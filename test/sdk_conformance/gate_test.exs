@@ -492,8 +492,9 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       # A per-test or per-describe override must carry its own skip, or a
       # deferring SDK would run it anyway (an include overrides an exclude).
       for {file, source} <- system_sources(),
-          [declaration] <-
-            Regex.scan(~r/^.*@(?:describe)?tag capability: :\w+.*(?:\n\s+\S.*)?$/m, source),
+          {kind, declaration} <- tag_declarations(source),
+          kind != "module",
+          declaration =~ ~r/\bcapability: :\w+/,
           not (declaration =~ "skip:") do
         fail("#{file} overrides the capability without a skip: #{String.trim(declaration)}")
       end
@@ -750,15 +751,30 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     for file <- Path.wildcard(Path.join(@system_dir, "*.exs")), do: {file, File.read!(file)}
   end
 
+  # A tag declaration as ExUnit reads it: the `@tag` line plus every line
+  # indented past it. The backreference on the opening indent is what stops the
+  # `test` line below a tag from being read as part of it.
+  defp tag_declarations(source) do
+    for [declaration, _indent, kind] <-
+          Regex.scan(~r/^([ \t]*)@(module|describe|)tag\b.*(?:\n\1[ \t]+\S.*)*/m, source),
+        do: {kind, declaration}
+  end
+
   # Every capability a file claims: its `@moduletag` plus any per-test
   # `@tag capability:` override, as the capability strings the manifests use.
+  # A tag is a keyword list, so `capability:` is read wherever it sits in one.
   defp capabilities_in(source) do
-    for [_, capability] <-
-          Regex.scan(
-            ~r/(?:use FlezhaTest\.SystemCase, capability|@(?:module|describe)?tag capability): :(\w+)/,
-            source
-          ),
-        uniq: true,
-        do: capability
+    from_use =
+      case Regex.run(~r/use FlezhaTest\.SystemCase, capability: :(\w+)/, source) do
+        [_, capability] -> [capability]
+        nil -> []
+      end
+
+    from_tags =
+      for {_kind, declaration} <- tag_declarations(source),
+          [_, capability] <- Regex.scan(~r/\bcapability: :(\w+)/, declaration),
+          do: capability
+
+    Enum.uniq(from_use ++ from_tags)
   end
 end
