@@ -1,7 +1,7 @@
 defmodule Flezha.Service.HubManager.Placement do
   @moduledoc """
   Where a child is placed and what it is told: the child spec and start args,
-  the refusals an unplaceable runner earns, and the runner-assignment wait.
+  what an unplaceable runner degrades to, and the runner-assignment wait.
   """
 
   alias Flezha.Config.Durations
@@ -250,22 +250,37 @@ defmodule Flezha.Service.HubManager.Placement do
     |> put_in([:metadata, :tag], assigned_runner)
   end
 
-  # A first start has no recorded runner and a caller waiting on the result, so
-  # it still fails loudly.
-  defp unplaceable_runner(nil, namespace, factory_id, _operative_id, reason) do
-    raise "No active compute engines available in namespace #{namespace} " <>
-            "for factory #{inspect(factory_id)} (#{reason})"
-  end
-
-  # A replayed cspec already names the runner it was bound to. Keeping it starts
-  # the operative, so its registry row gets a live pid and both Overwatch's own
-  # bounded wait and the convergence loop can still rebind it. Raising here
-  # instead kills the whole start request before `update_registry`, stranding
-  # every row in the batch on a dead pid where no reconciler can see it.
+  # Keep whatever the cspec recorded — a runner id, or nothing, which is what a
+  # declaration holds, since the declared entry commits before this hook rewrites
+  # anything. Either way the start proceeds.
+  #
+  # What that buys is small and worth stating plainly. The Overwatch starts, its
+  # own bind re-resolves the runner (`Lifecycle.bind/3` ignores the recorded one
+  # entirely), finds none, and stops with `:runner_not_ready`; `restart:
+  # :transient` brings it back every `overwatch_runner_wait_ms` until a runner
+  # returns, at which point it binds and the loop ends. The recorded-runner shape
+  # has always degraded exactly like this — the two shapes are not distinguished
+  # here — and it is deliberately preferred to raising, which kills the whole
+  # start request before `update_registry`, strands every row in the batch, and,
+  # because the hook runs in the hub's shared `WorkerQueue` under a linking
+  # `Task.async_stream`, takes that worker down with every start queued behind it
+  # — without starting the operative either.
+  #
+  # Known ceiling, pre-existing: `dsup_max_restarts: 100` per `dsup_max_seconds:
+  # 4` are ProcessHub's defaults and this hub does not override them, so on the
+  # order of 750 declared operatives in one runnerless namespace exhaust the
+  # dist_sup's restart intensity and it gives up.
+  #
+  # The caller still learns, though not from here. A named factory with no runner
+  # is refused by `Admission.validate_factory/2` before the hub is asked — its
+  # catch-all clause means that covers a binary factory id only — and a runner
+  # that goes away after that check reaches the caller through
+  # `Init.bind_started/4`, whose bounded `:registry_runner_set` call meets the
+  # stopping Overwatch and answers an error.
   defp unplaceable_runner(recorded_runner, namespace, _factory_id, operative_id, reason) do
     Logger.warning(
       "[hub_manager] no placeable runner for #{operative_id} in #{namespace} (#{reason}); " <>
-        "starting on recorded runner #{inspect(recorded_runner)} pending rebind"
+        "starting with recorded_runner=#{inspect(recorded_runner)}, pending rebind"
     )
 
     recorded_runner

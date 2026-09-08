@@ -33,9 +33,9 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
     def handle_call(_msg, _from, state), do: {:reply, {:error, :stub}, state}
   end
 
-  # `start_args/1`'s two-element clause yields a nil recorded runner, and
-  # `unplaceable_runner/5` RAISES on nil — which kills the whole start request.
-  # Naming a runner keeps an unplaceable row on the log-and-continue path.
+  # The runner a synthetic row records by default. `recorded_runner: nil` gives
+  # the two-element shape a real `ProcessHub.start_child/3` declares, which is
+  # what the reconcile replays.
   @recorded_runner "test_recorded_runner"
 
   @doc "Start (or reuse) the namespace's hub, normalising the start-result shapes."
@@ -85,15 +85,26 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   @doc """
   Start `operative_id` durably in `namespace`, through the same declared-set
   precommit every real start rides — so the hub's declared set holds it,
-  whether or not anything is running it. The recorded runner keeps the
-  `child_data_alter` hook on its log-and-continue path.
+  whether or not anything is running it.
+
+  Options: `:factory_id`, and `:recorded_runner` for the runner position of the
+  start args. Passing `recorded_runner: nil` declares the two-element shape a
+  real operative start submits, so the declared entry the reconcile replays is
+  the production one; the default names a runner instead.
   """
-  def start_durable(namespace, operative_id, factory_id \\ "market") do
+  def start_durable(namespace, operative_id, opts \\ []) do
+    factory_id = Keyword.get(opts, :factory_id, "market")
+    operative = %{id: operative_id, factory_id: factory_id}
+
+    arg =
+      case Keyword.get(opts, :recorded_runner, @recorded_runner) do
+        nil -> {namespace, operative}
+        runner -> {namespace, runner, operative}
+      end
+
     spec = %{
       id: operative_id,
-      start:
-        {StubChild, :start_link,
-         [{namespace, @recorded_runner, %{id: operative_id, factory_id: factory_id}}]},
+      start: {StubChild, :start_link, [arg]},
       restart: :transient
     }
 

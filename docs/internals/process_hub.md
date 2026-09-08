@@ -127,10 +127,26 @@ when auto-restore is off.
 | `pre_recovery_replay`, `post_recovery_replay`, `reconcile_round`, `reconcile_duplicate` | `Flezha.Boot.RecoveryHooks` | forward to telemetry; `reconcile_round` also triggers an immediate convergence tick; `reconcile_duplicate` is an alarm. Not registered when auto-restore is off |
 
 `alter_child_data` placement: it waits for a placeable runner with a budget shared across the
-start batch (`OperativeManager.await_runner/5`, bounded by `cross_node_request_timeout`). A first
-start with no runner for the factory raises (`No active compute engines available ...`). A
-replayed cspec that already records a runner starts on that recorded runner pending rebind, so
-its row gets a live pid and the convergence loop can heal it instead of the whole batch dying.
+start batch (`OperativeManager.await_runner/5`, bounded by `cross_node_request_timeout`). When the
+wait finds nothing the child is started anyway, keeping whatever runner its cspec recorded — which
+for a declared entry is none.
+
+**That is a degradation, not a repair, and it costs a restart loop.** The Overwatch starts, its
+own bind re-resolves the runner (`Lifecycle.bind/3` ignores the recorded one), finds none and
+stops with `:runner_not_ready`, and `restart: :transient` brings it back every
+`:overwatch_runner_wait_ms` (30 s) until a runner returns, binds, and the loop ends. Both
+cspec shapes have always behaved this way — the hook does not distinguish them. It is preferred to
+raising because the hook runs inside the hub's shared `WorkerQueue` under a linking
+`Task.async_stream`: a raise kills the whole start request before `update_registry`, strands every
+row in the batch, takes that worker down with every start queued behind it, and does not start the
+operative either. **Known ceiling**: ProcessHub's `dsup_max_restarts: 100` per `dsup_max_seconds:
+4` are not overridden here, so on the order of 750 declared operatives in one runnerless namespace
+exhaust the dist_sup's restart intensity and it gives up.
+
+The caller of a first start still learns, from elsewhere: a named factory with no runner is
+refused by `Admission.validate_factory/2` before the hub is asked (its catch-all clause means that
+covers a binary factory id only), and a runner that goes away after that check reaches the caller
+through `Init.bind_started/4`'s bounded `:registry_runner_set` call.
 
 ## Recovery is a reconcile toward the declared set
 
@@ -363,9 +379,10 @@ exists without its row.
 - **No persistent FleetManager state.** Runner sessions and advertised factories live in the
   FleetManager process; after a controller restart the reconcile grace and `alter_child_data`'s
   batch wait give runners time to re-announce.
-- **No persistent runner assignment beyond the registry row.** `metadata.tag` and the cspec
-  record the last binding so a replay can start pending rebind; placement is recomputed on
-  every `child_data_alter`.
+- **No persistent runner assignment beyond the registry row.** `metadata.tag` and the registry's
+  copy of the cspec record the last binding so a replay can start pending rebind. The declared
+  entry is a different thing: it commits before the hook runs and keeps the start args the caller
+  submitted, which name no runner. Placement is recomputed on every `child_data_alter`.
 - **No cross-node WAL replication.** `WalTransfer` is a one-shot pull at migration time; the
   remote durability tier is the cross-node artifact answer.
 

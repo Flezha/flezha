@@ -295,9 +295,10 @@ defmodule Flezha.Service.HubManager do
   # off — nothing lands under `:process_hub_registry_root`, which keeps
   # `unstarted_hub_has_registry?/0` (and thus `/healthz`) clean.
   #
-  # No `child_data_alter` hook: `place_child/3` would raise looking for a
-  # factory a schedule does not have. No `child_registered` hook either —
-  # schedules have no runner binding to reassert.
+  # No `child_data_alter` hook: a schedule's start args are not an operative's,
+  # so the hook would log every schedule start as unrecognised. No
+  # `child_registered` hook either — schedules have no runner binding to
+  # reassert.
   #
   # `ColdSwap` over the namespace hubs' `HotSwap`: HotSwap keeps the old
   # process alive until the new one registers, which for a cron timer means

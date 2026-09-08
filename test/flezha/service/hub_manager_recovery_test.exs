@@ -27,13 +27,16 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
+  alias Flezha.Process.Cspec
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.DurabilityTier.DeclaredManifest
   alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Storage.RemoteManifest
 
@@ -98,8 +101,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert await_bound_node(hub_id, operative_id, 10_000) == node(),
            "recovery replay left #{operative_id} bound to a dead pid — `flz operative list` renders it as (unplaced)"
 
-    # Degraded, not lost: the durable cspec's runner is kept so the row carries a
-    # live pid that Overwatch and the convergence loop can rebind.
+    # The recorded runner is kept rather than the batch dying. It is not a
+    # binding: a real Overwatch re-resolves the runner, finds none, stops with
+    # `:runner_not_ready`, and is restarted on the runner wait until one returns.
     assert registry_tag(ProcessRegistry.dump(hub_id), operative_id) == @recorded_runner
   end
 
@@ -146,6 +150,59 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     for operative_id <- unplaceable do
       assert registry_tag(dump, operative_id) == @recorded_runner
     end
+  end
+
+  # fails when: the reconcile replays a declaration whose start args name no
+  # runner — the only shape a real operative start ever declares — and the alter
+  # hook raises instead of degrading. The raise runs inside the hub's shared
+  # WorkerQueue, so it takes the worker down with the whole batch, the
+  # coordinator's pending work count never comes back, and the next round does
+  # it again.
+  test "a declaration that records no runner replays without raising" do
+    hub_id = Identificator.hub(@namespace)
+    operative_id = "declared_no_recorded_runner_op"
+
+    seed_runner(@seeded_runner, "market")
+    {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+    assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+    # The shape `OperativeManager.Init.start_child/2` submits: no runner
+    # position at all. The declared entry commits before the alter hook runs and
+    # the hook's rewrite only ever reaches the registry row, so this is the shape
+    # every later reconcile replays.
+    :ok = HubRegistryTestHelper.start_durable(@namespace, operative_id, recorded_runner: nil)
+
+    assert declared_start_arg(operative_id) ==
+             {@namespace, %{id: operative_id, factory_id: "market"}}
+
+    # The runner stops; the controller stays up. Zero budget removes every
+    # timing dependency from the lookup that now cannot succeed.
+    FleetStateHelper.seed(@namespace, %{})
+    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
+
+    {bound_node, log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        restart_hub(hub_id)
+        await_bound_node(hub_id, operative_id, 10_000)
+      end)
+
+    refute log =~ "No active compute engines available",
+           "the reconcile replay still raises, which kills the hub's shared WorkerQueue"
+
+    assert bound_node == node(),
+           "the replay never placed #{operative_id} — the alter hook took the start request with it"
+
+    # The tag is what the hook wrote: nothing owns the operative. A real
+    # Overwatch would then stop with `:runner_not_ready` and be restarted on the
+    # runner wait until one returns; `StubChild` stands still instead, which is
+    # what keeps this test about the hook and the batch.
+    assert registry_tag(ProcessRegistry.dump(hub_id), operative_id) == nil
+
+    assert NodeTestHelper.wait_until(
+             fn -> :sys.get_state(hub_id).pending_work_count == 0 end,
+             5_000
+           ),
+           "the hub still holds queued work — the WorkerQueue died before reporting it complete"
   end
 
   # fails when: one persisted row whose start args match no known shape raises
@@ -459,6 +516,14 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     else
       _ -> []
     end
+  end
+
+  # The single start argument of the hub's declared entry — the manifest the
+  # reconcile replays from, which is not the registry row the alter hook rewrote.
+  defp declared_start_arg(operative_id) do
+    %{children: children} = DeclaredChildren.declared_children(Identificator.hub(@namespace))
+    {:ok, arg} = children |> Enum.find(&(&1.id == operative_id)) |> Cspec.start_arg()
+    arg
   end
 
   # The owning runner recorded on a registry row (`metadata.tag`).
