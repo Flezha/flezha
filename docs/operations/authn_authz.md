@@ -211,6 +211,11 @@ flz namespace delete team-orders
 flz namespace list                 # the catalog, with a hub-running column
 ```
 
+`create` and `delete` both answer whether they changed anything: a name the
+catalog already holds is refused `:already_exists`, and a name it does not hold
+is refused `:not_found`. Both refusals go to standard error and exit 1, so a
+teardown script cannot read a typo as a successful delete.
+
 A namespace listing shows the caller its own namespace and no other, and
 `admin@_system` sees the whole cluster, which is the operator view. The same
 rule narrows the published `Flezha.Service.Operative.list_namespaces/1` a

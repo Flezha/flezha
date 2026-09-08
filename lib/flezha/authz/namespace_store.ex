@@ -98,9 +98,18 @@ defmodule Flezha.AuthZ.NamespaceStore do
     end
   end
 
+  # A delete says whether it removed anything: `create` refuses
+  # `:already_exists`, so absence has to be an answer on this side too, or a
+  # typo in a teardown script reports success.
   def handle_call({:delete, name}, _from, state) do
-    :ok = DetsStore.delete(@table, @cache, name)
-    {:reply, :ok, state}
+    case DetsStore.fetch(@table, name) do
+      {:ok, _entry} ->
+        :ok = DetsStore.delete(@table, @cache, name)
+        {:reply, :ok, state}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
   end
 
   def handle_call({:set_quotas, name, quotas}, _from, state) do

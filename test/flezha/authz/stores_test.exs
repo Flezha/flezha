@@ -85,6 +85,11 @@ defmodule Flezha.AuthZ.StoresTest do
       assert :ok = NamespaceStore.delete("team-orders")
       assert :error = NamespaceStore.get("team-orders")
 
+      # A delete that removed nothing says so, the way `create` refuses a name
+      # that is already taken.
+      assert {:error, :not_found} = NamespaceStore.delete("team-orders")
+      assert {:error, :not_found} = NamespaceStore.delete("never-existed-here")
+
       assert {:error, :cannot_delete_system_namespace} = NamespaceStore.delete("_system")
     end
   end

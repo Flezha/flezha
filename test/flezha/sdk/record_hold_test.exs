@@ -99,6 +99,16 @@ defmodule Flezha.SDK.RecordHoldTest do
     assert Counters.drops_oldest(counters) == 6
   end
 
+  test "a cap of zero is not a cap, on the caller's path as on the variable's" do
+    # `FLEZHA_RECONNECT_RING_CAPACITY=0` is refused by the knob and the default
+    # stands. `cap: 0` is truthy in Elixir, so without the same fallback it
+    # reached `:queue.drop/1` on an empty queue and raised on the first frame.
+    hold = Hold.new(cap: 0)
+
+    assert hold.cap == Hold.cap()
+    assert hold |> Hold.push(:x) |> Hold.member?(:x)
+  end
+
   test "the credit window is debited by the write, never by the hold" do
     counters = Counters.new()
     {:ok, credit} = Credit.start_link(counters: counters)
