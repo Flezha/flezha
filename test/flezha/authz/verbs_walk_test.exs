@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
-  alias FlezhaTest.Helper.{AuthTestHelper, ScheduleTestHelper}
+  alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper, ScheduleTestHelper}
 
   @elsewhere "walk-elsewhere"
 
@@ -147,7 +147,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     {_out, _err} =
       refusal(fn -> CliManager.operative_stop("default", "walk-nope", token: ctx.op_default) end)
 
-    settle()
+    settle(ctx.audit_dir)
 
     assert [record] = records(ctx.audit_dir, "schedule_service", "add")
     assert record["metadata"]["action"] == "schedule.add"
@@ -300,15 +300,26 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     dir
   end
 
-  defp settle do
+  # Draining the sink's mailbox is only half the signal: the record is readable
+  # once the sink has written the line, so wait for the walk's last act.
+  defp settle(dir) do
     TestSinks.settle(Sink)
-    Process.sleep(50)
+
+    assert NodeTestHelper.wait_until(
+             fn -> records(dir, "operative_service", "stop") != [] end,
+             2_000
+           ),
+           "the audit sink never wrote the walk's last record"
   end
 
   defp records(dir, source, name) do
     dir
     |> Path.join("audit-current.jsonl")
-    |> File.read!()
+    |> File.read()
+    |> case do
+      {:ok, body} -> body
+      {:error, _} -> ""
+    end
     |> String.split("\n", trim: true)
     |> Enum.map(&Jason.decode!/1)
     |> Enum.filter(&(&1["source"] == source and &1["name"] == name))

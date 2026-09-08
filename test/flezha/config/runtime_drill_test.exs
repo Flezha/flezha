@@ -37,6 +37,11 @@ defmodule Flezha.Config.RuntimeDrillTest do
   end
 
   test "a run in test derives its own resources, and an explicit variable still wins" do
+    # The derived half only holds when nothing states the value, and a session
+    # that isolates its runs exports these two. `:system_env` puts them back.
+    System.delete_env("FLEZHA_STATE_DIR")
+    System.delete_env("FLEZHA_SOCKET_FILES_PATH")
+
     config = read!(:test)
     token = config[:flezha][:run_token]
 
