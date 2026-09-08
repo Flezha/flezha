@@ -15,8 +15,10 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | [`runbooks/`](#runbooks) | operators, contributors | Step-by-step procedures for one-off operations |
 | [`publishing/`](#publishing) | the maintainer, before the first public release | The decisions publishing makes irreversible, and which of them block a release |
 
-Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) and
-[`configuration.md`](configuration.md) (every knob, by layer).
+Three references sit at the top level: [`glossary.md`](glossary.md) (vocabulary),
+[`configuration.md`](configuration.md) (every knob, by layer) and
+[`code_standards.md`](code_standards.md) (the rules a change to this repository is
+held to, in every language it carries).
 
 reproduces it and the output that command gave.
 

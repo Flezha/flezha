@@ -35,8 +35,8 @@ name: Naming
 # could never move. Its baseline, scripts/layer-direction-baseline.txt, is the
 # debt the tree held when the gate landed; the gate fails on anything outside
 # that list and on any entry the tree no longer holds, so the list may only
-# shrink. Unlike scripts/refactor_metrics.py it belongs in CI: its baseline is
-# tracked, so a fresh checkout can judge itself.
+# shrink. It belongs in CI because its baseline is tracked, so a fresh checkout
+# can judge itself.
 #
 # check-mimic-global is the one path-scoped gate here: it reads `test/` only,
 # because the call it refuses has no place in `lib/` at all. Mimic's global
@@ -84,11 +84,11 @@ name: Naming
 # blocking: the purge reclaimed 961 MB -> 15 MB, and the ceiling is what keeps
 # it there (docs/runbooks/purge-build-artifacts.md).
 #
-# There is no structure ratchet here, deliberately. scripts/refactor_metrics.py
-# reads its baseline and targets from docs/refactor/, which is programme
-# material this repository does not track, so on a fresh checkout the check
-# exits 2 and can only ever be green by being ignored. It is a local instrument,
-# run on a box that holds the baseline, and it does not belong in CI.
+# There is no structure ratchet here, deliberately. There was one, and it read
+# its baseline from a directory this repository does not track, so on a fresh
+# checkout it exited 2 and could only ever be green by being ignored. A check
+# whose memory lives on one laptop does not belong in CI, and the rules it was
+# ratcheting are written down in docs/code_standards.md instead.
 
 on:
   pull_request:

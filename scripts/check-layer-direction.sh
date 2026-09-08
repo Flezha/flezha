@@ -5,9 +5,8 @@
 # Charter §3 gives the controller one dependency order — transport -> runner ->
 # operative -> state / plugin -> service -> http / healthz, with observability,
 # authz and convergence as cross-cutting consumers no layer below service
-# names. Nothing enforced it: `refactor_metrics.py` ratchets cycle counts per
-# area, which says a cycle exists and never says which way an edge points, and
-# no test asserts direction at all.
+# names. Nothing enforced it: a cycle count says a cycle exists and never says
+# which way an edge points, and no test asserts direction at all.
 #
 # WHAT AN EDGE IS. One (file, module) pair: a file under lib/flezha/<dir>/ that
 # names a module whose own defining file lives under a higher directory. The

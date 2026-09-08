@@ -1,4 +1,4 @@
-.PHONY: build build-release nif nif-release test fmt metrics clean \
+.PHONY: build build-release nif nif-release test fmt clean \
         refresh-process-hub \
         docker-build docker-publish \
         docker-build-dev docker-build-toolchain \
@@ -43,10 +43,6 @@ test:
 # Format every language; scripts/format-check.sh is the gate
 fmt:
 	scripts/format-apply.sh
-
-# Per-area structure metrics (docs/refactor/charter.md §11)
-metrics:
-	python3 scripts/refactor_metrics.py
 
 # Archive criterion for the `stabilize-test-suite` OpenSpec change. Runs
 # the four invocations the proposal calls out — `mix test`, then a re-run

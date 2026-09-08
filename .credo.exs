@@ -1,5 +1,5 @@
-# Credo in measuring mode: `mix credo --strict` counts, scripts/refactor_metrics.py
-# ratchets the count. The ceilings are docs/refactor/charter.md §7.
+# Credo in measuring mode: `mix credo --strict` counts and nothing ratchets the
+# count. The ceilings a change is held to are docs/code_standards.md.
 %{
   configs: [
     %{

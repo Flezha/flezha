@@ -49,7 +49,10 @@
 #                                 the SDK asks Knob and the extraction swaps one
 #                                 file.)
 #
-# Scope is `git ls-files` under lib/flezha/sdk/. Takes no arguments.
+# Scope is `git ls-files` under lib/flezha/sdk/, plus the SDK's own entry module
+# lib/flezha/sdk.ex, which sits beside that directory: a bare directory pathspec
+# matches inside it only, so the one file the extraction most obviously carries
+# would otherwise be the one file this gate never reads. Takes no arguments.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -63,6 +66,8 @@ sys.path.insert(0, "scripts")
 import naming_gate
 
 SDK_DIR = "lib/flezha/sdk"
+# The entry module lives beside the directory, not in it, so it needs naming.
+SDK_ENTRY = "lib/flezha/sdk.ex"
 # The codec module is the ONLY place Protox / RunnerCommands may appear.
 CODEC = "lib/flezha/sdk/codec.ex"
 # The knob module is the ONLY place the controller's declared tables may appear.
@@ -120,7 +125,7 @@ def check(rel, line):
 
 sys.exit(naming_gate.walk(
     check=check,
-    pathspec=[SDK_DIR],
+    pathspec=[SDK_DIR, SDK_ENTRY],
     path_filter=lambda rel: rel.endswith(".ex"),
     headline="SDK packaging-boundary violations (SDK must touch the controller only\n"
              "through the named seams — see scripts/check-sdk-boundary.sh):",

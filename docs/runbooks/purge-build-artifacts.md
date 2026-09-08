@@ -104,13 +104,12 @@ commits must be repointed from `filter-repo/commit-map`:
 
     .git-blame-ignore-revs
 
-`.git-blame-ignore-revs` and `baseline.json` are **not** markdown and are the two
-most often missed. Both are functional, not prose: git blame skips those revs,
-and `refactor_metrics.py --check` reads `baseline.json`'s `head`. A scan limited
-to `*.md` leaves both broken.
+`.git-blame-ignore-revs` is **not** markdown and is the one most often missed.
+It is functional, not prose: git blame skips those revs, so a scan limited to
+`*.md` leaves it broken. Any other non-markdown file that records a commit hash
+needs the same treatment.
 
-Verify afterwards that every commit-shaped citation resolves, and that
-`baseline.json` still parses.
+Verify afterwards that every commit-shaped citation resolves.
 
 ## Publish
 

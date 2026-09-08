@@ -20,12 +20,52 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   use ExUnit.Case, async: true
 
   alias FlezhaTest.Helper.ReferenceTopologies
+  alias FlezhaTest.Helper.SourceWalk
 
   @issues "flz_core/src/host/issue.rs"
   @fixture "test/fixtures/reference_topologies.txt"
   @decl_keys "test/fixtures/host_class_decl_keys.txt"
   @record "flz_core/src/host/decl.rs"
-  @seams "docs/refactor/seams.toml"
+
+  # The seam's own shape: every spelling the tree used to judge a topology with,
+  # before the fold put the verdict in one place. A file outside @seam_files
+  # that matches one of these is deciding the same thing a second time.
+  @shape ~r/push\(TopologyIssue::|Err\(TopologyIssue::|linkIssues\.push\(|link_issues\.append\(|@link_issues <<|linkIssues\[\] =|EdgeAlreadyWired: already feeds|amendCheckpoint\(|_amend_checkpoint\(|checkpoint_policy\(|\{:invalid_topology,|new StreamOperativeConfigurationException\(/
+
+  @roots [
+    "flz_core/src",
+    "sdk/rust/src",
+    "sdk/node/src",
+    "sdk/python/src",
+    "sdk/ruby/lib",
+    "sdk/php/src",
+    "sdk/java/flezha-sdk-api/src/main",
+    "sdk/java/flezha-sdk-runtime/src/main",
+    "lib/flezha/sdk"
+  ]
+
+  # The seam and the one re-expression of it. The Elixir SDK is its own core and
+  # inherits nothing from `flz_core` (docs/architecture/runner.md, "One change,
+  # every SDK"), so it re-expresses the check against the same fixture; that is a
+  # second seam, not a bypass of this one.
+  @seam_files [
+    "flz_core/src/host/register.rs",
+    "flz_core/src/host/chains.rs",
+    "flz_core/src/host/issue.rs",
+    "lib/flezha/sdk/topology.ex",
+    "lib/flezha/sdk/channels.ex",
+    "lib/flezha/sdk/workflow/spec.ex"
+  ]
+
+  # Java's refusal type, matched because the shape names its constructor. These
+  # sites build and throw the exception that carries a verdict `flz_core` has
+  # already reached; none of them decides whether a topology is legal. The list
+  # only ever shrinks: an entry that stops matching is removed, never re-dated.
+  @carries_a_verdict [
+    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java",
+    "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
+    "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java"
+  ]
 
   # The residue of the text refusals the vocabulary has not named yet
   # (the language byte, the SDK version, the workflow ladder, the DAG leaf, the
@@ -129,31 +169,55 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     end
   end
 
-  describe "the ledger" do
-    test "the seam has a row, and the Elixir re-expression is the only allowance" do
-      seams = File.read!(@seams)
+  describe "the seam" do
+    test "judging a topology happens in one place, and it is that place" do
+      matched = matching_files()
 
-      assert seams =~ ~s(id = "check-a-topology"),
-             "the fold is not measured until #{@seams} carries its row"
+      assert matched != [],
+             """
+             the shape matches nothing under #{Enum.join(@roots, ", ")}, so this \
+             clause measures zero sites and cannot fail. Either the seam has been \
+             respelled and @shape needs updating, or a root has moved.
+             """
 
-      [_, allowed] = Regex.run(~r/id = "check-a-topology".*?^allow = \[(.*?)^\]/ms, seams)
+      assert "flz_core/src/host/register.rs" in matched,
+             "the seam itself no longer matches its own shape; @shape is measuring something else"
 
-      for file <- ~w(
-            flz_core/src/host/register.rs
-            flz_core/src/host/chains.rs
-            flz_core/src/host/issue.rs
-            lib/flezha/sdk/topology.ex
-          ) do
-        assert allowed =~ file,
-               "#{file} is the seam or its re-expression and must be allow-listed"
-      end
+      strangers = matched -- (@seam_files ++ @carries_a_verdict)
 
-      # Only the Elixir SDK re-expresses the check; every other SDK submits to
-      # it, so an allowance for one would be the scatter growing back.
-      for sdk <- ~w(sdk/rust sdk/java sdk/node sdk/python sdk/ruby sdk/php) do
-        refute allowed =~ sdk, "#{sdk} submits to the seam; it may not be allow-listed out of it"
-      end
+      assert strangers == [],
+             """
+             a file outside the seam judges a topology, which is the scatter \
+             growing back: one rule would then have to be changed in two places \
+             and the second is the one that gets missed.
+             #{Enum.join(strangers, "\n")}
+             """
     end
+
+    test "the exception list names only sites the tree still holds" do
+      stale = @carries_a_verdict -- matching_files()
+
+      assert stale == [],
+             """
+             a file listed here no longer matches the shape, so the allowance \
+             guards nothing and hides whatever is written there next. An \
+             exception list only shrinks:
+             #{Enum.join(stale, "\n")}
+             """
+    end
+  end
+
+  # Every file under the seam's roots whose text uses one of the spellings the
+  # fold replaced. The whole line set is read, comments included, because a
+  # commented-out refusal is a spelling somebody is about to restore.
+  defp matching_files do
+    @roots
+    |> SourceWalk.files()
+    |> SourceWalk.lines()
+    |> Enum.filter(fn {_path, line, _number} -> Regex.match?(@shape, line) end)
+    |> Enum.map(fn {path, _line, _number} -> path end)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   # The variant names, read from the enum the way the scatter map's own command

@@ -63,7 +63,6 @@ make clean
 | `nif` / `nif-release` | Build only the `flz_nif` crate (debug / release) |
 | `test` | `mix test` |
 | `fmt` | `scripts/format-apply.sh`, the formatter for every language in the tree |
-| `metrics` | `python3 scripts/refactor_metrics.py`, the per-area structure metrics |
 | `stabilize-test-check` | `mix test` twice, `cargo test --workspace --features flezha_runner/bench-internals`, `mvn -f sdk/java verify` (`SKIP_JAVA=1` skips the last) |
 | `refresh-process-hub` | `mix deps.unlock process_hub && mix deps.get` — re-resolve `process_hub` within the requirement `mix.exs` declares, taking a newer matching release |
 | `clean` | `cargo clean`, `mix clean`, remove `_build`, `deps`, `priv/native/*.so` |

@@ -83,9 +83,10 @@ this order: use what exists, extend or parameterise it, refactor two things into
 one shared core, and only then write something new. A new module beside a
 near-identical old one is a defect, not a delivery.
 
-`python3 scripts/refactor_metrics.py` measures it: production and test lines
-apart, files over 800 lines, functions over 50, dependency cycles, duplicate
-pairs.
+`git diff --numstat` measures it, split by hand into production and test paths.
+The ceilings a change is held to (no file over 800 lines, no function over 50,
+no new dependency cycle) are in `docs/code_standards.md`, along with the rules
+for writing a check that enforces one.
 
 ## Definition of done, for every item
 
