@@ -187,6 +187,13 @@ pub(crate) fn filter_out_extension_entries(words: &[String]) -> Vec<String> {
 /// Single-letter option aliases.
 const SHORT_KEYS: &[(&str, &str)] = &[("n", "namespace"), ("o", "output")];
 
+/// The plain-word keys of a plugin enable's settings document: written like an
+/// option and handed on unread by the walk, because they belong to the
+/// subscription and to the provider rather than to a row. `--X<key>=<value>`
+/// carries the rest. Declared here, where the parser that reads them lives, so
+/// that the screens may teach them without a row claiming the word.
+pub(crate) const SETTING_KEYS: &[&str] = &["--extension", "--trigger"];
+
 /// The plain `--key value` options of a plugin enable, with `namespace`
 /// defaulted to `"default"`. Both spellings of a setting are skipped:
 /// `extract_x_flags` owns them, and `option_key` refuses the bare one because
@@ -394,6 +401,44 @@ mod tests {
 
         let positional = extract_opts(&v(&["topic=t"]));
         assert!(!positional.iter().any(|(key, _)| key == "topic"));
+    }
+
+    /// fails when: a plain-word settings key the screens teach reaches neither
+    /// of the two documents a plugin enable sends, so an operator types a word
+    /// the verb drops. No row claims these — that is what lets the settings
+    /// document own them — so this is what stands in for a row's guarantee.
+    #[test]
+    fn every_plain_settings_key_reaches_one_of_the_two_documents() {
+        let mut dropped: Vec<String> = Vec::new();
+
+        for key in SETTING_KEYS {
+            let joined = format!("{}=on_input", key);
+
+            for form in [v(&[&joined]), v(&[key, "on_input"])] {
+                let opts = extract_opts(&filter_out_extension_entries(&form));
+                let extensions = extract_extension_flags(&form);
+                let bare = key.trim_start_matches('-');
+
+                let carried = extensions.iter().any(|(name, _)| name == "on_input")
+                    || opts
+                        .iter()
+                        .any(|(read, value)| read == bare && value == "on_input");
+
+                if !carried {
+                    dropped.push(format!(
+                        "{:?} -> opts {:?}, extensions {:?}",
+                        form, opts, extensions
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            dropped.is_empty(),
+            "{} plain settings spellings reach no document:\n{}",
+            dropped.len(),
+            dropped.join("\n")
+        );
     }
 
     /// Every settings-shaped token in a piece of operator-visible text: a

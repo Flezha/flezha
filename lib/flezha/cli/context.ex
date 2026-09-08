@@ -243,21 +243,37 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
+  The value `written` names in `rows` — `{spelling, value}` in the order the
+  accepted set is printed in — or a refusal naming the word and that set.
+
+  The ONE way this surface tells an operator a word is not one it knows.
+  `atom!/3` is this answered by halting; a family that threads its refusal out
+  as a value reads the message instead.
+  """
+  @spec one_of(String.t(), [{String.t(), term()}], String.t()) ::
+          {:ok, term()} | {:error, String.t()}
+  def one_of(written, rows, what) do
+    case List.keyfind(rows, written, 0) do
+      {_written, value} ->
+        {:ok, value}
+
+      nil ->
+        {:error,
+         "unknown #{what} '#{written}'. Use " <>
+           Enum.map_join(rows, " or ", &"'#{elem(&1, 0)}'") <> "."}
+    end
+  end
+
+  @doc """
   A word the operator typed, as the atom this surface knows it by. Never
   `String.to_atom/1`: a word nobody declared would mint an atom the node then
   keeps for ever.
   """
   @spec atom!(String.t(), [atom()], String.t()) :: atom()
   def atom!(written, allowed, what) do
-    case Enum.find(allowed, &(Atom.to_string(&1) == written)) do
-      nil ->
-        cli_error!(
-          "error: unknown #{what} '#{written}'. Use " <>
-            Enum.map_join(allowed, " or ", &"'#{&1}'") <> "."
-        )
-
-      known ->
-        known
+    case one_of(written, Enum.map(allowed, &{Atom.to_string(&1), &1}), what) do
+      {:ok, known} -> known
+      {:error, message} -> cli_error!("error: " <> message)
     end
   end
 end

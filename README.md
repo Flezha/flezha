@@ -257,10 +257,14 @@ for a minimal copy-paste starting point.
 subscription (`--trigger`) are plain options the CLI consumes first — a
 provider with a strict allow-list refuses every `--X` key it does not own.
 
+A subscription says what a plugin SENDS. An enable naming neither `--trigger`
+nor `--extension` subscribes to nothing, which is what a plugin that only
+receives wants: the websocket below holds its own socket and injects every
+frame into the operative's input.
+
 ```bash
 _build/dev/rel/flezha/bin/flz plugin enable my_ws operative_websocket \
   --operative_id=my_operative \
-  --trigger=proactive \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}'
 ```

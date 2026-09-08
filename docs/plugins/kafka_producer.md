@@ -270,12 +270,17 @@ the head of the queue; the duplicate bound is the window, as above.
 
 ```bash
 flz plugin enable trades-producer operative_kafka_producer \
+  --extension=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=trades \
   --Xqueue_max=20000 \
   --Xlinger_ms=20 \
   --Xqueue_overflow=drop_oldest
 ```
+
+The subscription is what makes this a producer: an enable naming neither
+`--trigger` nor `--extension` subscribes to nothing and publishes nothing.
+`on_input` publishes what the operative ingests instead of what it emits.
 
 ## See also
 

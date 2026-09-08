@@ -911,3 +911,38 @@ and the divergence is invisible until someone greps for it.
 - **WHEN** a provider reports a fact no other provider has
 - **THEN** it SHALL emit that verb under the same derived prefix, and the vocabulary test SHALL accept it
 
+### Requirement: An operator SHALL be able to enable a plugin that subscribes to nothing
+
+`flz plugin enable` SHALL support declaring a plugin with an empty subscription list, SHALL treat an enable that names neither a trigger nor an extension as that declaration, and SHALL refuse a trigger value it does not recognise rather than substituting one.
+
+An empty subscription list is already a supported state everywhere below the
+CLI: canonicalisation folds it to an empty canonical list, the io-bound
+predicate answers false for it, and no sink is built. Only the operator-facing
+spelling was missing, and its absence made the safest configuration
+unreachable while making a surprising one the default.
+
+The inbound half of an `:io_binding` provider does not depend on any
+subscription. A provider's declared worker holds the connection and injects
+what arrives through the host's one inject, so a plugin subscribed to nothing
+still feeds its operative. The subscription list governs only what the plugin
+sends.
+
+#### Scenario: An enable naming no trigger subscribes to nothing
+- **WHEN** `flz plugin enable p operative_websocket --operative_id op --Xuri=ws://host/in` is issued with no `--trigger` and no `--extension`
+- **THEN** the plugin's stored subscription list MUST be empty
+- **AND** no outbound queue MUST be allocated for it
+- **AND** frames arriving on its connection MUST still reach the operative's input
+
+#### Scenario: The empty subscription is nameable
+- **WHEN** the same enable is issued with `--trigger none`
+- **THEN** the stored subscription list MUST be empty, exactly as when the trigger is absent
+
+#### Scenario: An unrecognised trigger is refused
+- **WHEN** an enable is issued with a `--trigger` value that is not one of the declared values
+- **THEN** the command MUST fail naming the value and the accepted set
+- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
+
+#### Scenario: An echo is still available by name
+- **WHEN** an enable is issued with `--trigger on_input` or `--extension=on_input`
+- **THEN** the plugin MUST subscribe to `on_input` and every payload the operative ingests MUST be dispatched to the provider's `on_input/2`
+

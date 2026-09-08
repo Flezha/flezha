@@ -22,8 +22,10 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Service.Cli.Plugin, as: CliPlugin
+  alias FlezhaTest.Helper.ProviderPrepare
 
   defmodule EveryKind do
     use Flezha.Plugin.ProviderBehaviour
@@ -41,36 +43,78 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   end
 
   defp cli_subscriptions(extensions) do
-    CliPlugin.extract_subscriptions(%{"extensions" => extensions}, %{})
+    {:ok, subs} = CliPlugin.extract_subscriptions(%{"extensions" => extensions}, %{})
+    subs
   end
 
   defp extension(name, opts), do: %{"name" => name, "opts" => opts}
 
-  defp subscribe(subs) do
-    Table.bulk_subscribe(Table.new(Overwatch.__extensions_catalog__()), [
-      {"cli",
-       %Plugin{
-         id: "cli",
-         provider: EveryKind,
-         subscriptions: subs
-       }}
-    ])
+  defp subscribe(subs, overrides \\ []) do
+    plugin = struct(%Plugin{id: "cli", provider: EveryKind, subscriptions: subs}, overrides)
+
+    Table.bulk_subscribe(Table.new(Overwatch.__extensions_catalog__()), [{plugin.id, plugin}])
   end
 
-  test "proactive and interval both map onto :on_interval" do
-    assert CliPlugin.trigger_to_subscription("proactive") == [
-             {:on_interval, [interval_ms: 5_000]}
-           ]
+  describe "the --trigger vocabulary" do
+    test "every row names the subscriptions it stands for" do
+      for {written, subscriptions} <- [
+            {"none", []},
+            {"on_input", [{:on_input, []}]},
+            {"on_output", [{:on_output, []}]},
+            {"interval", [{:on_interval, [interval_ms: 5_000]}]},
+            {"proactive", [{:on_interval, [interval_ms: 5_000]}]}
+          ] do
+        assert CliPlugin.trigger_to_subscription(written) == {:ok, subscriptions}
+      end
+    end
 
-    assert CliPlugin.trigger_to_subscription("interval") == [
-             {:on_interval, [interval_ms: 5_000]}
-           ]
+    # Fails when: an enable that names neither a trigger nor an extension is
+    # given a subscription it never asked for. `on_input` used to be that
+    # answer, and it is a SEND on every provider whose two io callbacks are
+    # one function.
+    test "an enable naming neither a trigger nor an extension subscribes to nothing" do
+      assert CliPlugin.extract_subscriptions(%{}, %{}) == {:ok, []}
+      assert CliPlugin.trigger_to_subscription(nil) == {:ok, []}
+    end
+
+    # Fails when: a typo is coerced onto a row instead of being refused, which
+    # changes what the plugin is bound to with nothing said to the operator.
+    test "a value naming no row is refused, naming the value and the accepted set" do
+      assert {:error, message} = CliPlugin.trigger_to_subscription("on_inptu")
+
+      assert message ==
+               "unknown --trigger 'on_inptu'. Use 'none' or 'on_input' or " <>
+                 "'on_output' or 'interval' or 'proactive'."
+    end
   end
 
-  test "on_input / on_output map to their own extensions; unknown falls back to on_input" do
-    assert CliPlugin.trigger_to_subscription("on_input") == [{:on_input, []}]
-    assert CliPlugin.trigger_to_subscription("on_output") == [{:on_output, []}]
-    assert CliPlugin.trigger_to_subscription("bogus") == [{:on_input, []}]
+  # Fails when: an enable that names no trigger reaches the provider bound in a
+  # direction nobody asked for. The websocket's `on_input` and `on_output` are
+  # the same send, so a source made an echo ships every payload the operative
+  # ingests back out on the socket it arrived on.
+  test "a source-only enable subscribes to nothing, allocates no sink and ships nothing" do
+    plugin_id = "cli_source_only_#{System.unique_integer([:positive])}"
+    ProviderPrepare.stub_sink_worker(Websocket, plugin_id)
+
+    assert {:ok, subscriptions} = CliPlugin.extract_subscriptions(%{}, %{})
+
+    {:ok, table} =
+      subscribe(subscriptions,
+        id: plugin_id,
+        provider: Websocket,
+        opts: %{uri: "wss://flezha-test.invalid:9/never-connect", plugin_id: plugin_id}
+      )
+
+    assert %Plugin{opts: opts} = Map.fetch!(table.plugins, plugin_id)
+    assert opts.subscribed_extensions == []
+    assert opts.sink == nil
+
+    refute Extension.active?(table, :on_input)
+
+    ctx = %Ctx.IO{operative_id: "op", namespace: :default, message: "in", metadata: %{}}
+
+    assert {:ok, ^ctx} = Extension.run(table, :on_input, ctx)
+    refute_receive {:shipped, _, _}, 200
   end
 
   # Fails when: a subscription directive reaches `init_provider/1` as a plugin

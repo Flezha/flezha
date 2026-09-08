@@ -2,6 +2,7 @@ flz plugin - Plugin management commands
 
 USAGE:
     flz plugin <COMMAND>
+    flz plugin enable <plugin_id> <provider_id> [--trigger <value>] [OPTIONS]
 
 COMMANDS:
     install    Install a plugin from a .fpz package
@@ -14,6 +15,23 @@ COMMANDS:
     info       Show details for an installed plugin
     help       Show help for a specific plugin provider
 
+SUBSCRIPTIONS:
+    A subscription says what a plugin SENDS. `--trigger <value>` names one:
+
+        none         subscribe to nothing
+        on_input     send every payload the operative ingests
+        on_output    send every payload the operative emits
+        interval     tick the provider every 5 seconds
+        proactive    the same as interval
+
+    An enable naming neither --trigger nor --extension subscribes to nothing,
+    exactly as `--trigger none` does. A plugin that only receives still feeds
+    its operative: its connection is held by the provider's own worker, which
+    no subscription governs. A value naming no row is refused.
+
+    `--extension=<name>` subscribes by extension name and carries its
+    sub-options as `--<name>.<key>=<value>`.
+
 EXAMPLES:
     flz plugin install /path/to/kafka_ingest-1.0.0.fpz
     flz plugin list --installed
@@ -25,4 +43,6 @@ EXAMPLES:
     # Legacy provider enable (compile-time providers):
     flz plugin enable ws_id operative_websocket --Xuri=ws://localhost:4500 \
         --extension=on_input --on_input.position=0
+    # Source only: it injects what arrives and sends nothing back.
+    flz plugin enable ws_in operative_websocket --Xuri=ws://localhost:4500
     flz plugin disable ws_id

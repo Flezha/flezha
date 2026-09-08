@@ -415,11 +415,12 @@ mod tests {
             .filter(|word| word.starts_with("--") && word.len() > 2)
             .filter(|word| {
                 // `--<key>` is the shape a settings document is taught in, not
-                // a spelling anyone types.
+                // a spelling anyone types, and `settings::SETTING_KEYS` names
+                // the plain words that document owns rather than a row.
                 !word.starts_with("--X")
                     && !word.contains('.')
                     && !word.contains('<')
-                    && *word != "--extension"
+                    && !crate::settings::SETTING_KEYS.contains(word)
             })
             .collect()
     }

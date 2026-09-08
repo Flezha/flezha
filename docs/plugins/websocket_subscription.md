@@ -21,7 +21,21 @@ holds — one socket, both directions, no second connection. That half is
 A plugin with no source configured is the plain static provider: no poll
 timer, no applied set, and no subscription state on the per-frame path. A
 plugin subscribed to neither `on_input` nor `on_output` allocates no outbound
-queue and awaits no acknowledgement.
+queue and awaits no acknowledgement, and that is what an enable naming neither
+`--trigger` nor `--extension` declares:
+
+```bash
+flz plugin enable prices-in operative_websocket \
+  --operative_id=prices \
+  --Xuri=wss://feed.example/stream
+```
+
+The socket is held by the provider's own worker, which the extension table
+starts either way, so this plugin injects every frame it receives into the
+operative's input and sends nothing back. `--trigger none` says the same thing
+out loud. Naming a trigger here binds the other direction too: `on_input` on
+this provider is the same send as `on_output`, so it makes a source echo every
+payload the operative ingests back out on the socket it arrived on.
 
 ## Contract
 

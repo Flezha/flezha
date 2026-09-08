@@ -28,14 +28,18 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   end
 
   # What `Table.with_host_identity/3` merges: the caller stands in for the host
-  # operative, which is what a provider's worker is handed.
+  # operative, which is what a provider's worker is handed. The subscription
+  # list is one of the five, and a provider that allocates only for the
+  # directions it is bound in reads it — an absent key is a shape the table
+  # never produces.
   defp with_host_identity(opts) do
     Map.merge(
       %{
         overwatcher_pid: self(),
         source_namespace: :default,
         source_operative_id: "test-operative",
-        source_plugin_id: Map.get(opts, :plugin_id)
+        source_plugin_id: Map.get(opts, :plugin_id),
+        subscribed_extensions: []
       },
       opts
     )
@@ -64,6 +68,39 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
     with {:ok, prepared} <- prepare(provider, opts),
          {:ok, pid} <- activate(provider, prepared),
          do: {:ok, prepared, pid}
+  end
+
+  @doc """
+  Stand in for `provider`'s worker under `plugin_id`, registered where the real
+  one registers: it answers every `{:sink_frame, message, metadata}` ask `:ok`
+  and forwards it to the calling test as `{:shipped, message, metadata}`.
+
+  A negative assertion needs this as much as a positive one. With no worker
+  registered at all a provider refuses the ask, so "nothing was shipped" would
+  hold for a plugin that is bound in a direction and one that is not alike.
+  """
+  @spec stub_sink_worker(module(), binary()) :: pid()
+  def stub_sink_worker(provider, plugin_id) do
+    test = self()
+
+    worker =
+      spawn_link(fn ->
+        Registry.register(WorkerSup.registry_name(WorkerSup.family(provider)), plugin_id, nil)
+        send(test, {:registered, plugin_id})
+        answer_asks(test)
+      end)
+
+    assert_receive {:registered, ^plugin_id}, 1_000
+    worker
+  end
+
+  defp answer_asks(test) do
+    receive do
+      {{:sink_frame, message, metadata}, from, ref} ->
+        send(from, {ref, :ok})
+        send(test, {:shipped, message, metadata})
+        answer_asks(test)
+    end
   end
 
   @doc """

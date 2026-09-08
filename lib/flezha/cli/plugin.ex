@@ -16,6 +16,16 @@ defmodule Flezha.Service.Cli.Plugin do
   # provider with a strict allow-list refuses every key it does not own.
   @subscription_keys ["extensions", "trigger"]
 
+  # The `--trigger` vocabulary: the one declaration both the lookup and the
+  # refusal's accepted set are read from.
+  @triggers [
+    {"none", []},
+    {"on_input", [{:on_input, []}]},
+    {"on_output", [{:on_output, []}]},
+    {"interval", [{:on_interval, [interval_ms: 5_000]}]},
+    {"proactive", [{:on_interval, [interval_ms: 5_000]}]}
+  ]
+
   @doc """
   The row a `plugin enable` is judged by: the namespace in the operator's
   options, with the decoded provider, flags and options the body needs.
@@ -43,58 +53,58 @@ defmodule Flezha.Service.Cli.Plugin do
 
   @doc "Enables plugin."
   def enable_plugin(plugin_id, _provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
-    %{namespace: namespace, provider_mod: provider_mod, plugin_flags: plugin_flags, opts: opts} =
-      row
-
-    plugin = %Plugin{
-      id: plugin_id,
-      provider: provider_mod,
-      namespace: namespace,
-      operative_id: Map.get(plugin_flags, "operative_id") || Map.get(opts, "operative_id"),
-      opts: provider_opts(plugin_flags),
-      subscriptions: extract_subscriptions(plugin_flags, opts)
-    }
-
-    case PluginManager.enable_plugin(plugin_id, plugin) do
-      {:ok, :already_enabled} ->
-        IO.puts(
-          "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
-            "untouched (options were not compared)."
-        )
-
-      {:ok, _msg} ->
-        IO.puts("Plugin #{plugin_id} enabled successfully.")
-
-      {:error, reason} ->
-        Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
+    with {:ok, subscriptions} <- extract_subscriptions(row.plugin_flags, row.opts),
+         {:ok, outcome} <-
+           PluginManager.enable_plugin(plugin_id, plugin(plugin_id, row, subscriptions)) do
+      IO.puts(enabled_message(plugin_id, outcome))
+    else
+      {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
+  defp plugin(plugin_id, row, subscriptions) do
+    %Plugin{
+      id: plugin_id,
+      provider: row.provider_mod,
+      namespace: row.namespace,
+      operative_id:
+        Map.get(row.plugin_flags, "operative_id") || Map.get(row.opts, "operative_id"),
+      opts: provider_opts(row.plugin_flags),
+      subscriptions: subscriptions
+    }
+  end
+
+  defp enabled_message(plugin_id, :already_enabled) do
+    "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
+      "untouched (options were not compared)."
+  end
+
+  defp enabled_message(plugin_id, _msg), do: "Plugin #{plugin_id} enabled successfully."
+
   @doc """
   Build subscriptions from the legacy `--trigger=on_input` shape (single
-  trigger) OR the `--extension=on_input` repeatable shape. The legacy trigger
-  values `proactive` and `interval` both map onto `:on_interval`.
+  trigger) OR the `--extension=on_input` repeatable shape, or refuse a trigger
+  value that names no row. Neither written subscribes to nothing.
   """
+  @spec extract_subscriptions(map(), map()) :: {:ok, [{term(), term()}]} | {:error, binary()}
   def extract_subscriptions(plugin_flags, opts) do
-    extensions =
-      plugin_flags
-      |> Map.get("extensions")
-      |> List.wrap()
+    case declared_extensions(plugin_flags, opts) do
+      [] ->
+        trigger_to_subscription(Map.get(opts, "trigger") || Map.get(plugin_flags, "trigger"))
 
-    extensions =
-      if extensions == [],
-        do: Map.get(opts, "extensions") |> List.wrap(),
-        else: extensions
+      extensions ->
+        # Raw text, both halves: `Extension.Table.canonicalise/2` resolves the
+        # name and types every value against the declaration for its kind.
+        {:ok, Enum.map(extensions, &{Map.get(&1, "name"), Map.get(&1, "opts", %{})})}
+    end
+  end
 
-    if extensions != [] do
-      # Raw text, both halves: `Extension.Table.canonicalise/2` resolves the
-      # name and types every value against the declaration for its kind.
-      Enum.map(extensions, fn e ->
-        {Map.get(e, "name"), Map.get(e, "opts", %{})}
-      end)
-    else
-      trigger = Map.get(opts, "trigger") || Map.get(plugin_flags, "trigger")
-      trigger_to_subscription(trigger)
+  # `--extension` is written either as a plain option or behind `--X`, and the
+  # plain spelling wins when both carry one.
+  defp declared_extensions(plugin_flags, opts) do
+    case plugin_flags |> Map.get("extensions") |> List.wrap() do
+      [] -> opts |> Map.get("extensions") |> List.wrap()
+      declared -> declared
     end
   end
 
@@ -109,12 +119,20 @@ defmodule Flezha.Service.Cli.Plugin do
     |> SpecDecoder.atomize_keys()
   end
 
-  @doc false
-  def trigger_to_subscription("on_input"), do: [{:on_input, []}]
-  def trigger_to_subscription("on_output"), do: [{:on_output, []}]
-  def trigger_to_subscription("interval"), do: [{:on_interval, [interval_ms: 5_000]}]
-  def trigger_to_subscription("proactive"), do: [{:on_interval, [interval_ms: 5_000]}]
-  def trigger_to_subscription(_), do: [{:on_input, []}]
+  @doc """
+  The subscriptions a `--trigger` names, or a refusal naming the value and the
+  accepted set. No trigger at all reads as `none`.
+
+  A subscription says what a plugin SENDS. What it receives is its provider's
+  own declared worker, which the extension table starts either way, so a plugin
+  that only ingests subscribes to nothing. The legacy `interval` and
+  `proactive` both name `:on_interval`.
+  """
+  @spec trigger_to_subscription(binary() | nil) ::
+          {:ok, [{atom(), keyword()}]} | {:error, binary()}
+  def trigger_to_subscription(nil), do: {:ok, []}
+
+  def trigger_to_subscription(trigger), do: Context.one_of(trigger, @triggers, "--trigger")
 
   defp get_plugin_provider_mod(provider_id) do
     with :error <- Providers.fetch(provider_id) do
@@ -165,7 +183,7 @@ defmodule Flezha.Service.Cli.Plugin do
   @doc "Enable an installed plugin (routes through the Installer)."
   def installer_enable_plugin(plugin_id, _call) do
     case Installer.enable(plugin_id) do
-      :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
+      :ok -> IO.puts(enabled_message(plugin_id, :ok))
       {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end

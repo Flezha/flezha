@@ -17,11 +17,10 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.Websocket.Client
   alias Flezha.Plugin.Provider.Websocket.Sink
-  alias Flezha.Plugin.Provider.WorkerSup
-  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias Flezha.Process.Timer
   alias Flezha.State.Outbox
   alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.ProviderPrepare
 
   import ExUnit.CaptureLog
 
@@ -30,19 +29,17 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   ## ---------- preparation ----------
 
   defp prepared(extra \\ %{}, subscriptions \\ [:on_output]) do
-    opts =
+    ProviderPrepare.prepare(
+      Websocket,
       Map.merge(
         %{
           uri: @uri,
           plugin_id: "ws_sink_#{System.unique_integer([:positive])}",
-          overwatcher_pid: self(),
           subscribed_extensions: subscriptions
         },
         extra
       )
-
-    with {:ok, normalised} <- ProviderOptions.normalise_opts(Websocket, opts),
-         do: Websocket.init_provider(normalised)
+    )
   end
 
   defp sink!(extra \\ %{}, subscriptions \\ [:on_output]) do
@@ -120,31 +117,9 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   describe "the channel filter" do
     setup do
       plugin_id = "ws_chan_#{System.unique_integer([:positive])}"
-      test = self()
+      ProviderPrepare.stub_sink_worker(Websocket, plugin_id)
 
-      socket =
-        spawn_link(fn ->
-          Elixir.Registry.register(
-            WorkerSup.registry_name(WorkerSup.family(Websocket)),
-            plugin_id,
-            nil
-          )
-
-          send(test, :registered)
-          answer(test)
-        end)
-
-      assert_receive :registered, 1_000
-      {:ok, plugin_id: plugin_id, socket: socket}
-    end
-
-    defp answer(test) do
-      receive do
-        {{:sink_frame, message, metadata}, from, ref} ->
-          send(from, {ref, :ok})
-          send(test, {:shipped, message, metadata})
-          answer(test)
-      end
+      {:ok, plugin_id: plugin_id}
     end
 
     defp ctx(message, metadata) do
@@ -452,6 +427,16 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       opts = sink!(%{sink_queue_max: 5, sink_ack_mode: "none"}, [])
       assert opts.sink == nil
       assert opts.sink_queue_max == 5
+    end
+
+    # The other half of a source-only enable: the inbound path belongs to the
+    # declared worker, not to a subscription, so a plugin bound in neither
+    # direction still feeds its operative what arrives on the socket.
+    test "still ingests what arrives on its socket" do
+      assert {:ok, ingested} = Client.handle_in({:text, "frame"}, state(sink!(%{}, [])))
+
+      assert ingested.sink == nil
+      assert_receive {:"$gen_cast", {:io_in, "frame", _}}
     end
   end
 
