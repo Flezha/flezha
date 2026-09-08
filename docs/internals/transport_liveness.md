@@ -27,7 +27,9 @@ close uses. There is no parallel eviction path.
 
 QUIC declares death in the same window by construction: both `flz_transport/src/transport/quic.rs` and
 `flz_nif/src/driver/quic.rs` set `keep_alive_interval` to 5 s and `max_idle_timeout` to
-`liveness::control_idle_timeout()` instead of the quinn default. When tuning, pair
+`liveness::control_idle_timeout()` instead of the quinn default. That holds only while the
+client's driver thread keeps looping, which is what
+[receive-side backpressure](#receive-side-backpressure-on-the-quic-client) is for. When tuning, pair
 `FLEZHA_CONTROL_LIVENESS_WINDOW_MS` (the controller watchdog) with `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (the
 QUIC idle and the Rust/Java SDK idle watchdog in `flz_transport/src/transport/liveness.rs`; the Elixir
 SDK pings every 15 s from `Flezha.SDK.RunnerServer`).
@@ -165,6 +167,26 @@ never dropped. When the ceiling does refuse, the refusal is answered to its call
 under an `:ok`, and the per-stream `write_buffer_dropped` counter moves. That counter is an **invariant,
 not a metric**: nothing is discarded for congestion, so any increment is transport data loss and a
 defect to be surfaced — the stall classifier reads it as `:send_buffer_dropping`.
+
+## Receive-side backpressure on the QUIC client
+
+The runner's QUIC client (`flz_transport/src/transport/quic.rs`) drives every stream of a
+connection from **one** thread, and that thread also expires the connection's timers, pumps its
+socket, takes commands and flushes what quinn has to send. So the rule the send side states,
+never block the loop on a peer, holds on the read side too, and it has to be stronger: a
+runner's data-stream reader is under application control, and one that stops reading would
+otherwise stop the control channel's keepalives with it, at which point the controller declares
+the runner dead in the window above while nothing on the runner has anything to report.
+
+A stream's chunks reach its reader over a bounded channel, `CHUNK_CHANNEL_DEPTH` (64) chunks
+deep. When the reader is that far behind, the driver **suspends that stream**: the chunk the
+channel refused is held in the stream's slot, draining stops there, and what has not been read
+stays in quinn's receive window, so QUIC's own flow control carries the backpressure to the
+controller. Nothing is discarded, because a QUIC stream is ordered bytes and a hole in it
+cannot be repaired, and nothing is reordered, because a resumed stream offers the held chunk
+before it reads another. The stream resumes when its reader takes a chunk: the read wakes the
+driver, which retries every suspended stream on its next pass. Every other stream on the
+connection, the control channel included, is served throughout.
 
 ## The stall classifier
 

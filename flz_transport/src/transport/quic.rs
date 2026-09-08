@@ -19,6 +19,11 @@ use super::send_gate::SendGate;
 const UDP_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
 
+/// How many chunks a stream's reader may fall behind by before the driver
+/// suspends that stream. Production and every test slot take the bound from
+/// here, so a fixture cannot quietly run against a channel that never fills.
+const CHUNK_CHANNEL_DEPTH: usize = 64;
+
 enum DriverCommand {
     OpenStream {
         read_tx: channel::Sender<Bytes>,
@@ -43,6 +48,32 @@ struct StreamSlot {
     /// tree shares. The gate's raised bit is unused here: this stream signals
     /// congestion by withholding the reply, which is a stronger signal.
     gate: SendGate,
+    /// The chunk a full reader channel would not take, held until it has room.
+    /// It is `write_buf` in the other direction: what the far end will not
+    /// take yet waits in the slot, and the protocol carries the signal.
+    held_chunk: Option<Bytes>,
+}
+
+impl StreamSlot {
+    /// Hand one chunk to this stream's reader, and answer whether draining may
+    /// go on. `try_send` and never `send`: a full channel is a reader that is
+    /// behind, and waiting for it stops the one loop that also expires this
+    /// connection's timers, pumps its socket, takes commands and serves every
+    /// other stream on it. A refused chunk is held rather than dropped,
+    /// because a QUIC stream is ordered bytes and a hole in it cannot be
+    /// repaired, and the caller stops draining: the rest stays in the window
+    /// QUIC's own flow control backpressures the peer.
+    fn offer_chunk(&mut self, chunk: Bytes) -> bool {
+        match self.read_tx.try_send(chunk) {
+            Ok(()) => true,
+            Err(channel::TrySendError::Full(chunk)) => {
+                self.held_chunk = Some(chunk);
+                false
+            }
+            // The reader is gone; there is nobody left to drain this for.
+            Err(channel::TrySendError::Disconnected(_)) => false,
+        }
+    }
 }
 
 struct ChannelReader {
@@ -52,6 +83,9 @@ struct ChannelReader {
     // waits longer than this for the next chunk returns `WouldBlock` instead
     // of blocking forever, so control-channel liveness works over QUIC.
     read_timeout: Option<Duration>,
+    // The driver's waker, so a read that makes room in a full channel resumes
+    // the stream the driver suspended. `None` outside a real connection.
+    waker: Option<Arc<Waker>>,
 }
 
 impl Read for ChannelReader {
@@ -65,7 +99,11 @@ impl Read for ChannelReader {
         }
 
         // Buffer exhausted — wait for next chunk from driver, honoring the
-        // read deadline if one is armed.
+        // read deadline if one is armed. A full channel here is the driver
+        // holding this stream's next chunk, and this read is what makes the
+        // room, so the driver is woken once the chunk is in hand rather than
+        // left to resume at a timer the 5 s keep-alive can put seconds away.
+        let backed_up = self.rx.is_full();
         let chunk = match self.read_timeout {
             Some(d) => match self.rx.recv_timeout(d) {
                 Ok(c) => c,
@@ -82,6 +120,11 @@ impl Read for ChannelReader {
                 Err(_) => return Ok(0), // Channel closed = stream finished
             },
         };
+        if backed_up {
+            if let Some(waker) = &self.waker {
+                let _ = waker.wake();
+            }
+        }
 
         let n = std::cmp::min(out.len(), chunk.len());
         out[..n].copy_from_slice(&chunk[..n]);
@@ -90,51 +133,6 @@ impl Read for ChannelReader {
         }
         Ok(n)
     }
-}
-
-/// Load the client identity for mutual TLS. `Ok(None)` when the pair is not
-/// on disk (the caller falls back to no client auth and the server's posture
-/// decides); a present-but-unreadable pair is an error, not a silent
-/// downgrade.
-fn load_client_identity(
-    cert_path: &str,
-    key_path: &str,
-) -> io::Result<
-    Option<(
-        Vec<rustls::pki_types::CertificateDer<'static>>,
-        rustls::pki_types::PrivateKeyDer<'static>,
-    )>,
-> {
-    if !std::path::Path::new(cert_path).exists() || !std::path::Path::new(key_path).exists() {
-        return Ok(None);
-    }
-
-    let chain = super::tls::load_certs(cert_path)?;
-    if chain.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some((chain, super::tls::load_private_key(key_path)?)))
-}
-
-/// The client's TLS posture: the CA the server is verified against, the
-/// client identity for mutual TLS when its pair is on disk (the server
-/// requires it by default), and the `flezha` ALPN.
-fn client_crypto(ca_cert_path: &str) -> io::Result<rustls::ClientConfig> {
-    let root_store = super::tls::load_root_store(ca_cert_path)?;
-    let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
-
-    let client_cert_path = super::config::quic_client_cert_path();
-    let client_key_path = super::config::quic_client_key_path();
-
-    let mut crypto = match load_client_identity(&client_cert_path, &client_key_path)? {
-        Some((chain, key)) => builder
-            .with_client_auth_cert(chain, key)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-        None => builder.with_no_client_auth(),
-    };
-    crypto.alpn_protocols = vec![b"flezha".to_vec()];
-    Ok(crypto)
 }
 
 /// The transport settings both ends of a Flezha QUIC connection run: a 5 s
@@ -171,8 +169,10 @@ impl QuicClient {
     /// the candidate list exists to remove.
     pub fn connect(addr: SocketAddr, ca_cert_path: &str) -> io::Result<QuicClient> {
         let mut client_config = ClientConfig::new(Arc::new(
-            quinn_proto::crypto::rustls::QuicClientConfig::try_from(client_crypto(ca_cert_path)?)
-                .map_err(io::Error::other)?,
+            quinn_proto::crypto::rustls::QuicClientConfig::try_from(
+                super::tls::build_quic_client_crypto(ca_cert_path)?,
+            )
+            .map_err(io::Error::other)?,
         ));
         client_config.transport_config(Arc::new(transport_config()));
 
@@ -217,7 +217,7 @@ impl QuicClient {
 
     /// Open a new bidirectional stream on this connection.
     pub fn open_bidi_stream(&self) -> io::Result<QuicBidiStream> {
-        let (read_tx, read_rx) = channel::bounded::<Bytes>(64);
+        let (read_tx, read_rx) = channel::bounded::<Bytes>(CHUNK_CHANNEL_DEPTH);
         let (reply_tx, reply_rx) = channel::bounded::<io::Result<StreamId>>(1);
 
         self.cmd_tx
@@ -240,6 +240,7 @@ impl QuicClient {
                 rx: read_rx,
                 buf: Bytes::new(),
                 read_timeout: None,
+                waker: Some(Arc::clone(&self.waker)),
             })),
         })
     }
@@ -275,6 +276,24 @@ impl QuicBidiStream {
         Ok(())
     }
 
+    /// One frame onto the stream, and the answer the driver sends back for it.
+    /// The two `Write` impls are one call here, so a writer holding an
+    /// `Arc<FlezhaStream>` and one holding the handle cannot drift.
+    fn write_frame(&self, buf: &[u8]) -> io::Result<usize> {
+        let (reply_tx, reply_rx) = channel::bounded(1);
+        self.cmd_tx
+            .send(DriverCommand::Write {
+                stream_id: self.stream_id,
+                data: buf.to_vec(),
+                reply: reply_tx,
+            })
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
+        self.waker.wake().map_err(io::Error::other)?;
+        reply_rx
+            .recv()
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
+    }
+
     /// Clone by sharing the write channel and read channel. Infallible: the
     /// handle shares channels, it opens nothing.
     pub fn clone_handle(&self) -> QuicBidiStream {
@@ -298,18 +317,7 @@ impl Read for QuicBidiStream {
 
 impl Write for QuicBidiStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let (reply_tx, reply_rx) = channel::bounded(1);
-        self.cmd_tx
-            .send(DriverCommand::Write {
-                stream_id: self.stream_id,
-                data: buf.to_vec(),
-                reply: reply_tx,
-            })
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
-        self.waker.wake().map_err(io::Error::other)?;
-        reply_rx
-            .recv()
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
+        self.write_frame(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -329,18 +337,7 @@ impl Read for &QuicBidiStream {
 
 impl Write for &QuicBidiStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let (reply_tx, reply_rx) = channel::bounded(1);
-        self.cmd_tx
-            .send(DriverCommand::Write {
-                stream_id: self.stream_id,
-                data: buf.to_vec(),
-                reply: reply_tx,
-            })
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
-        self.waker.wake().map_err(io::Error::other)?;
-        reply_rx
-            .recv()
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
+        self.write_frame(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -423,6 +420,7 @@ fn driver_loop(
         if dispatch_stream_events(&mut connection, &mut streams) {
             return;
         }
+        resume_suspended_streams(&mut connection, &mut streams);
         let _ = flush_transmits(&mut connection, &udp, &mut transmit_buf);
     }
 }
@@ -498,6 +496,7 @@ fn handle_command(
                         write_buf: Vec::new(),
                         pending_write_replies: Vec::new(),
                         gate: SendGate::new(),
+                        held_chunk: None,
                     },
                 );
                 let _ = reply.send(Ok(stream_id));
@@ -638,24 +637,33 @@ fn dispatch_stream_events(
 /// a reader on ONE stream of a live connection hears that its stream is gone.
 /// Left in the map, that reader waits for a frame the peer will never send
 /// until the connection itself dies.
+///
+/// Draining stops the moment the reader will not take another chunk, and what
+/// is not read stays in the receive window: see [`StreamSlot::offer_chunk`].
 fn drain_readable(
     connection: &mut quinn_proto::Connection,
     id: StreamId,
     streams: &mut HashMap<StreamId, StreamSlot>,
 ) {
-    let slot = match streams.get(&id) {
+    let slot = match streams.get_mut(&id) {
         Some(s) => s,
         None => return,
     };
-    let read_tx = slot.read_tx.clone();
+    // Whatever an earlier pass held goes first, or this stream's bytes arrive
+    // out of the order the peer wrote them in.
+    if let Some(held) = slot.held_chunk.take() {
+        if !slot.offer_chunk(held) {
+            return;
+        }
+    }
 
     let mut ended = false;
     if let Ok(mut chunks) = connection.recv_stream(id).read(true) {
         loop {
             match chunks.next(usize::MAX) {
                 Ok(Some(chunk)) => {
-                    if read_tx.send(chunk.bytes).is_err() {
-                        break; // Consumer dropped
+                    if !slot.offer_chunk(chunk.bytes) {
+                        break; // Suspended, or the consumer is gone
                     }
                 }
                 Ok(None) => {
@@ -678,6 +686,24 @@ fn drain_readable(
     }
     if ended {
         streams.remove(&id);
+    }
+}
+
+/// Retry every stream a full chunk channel suspended. A suspended stream has
+/// no event of its own to wait for, so the loop asks on every pass; a reader
+/// that has made room is served at once rather than at the connection's next
+/// timer, which the 5 s keep-alive can put seconds away.
+fn resume_suspended_streams(
+    connection: &mut quinn_proto::Connection,
+    streams: &mut HashMap<StreamId, StreamSlot>,
+) {
+    let suspended: Vec<StreamId> = streams
+        .iter()
+        .filter(|(_, slot)| slot.held_chunk.is_some())
+        .map(|(id, _)| *id)
+        .collect();
+    for id in suspended {
+        drain_readable(connection, id, streams);
     }
 }
 

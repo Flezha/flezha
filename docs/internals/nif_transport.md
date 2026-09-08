@@ -193,7 +193,9 @@ writer thread draining the handle's command channel (`SendFrame` via `build_from
 `SendData`, `CloseStream`). Client streams are active from birth and route by the shared
 `owner`, so `SetActive`, `SetPassive` and `UpdateOwner` are inert for them; `controlling_process/2`
 still works because it updates the shared `Arc<Mutex<LocalPid>>`. Client stream ids come from a
-private counter and never mix with server ids.
+private counter and never mix with server ids. A QUIC client stream's reader is served over a
+bounded chunk channel and a reader that falls behind suspends only its own stream. See
+[receive-side backpressure](transport_liveness.md#receive-side-backpressure-on-the-quic-client).
 
 ## Messages delivered to Elixir
 

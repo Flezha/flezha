@@ -12,6 +12,19 @@ use crate::transport::quic_pair::Pair;
 
 type Reply = channel::Receiver<io::Result<usize>>;
 
+/// One driver-side stream slot, built where `handle_command` builds the real
+/// one. Every test slot in both suites comes from here, so a slot can never
+/// carry a shape production does not.
+pub(super) fn driver_slot(read_tx: channel::Sender<Bytes>) -> StreamSlot {
+    StreamSlot {
+        read_tx,
+        write_buf: Vec::new(),
+        pending_write_replies: Vec::new(),
+        gate: SendGate::new(),
+        held_chunk: None,
+    }
+}
+
 /// The client driver's stream map with one stream in it, driven the way
 /// `handle_command` and `dispatch_stream_events` drive the real one. Shared
 /// with the reader suite next door, which drives the same slot from the other
@@ -31,16 +44,8 @@ impl Client {
         let mut pair = Pair::new();
         pair.connect();
         let stream_id = pair.open_stream();
-        let (read_tx, read_rx) = channel::unbounded();
-        let streams = HashMap::from([(
-            stream_id,
-            StreamSlot {
-                read_tx,
-                write_buf: Vec::new(),
-                pending_write_replies: Vec::new(),
-                gate: SendGate::new(),
-            },
-        )]);
+        let (read_tx, read_rx) = channel::bounded(CHUNK_CHANNEL_DEPTH);
+        let streams = HashMap::from([(stream_id, driver_slot(read_tx))]);
         Client {
             pair,
             stream_id,

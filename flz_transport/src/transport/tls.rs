@@ -1,7 +1,7 @@
 //! PEM loading and endpoint crypto shared by every TLS endpoint: the QUIC
 //! client here and the controller-side QUIC server in `flz_nif` — one
 //! definition of "read a cert chain / private key / trust anchor off disk" and
-//! one of "assemble a server config from them", so neither can drift.
+//! one of "assemble an endpoint config from them", so neither can drift.
 
 use std::io;
 use std::sync::Arc;
@@ -103,4 +103,45 @@ pub fn build_quic_server_config(
     server_config.transport_config(Arc::new(transport));
 
     Ok(server_config)
+}
+
+/// Load the client identity for mutual TLS. `Ok(None)` when the pair is not
+/// on disk (the caller falls back to no client auth and the server's posture
+/// decides); a present-but-unreadable pair is an error, not a silent
+/// downgrade.
+fn load_client_identity(
+    cert_path: &str,
+    key_path: &str,
+) -> io::Result<Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>> {
+    if !std::path::Path::new(cert_path).exists() || !std::path::Path::new(key_path).exists() {
+        return Ok(None);
+    }
+
+    let chain = load_certs(cert_path)?;
+    if chain.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some((chain, load_private_key(key_path)?)))
+}
+
+/// The client's TLS posture, and the mirror of [`build_quic_server_config`]:
+/// the CA the server is verified against, the client identity for mutual TLS
+/// when its pair is on disk (the server requires it by default), and the
+/// `flezha` ALPN.
+pub fn build_quic_client_crypto(ca_cert_path: &str) -> io::Result<rustls::ClientConfig> {
+    let root_store = load_root_store(ca_cert_path)?;
+    let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
+
+    let client_cert_path = super::config::quic_client_cert_path();
+    let client_key_path = super::config::quic_client_key_path();
+
+    let mut crypto = match load_client_identity(&client_cert_path, &client_key_path)? {
+        Some((chain, key)) => builder
+            .with_client_auth_cert(chain, key)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        None => builder.with_no_client_auth(),
+    };
+    crypto.alpn_protocols = vec![b"flezha".to_vec()];
+    Ok(crypto)
 }

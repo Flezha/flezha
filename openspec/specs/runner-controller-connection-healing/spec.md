@@ -788,3 +788,39 @@ loss visible only as a line an operator has to be reading at the time.
 - **THEN** the runner SHALL proceed to exit exactly as it does today, because an
   unacked frame and an unwritten frame are different facts
 
+### Requirement: One slow stream reader SHALL NOT stall a runner's connection
+
+The runner's QUIC client SHALL serve every stream of a connection without ever
+waiting for one stream's reader. The client drives all of a connection's streams
+from a single thread that also expires the connection's timers, pumps its socket
+and takes its commands, so a wait for a reader is a wait for the keep-alive, for
+the idle timeout, and for every other stream on that connection including the
+control channel. A reader that has stopped reading SHALL cost its own stream and
+nothing else.
+
+Backpressure SHALL be carried by the protocol rather than by the driver. When a
+stream's reader is too far behind to take another chunk, the client SHALL suspend
+that stream and leave what it has not read where the transport's own flow control
+can see it, so the peer is slowed by the connection rather than by a stalled
+thread. A chunk the reader would not take SHALL be held and offered again, never
+discarded and never reordered: a stream is ordered bytes and a gap in it cannot
+be repaired by any later read.
+
+A suspended stream SHALL resume once its reader has room, without waiting for the
+connection's next timer, and SHALL deliver every byte the peer wrote, once, in
+the order it was written.
+
+#### Scenario: A reader that stops reading leaves the connection serving
+
+- **GIVEN** a runner connection carrying two streams
+- **WHEN** the controller writes far more on one stream than its reader will take,
+  and that reader stops reading
+- **THEN** the client SHALL go on serving the other stream and the connection's
+  timers, and SHALL NOT wait for the stopped reader
+
+#### Scenario: A suspended stream resumes without losing or reordering a byte
+
+- **WHEN** the reader of a suspended stream drains what it has
+- **THEN** the stream SHALL resume, and the reader SHALL receive every byte the
+  peer wrote, exactly once and in the order it was written
+
