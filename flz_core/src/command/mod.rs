@@ -144,10 +144,14 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::IterCommit(_))
         | Some(Command::IterPark(_))
         | Some(Command::UpdateFactories(_))
-        | Some(Command::SpawnWorkflowRequest(_)) => CommandActionType::NotificationIgnore,
+        | Some(Command::SpawnWorkflowRequest(_))
+        | Some(Command::AdminRequest(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
         Some(Command::SpawnWorkflowResponse(reply)) => {
             CommandActionType::AckSignal(ack_result(reply.outcome, reply.error))
+        }
+        Some(Command::AdminResponse(reply)) => {
+            CommandActionType::AckSignal(ack_result(reply.result, reply.error))
         }
         Some(Command::ProcCommitResponse(crate::pb::ProcCommitResponse { error, .. }))
         | Some(Command::IterCommitResponse(crate::pb::IterCommitResponse { error, .. })) => {

@@ -345,6 +345,28 @@ final class Core implements SpawnBridge, EntryIdleBridge
         return (string) $outcome;
     }
 
+    /**
+     * Administer the namespace this connection proved: one entry for the whole
+     * surface, because the verb is data. Answers the published function's own
+     * result as JSON.
+     */
+    public function adminCall(string $verb, string $args): string
+    {
+        $result = null;
+        $this->check($this->outBuffer(
+            fn (CData $out, CData $len): int => $this->ffi->flz_core_admin_call(
+                $this->live(),
+                $verb,
+                $args,
+                FFI::addr($out),
+                FFI::addr($len),
+            ),
+            $result,
+        ));
+
+        return (string) $result;
+    }
+
     /** The core's monotonic clock, in nanoseconds since a process origin. */
     public function monotonicNanos(): int
     {

@@ -84,6 +84,7 @@ final class Binding
         int32_t flz_core_workflow_recv(uintptr_t ctx, const char *instance_id, uint64_t timeout_ms, char **buf_out, size_t *len_out);
         int32_t flz_core_workflow_cancelled(uintptr_t ctx, const char *instance_id);
         int32_t flz_core_spawn_workflow(uintptr_t ctx, const char *instance_id, const char *factory_id, const char *payload, size_t payload_len, const char *if_running, char **outcome_out, size_t *outcome_len_out);
+        int32_t flz_core_admin_call(uintptr_t ctx, const char *verb, const char *args, char **result_out, size_t *result_len_out);
         uint64_t flz_core_monotonic_nanos(void);
         uint64_t flz_core_entry_last_delivery_nanos(const char *channel);
         uint64_t flz_core_idle_watch_new(const char *channel, uint64_t threshold_nanos);

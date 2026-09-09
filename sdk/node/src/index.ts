@@ -7,6 +7,8 @@
  * user code, and nothing else.
  */
 
+export { Admin } from './admin.js';
+export type { OperativeSpec } from './admin.js';
 export { defineOperative, defineProcedure, defineWorkflow } from './authoring.js';
 export type { ChannelSpec, ClassSpec, Link, ProcNode } from './authoring.js';
 export {

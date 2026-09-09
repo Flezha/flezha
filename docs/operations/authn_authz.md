@@ -15,7 +15,7 @@ refusal.
 | Posture | When | Effect |
 | --- | --- | --- |
 | `:open` | `FLEZHA_AUTHZ_ENABLED=false`, or the dev/test config opt-out | `authorize/3` returns `:ok` unconditionally; a warning is logged on every boot |
-| `:bootstrap_pending` | enforcement configured on, no `admin@_system` claimed yet | operator verbs refuse naming `flz auth bootstrap`; `:internal` callers pass and runner-role `:sdk` contexts are policy-checked as usual, so operatives and runner connections continue |
+| `:bootstrap_pending` | enforcement configured on, no `admin@_system` claimed yet | operator verbs refuse naming `flz auth bootstrap`; `:internal` callers pass and `:sdk` contexts are policy-checked as usual, so operatives and runner connections continue |
 | `:enforced` | the bootstrap was claimed (durable flag in `state.dets`) | every call is policy-checked against the role binding |
 
 The prod default is enabled (`config_env() == :prod`); dev and test carry the
@@ -24,7 +24,8 @@ to an outage and never to open.
 
 Identity reaches the policy point only from the transport: a verified token
 (`--token` / `FLEZHA_TOKEN`) for CLI callers, the connection's namespace
-handshake for runners (`runner@<namespace>`, role `runner`); a caller-supplied
+handshake for runners (`runner@<namespace>`, whose role the store answers and
+which is `runner` unless an operator bound it); a caller-supplied
 principal is never trusted. The `:internal` source is pre-authorized and only
 constructible inside the Controller's BEAM — reaching it from outside needs
 distribution, which the cookie gates. `FLEZHA_TOKEN` is read by the `flz`
@@ -304,16 +305,55 @@ session map. While the posture is not `:enforced`, every quota check passes.
 
 ## Role bindings
 
-Roles are a fixed enumeration: `viewer`, `operator`, `admin`, `runner`; the
-role→action map lives in `Flezha.AuthZ.Policy`. A principal holds at most one
-`(namespace, role)` binding, so cross-namespace presence means one principal
-identity per namespace.
+Roles are a fixed enumeration: `viewer`, `app`, `operator`, `admin`, `runner`;
+the role→action map lives in `Flezha.AuthZ.Policy`. A principal holds at most
+one `(namespace, role)` binding, so cross-namespace presence means one
+principal identity per namespace.
 
 ```sh
 flz role bind alice operator team-orders
 flz role list
 flz role unbind alice
 ```
+
+| Role | What it adds |
+| --- | --- |
+| `viewer` | the reads: operatives, plugins, entity state, audit, observability, the schedule registry |
+| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
+| `operator` | app plus the rest of the operative and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
+| `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
+| `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
+
+`app` also carries `runner.connect`, because the only principal ever bound to
+it is a runner's; `operator` and `admin` do not, because an operator credential
+is not a runner.
+
+### An application that administers its own namespace
+
+A connected runner's role is read from the role store on every call, keyed on
+the `runner@<namespace>` principal the transport minted. Unbound, it is
+`runner`, which grants the connect and nothing else: an application is refused
+every operator action until somebody says otherwise. Saying otherwise is one
+command, once per namespace:
+
+```sh
+flz role bind runner@team-orders team-orders app
+```
+
+From then on that namespace's application code administers the namespace its
+connection proved, with no credential of its own and nothing that expires. The
+request names no namespace and no principal, so it cannot reach another
+namespace; the controller fills both from the connection. Every act is judged
+at the same policy point, against the same row, and writes the same audit
+record an operator's would, naming `runner@<namespace>` as the principal and
+`sdk` as the surface.
+
+A binding made for a different namespace than the one the connection proved
+grants nothing, and `flz role unbind` takes effect on the next call rather than
+the next reconnect, because the role is read per call rather than stamped at
+connect.
+
+The SDK side is `docs/sdk/admin.md`.
 
 Auth-state mutations (`authz.*` actions) are admin-only on the bound namespace;
 only `admin@_system` may target another namespace. A token carries its own role
@@ -376,21 +416,21 @@ told nothing about whether the name exists.
 | `list_runners` | `list_runners` | `operative.list` | viewer | argument 1 (the namespace named) | - |
 | `operative_info` | `operative_info` | `operative.list` | viewer | argument 1 (the namespace named) | - |
 | `operative_classes` | published surface only | `operative.list` | viewer | the caller's own namespace | - |
-| `operative_start` | `operative_start` | `operative.start` | operator | argument 1 (the namespace named) | after on `operative_service` |
-| `operative_stop` | `operative_stop` | `operative.stop` | operator | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_start` | `operative_start` | `operative.start` | app | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_stop` | `operative_stop` | `operative.stop` | app | argument 1 (the namespace named) | after on `operative_service` |
 | `operative_scale` | `operative_scale` | `operative.scale` | operator | argument 1 (the namespace named) | after on `workflow_service` |
 | `operative_rewind` | `operative_rewind` | `operative.rewind` | operator | argument 1 (the namespace named) | after on `workflow_service` |
-| `operative_send` | `operative_send` | `operative.send` | operator | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_send` | `operative_send` | `operative.send` | app | argument 1 (the namespace named) | after on `operative_service` |
 | `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
-| `operative_listen` | `operative_listen` | `plugin.enable` | operator | argument 1 (the namespace named) | after on `plugin_service` |
+| `operative_listen` | `operative_listen` | `plugin.enable` | app | argument 1 (the namespace named) | after on `plugin_service` |
 | `entity_state` | `entity_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
-| `schedule_run` | `schedule_run` | `operative.start` | operator | the stored row's `namespace` | after on `operative_service` |
+| `schedule_run` | `schedule_run` | `operative.start` | app | the stored row's `namespace` | after on `operative_service` |
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
 | `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
 | `list_installed_plugins` | `list_installed_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
 | `plugin_info` | `installed_plugin?`, `installed_plugin_info`, `plugin_help` | `plugin.info` | viewer | the caller's own namespace | - |
-| `plugin_enable` | `enable_plugin` | `plugin.enable` | operator | the stored row's `namespace` | after on `plugin_service` |
-| `plugin_disable` | `disable_plugin` | `plugin.disable` | operator | the stored row's `namespace` | after on `plugin_service` |
+| `plugin_enable` | `enable_plugin` | `plugin.enable` | app | the stored row's `namespace` | after on `plugin_service` |
+| `plugin_disable` | `disable_plugin` | `plugin.disable` | app | the stored row's `namespace` | after on `plugin_service` |
 | `install_plugin` | `install_plugin` | `plugin.install` | admin | `_system` | after on `plugin_service` |
 | `upgrade_plugin` | `upgrade_plugin` | `plugin.upgrade` | admin | `_system` | after on `plugin_service` |
 | `uninstall_plugin` | `uninstall_plugin` | `plugin.uninstall` | admin | `_system` | after on `plugin_service` |

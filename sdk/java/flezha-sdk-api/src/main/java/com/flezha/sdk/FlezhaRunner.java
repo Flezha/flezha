@@ -1,5 +1,6 @@
 package com.flezha.sdk;
 
+import com.flezha.sdk.admin.Admin;
 import com.flezha.sdk.internal.RegistryCore;
 import com.flezha.sdk.internal.RunnerHandle;
 import com.flezha.sdk.internal.RuntimeBridge;
@@ -234,6 +235,23 @@ public final class FlezhaRunner implements AutoCloseable {
      */
     public void run() throws InterruptedException {
         start().awaitTermination();
+    }
+
+    /**
+     * Administer this namespace from ordinary application code: start, stop
+     * and feed operatives, enable and disable plugins, read what is running.
+     *
+     * <p>The controller judges every call as the identity this connection
+     * proved, so no credential is held here and nothing expires. An operator
+     * grants a namespace's applications the authority once, with
+     * {@code flz role bind runner@<namespace> <namespace> app}; until then
+     * every call is refused.
+     *
+     * @throws IllegalStateException on a never-started runner.
+     */
+    @Nonnull
+    public Admin admin() {
+        return new Admin(started("admin()"));
     }
 
     /**

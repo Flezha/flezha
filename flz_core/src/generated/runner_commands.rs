@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -81,6 +81,10 @@ pub mod command_request {
         SpawnWorkflowRequest(super::SpawnWorkflowRequest),
         #[prost(message, tag = "35")]
         SpawnWorkflowResponse(super::SpawnWorkflowResponse),
+        #[prost(message, tag = "36")]
+        AdminRequest(super::AdminRequest),
+        #[prost(message, tag = "37")]
+        AdminResponse(super::AdminResponse),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -166,10 +170,8 @@ pub struct AddOperative {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddOperativeResponse {
     #[prost(map = "string, string", tag = "1")]
-    pub metadata: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemOperative {
@@ -747,6 +749,41 @@ pub struct SpawnWorkflowRequest {
 pub struct SpawnWorkflowResponse {
     #[prost(string, tag = "1")]
     pub outcome: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub error: ::prost::alloc::string::String,
+}
+/// SDK -> Controller. Ordinary application code administering the namespace its
+/// connection proved: one frame for every verb, because the verb is data.
+/// `verb` names a function of the controller's published consumer surface as
+/// "<Module>.<function>" (for example "Operative.start"); `args` is a JSON array
+/// of that call's remaining arguments.
+///
+/// There is NO namespace field and NO principal field, and that is the safety
+/// property rather than an omission: the Controller fills both from the control
+/// channel the request arrived on, so naming another namespace is unexpressible
+/// rather than validated. The namespace slot each verb declares is filled the
+/// same way. What the caller may reach follows from the role its principal is
+/// bound to, so an added verb needs no change here and no change in any shared
+/// binding.
+///
+/// Rides the "control_command" payload_id like the other SDK-initiated
+/// variants; an old Controller ignores it via unknown-field handling, so the
+/// requester simply times out.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdminRequest {
+    #[prost(string, tag = "1")]
+    pub verb: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub args: ::prost::alloc::string::String,
+}
+/// Controller -> SDK reply to AdminRequest, carrying the originating request's
+/// reference_id so the SDK wakes the blocked caller. `result` is the published
+/// function's own answer as JSON; `error` details a refusal (policy, quota, a
+/// name that resolves to nothing) and is empty otherwise.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AdminResponse {
+    #[prost(string, tag = "1")]
+    pub result: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
 }

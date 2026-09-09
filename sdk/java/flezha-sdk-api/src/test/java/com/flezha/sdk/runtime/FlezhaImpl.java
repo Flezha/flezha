@@ -34,6 +34,12 @@ public final class FlezhaImpl implements RunnerHandle {
     /** Every factory set {@link #syncFactories(List)} shipped, in call order. */
     public static final List<List<String>> SYNCED_SETS = new ArrayList<>();
 
+    /** Every {@code (verb, args)} an administration call carried, in call order. */
+    public static final List<List<String>> ADMIN_CALLS = new ArrayList<>();
+
+    /** What {@link #adminCall(String, String)} answers. */
+    public static volatile String ADMIN_ANSWER = "null";
+
     /** The declared-set supplier of the LAST started runner — handshake/reconnect resync assertions. */
     public static volatile Supplier<List<String>> LAST_DECLARED_SUPPLIER;
 
@@ -98,6 +104,13 @@ public final class FlezhaImpl implements RunnerHandle {
         synchronized (SYNCED_SETS) {
             SYNCED_SETS.add(List.copyOf(factoryIds));
         }
+    }
+
+    @Override
+    @Nonnull
+    public String adminCall(String verb, String args) {
+        ADMIN_CALLS.add(List.of(verb, args));
+        return ADMIN_ANSWER;
     }
 
     @Override

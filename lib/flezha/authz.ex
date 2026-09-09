@@ -29,6 +29,11 @@ defmodule Flezha.AuthZ do
   The only way to present `:internal` from outside is arbitrary BEAM
   eval over distribution, which the provisioned release cookie gates —
   the same trust boundary as node ownership.
+
+  An `:sdk` context's namespace is the one its connection proved and its role
+  is resolved from `RoleStore` per call, so an operator grants and revokes a
+  namespace's applications without touching the connection. See
+  `Flezha.Runner.FleetManager.Session.runner_caller_context/1`.
   """
 
   alias Flezha.AuthZ.Action
@@ -107,7 +112,11 @@ defmodule Flezha.AuthZ do
       %{source: :internal} ->
         :ok
 
-      %{source: :sdk, role: :runner} ->
+      # A transport-bound runner identity is judged by the policy, whatever
+      # role the store resolved for it: the connect itself only ever needs
+      # `runner.connect`, and a namespace an operator bound before the reset
+      # keeps the authority that operator granted.
+      %{source: :sdk} ->
         do_authorize(caller_context, action, scope)
 
       ctx ->

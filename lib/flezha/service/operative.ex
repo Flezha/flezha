@@ -19,6 +19,7 @@ defmodule Flezha.Service.Operative do
   use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ.Namespace
+  alias Flezha.Operative.Builder
   alias Flezha.Operative.Kind
   alias Flezha.Partition
   alias Flezha.Service.CallerContext
@@ -44,7 +45,7 @@ defmodule Flezha.Service.Operative do
   @doc "The operative ids running in `namespace`."
   @spec list_operatives(String.t(), caller_context()) :: {:ok, [String.t()]} | {:error, term()}
   verb list_operatives(namespace, caller_context) do
-    {:ok, OperativeManager.get_operative_ids(namespace)}
+    OperativeManager.get_operative_ids(namespace)
   end
 
   @doc "One row per operative in `namespace`: node, health and partition."
@@ -120,12 +121,21 @@ defmodule Flezha.Service.Operative do
 
   # ---------- Mutations ----------
 
-  @doc "Start `operative` in `namespace`."
-  @spec start(String.t(), term(), caller_context()) :: term() | {:error, term()}
+  @doc """
+  Start `operative` in `namespace`.
+
+  `operative` is a `Flezha.Operative.Builder` or the named fields to build one
+  from, so a consumer that reached the controller over a wire never has to put
+  a struct on it. The same affordance `Flezha.Service.PluginManager.enable/3`
+  gives for a plugin.
+  """
+  @spec start(String.t(), Builder.t() | keyword(), caller_context()) :: term() | {:error, term()}
   verb start(namespace, operative, caller_context),
     verb: :operative_start,
     target: &operative_target/1 do
-    OperativeManager.start_operative(namespace, operative)
+    with {:ok, spec} <- Builder.build(operative) do
+      OperativeManager.start_operative(namespace, spec)
+    end
   end
 
   @doc "Stop the operative `operative_id` in `namespace`."
@@ -134,6 +144,33 @@ defmodule Flezha.Service.Operative do
     OperativeManager.stop_operative(namespace, operative_id)
   end
 
+  @doc """
+  Inject `message` into `operative_id`'s input stream, blocking for the
+  confirming verdict so a parked or absent target is reported rather than
+  silently dropped.
+
+  `channel` names the input channel; `""` is none. The verdict is the
+  operative's own: `:ok`, `{:ok, :absorbed}` for a duplicate,
+  `{:ok, :suspended}` for one journaled until the instance wakes.
+  """
+  @spec send(String.t(), String.t(), binary(), String.t(), caller_context()) ::
+          term() | {:error, term()}
+  verb send(namespace, operative_id, message, channel, caller_context), verb: :operative_send do
+    OperativeManager.send_io_confirming(
+      operative_id,
+      namespace,
+      message,
+      channel_metadata(channel)
+    )
+  end
+
+  defp channel_metadata(channel) when channel in [nil, ""], do: %{}
+  defp channel_metadata(channel), do: %{"channel" => channel}
+
   defp operative_target([_namespace, %{id: id} | _]), do: %{operative: id}
+
+  defp operative_target([_namespace, fields | _]) when is_list(fields),
+    do: %{operative: to_string(Keyword.get(fields, :id, ""))}
+
   defp operative_target([_namespace, operative | _]), do: %{operative: inspect(operative)}
 end

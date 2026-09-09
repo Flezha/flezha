@@ -30,6 +30,7 @@ pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
     "flz_core_complete",
     "flz_core_workflow_recv",
     "flz_core_spawn_workflow",
+    "flz_core_admin_call",
     // A local run parks the caller in all three: `feed` while the consumer's
     // mailbox is full, and the other two by their own budget. The host's poll
     // loop is what drains them, so a host that parked its only dispatch thread
@@ -373,6 +374,20 @@ pub fn spawn_workflow(
     );
     verdict(ctx, status)?;
     Ok(outcome.unwrap_or_default())
+}
+
+/// Administer the namespace this connection proved: the published function's
+/// own answer, as JSON. One wrapper for every verb, because the verb is data.
+pub fn admin_call(ctx: CtxPtr, verb: &CStr, args: &CStr) -> Result<String, Refusal> {
+    let (status, result) = with_buffer(
+        &[FLZ_OK],
+        |out, out_len| unsafe {
+            crate::flz_core_admin_call(ctx.get(), verb.as_ptr(), args.as_ptr(), out, out_len)
+        },
+        |bytes| String::from_utf8_lossy(bytes).into_owned(),
+    );
+    verdict(ctx, status)?;
+    Ok(result.unwrap_or_default())
 }
 
 pub fn entry_last_delivery_nanos(channel: &CStr) -> u64 {

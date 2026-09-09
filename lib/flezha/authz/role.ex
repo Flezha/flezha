@@ -2,15 +2,20 @@ defmodule Flezha.AuthZ.Role do
   @moduledoc """
   Fixed role enumeration for v1.
 
-  The four-role design is deliberate: `viewer`, `operator`, `admin`,
+  The set is deliberate and closed: `viewer`, `app`, `operator`, `admin`,
   `runner`. Custom roles are not supported in v1 — see
   `Flezha.AuthZ.Policy` for the role→action mapping and
   `design.md` Decision 4 for the rationale.
+
+  `app` sits between `viewer` and `operator` and exists for the identity a
+  connected runner holds: an application that administers the namespace its
+  connection proved. Its set is a strict subset of `operator`, which
+  additionally carries actions that destroy a record or move work.
   """
 
-  @roles [:viewer, :operator, :admin, :runner]
+  @roles [:viewer, :app, :operator, :admin, :runner]
 
-  @type t :: :viewer | :operator | :admin | :runner
+  @type t :: :viewer | :app | :operator | :admin | :runner
 
   @doc "Returns the full set of role atoms."
   @spec all() :: [t()]

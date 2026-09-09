@@ -139,6 +139,12 @@ public final class FlezhaImpl implements RunnerHandle {
         declared.remove(factoryId);
     }
 
+    @Override
+    @Nonnull
+    public String adminCall(String verb, String args) {
+        return FlzCore.adminCall(core, verb, args);
+    }
+
     /**
      * Post-start define/remove resync. New ids are declared to the core;
      * removals have no ABI surface (the core keeps the declaration until the

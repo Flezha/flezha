@@ -383,6 +383,8 @@ message CommandResponse {
 | 33 | `UpdateFactories` | R → C | none (fire-and-forget) |
 | 34 | `SpawnWorkflowRequest` | R → C | `SpawnWorkflowResponse` (tag 35) under the same `reference_id` |
 | 35 | `SpawnWorkflowResponse` | C → R | none |
+| 36 | `AdminRequest` | R → C | `AdminResponse` (tag 37) under the same `reference_id` |
+| 37 | `AdminResponse` | C → R | none |
 
 Tags 15, 17 and 25 are message types that only ever ride as a
 `CommandResponse.raw_data`, never as a `CommandRequest`.
@@ -798,6 +800,30 @@ the request's `reference_id`; `outcome` ∈ `spawned`, `delivered`,
 `refused`. It resolves the requester's result handle and never faults the
 requesting procedure (an unobserved handle logs the failure once); against an
 older controller the request is ignored and the requester times out.
+
+### AdminRequest
+
+`AdminRequest { verb, args }` goes runner → controller when application code
+administers the namespace its connection proved. One frame serves every verb,
+because the verb is data: `verb` names a function of the controller's published
+consumer surface as `"<Module>.<function>"` (`"Operative.start"`), and `args`
+is a JSON array of that call's arguments other than the namespace.
+
+**There is no namespace field and no principal field**, and that is the safety
+property rather than an omission: the controller fills both from the control
+channel the request arrived on, and fills the namespace slot each verb's own
+row declares, so naming another namespace is unexpressible rather than
+validated. What the caller may reach follows from the role its
+`runner@<namespace>` principal is bound to, which the controller reads on every
+call. Unbound, that is `runner`, and every administration verb is refused.
+
+### AdminResponse
+
+`AdminResponse { result, error }` returns controller → runner under the
+request's `reference_id`. `result` is the published function's own answer
+rendered as JSON; `error` carries a refusal (policy, quota, a name that
+resolves to nothing, or the effect's own failure) and is empty otherwise.
+Against an older controller the request is ignored and the requester times out.
 
 The persistence commands (`RestoreInitState`, `CompactEntity`,
 `EntityMailboxStatus`, `CreditWindowInit` / `CreditWindowAck` / `CreditGrant`,

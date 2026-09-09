@@ -80,6 +80,7 @@ Flezha.Service.Operative.overwatch_state/3
 Flezha.Service.Operative.partition_coverage/2
 Flezha.Service.Operative.partition_groups/2
 Flezha.Service.Operative.registry/2
+Flezha.Service.Operative.send/5
 Flezha.Service.Operative.start/3
 Flezha.Service.Operative.stop/3
 Flezha.Service.PluginManager.disable/2

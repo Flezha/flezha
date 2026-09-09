@@ -86,6 +86,7 @@ class Core:
         "workflow_recv",
         "workflow_cancelled",
         "spawn_workflow",
+        "admin_call",
         "last_error",
     )
 
@@ -218,6 +219,9 @@ class Core:
         self, instance_id: str, factory_id: str, payload: bytes, if_running: str
     ) -> str:
         return str(self._call("spawn_workflow", instance_id, factory_id, payload, if_running))
+
+    def admin_call(self, verb: str, args: str) -> str:
+        return str(self._call("admin_call", verb, args))
 
     # -- diagnostics -------------------------------------------------------
 

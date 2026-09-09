@@ -24,6 +24,13 @@ defmodule Flezha.AuthZ.Verb do
   the bound `t:Call.t/0`, and renders a refusal through `refuse`. A `sealed`
   surface refuses to compile a public function that binds no row.
 
+  The two forms differ in one declared way that outlives compilation: a wire
+  contract binds `identity:`, because it mints a caller context from what its
+  own transport carried, and a published surface binds none, because it is
+  handed one. `__verb_surface__/0` answers what the module declared, so a
+  caller that may only enter a surface taking a context can tell them apart
+  without a list of module names.
+
   A `{:row, field}` scope needs a `row:` fetch, called with the positional
   arguments as a list and answering `{:ok, row}` or `{:error, reason}`; the
   fetch runs only for a bound caller whose role grants the action, so a refusal
@@ -273,9 +280,14 @@ defmodule Flezha.AuthZ.Verb do
       end
     end
 
+    surface = Module.get_attribute(env.module, :verb_surface)
+
     quote do
       @doc false
       def __verbs__, do: unquote(Macro.escape(bindings))
+
+      @doc false
+      def __verb_surface__, do: unquote(Macro.escape(surface))
     end
   end
 

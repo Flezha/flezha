@@ -22,6 +22,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamPool
   alias Flezha.SafeCall
+  alias Flezha.Service.Admin
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
@@ -257,6 +258,10 @@ defmodule Flezha.Runner.ControlChannel do
         handle_spawn_workflow(state, request, reference_id)
         {:noreply, state}
 
+      {:admin_request, %{} = request, reference_id} ->
+        handle_admin(state, request, reference_id)
+        {:noreply, state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message, metadata})
         {:noreply, state}
@@ -269,18 +274,11 @@ defmodule Flezha.Runner.ControlChannel do
     handle_connection_closed(state)
   end
 
-  # The spawn resolution ran off-process; write its reply on this channel, which
-  # is the one process allowed to write control frames.
+  # A request `answer_off_process/2` resolved elsewhere; writing it is this
+  # process's job, because it is the only writer of control frames.
   @impl true
-  def handle_info({:spawn_workflow_result, reference_id, outcome, error}, state) do
-    emit_control_request(
-      state,
-      reference_id,
-      {:spawn_workflow_response,
-       %RunnerCommands.SpawnWorkflowResponse{outcome: outcome, error: error}},
-      "spawn-workflow response #{outcome}"
-    )
-
+  def handle_info({:sdk_reply, reference_id, command, log_label}, state) do
+    emit_control_request(state, reference_id, command, log_label)
     {:noreply, state}
   end
 
@@ -401,7 +399,8 @@ defmodule Flezha.Runner.ControlChannel do
     :iter_commit,
     :iter_park,
     :update_factories,
-    :spawn_workflow_request
+    :spawn_workflow_request,
+    :admin_request
   ]
 
   defp decode_sdk_initiated(message) do
@@ -629,15 +628,23 @@ defmodule Flezha.Runner.ControlChannel do
     end)
   end
 
+  # An SDK-initiated request whose answer cannot be worked out on this process:
+  # resolving it drives an `AddOperative` or a `RemOperative` whose response
+  # returns on THIS control stream, so doing it inline would deadlock the
+  # reader. `answer` runs off-process and hands back the reply command and its
+  # log label; `handle_info/2` writes it, because control writes stay here.
+  defp answer_off_process(reference_id, answer) when is_function(answer, 0) do
+    channel = self()
+
+    Task.start(fn ->
+      {command, log_label} = answer.()
+      send(channel, {:sdk_reply, reference_id, command, log_label})
+    end)
+  end
+
   # A procedure asked for a workflow instance (`ctx.spawn_workflow`). The
   # namespace is this channel's — never the requester's claim — so a request
   # cannot reach another namespace.
-  #
-  # Off this process: the resolution starts an operative, which drives
-  # `AddOperative` and waits for its response on THIS control stream; running it
-  # inline would deadlock the reader (same reason as the workflow-completed
-  # teardown). The reply is written back through `handle_info/2` so control
-  # writes stay on this process.
   defp handle_spawn_workflow(state, request, reference_id) do
     %RunnerCommands.SpawnWorkflowRequest{
       instance_id: instance_id,
@@ -647,9 +654,8 @@ defmodule Flezha.Runner.ControlChannel do
     } = request
 
     namespace = state.namespace
-    channel = self()
 
-    Task.start(fn ->
+    answer_off_process(reference_id, fn ->
       outcome =
         OperativeManager.spawn_or_deliver(
           namespace,
@@ -672,7 +678,34 @@ defmodule Flezha.Runner.ControlChannel do
         }
       )
 
-      send(channel, {:spawn_workflow_result, reference_id, Atom.to_string(name), error})
+      {{:spawn_workflow_response,
+        %RunnerCommands.SpawnWorkflowResponse{outcome: Atom.to_string(name), error: error}},
+       "spawn-workflow response #{name}"}
+    end)
+  end
+
+  # Application code administering the namespace this channel proved. The door
+  # judges it as the connection's identity against the published surface, so
+  # nothing about the request names a namespace, a principal or a role.
+  defp handle_admin(state, request, reference_id) do
+    %RunnerCommands.AdminRequest{verb: verb, args: args} = request
+    namespace = state.namespace
+
+    answer_off_process(reference_id, fn ->
+      {result, error} =
+        case Admin.call(namespace, verb, args) do
+          {:ok, json} -> {json, ""}
+          {:error, reason} -> {"", reason}
+        end
+
+      :telemetry.execute(
+        [:flezha, :runner, :admin_request],
+        %{count: 1},
+        %{namespace: namespace, verb: verb, refused: error != ""}
+      )
+
+      {{:admin_response, %RunnerCommands.AdminResponse{result: result, error: error}},
+       "admin response"}
     end)
   end
 

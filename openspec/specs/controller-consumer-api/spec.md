@@ -150,3 +150,35 @@ published function itself, so that one request is judged once.
   with a valid credential
 - **THEN** exactly one authorization decision and at most one audit record SHALL result
 
+### Requirement: The published surface SHALL serve every caller that proves an identity
+
+The published consumer surface SHALL be reachable by any caller the controller can attribute an identity to, and the way an identity is proven SHALL be the only thing that differs between them. A terminal proves it with a verified token, a console with a verified token over its own transport, and a runner connection with what its connection proved. Each SHALL resolve to a `Flezha.Service.CallerContext` before the surface is called, and no caller SHALL supply its own principal, namespace or role.
+
+A caller SHALL NOT be given a separate dispatch table, a separate policy point or a hand-maintained list of the functions it may call. What a caller may reach SHALL follow from the role its identity resolves to, so that changing a row's grant changes every caller at once.
+
+#### Scenario: One declaration judges every caller
+
+- **WHEN** the grant, scope rule or audit of a verb is changed in its row
+- **THEN** the next invocation from the terminal, the console or a runner
+  connection SHALL reflect the change, with no edit to any of them
+
+#### Scenario: A runner connection reaches the surface as itself
+
+- **WHEN** a runner connection invokes a published function
+- **THEN** the call SHALL be judged against the role its principal resolves to,
+  in the namespace its connection proved, and SHALL produce the audit record its
+  row declares
+
+#### Scenario: A caller cannot name its own identity
+
+- **WHEN** a request from any non-internal caller carries a principal, namespace
+  or role in its payload
+- **THEN** those values SHALL NOT reach the caller context, which SHALL be built
+  only from what the caller proved
+
+#### Scenario: Reachability follows the grant, not a list
+
+- **WHEN** a caller names a published function its role does not grant
+- **THEN** the call SHALL be refused at the policy point, and the refusal SHALL
+  NOT depend on any per-caller list of permitted functions
+

@@ -86,6 +86,16 @@ module Flezha
       EntryIdleWatcher.last_entry_delivery(@core || Core.context_free, channel)
     end
 
+    # Administer this namespace from ordinary application code: start, stop and
+    # feed operatives, enable and disable plugins, read what is running.
+    #
+    # The controller judges every call as the identity this connection proved,
+    # so no credential is held here and nothing expires. An operator grants a
+    # namespace's applications the authority once, with
+    # `flz role bind runner@<namespace> <namespace> app`; until then every call
+    # is refused.
+    def admin = Admin.new(@core || Core.context_free)
+
     # Observe silence on entry channel `channel`: `observer` (or the block) is
     # notified once per idle episode, when the gap since the last delivered
     # frame first exceeds `threshold_ms`, and once again when a frame resumes

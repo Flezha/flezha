@@ -34,6 +34,57 @@ defmodule Flezha.AuthZ.PolicyTest do
       refute Policy.grants?(:operator, :"state.retention")
     end
 
+    test "app is viewer plus the lifecycle an application runs on its own work" do
+      for a <- [:"operative.list", :"plugin.list", :"state.get"],
+          do: assert(Policy.grants?(:app, a))
+
+      for a <- [
+            :"operative.start",
+            :"operative.stop",
+            :"operative.send",
+            :"plugin.enable",
+            :"plugin.disable"
+          ] do
+        assert Policy.grants?(:app, a)
+      end
+    end
+
+    test "app destroys no record and moves no work it did not create" do
+      for a <- [
+            :"dlq.drop",
+            :"dlq.replay",
+            :"state.rotate",
+            :"state.delete",
+            :"operative.rewind",
+            :"operative.replay",
+            :"operative.scale",
+            :"plugin.install",
+            :"controller.stop",
+            :"authz.token_issue"
+          ] do
+        refute Policy.grants?(:app, a)
+      end
+    end
+
+    test "app is a strict subset of operator but for the connect a runner already held" do
+      app = Enum.filter(Action.all(), &Policy.grants?(:app, &1))
+      operator = Enum.filter(Action.all(), &Policy.grants?(:operator, &1))
+
+      assert app -- operator == [:"runner.connect"]
+      assert operator -- app != []
+    end
+
+    test "no role but app gained an action" do
+      # The five sets this change did not touch, spelled out so a grant that
+      # drifts into one of them fails here rather than in an audit.
+      assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]
+
+      for {role, gained} <- [viewer: [], operator: [], admin: []] do
+        assert Enum.filter(Action.all(), &(Policy.grants?(role, &1) and &1 == :"runner.connect")) ==
+                 gained
+      end
+    end
+
     test "runner holds runner.connect and nothing else" do
       assert Policy.grants?(:runner, :"runner.connect")
       assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]

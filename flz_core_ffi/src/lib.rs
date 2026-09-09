@@ -174,25 +174,17 @@ impl FlzContext {
             instance_id,
             flz_core::util::nonce_suffix()
         );
-        // Register before sending: the reply can then never arrive before its
-        // waiter exists.
-        let rx = flz_core::shutdown::register_pending_ack(reference_id.clone());
-        let sent = flz_core::runner::coordinator_try_send(RunnerMessage::EmitControlRequest {
-            reference_id: reference_id.clone(),
-            command: flz_core::pb::command_request::Command::SpawnWorkflowRequest(
-                flz_core::pb::SpawnWorkflowRequest {
-                    instance_id: instance_id.to_string(),
-                    factory_id: factory_id.to_string(),
-                    payload,
-                    if_running: if_running.to_string(),
-                },
-            ),
-        });
-        if !sent {
-            flz_core::shutdown::drop_pending_ack(&reference_id);
-            return Err(Error::NoControlPlane);
-        }
-        match rx.recv_timeout(Duration::from_secs(30)) {
+        let command = flz_core::pb::command_request::Command::SpawnWorkflowRequest(
+            flz_core::pb::SpawnWorkflowRequest {
+                instance_id: instance_id.to_string(),
+                factory_id: factory_id.to_string(),
+                payload,
+                if_running: if_running.to_string(),
+            },
+        );
+        let rx = flz_core::shutdown::ask(reference_id.clone(), command)
+            .map_err(|_| Error::NoControlPlane)?;
+        match rx.recv_timeout(flz_core::shutdown::REPLY_TIMEOUT) {
             Ok(Ok(outcome)) => Ok(outcome),
             Ok(Err(refusal)) => Err(Error::SpawnRefused(refusal)),
             Err(_) => {
@@ -663,6 +655,45 @@ pub unsafe extern "C" fn flz_core_spawn_workflow(
             FLZ_OK
         }
         Err(e) => ctx.fail(e),
+    }
+}
+
+/// Administer the namespace this runner's connection proved: one entry for the
+/// whole surface, because the verb is data. `verb` names a function of the
+/// controller's published consumer surface (`"Operative.start"`) and `args` is
+/// a JSON array of that call's arguments other than the namespace, which the
+/// controller fills from the connection. The published function's own answer
+/// comes back as JSON in `result_out`/`result_len_out` (free with
+/// [`flz_core_buf_free`]).
+///
+/// Adding a verb to the surface therefore costs nothing here and nothing in
+/// any host's glue: it is one typed wrapper in the host's own language.
+///
+/// Blocks for the controller's answer.
+///
+/// # Safety
+/// `ctx` must be live; strings NUL-terminated; buffers readable/writable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_admin_call(
+    ctx: *mut FlzContext,
+    verb: *const c_char,
+    args: *const c_char,
+    result_out: *mut *mut u8,
+    result_len_out: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let (Ok(verb), Ok(args)) = (CStr::from_ptr(verb).to_str(), CStr::from_ptr(args).to_str())
+    else {
+        return ctx.fail(Error::AdminArgsUtf8);
+    };
+    match flz_core::admin::call(verb, args) {
+        Ok(result) => {
+            hand_out(result.into_bytes(), result_out, result_len_out);
+            FLZ_OK
+        }
+        Err(e) => ctx.fail(e.into()),
     }
 }
 

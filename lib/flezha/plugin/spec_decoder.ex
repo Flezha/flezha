@@ -89,7 +89,7 @@ defmodule Flezha.Plugin.SpecDecoder do
          {:ok, provider_id} <- fetch_string(spec, "provider"),
          {:ok, provider_mod} <- resolve_provider(providers, provider_id),
          {:ok, raw_opts} <- fetch_map(spec, "opts"),
-         {:ok, subscriptions} <- build_subscriptions(Map.get(spec, "subscriptions", [])) do
+         {:ok, subscriptions} <- Plugin.subscriptions(Map.get(spec, "subscriptions", [])) do
       plugin = %Plugin{
         id: plugin_id,
         provider: provider_mod,
@@ -130,50 +130,4 @@ defmodule Flezha.Plugin.SpecDecoder do
       mod -> {:ok, mod}
     end
   end
-
-  defp build_subscriptions(subs) when is_list(subs) and subs != [] do
-    Enum.reduce_while(subs, {:ok, []}, fn sub, {:ok, acc} ->
-      case build_subscription(sub) do
-        {:ok, tuple} -> {:cont, {:ok, [tuple | acc]}}
-        err -> {:halt, err}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> {:ok, Enum.reverse(acc)}
-      err -> err
-    end
-  end
-
-  defp build_subscriptions([]), do: {:error, {:invalid_subscription, :empty}}
-  defp build_subscriptions(_), do: {:error, {:invalid_subscription, :not_a_list}}
-
-  # Name and opts pass through as the JSON carried them.
-  # `Extension.Table.canonicalise/2` resolves the name against the host catalog
-  # and types every value against the declaration for its kind — the wire format
-  # loses those types, and guessing them here is what made the two entry points
-  # disagree.
-  defp build_subscription([name, opts]) when is_binary(name) and is_map(opts) do
-    {:ok, {name, opts}}
-  end
-
-  defp build_subscription([name]) when is_binary(name) do
-    {:ok, {name, []}}
-  end
-
-  defp build_subscription(name) when is_binary(name) do
-    {:ok, {name, []}}
-  end
-
-  defp build_subscription(%{"name" => name} = sub) when is_binary(name) do
-    opts = Map.get(sub, "opts", %{})
-
-    if is_map(opts) do
-      {:ok, {name, opts}}
-    else
-      {:error, {:invalid_subscription, {:opts_not_a_map, name}}}
-    end
-  end
-
-  defp build_subscription(other),
-    do: {:error, {:invalid_subscription, {:unrecognised_shape, other}}}
 end

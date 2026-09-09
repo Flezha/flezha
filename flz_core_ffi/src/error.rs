@@ -35,6 +35,13 @@ pub enum Error {
     SpawnRefused(String),
     #[error("spawn request not answered within 30s")]
     SpawnUnanswered,
+    /// An administration call's refusal, rendered exactly as the kernel
+    /// renders it: the controller's own words for a policy refusal, or the
+    /// kernel's for a call that reached nothing.
+    #[error(transparent)]
+    Admin(#[from] flz_core::admin::AdminError),
+    #[error("administration arguments are not valid UTF-8")]
+    AdminArgsUtf8,
     /// A shim built against another activation schema, refused at creation.
     #[error("activation schema version mismatch: shim speaks {shim}, core speaks {core}")]
     SchemaMismatch { shim: u32, core: u32 },
@@ -90,6 +97,16 @@ mod tests {
             (
                 Error::SpawnUnanswered,
                 "spawn request not answered within 30s".into(),
+            ),
+            (
+                Error::from(flz_core::admin::AdminError::Refused(
+                    "forbidden: role_insufficient".into(),
+                )),
+                "forbidden: role_insufficient".into(),
+            ),
+            (
+                Error::AdminArgsUtf8,
+                "administration arguments are not valid UTF-8".into(),
             ),
             (
                 Error::SchemaMismatch { shim: 2, core: 3 },

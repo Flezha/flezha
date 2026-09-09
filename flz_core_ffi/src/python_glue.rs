@@ -600,6 +600,17 @@ impl Core {
         Ok(py.detach(move || veneer::spawn_workflow(ctx, &instance, &factory, &payload, &mode))?)
     }
 
+    /// Administer the namespace this connection proved; answers the published
+    /// function's own result as JSON. One method for the whole surface, so a
+    /// further verb is a Python function and no native work. Blocking: the ABI
+    /// call waits up to thirty seconds.
+    fn admin_call(&self, py: Python<'_>, verb: &str, args: &str) -> PyResult<String> {
+        let ctx = self.ptr()?;
+        let verb = veneer::c_string("verb", verb)?;
+        let args = veneer::c_string("args", args)?;
+        Ok(py.detach(move || veneer::admin_call(ctx, &verb, &args))?)
+    }
+
     /// The context's last recorded error, or `None`.
     fn last_error(&self) -> Option<String> {
         if self.freed.load(Ordering::Acquire) {
@@ -709,6 +720,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.workflow_recv", "flz_core_workflow_recv"),
     ("Core.workflow_cancelled", "flz_core_workflow_cancelled"),
     ("Core.spawn_workflow", "flz_core_spawn_workflow"),
+    ("Core.admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     (
         "entry_last_delivery_nanos",

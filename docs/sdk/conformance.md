@@ -258,6 +258,13 @@ every fixture id a file drives belongs to a capability that file declares; every
 `nightly-e2e.yml`; every `docs` page exists and names its manifest. A
 vocabulary entry no module or test is tagged for fails the gate by name.
 
+It also holds the administration surface to one declared set. Every SDK spells
+the same verb names over one shared entry point (see [`admin.md`](admin.md)),
+and nothing else compares them: the gate names the set once and measures each
+SDK's own wrapper against it, and refuses a wrapper that names a verb it will
+not call or a refusal reason of its own. Reachability is the controller's
+answer, so an SDK that decided for itself would be a second policy point.
+
 It also pins the half a fixture cannot express. `test/fixtures/runner_connect_env.txt`
 holds the environment contract every SDK's connect path reads — the
 socket-directory variable, the QUIC address-list variable, the group variable

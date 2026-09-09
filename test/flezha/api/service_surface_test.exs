@@ -77,7 +77,8 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:entity_state, ["default", "rc", "key"]},
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
-      {:stop, ["default", "rc"]}
+      {:stop, ["default", "rc"]},
+      {:send, ["default", "rc", "payload", ""]}
     ],
     PluginManager => [
       {:list, []},

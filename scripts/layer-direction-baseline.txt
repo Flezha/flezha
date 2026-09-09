@@ -83,6 +83,7 @@ lib/flezha/plugin/provider/operative_forward.ex -> Flezha.Service.HubManager
 lib/flezha/plugin/provider/operative_forward.ex -> Flezha.Service.OperativeManager
 lib/flezha/plugin/provider/operative_forward/forward_worker.ex -> Flezha.Service.OperativeManager
 lib/flezha/runner/control_channel.ex -> Flezha.Operative.Migration
+lib/flezha/runner/control_channel.ex -> Flezha.Service.Admin
 lib/flezha/runner/control_channel.ex -> Flezha.Service.HubManager
 lib/flezha/runner/control_channel.ex -> Flezha.Service.OperativeManager
 lib/flezha/runner/control_channel.ex -> Flezha.State.Completion
@@ -99,6 +100,7 @@ lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Operative.ClassRegistry
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.QuotaCounters
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Quotas
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.RoleStore
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Verb
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Convergence.Facts
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.EventManager

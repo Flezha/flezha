@@ -476,6 +476,33 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnWorkflow<'l>(
     }
 }
 
+/// Administer the namespace this connection proved: the published function's
+/// answer as JSON. One export for the whole surface, so a further verb is a
+/// Java method and no JNI. Throws on refusal / no control plane / timeout.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_adminCall<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    verb: JString,
+    args: JString,
+) -> jni::sys::jstring {
+    let ctx = ctx_of(ctx);
+    let result = c_string(&mut env, "verb", &verb)
+        .and_then(|verb| c_string(&mut env, "args", &args).map(|args| (verb, args)))
+        .and_then(|(verb, args)| veneer::admin_call(ctx, &verb, &args));
+    match result {
+        Ok(json) => match env.new_string(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(refusal) => {
+            throw(&mut env, &refusal);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// The core's monotonic clock in nanoseconds — the reading
 /// [`Java_com_flezha_sdk_native_1_FlzCore_entryLastDeliveryNanos`] is measured
 /// against.
@@ -553,6 +580,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("workflowRecv", "flz_core_workflow_recv"),
     ("workflowCancelled", "flz_core_workflow_cancelled"),
     ("spawnWorkflow", "flz_core_spawn_workflow"),
+    ("adminCall", "flz_core_admin_call"),
     ("monotonicNanos", "flz_core_monotonic_nanos"),
     (
         "entryLastDeliveryNanos",

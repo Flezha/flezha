@@ -63,6 +63,33 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # core inherits nothing from the kernel and builds its own.
   @heartbeat_site "flz_core/src/coordinator.rs"
 
+  # The administration surface an application reaches its own namespace with.
+  # The verb travels as data, so every SDK spells the same names and nothing
+  # compares them but this: the set is declared once here and each SDK's own
+  # wrapper is measured against it. An SDK that defers the surface names the
+  # change that owes it in its manifest and comes off this map in the same
+  # commit.
+  @admin_verbs ~w(
+    Operative.start
+    Operative.stop
+    Operative.send
+    Operative.list_operatives
+    Operative.entity_state
+    PluginManager.enable
+    PluginManager.disable
+    PluginManager.list
+  )
+
+  @admin_surfaces %{
+    rust: "sdk/rust/src/admin.rs",
+    java: "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/admin/Admin.java",
+    node: "sdk/node/src/admin.ts",
+    python: "sdk/python/src/flezha/admin.py",
+    ruby: "sdk/ruby/lib/flezha/admin.rb",
+    php: "sdk/php/src/Admin.php",
+    elixir: "lib/flezha/sdk/admin.ex"
+  }
+
   # A manifest must declare all of these.
   @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports dispatch toolchain deferred fixtures docs)
 
@@ -74,6 +101,37 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # help text may name a runtime as an example but may not enumerate the set: a
   # second copy of it goes stale the run after an SDK is added.
   @manifest_runtime_tasks [Mix.Tasks.Bench, Mix.Tasks.Bench.Roundtrip, Mix.Tasks.Bench.Workflow]
+
+  describe "the administration surface" do
+    test "every runtime carries one, and it is the declared set" do
+      for runtime <- runtimes() do
+        path =
+          Map.get(@admin_surfaces, runtime) ||
+            fail("#{runtime} declares no administration surface; add one or defer it by name")
+
+        source = File.read!(path)
+
+        for verb <- @admin_verbs, not String.contains?(source, verb) do
+          fail("#{path} does not name the administration verb `#{verb}`")
+        end
+      end
+    end
+
+    test "no SDK keeps a list of what it may call" do
+      # Reachability follows the role's grants. A verb an SDK spells is a typed
+      # wrapper; a verb it refuses on its own side would be a second policy
+      # point, drifting the first time a row's grant changed.
+      for {_runtime, path} <- @admin_surfaces do
+        source = File.read!(path)
+
+        for forbidden <- ["plugin.install", "controller.stop", "role_insufficient"] do
+          if String.contains?(source, forbidden) do
+            fail("#{path} names `#{forbidden}`; what an SDK may call is the controller's answer")
+          end
+        end
+      end
+    end
+  end
 
   defp runtimes, do: PortPilot.runtimes()
 

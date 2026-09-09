@@ -167,6 +167,19 @@ public final class FlzCore {
             long ctx, String instanceId, String factoryId, byte[] payload, String ifRunning);
 
     /**
+     * Administer the namespace this connection proved: one entry for the whole
+     * surface, because the verb is data. {@code verb} names a function of the
+     * controller's published consumer surface ({@code "Operative.start"}) and
+     * {@code args} is a JSON array of that call's arguments other than the
+     * namespace, which the controller fills from the connection. Returns the
+     * published function's own answer as JSON; throws on refusal, no control
+     * plane, or timeout.
+     *
+     * <p>A further verb therefore costs a Java method and no JNI.
+     */
+    public static native String adminCall(long ctx, String verb, String args);
+
+    /**
      * The core's monotonic clock in nanoseconds since an arbitrary process
      * origin — the reading {@link #entryLastDeliveryNanos(String)} is measured
      * against. Context-free: the core records deliveries process-wide.

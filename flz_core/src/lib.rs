@@ -11,6 +11,8 @@
 //! engine this crate exposes as a library.
 
 #[doc(hidden)]
+/// Administering the namespace a runner's connection proved.
+pub mod admin;
 pub mod admission;
 #[cfg(feature = "bench-internals")]
 #[doc(hidden)]

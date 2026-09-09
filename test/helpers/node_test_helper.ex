@@ -402,6 +402,39 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end)
   end
 
+  @doc """
+  A runner's stdout until `enough?` says the answer has arrived, or the budget
+  runs out. `seen` carries what an earlier read already took, so two reads of
+  one port never lose the first one's tail.
+
+  What a runner prints is the only observable effect of some fixtures, so this
+  is how a scenario watches its own application code rather than the
+  controller's answer to it.
+  """
+  @spec read_port(port(), (String.t() -> boolean()), non_neg_integer(), String.t()) :: String.t()
+  def read_port(port, enough?, budget_ms \\ 30_000, seen \\ "") do
+    read_port_until(port, enough?, System.monotonic_time(:millisecond) + budget_ms, seen)
+  end
+
+  defp read_port_until(port, enough?, deadline, seen) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    cond do
+      enough?.(seen) ->
+        seen
+
+      remaining <= 0 ->
+        seen
+
+      true ->
+        receive do
+          {^port, {:data, data}} -> read_port_until(port, enough?, deadline, seen <> data)
+        after
+          remaining -> seen
+        end
+    end
+  end
+
   def stop_runner(namespace, runner_id, opts \\ []) do
     # QUIC session teardown runs more cleanup than UDS, so allow a wider
     # default window; callers can tighten it via `timeout: N` when testing

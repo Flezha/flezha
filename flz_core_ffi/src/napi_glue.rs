@@ -518,6 +518,19 @@ pub fn spawn_workflow<'a>(
     })
 }
 
+/// Administer the namespace this connection proved; resolves with the
+/// published function's answer as JSON. One export for the whole surface, so a
+/// further verb is a JavaScript function and no native work. Asynchronous: the
+/// ABI call waits up to thirty seconds.
+#[napi(ts_return_type = "Promise<string>")]
+pub fn admin_call<'a>(env: &'a Env, verb: String, args: String) -> Result<Object<'a>> {
+    let verb = veneer::c_string("verb", &verb)?;
+    let args = veneer::c_string("args", &args)?;
+    off_loop(env, context()?, move |ctx| {
+        Ok(veneer::admin_call(ctx, &verb, &args)?)
+    })
+}
+
 /// The core's monotonic clock in nanoseconds.
 #[napi]
 pub fn monotonic_nanos() -> BigInt {
@@ -643,6 +656,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("workflowRecv", "flz_core_workflow_recv"),
         veneer("workflowCancelled", "flz_core_workflow_cancelled"),
         veneer("spawnWorkflow", "flz_core_spawn_workflow"),
+        veneer("adminCall", "flz_core_admin_call"),
         veneer("monotonicNanos", "flz_core_monotonic_nanos"),
         veneer(
             "entryLastDeliveryNanos",

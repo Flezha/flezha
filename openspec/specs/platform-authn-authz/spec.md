@@ -74,7 +74,9 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `runner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus operative/plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
+The system SHALL define exactly five roles: `viewer`, `app`, `operator`, `admin`, `runner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
+
+A runner connection's role SHALL be resolved from the role store keyed on its principal rather than stamped by the connect path. A principal with no binding, or one whose binding names a namespace other than the one the connection proved, SHALL resolve to `runner`. The resolution SHALL be read per call, so that binding or unbinding a role takes effect on the next call without a reconnect.
 
 #### Scenario: Admin on team-orders cannot mutate team-payments
 - **WHEN** `admin@team-orders` invokes a service call whose `scope.namespace` is `team-payments` and whose action is `:authz.token_issue`
@@ -87,6 +89,34 @@ The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `runn
 #### Scenario: The runner grant is one action
 - **WHEN** the runner role's grants are enumerated
 - **THEN** they SHALL contain `:runner.connect` and nothing else
+
+#### Scenario: An unbound runner principal gains nothing
+- **WHEN** a runner connects for a namespace whose `runner@<namespace>` principal
+  has no role binding
+- **THEN** it SHALL resolve to `runner`, and every operator action SHALL be
+  refused
+
+#### Scenario: A bound runner principal acts in its own namespace
+- **WHEN** `runner@team-orders` is bound to `app` on `team-orders` and a runner
+  on that connection asks to start an operative there
+- **THEN** the call SHALL be authorized, and the same call naming another
+  namespace SHALL be refused
+
+#### Scenario: Unbinding takes effect without a reconnect
+- **WHEN** a runner's principal is unbound while its connection is open
+- **THEN** its next call SHALL be refused, without the connection having been
+  closed or re-established
+
+#### Scenario: A binding for another namespace grants nothing
+- **WHEN** `runner@team-orders` is bound to `app` on `team-payments` and a
+  runner connects for `team-orders`
+- **THEN** it SHALL resolve to `runner`, and every operator action SHALL be
+  refused
+
+#### Scenario: The app role destroys nothing
+- **WHEN** the `app` role's grants are enumerated
+- **THEN** they SHALL contain no action that drops a parked payload, rotates or
+  deletes persisted state, or rewinds or replays work
 
 ### Requirement: Namespace catalog
 

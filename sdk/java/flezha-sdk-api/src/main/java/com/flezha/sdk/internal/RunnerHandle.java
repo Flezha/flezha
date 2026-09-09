@@ -45,4 +45,12 @@ public interface RunnerHandle {
      * to a live controller.
      */
     void syncFactories(List<String> factoryIds);
+
+    /**
+     * Run one administration verb against the controller's published consumer
+     * surface, as the identity this connection proved. Answers the published
+     * function's own result as JSON.
+     */
+    @Nonnull
+    String adminCall(String verb, String args);
 }

@@ -11,6 +11,7 @@
 import { pathToFileURL } from 'node:url';
 
 import type { ClassSpec } from './authoring.js';
+import { Admin } from './admin.js';
 import { envPositive } from './env.js';
 import { toHostClassDecl, validate } from './graph.js';
 import { installDeterminismWarnings, uninstallDeterminismWarnings } from './determinism.js';
@@ -177,6 +178,20 @@ export class Runner {
   /** Whether dispatch runs on worker threads, and how many. */
   get dispatchLoops(): number {
     return this.workerCount;
+  }
+
+  /**
+   * Administer this namespace from ordinary application code: start, stop and
+   * feed operatives, enable and disable plugins, read what is running.
+   *
+   * The controller judges every call as the identity this connection proved,
+   * so no credential is held here and nothing expires. An operator grants a
+   * namespace's applications the authority once, with
+   * `flz role bind runner@<namespace> <namespace> app`; until then every call
+   * is refused.
+   */
+  admin(): Admin {
+    return new Admin(this.native ?? loadNative());
   }
 
   /**

@@ -26,6 +26,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from . import determinism, graph
+from .admin import Admin
 from .ctx import WorkflowCtx
 from .dispatch import DispatchDeps, Registry
 from .entry_idle import EntryIdleWatcher, IdleObserver, last_entry_delivery
@@ -156,6 +157,18 @@ class Runner:
         :meth:`on_entry_idle` instead of polling this in a loop.
         """
         return last_entry_delivery(self._core or load_extension(), channel)
+
+    def admin(self) -> Admin:
+        """Administer this namespace from ordinary application code.
+
+        Start, stop and feed operatives, enable and disable plugins, read what
+        is running. The controller judges every call as the identity this
+        connection proved, so no credential is held here and nothing expires.
+        An operator grants a namespace's applications the authority once, with
+        ``flz role bind runner@<namespace> <namespace> app``; until then every
+        call is refused.
+        """
+        return Admin(self._core or load_extension())
 
     def on_entry_idle(
         self,

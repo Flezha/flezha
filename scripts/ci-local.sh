@@ -78,8 +78,11 @@ run_elixir() {
   mix compile --warnings-as-errors
 
   bold ">>> cargo test -p flezha_runner (Rust SDK unit + integration tests)"
+  # `testing` is not optional here: six integration tests import
+  # `flezha_runner::testing`, which the feature gates, and without it the crate
+  # does not compile. `.github/workflows/elixir.yml` names both features.
   cargo test --quiet \
-    -p flezha_runner --features bench-internals \
+    -p flezha_runner --features bench-internals,testing \
     --lib --tests
 
   # `--warnings-as-errors` is the half `mix compile` above cannot reach: the

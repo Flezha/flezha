@@ -50,8 +50,90 @@ defmodule Flezha.Plugin do
             "Flezha.Plugin.new/1 requires :id and :provider — got #{inspect(fields)}"
     end
 
-    struct!(__MODULE__, fields)
+    struct!(__MODULE__, fields |> named_provider() |> read_subscriptions())
   end
+
+  # A caller that reached the controller over a wire names its provider as text
+  # and its subscriptions as arrays, because JSON has neither a module nor a
+  # tuple. Both are read here, at the one constructor, so the terminal, the
+  # console and an application all build the same struct from the same shapes.
+  defp named_provider(fields) do
+    case Keyword.fetch!(fields, :provider) do
+      provider when is_binary(provider) ->
+        case Flezha.Plugin.Providers.fetch(provider) do
+          {:ok, module} ->
+            Keyword.put(fields, :provider, module)
+
+          :error ->
+            raise ArgumentError, "Flezha.Plugin.new/1 knows no provider named #{provider}"
+        end
+
+      _module ->
+        fields
+    end
+  end
+
+  defp read_subscriptions(fields) do
+    case Keyword.fetch(fields, :subscriptions) do
+      :error ->
+        fields
+
+      {:ok, subs} ->
+        case subscriptions(subs) do
+          {:ok, read} -> Keyword.put(fields, :subscriptions, read)
+          {:error, reason} -> raise ArgumentError, "Flezha.Plugin.new/1: #{inspect(reason)}"
+        end
+    end
+  end
+
+  @doc """
+  Read a subscription list as a boundary carried it: an array of names, of
+  `[name, opts]` pairs or of `%{"name" => _, "opts" => _}` objects, as well as
+  the `{name, opts}` tuples direct construction uses.
+
+  Name and opts pass through as they arrived.
+  `Flezha.Plugin.Extension.Table.canonicalise/2` resolves the name against the
+  host catalog and types every value against the declaration for its kind: the
+  wire format loses those types, and guessing them here is what made two entry
+  points disagree.
+  """
+  @spec subscriptions(term()) :: {:ok, [subscription()]} | {:error, term()}
+  def subscriptions(subs) when is_list(subs) and subs != [] do
+    Enum.reduce_while(subs, {:ok, []}, fn sub, {:ok, acc} ->
+      case subscription(sub) do
+        {:ok, tuple} -> {:cont, {:ok, [tuple | acc]}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      error -> error
+    end
+  end
+
+  def subscriptions([]), do: {:error, {:invalid_subscription, :empty}}
+  def subscriptions(_other), do: {:error, {:invalid_subscription, :not_a_list}}
+
+  defp subscription({name, opts}) when is_binary(name) or is_atom(name), do: {:ok, {name, opts}}
+
+  defp subscription([name, opts]) when is_binary(name) and is_map(opts), do: {:ok, {name, opts}}
+
+  defp subscription([name]) when is_binary(name), do: {:ok, {name, []}}
+
+  defp subscription(name) when is_binary(name), do: {:ok, {name, []}}
+
+  defp subscription(%{"name" => name} = sub) when is_binary(name) do
+    opts = Map.get(sub, "opts", %{})
+
+    if is_map(opts) do
+      {:ok, {name, opts}}
+    else
+      {:error, {:invalid_subscription, {:opts_not_a_map, name}}}
+    end
+  end
+
+  defp subscription(other),
+    do: {:error, {:invalid_subscription, {:unrecognised_shape, other}}}
 
   @doc """
   Point this plugin at one member of a partition group.

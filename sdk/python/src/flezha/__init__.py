@@ -23,6 +23,7 @@ idiomatic errors.
 
 from __future__ import annotations
 
+from .admin import Admin
 from .builder import DROPPED, Channels, Edge
 from .codec import TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
@@ -47,6 +48,7 @@ from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
 from .version import __version__
 
 __all__ = [
+    "Admin",
     # authoring
     "procedure",
     "state",

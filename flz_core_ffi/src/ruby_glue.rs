@@ -555,6 +555,19 @@ fn spawn_workflow(
         .map_err(refused)
 }
 
+/// Administer the namespace this connection proved; answers the published
+/// function's own result as JSON. One module function for the whole surface,
+/// so a further verb is Ruby and no native work. Blocking: the ABI call waits
+/// up to thirty seconds.
+fn admin_call(verb: String, args: String) -> Result<String, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let verb = veneer::c_string("verb", &verb).map_err(refused)?;
+    let args = veneer::c_string("args", &args).map_err(refused)?;
+    without_gvl(move || veneer::admin_call(ctx, &verb, &args)).map_err(refused)
+}
+
 /// The core's monotonic clock in nanoseconds.
 fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
@@ -644,6 +657,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("workflow_recv", "flz_core_workflow_recv"),
     ("workflow_cancelled", "flz_core_workflow_cancelled"),
     ("spawn_workflow", "flz_core_spawn_workflow"),
+    ("admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     (
         "entry_last_delivery_nanos",
@@ -695,6 +709,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("workflow_recv", function!(workflow_recv, 2))?;
     native.define_module_function("workflow_cancelled", function!(workflow_cancelled, 1))?;
     native.define_module_function("spawn_workflow", function!(spawn_workflow, 4))?;
+    native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
     native.define_module_function(
         "entry_last_delivery_nanos",

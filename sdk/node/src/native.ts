@@ -202,6 +202,7 @@ export interface Native {
     payload: Buffer,
     ifRunning: string,
   ): Promise<string>;
+  adminCall(verb: string, args: string): Promise<string>;
   monotonicNanos(): bigint;
   entryLastDeliveryNanos(channel: string): bigint;
   idleWatchNew(channel: string, thresholdNanos: bigint): bigint;

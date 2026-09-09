@@ -2,9 +2,11 @@ defmodule Flezha.AuthZ.Policy do
   @moduledoc """
   Compile-time role→action mapping.
 
-  Roles inherit upward: `admin` ⊇ `operator` ⊇ `viewer`. The
-  `runner` role is intentionally outside this hierarchy and grants
-  only `runner.connect`.
+  Roles inherit upward: `admin` ⊇ `operator` ⊇ `app` ⊇ `viewer`, with one
+  exception. The `runner` role is outside the hierarchy and grants only
+  `runner.connect`; `app` is the role a runner principal is bound to, so it
+  holds that connect as well, and `operator` inherits everything `app` adds
+  except the connect. An operator credential is not a runner.
 
   Cross-namespace auth-state mutations are additionally gated in
   `Flezha.AuthZ.authorize/3` by requiring the bound namespace to be
@@ -33,19 +35,27 @@ defmodule Flezha.AuthZ.Policy do
     :"schedule.list"
   ]
 
-  # Operator adds operative/plugin lifecycle, audit rotation, observability
-  # mutate, schedule management, the dead-letter queue whole and the records in
-  # flight. The DLQ reads and `state.records` sit here rather than with the
-  # viewer reads because a parked payload or a journaled input is the business
-  # record itself: whoever may read one may already replay or destroy it, and
-  # no viewer workflow needs it.
-  @operator_extra [
+  # App adds the namespace-scoped lifecycle an application performs on its own
+  # work, and nothing that destroys a record or moves work it did not create.
+  # `operative.scale` is deliberately absent: rescaling moves live work between
+  # partitions, which is an operator's call over a whole namespace rather than
+  # an application's over its own instance.
+  @app_extra [
     :"operative.start",
     :"operative.stop",
     :"operative.send",
-    :"operative.replay",
     :"plugin.enable",
-    :"plugin.disable",
+    :"plugin.disable"
+  ]
+
+  # Operator adds the rest of the operative/plugin lifecycle, audit rotation,
+  # observability mutate, schedule management, the dead-letter queue whole and
+  # the records in flight. The DLQ reads and `state.records` sit here rather
+  # than with the viewer reads because a parked payload or a journaled input is
+  # the business record itself: whoever may read one may already replay or
+  # destroy it, and no viewer workflow needs it.
+  @operator_extra [
+    :"operative.replay",
     :"audit.rotate",
     :"observability.enable_source",
     :"observability.disable_source",
@@ -84,12 +94,18 @@ defmodule Flezha.AuthZ.Policy do
   @runner_actions [:"runner.connect"]
 
   @viewer MapSet.new(@viewer_actions)
-  @operator MapSet.union(@viewer, MapSet.new(@operator_extra))
-  @admin MapSet.union(@operator, MapSet.new(@admin_extra))
   @runner MapSet.new(@runner_actions)
+  # `app` is the only role a runner principal is ever bound to, so it carries
+  # the connect that principal already held; `operator` takes the same extra
+  # actions without it, which is why the two unions are written out rather than
+  # chained through `@app`.
+  @app @viewer |> MapSet.union(@runner) |> MapSet.union(MapSet.new(@app_extra))
+  @operator MapSet.union(@viewer, MapSet.new(@app_extra ++ @operator_extra))
+  @admin MapSet.union(@operator, MapSet.new(@admin_extra))
 
   @grants %{
     viewer: @viewer,
+    app: @app,
     operator: @operator,
     admin: @admin,
     runner: @runner

@@ -4,7 +4,7 @@
 //! `lifecycle` drives the capabilities and `shutdown` ends the runner;
 //! `harness` is the fake controller and the poll/complete pair they drive
 //! them with; `shape` proves the mapping every binding shares, once, against
-//! a recording pair.
+//! a recording pair; `admin` holds the administration surface to one entry.
 //!
 //! Each veneer arm hangs off that same shape and proves only what its own
 //! language contributes — how it builds and reads a value — so a veneer is
@@ -14,6 +14,8 @@
 //! the Node addon's surface, `ruby-embed` for an embedded CRuby VM, `python`
 //! for an embedded CPython interpreter.
 
+#[path = "abi/admin.rs"]
+mod admin;
 #[path = "abi/harness.rs"]
 mod harness;
 #[path = "abi/lifecycle.rs"]

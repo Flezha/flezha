@@ -16,7 +16,7 @@ defmodule Flezha.SDK.Workflow.DriverTest do
 
     def handle_cast({:barrier, driver, ref, command}, s) do
       send(s.test, {:shipped, command})
-      send(driver, {:barrier_ack, ref, s.error})
+      send(driver, {:barrier_ack, ref, "", s.error})
       {:noreply, s}
     end
 

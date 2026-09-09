@@ -177,6 +177,42 @@ pub fn drop_pending_ack(reference_id: &str) {
     pending_acks_map().lock().unwrap().remove(reference_id);
 }
 
+/// How long a caller waits for the controller's reply to a request [`ask`]
+/// shipped. Generous: the controller may have to start an operative, which
+/// waits for a runner advertising the factory.
+pub const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Ship an SDK-initiated control request and hand back the receiver its reply
+/// arrives on.
+///
+/// The one place the ordering rule lives: the waiter is registered BEFORE the
+/// send, so a reply can never arrive before the waiter exists. `Err` means
+/// there was no control plane to ship it on, and nothing is left registered.
+pub fn ask(
+    reference_id: String,
+    command: crate::pb::command_request::Command,
+) -> Result<mpsc::Receiver<AckResult>, NoControlPlane> {
+    let rx = register_pending_ack(reference_id.clone());
+
+    let sent =
+        crate::runner::coordinator_try_send(crate::runner::RunnerMessage::EmitControlRequest {
+            reference_id: reference_id.clone(),
+            command,
+        });
+
+    if sent {
+        Ok(rx)
+    } else {
+        drop_pending_ack(&reference_id);
+        Err(NoControlPlane)
+    }
+}
+
+/// There was no control plane to ship a request on: a transport-less test or
+/// bench, or a runner that has closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoControlPlane;
+
 /// Wake the waiter under `reference_id`; a missing entry already timed out.
 pub fn signal_result(reference_id: &str, result: AckResult) {
     let entry = pending_acks_map().lock().unwrap().remove(reference_id);

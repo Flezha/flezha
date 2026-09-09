@@ -15,6 +15,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   alias Flezha.AuthZ.QuotaCounters
   alias Flezha.AuthZ.Quotas
+  alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.Verb
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
@@ -100,14 +101,35 @@ defmodule Flezha.Runner.FleetManager.Session do
     end
   end
 
+  @doc """
+  The identity a connection proved, as a caller context.
+
+  The namespace is the proven one and never the frame's. The role is read from
+  `RoleStore` on every call rather than stamped once, so `flz role bind` and
+  `flz role unbind` take effect on the next call instead of the next reconnect;
+  a principal with no binding, or one bound to another namespace, is `runner`,
+  which grants `runner.connect` and nothing else. Granting a namespace's
+  application more than that is one command per namespace:
+
+      flz role bind runner@team-orders team-orders app
+  """
   @spec runner_caller_context(binary()) :: Flezha.AuthZ.caller_context()
   def runner_caller_context(namespace) do
+    principal = "runner@" <> namespace
+
     %{
       source: :sdk,
-      principal: "runner@" <> namespace,
+      principal: principal,
       namespace: namespace,
-      role: :runner
+      role: resolved_role(principal, namespace)
     }
+  end
+
+  defp resolved_role(principal, namespace) do
+    case RoleStore.lookup(principal) do
+      {:ok, %{role: role, namespace: ^namespace}} -> role
+      _unbound_or_foreign -> :runner
+    end
   end
 
   # Reconnect/takeover binding swap. The SDK presents the same persisted stable

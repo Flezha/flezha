@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ.VerbsTest do
 
     exports =
       CliManager.__info__(:functions)
-      |> Enum.reject(&match?({:__verbs__, 0}, &1))
+      |> Enum.reject(&(&1 in [{:__verbs__, 0}, {:__verb_surface__, 0}]))
       |> Enum.reject(&MapSet.member?(bound, &1))
 
     assert exports == [], "wire names bound to no row: #{inspect(exports)}"

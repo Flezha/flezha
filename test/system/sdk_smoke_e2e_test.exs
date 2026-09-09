@@ -269,26 +269,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # procedure holds no state and answers nothing, so what it prints is its only
   # observable effect — and every SDK's fixture prints the same line.
   defp runner_said(port, needle, budget \\ 30_000) do
-    read_port(port, needle, System.monotonic_time(:millisecond) + budget, "")
-  end
-
-  defp read_port(port, needle, deadline, seen) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    cond do
-      String.contains?(seen, needle) ->
-        seen
-
-      remaining <= 0 ->
-        seen
-
-      true ->
-        receive do
-          {^port, {:data, data}} -> read_port(port, needle, deadline, seen <> data)
-        after
-          remaining -> seen
-        end
-    end
+    NodeTestHelper.read_port(port, &String.contains?(&1, needle), budget)
   end
 
   # Subscribed to every output channel, so it needs no channel name — only an

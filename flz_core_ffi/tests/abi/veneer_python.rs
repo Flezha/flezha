@@ -51,7 +51,8 @@ fn the_native_surface_is_the_declared_one() {
             "Core.wait_starvation",
             "Core.complete",
             "Core.workflow_recv",
-            "Core.spawn_workflow"
+            "Core.spawn_workflow",
+            "Core.admin_call"
         ]
     );
     for (name, abi) in NATIVE_SURFACE {

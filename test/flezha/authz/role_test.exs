@@ -3,12 +3,12 @@ defmodule Flezha.AuthZ.RoleTest do
 
   alias Flezha.AuthZ.Role
 
-  test "all/0 returns the four v1 roles" do
-    assert Enum.sort(Role.all()) == [:admin, :operator, :runner, :viewer]
+  test "all/0 returns the five v1 roles" do
+    assert Enum.sort(Role.all()) == [:admin, :app, :operator, :runner, :viewer]
   end
 
   test "known?/1 accepts documented roles" do
-    for r <- [:viewer, :operator, :admin, :runner], do: assert(Role.known?(r))
+    for r <- [:viewer, :app, :operator, :admin, :runner], do: assert(Role.known?(r))
   end
 
   test "validate/1 returns :ok / {:error, :unknown_role}" do

@@ -42,6 +42,7 @@ reproduces it and the output that command gave.
 | [`entity_timers.md`](sdk/entity_timers.md) | Per-Entity processing-time and event-time timers |
 | [`entry_input_idle.md`](sdk/entry_input_idle.md) | The per-entry-channel idle signal (`on_entry_idle`) |
 | [`procedure_requested_spawn.md`](sdk/procedure_requested_spawn.md) | `ctx.spawn_workflow`: a running procedure asks for a worker |
+| [`admin.md`](sdk/admin.md) | The surface an application administers its own namespace with, and the role that grants it |
 | [`partitioned_operatives.md`](sdk/partitioned_operatives.md) | One logical operative, N instances: key groups, sources, rescale |
 | [`protocol_spec.md`](sdk/protocol_spec.md) | The wire protocol: transports, framing, commands, lifecycle, data plane |
 | [`poll_core.md`](sdk/poll_core.md) | The shared `flz_core` kernel and its C ABI |
