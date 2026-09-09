@@ -38,18 +38,61 @@ class ApiSurfaceCompilationTest {
                 "com.flezha.sdk.operative.WorkflowOperativeRegistry",
             })
     void deletedTypesDoNotResolve(String type) {
-        Compilation result = compile(
-                """
-                package nowhere;
-                import %s;
-                public final class UsesLegacyApi { }
-                """
-                        .formatted(type));
+        Compilation result = compile(usesImport(type));
 
         assertThat(result.ok()).as("import %s should not resolve", type).isFalse();
         assertThat(result.diagnostics())
                 .as("the failure names the missing type")
                 .contains(type);
+    }
+
+    @Test
+    @DisplayName("the workflow kind is not in a package of its own: com.flezha.sdk.workflow does not resolve")
+    void theWorkflowKindIsNotInAPackageOfItsOwn() {
+        for (String type : List.of(
+                "com.flezha.sdk.workflow.WorkflowOperative",
+                "com.flezha.sdk.workflow.WorkflowOperativeCtx",
+                "com.flezha.sdk.workflow.WorkflowOperativeException",
+                "com.flezha.sdk.workflow.WorkflowOperativeConfigurationException",
+                "com.flezha.sdk.workflow.WorkflowLoopBody",
+                "com.flezha.sdk.workflow.LoopMode",
+                "com.flezha.sdk.workflow.RollbackMode")) {
+            assertDoesNotCompile(usesImport(type));
+        }
+    }
+
+    @Test
+    @DisplayName("both kinds and the base share one package, the workflow supporting types with them")
+    void bothKindsAndTheBaseShareOnePackage() {
+        assertThat(
+                        compiles(
+                                """
+                        package nowhere;
+                        import com.flezha.sdk.operative.LoopMode;
+                        import com.flezha.sdk.operative.Operative;
+                        import com.flezha.sdk.operative.RollbackMode;
+                        import com.flezha.sdk.operative.StreamOperative;
+                        import com.flezha.sdk.operative.WorkflowLoopBody;
+                        import com.flezha.sdk.operative.WorkflowOperative;
+                        import com.flezha.sdk.operative.WorkflowOperativeConfigurationException;
+                        import com.flezha.sdk.operative.WorkflowOperativeCtx;
+                        import com.flezha.sdk.operative.WorkflowOperativeException;
+                        public final class UsesLegacyApi {
+                            // Both kinds are the base, so one return type holds either.
+                            Operative eitherKind(StreamOperative s, WorkflowOperative w, boolean b) {
+                                return b ? s : w;
+                            }
+
+                            LoopMode loop;
+                            RollbackMode rollback;
+                            WorkflowLoopBody body;
+                            WorkflowOperativeCtx ctx;
+                            WorkflowOperativeException failure;
+                            WorkflowOperativeConfigurationException refusal;
+                        }
+                        """))
+                .as("the base, both kinds and the workflow supporting types resolve from one package")
+                .isTrue();
     }
 
     @Test
@@ -89,6 +132,16 @@ class ApiSurfaceCompilationTest {
 
         assertDoesNotCompile(usesStream("s.sink(\"x\").sealed().named(\"y\");"));
         assertDoesNotCompile(usesStream("s.sink(\"x\").sealed().keyed();"));
+    }
+
+    /** One import of {@code type}, the only thing under test. */
+    private static String usesImport(String type) {
+        return """
+                package nowhere;
+                import %s;
+                public final class UsesLegacyApi { }
+                """
+                .formatted(type);
     }
 
     /** One `Stream<String>` in scope, `body` the only thing under test. */

@@ -6,7 +6,7 @@ Defines the Java SDK for Flezha compute engines: the public authoring API and th
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperatives()` (a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperatives()` (a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
 - **WHEN** an SDK user calls `Flezha.createRunner("my_app").defineStream(MarketOperative.class).start()` with the controller running
@@ -21,8 +21,8 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 - **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and operative types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder is not importable
-- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operative.StreamOperativeRegistry`, `com.flezha.sdk.workflow.WorkflowOperativeRegistry`, or `Flezha.newRunner`
-- **THEN** compilation SHALL fail — the builder type, both public registry facades, and the old entry-point name are deleted with no shim
+- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operative.StreamOperativeRegistry`, `com.flezha.sdk.operative.WorkflowOperativeRegistry`, or `Flezha.newRunner`
+- **THEN** compilation SHALL fail: the builder type, both public registry facades, and the old entry-point name are deleted with no shim
 
 ### Requirement: Procedure Interface and Per-Entity Dispatch
 
@@ -1103,4 +1103,26 @@ of mixed-language runners SHALL not have to except the Java ones.
 - **GIVEN** `FLEZHA_LOG_LEVEL` is set
 - **WHEN** the application supplies its own logger through the runner builder
 - **THEN** the variable SHALL NOT filter what reaches that logger, which decides for itself what it writes
+
+### Requirement: Both operative kinds live in one package
+
+The Java SDK SHALL place the shared authoring base and both operative kinds in
+`com.flezha.sdk.operative`. The base SHALL be named `Operative`, and
+`StreamOperative` and `WorkflowOperative` SHALL both extend it from that package.
+No operative kind SHALL be reachable only from a package that the other kind is
+absent from.
+
+#### Scenario: The workflow kind is not in a package of its own
+
+- **WHEN** user code imports `com.flezha.sdk.workflow.WorkflowOperative`
+- **THEN** compilation SHALL fail, the package having been folded into
+  `com.flezha.sdk.operative` with no shim
+
+#### Scenario: Both kinds and the base share one package
+
+- **WHEN** the authoring surface is enumerated
+- **THEN** `Operative`, `StreamOperative` and `WorkflowOperative` SHALL all resolve
+  from `com.flezha.sdk.operative`, and the workflow supporting types
+  (`WorkflowOperativeCtx`, `LoopMode`, `RollbackMode`, `WorkflowLoopBody` and the
+  workflow exception types) SHALL resolve from the same package
 

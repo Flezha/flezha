@@ -11,6 +11,7 @@ Auto-Reconnect on Unexpected Disconnect :: Controller restart is invisible to Ja
 Command Dispatch :: AddOperative spawns a Java-hosted operative instance
 Command Dispatch :: Ping never reaches Java
 Command Dispatch :: Restore is a fold handed to Java
+Diagnostics Reach a Stream Without a Third-Party Logging Dependency :: No third-party logging facade on the compile classpath
 Each Entity SHALL run on its own Procedure instance :: Concurrent Entities do not race on one instance
 Each Entity SHALL run on its own Procedure instance :: Dynamic Entities each receive an instance
 Each Entity SHALL run on its own Procedure instance :: Instance state does not leak between Entity keys
@@ -123,6 +124,7 @@ Sticky Per-Entity Ordering Under ThreadPool Dispatch :: Different entities of sa
 Sticky Per-Entity Ordering Under ThreadPool Dispatch :: Per-entity inputs delivered in arrival order
 Sticky Per-Entity Ordering Under ThreadPool Dispatch :: Same entity never runs concurrently under load
 The Java Procedure surface declares migrations :: a Java Procedure restores state written at an older version
+The Java SDK Honours FLEZHA_LOG_LEVEL :: The variable sets the level
 The Java SDK SHALL document its actual state-mutation enforcement level :: A bypassed mutation's actual fate is described
 The Java SDK SHALL document its actual state-mutation enforcement level :: Documentation does not claim enforcement that does not exist
 The Java SDK SHALL document its actual state-mutation enforcement level :: The asymmetry with Rust is stated

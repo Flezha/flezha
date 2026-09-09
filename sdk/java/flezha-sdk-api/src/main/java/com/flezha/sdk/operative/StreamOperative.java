@@ -1,7 +1,6 @@
 package com.flezha.sdk.operative;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import javax.annotation.Nonnull;
 
 /**
  * Declares a graph of channels and procedures that runs continuously over a stream of messages.
@@ -45,18 +44,6 @@ import javax.annotation.Nonnull;
  * handles messages.
  */
 public interface StreamOperative extends Operative {
-
-    /**
-     * The stable, controller-facing identity of this operative class, and the name
-     * {@code flz operative start <factory_id>} resolves. Exactly one factory id per class.
-     *
-     * <p>This value is written into durable state and into the controller's registry, so changing
-     * it does not rename an existing operative: it declares a new one, and state recorded under the
-     * previous identity is no longer associated with it. Choose it deliberately at authoring time.
-     */
-    @Override
-    @Nonnull
-    String factoryId();
 
     /**
      * Declares the graph. Called exactly once per class, at

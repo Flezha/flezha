@@ -111,7 +111,7 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 - **THEN** startup fails with an error naming the colliding id
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Operative` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
 An SDK whose authoring surface is a set of factory functions, or a set of classes, rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
 
@@ -217,24 +217,6 @@ The procedure authoring sugar SHALL offer an opt-in that maps an entity's key to
 
 - **WHEN** the init opt-in is declared on a procedure with no state
 - **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation
-
-### Requirement: Stream and workflow share a `Computation` authoring base
-Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `StreamOperative` and `WorkflowOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineStream`/`defineWorkflow` in Java, `define_stream`/`define_workflow` in Rust) and their removal inverses (`removeStream`/`removeWorkflow`, `remove_stream`/`remove_workflow`) SHALL be methods on the concrete `FlezhaRunner` handle — not free functions, static methods, or methods on a builder type (there is no builder) — and SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` (and `remove_*`/`removeX`) runner method, without editing the existing two authoring surfaces.
-
-#### Scenario: Both kinds implement the base
-
-- **WHEN** a stream operative class and a workflow operative class are declared on the same `FlezhaRunner`
-- **THEN** both SHALL be `Computation` implementations resolvable through their respective `define_*`/`defineX` runner method, sharing `factory_id()`
-
-#### Scenario: A future kind plugs into the base without touching existing kinds
-
-- **WHEN** a new operative kind is added by implementing `Computation` and adding a new `define_*`/`defineX` runner method for it
-- **THEN** the `StreamOperative` and `WorkflowOperative` authoring surfaces SHALL be unchanged
-
-#### Scenario: The instance enum is not forced symmetric
-
-- **WHEN** the sealed operative instance enum is renamed
-- **THEN** its variants MAY remain asymmetric (a rich stream instance vs an id-only workflow instance), and the `Computation` base SHALL NOT require inventing a common instance type
 
 ### Requirement: Each SDK SHALL name the state-mutation enforcement level it actually provides
 The authoring contract SHALL record, per SDK, the state-mutation enforcement level that SDK actually provides, so that an asymmetry between SDKs is a deliberate documented choice rather than an accident of each language's ergonomics.
@@ -421,4 +403,51 @@ requirement by one conformance run over every row, not by a set of tests of its 
   or `checkpoint_max_delay_ms` in any SDK
 - **THEN** the record carries the flags as written and the reference check derives the
   acknowledgement granularity and judges its preconditions, with no per-SDK helper doing so
+
+### Requirement: Stream and workflow share an `Operative` authoring base
+
+Both authoring surfaces SHALL be rooted in a shared `Operative` base, a Rust trait or
+Java interface that `StreamOperative` and `WorkflowOperative` both implement at the
+**authoring-trait layer**. The base's shared member SHALL be `factory_id()`, the one
+method both authoring traits already share; the kind-divergent surface (`channels` and
+the persistence opt-in on one side, `run` on the other) SHALL remain on the per-kind
+traits. The declaration siblings (`defineStream`/`defineWorkflow` in Java,
+`define_stream`/`define_workflow` in Rust) and their removal inverses
+(`removeStream`/`removeWorkflow`, `remove_stream`/`remove_workflow`) SHALL be methods
+on the concrete `FlezhaRunner` handle, not free functions, static methods, or methods
+on a builder type, and SHALL be generic over the shared base where the host language
+expresses such a bound. The base SHALL NOT require unifying the sealed operative
+*instance* enum, which stays asymmetric. Adding a future operative kind SHALL require
+implementing the base and adding a corresponding `define_*`/`defineX` and
+`remove_*`/`removeX` runner method, without editing the existing two authoring
+surfaces.
+
+Where a host language groups types into namespaces or modules, both operative kinds
+and the shared base SHALL be grouped together rather than split across namespaces, so
+that the grouping states the taxonomy the vocabulary already uses.
+
+#### Scenario: Both kinds resolve through the shared base
+
+- **WHEN** a stream operative and a workflow operative are each declared on a runner
+- **THEN** both SHALL be `Operative` implementations resolvable through their respective
+  `define_*`/`defineX` runner method, sharing `factory_id()`
+
+#### Scenario: A new kind is added without editing the existing surfaces
+
+- **WHEN** a new operative kind is added by implementing `Operative` and adding a new
+  `define_*`/`defineX` runner method for it
+- **THEN** neither existing authoring surface SHALL require modification
+
+#### Scenario: The instance enum stays asymmetric
+
+- **WHEN** the sealed operative instance representation is considered
+- **THEN** its variants MAY remain asymmetric, a rich stream instance against an id-only
+  workflow instance, and the `Operative` base SHALL NOT require inventing a common
+  instance type
+
+#### Scenario: Both kinds are grouped in one namespace
+
+- **WHEN** a host language groups authoring types into namespaces, modules or packages
+- **THEN** the shared base and both operative kinds SHALL be reachable from one such
+  grouping, and neither kind SHALL be the only one placed outside it
 

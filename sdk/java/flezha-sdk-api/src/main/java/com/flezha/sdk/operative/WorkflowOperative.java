@@ -78,11 +78,6 @@ import javax.annotation.Nonnull;
  */
 public interface WorkflowOperative extends Operative {
 
-    /** Stable, controller-facing factory identifier. */
-    @Override
-    @Nonnull
-    String factoryId();
-
     /**
      * Run-sugar body: the single-Procedure, single-Entity case. Invoked once
      * per started instance with {@code args} from {@code init_values}. Emit

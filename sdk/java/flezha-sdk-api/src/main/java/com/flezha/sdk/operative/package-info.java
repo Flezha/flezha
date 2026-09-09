@@ -27,10 +27,6 @@
  * methods or retains progress. {@link com.flezha.sdk.operative.LoopMode} and {@code wakeAfter()}
  * turn a workflow into a long-lived loop: one durable iteration per inbound message, optionally
  * woken by a timer, parking between iterations while holding its journal.
- *
- * <p>A factory id is written into durable state and into the controller's registry. Changing one
- * does not rename an existing operative; it declares a new one, and state recorded under the
- * previous identity is no longer associated with it.
  */
 @javax.annotation.ParametersAreNonnullByDefault
 package com.flezha.sdk.operative;

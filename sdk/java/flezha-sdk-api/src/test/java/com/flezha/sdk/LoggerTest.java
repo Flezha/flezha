@@ -55,7 +55,7 @@ class LoggerTest {
     }
 
     @Test
-    @DisplayName("a named level parses case-insensitively; unset, blank and unrecognised all mean warn")
+    @DisplayName("a named level parses case-insensitively; unset, blank or unrecognised all mean warn")
     void levelNamesParse() {
         assertThat(LogLevel.from("debug")).isEqualTo(LogLevel.DEBUG);
         assertThat(LogLevel.from("INFO")).isEqualTo(LogLevel.INFO);
@@ -68,7 +68,7 @@ class LoggerTest {
     }
 
     @Test
-    @DisplayName("the default sink writes at and above its level and nothing below it")
+    @DisplayName("a fresh application gets diagnostics with no extra dependency, at and above its level only")
     void theDefaultSinkFilters() {
         new ConsoleLogger(LogLevel.WARN).debug("d");
         new ConsoleLogger(LogLevel.WARN).info("i");
@@ -118,7 +118,7 @@ class LoggerTest {
     }
 
     @Test
-    @DisplayName("a sink that cannot write does not propagate, so a drain stays clean")
+    @DisplayName("a failed write never takes the process down, so a drain stays clean")
     void aFailedWriteIsSwallowed() {
         System.setErr(new PrintStream(OutputStream.nullOutputStream(), true, UTF_8) {
             @Override
@@ -132,7 +132,7 @@ class LoggerTest {
     }
 
     @Test
-    @DisplayName("the runner builder routes diagnostics to the supplied sink and off the default one")
+    @DisplayName("diagnostics reach the host's logger supplied through the runner builder, not the default sink")
     void theBuilderReplacesTheSink() {
         Recorder sink = new Recorder();
         Flezha.createRunner("logger_ns").logger(sink);
@@ -144,7 +144,7 @@ class LoggerTest {
     }
 
     @Test
-    @DisplayName("a sink supplied through the builder decides its own level")
+    @DisplayName("a supplied logger governs its own level, whatever the default sink's level is")
     void aSuppliedSinkDecidesItsOwnLevel() {
         Recorder sink = new Recorder();
         Flezha.createRunner("logger_ns").logger(sink);
@@ -167,7 +167,7 @@ class LoggerTest {
     }
 
     @Test
-    @DisplayName("a sink supplied before start still receives what is emitted during and after close()")
+    @DisplayName("a supplied logger survives the runner's close, receiving what is emitted during and after it")
     void theSinkOutlivesTheRunner() {
         Recorder sink = new Recorder();
         FlezhaRunner runner = Flezha.createRunner("logger_ns").logger(sink).start();

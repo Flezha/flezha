@@ -10,10 +10,9 @@ import javax.annotation.Nonnull;
  * and resume at the step they reached. Both are operatives, both are declared on a runner, and both
  * are scheduled, restarted and relocated by the controller in the same way.
  *
- * <p>The only member common to both is {@link #factoryId()}, the stable controller-facing name that
- * {@code flz operative start <factory_id>} resolves to a registered class. Everything that differs
- * between the kinds, the channel graph on one side and the step sequence on the other, stays on the
- * per-kind interface.
+ * <p>The only member common to both is {@link #factoryId()}. Everything that differs between the
+ * kinds, the channel graph on one side and the step sequence on the other, stays on the per-kind
+ * interface.
  *
  * <p>You rarely implement this interface directly. Implement one of the two kinds, which extend it:
  *
@@ -37,7 +36,14 @@ import javax.annotation.Nonnull;
  */
 public interface Operative {
 
-    /** The stable, controller-facing factory identifier. One factory id per class. */
+    /**
+     * The stable, controller-facing identity of this operative class, and the name
+     * {@code flz operative start <factory_id>} resolves. Exactly one factory id per class.
+     *
+     * <p>This value is written into durable state and into the controller's registry, so changing
+     * it does not rename an existing operative: it declares a new one, and state recorded under the
+     * previous identity is no longer associated with it. Choose it deliberately at authoring time.
+     */
     @Nonnull
     String factoryId();
 }
