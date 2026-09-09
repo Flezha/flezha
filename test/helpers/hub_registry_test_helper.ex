@@ -123,11 +123,18 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   SDK. The caller owns FleetManager state restoration (snapshot +
   `:sys.replace_state` on exit).
   """
-  def seed_runner(ns, runner_id, factory_id) do
+  def seed_runner(ns, runner_id, factory_id), do: seed_runners(ns, [runner_id], factory_id)
+
+  @doc """
+  Seed a whole synthetic fleet at once — every runner in `runner_ids` advertises
+  `factory_id`. `FleetStateHelper.seed/2` replaces the namespace's runner set,
+  so a fleet has to be declared in one call rather than one runner at a time.
+  """
+  def seed_runners(ns, runner_ids, factory_id) do
     # One definition of "this namespace holds these runners advertising these
     # factories" — including the SDK language placement filters on.
-    FleetStateHelper.seed(ns, %{runner_id => [factory_id]})
-    register_control_unit(runner_id)
+    FleetStateHelper.seed(ns, Map.new(runner_ids, &{&1, [factory_id]}))
+    Enum.each(runner_ids, &register_control_unit/1)
   end
 
   # `runner_registered?/1` gates on the CU registration, so a synthetic runner

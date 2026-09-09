@@ -50,6 +50,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate recovery_state(arg1), to: Lifecycle
   defdelegate register_handler(arg1, arg2), to: Placement
   defdelegate registered_operatives?(arg1), to: Rows
+  defdelegate registry_dump(arg1), to: Rows
   defdelegate registry_backend_config(arg1), to: Lifecycle
   defdelegate rewrite_cspec_plugins(arg1, arg2), to: Rows
   defdelegate runner_operatives(arg1, arg2), to: Placement

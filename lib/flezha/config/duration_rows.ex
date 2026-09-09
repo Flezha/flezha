@@ -71,6 +71,11 @@ defmodule Flezha.Config.DurationRows do
     {:runner_min_call_ms, :ms, 25, []},
     {:runner_poll_call_ms, :ms, 250, []},
     {:runner_poll_interval_ms, :ms, 50, []},
+    # How long the per-runner operative count a placement reads may go without
+    # being rebuilt from the hub registry. Its own row rather than a borrowed
+    # one: a cache's staleness bound and a lookup's timeout answer different
+    # questions and move apart the moment either is tuned.
+    {:placement_load_refresh_ms, :ms, 1_000, key: true},
     {:runner_retiring_mark_ttl_ms, :ms, 30_000,
      key: true, env: "FLEZHA_RUNNER_RETIRING_MARK_TTL_MS"},
     {:superseded_mark_ttl_ms, :ms, 600_000, []},

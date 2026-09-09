@@ -203,6 +203,13 @@ defmodule Flezha.Config.Keys do
     # an update does not evict one. `0` disables the hold.
     {:runner_keepalive, :ms, 30_000, key: true, env: "FLEZHA_RUNNER_KEEPALIVE"},
     {:bind_restore_concurrency, :positive_int, 16, key: true},
+    # The fairness cap on runner selection, as a percentage of the fair share of
+    # the candidate set. At `100` the cap is exactly the fair share and the
+    # spread is even at every operative count; a value high enough that no
+    # candidate ever reaches the cap is plain rendezvous hashing, which is where
+    # placement was before the cap existed.
+    {:placement_load_cap_percent, :positive_int, 100,
+     key: true, env: "FLEZHA_PLACEMENT_LOAD_CAP_PERCENT"},
     {:overwatch_ping_enabled, :bool, true, key: true},
     {:overwatch_ping_fn, :term, nil, key: true},
     {:state_resync_fun, :term, nil, key: true},

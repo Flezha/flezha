@@ -22,6 +22,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager.Factories
+  alias Flezha.Runner.FleetManager.Load
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
@@ -117,6 +118,33 @@ defmodule Flezha.Runner.FleetManager do
   """
   def runners_for_factory(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:runners_for_factory, namespace, factory_id}, timeout)
+  end
+
+  @doc """
+  The runner `operative_id` is placed on in `namespace`, or `nil` when the
+  candidate set is empty.
+
+  Candidates come from the same filter `runners_for_factory/3` answers with — a
+  `nil` factory widens it to every active runner — and one of them is chosen by
+  bounded-load rendezvous hashing (`Load.select/3`). The choice is counted
+  against the runner before this returns, which is what a recovery batch needs:
+  its members are placed under one `Task.async_stream` and none of their rows is
+  written until the last of them has been placed, so a count that only advanced
+  when the registry did would be identical for every member and the batch would
+  spread exactly as the plain hash spread it.
+  """
+  @spec resolve_runner(String.t(), binary() | nil, binary(), timeout()) :: binary() | nil
+  def resolve_runner(
+        namespace,
+        factory_id,
+        operative_id,
+        timeout \\ Durations.get(:runner_lookup_ms)
+      ) do
+    GenServer.call(
+      __MODULE__,
+      {:resolve_runner, namespace, factory_id, operative_id},
+      timeout
+    )
   end
 
   @doc """
@@ -243,6 +271,7 @@ defmodule Flezha.Runner.FleetManager do
        runner_namespaces: %{},
        namespace_factories: %{},
        stable_sessions: %{},
+       runner_loads: %{},
        directory_groups: MapSet.new()
      })}
   end
@@ -279,14 +308,31 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call({:active_runners, namespace}, _from, state) do
-    runner_ids = Roster.get_runner_ids(state, namespace, :active)
-
-    {:reply, runner_ids, state}
+    {:reply, candidates(state, namespace, nil), state}
   end
 
   @impl true
   def handle_call({:runners_for_factory, namespace, factory_id}, _from, state) do
-    {:reply, MapSet.to_list(Factories.placeable_runners(state, namespace, factory_id)), state}
+    {:reply, candidates(state, namespace, factory_id), state}
+  end
+
+  # Filter, select and count in one step. Splitting it — a read here and a cast
+  # to count — lets another batch member's read overtake the count, and the
+  # batch is exactly where the spread matters.
+  @impl true
+  def handle_call({:resolve_runner, namespace, factory_id, operative_id}, _from, state) do
+    case candidates(state, namespace, factory_id) do
+      [] ->
+        {:reply, nil, state}
+
+      candidates ->
+        {cache, entry} =
+          Load.refreshed(state.runner_loads, namespace, fn -> rebuild_loads(state, namespace) end)
+
+        {entry, runner_id} = Load.place(entry, candidates, operative_id)
+
+        {:reply, runner_id, %{state | runner_loads: Map.put(cache, namespace, entry)}}
+    end
   end
 
   @impl true
@@ -338,6 +384,7 @@ defmodule Flezha.Runner.FleetManager do
 
     state = Map.put(state, :runner_namespaces, runner_namespaces)
     state = Map.update!(state, :namespace_factories, &Map.delete(&1, namespace))
+    state = Map.update!(state, :runner_loads, &Map.delete(&1, namespace))
     {:reply, reply, Session.sync_directory(state)}
   end
 
@@ -427,6 +474,22 @@ defmodule Flezha.Runner.FleetManager do
     Logger.info("Received unexpected message at node manager: #{inspect(any)}")
 
     {:noreply, state}
+  end
+
+  # The one definition of "which runners may take this work": every active
+  # runner, or the subset the placement filter allows for a factory.
+  defp candidates(state, namespace, nil),
+    do: Roster.get_runner_ids(state, namespace, :active)
+
+  defp candidates(state, namespace, factory_id) when is_binary(factory_id),
+    do: MapSet.to_list(Factories.placeable_runners(state, namespace, factory_id))
+
+  # Counted from the hub registry's own record of who owns each operative, over
+  # the same universe a placement chooses from. A namespace whose hub is not up
+  # holds no recorded binding, so every active runner counts zero and the
+  # handouts alone spread the work.
+  defp rebuild_loads(state, namespace) do
+    Load.counts(HubManager.registry_dump(namespace), candidates(state, namespace, nil))
   end
 
   defp arm_runner_cleanup(state) do

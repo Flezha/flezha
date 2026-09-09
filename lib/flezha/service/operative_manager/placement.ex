@@ -1,7 +1,10 @@
 defmodule Flezha.Service.OperativeManager.Placement do
   @moduledoc """
-  Which runner an operative lands on: rendezvous choice, the candidate lookup,
-  and the bounded poll a caller waits on.
+  Which runner an operative lands on: the call that asks the fleet, the node
+  choice that shares its ranking, and the bounded poll a caller waits on.
+
+  The choice itself is `Flezha.Runner.FleetManager.Load` — the fleet filters,
+  ranks and counts in one step, so nothing here holds a candidate set.
   """
 
   require Logger
@@ -9,22 +12,21 @@ defmodule Flezha.Service.OperativeManager.Placement do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
-
-  # Per-attempt budget for the polling path. Must stay well under any caller's
-  # deadline, or one blocked lookup consumes it and the loop never iterates.
-
-  # Floor for the clamped attempt: below this a healthy FleetManager could not
-  # answer, and we would blame it for our own exhausted budget.
+  alias Flezha.Runner.FleetManager.Load
 
   @doc """
   Pick an active compute engine for `operative_id` in `namespace`.
 
-  Placement is deterministic — rendezvous (HRW) hashing of `operative_id` over
-  the candidate runners — so every controller and every tick computes the
-  same target with no coordination, load spreads evenly, and only ~1/N
-  operatives move when the runner set changes. A newly connected runner
-  never reshuffles existing operatives: placement is computed only at start /
-  forced rebind.
+  Candidates are ranked by rendezvous (HRW) hashing of `operative_id` over the
+  runner set, and the one chosen is the highest-ranked whose count of bound
+  operatives is under a fairness cap — so a namespace holding fewer operatives
+  than it has runners still uses all of them, which a plain hash does not. The
+  cap and its knob are `Flezha.Runner.FleetManager.Load`; `FleetManager` reads
+  the count and selects in one step, so a recovery batch spreads across its
+  members rather than placing them all as if none of the others existed.
+
+  A newly connected runner never reshuffles existing operatives: placement is
+  computed only at start / forced rebind.
 
   When `factory_id` is given the pool is restricted to runners advertising
   that factory. Without this filter a mixed-factory namespace (e.g.
@@ -113,23 +115,23 @@ defmodule Flezha.Service.OperativeManager.Placement do
     end
   end
 
+  # `runner_poll_call_ms` must stay well under any caller's deadline, or one
+  # blocked lookup consumes it and the loop never iterates; `runner_min_call_ms`
+  # is the floor, below which a healthy FleetManager could not answer and we
+  # would blame it for our own exhausted budget.
   defp call_timeout(deadline) do
     (deadline - System.monotonic_time(:millisecond))
     |> min(Durations.get(:runner_poll_call_ms))
     |> max(Durations.get(:runner_min_call_ms))
   end
 
+  # `{:error, :unavailable}`, never `{:ok, nil}`: collapsing an unanswered read
+  # into "no runners" blames the fleet for a control-plane stall (see
+  # `Convergence.Probe`). The filter, the choice and the count all happen inside
+  # the manager's own call — see `FleetManager.resolve_runner/4` for why they
+  # cannot be a read followed by a separate count.
   defp resolve_runner(namespace, factory_id, operative_id, call_timeout_ms) do
-    case candidate_runners(namespace, factory_id, call_timeout_ms) do
-      :unavailable -> {:error, :unavailable}
-      runner_ids -> {:ok, pick_runner(runner_ids, operative_id)}
-    end
-  end
-
-  # `:unavailable`, never `[]`: collapsing an unanswered read into "no runners"
-  # blames the fleet for a control-plane stall (see `Convergence.Probe`).
-  defp candidate_runners(namespace, factory_id, call_timeout_ms) do
-    lookup_runners(namespace, factory_id, call_timeout_ms)
+    {:ok, FleetManager.resolve_runner(namespace, factory_id, operative_id, call_timeout_ms)}
   catch
     :exit, reason ->
       Logger.warning(
@@ -137,22 +139,14 @@ defmodule Flezha.Service.OperativeManager.Placement do
           "#{namespace} factory #{inspect(factory_id)}: #{inspect(reason)}"
       )
 
-      :unavailable
+      {:error, :unavailable}
   end
 
-  defp lookup_runners(namespace, nil, timeout),
-    do: FleetManager.active_runners(namespace, timeout)
-
-  defp lookup_runners(namespace, factory_id, timeout) when is_binary(factory_id),
-    do: FleetManager.runners_for_factory(namespace, factory_id, timeout)
-
-  # The candidate set is the authority: a runner is in it only while its
-  # transport connection is open. HRW then picks the runner with the
-  # highest hash of `{operative_id, runner}` — deterministic and stable under
-  # membership change.
+  # Rendezvous hashing with no load input, for the callers choosing a cluster
+  # NODE rather than a runner: a node has no operative count in the fleet's map,
+  # and repeated convergence ticks have to agree on one destination. Same
+  # implementation as the runner case, with the cap left off — an empty load map
+  # is no cap.
   @doc false
-  def pick_runner([], _operative_id), do: nil
-
-  def pick_runner(runner_ids, operative_id),
-    do: Enum.max_by(runner_ids, fn ce -> :erlang.phash2({operative_id, ce}) end)
+  def pick_runner(candidates, operative_id), do: Load.select(candidates, operative_id, %{})
 end

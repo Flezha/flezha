@@ -205,8 +205,11 @@ symbol — that stage 1's `key_by` must return, or the guard says so on the firs
 
 - **More partitions than runners buys nothing.** The start proceeds but warns, naming both
   counts and how many members will share machines.
-- **Placement is statistical** (the ordinary HRW hash; no anti-affinity), so two members of one
-  group can land on one runner — `flz operative info` shows it.
+- **Placement spreads by count, not by anti-affinity.** Candidates are ranked by the ordinary HRW
+  hash and narrowed by a fairness cap on operatives already bound, so a group of N members across
+  N runners normally lands one per runner; nothing pins a *particular* member to a *particular*
+  runner, and two members can still share one when the fleet is already uneven —
+  `flz operative info` shows where each landed.
 - **One partition's whole state lives on one controller node**, which keeps the per-class input
   log correct. N partitions consume N `max_operatives` units and open N source connections;
   each partition's sink plugins open their own connections.

@@ -58,6 +58,13 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
+  @doc """
+  The same dump, for a caller that only folds it: a hub that is not up holds no
+  running operative, and that is an empty dump rather than an error to unwrap.
+  """
+  @spec registry_dump(String.t()) :: map()
+  def registry_dump(namespace), do: with_live_hub(namespace, %{}, &live_registry_dump/1)
+
   # Every caller here means "what is currently running with a live binding":
   # unbound rows are replay residue, not runtime. Declared intent is a
   # different question — `declared_operatives/1` answers that from the hub's

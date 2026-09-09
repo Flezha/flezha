@@ -56,6 +56,20 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
     :ok
   end
 
+  @doc """
+  The per-runner operative count `FleetManager` last handed placements out of.
+
+  Read from its state rather than through an API: nothing in the controller asks
+  the fleet for this — the operator-facing count is the observability source's,
+  read straight from the hub registry.
+  """
+  def loads(namespace) do
+    case :sys.get_state(FleetManager).runner_loads[namespace] do
+      %{counts: counts} -> counts
+      nil -> %{}
+    end
+  end
+
   @doc "Forget every factory's established language — `on_exit` for a seeding test."
   def forget_langs(namespace, factory_ids),
     do: Enum.each(factory_ids, &ClassRegistry.delete_sdk_lang(namespace, &1))

@@ -14,7 +14,13 @@ defmodule Flezha.Observability.OtpBackendTest do
     TransportSource
   }
 
+  alias Flezha.Identificator
+  alias Flezha.Observability.Export.PrometheusRegistry
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.FleetStateHelper
+  alias FlezhaTest.Helper.HubRegistryTestHelper
 
   @moduletag :observability_otp_backend
 
@@ -126,6 +132,46 @@ defmodule Flezha.Observability.OtpBackendTest do
       # One poll; no namespaces => no signals, no raise.
       poll(pid, 1)
       :ok = GenServer.stop(pid)
+    end
+
+    test "the exposition carries a bound-operative count per runner, zero included" do
+      ns = "bound_count_ns_#{System.unique_integer([:positive])}"
+      [busy, idle] = ["bound_runner_busy", "bound_runner_idle"]
+
+      fleet = :sys.get_state(FleetManager)
+      on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> fleet end) end)
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(ns)
+      on_exit(fn -> HubManager.stop_hub(ns) end)
+      HubRegistryTestHelper.seed_runners(ns, [busy, idle], "bound_factory")
+      on_exit(fn -> FleetStateHelper.forget_langs(ns, ["bound_factory"]) end)
+
+      HubRegistryTestHelper.inject_operative(ns, "bound_op")
+      HubManager.operative_set_runner(ns, "bound_op", busy)
+
+      arm(:processhub)
+      start_supervised!(PrometheusRegistry)
+      {:ok, pid} = ProcessHubSource.start_link([])
+      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+      poll(pid, 1)
+
+      hub = Identificator.hub(ns)
+
+      counts =
+        :processhub
+        |> RingBufferSink.query(0)
+        |> Enum.filter(&(&1.name == :runner_bound_operatives and &1.metadata.hub == hub))
+        |> Map.new(&{&1.metadata.runner, &1.measurements.value})
+
+      # A missing series and a zero are not the same answer to an operator.
+      assert counts == %{busy => 1, idle => 0}
+
+      for signal <- RingBufferSink.query(:processhub, 0), do: PrometheusRegistry.record(signal)
+      TestSinks.settle(PrometheusRegistry)
+      {body, _series} = PrometheusRegistry.render()
+      text = IO.iodata_to_binary(body)
+
+      assert text =~ ~s(runner="#{busy}")
+      assert text =~ ~s(runner="#{idle}")
     end
   end
 
@@ -255,7 +301,7 @@ defmodule Flezha.Observability.OtpBackendTest do
   @lifecycle [
     {BeamVmSource, :beam_vm, [:metric], 50, 1_000, [:last_scheduler_sample]},
     {HostSource, :host, [:metric, :event], 50, 5_000, [:prev_cpu_jiffies, :status]},
-    {ProcessHubSource, :processhub, [:metric], 200, 1_000, []},
+    {ProcessHubSource, :processhub, [:metric], 1_000, 1_000, []},
     {TransportSource, :flezha_transport, [:metric], 40, 1_000, []},
     {BoundedMailboxSource, :flezha_bounded_mailbox, [:metric, :event], 5_000, 1_000,
      [:announced?]}

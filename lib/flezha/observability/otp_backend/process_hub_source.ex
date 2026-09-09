@@ -6,11 +6,11 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   `Flezha.Identificator` surface and queries ProcessHub for
   registered-process counts and recovery state.
 
-  Cardinality math: one metadata shape per hub. A cluster with N
-  namespaces emits N distinct shapes per metric name. Default
-  budget `1_000` is sufficient for any practical cluster — the
-  source declares an explicit `200` here, sized for the typical
-  namespace count, with headroom.
+  Cardinality math: the two hub-wide metrics carry one shape per hub, so a
+  cluster with N namespaces emits N of them; `runner_bound_operatives` carries
+  one shape per runner per hub, so it emits N x runners. The declared budget is
+  sized for a fleet of a few hundred runner-namespace pairs, which is what the
+  default per-source budget allows too.
 
   Default poll interval `1_000` ms; overridable via
   `:flezha, :observability, :otp_backend, :poll_intervals, :processhub`.
@@ -19,11 +19,13 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   use Flezha.Observability.OtpBackend.Poller,
     source: :processhub,
     kinds: [:metric],
-    cardinality_budget: 200,
+    cardinality_budget: 1_000,
     default_poll_ms: 1_000
 
   alias Flezha.Identificator
   alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Load
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
@@ -51,6 +53,33 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
     emit_metric(:pending_recoveries, %{value: pending_recoveries_value(recovery_state)}, %{
       hub: hub
     })
+
+    emit_bound_operatives(namespace, hub)
+  end
+
+  # The spread the placement cap governs, read from the registry's runner tags
+  # rather than from the cap's own cached count — that count carries handouts
+  # that may never have started, and an operator is owed the binding rather than
+  # the intention. `Load.counts/2` seeds every active runner, so a runner
+  # holding nothing reports `0` instead of vanishing from the exposition.
+  defp emit_bound_operatives(namespace, hub) do
+    namespace
+    |> HubManager.registry_dump()
+    |> Load.counts(safe_active_runners(namespace))
+    |> Enum.each(fn {runner_id, bound} ->
+      emit_metric(:runner_bound_operatives, %{value: bound}, %{hub: hub, runner: runner_id})
+    end)
+  end
+
+  # The fleet is one serialized process that may be inside a runner connect, so
+  # a poll waits the same short budget every other poller does rather than the
+  # manager's own.
+  defp safe_active_runners(namespace) do
+    try do
+      FleetManager.active_runners(namespace, @default_poll_ms)
+    catch
+      _, _ -> []
+    end
   end
 
   defp safe_process_count(hub) do

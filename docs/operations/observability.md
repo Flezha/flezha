@@ -35,9 +35,13 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   `load_avg_1m|5m|15m`, `cpu_utilisation` (second poll on); counters `cpu_user_us`, `cpu_system_us`
   (jiffies × 10_000). An unreadable `/proc/self/stat` yields one `:host_source_degraded` event
   (`metadata.reason: :proc_self_stat_unreadable`), then no-ops.
-- `:processhub` (`[:metric]`, 1_000 ms, 200) — per running namespace hub, metadata `%{hub: hub}`:
+- `:processhub` (`[:metric]`, 1_000 ms, 1_000) — per running namespace hub, metadata `%{hub: hub}`:
   `registered_processes` (`ProcessHub.process_list(hub, :local)` length) and `pending_recoveries`
   (`1` when `ProcessHub.Service.Recovery.recovery_state/1` is `:recovering` or `:recovery_pending`).
+  Plus `runner_bound_operatives`, metadata `%{hub: hub, runner: runner_id}` — how many operatives
+  the hub registry records as bound to each active runner, which is the spread
+  `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT` governs. Every active runner reports, so an idle one reads
+  `0` rather than being absent.
 - `:flezha_transport` (`[:metric]`, 1_000 ms, 40) — per active transport
   (`Flezha.Transport.Server.list_active_transports/0` + `get_stats/1`), metadata
   `%{transport: :uds | :quic}`: gauge `open_connections` (pending streams). With

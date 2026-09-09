@@ -37,8 +37,16 @@ opening empty; `ProcessHub.Service.DeclaredChildren.clear/1` is the operator ove
    on N nodes (see [partitioned operatives](../sdk/partitioned_operatives.md)).
 2. **Within a controller — runner selection.** The owning controller picks one locally
    connected runner advertising the operative's factory: `OperativeManager.assign_runner/3` ->
-   `pick_runner/2`, a rendezvous hash (`max_by :erlang.phash2({operative_id, runner_id})`), so
-   a partitioned group's members spread statistically across runners.
+   `FleetManager.resolve_runner/4` -> `FleetManager.Load.select/3`. Candidates are ranked by a
+   rendezvous hash (`:erlang.phash2({operative_id, runner_id})`, highest wins) and the winner is
+   the highest-ranked candidate whose count of bound operatives is under a fairness cap, so the
+   members of a partitioned group spread evenly rather than statistically. The cap is
+   `max(1, ceil(percent * (bound + 1) / (100 * candidates)))` and `percent` is
+   `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT`, default `100` — exactly the fair share. Raising it loosens
+   the cap, and a high enough value never binds, which is plain rendezvous hashing. When every
+   candidate is at cap the ranking head wins, so a cap never refuses a placement the factory filter
+   allowed. Choosing a controller **node** (`Heal.replacement_node/3`) stays a plain rendezvous
+   hash with no load input, because two convergence ticks have to agree on one destination.
 
 The levels are decoupled: the hub knows nothing about runners; the `child_data_alter` hook does
 runner selection at start time.
