@@ -71,7 +71,8 @@ impl Controller {
             "cmd",
             &request.encode_to_vec(),
             Default::default(),
-        );
+        )
+        .unwrap();
         let mut guard = self.writer.lock().unwrap();
         let stream = guard.as_mut().expect("control connection accepted");
         (&*stream).write_all(&frame).expect("write command frame");

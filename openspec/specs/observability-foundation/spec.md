@@ -190,7 +190,7 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **THEN** the original `:telemetry.execute` call SHALL return normally, a `:dispatcher_failure_count` counter SHALL increment, and an error SHALL be logged once with the offending event name
 
 #### Scenario: A detector's declared event is bridged with no bridge edit
-- **WHEN** the control-plane watchdog executes `[:flezha, :runner, :liveness_timeout]`, or the plugin fact seam executes `[:flezha, :plugin, :health, :fail_open]`, or the watchdog executes `[:flezha, :state, :catastrophic_dataflow_stop]`
+- **WHEN** the control-plane watchdog executes `[:flezha, :runner, :liveness_timeout]`, or the plugin fact seam executes `[:flezha, :plugin, :health, :fail_open]`, or the watchdog executes `[:flezha, :state, :input_silence]`
 - **THEN** a signal for it SHALL appear on the bus, mapped from the detector table's declaration, and the bridge module's hand-kept half SHALL hold no line for it
 
 #### Scenario: A verdict transition is bridged

@@ -99,6 +99,13 @@ pub enum ServerCommand {
     Shutdown,
 }
 
+/// A frame this side could not encode, because a metadata field is longer
+/// than the wire can carry. The frame is dropped; the connection is not, because retrying a
+/// value that cannot be represented would refuse identically for ever.
+pub(crate) fn report_refused_frame(payload_id: &str, error: &std::io::Error) {
+    eprintln!("[flz_nif] frame refused for payload {payload_id}: {error}");
+}
+
 /// Start result passed back from a driver thread to the NIF via channel.
 pub struct DriverReady {
     pub waker: Arc<Waker>,
@@ -440,11 +447,17 @@ impl<T: Transport> DriverLoop<T> {
                 metadata,
             } => {
                 let reserved = message.len();
-                let frame = flz_transport::service::payloader::build_from_binary(
+                let frame = match flz_transport::service::payloader::build_from_binary(
                     &payload_id,
                     &message,
                     metadata,
-                );
+                ) {
+                    Ok(frame) => frame,
+                    Err(e) => {
+                        report_refused_frame(&payload_id, &e);
+                        return false;
+                    }
+                };
                 if let Some(state) = self.streams.get_mut(&stream_id) {
                     state.offer(&frame, reserved);
                     self.flush(stream_id);

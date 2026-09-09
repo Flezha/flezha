@@ -151,7 +151,7 @@ All marker reads SHALL be off-path at the convergence tick cadence, reusing coun
 #### Scenario: A checkpoint-ack operative that stops consuming is STUCK
 
 - **WHEN** a checkpoint-ack operative's input-log tail grows across ticks while its Entities' durable consumed offsets stay flat past the grace period
-- **THEN** the operative classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the catastrophic-dataflow sweep
+- **THEN** the operative classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the input-silence sweep
 
 #### Scenario: Undrained outbox with accumulating output records is STUCK (tier on)
 

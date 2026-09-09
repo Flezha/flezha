@@ -189,10 +189,16 @@ for each (key, value):
   [key_length: u8] [value_length: u8] [key: key_length bytes] [value: value_length bytes]
 ```
 
-Keys and values are limited to 255 bytes by the 1-byte length prefix (the
-serializer does not check this — longer strings corrupt the frame). An empty
-map serializes to zero bytes (`Metadata Size = 0`). Entry order is
-unspecified.
+Keys and values are limited to 255 bytes by the 1-byte length prefix, and the
+whole serialized table to 65535 by `Metadata Size`. The encoder refuses a frame
+that exceeds any of the three, naming the offending key and the length; it never
+writes a truncated prefix, because a truncated one produces a frame that parses
+cleanly and yields pairs the sender never wrote. An empty map serializes to zero
+bytes (`Metadata Size = 0`). Entry order is unspecified.
+
+A channel name rides every frame its channel produces, as the `channel` value,
+so an over-long one is refused at registration with `ChannelNameTooLong` rather
+than at emit.
 
 #### Reserved metadata keys
 

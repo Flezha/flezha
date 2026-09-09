@@ -45,9 +45,9 @@ defmodule Flezha.Convergence.Probe.Table do
       facts: &Readers.output_stall/1,
       events: [
         [:flezha, :state, :output_stall],
-        [:flezha, :state, :catastrophic_dataflow_stop]
+        [:flezha, :state, :input_silence]
       ],
-      thresholds: [:output_stall_timeout_ms, :catastrophic_dataflow_timeout_ms]
+      thresholds: [:output_stall_timeout_ms, :input_silence_timeout_ms]
     },
     %{
       id: :progress,
@@ -133,8 +133,8 @@ defmodule Flezha.Convergence.Probe.Table do
   @spec threshold(atom()) :: non_neg_integer() | nil
   def threshold(:output_stall_timeout_ms), do: Durations.get(:output_stall_timeout_ms)
 
-  def threshold(:catastrophic_dataflow_timeout_ms),
-    do: Durations.get(:catastrophic_dataflow_timeout_ms)
+  def threshold(:input_silence_timeout_ms),
+    do: Durations.get(:input_silence_timeout_ms)
 
   def threshold(:convergence_output_stall_grace_ms),
     do: Durations.get(:convergence_output_stall_grace_ms)

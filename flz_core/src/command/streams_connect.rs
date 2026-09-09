@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -156,7 +155,7 @@ fn install_state_sink(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
         let writer = Arc::new(Mutex::new(sink_stream));
         let send_fn: SendFrameFn = Arc::new(
             move |payload_id: &str, frame: &[u8]| -> Result<(), SendError> {
-                let payload = payloader::build_from_binary(payload_id, frame, HashMap::new());
+                let payload = payloader::build_without_metadata(payload_id, frame);
                 let stream = writer.lock().map_err(|e| SendError::Other(e.to_string()))?;
                 (&**stream)
                     .write_all(&payload)

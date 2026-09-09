@@ -324,7 +324,7 @@ mod tests {
         metadata.insert("key1".to_string(), "val1".to_string());
 
         let frame_bytes =
-            payloader::build_from_binary("test_payload", b"hello world", metadata.clone());
+            payloader::build_from_binary("test_payload", b"hello world", metadata.clone()).unwrap();
 
         let mut fb = FrameBuffer::new();
         let frames = fb.feed(&frame_bytes).unwrap();
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_partial_header() {
-        let frame_bytes = payloader::build_from_binary("my_id", b"data", HashMap::new());
+        let frame_bytes = payloader::build_without_metadata("my_id", b"data");
 
         let mut fb = FrameBuffer::new();
 
@@ -354,8 +354,7 @@ mod tests {
 
     #[test]
     fn test_partial_payload() {
-        let frame_bytes =
-            payloader::build_from_binary("pid", b"a]longer message here", HashMap::new());
+        let frame_bytes = payloader::build_without_metadata("pid", b"a]longer message here");
 
         let mut fb = FrameBuffer::new();
 
@@ -371,8 +370,8 @@ mod tests {
 
     #[test]
     fn test_multiple_frames_in_one_feed() {
-        let f1 = payloader::build_from_binary("id_a", b"msg1", HashMap::new());
-        let f2 = payloader::build_from_binary("id_b", b"msg2", HashMap::new());
+        let f1 = payloader::build_without_metadata("id_a", b"msg1");
+        let f2 = payloader::build_without_metadata("id_b", b"msg2");
 
         let mut combined = Vec::new();
         combined.extend_from_slice(&f1);
@@ -424,7 +423,7 @@ mod tests {
         assert!(fb.feed(&oversized_header(4096)).is_err());
 
         // A later feed of otherwise-valid bytes must not resync.
-        let good = payloader::build_from_binary("id", b"data", HashMap::new());
+        let good = payloader::build_without_metadata("id", b"data");
         let err = fb.feed(&good).unwrap_err();
         assert_eq!(err.declared, 4096);
     }
@@ -440,7 +439,7 @@ mod tests {
 
     #[test]
     fn in_limit_frame_at_exact_limit_still_decodes() {
-        let frame_bytes = payloader::build_from_binary("edge", b"payload", HashMap::new());
+        let frame_bytes = payloader::build_without_metadata("edge", b"payload");
         // payload_size = total - 36-byte header; a limit of exactly that passes.
         let payload_size = frame_bytes.len() - 36;
 
@@ -456,7 +455,7 @@ mod tests {
         metadata.insert("foo".to_string(), "bar".to_string());
         metadata.insert("baz".to_string(), "qux".to_string());
 
-        let frame_bytes = payloader::build_from_binary("meta_test", b"body", metadata);
+        let frame_bytes = payloader::build_from_binary("meta_test", b"body", metadata).unwrap();
 
         let mut fb = FrameBuffer::new();
         let frames = fb.feed(&frame_bytes).unwrap();

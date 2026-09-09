@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::str;
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt};
 
 /// Metadata key-value pairs attached to a payload frame.
 pub type PayloadMetadata = HashMap<String, String>;
@@ -18,9 +18,18 @@ pub fn parse_payload_id(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
 }
 
-/// A declared length prefix an untrusted peer controls exceeded its bound.
-/// Raised BEFORE allocating for the declared length; the stream cannot resync
-/// past it, so callers treat it as stream-fatal.
+/// Fixed width of a metadata key's and a metadata value's length prefix.
+pub const MAX_METADATA_FIELD_LEN: usize = u8::MAX as usize;
+
+/// Fixed width of the metadata table's length prefix.
+pub const MAX_METADATA_TABLE_LEN: usize = u16::MAX as usize;
+
+/// A length prefix exceeded the field that has to carry it.
+///
+/// On decode the length is one an untrusted peer declared, raised BEFORE
+/// allocating for it; the stream cannot resync past it, so callers treat it as
+/// stream-fatal. On encode it is a length this side cannot represent, refused
+/// rather than written as a truncated cast.
 fn reject_oversized(what: &str, declared: usize, max: usize) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -142,54 +151,78 @@ fn read_header_or_none<R: Read>(reader: &mut R) -> io::Result<Option<[u8; HEADER
     }
 }
 
-pub fn build_from_binary(payload_id: &str, message: &[u8], metadata: PayloadMetadata) -> Vec<u8> {
-    build_payload(payload_id, message, metadata)
+/// Refused when a metadata key, value or table is longer than the length
+/// prefix the wire format gives it.
+pub fn build_from_binary(
+    payload_id: &str,
+    message: &[u8],
+    metadata: PayloadMetadata,
+) -> io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    append_payload(&mut out, payload_id, message, &metadata)?;
+    Ok(out)
 }
 
-pub fn build_from_str(payload_id: &str, message: &str, metadata: PayloadMetadata) -> Vec<u8> {
-    build_payload(payload_id, message.as_bytes(), metadata)
+/// A frame carrying no metadata. An empty table fits every length prefix, so
+/// there is nothing here to refuse and callers get bytes, not a result.
+pub fn build_without_metadata(payload_id: &str, message: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    append_checked(&mut out, payload_id, message, &[], 0);
+    out
 }
 
 /// Zero-alloc variant of `build_from_binary`: appends the framed payload
 /// bytes to `out` in-place. Used by the hot path to batch many outputs
 /// into a single write syscall.
+///
+/// On refusal `out` is left exactly as it was found, so a rejected frame
+/// cannot half-append into a batch.
 pub fn build_from_binary_into(
     out: &mut Vec<u8>,
     payload_id: &str,
     message: &[u8],
     metadata: &PayloadMetadata,
-) {
-    append_payload(out, payload_id, message, metadata);
+) -> io::Result<()> {
+    append_payload(out, payload_id, message, metadata)
 }
 
-pub fn build_from_str_into(
+fn append_payload(
     out: &mut Vec<u8>,
     payload_id: &str,
-    message: &str,
+    message: &[u8],
     metadata: &PayloadMetadata,
-) {
-    append_payload(out, payload_id, message.as_bytes(), metadata);
-}
-
-fn append_payload(out: &mut Vec<u8>, payload_id: &str, message: &[u8], metadata: &PayloadMetadata) {
+) -> io::Result<()> {
     // Serialize metadata directly into the metadata region after we write
     // the metadata_size. We can't do that cleanly because metadata_size
     // precedes the bytes, so serialize to a scratch Vec first.
-    let metadata_binary = serialize_metadata(metadata);
-    let metadata_size = metadata_binary.len() as u16;
+    let metadata_binary = serialize_metadata(metadata)?;
+    let metadata_size = check_metadata_table(&metadata_binary)?;
+    append_checked(out, payload_id, message, &metadata_binary, metadata_size);
+    Ok(())
+}
+
+/// Write the frame from a metadata table already proven to fit `metadata_size`.
+/// The only place the frame layout is written down.
+fn append_checked(
+    out: &mut Vec<u8>,
+    payload_id: &str,
+    message: &[u8],
+    metadata_binary: &[u8],
+    metadata_size: u16,
+) {
     let message_size = message.len() as u32;
     let payload_size = 4 + message.len() + 2 + metadata_binary.len();
 
     // Reserve in-place to avoid resizes during the appends below.
-    out.reserve(32 + 4 + payload_size);
+    out.reserve(HEADER_LEN + payload_size);
 
     // Write the payload ID (32 bytes, space-padded).
     let id_bytes = payload_id.as_bytes();
-    if id_bytes.len() >= 32 {
-        out.extend_from_slice(&id_bytes[..32]);
+    if id_bytes.len() >= PAYLOAD_ID_LEN {
+        out.extend_from_slice(&id_bytes[..PAYLOAD_ID_LEN]);
     } else {
         out.extend_from_slice(id_bytes);
-        for _ in id_bytes.len()..32 {
+        for _ in id_bytes.len()..PAYLOAD_ID_LEN {
             out.push(b' ');
         }
     }
@@ -203,69 +236,47 @@ fn append_payload(out: &mut Vec<u8>, payload_id: &str, message: &[u8], metadata:
 
     // Metadata size (2 BE) + metadata.
     out.extend_from_slice(&metadata_size.to_be_bytes());
-    out.extend_from_slice(&metadata_binary);
+    out.extend_from_slice(metadata_binary);
 }
 
-fn build_payload(payload_id: &str, message: &[u8], metadata: PayloadMetadata) -> Vec<u8> {
-    // Serialize metadata
-    let metadata_binary = serialize_metadata(&metadata);
-    let metadata_size = metadata_binary.len() as u16;
-    let message_size = message.len() as u32;
-
-    // Calculate payload size: message_size (4) + message + metadata_size (2) + metadata
-    let payload_size = 4 + message.len() + 2 + metadata_binary.len();
-
-    // Ensure the payload ID is 32 bytes
-    let mut payload_id_padded = payload_id.to_string();
-    if payload_id_padded.len() > 32 {
-        payload_id_padded.truncate(32);
-    } else {
-        payload_id_padded.push_str(&" ".repeat(32 - payload_id_padded.len()));
-    }
-
-    // Calculate total capacity: payload_id (32) + payload_size (4) + payload_size
-    let total_capacity = 32 + 4 + payload_size;
-    let mut result = Vec::with_capacity(total_capacity);
-
-    // Write the payload ID (32 bytes)
-    result.write_all(payload_id_padded.as_bytes()).unwrap();
-
-    // Write the payload size (4 bytes)
-    result.write_u32::<BigEndian>(payload_size as u32).unwrap();
-
-    // Write the message size (4 bytes)
-    result.write_u32::<BigEndian>(message_size).unwrap();
-
-    // Write the message
-    result.write_all(message).unwrap();
-
-    // Write the metadata size (2 bytes)
-    result.write_u16::<BigEndian>(metadata_size).unwrap();
-
-    // Write the metadata
-    result.write_all(&metadata_binary).unwrap();
-
-    result
+/// The serialized table has to fit its two-byte length prefix.
+fn check_metadata_table(metadata_binary: &[u8]) -> io::Result<u16> {
+    u16::try_from(metadata_binary.len()).map_err(|_| {
+        reject_oversized(
+            "metadata table",
+            metadata_binary.len(),
+            MAX_METADATA_TABLE_LEN,
+        )
+    })
 }
 
-fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
+/// Each key and each value has to fit its one-byte length prefix. Writing the
+/// low bits instead would produce a frame that parses cleanly and carries
+/// wrong pairs, which no decode-side limit can catch.
+fn serialize_metadata(metadata: &HashMap<String, String>) -> io::Result<Vec<u8>> {
     let mut result = Vec::new();
 
     for (key, value) in metadata {
         let key_bytes = key.as_bytes();
         let value_bytes = value.as_bytes();
 
-        // Write key size (1 byte)
-        result.push(key_bytes.len() as u8);
-        // Write value size (1 byte)
-        result.push(value_bytes.len() as u8);
-        // Write key
+        let key_size = field_len(key_bytes, || format!("metadata key {key:?}"))?;
+        let value_size = field_len(value_bytes, || format!("metadata value for key {key:?}"))?;
+
+        result.push(key_size);
+        result.push(value_size);
         result.extend_from_slice(key_bytes);
-        // Write value
         result.extend_from_slice(value_bytes);
     }
 
-    result
+    Ok(result)
+}
+
+/// One field's length prefix. `what` names the field and is called only on
+/// refusal, so the emit path formats nothing for a field that fits.
+fn field_len(field: &[u8], what: impl FnOnce() -> String) -> io::Result<u8> {
+    u8::try_from(field.len())
+        .map_err(|_| reject_oversized(&what(), field.len(), MAX_METADATA_FIELD_LEN))
 }
 
 fn deserialize_metadata(metadata_bytes: &[u8]) -> io::Result<HashMap<String, String>> {
@@ -343,7 +354,7 @@ mod tests {
     fn in_limit_frames_decode_unchanged() {
         let mut metadata = PayloadMetadata::new();
         metadata.insert("k".to_string(), "v".to_string());
-        let bytes = build_from_binary("round_trip", b"hello", metadata.clone());
+        let bytes = build_from_binary("round_trip", b"hello", metadata.clone()).unwrap();
 
         let (id, message, meta) = extract_payload(&bytes[..]).unwrap();
         assert_eq!(
@@ -358,6 +369,79 @@ mod tests {
             ("round_trip", &b"hello"[..])
         );
         assert_eq!(meta, metadata);
+    }
+
+    fn oversized(len: usize) -> String {
+        "v".repeat(len)
+    }
+
+    // A 256-byte value writes `256 as u8` == 0, so a reader takes no value and
+    // resumes INSIDE it. Truncating produces a frame that parses cleanly and
+    // carries pairs the sender never wrote, which no decode-side limit can
+    // catch; the encoder refuses it instead.
+    #[test]
+    fn oversized_metadata_value_refused() {
+        let mut metadata = PayloadMetadata::new();
+        metadata.insert("flz.key".to_string(), oversized(MAX_METADATA_FIELD_LEN + 1));
+
+        let err = build_from_binary("emit", b"body", metadata.clone()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("flz.key"), "{err}");
+        assert!(err.to_string().contains("256"), "{err}");
+
+        // ... and no bytes reach the caller's buffer.
+        let mut out = vec![0xAA];
+        assert!(build_from_binary_into(&mut out, "emit", b"body", &metadata).is_err());
+        assert_eq!(out, vec![0xAA]);
+    }
+
+    #[test]
+    fn oversized_metadata_key_refused() {
+        let mut metadata = PayloadMetadata::new();
+        metadata.insert(oversized(MAX_METADATA_FIELD_LEN + 1), "v".to_string());
+
+        let err = build_from_binary("emit", b"body", metadata).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("metadata key"), "{err}");
+        assert!(err.to_string().contains("256"), "{err}");
+    }
+
+    #[test]
+    fn oversized_metadata_table_refused() {
+        // Every pair is within its one-byte prefixes; the table is not.
+        let mut metadata = PayloadMetadata::new();
+        for i in 0..512 {
+            metadata.insert(format!("key{i:03}"), oversized(MAX_METADATA_FIELD_LEN));
+        }
+
+        let err = build_from_binary("emit", b"body", metadata).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("metadata table"), "{err}");
+    }
+
+    // The boundary is inclusive on both fields: the largest representable
+    // key and value still round-trip.
+    #[test]
+    fn metadata_at_the_limit_round_trips() {
+        let mut metadata = PayloadMetadata::new();
+        metadata.insert(
+            oversized(MAX_METADATA_FIELD_LEN),
+            oversized(MAX_METADATA_FIELD_LEN),
+        );
+        let bytes = build_from_binary("emit", b"body", metadata.clone()).unwrap();
+
+        let (_, _, decoded) = extract_payload(&bytes[..]).unwrap();
+        assert_eq!(decoded, metadata);
+    }
+
+    // The no-metadata builder has nothing to refuse, and writes the same
+    // frame the fallible one writes for an empty table.
+    #[test]
+    fn build_without_metadata_matches_the_empty_table() {
+        assert_eq!(
+            build_without_metadata("probe", b"body"),
+            build_from_binary("probe", b"body", PayloadMetadata::new()).unwrap()
+        );
     }
 
     // The reject must be stream-fatal through the existing reader error

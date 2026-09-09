@@ -10,6 +10,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
+
 use super::build::{
     build_channels, build_host_dag, build_procedures, register_workflow_class, resolve_class_facts,
 };
@@ -147,7 +149,8 @@ fn derive_ack_granularity(decl: &HostClassDecl) -> HostAckGranularity {
 }
 
 /// One namespace per operative for channels, one for nodes: a derived name,
-/// a `named(...)` override and an entry name all collide here.
+/// a `named(...)` override and an entry name all collide here. A name also has
+/// to fit the frame it rides, and this is where the author can still be told.
 fn refuse_names(
     decl: &HostClassDecl,
     channels: &[DerivedChannel],
@@ -157,6 +160,13 @@ fn refuse_names(
     for channel in channels {
         if !seen.insert(channel.name.as_str()) {
             issues.push(TopologyIssue::DuplicateChannel(channel.name.clone()));
+        }
+        if channel.name.len() > MAX_METADATA_FIELD_LEN {
+            issues.push(TopologyIssue::ChannelNameTooLong {
+                channel: channel.name.clone(),
+                len: channel.name.len(),
+                max: MAX_METADATA_FIELD_LEN,
+            });
         }
     }
     let mut seen_procs = HashSet::new();

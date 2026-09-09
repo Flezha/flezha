@@ -546,7 +546,8 @@ mod tests {
             "op-1",
             b"body",
             std::collections::HashMap::from([("flz.key".to_string(), "k".to_string())]),
-        );
+        )
+        .unwrap();
         assert!(matches!(
             write(Class::Output, Some(&dead_stream()), framed.clone()),
             Verdict::Held

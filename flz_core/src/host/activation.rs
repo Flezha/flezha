@@ -613,12 +613,19 @@ fn ship_plugin_outputs(
             schema::OutputTarget::Plugin { channel } => {
                 let mut metadata: HashMap<String, String> = output.metadata.into_iter().collect();
                 metadata.insert("channel".to_string(), channel);
-                crate::routing::send_plugin_frame(
+                if let Err(error) = crate::routing::send_plugin_frame(
                     stream,
                     &slot.instance_id,
                     &output.payload,
                     &metadata,
-                );
+                ) {
+                    tracing::error!(
+                        target: "flezha::host",
+                        instance_id = %slot.instance_id,
+                        %error,
+                        "plugin output refused; it is dropped and the fold carries on"
+                    );
+                }
             }
             schema::OutputTarget::Edge { .. } => unreachable!("edge outputs partitioned above"),
         }

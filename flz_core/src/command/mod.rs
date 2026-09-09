@@ -184,15 +184,17 @@ pub fn handle_command(
 
     match handler_type {
         CommandActionType::Regular(handler) => {
-            let reply = command::exec_control(runner, handler, payload_id, message, reference_id);
-            if let Err(e) = write_reply(stream, reply) {
+            let written = command::exec_control(runner, handler, payload_id, message, reference_id)
+                .and_then(|reply| write_reply(stream, reply));
+            if let Err(e) = written {
                 eprintln!("[flezha] Failed to write command response: {}", e);
             }
         }
 
         CommandActionType::RunnerDisconnect(handler) => {
-            let reply = command::exec_control(runner, handler, payload_id, message, reference_id);
-            if let Err(e) = write_reply(stream, reply) {
+            let written = command::exec_control(runner, handler, payload_id, message, reference_id)
+                .and_then(|reply| write_reply(stream, reply));
+            if let Err(e) = written {
                 eprintln!("[flezha] Failed to write disconnect response: {}", e);
             }
             finish_disconnect(stream);
@@ -267,7 +269,7 @@ fn exec_control(
     payload_id: &str,
     message: &[u8],
     reference_id: String,
-) -> Vec<u8> {
+) -> std::io::Result<Vec<u8>> {
     let mut errors: Vec<String> = vec![];
     let mut status = String::from("success");
 

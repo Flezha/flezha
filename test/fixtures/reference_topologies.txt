@@ -112,8 +112,13 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | tier_sink
 #              regressing has a name, and `flz_core/src/host/check_tests.rs`
 #              drives them against the record directly
 
+# `long_channel_name` declares a 256-character `named(...)`: one byte past the
+# metadata region's one-byte length prefix, which is the whole of what the row
+# is testing. It is the one row whose steps column carries a literal that long.
+
 DuplicateChannel                   | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.sink(out)                           | -
 NodeIdentityCollision              | dup_node         | entry(in); in.into(plain); in.into(twin)                                              | -
+ChannelNameTooLong                 | long_channel_name| entry(in); in.into(plain); plain.named(nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn) | -
 BranchTooFewArms                   | branch_one_arm   | entry(in); in.into(plain); branch(plain, 1)                                           | branch
 Cycle                              | cycle            | entry(in); in.into(plain); plain.into(second); second.into(plain)                     | -
 UnreachableProcedure               | detached_node    | entry(in); in.into(plain); second.into(plain)                                         | detached

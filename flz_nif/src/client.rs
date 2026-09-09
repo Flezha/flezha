@@ -30,7 +30,7 @@ use flz_transport::utility::socket_probe;
 use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
 use crate::atoms;
-use crate::driver::{CloseReason, ServerCommand};
+use crate::driver::{report_refused_frame, CloseReason, ServerCommand};
 use crate::driver_msg::{send_closed_msg, send_data_msg};
 use crate::frame_buffer::ParsedFrame;
 use crate::resources::{StreamHandle, StreamHandleArc, StreamWaker};
@@ -318,7 +318,14 @@ fn spawn_writer(
                 } => {
                     gate.release(message.len());
                     buf.clear();
-                    build_from_binary_into(&mut buf, &payload_id, &message, &metadata);
+                    // One encoder serves both directions, so a frame the
+                    // controller builds is refused here exactly as a runner's is.
+                    if let Err(e) =
+                        build_from_binary_into(&mut buf, &payload_id, &message, &metadata)
+                    {
+                        report_refused_frame(&payload_id, &e);
+                        continue;
+                    }
                     if write_stream.write_all(&buf).is_err() {
                         break;
                     }
@@ -337,6 +344,7 @@ fn spawn_writer(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::os::unix::net::UnixListener;
 
     use super::*;
@@ -361,6 +369,41 @@ mod tests {
         assert!(result.is_err());
         // The ~3 s deadline bounds the wait (allow slack for slow CI).
         assert!(start.elapsed() <= Duration::from_secs(5));
+    }
+
+    // One encoder serves both directions: the frame the controller's writer
+    // builds is refused by the same check that refuses a runner's. The frame
+    // is dropped; the connection carries on.
+    #[test]
+    fn writer_drops_a_refused_frame_and_keeps_the_connection() {
+        let (near, far) = UnixStream::pair().unwrap();
+        let (tx, rx) = unbounded();
+        spawn_writer(FlezhaStream::Unix(near), rx, Arc::new(SendGate::new()));
+
+        let mut oversized = HashMap::new();
+        oversized.insert("flz.key".to_string(), "v".repeat(256));
+        tx.send(ServerCommand::SendFrame {
+            stream_id: 1,
+            payload_id: "refused".to_string(),
+            message: b"body".to_vec(),
+            metadata: oversized,
+        })
+        .unwrap();
+        tx.send(ServerCommand::SendFrame {
+            stream_id: 1,
+            payload_id: "accepted".to_string(),
+            message: b"body".to_vec(),
+            metadata: HashMap::new(),
+        })
+        .unwrap();
+
+        // Only the second frame is on the wire, so the first byte-run read
+        // back is the one the encoder accepted.
+        let (payload_id, message, _) = extract_payload(&far).unwrap();
+        assert_eq!(
+            (payload_id.as_str(), message.as_slice()),
+            ("accepted", &b"body"[..])
+        );
     }
 
     #[test]

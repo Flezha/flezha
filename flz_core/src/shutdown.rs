@@ -115,7 +115,7 @@ fn ship_notification(
     };
 
     let encoded = request.encode_to_vec();
-    let payload = payloader::build_from_binary(SHUTDOWN_PAYLOAD_ID, &encoded, HashMap::new());
+    let payload = payloader::build_without_metadata(SHUTDOWN_PAYLOAD_ID, &encoded);
 
     let rx = register_pending_ack(reference_id.clone());
 

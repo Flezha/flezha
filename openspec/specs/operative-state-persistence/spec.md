@@ -1337,3 +1337,43 @@ A cursor's name SHALL mean one thing. Where several names denote "the last durab
 - **WHEN** a cursor moves backwards
 - **THEN** the move SHALL be attributable to an epoch realign, and any other backwards move SHALL be refused
 
+### Requirement: The input-silence sweep is off by default and reports as a warning
+
+The Controller's input-silence sweep SHALL be disabled by default, SHALL be named for the observation it makes rather than for a conclusion about severity, and SHALL report at warning level when enabled.
+
+The sweep observes one thing: an operative whose `last_persisted_seq` advanced at
+some point has received no Change for the whole window. That is silence on the
+input side. Whether it means a dead upstream, a source that reports hourly, or a
+quiet night is precisely what the sweep cannot determine, so it SHALL NOT report
+a conclusion its evidence does not support. The convergence judge already holds
+this rule for the same observation: a flat marker with no input-side advance is
+idle, and idle is healthy.
+
+The knob SHALL be `input_silence_timeout_ms`, defaulting to `0`, which the sweep
+already reads as "do not run". The telemetry event SHALL be
+`[:flezha, :state, :input_silence]`. Both are plain renames of the previous
+`catastrophic_dataflow_*` spellings, with no acceptance of the old names.
+
+#### Scenario: A quiet operative raises nothing by default
+
+- **GIVEN** a stream operative that produced output earlier and has received no input for an hour
+- **WHEN** the watchdog sweeps with `input_silence_timeout_ms` unset
+- **THEN** no event SHALL be emitted and no line SHALL be logged
+
+#### Scenario: An operator can turn it back on
+
+- **GIVEN** `input_silence_timeout_ms` set to a positive value
+- **WHEN** a stream operative that produced output earlier receives no input for longer than that value
+- **THEN** `[:flezha, :state, :input_silence]` SHALL be emitted once for that operative class, and one line SHALL be logged at warning level
+
+#### Scenario: The message states what was observed
+
+- **WHEN** the sweep reports an operative
+- **THEN** the logged line SHALL state that no input was received within the window and that output was produced earlier, and SHALL NOT assert that data flow has stopped
+
+#### Scenario: Resumed input clears the latch
+
+- **GIVEN** an operative the sweep has reported
+- **WHEN** a Change arrives for it and the sweep runs again
+- **THEN** the latch SHALL clear so a later silence is reported afresh
+

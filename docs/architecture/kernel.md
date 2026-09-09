@@ -794,13 +794,14 @@ detection off:
 | Sweep | Fires when | Action |
 | --- | --- | --- |
 | Output staleness | fed, but the sequence has not advanced for 60 s | `[:flezha, :state, :output_stall]` and nothing else — the convergence loop ticks on it and applies the resync→rebind ladder. The sweep is a sensor; it invokes no remedy |
-| Catastrophic dataflow | produced output before, but has received **nothing** for 60 s | `[:flezha, :state, :catastrophic_dataflow_stop]` + a critical log — a dead feed |
+| Input silence | produced output before, but has received **nothing** for the window | `[:flezha, :state, :input_silence]` + a warning log. Off by default (`input_silence_timeout_ms` is `0`): silence on the input side is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly |
 | Compaction trigger | the WAL is past its size or age floor | `CompactEntity` |
 | Compaction timeout | a requested snapshot has not arrived in 30 s | resync |
 
-The catastrophic sweep is skipped for a checkpoint-ack operative, whose silence between
+The input-silence sweep is skipped for a checkpoint-ack operative, whose silence between
 checkpoints **is** its steady state, and for a workflow operative, which legitimately goes quiet
-between iterations.
+between iterations. The convergence judge holds the same rule for the same observation: a flat
+marker with no input-side advance is idle, and idle is healthy.
 
 ### Stall localization
 

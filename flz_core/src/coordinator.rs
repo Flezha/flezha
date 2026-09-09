@@ -457,7 +457,7 @@ fn write_workflow_output(
     operative_id: &str,
     payload: &[u8],
 ) {
-    let frame = payloader::build_from_binary(operative_id, payload, HashMap::new());
+    let frame = payloader::build_without_metadata(operative_id, payload);
     let streams = io_streams.read().unwrap();
     // Held framed, not as a record: the ring re-frames a record with empty
     // metadata, which would strip a stamped output of its identity.
@@ -479,7 +479,7 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
         reference_id,
         command: Some(command),
     };
-    payloader::build_from_binary("control_command", &request.encode_to_vec(), HashMap::new())
+    payloader::build_without_metadata("control_command", &request.encode_to_vec())
 }
 
 /// One heartbeat tick; a heartbeat that reached nothing feeds the flood
@@ -494,11 +494,24 @@ fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
 /// Reaching none means the controller will flag `output_stall`, so the
 /// caller drives its own recovery rather than wait for a `ConnectSocket`.
 fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool {
-    let frame = payloader::build_from_binary(
+    // A refused frame is a tick that reached nothing, which is the answer this
+    // function already has for that; a heartbeat is owed no delivery, so the
+    // tick is skipped rather than held.
+    let frame = match payloader::build_from_binary(
         liveness::DATA_HEARTBEAT_PAYLOAD_ID,
         &[],
         heartbeat_metadata(),
-    );
+    ) {
+        Ok(frame) => frame,
+        Err(error) => {
+            tracing::warn!(
+                target: "flezha::transport",
+                %error,
+                "self-report could not be framed; heartbeat tick skipped"
+            );
+            return false;
+        }
+    };
     let streams = io_streams.read().unwrap();
     let mut delivered = false;
     for stream in streams.values() {
@@ -776,7 +789,7 @@ mod workflow_output_tests {
         let _g = state_sink::test_guard();
         state_sink::reset_for_test();
 
-        let expected = payloader::build_from_binary(OPERATIVE, BODY, HashMap::new());
+        let expected = payloader::build_without_metadata(OPERATIVE, BODY);
         write_workflow_output(&no_streams(), OPERATIVE, BODY);
 
         let (near, mut far) = UnixStream::pair().expect("a socket pair");

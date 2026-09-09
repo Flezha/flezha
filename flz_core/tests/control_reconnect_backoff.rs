@@ -73,7 +73,8 @@ impl Controller {
                             "control_command",
                             b"\x08\x01",
                             std::collections::HashMap::new(),
-                        );
+                        )
+                        .unwrap();
                         let _ = conn.write_all(&ack);
                     }
                     let _ = noted.send(());

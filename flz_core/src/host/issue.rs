@@ -20,6 +20,16 @@ pub enum TopologyIssue {
     )]
     NodeIdentityCollision { name: String },
 
+    #[error(
+        "channel `{channel}` has a {len}-byte name; the name rides every frame this channel \
+         produces, under a one-byte length prefix, so it may be at most {max} bytes"
+    )]
+    ChannelNameTooLong {
+        channel: String,
+        len: usize,
+        max: usize,
+    },
+
     #[error("branch(...) requires at least two arms; {arms} given")]
     BranchTooFewArms { arms: usize },
 
@@ -218,6 +228,7 @@ impl TopologyIssue {
         match self {
             Self::DuplicateChannel(..) => "DuplicateChannel",
             Self::NodeIdentityCollision { .. } => "NodeIdentityCollision",
+            Self::ChannelNameTooLong { .. } => "ChannelNameTooLong",
             Self::BranchTooFewArms { .. } => "BranchTooFewArms",
             Self::Cycle { .. } => "Cycle",
             Self::UnreachableProcedure { .. } => "UnreachableProcedure",

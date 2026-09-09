@@ -55,7 +55,7 @@ invisible without a hand-written bridge line.
 Every detector's event reaches a sink the same way. The convergence loop's detector table declares
 the `[:flezha, …]` events each detector executes, and the telemetry bridge derives half its mapping
 from that declaration — so the control-plane watchdog's `[:flezha, :runner, :liveness_timeout]`,
-the Watchdog's `[:flezha, :state, :catastrophic_dataflow_stop]`, the bounded call's
+the Watchdog's `[:flezha, :state, :input_silence]`, the bounded call's
 `[:flezha, :convergence, :safe_call]`, the heal's four `runner :restarted|:reconnected|
 :reconnected_reassigned|:evicted` events and the loop's own `[:flezha, :convergence, :heal]` are
 all on the bus. `[:flezha, :health, :verdict]` joins them: it fires on every verdict-state

@@ -147,7 +147,7 @@ defmodule Flezha.Config.DurationRows do
     {:agent_fsync_interval_ms, :ms, 5, key: true},
     {:agent_fsync_max_interval_ms, :ms, 1_000, []},
     {:agent_fsync_min_interval_ms, :ms, 1, []},
-    {:catastrophic_dataflow_timeout_ms, :ms, 60_000, key: true},
+    {:input_silence_timeout_ms, :ms, 0, key: true},
     {:compact_after_age_ms, :ms, 300_000,
      key: true, env: "FLEZHA_COMPACT_AFTER_AGE_MS", env_default: [test: 0]},
     {:compaction_timeout_ms, :ms, 30_000, key: true},

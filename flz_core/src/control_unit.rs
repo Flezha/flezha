@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -401,11 +400,7 @@ fn build_keepalive_ping() -> Vec<u8> {
     let ping = Ping {
         nonce: format!("ka-{}", nonce_suffix()),
     };
-    payloader::build_from_binary(
-        liveness::CONTROL_PING_PAYLOAD_ID,
-        &ping.encode_to_vec(),
-        HashMap::new(),
-    )
+    payloader::build_without_metadata(liveness::CONTROL_PING_PAYLOAD_ID, &ping.encode_to_vec())
 }
 
 pub fn send_keepalive_ping(stream: &FlezhaStream) -> io::Result<()> {
@@ -503,7 +498,7 @@ fn send_init_msg(
 
     let control_message = serde_json::to_string(&control_init_message).unwrap();
     let payload =
-        payloader::build_from_str("connect_control_channel", &control_message, HashMap::new());
+        payloader::build_without_metadata("connect_control_channel", control_message.as_bytes());
 
     // A failed init write means the peer vanished between connect and write
     // (e.g. a controller that died mid-handshake); the class refuses it to the
@@ -641,7 +636,7 @@ mod tests {
             let mut ctrl_end = ctrl_end;
             let mut buf = [0u8; 1024];
             let _ = ctrl_end.read(&mut buf);
-            let ack = payloader::build_from_binary("control_command", b"\x08\x01", HashMap::new());
+            let ack = payloader::build_without_metadata("control_command", b"\x08\x01");
             let _ = ctrl_end.write_all(&ack);
             let _ = held.recv();
         });

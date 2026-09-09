@@ -47,7 +47,7 @@ defmodule Flezha.State.Watchdog do
   # evaluated at compile time and would make this a compile-time dependency on
   # a module a sensor only calls.
   defstruct compactions: %{},
-            catastrophic: %{},
+            input_silence: MapSet.new(),
             rpo_breached: MapSet.new(),
             disk_breaches: MapSet.new(),
             backoff: nil,
@@ -182,7 +182,7 @@ defmodule Flezha.State.Watchdog do
     swept =
       state
       |> sweep_output_staleness(now)
-      |> sweep_catastrophic_dataflow(now)
+      |> sweep_input_silence(now)
       |> sweep_compaction_triggers(now)
       |> sweep_compactions(now)
       |> sweep_rpo()
@@ -258,7 +258,7 @@ defmodule Flezha.State.Watchdog do
   # A remote-durability reference whose local progress has been unshipped past
   # the RPO target. Latched per reference so a sustained backend outage alarms
   # once per breach rather than every sweep, and cleared when it catches up —
-  # the same shape as the catastrophic-dataflow latch.
+  # the same shape as the input-silence latch.
   defp sweep_rpo(state) do
     breaches = DurabilityTier.breaches()
     breached = MapSet.new(breaches, & &1.ref)
@@ -334,11 +334,18 @@ defmodule Flezha.State.Watchdog do
     :ok
   end
 
-  # Detects a operative that produced output but received zero Change frames for the
-  # full timeout — the condition the output-staleness sweep cannot see (no Changes
-  # arriving means the entity looks idle, not stalled). Latched per operative_class.
-  defp sweep_catastrophic_dataflow(state, now) do
-    timeout = Durations.get(:catastrophic_dataflow_timeout_ms)
+  # Detects an operative that produced output but received zero Change frames for
+  # the full timeout: the condition the output-staleness sweep cannot see (no
+  # Changes arriving means the entity looks idle, not stalled). Latched per
+  # operative_class.
+  #
+  # Silence is all this establishes. A dead upstream, a source that reports
+  # hourly and a quiet night are indistinguishable here, which is why the
+  # window defaults to 0 and the sweep does not run unless an operator asks
+  # for it. The convergence judge holds the same rule for the same observation:
+  # a flat marker with no input-side advance is idle, and idle is healthy.
+  defp sweep_input_silence(state, now) do
+    timeout = Durations.get(:input_silence_timeout_ms)
 
     if timeout <= 0 do
       state
@@ -346,23 +353,23 @@ defmodule Flezha.State.Watchdog do
       entity_statuses()
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
-        # The dataflow-stop watchdog is stream-only: a durable :workflow
-        # operative legitimately goes quiet between stages/iterations — and so
-        # does a checkpoint-ack one between checkpoints, where making nothing
-        # durable for a whole interval is the steady state, not a dead feed.
+        # The sweep is stream-only: a durable :workflow operative legitimately
+        # goes quiet between stages/iterations, and so does a checkpoint-ack
+        # one between checkpoints, where making nothing durable for a whole
+        # interval is the steady state, not a dead feed.
         if ClassRegistry.capable?(rc, :output_stall_watch?) and
              not ClassRegistry.checkpoint_ack?(rc) do
-          any_dead? = Enum.any?(list, fn {_pid, s} -> input_dead?(s, now, timeout) end)
-          latched? = Map.has_key?(acc.catastrophic, rc)
+          any_silent? = Enum.any?(list, fn {_pid, s} -> input_silent?(s, now, timeout) end)
+          latched? = MapSet.member?(acc.input_silence, rc)
 
           cond do
-            any_dead? and not latched? ->
-              flag_catastrophic(rc, list, now, timeout)
-              %{acc | catastrophic: Map.put(acc.catastrophic, rc, now)}
+            any_silent? and not latched? ->
+              flag_input_silence(rc, timeout)
+              %{acc | input_silence: MapSet.put(acc.input_silence, rc)}
 
-            not any_dead? and latched? ->
-              Logger.info("[watchdog] catastrophic data-flow recovered operative=#{inspect(rc)}")
-              %{acc | catastrophic: Map.delete(acc.catastrophic, rc)}
+            not any_silent? and latched? ->
+              Logger.info("[watchdog] input resumed for operative=#{inspect(rc)}")
+              %{acc | input_silence: MapSet.delete(acc.input_silence, rc)}
 
             true ->
               acc
@@ -386,20 +393,21 @@ defmodule Flezha.State.Watchdog do
   end
 
   # Produced output before (seq advanced past 0) but no Change frame has arrived
-  # for the whole timeout window => the upstream feed into this operative is dead.
-  defp input_dead?(status, now, timeout) do
+  # for the whole timeout window.
+  defp input_silent?(status, now, timeout) do
     status.last_persisted_seq > 0 and now - status.last_change_seen_at >= timeout
   end
 
-  defp flag_catastrophic(rc, _list, _now, timeout) do
+  defp flag_input_silence(rc, timeout) do
     :telemetry.execute(
-      [:flezha, :state, :catastrophic_dataflow_stop],
+      [:flezha, :state, :input_silence],
       %{timeout_ms: timeout},
       %{operative_class: rc, operative_instance: rc}
     )
 
-    Logger.critical(
-      "[watchdog] data-flow stop operative=#{inspect(rc)}: no input Changes for >= #{timeout}ms despite prior output"
+    Logger.warning(
+      "[watchdog] input silent for operative=#{inspect(rc)}: no Changes received for >= " <>
+        "#{timeout}ms, having produced output earlier"
     )
   end
 

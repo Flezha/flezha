@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Fixed — a frame is refused rather than written with a truncated length
+
+The frame encoder wrote each metadata key's and value's length into one byte and
+the table's into two, all as unguarded casts. A value over 255 bytes wrote a
+wrong length, the reader took that many bytes and resumed at the wrong offset,
+and every remaining pair in the frame was misread. Nothing detected it: the
+frame was small and well formed by every check the decode side applies, so it
+parsed cleanly and carried pairs the sender never wrote.
+
+The encoder now refuses a key, a value or a table longer than the field that has
+to carry it, naming the offending key and the length. One encoder serves both
+directions, so frames the runner builds and frames the controller builds are
+covered by the same check. A heartbeat that cannot be framed skips its tick; a
+data emit that cannot be framed fails as non-retryable rather than shipping
+something corrupt.
+
+A channel name rides every frame its channel produces, so an over-long one is
+now also refused at registration, where the author can still see the
+declaration. `ChannelNameTooLong` joins the reference refusal vocabulary and its
+fixture row, so every SDK renders it the same way.
+
+### Changed — the dead-data-flow watchdog is now an input-silence sweep, off by default
+
+The Watchdog reported an operative as a catastrophic data-flow stop when it had
+produced output at some point and then received nothing for 60 seconds. That is
+idleness, not a fault: a stream fed hourly, nightly, or by user activity is
+silent for far longer in normal operation, and the detector cannot tell that
+from a dead upstream. It logged at `critical`, the level that should mean the
+controller itself is in trouble.
+
+The sweep is renamed for what it measures, reports at `warning`, and its message
+now states the observation instead of a conclusion. It is off by default, and an
+operator who wants it back sets a positive window. **Breaking** for anyone
+reading the knob, the event or the metric derived from it:
+
+| Was | Is |
+| --- | --- |
+| `catastrophic_dataflow_timeout_ms`, default `60_000` | `input_silence_timeout_ms`, default `0` (off) |
+| `[:flezha, :state, :catastrophic_dataflow_stop]` | `[:flezha, :state, :input_silence]` |
+
+The old names are not accepted.
+
 ### Fixed — a `flz` failure reaches the operator instead of the Controller's log
 
 Every refusal and every error a `flz` verb rendered was written to the

@@ -306,16 +306,21 @@ pub fn end_replay_slice(instance: &StreamInstance) {
 
 /// One plugin output onto the stream that carried its input. A write the
 /// stream refuses is held for the reconnect, never dropped.
+///
+/// A metadata field too long for its length prefix is refused instead: the
+/// error names the field, and no bytes reach the wire. Retrying cannot help,
+/// so the emit fails rather than being held.
 pub fn send_plugin_frame(
     stream: &Arc<FlezhaStream>,
     instance_id: &str,
     bytes: &[u8],
     metadata: &HashMap<String, String>,
-) {
+) -> std::io::Result<()> {
+    let frame = payloader::build_from_binary(instance_id, bytes, metadata.clone())?;
     // The wire's other writer holds a frame it could not send and drives the
     // reconnect that replays it; an output is not worth less than a record.
-    let frame = payloader::build_from_binary(instance_id, bytes, metadata.clone());
     crate::state_sink::write(crate::state_sink::Class::Output, Some(stream), frame);
+    Ok(())
 }
 
 /// The stream readers' handle onto the live instance registry.
@@ -577,7 +582,7 @@ mod tests {
         let _guard = state_sink::test_guard();
         state_sink::reset_for_test();
 
-        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &sink_metadata());
+        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &sink_metadata()).unwrap();
 
         assert_eq!(
             state_sink::ring_len_for_test(),
@@ -593,8 +598,8 @@ mod tests {
         state_sink::reset_for_test();
 
         let metadata = sink_metadata();
-        let expected = payloader::build_from_binary(OPERATIVE, BODY, metadata.clone());
-        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &metadata);
+        let expected = payloader::build_from_binary(OPERATIVE, BODY, metadata.clone()).unwrap();
+        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &metadata).unwrap();
 
         // The reconnect: a fresh secondary, then the sink install that replays
         // the ring onto it.

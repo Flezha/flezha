@@ -240,7 +240,8 @@ fn a_command_reaches_the_wire<W: Wire>(wire: &mut W) {
         "p-1",
         b"hello",
         std::collections::HashMap::new(),
-    );
+    )
+    .unwrap();
     let change = offer_and_flush(wire, &frame, 11);
     assert_eq!(change, None, "one small frame crosses no watermark");
     assert!(
@@ -411,7 +412,8 @@ fn bytes_the_peer_sent_are_framed<W: Wire>(wire: &mut W) {
         "p-2",
         b"from the peer",
         std::collections::HashMap::new(),
-    );
+    )
+    .unwrap();
     wire.peer_writes(&frame);
 
     let mut buf = ReadBuf::new();

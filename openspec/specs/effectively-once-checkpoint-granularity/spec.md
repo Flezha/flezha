@@ -170,11 +170,11 @@ The controller's liveness detectors SHALL NOT report a checkpoint-mode operative
 as a stalled or dead data-flow merely because it made nothing durable for an
 interval. Silence between checkpoints is the mode's steady state.
 
-#### Scenario: A quiet interval does not trip the dataflow-stop watchdog
+#### Scenario: A quiet interval does not trip the input-silence sweep
 
 - **WHEN** a checkpoint-mode operative that has produced output before makes
-  nothing durable for longer than the dataflow-stop timeout
-- **THEN** no `catastrophic_dataflow_stop` is reported for it
+  nothing durable for longer than the input-silence timeout
+- **THEN** no `input_silence` is reported for it
 
 ### Requirement: The checkpoint opt-in is one seam every SDK exposes, and each option turns the granularity on itself
 

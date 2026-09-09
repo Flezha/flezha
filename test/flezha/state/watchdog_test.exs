@@ -14,7 +14,7 @@ defmodule Flezha.State.WatchdogTest do
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
+  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 3]
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Operative.ClassRegistry
@@ -53,47 +53,29 @@ defmodule Flezha.State.WatchdogTest do
       end)
     )
 
-    out_id = {__MODULE__, :output_stall, System.unique_integer([:positive])}
-    comp_id = {__MODULE__, :compaction_timeout, System.unique_integer([:positive])}
-    trig_id = {__MODULE__, :compaction_trigger, System.unique_integer([:positive])}
-    give_id = {__MODULE__, :compaction_gave_up, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      out_id,
-      [:flezha, :state, :output_stall],
-      fn _e, meas, meta, _ -> send(parent, {:output_stall, meas, meta}) end,
-      nil
-    )
-
-    :telemetry.attach(
-      comp_id,
-      [:flezha, :state, :compaction_timeout],
-      fn _e, meas, meta, _ -> send(parent, {:compaction_timeout, meas, meta}) end,
-      nil
-    )
-
-    :telemetry.attach(
-      trig_id,
-      [:flezha, :state, :compaction_trigger],
-      fn _e, meas, meta, _ -> send(parent, {:compaction_trigger, meas, meta}) end,
-      nil
-    )
-
-    :telemetry.attach(
-      give_id,
-      [:flezha, :state, :compaction_gave_up],
-      fn _e, meas, meta, _ -> send(parent, {:compaction_gave_up, meas, meta}) end,
-      nil
-    )
-
-    on_exit(fn ->
-      :telemetry.detach(out_id)
-      :telemetry.detach(comp_id)
-      :telemetry.detach(trig_id)
-      :telemetry.detach(give_id)
-    end)
+    for event <- [:output_stall, :compaction_timeout, :compaction_trigger, :compaction_gave_up] do
+      forward_state_event(event)
+    end
 
     %{header: TestHelpers.stub_header()}
+  end
+
+  # Forward `[:flezha, :state, <event>]` to the running test as
+  # `{event, measurements, metadata}`, detached when the test ends. Setup runs in
+  # the test's own process, so one helper serves a setup watcher and a per-test
+  # one alike.
+  defp forward_state_event(event) do
+    parent = self()
+    id = {__MODULE__, event, System.unique_integer([:positive])}
+
+    :telemetry.attach(
+      id,
+      [:flezha, :state, event],
+      fn _e, meas, meta, _ -> send(parent, {event, meas, meta}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
   end
 
   defp live_writer(suffix, header) do
@@ -323,24 +305,18 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
-  test "a workflow class is not flagged for output stall or catastrophic dataflow", %{
+  test "a workflow class is not flagged for output stall or input silence", %{
     header: header
   } do
+    # The sweep is off at its default, so the exemption is only observable
+    # with the window armed.
+    on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
+
     class = "WorkflowWatch" <> uniq()
     ClassRegistry.put(class, :workflow)
     on_exit(fn -> ClassRegistry.delete(class) end)
 
-    parent = self()
-    cat_id = {__MODULE__, :catastrophic, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      cat_id,
-      [:flezha, :state, :catastrophic_dataflow_stop],
-      fn _e, meas, meta, _ -> send(parent, {:catastrophic, meas, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(cat_id) end)
+    forward_state_event(:input_silence)
 
     pid = {class, "proc", "seg" <> uniq()}
     {:ok, _} = Supervisor.find_or_start(pid)
@@ -361,14 +337,16 @@ defmodule Flezha.State.WatchdogTest do
     # sibling test's resync (a compaction timeout on its own WAL, say).
     refute_received {:output_stall, _, %{operative_class: ^class}}
     refute_received {:resync_called, ^pid, _}
-    refute_received {:catastrophic, _, %{operative_class: ^class}}
+    refute_received {:input_silence, _, %{operative_class: ^class}}
   end
 
-  test "a checkpoint-ack class's quiet interval is not a dead data-flow", %{header: header} do
-    # The dataflow-stop detector reads "produced output before, silent since"
-    # as a dead feed. For a checkpoint-ack class that silence is the steady
-    # state: it makes nothing durable until the interval closes.
-    on_exit(TestHelpers.override_env(:catastrophic_dataflow_timeout_ms, @stall_ms))
+  test "a checkpoint-ack class's quiet interval does not trip the input-silence sweep", %{
+    header: header
+  } do
+    # The sweep reads "produced output before, silent since". For a
+    # checkpoint-ack class that silence is the steady state: it makes nothing
+    # durable until the interval closes.
+    on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
 
     per_input = "PerInputWatch" <> uniq()
     checkpoint = "CheckpointWatch" <> uniq()
@@ -379,17 +357,7 @@ defmodule Flezha.State.WatchdogTest do
       ClassRegistry.delete(checkpoint)
     end)
 
-    parent = self()
-    cat_id = {__MODULE__, :cp_catastrophic, System.unique_integer([:positive])}
-
-    :telemetry.attach(
-      cat_id,
-      [:flezha, :state, :catastrophic_dataflow_stop],
-      fn _e, _meas, meta, _ -> send(parent, {:catastrophic, meta.operative_class}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(cat_id) end)
+    forward_state_event(:input_silence)
 
     for class <- [per_input, checkpoint] do
       pid = {class, "proc", "seg" <> uniq()}
@@ -401,31 +369,86 @@ defmodule Flezha.State.WatchdogTest do
       TestHelpers.age_writer(w, @stall_ms * 2)
     end
 
+    # The sweep reports at warning and the suite's primary level is error, which
+    # filters the event before any capture handler sees it.
+    on_exit(override_log_level(:warning))
+
     log =
       ExUnit.CaptureLog.capture_log(fn ->
         :ok = Watchdog.sweep_now()
 
         # The control proves the detector is armed and this signature trips it...
-        assert_receive {:catastrophic, ^per_input}, 1_000
+        assert_receive {:input_silence, _, %{operative_class: ^per_input}}, 1_000
         # ...and that the checkpoint-ack class is exempt, not merely unobserved.
-        refute_received {:catastrophic, ^checkpoint}
+        refute_received {:input_silence, _, %{operative_class: ^checkpoint}}
       end)
 
     # The positive control alarms by name; the exempt class never appears.
-    assert log =~ ~s(data-flow stop operative="#{per_input}")
+    assert log =~ ~s(input silent for operative="#{per_input}")
+    # The line states what was seen, and claims nothing about a dead feed.
+    assert log =~ "having produced output earlier"
+    refute log =~ "data-flow stop"
     refute log =~ checkpoint
   end
 
-  test "a remote-durability RPO breach alarms once and clears when it catches up" do
-    rpo_id = {__MODULE__, :rpo_exceeded, System.unique_integer([:positive])}
-    parent = self()
+  test "the sweep does nothing at its default window", %{header: header} do
+    class = "SilentDefault" <> uniq()
+    on_exit(fn -> ClassRegistry.delete(class) end)
 
-    :telemetry.attach(
-      rpo_id,
-      [:flezha, :state, :rpo_exceeded],
-      fn _e, meas, meta, _ -> send(parent, {:rpo_exceeded, meas, meta}) end,
-      nil
-    )
+    forward_state_event(:input_silence)
+
+    pid = {class, "proc", "seg" <> uniq()}
+    {:ok, _} = Supervisor.find_or_start(pid)
+    {:ok, w} = Supervisor.lookup(pid)
+    :ok = WalWriter.append(w, 0, header, "z")
+    :ok = WalWriter.append(w, 1, header, "a")
+    # An hour of silence with output behind it: the old window's firing shape,
+    # ten times over.
+    TestHelpers.age_writer(w, 3_600_000)
+
+    # Lowered so the refute is a real one: at the suite's primary level the line
+    # could not appear whatever the sweep did.
+    on_exit(override_log_level(:warning))
+
+    log = ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end)
+
+    refute_received {:input_silence, _, %{operative_class: ^class}}
+    refute log =~ "input silent"
+  end
+
+  test "the latch reports once per episode and clears when input resumes", %{header: header} do
+    on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
+
+    class = "SilenceLatch" <> uniq()
+    on_exit(fn -> ClassRegistry.delete(class) end)
+
+    forward_state_event(:input_silence)
+
+    pid = {class, "proc", "seg" <> uniq()}
+    {:ok, _} = Supervisor.find_or_start(pid)
+    {:ok, w} = Supervisor.lookup(pid)
+    :ok = WalWriter.append(w, 0, header, "z")
+    :ok = WalWriter.append(w, 1, header, "a")
+    TestHelpers.age_writer(w, @stall_ms * 2)
+
+    :ok = Watchdog.sweep_now()
+    assert_receive {:input_silence, _, %{operative_class: ^class}}, 1_000
+
+    # Still silent: the latch holds, so the episode reports once.
+    :ok = Watchdog.sweep_now()
+    refute_received {:input_silence, _, %{operative_class: ^class}}
+
+    # Input resumes, and a later silence is reported afresh.
+    :ok = WalWriter.append(w, 2, header, "b")
+    :ok = Watchdog.sweep_now()
+
+    TestHelpers.age_writer(w, @stall_ms * 2)
+    :ok = Watchdog.sweep_now()
+    assert_receive {:input_silence, _, %{operative_class: ^class}}, 1_000
+  end
+
+  test "a remote-durability RPO breach alarms once and clears when it catches up" do
+    forward_state_event(:rpo_exceeded)
 
     DurabilityBackendStub.install()
 
@@ -435,10 +458,7 @@ defmodule Flezha.State.WatchdogTest do
       Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
     )
 
-    on_exit(fn ->
-      :telemetry.detach(rpo_id)
-      DurabilityBackendStub.uninstall()
-    end)
+    on_exit(&DurabilityBackendStub.uninstall/0)
 
     {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
 
