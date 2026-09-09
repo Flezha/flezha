@@ -56,6 +56,7 @@ pub struct StreamHandle {               // one per UDS connection / QUIC stream 
     cmd_tx: Sender<ServerCommand>,
     waker: StreamWaker,                 // Mio(Arc<Waker>) for server streams, Channel for client
     owner: Arc<Mutex<LocalPid>>,        // current owning Elixir process
+    peer_cert: Option<Vec<u8>>,         // the handshake's DER leaf; None for UDS and client streams
 }
 pub struct QuicClientConn { client: QuicClient }
 ```
@@ -63,6 +64,13 @@ pub struct QuicClientConn { client: QuicClient }
 Dropping a `TransportServer` sends `Shutdown` and joins the driver thread; dropping a
 `StreamHandle` sends `CloseStream`. `StreamWaker` exists so one handle type serves the mio
 drivers and the channel-driven client writer (`wake` is a no-op for `Channel`).
+
+`peer_cert` is read once per accept pass from `Connection::crypto_session().peer_identity()`
+and is the same for every stream a connection carries; `peer_certificate/1` hands it to Elixir,
+where the connect path reads the namespace the certificate names. rustls has already verified
+the chain against the trust anchor by the time a stream can be accepted, so nothing above
+re-verifies it. A UDS peer completed no handshake and a client stream's peer is the controller,
+so both carry `None`.
 
 `ServerCommand` is the whole NIF-to-driver vocabulary: `SendData`, `SendFrame`, `SetActive`,
 `SetPassive`, `CloseStream`, `UpdateOwner`, `Shutdown`.
@@ -141,7 +149,8 @@ once empty the interest reverts to `READABLE`. A read of zero bytes is the peer'
 
 The listening socket's parent directory is created 0700 and the socket itself 0600, because
 directory traversal is the UDS authentication boundary: a local same-uid peer IS the node
-owner.
+owner. One socket serves every namespace, so reaching it entitles a peer to no namespace by
+itself — that comes from the credential the connect frame presents.
 
 ## The QUIC wire (`driver/quic.rs`)
 

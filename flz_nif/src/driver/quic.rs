@@ -319,6 +319,14 @@ impl Quic {
                     qstream_id,
                     type_byte_state,
                 },
+                // Only the control stream is asked what the handshake proved:
+                // reading the identity clones the whole verified chain, and the
+                // connect path is the one reader.
+                if is_control {
+                    peer_leaf_der(&conn_state.connection)
+                } else {
+                    None
+                },
             );
             streams.insert(nif_id, state);
             self.nif_stream_map.insert(nif_id, (ch, qstream_id));
@@ -474,6 +482,22 @@ impl Transport for Quic {
             );
         }
     }
+}
+
+/// The leaf certificate the peer presented, DER-encoded, or `None` when it
+/// presented none.
+///
+/// `peer_identity` answers the whole verified chain and only after the
+/// handshake completes; the leaf is the one that carries the peer's own SPIFFE
+/// SAN, so it is the one the connect path reads its namespace from. rustls has
+/// already verified the chain against the configured trust anchor by the time a
+/// stream can be accepted, so nothing here re-verifies it.
+fn peer_leaf_der(connection: &quinn_proto::Connection) -> Option<Vec<u8>> {
+    let identity = connection.crypto_session().peer_identity()?;
+    let chain = identity
+        .downcast::<Vec<rustls::pki_types::CertificateDer<'static>>>()
+        .ok()?;
+    chain.first().map(|leaf| leaf.as_ref().to_vec())
 }
 
 /// Everything readable on a stream right now, into the loop's read buffer, and

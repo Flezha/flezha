@@ -161,6 +161,7 @@ characters of that hash.
 flz token issue bob team-orders operator --ttl 604800   # --ttl defaults to 86400
 # → id:    4f2a9b1c2e7d
 # → token (shown once, store it now): flzt_...
+flz token issue archivist team-orders viewer --ttl never # no expiry
 flz token list                                           # admin@_system sees every namespace
 flz token revoke 4f2a9b1c                                # ≥ 8 chars of the id; immediate
 ```
@@ -182,20 +183,73 @@ on and answers with its defaults.
 
 ### When a token expires
 
-Nothing stops except the CLI. A runner's identity is its connection handshake,
-not a token, so operatives and runner connections carry on; an expired operator
-credential means gated verbs refuse, and that is all.
+Nothing stops except the CLI. A runner's namespace is proven by its own
+credential and that credential never expires (see [Runner credentials](#runner-credentials)),
+so operatives and runner connections carry on; an expired operator credential
+means gated verbs refuse, and that is all.
 
-There is no automatic renewal. Issue a replacement before the current one
-lapses:
+There is no automatic renewal, but a lapse is announced before it happens: an
+entry that crosses `:token_expiry_warning_ms` (one day by default) of its expiry
+emits `:token_expiring` on `:platform_authz`, naming the principal, the
+namespace and the expiry. Alert on it. Issue a replacement before the current
+one lapses:
 
 ```sh
 flz token issue admin _system admin --ttl 2592000
 ```
 
 If your only admin token does lapse, `flz token issue` is itself gated. Recover
-with `flz auth rebootstrap` under [Recovery](#recovery), which needs a stopped
-Controller.
+with `flz auth rebootstrap` under [Recovery](#recovery). It does **not** need a
+stopped Controller.
+
+### Runner credentials
+
+A runner does not name the namespace it works in — it proves it. What counts as
+proof depends on how it connected:
+
+| Connection | What proves the namespace |
+| --- | --- |
+| QUIC, client certificate carrying a SPIFFE `/ns/<name>` entity | the certificate |
+| QUIC, certificate with no `/ns/` entity (the pair `flz` generates) | the presented credential |
+| UDS | the presented credential |
+| in-node (the Elixir SDK inside the Controller) | co-residence in the Controller's BEAM |
+
+The connect frame still carries a namespace field, because a peer entitled to
+several has to say which it wants. It is now checked: a frame naming a namespace
+the credential does not entitle is refused, the refusal names both namespaces,
+and no control or data frame is processed. `_system` is refused on every
+transport, so no runner identity can reach the cross-namespace admin gate.
+
+A runner credential is a `runner`-role entry of the same token registry:
+
+```sh
+flz token issue runner@team-orders team-orders runner --ttl never
+# → token (shown once, store it now): flzt_...
+```
+
+Hand it to the runner as `FLEZHA_NAMESPACE_SECRET`. Three rules the registry
+enforces on it:
+
+- **It cannot expire.** `--ttl` is refused for a `runner` entry. The holder is an
+  unattended process, and a credential that lapses fails it at a restart — a
+  deploy or a recovery, which is exactly when nobody wants a new failure.
+- **It cannot be `_system`.** Refused at issue as well as at connect.
+- **Revoking it closes the sessions it authenticated.** Nothing else would: a
+  credential with no expiry leaves no deadline that evicts a holder.
+
+A namespace may hold as many live credentials as you issue, so a rotation is
+rolling and disconnects nothing:
+
+```sh
+flz token issue runner@team-orders team-orders runner --ttl never   # 1. the new one
+# 2. roll the fleet onto it, one runner at a time
+flz token list                                                      # 3. find the old id
+flz token revoke <old-id>                                           # 4. retire it
+```
+
+Step 4 closes any session still on the old credential, which is why step 2 comes
+first. A QUIC deployment whose certificates carry `/ns/` entities needs no
+credential at all; its expiry is the PKI's to manage.
 
 ## Namespaces and quotas
 
@@ -429,8 +483,9 @@ Precedence is env var > `config :flezha, :authn_authz` > default.
 | `:enabled` | `FLEZHA_AUTHZ_ENABLED` | `config_env() == :prod` | `1/true/yes/on` enables; any other value is the explicit opt-out, warned on every boot |
 | `:auth_dir` | `FLEZHA_AUTHZ_DIR` | `app_data/auth` | store directory |
 | `:bootstrap_token_path` | `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` | `<auth_dir>/bootstrap.token` | one-time token file |
-| `:token_ttl_default_seconds` | — | `86_400` | TTL of the bootstrap-minted admin token (`flz token issue` has its own `--ttl`, default 86400) |
-| `:sdk_token_ttl_seconds` | — | `2_592_000` | reserved; nothing consumes it yet |
+| `:token_ttl_default_seconds` | — | `86_400` | TTL of the bootstrap-minted admin token (`flz token issue` has its own `--ttl`, default 86400, and takes `never`) |
+| `:token_expiry_warning_ms` | `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | `86_400_000` | how far ahead of its expiry an entry emits `:token_expiring` |
+| `:token_expiry_check_interval_ms` | — | `300_000` | how often the registry looks for one |
 | `:namespaces` | — | `%{}` | per-namespace quota overrides, e.g. `%{"team-orders" => %{max_operatives: 50}}` |
 | `:application_managed` | — | `true` | tests set `false` to run isolated stores |
 
@@ -441,7 +496,7 @@ app_data/auth/               # mode 0700; DETS files are 0600
 ├── state.dets               # durable enabled (claimed) flag
 ├── roles.dets               # principal → {namespace, role, bound_at, bound_by}
 ├── namespaces.dets          # name → {quotas, created_at, created_by}
-├── tokens.dets              # SHA-256-hashed token registry
+├── tokens.dets              # SHA-256-hashed token registry, runner credentials included
 ├── quota_counters.dets      # per-namespace counters
 ├── bootstrap.token          # one-time, 0600, unlinked on claim
 └── REBOOTSTRAP              # recovery marker, consumed on the next boot
@@ -460,22 +515,40 @@ and a fresh table is created. The cost depends on the file:
 
 | File | Consequence | Recovery |
 | --- | --- | --- |
-| `tokens.dets` | every token, including the admin's, is invalid | `flz auth rebootstrap`, then re-issue |
+| `tokens.dets` | every token is invalid, the admin's and every runner credential | `flz auth rebootstrap`, then re-issue both |
 | `roles.dets` | every binding is gone; the next boot writes a fresh `bootstrap.token` (tokens still carry their role and keep working) | claim it, then `flz role bind` the rest |
 | `namespaces.dets` | non-`_system` namespaces are forgotten; their `app_data/state/<ns>/` trees stay intact | `flz namespace create` again |
 | `quota_counters.dets` | counters restart; `disk_bytes` is rebuilt from disk at boot and `runners` from the live sessions | nothing |
 | `state.dets` | the claimed flag resets and the posture falls back to `:bootstrap_pending`; a plain claim is refused because the admin binding still exists | `flz auth rebootstrap` |
 
 **Lost `admin@_system` (emergency recovery / rebootstrap).** Needs filesystem
-access to `<auth_dir>` and a stopped Controller:
+access to `<auth_dir>` and nothing else. That access is already enough to stop
+the Controller, so a claim against a running one grants no authority it did not
+already carry — and recovery therefore costs no downtime.
+
+With the Controller **running**:
+
+```sh
+flz auth rebootstrap          # mints <auth_dir>/bootstrap.token (0600) and prints it
+flz auth bootstrap <token>    # unbinds every admin@_system, revokes every _system
+                              # admin token, binds the new admin, emits
+                              # :rebootstrap_recovery with mode: :online
+```
+
+With the Controller **stopped**, the marker path is unchanged:
 
 ```sh
 flz controller stop
-flz auth rebootstrap          # refuses while the Controller is up; writes <auth_dir>/REBOOTSTRAP
+flz auth rebootstrap          # writes <auth_dir>/REBOOTSTRAP
 # next boot: unbinds every admin@_system, revokes every _system admin token,
 # resets the claimed flag, emits :rebootstrap_recovery, writes a fresh bootstrap.token
 flz auth bootstrap <token>
 ```
+
+Either way the claim succeeds exactly once — it unlinks the file — and a claim
+with no file present is refused naming the path it expected. Operatives, runner
+connections and their credentials are untouched by a recovery: only
+`admin@_system` and its `_system` admin tokens are invalidated.
 
 `flz auth rebootstrap` resolves the directory from `FLEZHA_AUTHZ_DIR`, else
 `<app_data>/auth`.

@@ -411,7 +411,6 @@ defmodule Flezha.Config.Keys do
      derived: {:join, :authz_auth_dir, "bootstrap.token"}},
     {:authz_token_ttl_default_seconds, :int, 86_400,
      key: {:authn_authz, :token_ttl_default_seconds}},
-    {:authz_sdk_token_ttl_seconds, :int, 2_592_000, key: {:authn_authz, :sdk_token_ttl_seconds}},
     {:authz_namespaces, :term, %{}, key: {:authn_authz, :namespaces}},
 
     # ---- scheduled workflow spawns ------------------------------------------
@@ -495,6 +494,13 @@ defmodule Flezha.Config.Keys do
     {:reap_interval_ms, :ms, nil, runtimes: [:elixir_sdk, :rust], env: "FLEZHA_REAP_INTERVAL_MS"},
     {:runner_id_path, :path, "/var/lib/flezha-runner/id",
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RUNNER_ID_PATH"},
+    # The credential a runner proves its namespace with, presented on the
+    # control channel at connect. Read by every SDK, because the namespace a
+    # runner claims is checked against what its own credential entitles; a
+    # deployment whose peers authenticate with a SPIFFE certificate needs none.
+    {:namespace_secret, :string, nil,
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     env: "FLEZHA_NAMESPACE_SECRET"},
     {:token, :string, nil, runtimes: [:cli], env: "FLEZHA_TOKEN"},
     {:reconnect_ring_capacity, :positive_int, 1_024,
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_RING_CAPACITY"},

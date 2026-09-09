@@ -88,10 +88,6 @@ defmodule Flezha.Service.Cli.Context do
       {:error, _reason} ->
         base
     end
-  catch
-    # The token store is not running while auth is disabled; an unbound
-    # context is the correct degraded shape either way.
-    _, _ -> base
   end
 
   @doc """

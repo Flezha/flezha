@@ -43,4 +43,13 @@ defmodule Flezha.Transport.Stream do
   @spec stream_id(handle()) :: non_neg_integer()
   def stream_id(%Local.Stream{} = handle), do: Local.Stream.stream_id(handle)
   def stream_id(ref), do: Native.stream_id(ref)
+
+  @doc """
+  The DER certificate the peer presented on this stream's connection, or `nil`
+  when it presented none. Only a QUIC control stream can answer one: UDS has no
+  handshake and an in-node stream has no peer.
+  """
+  @spec peer_certificate(handle()) :: binary() | nil
+  def peer_certificate(%Local.Stream{}), do: nil
+  def peer_certificate(ref), do: Native.peer_certificate(ref)
 end

@@ -14,6 +14,7 @@ defmodule Flezha.Runner.FleetManager do
   unconditionally; what varies is only what becomes of its operatives.
   """
 
+  alias Flezha.AuthZ.RunnerProof
   alias Flezha.Cluster.Directory
   alias Flezha.Config
   alias Flezha.Config.Durations
@@ -48,18 +49,22 @@ defmodule Flezha.Runner.FleetManager do
 
   Called by Transport.Server when a new SDK connects.
   `stream_ref` is a NIF StreamHandle resource.
-  `namespace` is extracted from the connect_control_channel frame.
+  `namespace` is what the connect_control_channel frame CLAIMS; the namespace
+  this connection acts in is what its own credential proves
+  (`Flezha.AuthZ.RunnerProof`), and a frame naming another one is refused here,
+  before a session is minted or a hub created.
   `init_payload` is the decoded JSON from the initial frame.
   """
   def connect_handler(stream_ref, namespace, init_payload, transport) do
-    with :ok <- Session.check_not_shutting_down(namespace),
-         :ok <- Session.admit_runner(namespace, transport) do
-      factories = Session.parse_factories(init_payload)
-      stable_id = Session.parse_stable_id(init_payload)
+    with {:ok, %{namespace: proven} = proof} <-
+           RunnerProof.prove(stream_ref, namespace, init_payload, transport),
+         :ok <- Session.check_not_shutting_down(proven),
+         :ok <- Session.admit_runner(proven, transport) do
+      connect = Session.connect_record(proof, init_payload, transport)
 
       case GenServer.call(
              __MODULE__,
-             {:runner_connect, stream_ref, namespace, factories, transport, stable_id},
+             {:runner_connect, stream_ref, connect},
              runner_connect_timeout()
            ) do
         {:error, reason} ->
@@ -73,8 +78,25 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
+  Close every runner session the credential `hash` authenticated.
+
+  A runner credential never expires, so nothing else would ever evict its
+  holder: revoking one has to reach the live sessions or the revocation is only
+  a refusal of the next connect. Answers the number of sessions closed, and `0`
+  when there is no fleet to reach — a revoke during boot recovery runs before
+  this manager starts, which is routine and so unlogged.
+  """
+  @spec evict_credential(binary()) :: non_neg_integer()
+  def evict_credential(hash) when is_binary(hash) do
+    SafeCall.bounded(__MODULE__, {:evict_credential, hash}, manager_call_timeout(),
+      on_error: 0,
+      log: false
+    )
+  end
+
+  @doc """
   The caller context service calls attributed to a runner connection carry:
-  a `runner`-role principal bound to the connection's handshake namespace.
+  a `runner`-role principal bound to the namespace the connection PROVED.
   """
   defdelegate runner_caller_context(namespace), to: Session
 
@@ -271,6 +293,7 @@ defmodule Flezha.Runner.FleetManager do
        runner_namespaces: %{},
        namespace_factories: %{},
        stable_sessions: %{},
+       session_credentials: %{},
        runner_loads: %{},
        directory_groups: MapSet.new()
      })}
@@ -402,11 +425,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call(
-        {:runner_connect, stream_ref, namespace, factories, transport, stable_id},
-        _from,
-        state
-      ) do
+  def handle_call({:runner_connect, stream_ref, connect}, _from, state) do
     # runner_connect/3 mints a fresh per-connection SESSION TOKEN (the
     # Registry/StreamChannel naming + routing key) and brings up its supervision
     # tree. That tree can fail to come up for reasons that belong to this runner
@@ -414,13 +433,25 @@ defmodule Flezha.Runner.FleetManager do
     # manager serves every other runner on the node, so the connect is refused
     # rather than allowed to take the manager (and the transport server linked
     # to it) down.
-    case Session.catch_runner_connect(stream_ref, namespace, transport) do
+    case Session.catch_runner_connect(stream_ref, connect.namespace, connect.transport) do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
 
-      {:ok, namespace, session_token} ->
-        Session.finish_runner_connect(state, namespace, session_token, factories, stable_id)
+      {:ok, _namespace, session_token} ->
+        Session.finish_runner_connect(state, session_token, connect)
     end
+  end
+
+  @impl true
+  def handle_call({:evict_credential, hash}, _from, state) do
+    sessions = for {session, held} <- state.session_credentials, held == hash, do: session
+
+    state =
+      sessions
+      |> Enum.reduce(state, &Session.do_evict_runner(&2, &1))
+      |> Session.sync_directory()
+
+    {:reply, length(sessions), state}
   end
 
   @impl true

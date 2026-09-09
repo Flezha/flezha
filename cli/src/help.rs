@@ -56,9 +56,16 @@ USAGE:
 COMMANDS:
     bootstrap <token>   Claim the one-time bootstrap token as admin@_system
     whoami              Show the identity the current token resolves to
-    rebootstrap         OFFLINE break-glass: reset a lost admin@_system
-                        (controller must be stopped; writes app_data/auth/REBOOTSTRAP)
+    rebootstrap         Break-glass: recover a lost admin@_system
+                        (running: writes app_data/auth/bootstrap.token and prints it;
+                         stopped: writes app_data/auth/REBOOTSTRAP for the next boot)
     help                Show this help message
+
+Break-glass needs write access to app_data/auth/ and nothing else, which is
+already enough to stop the controller: a claim against a running controller
+therefore grants no authority filesystem access does not already carry. It
+unbinds every admin@_system and revokes its _system admin tokens before binding
+the new admin, and it is audited as a recovery.
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
@@ -529,9 +536,15 @@ USAGE:
 
 COMMANDS:
     issue <principal> <namespace> <role>   Issue a token (printed once)
-        [--ttl <seconds>]
+        [--ttl <seconds>|never]
     revoke <token-id>                      Revoke by id (prefix of the token hash)
     list                                   List tokens visible to the caller
     help                                   Show this help message
+
+A `runner` token is the credential a runner connection proves its namespace
+with. It never expires and `--ttl` is refused for it: the holder is an
+unattended process, and a credential that lapses fails it at a restart. A
+namespace may hold several at once, so a rotation is issue, roll the fleet,
+revoke the old one; revoking one closes the sessions it authenticated.
 
 Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;

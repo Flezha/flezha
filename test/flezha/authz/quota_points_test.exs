@@ -10,7 +10,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   import ExUnit.CaptureLog
 
   alias Flezha.AuthZ
-  alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas}
+  alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas, TokenStore}
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
@@ -35,8 +35,18 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       {:ok, _} = NamespaceStore.create("team-tight", quotas: %{max_runners: 1})
       :ok = QuotaCounters.set("team-tight", :runners, 1)
 
+      # The quota point is reached only by a connect whose namespace is proven,
+      # so the runner credential is part of the set-up now.
+      {:ok, secret, _} =
+        TokenStore.issue("runner@team-tight", "team-tight", :runner, :never)
+
       assert {:error, {:quota_exceeded, :max_runners, %{current: 1, limit: 1}}} =
-               FleetManager.connect_handler(make_ref(), "team-tight", %{}, :uds)
+               FleetManager.connect_handler(
+                 make_ref(),
+                 "team-tight",
+                 %{"namespace_secret" => secret},
+                 :uds
+               )
     end
 
     test "under the limit the quota check passes" do

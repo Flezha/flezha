@@ -260,6 +260,9 @@ mod tests {
     fn value_for(spec: &crate::args::OptSpec) -> &'static str {
         match &spec.kind {
             Kind::Number => "7",
+            // The word reading, so a value the walk parses as a number is not
+            // what proves the option is read by name.
+            Kind::NumberOr { words } => words[words.len() - 1],
             Kind::Choice { words, .. } => words[words.len() - 1],
             _ => "a\"b\\c\u{00e4}",
         }

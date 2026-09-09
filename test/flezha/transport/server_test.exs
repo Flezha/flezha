@@ -118,4 +118,23 @@ defmodule Flezha.Transport.ServerTest do
       refute_received {:rejected, _, _}
     end
   end
+
+  describe "a data stream carries no credential of its own" do
+    @tag :capture_log
+    test "a QUIC data stream on a connection with no admitted control channel binds nothing" do
+      state = %{
+        transport: :quic,
+        pending_streams: %{},
+        quic_conn_runners: %{},
+        quic_conn_monitors: Flezha.Process.Watch.new()
+      }
+
+      # The routing key is the control stream's own nif id, and it is written
+      # only once `connect_handler/4` admits that control channel. A data stream
+      # whose connection was refused therefore reaches no StreamPool at all,
+      # which is why the namespace credential is presented on the control
+      # channel and nowhere else.
+      assert {:noreply, ^state} = Server.handle_info({:flz_stream, make_ref(), 1, 0, 42}, state)
+    end
+  end
 end

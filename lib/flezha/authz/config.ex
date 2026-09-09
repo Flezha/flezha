@@ -20,10 +20,17 @@ defmodule Flezha.AuthZ.Config do
   @spec bootstrap_token_path() :: String.t()
   def bootstrap_token_path(), do: Config.get(:authz_bootstrap_token_path)
 
-  @doc "Default TTL in seconds for a token issued to the given source kind."
-  @spec default_token_ttl_seconds(:cli | :ui | :sdk) :: pos_integer()
-  def default_token_ttl_seconds(:sdk), do: Config.get(:authz_sdk_token_ttl_seconds)
-  def default_token_ttl_seconds(_kind), do: Config.get(:authz_token_ttl_default_seconds)
+  @doc """
+  Default TTL in seconds for an issued token.
+
+  One value, because every credential with an expiry is one a human holds and a
+  human can always get another. No unattended process holds an expiring
+  credential at all: a runner proves its namespace with a registry entry that
+  is refused an expiry, so a second, longer default for a machine would be the
+  trap rather than the convenience.
+  """
+  @spec default_token_ttl_seconds() :: pos_integer()
+  def default_token_ttl_seconds(), do: Config.get(:authz_token_ttl_default_seconds)
 
   @doc "Per-namespace quota overrides from the config map (may be empty)."
   @spec namespace_quota_overrides() :: %{optional(binary()) => map()}

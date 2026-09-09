@@ -204,6 +204,15 @@ defmodule Flezha.Config.DurationRows do
     # for the stop itself to answer.
     {:stop_process_budget_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -1_000}},
 
+    # ---- authentication and authorization ----------------------------------
+    # How far ahead of an expiry a token is announced as expiring, and how often
+    # the registry looks. A lapse is then a monitoring alert rather than the
+    # moment an operator discovers they cannot issue another credential.
+    {:token_expiry_warning_ms, :ms, 86_400_000,
+     key: {:authn_authz, :token_expiry_warning_ms}, env: "FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS"},
+    {:token_expiry_check_interval_ms, :ms, 300_000,
+     key: {:authn_authz, :token_expiry_check_interval_ms}},
+
     # ---- observability -----------------------------------------------------
     {:audit_log_block_timeout_ms, :ms, 30_000, []},
     {:audit_log_writer_call_ms, :ms, 5_000, []},

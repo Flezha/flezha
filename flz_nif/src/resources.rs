@@ -55,6 +55,11 @@ pub struct StreamHandle {
     /// Shared with the driver's stream state: the driver raises it as its send
     /// buffer fills, `send_frame` reads it before queueing anything more.
     pub gate: Arc<SendGate>,
+    /// The DER certificate the peer presented on this stream's connection, read
+    /// once at the handshake. `None` for every UDS stream (no handshake) and for
+    /// a QUIC peer that presented none. The connect path reads it to learn which
+    /// namespace the connection proved.
+    pub peer_cert: Option<Vec<u8>>,
 }
 
 impl Drop for StreamHandle {

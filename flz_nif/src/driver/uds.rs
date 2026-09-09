@@ -152,6 +152,9 @@ impl Uds {
             &self.cmd_tx,
             &self.waker,
             UdsWire { stream, token },
+            // A UDS peer completed no handshake: its namespace entitlement
+            // comes from the credential it presents, never from the socket.
+            None,
         );
         streams.insert(id, state);
         self.token_to_stream.insert(token, id);

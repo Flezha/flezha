@@ -87,9 +87,14 @@ multiplexes every channel over bidirectional streams inside it.
 Certificates are generated on first start if absent (CA, server pair, a client
 identity with the `clientAuth` EKU). The server verifies the client certificate
 against `FLEZHA_QUIC_CLIENT_CA` and refuses the handshake otherwise — no frame
-of an unauthenticated peer is ever parsed. The runner principal
-(`runner@<namespace>`, role `runner`) is minted controller-side from the
-handshake namespace, never carried on the wire
+of an unauthenticated peer is ever parsed. That verification proves the peer was
+issued a certificate; **which namespace it may serve is a separate question**,
+and the certificate answers it only when it carries a SPIFFE URI SAN with an
+`/ns/<name>` entity. The pair generated on first start does not, so a default
+QUIC deployment proves its namespace with the credential of §5 step 2, exactly as
+UDS does. The runner principal (`runner@<namespace>`, role `runner`) is minted
+controller-side from the namespace the connection PROVED, never from the value
+the frame claimed
 ([`../operations/authn_authz.md`](../operations/authn_authz.md)). QUIC sends a
 keep-alive every 5 s, declares the connection dead after
 `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (default 45 s) of silence — the UDS watchdog's
@@ -428,12 +433,16 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   "namespace": "<namespace>",
   "factory_ids": ["<factory_id>", ...],
   "factories": [{"id": "<factory_id>", "description": null}, ...],
-  "stable_id": "<namespace>-<profile_hash8>-<rand6>"
+  "stable_id": "<namespace>-<profile_hash8>-<rand6>",
+  "namespace_secret": "flzt_<base32>"
 }
 ```
 
 - `namespace` — the logical group the runner belongs to (also the namespace
-  of the `runner@<namespace>` principal).
+  of the `runner@<namespace>` principal). It is what the runner ASKS for: the
+  controller checks it against what the connection proved and refuses a frame
+  naming a namespace the credential does not entitle, naming both namespaces in
+  the refusal. `_system` is refused on every transport.
 - `factory_ids` / `factories` — every factory the runner currently declares
   (`factories` adds an optional `description`), read at write time so a
   reconnect resyncs post-start defines/removes: the init frame is the resync
@@ -443,15 +452,25 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   `rand6` is a per-process random suffix). The controller binds operatives to
   it and on a reconnect swaps the prior session's bindings onto the new token.
   See [`../internals/runner_identity.md`](../internals/runner_identity.md).
+- `namespace_secret` — the credential the claimed namespace is checked against,
+  from `FLEZHA_NAMESPACE_SECRET`. **Omitted entirely** when the runner holds
+  none, which is what a deployment authenticating with an `/ns/`-bearing
+  certificate, and one whose controller enforces nothing, both send. Presented on
+  the control channel only: a data stream is bound to a session the control
+  channel already minted, so a data stream on a connection that was refused
+  reaches no channel at all.
 
 ### Step 3: controller processing
 
 `Flezha.Transport.Server` hands the frame to
-`Flezha.Runner.FleetManager.connect_handler/4`, which mints a fresh
-**session token** (the `runner_id` below), resolves `stable_id`, stores the
-factory set, starts the runner's supervision tree (`ControlChannel`,
-`ControlUnit`, stream supervisors) and starts or joins the namespace hub,
-bounded by `:cluster_formation_timeout_ms` (15 s) + 5 s.
+`Flezha.Runner.FleetManager.connect_handler/4`, which first resolves the
+namespace the connection proved (`Flezha.AuthZ.RunnerProof`) and refuses the
+connect if the frame named another one. Only then does it mint a fresh **session
+token** (the `runner_id` below), resolve `stable_id`, store the factory set,
+start the runner's supervision tree (`ControlChannel`, `ControlUnit`, stream
+supervisors) and start or join the namespace hub, bounded by
+`:cluster_formation_timeout_ms` (15 s) + 5 s. The session remembers the
+credential that admitted it, so revoking that credential closes this channel.
 
 ### Steps 4–5: `AssignRunnerId`
 

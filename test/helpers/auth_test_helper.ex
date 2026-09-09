@@ -71,6 +71,22 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
     %{tmp: tmp, auth_dir: auth_dir}
   end
 
+  @doc """
+  A runner credential for `namespace`, as `{raw, hash}`.
+
+  The one spelling of "the credential a runner proves its namespace with": a
+  `:runner` entry of the token registry, principal `runner@<namespace>`, no
+  expiry — the shape `Flezha.AuthZ.RunnerProof` verifies and the shape the
+  registry refuses to give an expiry.
+  """
+  @spec issue_runner_credential(binary()) :: {binary(), binary()}
+  def issue_runner_credential(namespace) when is_binary(namespace) do
+    {:ok, raw, entry} =
+      TokenStore.issue("runner@" <> namespace, namespace, :runner, :never)
+
+    {raw, entry.token_hash}
+  end
+
   @doc "Stop each named auth-store GenServer if it is running."
   def stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running_one/1)
 

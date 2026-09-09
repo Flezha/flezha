@@ -64,12 +64,17 @@ defmodule Flezha.AuthZ.BootstrapTest do
     assert {:ok, %{role: :admin, namespace: "_system"}} = TokenStore.verify(minted)
   end
 
-  test "second claim attempt is rejected" do
+  test "second claim attempt is rejected, naming the file it expected" do
+    path = Application.get_env(:flezha, :authn_authz)[:bootstrap_token_path]
     :ok = Bootstrap.check_and_write()
-    {:ok, raw} = File.read(Application.get_env(:flezha, :authn_authz)[:bootstrap_token_path])
+    {:ok, raw} = File.read(path)
     {:ok, _} = Bootstrap.claim(raw, principal: "alice")
 
-    assert {:error, :bootstrap_already_completed} = Bootstrap.claim(raw, principal: "eve")
+    # The claim unlinks the file, so a second one has nothing to compare
+    # against. Recovery IS a second claim, and it is the operator writing that
+    # file again that admits it — so the refusal names the file rather than
+    # asserting the bootstrap can never happen twice.
+    assert {:error, {:bootstrap_token_missing, ^path}} = Bootstrap.claim(raw, principal: "eve")
   end
 
   test "mismatched token is rejected" do

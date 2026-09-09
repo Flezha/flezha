@@ -93,6 +93,7 @@ lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Paths
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.ProcInbox
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.ProcJournal
 lib/flezha/runner/control_unit.ex -> Flezha.Partition
+lib/flezha/runner/fleet_manager.ex -> Flezha.AuthZ.RunnerProof
 lib/flezha/runner/fleet_manager.ex -> Flezha.Service.HubManager
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Operative.ClassRegistry
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Service.HubManager

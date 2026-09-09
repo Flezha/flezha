@@ -22,7 +22,7 @@ The system SHALL define a Principal as a verified identity. For mTLS-authenticat
 
 ### Requirement: Scoped token registry and verification
 
-The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted in `app_data/auth/tokens.dets`. Each entry SHALL store: `token_hash` (SHA-256 of the bare token), `principal`, `namespace`, `role`, `created_at`, `expires_at`, `revoked_at`, `created_by_principal`, `label`. The wire-form token SHALL be a 256-bit cryptographically random value with base32 encoding and a `flzt_` prefix. The on-disk form SHALL be the SHA-256 hash. Verification SHALL look up the hash, reject entries whose `revoked_at` is non-null, reject entries whose `expires_at` has passed, and otherwise return the bound `principal`/`namespace`/`role`. Issuance and revocation SHALL emit `:token_issued` / `:token_revoked` events on the `:platform_authz` source.
+The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted in `app_data/auth/tokens.dets`. Each entry SHALL store: `token_hash` (SHA-256 of the bare token), `principal`, `namespace`, `role`, `created_at`, `expires_at`, `revoked_at`, `created_by_principal`, `label`. The wire-form token SHALL be a 256-bit cryptographically random value with base32 encoding and a `flzt_` prefix. The on-disk form SHALL be the SHA-256 hash. Verification SHALL look up the hash, reject entries whose `revoked_at` is non-null, reject entries whose `expires_at` has passed, and otherwise return the bound `principal`/`namespace`/`role` and the entry's hash, so a caller can name the credential that admitted it. An entry MAY be issued with no expiry, and the operator surface SHALL be able to ask for one. A `runner`-role entry is the credential a runner connection proves its namespace with and SHALL be refused any expiry and refused the `_system` namespace. Issuance and revocation SHALL emit `:token_issued` / `:token_revoked` events on the `:platform_authz` source, and an entry approaching its expiry SHALL emit `:token_expiring` on the same source.
 
 #### Scenario: Token issuance returns the raw value exactly once
 - **WHEN** `TokenStore.issue/5` succeeds
@@ -35,6 +35,22 @@ The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted 
 #### Scenario: Expired token is rejected at verification
 - **WHEN** a token's `expires_at` has passed
 - **THEN** `TokenStore.verify/1` SHALL return `{:error, :token_expired}`
+
+#### Scenario: A non-expiring token is reachable from the operator surface
+- **WHEN** an operator issues a token asking for no expiry
+- **THEN** the entry SHALL record no expiry, verification SHALL keep answering
+  for it, and the value SHALL have been obtainable without editing the store
+
+#### Scenario: A runner entry is refused an expiry and refused `_system`
+- **WHEN** an operator asks for a `runner`-role entry with an expiry, or for one
+  in the `_system` namespace
+- **THEN** each request SHALL be refused, so that no unattended process holds a
+  credential that lapses and no runner identity can be `_system`
+
+#### Scenario: An approaching expiry is announced
+- **WHEN** an entry with an expiry crosses the configured warning threshold
+- **THEN** a `:token_expiring` event SHALL be emitted on the `:platform_authz`
+  source naming the entry, so a lapse is observable before it happens
 
 #### Scenario: Token file mode is restrictive
 - **WHEN** `app_data/auth/tokens.dets` is created or reopened
@@ -184,7 +200,7 @@ Each of these files SHALL be one declared durable store: it names the layout sub
 
 ### Requirement: Runtime configuration surface
 
-The system SHALL expose runtime configuration under the `:authn_authz` key with at minimum: `:enabled` (boolean, default `true` in production; dev/test carry the explicit opt-out), `:auth_dir` (default `app_data/auth`), `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`), `:token_ttl_default_seconds` (default `86_400`), `:sdk_token_ttl_seconds` (default `2_592_000`), `:namespaces` (per-namespace quota overrides), `:application_managed` (boolean, default `true`; tests flip to `false`). Env-var overrides `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` SHALL be honoured with `env > app config > default` precedence.
+The system SHALL expose runtime configuration under the `:authn_authz` key with at minimum: `:enabled` (boolean, default `true` in production; dev/test carry the explicit opt-out), `:auth_dir` (default `app_data/auth`), `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`), `:token_ttl_default_seconds` (default `86_400`), `:token_expiry_warning_ms` (default `86_400_000`), `:token_expiry_check_interval_ms` (default `300_000`), `:namespaces` (per-namespace quota overrides), `:application_managed` (boolean, default `true`; tests flip to `false`). There SHALL be no second, longer default TTL for a machine-held credential, because no unattended process holds an expiring credential. Env-var overrides `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` and `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` SHALL be honoured with `env > app config > default` precedence.
 
 #### Scenario: Env var overrides config
 - **WHEN** the Controller boots with `FLEZHA_AUTHZ_DIR=/srv/flezha/auth` set
@@ -254,19 +270,27 @@ refused and the refusal SHALL be audited.
 
 ### Requirement: Principals derive from the authenticated transport
 
-While authorization is enforced, `caller_context.principal` SHALL derive from the
-authenticated connection — the verified peer certificate (via
-`Flezha.AuthN.Cert`) or a namespace-bound handshake for runner connections, and a
-verified token for CLI callers — never from an unverified caller-supplied value.
-The `:internal` caller source SHALL remain valid only for calls originating inside
-the controller's own BEAM.
+While authorization is enforced, `caller_context.principal` SHALL derive from what the connection proved, never from an unverified caller-supplied value. For a CLI caller that is a verified token. For a runner connection over a socket transport the namespace SHALL be established by the connection's own credential — a peer certificate naming the namespace, or a per-namespace runner credential from the token registry — and a connect frame naming a namespace the credential does not entitle SHALL be refused. For a runner over the in-node transport the proof SHALL be co-residence in the controller's own BEAM. The `:internal` caller source SHALL remain valid only for calls originating inside the controller's own BEAM. A runner connection SHALL NOT resolve to the `_system` namespace, on any transport.
 
-#### Scenario: Runner principal is bound to its authenticated connection
+#### Scenario: Runner principal is bound to what its connection proved
 
-- **WHEN** a runner connects over an authenticated transport for namespace
-  `team-orders`
+- **WHEN** a runner connects presenting a credential entitling it to namespace
+  `team-orders` and its connect frame names `team-orders`
 - **THEN** service calls attributed to that connection carry a `runner`-role
   principal bound to `team-orders` and cannot act on another namespace
+
+#### Scenario: A claimed namespace the credential does not entitle is refused
+
+- **WHEN** a runner connects presenting a credential entitling it to
+  `team-orders` and its connect frame names `team-payments`
+- **THEN** the connection SHALL be refused, no control or data frame SHALL be
+  processed, and the refusal SHALL name both namespaces
+
+#### Scenario: A runner cannot connect as the system namespace
+
+- **WHEN** a runner connect frame names `_system`
+- **THEN** the connection SHALL be refused, so that no runner identity can
+  satisfy the cross-namespace admin gate
 
 #### Scenario: Caller-supplied principal is ignored
 
@@ -317,17 +341,27 @@ SHALL be rebuilt from a State registry scan on boot.
 
 ### Requirement: Break-glass recovery for a lost admin
 
-The system SHALL provide a documented offline recovery path for a lost
-`admin@_system` credential: with the controller stopped, an operator with
-filesystem access to `app_data/auth/` SHALL be able to clear the claimed state so
-the next boot re-enters the existing bootstrap flow. The recovery SHALL be
-impossible without filesystem access and SHALL emit an auditable event on the boot
-that re-entered bootstrap.
+The system SHALL provide a documented recovery path for a lost `admin@_system` credential that does not require stopping the controller. An operator with filesystem access to `app_data/auth/` SHALL be able to write the bootstrap token file that `Flezha.AuthZ.Bootstrap` already reads, and claim it once against the running controller. The recovery SHALL be impossible without filesystem access and SHALL emit an auditable event recording that recovery occurred. Recovery with the controller stopped SHALL remain available and unchanged.
+
+#### Scenario: Recovery re-enters bootstrap without a stop
+
+- **WHEN** the operator writes the bootstrap token file and claims it against a
+  running controller
+- **THEN** the claim SHALL succeed exactly once, the previous admin binding SHALL
+  no longer authorize, an auditable event SHALL record that recovery occurred,
+  and the controller SHALL NOT have been stopped
+
+#### Scenario: Recovery is refused without filesystem access
+
+- **WHEN** a caller attempts the recovery claim without having written the
+  bootstrap token file
+- **THEN** the claim SHALL be refused and the refusal SHALL name the file it
+  expected
 
 #### Scenario: Recovery re-enters bootstrap
 
-- **WHEN** the operator runs the recovery procedure with the controller stopped and
-  boots the controller
+- **WHEN** the operator runs the offline recovery procedure with the controller
+  stopped and boots the controller
 - **THEN** a fresh `bootstrap.token` is written, the previous admin binding no
   longer authorizes, and an auditable event records that recovery occurred
 

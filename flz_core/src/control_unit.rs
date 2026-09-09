@@ -67,6 +67,12 @@ struct ControlInitMessage {
     /// The runner's stable identity, on every connect; the controller's
     /// binding key.
     stable_id: String,
+    /// The credential the controller checks the claimed namespace against.
+    /// Absent when this runner holds none, so a deployment authenticating with a
+    /// SPIFFE certificate — or one with enforcement off — sends what it always
+    /// did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace_secret: Option<String>,
 }
 
 pub fn open(
@@ -494,6 +500,7 @@ fn send_init_msg(
         factory_ids,
         factories,
         stable_id,
+        namespace_secret: flz_transport::env::env_raw("FLEZHA_NAMESPACE_SECRET"),
     };
 
     let control_message = serde_json::to_string(&control_init_message).unwrap();
@@ -713,6 +720,46 @@ mod tests {
         assert!(
             !json.contains("previous_runner_id"),
             "the retired previous_runner_id field must be gone, got: {json}"
+        );
+    }
+
+    // The namespace credential rides the connect frame, and only when this
+    // runner holds one: a deployment authenticating with a certificate, or one
+    // whose controller enforces nothing, sends the frame it always sent.
+    #[test]
+    fn handshake_presents_the_namespace_secret_only_when_one_is_set() {
+        let _guard = env_test_guard();
+
+        let init_json = |secret: Option<&str>| {
+            match secret {
+                Some(value) => std::env::set_var("FLEZHA_NAMESPACE_SECRET", value),
+                None => std::env::remove_var("FLEZHA_NAMESPACE_SECRET"),
+            }
+
+            let (stream, ctrl_end) = stream_pair();
+            let (otx, _orx) = unbounded();
+            let _ = sock_conn(
+                "test_ns".to_string(),
+                Arc::new(RwLock::new(vec!["probe".to_string()])),
+                stream,
+                None,
+                Arc::new(Mutex::new(otx)),
+            );
+            let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
+            let (_id, message, _meta) = payloader::extract_payload(&ctrl).unwrap();
+            String::from_utf8(message).unwrap()
+        };
+
+        let with_secret = init_json(Some("flzt_abc"));
+        assert!(
+            with_secret.contains("\"namespace_secret\":\"flzt_abc\""),
+            "a runner holding a secret must present it, got: {with_secret}"
+        );
+
+        let without = init_json(None);
+        assert!(
+            !without.contains("namespace_secret"),
+            "a runner holding none must not carry the field, got: {without}"
         );
     }
 

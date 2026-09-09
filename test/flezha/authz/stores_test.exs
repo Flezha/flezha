@@ -148,6 +148,40 @@ defmodule Flezha.AuthZ.StoresTest do
       assert length(TokenStore.list("team-payments")) == 1
       assert length(TokenStore.list(:all)) == 2
     end
+
+    test "an entry inside its warning window is announced once" do
+      {:ok, _} = TokenStore.start_link([])
+
+      # Inside the window (default one day), outside it, and one with no expiry
+      # at all: only the first is announced, and only the first time.
+      {:ok, _, inside} = TokenStore.issue("soon", "team-orders", :operator, 3_600)
+      {:ok, _, _far} = TokenStore.issue("later", "team-orders", :operator, 30 * 86_400)
+      {:ok, _, _never} = TokenStore.issue("runner@t", "team-orders", :runner, :never)
+
+      assert TokenStore.check_expiring_now() == [inside.token_hash]
+      assert TokenStore.check_expiring_now() == []
+    end
+
+    test "a revoked entry inside the window is not announced" do
+      {:ok, _} = TokenStore.start_link([])
+      {:ok, _, entry} = TokenStore.issue("soon", "team-orders", :operator, 3_600)
+      {:ok, _} = TokenStore.revoke(String.slice(entry.token_hash, 0, 12))
+
+      assert TokenStore.check_expiring_now() == []
+    end
+
+    test "a runner entry is refused an expiry and refused _system" do
+      {:ok, _} = TokenStore.start_link([])
+
+      assert {:error, :runner_token_cannot_expire} =
+               TokenStore.issue("runner@t", "team-orders", :runner, 3_600)
+
+      assert {:error, :runner_namespace_cannot_be_system} =
+               TokenStore.issue("runner@_system", "_system", :runner, :never)
+
+      assert {:ok, _raw, %{expires_at: :never}} =
+               TokenStore.issue("runner@t", "team-orders", :runner, :never)
+    end
   end
 
   describe "crash recovery" do

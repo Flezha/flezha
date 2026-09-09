@@ -84,6 +84,11 @@ pub(crate) enum Kind {
         noun: &'static str,
         words: &'static [&'static str],
     },
+    /// A number, or one of a closed set of words that mean something a number
+    /// cannot — `--ttl never` for an entry with no expiry. The parse is still
+    /// the walk's, so a value that is neither is refused in the shared
+    /// sentence; what the words mean is the handler's.
+    NumberOr { words: &'static [&'static str] },
 }
 
 /// One option a verb declares: its two spellings, what its value is called,
@@ -126,6 +131,20 @@ impl OptSpec {
         OptSpec {
             kind: Kind::Switch,
             ..OptSpec::text(long, short, "")
+        }
+    }
+
+    /// A number, or one of `words`. The usage line names both readings, so a
+    /// help screen that teaches the option teaches the word too.
+    pub(crate) const fn number_or(
+        long: &'static str,
+        short: &'static str,
+        value: &'static str,
+        words: &'static [&'static str],
+    ) -> Self {
+        OptSpec {
+            kind: Kind::NumberOr { words },
+            ..OptSpec::text(long, short, value)
         }
     }
 
@@ -567,6 +586,9 @@ fn assign_positionals(
             (Some(value), Kind::Number) => {
                 read_number::<u64>(slot.name, value)?;
             }
+            (Some(value), Kind::NumberOr { words }) if !words.contains(&value.as_str()) => {
+                read_number::<u64>(slot.name, value)?;
+            }
             (Some(value), Kind::Choice { noun, words }) if !words.contains(&value.as_str()) => {
                 return Err(unknown_word(noun, value, words))
             }
@@ -666,6 +688,9 @@ fn claim(
 fn check_value(spec: &OptSpec, written: &str) -> Result<(), String> {
     match &spec.kind {
         Kind::Number => read_number::<u64>(spec.long, written).map(|_: u64| ()),
+        Kind::NumberOr { words } if !words.contains(&written) => {
+            read_number::<u64>(spec.long, written).map(|_: u64| ())
+        }
         Kind::Choice { noun, words } if !words.contains(&written) => {
             Err(unknown_word(noun, written, words))
         }

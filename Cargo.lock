@@ -467,6 +467,7 @@ name = "flz"
 version = "0.1.0"
 dependencies = [
  "flz_transport",
+ "getrandom 0.2.17",
  "serde_json",
  "tempfile",
 ]

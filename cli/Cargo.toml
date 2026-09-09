@@ -10,6 +10,10 @@ publish = false
 serde_json.workspace = true
 # `flz runner check` runs the runner's own probe, not a second copy of it.
 flz_transport = { path = "../flz_transport" }
+# The OS entropy source, for the one value this crate mints: the break-glass
+# bootstrap token. `flz_transport::utility::noise` is deliberately not
+# cryptographic and must not be used for a credential.
+getrandom = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true

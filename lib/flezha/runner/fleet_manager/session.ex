@@ -61,13 +61,13 @@ defmodule Flezha.Runner.FleetManager.Session do
     end
   end
 
-  # The runner principal is minted from the authenticated connection's own
-  # namespace handshake (the transport authenticated the peer; the namespace
-  # is what the connection is FOR), never from anything the payload claims.
-  # Cross-namespace action is impossible by construction: the bound namespace
-  # IS the handshake namespace. Also the per-namespace `max_runners` quota
-  # point — both refusals are observable through the authz denial event /
-  # the quota telemetry below.
+  # The runner principal is minted from the namespace the connection PROVED
+  # (`Flezha.AuthZ.RunnerProof`), which is also what argument one carries, so
+  # both sides of the row's namespace rule read the proven value and neither
+  # reads the frame. Cross-namespace action is refused before this, at the
+  # proof; what this row judges is that the identity holds `runner.connect` at
+  # all. Also the per-namespace `max_runners` quota point — both refusals are
+  # observable through the authz denial event / the quota telemetry below.
   def admit_runner(namespace, transport) do
     runner_ctx = runner_caller_context(namespace)
 
@@ -167,7 +167,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   def do_evict_runner(state, runner_id) do
     case Roster.find_runner_namespace(state, runner_id) do
       nil ->
-        state
+        forget_credential(state, runner_id)
 
       namespace ->
         detach_runner_operatives(namespace, runner_id)
@@ -181,11 +181,23 @@ defmodule Flezha.Runner.FleetManager.Session do
         )
 
         state
+        |> forget_credential(runner_id)
         |> Factories.remove_ce_factories(namespace, runner_id)
         |> Factories.prune_empty_factories(namespace)
         |> update_in([:runner_namespaces, namespace], &Map.delete(&1 || %{}, runner_id))
     end
   end
+
+  # The credential ledger tracks live sessions only, so it is written where a
+  # session is minted and cleared wherever one ends — an eviction here, a
+  # disconnect below.
+  defp remember_credential(state, _session_token, nil), do: state
+
+  defp remember_credential(state, session_token, credential),
+    do: put_in(state, [:session_credentials, session_token], credential)
+
+  defp forget_credential(state, session_token),
+    do: update_in(state, [:session_credentials], &Map.delete(&1 || %{}, session_token))
 
   def handle_runner_disconnect(state, namespace, runner_id) do
     if Map.has_key?(state.runner_namespaces, namespace) do
@@ -221,6 +233,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
     state =
       state
+      |> forget_credential(runner_id)
       |> Factories.remove_ce_factories(namespace, runner_id)
       |> Factories.prune_empty_factories(namespace)
 
@@ -357,18 +370,36 @@ defmodule Flezha.Runner.FleetManager.Session do
     throw({:runner_connect_failed, reason})
   end
 
+  @doc """
+  Everything one connect settled, in the shape `runner_connect` is served from:
+  the namespace and credential the proof answered (`Flezha.AuthZ.RunnerProof`),
+  and the factory set and stable identity the frame declared. The frame's own
+  shape is read here and nowhere else.
+  """
+  @spec connect_record(%{namespace: binary(), credential: binary() | nil}, map(), atom()) ::
+          map()
+  def connect_record(%{namespace: namespace, credential: credential}, init_payload, transport) do
+    %{
+      namespace: namespace,
+      transport: transport,
+      credential: credential,
+      factories: parse_factories(init_payload),
+      stable_id: parse_stable_id(init_payload)
+    }
+  end
+
   # The SDK's self-owned, durable stable identity, presented on every connect.
   # `nil` only when absent/empty (a degraded runner with no writable
   # persistence path) — such a runner connects fresh with no binding
   # continuity, per the identity-degradation contract.
-  def parse_stable_id(init_payload) do
+  defp parse_stable_id(init_payload) do
     case Map.get(init_payload, "stable_id") do
       id when is_binary(id) and id != "" -> id
       _ -> nil
     end
   end
 
-  def parse_factories(init_payload) do
+  defp parse_factories(init_payload) do
     Map.get(init_payload, "factories") || []
   end
 
@@ -419,23 +450,21 @@ defmodule Flezha.Runner.FleetManager.Session do
     {:runner_connect_failed, reason} -> {:error, reason}
   end
 
-  def finish_runner_connect(state, namespace, session_token, factories, stable_id) do
+  def finish_runner_connect(state, session_token, connect) do
+    %{namespace: namespace, factories: factories, stable_id: stable_id, credential: credential} =
+      connect
+
     timestamp = System.monotonic_time(:millisecond)
 
-    state =
-      case Map.get(state.runner_namespaces, namespace, nil) do
-        nil -> put_in(state, [:runner_namespaces, namespace], %{})
-        _ -> state
-      end
-
-    state =
-      put_in(
-        state,
-        [:runner_namespaces, namespace, session_token],
-        {:active, timestamp}
-      )
+    state = update_in(state, [:runner_namespaces], &Map.put_new(&1, namespace, %{}))
+    state = put_in(state, [:runner_namespaces, namespace, session_token], {:active, timestamp})
 
     state = Factories.store_factories(state, namespace, session_token, factories)
+
+    # The credential that admitted this session, remembered so revoking it can
+    # close the session: a runner credential never expires, so nothing else
+    # would. A certificate-proven connect presents none and records nothing.
+    state = remember_credential(state, session_token, credential)
 
     # Resolve the runner's durable STABLE IDENTITY: on a reconnect (or a
     # newest-wins takeover) re-point the prior session's operative bindings onto

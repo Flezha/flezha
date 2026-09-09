@@ -89,6 +89,22 @@ fn stream_id(stream: StreamHandleArc) -> u64 {
     stream.stream_id
 }
 
+/// The DER certificate the peer presented on this stream's connection, captured
+/// once at the handshake, or `nil` when there was none. The connect path reads
+/// the namespace the connection proved out of it; a UDS stream and a QUIC peer
+/// with no client certificate both answer `nil`.
+#[rustler::nif]
+fn peer_certificate<'a>(env: Env<'a>, stream: StreamHandleArc) -> NifResult<Term<'a>> {
+    Ok(match &stream.peer_cert {
+        None => rustler::types::atom::nil().encode(env),
+        Some(der) => {
+            let mut binary = rustler::NewBinary::new(env, der.len());
+            binary.as_mut_slice().copy_from_slice(der);
+            rustler::Binary::from(binary).encode(env)
+        }
+    })
+}
+
 /// Transfer ownership of a stream to a different Elixir process.
 #[rustler::nif]
 fn controlling_process(env: Env, stream: StreamHandleArc, new_owner: LocalPid) -> NifResult<Term> {

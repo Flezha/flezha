@@ -1,10 +1,11 @@
 defmodule Flezha.AuthZ.AuditEmissionTest do
   @moduledoc """
-  Verifies that the three mutating authn/authz primitives each emit exactly
-  one `:platform_authz` event on the observability bus, carrying the
-  documented `name:` atom and a `metadata.principal` / related identity field,
-  and that a namespace create through the wire leaves exactly one record on
-  the verb's own source.
+  Verifies that the mutating authn/authz primitives each emit exactly one
+  `:platform_authz` event on the observability bus, carrying the documented
+  `name:` atom and a `metadata.principal` / related identity field, and that a
+  namespace create through the wire leaves exactly one record on the verb's own
+  source. An entry crossing its expiry warning threshold is announced on the
+  same source, so a lapse is observable before it happens.
 
   The foundation `:ring_buffer` sink is already registered in the
   test config; the shared auth harness registers the `:platform_authz`
@@ -59,6 +60,25 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
     assert signal.source == @source
     assert signal.metadata.principal == "alice"
     assert signal.metadata.revoked_by_principal == "alice"
+  end
+
+  test "an entry inside its expiry window emits exactly one :token_expiring event" do
+    {:ok, _raw, entry} = TokenStore.issue("alice", "_system", :admin, 60)
+
+    boundary = now_us()
+    assert TokenStore.check_expiring_now() == [entry.token_hash]
+
+    [signal] = wait_for_events(:token_expiring, boundary, 1)
+    assert signal.source == @source
+    assert signal.metadata.principal == "alice"
+    assert signal.metadata.expires_at == entry.expires_at
+
+    # Announced once: a second sweep says nothing about an entry already named.
+    second = now_us()
+    assert TokenStore.check_expiring_now() == []
+
+    assert RingBufferSink.query(@source, second) |> Enum.filter(&(&1.name == :token_expiring)) ==
+             []
   end
 
   test "Bootstrap.claim/2 emits exactly one :bootstrap_completed event" do

@@ -76,6 +76,14 @@ defmodule Flezha.Transport.Native do
   """
   def stream_id(_stream_ref), do: :erlang.nif_error(:not_loaded)
 
+  @doc """
+  The DER certificate the peer presented on this stream's connection, captured
+  once at the handshake, or `nil` when there was none — every UDS stream, and a
+  QUIC one whose peer authenticated with no client certificate.
+  """
+  @spec peer_certificate(reference()) :: binary() | nil
+  def peer_certificate(_stream_ref), do: :erlang.nif_error(:not_loaded)
+
   # --- Client entry points (standalone SDK deployment) ---
   #
   # Thin wrappers over flz_transport's client + payloader; they return the same

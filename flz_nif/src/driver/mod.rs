@@ -224,12 +224,16 @@ impl<W> StreamState<W> {
     /// One accepted stream's loop state and the handle Elixir holds: they share
     /// the owner and the send gate the loop signals through. Written once
     /// because an accepted stream is the same thing on every wire.
+    ///
+    /// `peer_cert` is what the wire's handshake proved about the peer, and only
+    /// QUIC has one to give.
     pub(crate) fn accept(
         id: u64,
         acceptor: LocalPid,
         cmd_tx: &Sender<ServerCommand>,
         waker: &Arc<Waker>,
         wire: W,
+        peer_cert: Option<Vec<u8>>,
     ) -> (Self, ResourceArc<StreamHandle>) {
         let owner = Arc::new(Mutex::new(acceptor));
         let gate = Arc::new(SendGate::new());
@@ -239,6 +243,7 @@ impl<W> StreamState<W> {
             waker: StreamWaker::Mio(Arc::clone(waker)),
             owner: Arc::clone(&owner),
             gate: Arc::clone(&gate),
+            peer_cert,
         });
         (StreamState::new(id, owner, gate, wire), handle)
     }

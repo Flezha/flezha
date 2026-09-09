@@ -468,6 +468,16 @@ const CASES: &[(&[&str], Want)] = &[
         &["token", "issue", "p", "ns", "viewer", "--ttl", "0"],
         Refused("--ttl requires a positive integer"),
     ),
+    // The word reading: the registry has always answered an entry with no
+    // expiry, and this is the spelling that reaches it.
+    (
+        &["token", "issue", "p", "ns", "viewer", "--ttl", "never"],
+        Rpc("Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", [ttl: :never])"),
+    ),
+    (
+        &["token", "issue", "runner@ns", "ns", "runner", "--ttl", "never"],
+        Rpc("Flezha.Service.CliManager.authz_render_token_issue(\"runner@ns\", \"ns\", \"runner\", [ttl: :never])"),
+    ),
     (
         &["controller", "stop", "--timeout-ms", "abc"],
         Refused("invalid --timeout-ms value 'abc'"),

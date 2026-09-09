@@ -19,9 +19,22 @@ defmodule Flezha.AuthZ.Bootstrap do
        `bootstrap.token`, and emits a `:bootstrap_completed` event
        on `:platform_authz`.
 
-  Re-claim after a successful `claim/2` is rejected with
-  `{:error, :bootstrap_already_completed}` because the token file is
-  unlinked.
+  Re-claim after a successful `claim/2` is refused naming the file it expected,
+  because the token file is unlinked.
+
+  ## Break-glass recovery, with or without a stop
+
+  A lost `admin@_system` is recovered by writing the same `bootstrap.token`
+  file, and it does not require stopping the controller. Whoever can write
+  inside `<auth_dir>` — mode `0700`, owned by the controller's user — can
+  already stop the controller and take the offline path, so admitting the claim
+  while it runs grants no authority filesystem access did not already carry;
+  what it removes is a forced outage. A claim that finds a previous
+  `admin@_system` binding is that recovery: every such binding is unbound and
+  every live `_system` admin token revoked before the new principal is bound,
+  so exactly one admin identity survives it and the event says so. The offline
+  `REBOOTSTRAP` marker path is unchanged and invalidates through the same
+  function.
   """
 
   require Logger
@@ -51,20 +64,7 @@ defmodule Flezha.AuthZ.Bootstrap do
     path = recovery_marker_path()
 
     if File.exists?(path) do
-      unbound =
-        for %{principal: principal, namespace: ns, role: :admin} <- RoleStore.list(),
-            Namespace.system?(ns) do
-          :ok = RoleStore.unbind(principal)
-          principal
-        end
-
-      revoked =
-        for %{token_hash: hash, namespace: ns, role: :admin, revoked_at: nil} <-
-              TokenStore.list(:all),
-            Namespace.system?(ns) do
-          _ = TokenStore.revoke(String.slice(hash, 0, 12), revoked_by_principal: "rebootstrap")
-          hash
-        end
+      {unbound, revoked} = invalidate_previous_admin("rebootstrap")
 
       :ok = AuthState.reset()
       _ = File.rm(path)
@@ -75,7 +75,7 @@ defmodule Flezha.AuthZ.Bootstrap do
           "re-entering bootstrap"
       )
 
-      emit_recovery(unbound, length(revoked))
+      emit_recovery(:offline, unbound, length(revoked))
       :recovered
     else
       :ok
@@ -117,6 +117,12 @@ defmodule Flezha.AuthZ.Bootstrap do
   When neither principal is supplied, a freshly-minted scoped admin
   token is issued and returned to the caller via the `:minted_token`
   field on the success map.
+
+  A claim made while an `admin@_system` binding already exists is a break-glass
+  recovery: it needs no stop, and the previous admin bindings and `_system`
+  admin tokens are invalidated before the new principal is bound. Whoever wrote
+  the token file already owns the box; a caller who did not write it is refused
+  naming the file it expected.
   """
   @spec claim(binary(), keyword()) ::
           {:ok, %{principal: binary(), minted_token: binary() | nil}}
@@ -124,28 +130,68 @@ defmodule Flezha.AuthZ.Bootstrap do
   def claim(presented_token, opts \\ []) when is_binary(presented_token) do
     path = Config.bootstrap_token_path()
 
-    cond do
-      RoleStore.admin_system_exists?() ->
-        {:error, :bootstrap_already_completed}
-
-      not File.exists?(path) ->
-        {:error, :bootstrap_already_completed}
-
-      true ->
-        with {:ok, stored} <- read_token_file(path),
-             :ok <- compare_constant_time(stored, presented_token),
-             {:ok, principal, minted} <- resolve_principal(opts),
-             :ok <-
-               RoleStore.bind(principal, Namespace.system_name(), :admin, bound_by: principal),
-             :ok <- AuthState.set_enabled() do
-          _ = File.rm(path)
-          emit_bootstrap_completed(principal)
-          {:ok, %{principal: principal, minted_token: minted}}
-        end
+    if File.exists?(path) do
+      with {:ok, stored} <- read_token_file(path),
+           :ok <- compare_constant_time(stored, presented_token) do
+        recover_or_bind(path, opts)
+      end
+    else
+      {:error, {:bootstrap_token_missing, path}}
     end
   end
 
   # ----- private -----
+
+  # The one binding step, whichever claim reached it. A claim that finds a
+  # previous admin is a recovery, and the previous identity is invalidated
+  # first, so a recovered controller holds exactly one admin.
+  defp recover_or_bind(path, opts) do
+    recovery =
+      if RoleStore.admin_system_exists?(), do: invalidate_previous_admin("recovery-claim")
+
+    with {:ok, principal, minted} <- resolve_principal(opts),
+         :ok <- RoleStore.bind(principal, Namespace.system_name(), :admin, bound_by: principal),
+         :ok <- AuthState.set_enabled() do
+      _ = File.rm(path)
+
+      if recovery do
+        {unbound, revoked} = recovery
+
+        Logger.warning(
+          "[authz.bootstrap] recovery claim accepted against a RUNNING controller: " <>
+            "unbound #{length(unbound)} admin@_system binding(s), revoked " <>
+            "#{length(revoked)} _system admin token(s); admin@_system is now #{principal}"
+        )
+
+        emit_recovery(:online, unbound, length(revoked))
+      end
+
+      emit_bootstrap_completed(principal)
+      {:ok, %{principal: principal, minted_token: minted}}
+    end
+  end
+
+  # Every `admin@_system` binding dropped and every live `_system` admin token
+  # revoked. Shared by the offline marker and the online recovery claim, because
+  # "the previous admin no longer authorizes" is one rule and both paths owe it.
+  defp invalidate_previous_admin(actor) do
+    unbound =
+      for %{principal: principal, namespace: ns, role: :admin} <- RoleStore.list(),
+          Namespace.system?(ns) do
+        :ok = RoleStore.unbind(principal)
+        principal
+      end
+
+    revoked =
+      for %{token_hash: hash, namespace: ns, role: :admin, revoked_at: nil} <-
+            TokenStore.list(:all),
+          Namespace.system?(ns) do
+        _ = TokenStore.revoke(String.slice(hash, 0, 12), revoked_by_principal: actor)
+        hash
+      end
+
+    {unbound, revoked}
+  end
 
   defp write_bootstrap_token() do
     path = Config.bootstrap_token_path()
@@ -261,7 +307,7 @@ defmodule Flezha.AuthZ.Bootstrap do
                synthetic_principal,
                Namespace.system_name(),
                :admin,
-               Config.default_token_ttl_seconds(:cli),
+               Config.default_token_ttl_seconds(),
                label: "bootstrap-admin"
              ) do
           {:ok, raw, _entry} -> {:ok, synthetic_principal, raw}
@@ -275,13 +321,17 @@ defmodule Flezha.AuthZ.Bootstrap do
     "admin-" <> suffix
   end
 
-  defp emit_recovery(unbound_principals, revoked_count) do
+  defp emit_recovery(mode, unbound_principals, revoked_count) do
     Bus.emit(
       Signal.new(%{
         kind: :event,
         source: @source,
         name: :rebootstrap_recovery,
-        metadata: %{unbound_principals: unbound_principals, revoked_tokens: revoked_count}
+        metadata: %{
+          mode: mode,
+          unbound_principals: unbound_principals,
+          revoked_tokens: revoked_count
+        }
       })
     )
 

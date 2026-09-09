@@ -2,9 +2,9 @@ defmodule Flezha.AuthZ.SourceRegistration do
   @moduledoc """
   One-shot worker that registers the `:platform_authz` source on the
   observability bus so authz signals (`:authorization_denied`,
-  `:token_issued`, `:token_revoked`, `:namespace_created`,
-  `:role_bound`, `:bootstrap_completed`, ...) participate in fan-out
-  and the audit log allow-list.
+  `:token_issued`, `:token_revoked`, `:token_expiring`,
+  `:namespace_created`, `:role_bound`, `:bootstrap_completed`, ...)
+  participate in fan-out and the audit log allow-list.
   """
 
   use GenServer, restart: :transient

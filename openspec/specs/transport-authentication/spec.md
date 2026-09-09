@@ -12,11 +12,7 @@ explicit opt-out that is warned on every boot.
 ## Requirements
 ### Requirement: Runner transport authenticates its peer
 
-The runner transport (QUIC and UDS) SHALL authenticate the connecting peer before
-accepting any control or data frame. The QUIC server SHALL verify a client
-certificate against a configured trust anchor; the UDS control socket SHALL be
-created with owner-only permissions on a directory not world-writable. A connection
-that fails authentication SHALL be refused and the refusal SHALL be observable.
+The runner transport (QUIC and UDS) SHALL authenticate the connecting peer before accepting any control or data frame, and the authentication SHALL establish which namespace the peer is entitled to rather than only that the peer is admissible. The QUIC server SHALL verify a client certificate against a configured trust anchor and SHALL make that certificate available to the connect path, so the namespace it names can be read. The UDS control socket SHALL be created with owner-only permissions on a directory not world-writable, and because one socket serves every namespace, a UDS peer's namespace entitlement SHALL come from a presented credential rather than from the socket. A connection that fails authentication SHALL be refused and the refusal SHALL be observable.
 
 The UDS access boundary MAY be widened to a single named group, and only so, by setting
 `FLEZHA_SOCKET_DIR_GROUP` to a group the controller's user belongs to: the socket directory is
@@ -32,11 +28,25 @@ world-writable.
 - **THEN** the handshake is rejected, no operative-control frame is processed, and a
   refusal is recorded
 
+#### Scenario: The peer certificate reaches the connect path
+
+- **WHEN** a QUIC peer completes a handshake presenting a client certificate
+- **THEN** the connect path SHALL be able to read that certificate, so that the
+  namespace it names is available before the connection is admitted
+
 #### Scenario: UDS socket is not world-accessible
 
 - **WHEN** the controller creates the runner control socket
 - **THEN** the socket and its parent directory permit access only to the owning user, unless the
   group mode is configured, and in no case to any other user
+
+#### Scenario: A UDS peer's namespace is not implied by the socket
+
+- **WHEN** two peers entitled to different namespaces connect over the same UDS
+  control socket
+- **THEN** each SHALL be admitted only to the namespace its presented credential
+  entitles, and reaching the socket SHALL entitle a peer to no namespace by
+  itself
 
 #### Scenario: The group mode is explicit and warned
 

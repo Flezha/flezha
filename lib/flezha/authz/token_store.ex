@@ -10,15 +10,35 @@ defmodule Flezha.AuthZ.TokenStore do
   Verification: hash the presented token, look it up, reject when
   `revoked_at` is non-null or `expires_at` is in the past, otherwise
   bind `principal`/`namespace`/`role` to the caller.
+
+  A `:runner` entry is the credential a runner connection proves its namespace
+  with (`Flezha.AuthZ.RunnerProof`), and it is the one kind this registry
+  refuses to give an expiry: the holder is an unattended process, and a
+  credential that lapses fails it at a restart rather than at a convenient
+  moment. A namespace may hold as many live runner entries as an operator
+  issues, which is what makes a rotation "issue, roll the fleet, retire the
+  old one" rather than a cutover. Revoking one closes the sessions it
+  authenticated, because nothing else would ever evict them.
+
+  Every entry that does have an expiry is announced before it reaches it: the
+  registry sweeps on `:token_expiry_check_interval_ms` and emits
+  `:token_expiring` once for each entry inside `:token_expiry_warning_ms` of
+  lapsing, so a lapse is a monitoring alert rather than the moment an operator
+  discovers they can no longer issue a credential.
   """
 
   use GenServer
   use Flezha.State.Store
+  use Flezha.Process.Timer, keys: [:expiry_check]
+
+  require Logger
 
   alias Flezha.AuthZ.{Namespace, Role}
+  alias Flezha.Config.Durations
   alias Flezha.DetsStore
   alias Flezha.Identificator
   alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Runner.FleetManager
 
   @table :flz_authz_tokens
   @filename "tokens.dets"
@@ -52,51 +72,41 @@ defmodule Flezha.AuthZ.TokenStore do
           {:ok, binary(), entry()} | {:error, term()}
   def issue(principal, namespace, role, ttl_seconds, opts \\ [])
       when is_binary(principal) and is_binary(namespace) and is_atom(role) do
+    now = System.system_time(:second)
+
     with :ok <- Role.validate(role),
-         :ok <- Namespace.validate_name(namespace) do
+         :ok <- Namespace.validate_name(namespace),
+         :ok <- validate_runner_entry(role, namespace, ttl_seconds),
+         {:ok, expires_at} <- expiry_at(ttl_seconds, now) do
       raw = generate_token()
-      hash = hash_token(raw)
-      now = System.system_time(:second)
 
-      expires_at =
-        case ttl_seconds do
-          :never -> :never
-          n when is_integer(n) and n > 0 -> now + n
-          _ -> {:error, :invalid_ttl}
-        end
+      entry = %{
+        token_hash: hash_token(raw),
+        principal: principal,
+        namespace: namespace,
+        role: role,
+        created_at: now,
+        expires_at: expires_at,
+        revoked_at: nil,
+        created_by_principal: Keyword.get(opts, :created_by_principal),
+        label: Keyword.get(opts, :label)
+      }
 
-      case expires_at do
-        {:error, _} = err ->
-          err
-
-        _ ->
-          entry = %{
-            token_hash: hash,
-            principal: principal,
-            namespace: namespace,
-            role: role,
-            created_at: now,
-            expires_at: expires_at,
-            revoked_at: nil,
-            created_by_principal: Keyword.get(opts, :created_by_principal),
-            label: Keyword.get(opts, :label)
-          }
-
-          case GenServer.call(__MODULE__, {:insert, hash, entry}) do
-            :ok ->
-              emit_issued(entry)
-              {:ok, raw, entry}
-
-            other ->
-              other
-          end
+      with :ok <- GenServer.call(__MODULE__, {:insert, entry.token_hash, entry}) do
+        emit_issued(entry)
+        {:ok, raw, entry}
       end
     end
   end
 
   @doc """
   Verify a presented raw token. On success returns
-  `{:ok, %{principal, namespace, role, expires_at}}`.
+  `{:ok, %{principal, namespace, role, expires_at, token_hash}}`.
+
+  A registry that is not open answers `{:error, :registry_unavailable}` rather
+  than raising: both readers — the CLI's identity binding and the runner
+  connect's namespace proof — are on paths where an exception would cost more
+  than a refusal, and neither should carry its own guard.
   """
   @spec verify(binary()) ::
           {:ok,
@@ -104,9 +114,11 @@ defmodule Flezha.AuthZ.TokenStore do
              principal: binary(),
              namespace: binary(),
              role: Role.t(),
-             expires_at: integer() | :never
+             expires_at: integer() | :never,
+             token_hash: binary()
            }}
-          | {:error, :malformed | :unknown | :token_revoked | :token_expired}
+          | {:error,
+             :malformed | :unknown | :token_revoked | :token_expired | :registry_unavailable}
   def verify(token) when is_binary(token) do
     if String.starts_with?(token, @prefix) do
       case lookup_by_hash(hash_token(token)) do
@@ -125,6 +137,9 @@ defmodule Flezha.AuthZ.TokenStore do
 
         :error ->
           {:error, :unknown}
+
+        :unavailable ->
+          {:error, :registry_unavailable}
       end
     else
       {:error, :malformed}
@@ -141,7 +156,7 @@ defmodule Flezha.AuthZ.TokenStore do
   @spec revoke(binary(), keyword()) :: {:ok, entry()} | {:error, term()}
   def revoke(id, opts \\ []) when is_binary(id) do
     case Identificator.validate(:token, id) do
-      :ok -> GenServer.call(__MODULE__, {:revoke, id, opts})
+      :ok -> close_authenticated_sessions(GenServer.call(__MODULE__, {:revoke, id, opts}))
       {:error, _refusal} -> {:error, :not_found}
     end
   end
@@ -153,7 +168,7 @@ defmodule Flezha.AuthZ.TokenStore do
   @spec revoke_by_token(binary()) :: {:ok, entry()} | {:error, term()}
   def revoke_by_token(token) when is_binary(token) do
     hash = hash_token(token)
-    GenServer.call(__MODULE__, {:revoke_by_hash, hash})
+    close_authenticated_sessions(GenServer.call(__MODULE__, {:revoke_by_hash, hash}))
   end
 
   @doc """
@@ -169,6 +184,16 @@ defmodule Flezha.AuthZ.TokenStore do
     all_entries() |> Enum.filter(&(&1.namespace == namespace))
   end
 
+  @doc """
+  Run the expiry sweep now and answer the hashes it announced.
+
+  The sweep the timer drives, called synchronously — the same shape
+  `Flezha.State.Retention.sweep_now/0` gives its own tick, so what the timer does
+  can be asserted without waiting for it.
+  """
+  @spec check_expiring_now() :: [binary()]
+  def check_expiring_now(), do: GenServer.call(__MODULE__, :check_expiring_now)
+
   ## ----- store declaration -----
 
   @impl Flezha.State.Store
@@ -180,9 +205,28 @@ defmodule Flezha.AuthZ.TokenStore do
   @impl Flezha.State.Store
   def table(), do: @table
 
+  # The first sweep is owed as soon as the table is warm: an entry already
+  # inside its warning window at boot is exactly the one nobody has noticed.
+  @impl Flezha.State.Store
+  def after_open(_state) do
+    send(self(), :expiry_check)
+    :ok
+  end
+
   ## ----- GenServer -----
 
   @impl true
+  def handle_info(:expiry_check, state) do
+    {_named, state} = announce_expiring(timer_fired(state, :expiry_check))
+    {:noreply, arm_expiry_check(state)}
+  end
+
+  @impl true
+  def handle_call(:check_expiring_now, _from, state) do
+    {named, state} = announce_expiring(state)
+    {:reply, named, state}
+  end
+
   def handle_call({:insert, hash, entry}, _from, state) do
     :ok = DetsStore.put(@table, hash, entry)
     {:reply, :ok, state}
@@ -220,6 +264,49 @@ defmodule Flezha.AuthZ.TokenStore do
 
   ## ----- private -----
 
+  # The expiry an entry records: a positive number of seconds from now, or none
+  # at all. `:never` is a real answer rather than a missing one, which is why it
+  # is a clause here and not a nil check at the call.
+  defp expiry_at(:never, _now), do: {:ok, :never}
+  defp expiry_at(seconds, now) when is_integer(seconds) and seconds > 0, do: {:ok, now + seconds}
+  defp expiry_at(_invalid, _now), do: {:error, :invalid_ttl}
+
+  # The two rules a runner credential carries, refused here rather than at the
+  # connect path: an expiring one is the trap this change exists to close, and a
+  # `_system` one would satisfy the cross-namespace admin gate the moment any
+  # authority were attached to a runner identity.
+  defp validate_runner_entry(:runner, namespace, ttl_seconds) do
+    cond do
+      Namespace.system?(namespace) -> {:error, :runner_namespace_cannot_be_system}
+      ttl_seconds != :never -> {:error, :runner_token_cannot_expire}
+      true -> :ok
+    end
+  end
+
+  defp validate_runner_entry(_role, _namespace, _ttl_seconds), do: :ok
+
+  # A revoked runner credential leaves live control channels behind it, and a
+  # credential with no expiry has nothing that would otherwise evict them. Only
+  # a runner entry can have authenticated a session, so no operator revoke pays
+  # for a fleet call. Driven from the client function rather than the store's
+  # own `handle_call`, so the eviction never runs inside this GenServer.
+  defp close_authenticated_sessions({:ok, %{role: :runner, token_hash: hash}} = revoked) do
+    case FleetManager.evict_credential(hash) do
+      0 ->
+        :ok
+
+      closed ->
+        Logger.warning(
+          "[authz.tokens] revoking runner credential #{String.slice(hash, 0, 12)} closed " <>
+            "#{closed} live session(s)"
+        )
+    end
+
+    revoked
+  end
+
+  defp close_authenticated_sessions(other), do: other
+
   @spec hash_token(binary()) :: binary()
   defp hash_token(token) when is_binary(token) do
     :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
@@ -239,10 +326,41 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   defp project(entry) do
-    Map.take(entry, [:principal, :namespace, :role, :expires_at])
+    Map.take(entry, [:principal, :namespace, :role, :expires_at, :token_hash])
   end
 
-  defp lookup_by_hash(hash), do: DetsStore.fetch(@table, hash)
+  defp lookup_by_hash(hash) do
+    DetsStore.fetch(@table, hash)
+  rescue
+    _ -> :unavailable
+  end
+
+  # Every entry inside the warning window that has not been announced yet, named
+  # once each. The announced set is held in memory rather than written back to
+  # the row: a restart re-announcing an entry still inside its window is the
+  # right answer, and the row's field list is the published one.
+  defp arm_expiry_check(state) do
+    arm_timer(state, :expiry_check, Durations.get(:token_expiry_check_interval_ms), :expiry_check)
+  end
+
+  defp announce_expiring(state) do
+    announced = Map.get(state, :announced, MapSet.new())
+    horizon = System.system_time(:second) + div(Durations.get(:token_expiry_warning_ms), 1_000)
+    now = System.system_time(:second)
+
+    expiring =
+      for entry <- all_entries(),
+          is_nil(entry.revoked_at),
+          is_integer(entry.expires_at),
+          entry.expires_at > now,
+          entry.expires_at <= horizon,
+          not MapSet.member?(announced, entry.token_hash) do
+        emit_expiring(entry)
+        entry.token_hash
+      end
+
+    {expiring, Map.put(state, :announced, MapSet.union(announced, MapSet.new(expiring)))}
+  end
 
   defp all_entries() do
     DetsStore.all(@table)
@@ -262,6 +380,28 @@ defmodule Flezha.AuthZ.TokenStore do
           namespace: entry.namespace,
           role: entry.role,
           created_by_principal: entry.created_by_principal,
+          token_hash_prefix: String.slice(entry.token_hash, 0, 12),
+          expires_at: entry.expires_at,
+          label: entry.label
+        }
+      })
+    )
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp emit_expiring(entry) do
+    Bus.emit(
+      Signal.new(%{
+        kind: :event,
+        source: :platform_authz,
+        name: :token_expiring,
+        metadata: %{
+          principal: entry.principal,
+          namespace: entry.namespace,
+          role: entry.role,
           token_hash_prefix: String.slice(entry.token_hash, 0, 12),
           expires_at: entry.expires_at,
           label: entry.label

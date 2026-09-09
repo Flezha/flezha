@@ -6,8 +6,12 @@ use crate::help;
 use crate::rpc::{self, text};
 
 /// How long an issued token lives. An option, not a positional: it is optional
-/// and the request carries it in the options list like every other one.
-const TTL: OptSpec = OptSpec::number("--ttl", "--ttl", "<seconds>");
+/// and the request carries it in the options list like every other one. Its
+/// value is a number of seconds or the word `never`, which is what the registry
+/// stores for an entry that must not lapse — a runner credential is refused any
+/// other reading.
+const NEVER: &str = "never";
+const TTL: OptSpec = OptSpec::number_or("--ttl", "--ttl", "<seconds>|never", &[NEVER]);
 
 pub(crate) const TABLE: Command = Command {
     path: "flz token",
@@ -39,17 +43,6 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_issue(read: &Reading) {
-    let ttl = match read.num::<u64>(TTL.long) {
-        // A range is this option's own rule; the parse is the walk's.
-        Some(0) => {
-            eprintln!("Error: --ttl requires a positive integer (seconds)");
-            exit(1);
-        }
-        Some(seconds) => seconds,
-        // Default CLI-token TTL (config `:token_ttl_default_seconds`).
-        None => 86_400,
-    };
-
     rpc::run(
         "authz_render_token_issue",
         &[
@@ -57,8 +50,26 @@ fn handle_issue(read: &Reading) {
             text(read.pos("<namespace>")),
             text(read.pos("<viewer|operator|admin|runner>")),
         ],
-        &[("ttl", ttl.to_string())],
+        &[("ttl", ttl_literal(read.opt(TTL.long)))],
         read.token(),
         rpc::PROPAGATE,
     );
+}
+
+/// The `--ttl` value as the literal the store takes: `:never` for an entry that
+/// must not lapse, else a positive number of seconds. The parse is the walk's;
+/// the range is this option's own rule, as it always was.
+fn ttl_literal(written: Option<&str>) -> String {
+    match written {
+        // Default CLI-token TTL (config `:token_ttl_default_seconds`).
+        None => "86400".to_string(),
+        Some(NEVER) => ":never".to_string(),
+        Some(seconds) => match seconds.parse::<u64>() {
+            Ok(0) | Err(_) => {
+                eprintln!("Error: --ttl requires a positive integer (seconds) or 'never'");
+                exit(1);
+            }
+            Ok(positive) => positive.to_string(),
+        },
+    }
 }

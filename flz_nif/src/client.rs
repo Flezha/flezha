@@ -267,6 +267,9 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
         waker: StreamWaker::Channel,
         owner,
         gate,
+        // A client stream's peer is the controller, whose certificate proves
+        // nothing about a namespace: only the controller-side accept reads one.
+        peer_cert: None,
     })
 }
 

@@ -228,6 +228,8 @@ the value and the type.
 | `FLEZHA_AUTHZ_ENABLED` | `true` in prod, `false` otherwise | `:authn_authz[:enabled]`; `Flezha.AuthZ.Config` also reads the variable live, so it wins over the config file. `false` warns on every boot |
 | `FLEZHA_AUTHZ_DIR` | `app_data/auth` | `:authn_authz[:auth_dir]`, also read live by `Flezha.AuthZ.Config` |
 | `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` | `<FLEZHA_AUTHZ_DIR>/bootstrap.token` | `:authn_authz[:bootstrap_token_path]`, also read live |
+| `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | `86400000` | `:authn_authz[:token_expiry_warning_ms]` — how far ahead of its expiry an entry is announced as `:token_expiring` |
+| `FLEZHA_NAMESPACE_SECRET` | — | The credential a runner presents at connect to prove the namespace it names. Read by every SDK, never by the controller |
 
 ### Plugins, DLQ and schedules
 
@@ -646,7 +648,8 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:authn_authz[:application_managed]` | `true` (`false` in test) | `lib/flezha/application.ex` — `false` starts no `Flezha.AuthZ.Supervisor` in the application tree |
 | `:authn_authz[:auth_dir]` | `"app_data/auth"` | `lib/flezha/authz/config.ex` |
 | `:authn_authz[:bootstrap_token_path]` | `"app_data/auth/bootstrap.token"` | `lib/flezha/authz/config.ex` |
-| `:authn_authz[:token_ttl_default_seconds]` / `[:sdk_token_ttl_seconds]` | `86_400` / `2_592_000` | `lib/flezha/authz/config.ex` |
+| `:authn_authz[:token_ttl_default_seconds]` | `86_400` | `lib/flezha/authz/config.ex` — every credential with an expiry is one a human holds; a runner credential is refused an expiry outright |
+| `:authn_authz[:token_expiry_warning_ms]` / `[:token_expiry_check_interval_ms]` | `86_400_000` / `300_000` | `lib/flezha/authz/token_store.ex` — the warning window and how often the registry looks |
 | `:authn_authz[:namespaces]` | `%{}` | `lib/flezha/authz/config.ex` — per-namespace quota overrides |
 
 ### Plugins, DLQ and schedules
