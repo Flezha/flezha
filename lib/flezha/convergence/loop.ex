@@ -25,6 +25,7 @@ defmodule Flezha.Convergence.Loop do
   alias Flezha.Convergence.Verdict
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.{EventManager, HubManager, PluginManager}
 
   require Logger
@@ -147,8 +148,8 @@ defmodule Flezha.Convergence.Loop do
 
   # One declaration: a known key refreshes its time and costs no tick, a new
   # key ticks at once when its kind says so, a counter-fact clears its fact,
-  # and a runner arriving in a namespace releases every parked ladder in it —
-  # the world changed, so the parked operatives are retried at once.
+  # and a runner arriving in a namespace releases the ladders of the operatives
+  # it could take — the world changed, so they are retried at once.
   defp declared(%State{} = state, kind, target, args) do
     now = System.monotonic_time(:millisecond)
     {facts, what} = Facts.put(state.facts, kind, target, args, now)
@@ -159,9 +160,10 @@ defmodule Flezha.Convergence.Loop do
 
   # A counter-fact is the evidence its fact's ladder was waiting for, so it
   # releases the key as well as dropping the fact — `settle_facts/3` never sees
-  # a fact cleared this way. A runner connecting releases every parked key in
-  # its namespace: the world changed, which is what the deleted per-attempt
-  # runner re-resolution used to buy.
+  # a fact cleared this way. A runner connecting releases the keys of every
+  # operative in its namespace waiting for a runner it could serve: the world
+  # changed, which is what the deleted per-attempt runner re-resolution used to
+  # buy.
   defp release(%State{} = state, kind, target, :cleared, now) do
     case Facts.cleared_key(kind, target) do
       nil -> state
@@ -169,13 +171,19 @@ defmodule Flezha.Convergence.Loop do
     end
   end
 
-  defp release(%State{} = state, :runner_connected, {namespace, _runner_id}, _what, now) do
+  defp release(%State{} = state, :runner_connected, {namespace, runner_id}, _what, now) do
+    waiting = waiting_operatives(state, namespace)
+    servable = servable_factories(namespace, runner_id, waiting)
+
     backoff =
-      state.facts
-      |> Facts.targets(:operative_parked)
-      |> Enum.filter(fn {ns, _id} -> ns == namespace end)
-      |> Enum.reduce(state.backoff, fn {_ns, id}, acc ->
-        Enum.reduce(waiting_keys(id), acc, &Backoff.update(&2, &1, :ok, now))
+      Enum.reduce(waiting, state.backoff, fn {id, factory}, acc ->
+        if release?(factory, servable) do
+          {namespace, id}
+          |> Planner.waiting_keys()
+          |> Enum.reduce(acc, &Backoff.update(&2, &1, :ok, now))
+        else
+          acc
+        end
       end)
 
     %{state | backoff: backoff}
@@ -183,14 +191,44 @@ defmodule Flezha.Convergence.Loop do
 
   defp release(%State{} = state, _kind, _target, _what, _now), do: state
 
-  # The cooldowns an operative waiting for a runner is held on: the un-park
-  # ladder a parked one walks, and the rebind an unbound one is planned on. Both
-  # are keys `Planner.key/1` derives. An operative held with no binding is judged
-  # unbound, so releasing the park ladder alone would leave it on its own rung
-  # after the runner it was waiting for came back.
-  @doc false
-  @spec waiting_keys(term()) :: [Backoff.key()]
-  def waiting_keys(operative_id), do: [{:parked, operative_id}, {:rebind_operative, operative_id}]
+  # Every operative in `namespace` whose next step is a binding — parked,
+  # unbound, or misbound to a runner that is gone — with the factory the judge
+  # read for it, so the release path and the Diff agree on who is waiting.
+  #
+  # The last tick's records are the whole answer: a key only reaches a rung
+  # through `execute_plan/2`, which runs inside a tick after `judge/4` has
+  # written that tick's records, so an operative with a cooldown to release
+  # always has a record here.
+  defp waiting_operatives(%State{} = state, namespace) do
+    for {{:operative, {ns, id}}, %Verdict{state: judged, facts: facts}} <- state.verdicts,
+        ns == namespace,
+        judged in Diff.awaiting_binding(),
+        into: %{},
+        do: {id, Map.get(facts, :factory_id)}
+  end
+
+  # A runner releases an operative it could take, and one whose factory nobody
+  # could resolve. This guard stops the needless work; it is not what makes the
+  # release safe — an advertisement can change between here and the plan, so
+  # the rebind is what refuses to charge a rung for an attempt that had no
+  # runner to bind to.
+  defp release?(_factory, :unknown), do: true
+  defp release?(nil, _servable), do: true
+  defp release?(factory, servable), do: MapSet.member?(servable, factory)
+
+  # Which of the waiting operatives' factories this runner advertises, in one
+  # bounded read. A refusal answers `:unknown`, and so does a runner that has
+  # advertised nothing yet — an SDK may send its factories on a later frame,
+  # and "has told us nothing" must not read as "serves nothing". Both release
+  # everything: a needless release costs a plan, a missed one costs a rung.
+  defp servable_factories(namespace, runner_id, waiting) when map_size(waiting) > 0 do
+    case FleetManager.factories_for_runner(namespace, runner_id) do
+      %MapSet{} = factories -> if MapSet.size(factories) == 0, do: :unknown, else: factories
+      _unreadable -> :unknown
+    end
+  end
+
+  defp servable_factories(_namespace, _runner_id, _waiting), do: :unknown
 
   # An immediate tick, folded: declarations that land while one is pending
   # ride the tick already on its way, so a burst of facts costs one probe.
@@ -423,12 +461,22 @@ defmodule Flezha.Convergence.Loop do
     end
   end
 
+  # `issued` counts the ops that APPLIED something: an op whose precondition was
+  # unmet did nothing, so it neither advances its key nor argues that the tick's
+  # cap cut a longer plan short. Counting it would re-tick immediately on a
+  # namespace with no capable runner and turn a cap into a spin.
   defp execute_plan(plan, backoff) do
     now = System.monotonic_time(:millisecond)
 
     Enum.reduce(plan, {backoff, 0}, fn op, {acc_backoff, count} ->
-      result = Heal.execute(op)
-      {Backoff.update(acc_backoff, Planner.key(op), ladder_outcome(op, result), now), count + 1}
+      case Heal.execute(op) do
+        :unmet ->
+          {acc_backoff, count}
+
+        result ->
+          {Backoff.update(acc_backoff, Planner.key(op), ladder_outcome(op, result), now),
+           count + 1}
+      end
     end)
   end
 

@@ -13,7 +13,10 @@ defmodule Flezha.Convergence.HealTest do
   use Mimic
 
   alias Flezha.Config.Backoff
+  alias Flezha.Cluster.Directory
   alias Flezha.Convergence.{Diff, Heal, Intent, Planner, Snapshot}
+  alias Flezha.Operative.Overwatch
+  alias Flezha.Service.{HubManager, OperativeManager}
   alias Flezha.SafeCall
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -310,6 +313,39 @@ defmodule Flezha.Convergence.HealTest do
       op = %{primitive: :restart_plugin, namespace: nil, target: :noop}
       assert Heal.execute(op) == :error
     end
+
+    # fails when: "no runner advertises this factory" is answered as a repair
+    # that failed. The Loop reads `:unmet` as the one outcome that drives the
+    # ladder neither way, so an operative woken with nothing to bind to is not
+    # pushed further up its own rung by the attempt.
+    test "a rebind with no runner for the factory is unmet, not a failed heal" do
+      pid = overwatch_double(%Overwatch{id: "op", namespace: :ns, factory_id: "f"})
+
+      stub(HubManager, :get_pid, fn :ns, "op" -> {:ok, pid} end)
+      stub(OperativeManager, :assign_runner, fn :ns, "f", "op" -> nil end)
+
+      op = %{primitive: :rebind_operative, namespace: :ns, target: "op", args: %{}}
+      assert Heal.execute(op) == :unmet
+    end
+
+    # A operative whose factory NO node's fleet serves meets the same unmet
+    # precondition one scope out, so the re-place answers it the same way.
+    test "a re-place with no node for the factory is unmet, not a failed heal" do
+      pid = overwatch_double(%Overwatch{id: "op", namespace: :ns, factory_id: "f"})
+
+      stub(HubManager, :get_pid, fn :ns, "op" -> {:ok, pid} end)
+      stub(Directory, :factory_nodes, fn :ns, "f" -> [] end)
+
+      op = %{primitive: :replace_operative, namespace: :ns, target: "op", args: %{}}
+      assert Heal.execute(op) == :unmet
+    end
+
+    # A target that answers the one call `Heal` reads an operative's factory
+    # through, without standing up a real Overwatch tree.
+    defp overwatch_double(%Overwatch{} = state) do
+      {:ok, pid} = GenServer.start_link(__MODULE__.WedgeServer, state)
+      pid
+    end
   end
 
   describe "output-stall ladder (D1)" do
@@ -464,13 +500,15 @@ defmodule Flezha.Convergence.HealTest do
   end
 
   # A GenServer that wedges inside `handle_call(:block, ...)` so the SafeCall
-  # probe has a live-but-stuck target to introspect.
+  # probe has a live-but-stuck target to introspect, and answers its start
+  # argument to `:get_overwatch_state` so a heal that reads an operative's
+  # factory has a target that is not a real Overwatch tree.
   defmodule WedgeServer do
     @moduledoc false
     use GenServer
 
     @impl true
-    def init(_), do: {:ok, nil}
+    def init(state), do: {:ok, state}
 
     @impl true
     def handle_call(:block, _from, state) do
@@ -478,6 +516,8 @@ defmodule Flezha.Convergence.HealTest do
         :never -> {:reply, :ok, state}
       end
     end
+
+    def handle_call(:get_overwatch_state, _from, state), do: {:reply, state, state}
 
     def handle_call(_other, _from, state), do: {:reply, :ok, state}
 

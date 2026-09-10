@@ -160,6 +160,23 @@ defmodule Flezha.Convergence.Facts do
   @spec holding() :: %{atom() => map()}
   def holding(), do: Map.filter(@kinds, fn {_, e} -> Map.get(e, :holds, false) end)
 
+  @doc """
+  Every `args.reason` a kind consumed by one of `fields` stamps on its op.
+
+  The release path derives the cooldown keys it clears from this, so a kind
+  added to the table above joins that set on its own — a reason that must be
+  released cannot be forgotten in a second list somewhere else.
+  """
+  @spec reasons_for([atom()]) :: [atom()]
+  def reasons_for(fields) do
+    for {_kind, entry} <- @kinds,
+        entry[:diff] in fields,
+        is_atom(entry[:reason]),
+        not is_nil(entry[:reason]),
+        uniq: true,
+        do: entry[:reason]
+  end
+
   @doc "Whether an op carrying `reason` is a ladder rung: its key resets on evidence only."
   @spec ladder_reason?(atom()) :: boolean()
   def ladder_reason?(reason) when is_atom(reason) do

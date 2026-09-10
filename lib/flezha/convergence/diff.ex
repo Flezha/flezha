@@ -80,16 +80,35 @@ defmodule Flezha.Convergence.Diff do
     :data_plane_wedge
   ]
 
-  # The fields a binding op is planned from. While this node drains they are
-  # emptied: every binding the local loop can plan places onto this node, and
-  # the drain owns the node.
-  @placing_fields [
+  # The fields that mean "this operative needs a runner": what one arriving in
+  # the namespace is news for, and what `Planner.waiting_keys/2` plans to derive
+  # the cooldown keys that arrival releases.
+  @waiting_fields [
     :unbound_operatives,
     :misbound_operatives,
     :parked_operatives,
-    :replace_operatives,
-    :stale_tags
+    :replace_operatives
   ]
+
+  # The verdict states `classify/6` answers with a binding: never bound, bound
+  # to a runner that is gone, or left behind by a bind that failed. Declared
+  # beside the classification that produces them so the two cannot drift, and
+  # held to it by the seam test.
+  @awaiting_binding [:unbound, :failed, :parked]
+
+  # The fields a binding op is planned from — the waiting ones, and the row
+  # re-publish that follows a placement. While this node drains they are
+  # emptied: every binding the local loop can plan places onto this node, and
+  # the drain owns the node.
+  @placing_fields @waiting_fields ++ [:stale_tags]
+
+  @doc "The fields whose ops place a waiting operative on a runner."
+  @spec waiting_fields() :: [atom()]
+  def waiting_fields(), do: @waiting_fields
+
+  @doc "The verdict states whose next step is a binding, so a runner arriving is news for them."
+  @spec awaiting_binding() :: [Flezha.Convergence.Verdict.state()]
+  def awaiting_binding(), do: @awaiting_binding
 
   @spec compute(Flezha.Convergence.Intent.t(), map(), verdicts(), Facts.t()) :: t()
   def compute(intent, reality, verdicts \\ %{}, facts \\ %{})

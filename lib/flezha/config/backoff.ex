@@ -30,7 +30,30 @@ defmodule Flezha.Config.Backoff do
 
   alias Flezha.Config.Durations
 
-  @heal_rungs [5_000, 30_000, 60_000, 300_000]
+  # The convergence loop's rungs. Dense early because the common fault is a
+  # runner restart measured in seconds, and a coarse first step punishes that
+  # as though it were permanent; the ceiling is unchanged, so a target that is
+  # genuinely broken still costs one attempt every five minutes.
+  @heal_rungs [
+    2_000,
+    5_000,
+    10_000,
+    15_000,
+    20_000,
+    30_000,
+    45_000,
+    60_000,
+    90_000,
+    120_000,
+    180_000,
+    300_000
+  ]
+
+  # The Watchdog's compaction handshake gives up by ATTEMPT COUNT, so its rungs
+  # ARE the wall clock it waits before abandoning a compaction. Sharing the heal
+  # row would move that wall clock every time the heal rungs are retuned, which
+  # is a change to durability behaviour and not to healing.
+  @compaction_rungs [5_000, 30_000, 60_000, 300_000]
 
   # {key, fields}. `rungs` or `base`/`cap`; `jitter` false unless the site
   # spread its attempts; `give_up` is what the site checked with a counter of
@@ -42,7 +65,7 @@ defmodule Flezha.Config.Backoff do
   @declared [
     # ---- convergence ------------------------------------------------------
     {:heal, rungs: @heal_rungs, reset: :on_success},
-    {:compaction, rungs: @heal_rungs, reset: :on_success, give_up: 4},
+    {:compaction, rungs: @compaction_rungs, reset: :on_success, give_up: 4},
 
     # ---- cluster and transport --------------------------------------------
     {:cluster_reconnect,

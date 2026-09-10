@@ -214,6 +214,21 @@ defmodule Flezha.Runner.FleetManager.Factories do
     end
   end
 
+  # The factories `runner_id` advertises in `namespace`, at any language. The
+  # inverse read of `advertising_runners/3` over the same table: the release
+  # path asks what one runner can take, where a placement asks who can take one
+  # operative. Unfiltered by language on purpose — a mismatched advertisement
+  # must not place, but it is not evidence that the runner is irrelevant, and
+  # the bind itself is where the language guard belongs.
+  def runner_factories(state, namespace, runner_id) do
+    state.namespace_factories
+    |> Map.get(namespace, %{})
+    |> Enum.filter(fn {_factory_id, info} ->
+      MapSet.member?(factory_entry(info).ce_ids, runner_id)
+    end)
+    |> MapSet.new(fn {factory_id, _info} -> factory_id end)
+  end
+
   # The stored entry and the ACTIVE runners advertising `factory_id` at any
   # language — what separates "the factory exists in another language" from "no
   # runner has this factory at all". `placeable_runners/3` is this set narrowed

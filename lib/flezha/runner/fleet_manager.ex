@@ -130,6 +130,24 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
+  The factories `runner_id` advertises in `namespace`, as a set.
+
+  The inverse of `runners_for_factory/3`, for the caller that holds a runner
+  and asks what it can take: the convergence loop's release path, deciding
+  which waiting operatives a runner arriving in the namespace is news for. An
+  empty set is a runner that has advertised nothing yet, which the caller must
+  not read as "serves nothing"; a fleet that could not be read at all answers
+  `:unknown`, because a refused read is evidence of nothing.
+  """
+  @spec factories_for_runner(String.t(), binary(), timeout()) :: MapSet.t() | :unknown
+  def factories_for_runner(namespace, runner_id, timeout \\ Durations.get(:runner_lookup_ms)) do
+    SafeCall.bounded(__MODULE__, {:factories_for_runner, namespace, runner_id}, timeout,
+      on_error: :unknown,
+      log: false
+    )
+  end
+
+  @doc """
   Returns active compute engines in `namespace` that advertise `factory_id`.
 
   Used by `OperativeManager.assign_runner/3` so we never route a
@@ -337,6 +355,11 @@ defmodule Flezha.Runner.FleetManager do
   @impl true
   def handle_call({:runners_for_factory, namespace, factory_id}, _from, state) do
     {:reply, candidates(state, namespace, factory_id), state}
+  end
+
+  @impl true
+  def handle_call({:factories_for_runner, namespace, runner_id}, _from, state) do
+    {:reply, Factories.runner_factories(state, namespace, runner_id), state}
   end
 
   # Filter, select and count in one step. Splitting it — a read here and a cast

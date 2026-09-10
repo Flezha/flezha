@@ -101,7 +101,12 @@ defmodule Flezha.Convergence.Heal do
   @spec table() :: [%{name: atom(), executor: String.t(), evidence: atom()}]
   def table(), do: @table
 
-  @spec execute(Flezha.Convergence.Planner.op()) :: :ok | :error
+  @doc """
+  Apply one planned op. `:ok` and `:error` drive the ladder; `:unmet` is the
+  third answer and drives nothing — the op's precondition did not hold, so
+  nothing was attempted and the target's rung is neither advanced nor reset.
+  """
+  @spec execute(Flezha.Convergence.Planner.op()) :: :ok | :error | :unmet
   def execute(%{primitive: primitive} = op) when primitive in @primitives do
     :telemetry.execute(
       [:flezha, :convergence, :heal],
@@ -131,8 +136,7 @@ defmodule Flezha.Convergence.Heal do
       with true <- node(pid) == node(),
            %Overwatch{} = ow <- overwatch_snapshot(pid),
            :ready <- Overwatch.migration_consent(ow),
-           target_node when target_node != nil <-
-             replacement_node(namespace, ow.factory_id, operative_id),
+           {:ok, target_node} <- placed(replacement_node(namespace, ow.factory_id, operative_id)),
            :ok <- Migration.migrate_child(Identificator.hub(namespace), operative_id, target_node) do
         Logger.info(
           "[convergence] re-placed operative #{operative_id} (#{namespace}) onto " <>
@@ -141,6 +145,9 @@ defmodule Flezha.Convergence.Heal do
 
         :ok
       else
+        # No other node's fleet serves the factory either: the same unmet
+        # precondition a rebind meets, one scope out.
+        :unplaced -> :unmet
         _ -> :error
       end
     end)
@@ -268,8 +275,7 @@ defmodule Flezha.Convergence.Heal do
     with %{factory_id: factory, runner_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, op),
-         target when is_binary(target) <-
-           OperativeManager.assign_runner(namespace, factory, operative_id),
+         {:ok, target} <- placed(OperativeManager.assign_runner(namespace, factory, operative_id)),
          {:ok, :ok} <-
            SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
       _ = HubManager.operative_set_runner(namespace, operative_id, target)
@@ -290,8 +296,18 @@ defmodule Flezha.Convergence.Heal do
       # `skip_rebind?` returned true — a MISBOUND operative whose bound runner
       # is already active and owns the factory, so a stale-snapshot rebind
       # would only disrupt a healthy operative. Safe no-op.
-      true -> :ok
-      _ -> :error
+      true ->
+        :ok
+
+      # No runner in the namespace can serve this operative's factory. That is
+      # an unmet precondition, not a repair that failed: the ladder spaces out
+      # attempts that could have worked, and charging a rung for one that could
+      # not is what turns a wake with nothing to bind to into a longer wait.
+      :unplaced ->
+        :unmet
+
+      _ ->
+        :error
     end
   end
 
@@ -333,6 +349,12 @@ defmodule Flezha.Convergence.Heal do
 
   # The reply is always the full `%Overwatch{}` struct — callers hand it to
   # `Overwatch`'s own functions (the consent gate) or read its fields.
+  # The placement decision, told apart from the reads around it: `nil` is "no
+  # runner or node can serve this operative", the one failure that is an unmet
+  # precondition rather than a repair that failed.
+  defp placed(nil), do: :unplaced
+  defp placed(target), do: {:ok, target}
+
   defp overwatch_snapshot(pid) do
     case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:operative_call_timeout_ms)) do
       {:ok, %Overwatch{} = ow} -> ow

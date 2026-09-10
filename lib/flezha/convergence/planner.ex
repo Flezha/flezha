@@ -85,6 +85,33 @@ defmodule Flezha.Convergence.Planner do
   def rules(), do: @rules
 
   @doc """
+  Every cooldown key an operative waiting for a runner can be held on.
+
+  DERIVED, never listed: the binding rules are run over a Diff carrying the
+  operative in each waiting field, under every reason the declared kinds stamp
+  on those fields, and each resulting op goes through `key/1` — the same
+  function the plan keys on. A rebind planned under a reason added later joins
+  this set on its own, which a hand-written list of key shapes could not do.
+  """
+  @spec waiting_keys(Diff.operative_ref()) :: [Backoff.key()]
+  def waiting_keys(ref) do
+    %Diff{
+      unbound_operatives: [ref],
+      misbound_operatives: for(r <- Facts.reasons_for(Diff.waiting_fields()), do: {ref, nil, r}),
+      parked_operatives: [{ref, %{}, nil}],
+      replace_operatives: [{ref, nil}]
+    }
+    |> waiting_ops()
+    |> Enum.map(&key/1)
+    |> Enum.uniq()
+  end
+
+  # The ops those fields plan, and only those: the eviction and the channel
+  # reset planned beside them target the RUNNER, and no waiting operative cools
+  # on a key of its runner's.
+  defp waiting_ops(%Diff{} = d), do: bind_ops(d) ++ replace_ops(d)
+
+  @doc """
   Backoff key for an op: `{primitive, target}`; for a plugin op
   `{primitive, {operative_id, plugin_id}}`; for an op carrying a declared
   reason `{reason, target}`, so every rung of that reason's ladder walks ONE

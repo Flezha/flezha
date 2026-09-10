@@ -13,7 +13,8 @@ defmodule Flezha.Convergence.DiffTest do
   use Mimic
 
   alias Flezha.Config.Backoff
-  alias Flezha.Convergence.{Diff, Intent, Planner}
+  alias Flezha.Convergence.{Diff, Intent, Planner, Verdict}
+  alias FlezhaTest.Helper.ConvergenceFixtures
   alias Flezha.Plugin
 
   defp plugin(id) do
@@ -669,6 +670,62 @@ defmodule Flezha.Convergence.DiffTest do
       assert Planner.ladder?(resync)
       assert Planner.key(publish) == {:publish_binding, "r"}
       refute Planner.ladder?(publish)
+    end
+  end
+
+  describe "who is waiting for a runner" do
+    @waiting_ref {:ns, "r"}
+
+    defp waiting_delta(state) do
+      intent = %Intent{
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: "f", plugins: []}]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{@waiting_ref => %{bound_runner: "e_dead", pid: self(), factory_id: "f"}}
+      }
+
+      Diff.compute(
+        intent,
+        reality,
+        ConvergenceFixtures.verdicts([{{:operative, @waiting_ref}, state}])
+      )
+    end
+
+    defp waiting?(%Diff{} = delta) do
+      Enum.any?(Diff.waiting_fields(), &(Map.fetch!(delta, &1) != []))
+    end
+
+    # fails when: `classify/6` answers a state with a binding that
+    # `awaiting_binding/0` does not name, or names one it no longer answers.
+    # The release path reads that list to find who a connecting runner is news
+    # for, so the two drifting apart is the defect this change closed once.
+    test "exactly the declared states classify into a field that needs a runner" do
+      for state <- Verdict.states() do
+        assert waiting?(waiting_delta(state)) == state in Diff.awaiting_binding(),
+               "#{state}: `awaiting_binding/0` and the classification disagree"
+      end
+    end
+
+    # fails when: the drain stops suppressing a field a binding is planned from.
+    test "the drain suppresses every waiting field, and the row re-publish with them" do
+      draining = %{{:node_draining, node()} => %{at: 0, args: %{}}}
+
+      intent = %Intent{
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: "f", plugins: []}]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{@waiting_ref => %{bound_runner: "e_dead", pid: self(), factory_id: "f"}}
+      }
+
+      verdicts = ConvergenceFixtures.verdicts([{{:operative, @waiting_ref}, :failed}])
+
+      assert waiting?(Diff.compute(intent, reality, verdicts))
+      assert Diff.compute(intent, reality, verdicts, draining).draining
+      refute waiting?(Diff.compute(intent, reality, verdicts, draining))
     end
   end
 

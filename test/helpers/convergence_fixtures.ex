@@ -30,6 +30,25 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
     end)
   end
 
+  @doc """
+  The six-key map `Probe.snapshot/0` answers, for a test that stubs the probe.
+
+  Only the operatives and the active set ever differ between tests; the other
+  four are what an idle tick reads, so a key added to the real snapshot is
+  added here once instead of in every module that stubs one.
+  """
+  @spec snapshot(map(), map()) :: map()
+  def snapshot(operatives, active_runners) do
+    %{
+      operatives: operatives,
+      active_runners: active_runners,
+      placement: %{},
+      recovery: %{},
+      writers: MapSet.new(),
+      tick_at: 0
+    }
+  end
+
   @doc "The verdict records one tick would mint from `reality` and `signals`."
   @spec judge(Intent.t(), map(), map()) :: %{term() => Flezha.Convergence.Verdict.t()}
   def judge(%Intent{} = intent, reality, signals \\ %{}) do

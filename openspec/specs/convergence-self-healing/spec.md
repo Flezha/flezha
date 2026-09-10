@@ -108,7 +108,9 @@ Committing the binding first records `bound_runner ∈ active_runners` for a run
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
-Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick; that backoff is the `:heal` row of the ladder table (`5 s → 30 s → 60 s → 300 s`, held at 300 s, reset on `:ok`), and the Watchdog's compaction handshake rides the `:compaction` row of the same table under the same rungs.
+Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick; that backoff is the `:heal` row of the ladder table, whose rungs SHALL be `2 s → 5 s → 10 s → 15 s → 20 s → 30 s → 45 s → 60 s → 90 s → 120 s → 180 s → 300 s`, held at 300 s, reset on `:ok`. The early rungs are dense because the common fault is a runner restart measured in seconds, and a coarse first step punishes it as though it were permanent.
+
+The Watchdog's compaction handshake SHALL ride a `:compaction` row of its own with rungs `5 s → 30 s → 60 s → 300 s` and its existing give-up bound of four attempts. It MUST NOT share the heal row's rungs: it gives up by attempt count, so a denser ladder would shorten the wall-clock it waits before abandoning a compaction, which is a change to durability behaviour and not to healing.
 
 The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits at the root. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
 
@@ -118,8 +120,13 @@ The wrapper is control-plane-wide, not a convergence concept: it is named by `co
 - **THEN** the Planner filters the repeat `rebind_operative` op under backoff and does not re-issue it until the backoff window elapses.
 
 #### Scenario: the loop's rungs are the table's
-- **WHEN** a heal of one target fails on four consecutive eligible ticks
-- **THEN** the four waits emitted on `[:flezha, :backoff, :wait]` for ladder `:heal` SHALL be `5_000`, `30_000`, `60_000`, `300_000`, and a fifth failure SHALL wait `300_000` again
+- **WHEN** a heal of one target fails on twelve consecutive eligible ticks
+- **THEN** the twelve waits emitted on `[:flezha, :backoff, :wait]` for ladder `:heal` SHALL be `2_000`, `5_000`, `10_000`, `15_000`, `20_000`, `30_000`, `45_000`, `60_000`, `90_000`, `120_000`, `180_000`, `300_000`, and a thirteenth failure SHALL wait `300_000` again
+
+#### Scenario: compaction keeps its own wall-clock before giving up
+- **WHEN** a compaction of one Entity fails on four consecutive eligible attempts
+- **THEN** the waits emitted for ladder `:compaction` SHALL be `5_000`, `30_000`, `60_000`, `300_000` and the Watchdog SHALL give up only after the fourth
+- **AND** a change to the `:heal` rungs SHALL NOT move any of those four values
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
@@ -265,7 +272,7 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 
-An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, operative_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_operative` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, operative_id}` key of the one backoff table, so a persistently stalled operative follows the 5 s → 30 s → 60 s → 300 s cooldown and never a per-tick storm. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
+An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, operative_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_operative` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, operative_id}` key of the one backoff table, so a persistently stalled operative follows the `:heal` row's cooldown and never a per-tick storm. Escalation is counted in attempts, not in elapsed time, so the denser early rungs reach `rebind_operative` sooner in wall-clock terms while the order of remedies is unchanged. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
 
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operative's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy operative, which an output-stalled operative is not.
 
@@ -279,9 +286,9 @@ An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry 
 
 #### Scenario: repeated stalls are backoff-throttled
 
-- **GIVEN** operative `btc_kraken` was just resynced due to an output stall 2 seconds ago
+- **GIVEN** operative `btc_kraken` was just resynced due to an output stall 1 second ago
 - **WHEN** the Watchdog flags another output stall for `btc_kraken`
-- **THEN** the planned op is filtered out by Backoff (5s cooldown not yet elapsed)
+- **THEN** the planned op is filtered out by Backoff (the first rung's cooldown has not yet elapsed)
 - **AND** no op is issued on this tick
 
 ### Requirement: Rolling upgrade preserves producing-operatives count
@@ -346,7 +353,7 @@ When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persi
 
 The convergence loop SHALL judge production liveness of a operative's plugins by the plugin provider's own `health/1` self-report (`Extension.Table.health/1`), never by traffic-volume proxies. A plugin that is declared, currently subscribed, and self-reports `{:unhealthy, reason}` SHALL produce a `restart_plugin` heal op routed through the extension table's existing restart machinery, subject to the loop's per-target exponential backoff. An uncertain health probe (timeout, raise, missing provider callback) SHALL be treated as healthy so the loop never escalates on uncertainty.
 
-A subscriber that crashes is the same divergence declared from the other side: the extension table records its phase as `{:down, reason}` and declares `{:plugin_down, namespace, operative_id, plugin_id}`; the table restarts nothing and holds no counter or timer. The loop plans `restart_plugin` keyed `{restart_plugin, {operative_id, plugin_id}}` — per plugin, so one crashing plugin never throttles its siblings' starts — and the key resets only on `:running` observed for the stable window, read from the table's `started_at` by the Probe, so a fast-failing provider accumulates backoff instead of resetting on every restart.
+A subscriber that crashes is the same divergence declared from the other side: the extension table records its phase as `{:down, reason}` and declares `{:plugin_down, namespace, operative_id, plugin_id}`; the table restarts nothing and holds no counter or timer. The loop plans `restart_plugin` keyed `{restart_plugin, {operative_id, plugin_id}}` — per plugin, so one crashing plugin never throttles its siblings' starts — and the key resets only on `:running` observed for the stable window, read from the table's `started_at` by the Probe, so a fast-failing provider accumulates backoff instead of resetting on every restart. The denser early rungs of the `:heal` row mean such a provider is retried more often in its first minute; the stable-window reset is what still carries it to the top rung rather than resetting on every restart.
 
 The health self-report is the authority on whether a RUNNING plugin is producing;
 it is not the authority on whether a plugin is running at all. A declared plugin
@@ -380,7 +387,7 @@ extension table, so that fail-open is observable rather than silent.
 #### Scenario: a fast-failing provider accumulates backoff
 - **GIVEN** a plugin that reaches `:running` and crashes again within the stable window on every restart
 - **WHEN** the loop plans across ticks
-- **THEN** its key SHALL walk 5 s → 30 s → 60 s → 300 s and SHALL NOT reset until `:running` is observed for the whole window
+- **THEN** its key SHALL walk the `:heal` row's rungs to the top and SHALL NOT reset until `:running` is observed for the whole window
 
 ### Requirement: Plugin-degraded operatives surface on /healthz and telemetry
 
@@ -607,17 +614,11 @@ runner restarting repeatedly is visible rather than mysterious.
 
 ### Requirement: A park is an outcome declared to the loop, never a primitive
 
-A park SHALL be declared to the convergence loop by the one park funnel
-(`Flezha.Operative.Lifecycle.park/2`) as the fact `{:operative_parked, namespace,
-operative_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a
-park, it is what a failed repair leaves behind. The Diff SHALL report parked operatives
-apart from unbound ones, with the reason, and the Planner SHALL answer with
-`rebind_operative` on the `{:parked, operative_id}` key — eligible at the declaring tick,
-then on the loop's table — planning `reset_control_channel` for the runner first when the
-reason is a dead-transport ping failure, and only once the parked key has walked two
-rungs when the reason is a timeout. A runner connecting in the namespace SHALL release
-every `{:parked, _}` key in it. A bind SHALL be one attempt; the un-park task reports its
-outcome to the Overwatch and decides nothing.
+A park SHALL be declared to the convergence loop by the one park funnel (`Flezha.Operative.Lifecycle.park/2`) as the fact `{:operative_parked, namespace, operative_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a park, it is what a failed repair leaves behind. The Diff SHALL report parked operatives apart from unbound ones, with the reason, and the Planner SHALL answer with `rebind_operative` on the `{:parked, operative_id}` key — eligible at the declaring tick, then on the loop's table — planning `reset_control_channel` for the runner first when the reason is a dead-transport ping failure, and only once the parked key has walked two rungs when the reason is a timeout. A bind SHALL be one attempt; the un-park task reports its outcome to the Overwatch and decides nothing.
+
+A runner connecting in a namespace SHALL release the cooldown keys of every operative in that namespace which is waiting for a runner, whatever phase it is in: parked, unbound, and misbound to a runner that is gone. The released set SHALL be **derived** from the same `Planner.key/1` that produced the op, never from a hand-written list of key shapes, so a rebind planned under a new reason cannot silently escape the release.
+
+The release SHALL be guarded so that a runner which cannot serve an operative does not wake it: a runner SHALL release only the keys of operatives whose factory it advertises. Because that advertisement can change between the release and the plan, the guard SHALL NOT be the only protection — a rebind attempt that finds no runner able to serve the operative SHALL be treated as an unmet precondition and SHALL neither advance nor reset the ladder, so a wake that turns out to be useless costs a plan and not a rung. A failed bind that did have a capable runner is a failed repair and advances the ladder as before. No separate release counter, per-runner release cooldown or other site-local ladder SHALL be introduced: the `:on_success` reset of the one table is what bounds a flapping runner.
 
 #### Scenario: A failed bind parks once and is retried by the loop
 - **GIVEN** an operative whose one bind attempt fails with a timeout-class reason
@@ -635,13 +636,25 @@ outcome to the Overwatch and decides nothing.
 - **THEN** the plan SHALL carry `reset_control_channel` for its runner; a first timeout SHALL NOT cut the channel
 
 #### Scenario: A runner arriving mid-cooldown is used at once
-- **GIVEN** three operatives parked in a namespace, their keys on the 30 s rung
+- **GIVEN** three operatives parked in a namespace, their keys on a mid-ladder rung
 - **WHEN** a runner advertising their factory connects to that namespace
-- **THEN** every `{:parked, _}` key in the namespace SHALL be released and the immediate tick SHALL plan their rebinds
+- **THEN** every one of their cooldown keys SHALL be released and the immediate tick SHALL plan their rebinds
 
-#### Scenario: The un-park task decides nothing
-- **WHEN** the supervised un-park migrate fails
-- **THEN** it SHALL report the failure to the Overwatch, whose park declares the fact; no ladder SHALL run inside the task
+#### Scenario: An operative whose runner died is released too
+- **GIVEN** an operative judged misbound to a runner that is gone, cooling on the `{:dead_runner, id}` key its reasoned rebind derives
+- **WHEN** a runner advertising its factory connects to the namespace
+- **THEN** that key SHALL be released and the operative SHALL bind on the immediate tick rather than waiting out its rung
+
+#### Scenario: A runner that cannot serve the operative wakes nobody
+- **GIVEN** an operative waiting for a runner in a namespace
+- **WHEN** a runner connects to that namespace advertising no factory the operative needs
+- **THEN** the operative's cooldown key SHALL NOT be released
+- **AND** if it is woken anyway, the resulting attempt SHALL neither advance nor reset its ladder
+
+#### Scenario: A flapping runner does not defeat the ladder
+- **GIVEN** an operative waiting on a mid-ladder rung whose bind fails for its own reasons
+- **WHEN** a runner connects and disconnects repeatedly in its namespace
+- **THEN** each failed repair SHALL advance the ladder, and the rung SHALL be cleared only by a bind that succeeds
 
 ### Requirement: A bypass of the remedy seam SHALL be impossible, and every primitive SHALL pass one conformance test
 
@@ -776,12 +789,15 @@ never from its own arithmetic, list or literal. Jitter SHALL be one rule, unifor
 emitted on `[:flezha, :backoff, :wait]` (`delay_ms`, `attempt`; `ladder`, `target`) and
 `[:flezha, :backoff, :reset]`, so a ladder's behaviour is observable without reading its
 site. A successful attempt SHALL reset the row's attempt count, under the row's own
-definition of success. A row's values at landing SHALL be the values its site carried
-before: the loop's `5 s → 30 s → 60 s → 300 s`, the OTLP post's `250 ms → 4 s` in five
-attempts, the cluster reconnect's `1 s` doubling to its `:reconnect_max_backoff_ms`
-knob, the hub-call retry's `150 ms → 5 s` in eight attempts, the schedule's
-`1 s → 60 s`, the shipper's `500 ms → 30 s`, the websocket socket reconnect's
-`250 ms × 1.5 → 30 s` and the SDK's `50 ms → 5 s` and `100 ms → 30 s`.
+definition of success. A row's values SHALL be stated once, by the requirement that owns
+the behaviour they pace: the `:heal` and `:compaction` rows by "Bounded calls and
+backoff prevent heal-induced churn", and the rest here — the OTLP post's
+`250 ms → 4 s` in five attempts, the cluster reconnect's `1 s` doubling to its
+`:reconnect_max_backoff_ms` knob, the hub-call retry's `150 ms → 5 s` in eight attempts,
+the schedule's `1 s → 60 s`, the shipper's `500 ms → 30 s`, the websocket socket
+reconnect's `250 ms × 1.5 → 30 s` and the SDK's `50 ms → 5 s` and `100 ms → 30 s`. A row
+retuned later SHALL be retuned in the one requirement that states it, so no second copy
+of a ladder's values can go stale.
 
 #### Scenario: A site beside the table fails the seam test
 

@@ -218,6 +218,71 @@ defmodule Flezha.Config.BackoffSeamTest do
     end
   end
 
+  describe "the two convergence rows are pinned by the clock they promise" do
+    # fails when: the heal rungs are retuned and the Watchdog's compaction
+    # handshake follows them. Compaction gives up by ATTEMPT COUNT, so its four
+    # rungs ARE the wall clock it waits before abandoning a compaction — a
+    # denser ladder would shorten that from about 395 s to about 32 s, which is
+    # a change to durability behaviour and not to healing.
+    test "the heal row walks twelve rungs and then holds at the top" do
+      assert waits(:heal, 13) == [
+               2_000,
+               5_000,
+               10_000,
+               15_000,
+               20_000,
+               30_000,
+               45_000,
+               60_000,
+               90_000,
+               120_000,
+               180_000,
+               300_000,
+               300_000
+             ]
+    end
+
+    test "the compaction row keeps its four, and gives up only after the fourth" do
+      assert waits(:compaction, 4) == [5_000, 30_000, 60_000, 300_000]
+      refute Backoff.give_up?(:compaction, 3)
+      assert Backoff.give_up?(:compaction, 4)
+    end
+  end
+
+  # The waits `ladder` announces for its first `attempts` failures, read off
+  # `[:flezha, :backoff, :wait]` — the published surface the rungs are a claim
+  # about, rather than the table they are written in. The target is unique per
+  # call so a row driven by another test in this async file cannot be read as
+  # this one's.
+  defp waits(ladder, attempts) do
+    parent = self()
+    target = {__MODULE__, ladder, System.unique_integer([:positive])}
+    handler = {:pin, target}
+
+    :telemetry.attach(
+      handler,
+      [:flezha, :backoff, :wait],
+      fn _event, %{delay_ms: ms}, meta, _config ->
+        if meta.target == target, do: send(parent, {:wait, target, ms})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    Enum.reduce(1..attempts, Backoff.new(ladder), fn _attempt, table ->
+      Backoff.update(table, target, :error, 0)
+    end)
+
+    for _ <- 1..attempts do
+      receive do
+        {:wait, ^target, ms} -> ms
+      after
+        1_000 -> flunk("#{ladder} announced fewer than #{attempts} waits")
+      end
+    end
+  end
+
   describe "the deployment manifests carry the derived grace" do
     test "the DaemonSet and both compose files equal orchestrator_grace_ms" do
       seconds = div(Durations.default(:orchestrator_grace_ms), 1_000)

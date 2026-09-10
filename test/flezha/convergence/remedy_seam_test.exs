@@ -18,6 +18,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Cluster.Directory
+  alias FlezhaTest.Helper.ConvergenceFixtures
 
   alias Flezha.Config.Backoff
 
@@ -149,16 +150,12 @@ defmodule Flezha.Convergence.RemedySeamTest do
     end
 
     defp reality(observed) do
-      %{
-        operatives: %{
+      ConvergenceFixtures.snapshot(
+        %{
           {:ns, "op"} => Map.merge(%{pid: self(), bound_runner: "e1", factory_id: "f"}, observed)
         },
-        active_runners: %{ns: MapSet.new(["e1"])},
-        placement: %{},
-        recovery: %{},
-        writers: MapSet.new(),
-        tick_at: 0
-      }
+        %{ns: MapSet.new(["e1"])}
+      )
     end
 
     test "a stub executor answering :ok leaves a parked ladder armed until the park is observed gone" do
@@ -461,13 +458,16 @@ defmodule Flezha.Convergence.RemedySeamTest do
     end
 
     test "a timed-out, refused or unplaceable migrate leaves the registry binding unchanged" do
-      for {id, opts} <- [
-            {"hanging_op", [factory: "market", migrate: :hang]},
-            {"refusing_op", [factory: "market", migrate: :refuse]},
-            {"unservable_op", [factory: "factory_nobody_serves", migrate: :confirm]}
+      # The third row differs in its outcome and not in its effect: no runner
+      # advertises that factory, so the rebind never had a repair to attempt
+      # and answers the unmet precondition the loop charges no rung for.
+      for {id, outcome, opts} <- [
+            {"hanging_op", :error, [factory: "market", migrate: :hang]},
+            {"refusing_op", :error, [factory: "market", migrate: :refuse]},
+            {"unservable_op", :unmet, [factory: "factory_nobody_serves", migrate: :confirm]}
           ] do
         inject(id, opts)
-        assert Heal.execute(rebind(id)) == :error
+        assert Heal.execute(rebind(id)) == outcome
         assert registry_tag(id) == @dead_runner
       end
     end
@@ -524,6 +524,9 @@ defmodule Flezha.Convergence.RemedySeamTest do
              }) ==
                :error
 
+      # A deferring consent is a repair that failed; no other node serving the
+      # factory is a precondition that was never met, and the two are told
+      # apart so only the first is charged a rung.
       {:ok, nowhere} = start_shell("nowhere_to_go_op", "market")
       inject_pid("nowhere_to_go_op", nowhere)
       Directory |> stub(:factory_nodes, fn @namespace, "market" -> [node()] end)
@@ -534,7 +537,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
                target: "nowhere_to_go_op",
                args: %{}
              }) ==
-               :error
+               :unmet
 
       refute_received :moved
     end
