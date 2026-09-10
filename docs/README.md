@@ -5,6 +5,7 @@ operative profiles and the runner model. Everything else is grouped by who reads
 
 | Directory | For | What is in it |
 | --- | --- | --- |
+| [`guides/`](#guides) | someone deploying Flezha for the first time | End-to-end walkthroughs: build, start, connect, run |
 | [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, stream profile, workflow profile, runner |
 | [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
 | [`sdk/`](#sdk) | operative authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
@@ -21,6 +22,15 @@ Three references sit at the top level: [`glossary.md`](glossary.md) (vocabulary)
 held to, in every language it carries).
 
 reproduces it and the output that command gave.
+
+## guides
+
+A guide walks one path from start to finish. The reference docs it points at
+answer "what are the options"; a guide answers "what do I type".
+
+| Doc | Covers |
+| --- | --- |
+| [`first_deployment.md`](guides/first_deployment.md) | Build the release, start the controller, claim the bootstrap admin, create a namespace, issue a runner credential, connect a runner, start an operative, run the testnet, attach plugins |
 
 ## sdk
 

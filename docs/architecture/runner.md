@@ -213,7 +213,7 @@ sequenceDiagram
     CORE-->>T2: Work — entity "ETH", inputs [7]
     Note over T1,T2: different entities run in parallel, always
     T1->>CORE: complete("BTC")
-    Note over CORE: only NOW is "BTC" a candidate again;<br/>its inputs are delivered in enqueue order across activations
+    Note over CORE: only NOW is "BTC" a candidate again,<br/>its inputs are delivered in enqueue order across activations
 ```
 
 Batch assembly owns the rest of the ordering contract: the consumed-floor skip, replay-slice
