@@ -74,6 +74,44 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       assert Quotas.rebuild_disk_bytes("team-disk") == 3_072
     end
 
+    test "a burst of callers rebuilds the counter once between them", %{state_root: state_root} do
+      {:ok, _} = NamespaceStore.create("team-burst", quotas: %{})
+      dir = Path.join([state_root, "team-burst", "op", "proc"])
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 2_048))
+
+      # One claim is granted and the other 199 are told the window is held, so
+      # 200 concurrent starts walk the tree once rather than 200 times and none
+      # of them waits behind 199 fsyncing writes to be refused on a timeout.
+      claims =
+        1..200
+        |> Task.async_stream(
+          fn _ -> QuotaCounters.claim_refresh("team-burst", :disk_bytes, 30) end,
+          max_concurrency: 200,
+          ordered: false
+        )
+        |> Enum.map(fn {:ok, claim} -> claim end)
+
+      assert Enum.count(claims, &(&1 == :claimed)) == 1
+      assert Enum.count(claims, &(&1 == :fresh)) == 199
+
+      # The window holds the burst off, never the truth: the bypass still reads
+      # the disk.
+      assert Quotas.rebuild_disk_bytes("team-burst") == 2_048
+    end
+
+    test "a lapsed window is claimed again", %{state_root: state_root} do
+      {:ok, _} = NamespaceStore.create("team-lapse", quotas: %{})
+      File.mkdir_p!(Path.join([state_root, "team-lapse"]))
+
+      # A zero-second window has always lapsed, which is the boot rebuild's
+      # reading: nothing it finds stamped can be newer than the uptime it lost.
+      assert QuotaCounters.claim_refresh("team-lapse", :disk_bytes, 0) == :claimed
+      assert QuotaCounters.claim_refresh("team-lapse", :disk_bytes, 0) == :claimed
+
+      assert QuotaCounters.claim_refresh("team-lapse", :disk_bytes, 30) == :fresh
+    end
+
     test "a breached namespace refuses new allocation without touching writes", %{
       state_root: state_root
     } do

@@ -14,6 +14,11 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   ETS reads are direct (no GenServer hop). Mutations go through the
   GenServer, write DETS with `:dets.sync/1`, then refresh the cache.
+
+  The process also keeps, per counter, when it was last written from the truth
+  behind it. `claim_refresh/3` reads that stamp so concurrent callers rebuild a
+  counter once between them rather than once each; `set/3` writes it, being the
+  write that establishes a counter from its source.
   """
 
   use GenServer
@@ -63,6 +68,22 @@ defmodule Flezha.AuthZ.QuotaCounters do
     GenServer.call(__MODULE__, {:set, namespace, kind, value})
   end
 
+  @doc """
+  Claim the right to rebuild `(namespace, kind)` from the truth behind it.
+
+  Answers `:claimed` to one caller per `ttl_seconds` window and `:fresh` to
+  every other, so a burst of callers costs one rebuild between them. The window
+  is stamped on the claim, before the caller does the work, which is what makes
+  the burst collapse: stamping after the work leaves every caller in the burst
+  reading a window nobody has claimed yet.
+  """
+  @spec claim_refresh(binary(), atom(), non_neg_integer()) :: :claimed | :fresh
+  def claim_refresh(namespace, kind, ttl_seconds)
+      when is_binary(namespace) and is_atom(kind) and is_integer(ttl_seconds) and
+             ttl_seconds >= 0 do
+    GenServer.call(__MODULE__, {:claim_refresh, namespace, kind, ttl_seconds})
+  end
+
   @doc "Drop every counter for a namespace (used by `flz ns delete`)."
   @spec drop_namespace(binary()) :: :ok
   def drop_namespace(namespace) when is_binary(namespace) do
@@ -97,7 +118,20 @@ defmodule Flezha.AuthZ.QuotaCounters do
   @impl true
   def handle_call({:set, namespace, kind, value}, _from, state) do
     :ok = DetsStore.put(@table, @cache, {namespace, kind}, value)
-    {:reply, :ok, state}
+    {:reply, :ok, stamp(state, {namespace, kind}, System.monotonic_time(:second))}
+  end
+
+  def handle_call({:claim_refresh, namespace, kind, ttl_seconds}, _from, state) do
+    key = {namespace, kind}
+    now = System.monotonic_time(:second)
+
+    # Monotonic seconds carry an arbitrary (typically negative) offset, so
+    # "never stamped" has to be the absent key rather than a 0 default, which
+    # would read as freshly written.
+    case Map.get(stamps(state), key) do
+      at when is_integer(at) and now - at < ttl_seconds -> {:reply, :fresh, state}
+      _ -> {:reply, :claimed, stamp(state, key, now)}
+    end
   end
 
   def handle_call({:drop_namespace, namespace}, _from, state) do
@@ -106,10 +140,19 @@ defmodule Flezha.AuthZ.QuotaCounters do
       :ok = DetsStore.delete(@table, @cache, key)
     end)
 
-    {:reply, :ok, state}
+    kept = Map.reject(stamps(state), fn {{ns, _kind}, _at} -> ns == namespace end)
+
+    {:reply, :ok, Map.put(state, :refreshed_at, kept)}
   end
 
   ## ----- private -----
+
+  # The stamps ride the store's state map and are volatile by design: they say
+  # when this uptime last wrote a counter from its source, so a restart rebuilds
+  # rather than trusting a window it cannot have observed.
+  defp stamps(state), do: Map.get(state, :refreshed_at, %{})
+
+  defp stamp(state, key, at), do: Map.put(state, :refreshed_at, Map.put(stamps(state), key, at))
 
   defp do_adjust(namespace, kind, delta, state) do
     key = {namespace, kind}

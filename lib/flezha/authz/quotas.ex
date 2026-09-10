@@ -31,6 +31,9 @@ defmodule Flezha.AuthZ.Quotas do
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters}
   alias Flezha.State.Paths
 
+  # How long a disk-bytes snapshot stands before the next caller rebuilds it.
+  @disk_bytes_window_seconds 30
+
   @type kind ::
           :max_operatives
           | :max_entities_per_operative
@@ -119,7 +122,6 @@ defmodule Flezha.AuthZ.Quotas do
   def rebuild_disk_bytes(namespace) when is_binary(namespace) do
     bytes = compute_disk_bytes(namespace)
     :ok = QuotaCounters.set(namespace, :disk_bytes, bytes)
-    :persistent_term.put({namespace, :disk_bytes_cached_at}, System.monotonic_time(:second))
     bytes
   end
 
@@ -127,20 +129,19 @@ defmodule Flezha.AuthZ.Quotas do
   Snapshot the disk-bytes counter for `namespace` from the on-disk
   state tree. Cached internally for 30s — calls within the cache
   window read the stored value rather than re-walking.
+
+  Concurrent callers collapse onto one walk: the window is claimed in
+  `QuotaCounters` BEFORE the tree is walked, so a namespace starting a thousand
+  operatives at once pays one walk and one counter write rather than a thousand
+  of each, and none of them queues behind the other 999 to be refused on a call
+  timeout. A claim whose walk then fails leaves the counter as it was until the
+  window lapses, which is the staleness the window already allows.
   """
   @spec refresh_disk_bytes(binary()) :: non_neg_integer()
   def refresh_disk_bytes(namespace) when is_binary(namespace) do
-    now = System.monotonic_time(:second)
-
-    # Monotonic time has an arbitrary (typically negative) offset, so "never
-    # cached" must be the nil sentinel — a 0 default made every first read
-    # look freshly cached and serve the empty counter instead of the disk.
-    case :persistent_term.get({namespace, :disk_bytes_cached_at}, nil) do
-      cached_at when is_integer(cached_at) and now - cached_at < 30 ->
-        QuotaCounters.get(namespace, :disk_bytes)
-
-      _ ->
-        rebuild_disk_bytes(namespace)
+    case QuotaCounters.claim_refresh(namespace, :disk_bytes, @disk_bytes_window_seconds) do
+      :claimed -> rebuild_disk_bytes(namespace)
+      :fresh -> QuotaCounters.get(namespace, :disk_bytes)
     end
   end
 
