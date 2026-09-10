@@ -15,6 +15,7 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.AuthZ.TokenStore
   alias Flezha.Config
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
@@ -103,21 +104,23 @@ defmodule Mix.Tasks.Bench.Fleet do
 
       true ->
         IO.puts("Setting up test environment with compute engines...")
-        runner_ids = start_runners(namespace, count, extra_env)
+        runner_ids = start_runners(namespace, count, extra_env ++ runner_credential(namespace))
         IO.puts("Started #{length(runner_ids)} compute engines for performance testing")
         Process.put(:bench_runners, runner_ids)
     end
   end
 
   # The bench runs under `MIX_ENV=prod`, where `authz_enabled` defaults to true,
-  # so on a box whose `flz auth bootstrap` has been claimed every runner connect
-  # is refused `:namespace_unknown` until the catalog carries this namespace. The
-  # harness establishes its own precondition rather than opting out of
-  # enforcement: a bench that turned authz off would measure a configuration that
-  # ships nowhere, and would never exercise the admission path at all.
+  # so on a box whose `flz auth bootstrap` has been claimed a runner connect is
+  # refused twice over: `:namespace_unknown` until the catalog carries this
+  # namespace, and `:namespace_not_proven` until the connect presents a runner
+  # credential for it. The harness establishes both preconditions rather than
+  # opting out of enforcement: a bench that turned authz off would measure a
+  # configuration that ships nowhere, and would never exercise the admission
+  # path at all.
   #
-  # Gated on the same predicate `Quotas.check_allocation/3` reads, so a run that
-  # will not be enforced writes no catalog row.
+  # Both are gated on the same predicate `Quotas.check_allocation/3` reads, so a
+  # run that will not be enforced writes no catalog row and issues no credential.
   #
   # Quotas are wide enough that the bench never measures a ceiling: the defaults
   # cap a namespace at 100 operatives, which `-n 100` sits exactly on.
@@ -133,6 +136,41 @@ defmodule Mix.Tasks.Bench.Fleet do
         {:error, reason} ->
           Mix.raise("could not register bench namespace #{namespace}: #{inspect(reason)}")
       end
+    end
+  end
+
+  @doc """
+  The credential a spawned runner proves `namespace` with, as the environment
+  entry every SDK reads it from, or `[]` when nothing will be enforced.
+
+  One is issued per run because the raw value cannot be recovered from the store
+  once written, and the entries earlier runs left behind are retired first: a
+  bench namespace is scratch, so every runner entry in it is one of ours.
+
+  The in-process runner is asked for no credential (co-residence is its proof),
+  so only the branch that spawns runner processes calls this.
+  """
+  @spec runner_credential(binary()) :: [{binary(), binary()}]
+  def runner_credential(namespace) do
+    if AuthZ.enabled?() do
+      for %{role: :runner, revoked_at: nil, token_hash: hash} <- TokenStore.list(namespace),
+          do: TokenStore.revoke(hash)
+
+      case TokenStore.issue("runner@#{namespace}", namespace, :runner, :never,
+             created_by_principal: "bench",
+             label: "bench-runner"
+           ) do
+        {:ok, secret, _entry} ->
+          IO.puts("Issued a runner credential for namespace #{namespace}")
+          [{"FLEZHA_NAMESPACE_SECRET", secret}]
+
+        {:error, reason} ->
+          Mix.raise(
+            "could not issue a bench runner credential for #{namespace}: #{inspect(reason)}"
+          )
+      end
+    else
+      []
     end
   end
 
