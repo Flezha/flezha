@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed: the controller reports ready in seconds instead of after 45
+
+`flz boot await`, `GET /readyz` and the image health check held every controller
+at `recovering` for about 45 seconds after start, a single node with nothing to
+wait for included. A namespace hub stayed in recovery until its first reconcile
+round, and only the `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` timer opened it.
+
+The round now opens once the hub has heard from every peer it is connected to,
+after a short settle window, so a controller with no peers is ready about two
+seconds after start. The new `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` (default
+`2000`) sets that window; `0` suits a deployment that forms its cluster before
+the controller starts. The grace keeps its `45000` default and now only caps the
+wait on a connected peer that never answers. Nothing in that window waits for a
+runner: an operative whose runner has not reconnected is started unbound and
+bound when the runner arrives.
+
+This needs process_hub 0.7.1. Against 0.7.0 the new setting is ignored and the
+wait is unchanged.
+
 ### Fixed — an enabled plugin survives a controller restart
 
 A plugin enabled with `flz plugin enable` was silently lost when the controller

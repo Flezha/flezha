@@ -29,15 +29,20 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   import ExUnit.CaptureIO
 
   alias Flezha.Boot.Readiness
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Healthz.Server
   alias Flezha.Service.{CliManager, HubManager}
+  alias Flezha.Service.HubManager.Starter
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.HubRegistryTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @dockerfile "docker/prod/Dockerfile.controller"
+  @ready_within_ms 10_000
 
   setup do
-    previous_port = Application.get_env(:flezha, :healthz_port)
-    Application.put_env(:flezha, :healthz_port, 0)
+    on_exit(TestHelpers.override_env(:healthz_port, 0))
 
     Snapshot.reset_recovery_states()
     Readiness.reset()
@@ -48,10 +53,6 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     on_exit(fn ->
       Snapshot.reset_recovery_states()
       Readiness.publish_sequence_complete()
-
-      if previous_port,
-        do: Application.put_env(:flezha, :healthz_port, previous_port),
-        else: Application.delete_env(:flezha, :healthz_port)
     end)
 
     {:ok, port: port}
@@ -104,6 +105,40 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     end
   end
 
+  # Real hub, shipped recovery config: a node with nobody to wait for must not
+  # sit at `recovering` for the whole grace.
+  @tag :tmp_dir
+  test "a controller with no peers is ready in seconds, hub recovery met last", %{tmp_dir: tmp} do
+    assert Node.list() == [], "this boot needs a node with no peers: #{inspect(Node.list())}"
+
+    on_exit(TestHelpers.override_env(:auto_restore_enabled, true))
+    on_exit(TestHelpers.override_env(:process_hub_registry_root, tmp))
+
+    # A grace under the deadline would pass this test on the timer alone.
+    assert Durations.get(:process_hub_reconcile_grace_ms) > @ready_within_ms
+
+    HubRegistryTestHelper.stop_new_hubs_on_exit()
+
+    # The previous boot, leaving its registry on disk the way a restart finds it.
+    namespace = "drill-no-peers-#{System.unique_integer([:positive])}"
+    {:ok, _pid} = HubManager.start_hub(namespace)
+    HubRegistryTestHelper.stop_hub_keeping_registry(namespace)
+    assert File.regular?(HubRegistryTestHelper.registry_file(namespace))
+
+    # This boot: the owner that creates the declared set's hubs, then the end
+    # of the sequence.
+    started = System.monotonic_time(:millisecond)
+    {:ok, _pid} = start_supervised(Starter)
+    Readiness.publish_sequence_complete()
+
+    ready? = NodeTestHelper.wait_until(&ready_or_record_unmet/0, @ready_within_ms)
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    assert ready?, "not ready #{elapsed} ms after boot, unmet: #{inspect(Process.get(:unmet))}"
+    assert Process.get(:unmet) == [:hubs_recovered]
+    assert namespace in HubManager.get_running_namespaces()
+  end
+
   test "the shipped HEALTHCHECK evaluates the readiness verdict once" do
     argv = healthcheck_argv()
 
@@ -130,6 +165,17 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
       assert {{:shutdown, 1}, out} = run.(), "#{name} reported ready while #{unmet} is unmet"
       assert out =~ verdict
       assert out =~ unmet
+    end
+  end
+
+  defp ready_or_record_unmet() do
+    case Readiness.verdict() do
+      {:ready, _rows} ->
+        true
+
+      {_verdict, rows} ->
+        Process.put(:unmet, for(%{key: key, met: false} <- rows, do: key))
+        false
     end
   end
 

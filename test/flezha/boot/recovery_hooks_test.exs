@@ -6,10 +6,10 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   alias Flezha.Observability.TelemetryBridge
 
   setup do
-    # `config/test.exs` sets this `false` while every reader defaults to `true`,
-    # so auto-restore left ON boots later hubs into `:recovering`, where they
-    # hold for `reconcile_grace_ms` and stall `RecoveryGate` and any convergence
-    # assertion behind it.
+    # The key row defaults this to `false` under `:test`, so auto-restore left
+    # ON boots later hubs into `:recovering`, where they hold until their first
+    # reconcile round and stall `RecoveryGate` and any convergence assertion
+    # behind it.
     Application.put_env(:flezha, :auto_restore_enabled, true)
 
     :ok

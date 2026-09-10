@@ -22,7 +22,7 @@ defmodule Flezha.Service.HubManager do
 
   defdelegate alter_child_data(arg1, arg2), to: Placement
   defdelegate attempt_start(arg1, arg2), to: Lifecycle
-  defdelegate auto_recovery_config(), to: Rows
+  defdelegate auto_recovery_config(), to: Lifecycle
   defdelegate await_cluster_gate(), to: Lifecycle
   defdelegate consent_settings(), to: Lifecycle
   defdelegate cspec_partition(arg1), to: Rows
@@ -186,8 +186,8 @@ defmodule Flezha.Service.HubManager do
 
   Two windows, and a live-placement read is blind in both. A hub does not load
   its durable registry into the live one at start — the rows sit on disk until
-  the reconcile runs a whole `reconcile_grace_ms` later, and every live read
-  answers "empty" until then, so an unsettled recovery is what says "wait".
+  the first reconcile round runs, and every live read answers "empty" until
+  then, so an unsettled recovery is what says "wait".
   After the reconcile the rows are back but nothing has placed them, because
   placing an operative needs a runner and there is none; the declared set is
   what says "this node was told to hold these", whether or not anything
@@ -261,7 +261,7 @@ defmodule Flezha.Service.HubManager do
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: Lifecycle.migration_strategy(),
       registry_backend: Lifecycle.registry_backend_config(hub_id),
-      auto_recovery: Rows.auto_recovery_config(),
+      auto_recovery: Lifecycle.auto_recovery_config(),
       # Operative startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: Durations.get(:hub_cross_node_request_ms),

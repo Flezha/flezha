@@ -1,8 +1,9 @@
 defmodule Flezha.Service.HubManager.Lifecycle do
   @moduledoc """
-  What a hub does around its own start and stop: the post-start hook wiring,
-  the aliveness wait, the drain, and the registry directory a stopped hub
-  leaves behind. The drain and the stop are the hub's steps of the shutdown
+  What a hub does around its own start and stop: the registry backend, recovery
+  and migration settings it starts with, the post-start hook wiring, the
+  aliveness wait, the drain, and the registry directory a stopped hub leaves
+  behind. The drain and the stop are the hub's steps of the shutdown
   plan — the `:node` drain and the `:namespace` hub stop — and nothing else
   reaches `drain_hub/2`.
   """
@@ -18,6 +19,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Shutdown.Coordinator
+  alias Flezha.State.DurabilityTier
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
@@ -285,6 +287,40 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   def wipe_registry_dir(hub_id) do
     File.rm_rf(Layout.file(:process_hub, Atom.to_string(hub_id)))
+  end
+
+  @doc false
+  def auto_recovery_config do
+    # Orphan reconcile: each round converges the cluster toward the hub's
+    # declared set, starting declared children observed running nowhere and
+    # stopping running durable children whose entry was removed. The hub is
+    # `:recovering`, which holds readiness, until its first round; that opens
+    # once the settle window has passed and every connected peer has sent its
+    # registry, and the grace only caps a peer that never does. No runner is
+    # waited for: an orphan placed first is held unbound until the rebind.
+    if Rows.durable_starts?() do
+      [
+        reconcile_grace_ms: Durations.get(:process_hub_reconcile_grace_ms),
+        reconcile_interval_ms: Durations.get(:process_hub_reconcile_interval_ms),
+        cluster_settle_ms: Durations.get(:process_hub_cluster_settle_ms),
+        remote_manifest: remote_manifest_config()
+      ]
+    else
+      false
+    end
+  end
+
+  # The declared set's off-cluster copy rides the durability tier the operator
+  # already configured: one remote-storage path, every tier backend
+  # (`:postgres`, `:s3`, `:local_path`, custom) works unchanged. No tier, no
+  # remote copy: `nil` keeps the feature local-only, exactly as before the
+  # tier existed.
+  defp remote_manifest_config do
+    if DurabilityTier.enabled?() do
+      {Flezha.State.DurabilityTier.DeclaredManifest, []}
+    else
+      nil
+    end
   end
 
   @doc false

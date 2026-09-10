@@ -175,6 +175,7 @@ the value and the type.
 | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | `2000` | `:migration_consent[:retry_interval_ms]` |
 | `FLEZHA_MIGRATION_MAX_DEFER_MS` | unset → the graceful-shutdown timeout (derived) | `:migration_consent[:max_defer_ms]` |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `app_data/process_hub` | `:process_hub_registry_root` (not in test) |
+| `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` | `2000` | `:process_hub_cluster_settle_ms` (not in test) |
 | `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | `45000` | `:process_hub_reconcile_grace_ms` (not in test) |
 | `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `30000` | `:process_hub_reconcile_interval_ms` (not in test) |
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `60000` | `:boot_replay_timeout_ms` (not in test) |

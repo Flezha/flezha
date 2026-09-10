@@ -26,6 +26,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Boot.Readiness
   alias Flezha.Cluster.Orchestrator
+  alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager.Session
@@ -42,21 +43,14 @@ defmodule Flezha.Service.HubManagerStarterTest do
     Application.put_env(:flezha, :process_hub_registry_root, root)
     Application.put_env(:flezha, :auto_restore_enabled, true)
 
-    # Only what this module creates comes down again: `default` is the suite's
-    # own hub and every later file depends on it.
-    inherited = HubManager.get_running_namespaces()
+    stop_new_hubs_on_exit()
 
-    on_exit(fn ->
-      (HubManager.get_running_namespaces() -- inherited)
-      |> Enum.each(&HubManager.stop_hub/1)
-    end)
-
-    {:ok, root: root, inherited: inherited}
+    {:ok, root: root}
   end
 
   describe "the declared set" do
-    test "a registry directory alone gets a hub", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "a registry directory alone gets a hub" do
+      namespace = leave_registry_on_disk()
 
       refute namespace in HubManager.get_running_namespaces()
       assert namespace in HubManager.declared_namespaces()
@@ -90,8 +84,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
       assert Enum.sort(HubManager.declared_namespaces()) == ["_system", "billing", "team-orders"]
     end
 
-    test "the kill-switch empties it, and the starter then creates nothing", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "the kill-switch empties it, and the starter then creates nothing" do
+      namespace = leave_registry_on_disk()
       {:ok, _} = NamespaceStore.create(unique("catalog-off"))
 
       Application.put_env(:flezha, :auto_restore_enabled, false)
@@ -108,8 +102,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
   end
 
   describe "readiness" do
-    test "refuses until the starter has run, then flips with no restart", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "refuses until the starter has run, then flips with no restart" do
+      namespace = leave_registry_on_disk()
       Readiness.publish_sequence_complete()
       Starter.reset()
 
@@ -123,8 +117,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
       assert Readiness.declared_hubs_started?()
     end
 
-    test "a hub torn down later does not hold the node out of rotation", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "a hub torn down later does not hold the node out of rotation" do
+      namespace = leave_registry_on_disk()
       run_starter()
       assert Readiness.declared_hubs_started?()
 
@@ -140,8 +134,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
   end
 
   describe "the vacancy reclaim" do
-    test "leaves a replayed registry alone instead of deleting it", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "leaves a replayed registry alone instead of deleting it" do
+      namespace = leave_registry_on_disk()
       run_starter()
       assert namespace in HubManager.get_running_namespaces()
 
@@ -151,17 +145,17 @@ defmodule Flezha.Service.HubManagerStarterTest do
       # boot-time creation just recovered, before any runner could connect.
       # The window the guard is about: the rows are on disk and the live
       # registry is still empty, because the reconcile has not run yet.
-      assert File.stat!(registry_file(ctx, namespace)).size > 0
+      assert File.stat!(registry_file(namespace)).size > 0
       assert ProcessHub.registry_dump(Identificator.hub(namespace)) == %{}
 
       HubManager.stop_hub_if_vacant(namespace)
 
       assert namespace in HubManager.get_running_namespaces()
-      assert File.regular?(registry_file(ctx, namespace))
+      assert File.regular?(registry_file(namespace))
     end
 
-    test "leaves a hub declared to hold operatives, even once recovery settles", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "leaves a hub declared to hold operatives, even once recovery settles" do
+      namespace = leave_registry_on_disk()
       run_starter()
       start_durable(namespace, "declared_op")
 
@@ -174,7 +168,28 @@ defmodule Flezha.Service.HubManagerStarterTest do
       HubManager.stop_hub_if_vacant(namespace)
 
       assert namespace in HubManager.get_running_namespaces()
-      assert File.regular?(registry_file(ctx, namespace))
+      assert File.regular?(registry_file(namespace))
+    end
+
+    test "outlives real ticks once recovery settles on its own, with no runner" do
+      # The previous boot declared an operative whose runner never comes back.
+      namespace = leave_registry_on_disk(&start_durable(&1, "declared_op"))
+
+      # Settled and holding nothing: the same ticks must reclaim this one, or
+      # they never reached the reclaim at all.
+      empty = unique("empty-hub")
+      {:ok, _} = ensure_hub(empty)
+
+      run_starter()
+      hubs = Enum.map([namespace, empty], &Identificator.hub/1)
+      assert :ok = HubManager.await_recovery_complete(hubs, 10_000)
+
+      {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
+      for _tick <- 1..3, do: :ok = Loop.tick_now()
+
+      assert namespace in HubManager.get_running_namespaces()
+      assert File.regular?(registry_file(namespace))
+      refute empty in HubManager.get_running_namespaces()
     end
 
     test "still reclaims a settled hub that holds nothing" do
@@ -222,8 +237,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
   end
 
   describe "the cluster-formation gate" do
-    test "the starter creates nothing until it clears", ctx do
-      namespace = leave_registry_on_disk(ctx)
+    test "the starter creates nothing until it clears" do
+      namespace = leave_registry_on_disk()
       hold_gate()
 
       {:ok, _pid} = start_supervised(Starter)
@@ -257,23 +272,19 @@ defmodule Flezha.Service.HubManagerStarterTest do
   # ---------- helpers ----------
 
   # The state a restarted controller is in: a registry on disk with no hub
-  # over it. NOT `stop_hub/1`, which wipes the registry directory.
-  defp leave_registry_on_disk(%{root: root}) do
+  # over it.
+  defp leave_registry_on_disk(seed \\ &inject_parked_operative/1) do
     namespace = unique("registry-only")
     {:ok, _} = ensure_hub(namespace)
-    inject_operative(namespace, "durable_op", [{node(), spawn(&NodeTestHelper.park/0)}])
+    seed.(namespace)
+    stop_hub_keeping_registry(namespace)
 
-    hub_id = Identificator.hub(namespace)
-    Supervisor.terminate_child(HubManager, hub_id)
-    Supervisor.delete_child(HubManager, hub_id)
-
-    assert File.regular?(Path.join([root, to_string(hub_id), "registry.dets"]))
+    assert File.regular?(registry_file(namespace))
     namespace
   end
 
-  defp registry_file(%{root: root}, namespace) do
-    Path.join([root, to_string(Identificator.hub(namespace)), "registry.dets"])
-  end
+  defp inject_parked_operative(namespace),
+    do: inject_operative(namespace, "durable_op", [{node(), spawn(&NodeTestHelper.park/0)}])
 
   # `handle_continue(:bootstrap, _)` runs before any call is served, so an
   # answered call is the first batch finished.

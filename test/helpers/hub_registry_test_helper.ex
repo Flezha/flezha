@@ -5,6 +5,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   runner process.
   """
   alias Flezha.Identificator
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -64,6 +65,32 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
       {:error, {:already_started, pid}} -> {:ok, pid}
       other -> other
     end
+  end
+
+  @doc """
+  Stop the namespace's hub the way a controller restart does: its registry
+  directory stays on disk, where `HubManager.stop_hub/1` would wipe it.
+  """
+  def stop_hub_keeping_registry(ns) do
+    hub_id = Identificator.hub(ns)
+    Supervisor.terminate_child(HubManager, hub_id)
+    Supervisor.delete_child(HubManager, hub_id)
+  end
+
+  @doc "Where the namespace's hub keeps its durable registry under the configured root."
+  def registry_file(ns),
+    do: Layout.file(:process_hub, [to_string(Identificator.hub(ns)), Layout.hub_registry_file()])
+
+  @doc """
+  On exit, stop every hub started after this call and only those: a hub that
+  was already running belongs to the suite, and later files depend on it.
+  """
+  def stop_new_hubs_on_exit() do
+    inherited = HubManager.get_running_namespaces()
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Enum.each(HubManager.get_running_namespaces() -- inherited, &HubManager.stop_hub/1)
+    end)
   end
 
   @doc """

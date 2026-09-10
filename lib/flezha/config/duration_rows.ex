@@ -104,6 +104,8 @@ defmodule Flezha.Config.DurationRows do
     {:partition_peer_call_ms, :ms, 30_000, []},
     {:partition_quiesce_poll_ms, :ms, 250, []},
     {:partition_quiesce_timeout_ms, :ms, 30_000, []},
+    {:process_hub_cluster_settle_ms, :ms, 2_000,
+     key: true, env: "FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS"},
     {:process_hub_reconcile_grace_ms, :ms, 45_000,
      key: true, env: "FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS"},
     {:process_hub_reconcile_interval_ms, :ms, 30_000,

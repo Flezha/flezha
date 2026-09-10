@@ -58,9 +58,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     Application.put_env(:flezha, :auto_restore_enabled, true)
     Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
-    # The grace is what holds a hub in `:recovering`; production sets it
-    # above the runner handshake window, but here nothing has to connect,
-    # so shrink it or every boot in this file costs 45 s.
+    # A hub with no peers opens its first round at the settle window or the
+    # grace, whichever comes first, so a 50 ms grace keeps every boot in this
+    # file off the 2 s settle window.
     Application.put_env(:flezha, :process_hub_reconcile_grace_ms, @reconcile_grace_ms)
     Application.put_env(:flezha, :process_hub_reconcile_interval_ms, 1_000)
 
@@ -510,7 +510,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       start_durable_stub(hub_id, operative_id)
       assert operative_id in declared_ids()
 
-      stop_hub_keeping_registry(hub_id)
+      HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
       drop_registry_rows()
 
       {:ok, _} = HubManager.start_hub(@namespace)
@@ -582,7 +582,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
              ),
              "the declared list never reached the durability tier"
 
-      stop_hub_keeping_registry(hub_id)
+      HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
       drop_all_registry_files()
 
       {:ok, _} = HubManager.start_hub(@namespace)
@@ -622,7 +622,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # between the stop and the start, so the boot re-seeds from registry rows —
   # the pre-declared-list upgrade shape injected rows rely on.
   defp restart_hub(hub_id, opts \\ []) do
-    stop_hub_keeping_registry(hub_id)
+    HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
 
     if Keyword.get(opts, :drop_declared, false), do: drop_declared_list()
 
@@ -718,12 +718,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
     pid
-  end
-
-  # `HubManager.stop_hub/1` wipes the registry dir; a warm restart must keep it.
-  defp stop_hub_keeping_registry(hub_id) do
-    Supervisor.terminate_child(HubManager, hub_id)
-    Supervisor.delete_child(HubManager, hub_id)
   end
 
   defp seed_runner(runner_id, factory_id),

@@ -13,14 +13,12 @@ defmodule Flezha.Service.HubManager.Rows do
 
   alias Flezha.Config
 
-  alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
   alias Flezha.Operative.Lookup
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Process.Hub
-  alias Flezha.State.DurabilityTier
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
 
@@ -383,37 +381,5 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   catch
     _kind, _reason -> true
-  end
-
-  @doc false
-  def auto_recovery_config do
-    # Orphan reconcile: each round converges the cluster toward the hub's
-    # declared set — starting declared children observed running nowhere,
-    # stopping running durable children whose entry was removed. The grace is
-    # also what holds the hub in `:recovering`, so it gates `RecoveryGate` and
-    # through it the readiness verdict — it is set long enough for runners to
-    # finish their handshake, since an orphan start needs one to place against.
-    if durable_starts?() do
-      [
-        reconcile_grace_ms: Durations.get(:process_hub_reconcile_grace_ms),
-        reconcile_interval_ms: Durations.get(:process_hub_reconcile_interval_ms),
-        remote_manifest: remote_manifest_config()
-      ]
-    else
-      false
-    end
-  end
-
-  # The declared set's off-cluster copy rides the durability tier the operator
-  # already configured — one remote-storage path, every tier backend
-  # (`:postgres`, `:s3`, `:local_path`, custom) works unchanged. No tier, no
-  # remote copy: `nil` keeps the feature local-only, exactly as before the
-  # tier existed.
-  defp remote_manifest_config do
-    if DurabilityTier.enabled?() do
-      {Flezha.State.DurabilityTier.DeclaredManifest, []}
-    else
-      nil
-    end
   end
 end

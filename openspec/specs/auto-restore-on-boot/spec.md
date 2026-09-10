@@ -14,9 +14,11 @@ The live registry MUST still start empty on such a boot. `ProcessRegistry.local_
 
 The DETS path SHALL resolve to `app_data/process_hub/<hub_id>/registry.dets` by default, with the root configurable via `:flezha, :process_hub_registry_root` (env var `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`).
 
-The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recovery.parse_config/1` reads — `[reconcile_grace_ms:, reconcile_interval_ms:, stopped_row_ttl_ms:]` — so no key advertises a control ProcessHub ignores; a key it no longer reads is accepted with a WARN and silently dropped, which is indistinguishable from working. Values come from runtime config `:flezha, :process_hub_reconcile_grace_ms` (default `45_000`), `:process_hub_reconcile_interval_ms` (default `30_000`) and `:process_hub_stopped_row_ttl_ms` (default `2_592_000_000`, 30 days).
+The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recovery.parse_config/1` reads, currently `[reconcile_grace_ms:, reconcile_interval_ms:, cluster_settle_ms:, remote_manifest:]`, so no key advertises a control ProcessHub ignores; a key it no longer reads is accepted with a WARN and silently dropped, which is indistinguishable from working. Values come from runtime config `:flezha, :process_hub_reconcile_grace_ms` (default `45_000`), `:process_hub_reconcile_interval_ms` (default `30_000`) and `:process_hub_cluster_settle_ms` (default `2_000`, env var `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS`). `remote_manifest` carries the durability tier's declared-manifest module when a tier is configured and `nil` otherwise. `stopped_row_ttl_ms` SHALL NOT be passed: ProcessHub deprecated the key and Flezha holds no row for it.
 
-The grace SHALL exceed the runner handshake window. The first reconcile round is what moves a hub `:recovering` → `:normal`, so it both gates boot and is the round that starts orphans — and an orphan start needs a connected runner to place against.
+The grace SHALL be the cap on the first reconcile round rather than the path every boot takes. The round opens on peer evidence, so a controller whose hubs have no peers leaves `:recovering` once the cluster settle window has elapsed, and `:process_hub_reconcile_grace_ms` bounds only the case where a connected peer never delivers its registry data. Its `45_000` default is sized for a peer that is itself still booting, which is the slowest answer a healthy cluster produces, and is no longer tied to ProcessHub's `sync_interval` or to any runner handshake window.
+
+An operative whose runner has not connected when its start is placed SHALL be started unbound and rebound by the convergence loop, rather than waited for. The placement records no runner, the Overwatch holds the operative, and the binding happens when a runner advertising its factory connects. No configuration value SHALL be sized as a runner handshake window, because none of them waits for a runner.
 
 The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` and never reconciles.
 
@@ -26,7 +28,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 - **GIVEN** an application boots with default Flezha config
 - **WHEN** `HubManager` constructs the ProcessHub child spec for namespace `"default"`
-- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [reconcile_grace_ms: 45_000, reconcile_interval_ms: 30_000, stopped_row_ttl_ms: 2_592_000_000]`
+- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}`, and its `auto_recovery` carries `reconcile_grace_ms: 45_000`, `reconcile_interval_ms: 30_000`, `cluster_settle_ms: 2_000` and `remote_manifest: nil`
 
 #### Scenario: Kill-switch disables auto-recovery
 
@@ -56,6 +58,18 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 - **AND** `Flezha.Service.HubManager.register_handler/2` completes with `:ok`
 - **AND** the controller does not crash, the BEAM does not exit, and the agent stays Ready
 - **AND** a subsequent `bin/flz operative list` returns exit 0 (empty list on first boot)
+
+#### Scenario: A controller with no peers is ready in seconds
+
+- **GIVEN** a controller booting with default configuration, a durable registry on disk and no peer node connected
+- **WHEN** `flz boot await` is run against it
+- **THEN** the verdict SHALL reach `:ready` within 10 seconds of boot rather than after `:process_hub_reconcile_grace_ms`, and the `hubs_recovered` precondition SHALL be the last one met
+
+#### Scenario: A connected peer that never answers still bounds the wait
+
+- **GIVEN** a controller whose namespace hub has a connected peer that delivers no registry data
+- **WHEN** `:process_hub_reconcile_grace_ms` elapses
+- **THEN** the first reconcile round runs anyway, the hub reaches `:normal`, and the readiness verdict becomes `:ready`
 
 ### Requirement: `post_recovery_replay` hook emits Flezha-side telemetry
 

@@ -289,30 +289,27 @@ defmodule Flezha.Service.HubManagerTest do
   describe "auto_recovery_config/0" do
     test "every key we advertise is one upstream reads, and every value is in range" do
       # Fails when a knob drifts out of `parse_config/1`'s accepted set or
-      # bounds: upstream then either WARNs and silently ignores the key, or
-      # refuses the whole hub spec. Round-tripping through the real parser
-      # is the only check that catches both.
+      # bounds: upstream then ignores the key, warning only for one it
+      # deprecated, or refuses the whole hub spec. Round-tripping through the
+      # real parser is the only check that catches both.
       previous = Application.get_env(:flezha, :auto_restore_enabled)
       Application.put_env(:flezha, :auto_restore_enabled, true)
 
       try do
         config = HubManager.auto_recovery_config()
 
+        # The shipped defaults, and `nil` because no durability tier is
+        # configured here.
+        assert config == [
+                 reconcile_grace_ms: 45_000,
+                 reconcile_interval_ms: 30_000,
+                 cluster_settle_ms: 2_000,
+                 remote_manifest: nil
+               ]
+
         assert {:ok, parsed} = HubRecovery.parse_config(config)
         assert parsed.enabled?
-        assert parsed.reconcile_grace_ms == Keyword.fetch!(config, :reconcile_grace_ms)
-        assert parsed.reconcile_interval_ms == Keyword.fetch!(config, :reconcile_interval_ms)
-
-        # No durability tier configured here, so the declared set stays
-        # local-only: the parsed config must carry an explicit nil, not a
-        # missing key upstream would warn about.
-        assert parsed.remote_manifest == nil
-
-        # The grace holds the hub in `:recovering`, which gates the boot
-        # path — it must clear the runner handshake window, not the other
-        # way round.
-        assert parsed.reconcile_grace_ms > parsed.reconcile_interval_ms or
-                 parsed.reconcile_grace_ms >= 30_000
+        assert Map.take(parsed, Keyword.keys(config)) == Map.new(config)
       after
         Application.put_env(:flezha, :auto_restore_enabled, previous)
       end
