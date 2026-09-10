@@ -12,18 +12,13 @@ on:
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-node-sdk.sh"
       - ".github/workflows/node-sdk.yml"
+  # No `paths:` here, deliberately. A path filter is evaluated against the
+  # commits a push carries, and a tag pushed onto an existing commit carries
+  # none, so a filtered push trigger would skip the release job every time.
+  # The pull-request trigger above keeps its filter, which is where the cost is.
   push:
     branches: [main]
-    paths:
-      - "sdk/node/**"
-      - "examples/node/**"
-      - "flz_core/**"
-      - "flz_core_ffi/**"
-      - "flz_transport/**"
-      - "test/apps/node_runner/**"
-      - "test/fixtures/host_class_decl_keys.txt"
-      - "scripts/build-node-sdk.sh"
-      - ".github/workflows/node-sdk.yml"
+    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -102,6 +97,10 @@ jobs:
   # The native binaries the per-platform packages carry. Cross-built rather
   # than one runner per platform: N-API is ABI-stable across Node versions, so
   # one binary per platform serves every supported release.
+  #
+  # Each arm stages its addon under the platform suffix and nothing else. The
+  # packaging is one job below, because "all five were produced" is a statement
+  # about the set and cannot be made from inside one arm.
   binaries:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -127,9 +126,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Node
-        uses: ./.github/actions/setup-node
-
       - name: Install Rust
         # No cargo cache: each arm is a different target triple, and what this
         # job publishes is the artifact rather than a warm tree.
@@ -148,11 +144,8 @@ jobs:
       - name: Build
         run: cargo build -p flz_core_ffi --features napi --release --target ${{ matrix.target }}
 
-      - name: Build the per-platform package
+      - name: Stage the addon under its platform suffix
         shell: bash
-        # The artifact IS the publishable package: `@flezha/sdk` resolves its
-        # binary through `optionalDependencies`, so publishing is `npm publish`
-        # over these directories and nothing else.
         run: |
           set -euo pipefail
           addon=""
@@ -161,10 +154,96 @@ jobs:
             if [ -f "$built" ]; then addon="$built"; fi
           done
           test -n "$addon"
-          node sdk/node/scripts/platform-package.mjs "${{ matrix.package }}" "$addon" artifacts
+          mkdir -p "staging/${{ matrix.package }}"
+          cp "$addon" "staging/${{ matrix.package }}/flz_core_ffi.node"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: flezha-sdk-${{ matrix.package }}
-          path: artifacts/
+          name: node-addon-${{ matrix.package }}
+          path: staging/
           retention-days: 14
+
+  # The publishable set: five per-platform packages and the parent tarball that
+  # declares them. The packaging refuses a build missing any platform, so the
+  # parent is never packed beside an optional dependency nothing produced.
+  packages:
+    runs-on: ubuntu-latest
+    needs: binaries
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: ./.github/actions/setup-node
+        with:
+          deps-dir: sdk/node
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: node-addon-*
+          merge-multiple: true
+          path: staging
+
+      - name: Build the package
+        working-directory: sdk/node
+        run: npm run build
+
+      - name: Write the per-platform packages
+        # `--require-all` is what makes this job the gate: every platform the
+        # SDK declares must have an addon here, or nothing is packed.
+        run: node sdk/node/scripts/platform-package.mjs staging packages --require-all
+
+      - name: Pack the parent
+        run: npm pack --pack-destination "$PWD/packages" ./sdk/node
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flezha-sdk-packages
+          path: packages/
+          retention-days: 14
+
+  # Publishing, in the one order that works: the platform packages first, then
+  # the parent that declares them, in one run and at one version. A parent
+  # published first names versions that do not resolve yet, and npm treats an
+  # optional dependency it cannot resolve as a non-event, so that window
+  # produces installations that are quietly broken rather than failed.
+  #
+  # This job is the one the publication readiness record's B2 asks for: a
+  # reviewed, repeatable publication rather than a hand-run one. B2's other
+  # half, a rehearsal against a scratch name, and N1, claiming the six real
+  # names, are both the owner's and are what the gate below holds the release
+  # on. The job is therefore red by design today, and `packages` above builds
+  # and packs the exact artefacts on every run in the meantime.
+  publish:
+    runs-on: ubuntu-latest
+    needs: packages
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+
+      # First, before anything is published. A registry name cannot be
+      # reclaimed and a published package cannot be withdrawn, so an open
+      # blocking entry in the publication readiness record stops the release.
+      - name: Publication readiness
+        run: python3 scripts/naming_gate.py --run @release
+
+      - name: Set up Node
+        uses: ./.github/actions/setup-node
+        with:
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flezha-sdk-packages
+          path: packages
+
+      - name: Publish the platform packages, then the parent
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for pkg in packages/@flezha-sdk-*/; do
+            echo "== $pkg"
+            npm publish --access public "$pkg"
+          done
+          echo "== the parent"
+          npm publish --access public packages/flezha-sdk-*.tgz

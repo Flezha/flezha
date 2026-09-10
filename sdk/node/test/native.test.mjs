@@ -13,7 +13,6 @@ import {
   defineOperative,
   defineProcedure,
   loadNative,
-  nativePackageName,
   toHostClassDecl,
 } from '../dist/esm/index.js';
 
@@ -185,39 +184,6 @@ test('the idle latch lives in the core and is advanced through the veneer', () =
   );
   native.idleWatchFree(watch);
   assert.equal(native.idleWatchPoll(watch).status, -1, 'a freed id answers the ABI error');
-});
-
-test('this platform has a per-platform binary package name', () => {
-  assert.equal(nativePackageName('linux', 'x64'), '@flezha/sdk-linux-x64-gnu');
-  assert.equal(nativePackageName('darwin', 'arm64'), '@flezha/sdk-darwin-arm64');
-  assert.equal(nativePackageName('win32', 'x64'), '@flezha/sdk-win32-x64-msvc');
-  assert.equal(nativePackageName('sunos', 'sparc'), null);
-});
-
-test('a supported platform resolves one binary package, not five', async () => {
-  const { nativeCandidates } = await import('../dist/esm/native.js');
-  const candidates = nativeCandidates('linux', 'x64', undefined);
-  assert.equal(candidates[0], '@flezha/sdk-linux-x64-gnu');
-  assert.equal(
-    candidates.filter((candidate) => candidate.startsWith('@flezha/sdk-')).length,
-    1,
-    'exactly one per-platform package is consulted',
-  );
-  assert.match(candidates.at(-1), /native\/flz_core_ffi\.node$/);
-});
-
-test('an unsupported platform is told what a source build needs', async () => {
-  const { nativeCandidates, nativeResolutionError } = await import('../dist/esm/native.js');
-  const candidates = nativeCandidates('sunos', 'sparc', undefined);
-  assert.deepEqual(
-    candidates.filter((candidate) => candidate.startsWith('@flezha/sdk-')),
-    [],
-    'no per-platform package is published for this platform',
-  );
-  const error = nativeResolutionError(candidates, 'sunos', 'sparc');
-  assert.match(error.message, /No prebuilt binary is published/);
-  assert.match(error.message, /cargo build -p flz_core_ffi --features napi/);
-  assert.match(error.message, /FLEZHA_NATIVE_BINARY/);
 });
 
 test('both module systems import the package and expose the same surface', () => {

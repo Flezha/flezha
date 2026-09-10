@@ -26,6 +26,13 @@ inputs:
       scripts/build-node-sdk.sh wants.
     required: false
     default: ""
+  registry-url:
+    description: >
+      Registry to write an auth-bearing .npmrc for, which is what `npm publish`
+      reads NODE_AUTH_TOKEN through. Empty writes none, which is what every job
+      that only installs wants.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -43,6 +50,7 @@ runs:
     - uses: actions/setup-node@v5
       with:
         node-version: ${{ steps.resolve.outputs.version }}
+        registry-url: ${{ inputs.registry-url }}
 
     - if: inputs.deps-dir != ''
       uses: actions/cache@v5

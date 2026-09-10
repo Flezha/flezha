@@ -52,8 +52,14 @@ boundary SHALL become a host error rather than terminating the process.
 ### Requirement: Prebuilt Binaries Ship as Per-Platform Optional Dependencies
 
 The package SHALL distribute native binaries as separate per-platform packages resolved through
-optional dependencies, with a source build as fallback, so that installing the SDK requires neither
-a Rust toolchain nor downloading binaries for platforms the user does not run.
+optional dependencies, with a source build from a checkout as the fallback, so that installing the
+SDK requires neither a Rust toolchain nor downloading binaries for platforms the user does not run.
+Every per-platform package the SDK declares SHALL be produced by the build and published at the same
+version as the parent package, and SHALL be published before it, so the parent never declares a
+version that cannot yet resolve. The set of declared packages and the set the loader resolves SHALL derive from
+one table, so a platform cannot be added to one and omitted from the other. When no platform
+package resolved and no fallback is available, the SDK SHALL refuse at load with a message naming
+the detected platform, the package it looked for, and how to build the binary locally.
 
 Bundling every supported triple into one artifact is refused: it is the distribution shape already
 recorded as owed a split, and this package has an established convention for doing it correctly from
@@ -63,9 +69,22 @@ the start.
 - **WHEN** the package is installed on a supported platform
 - **THEN** only that platform's binary SHALL be fetched, and no toolchain SHALL be required
 
-#### Scenario: An unsupported platform falls back to source
-- **WHEN** the package is installed on a platform with no prebuilt binary
-- **THEN** the source build SHALL be attempted and its requirements SHALL be stated on failure
+#### Scenario: An unsupported platform is told what a source build needs
+- **WHEN** the package is installed on a platform no per-platform package is published for
+- **THEN** the SDK SHALL name that platform as unpublished and state the source build's
+  requirements, rather than naming a package that does not exist
+
+#### Scenario: Every declared platform package is produced
+- **WHEN** the build's published artefacts are enumerated
+- **THEN** every package named in the SDK's optional dependencies SHALL be among them, at the parent's version
+
+#### Scenario: A resolution failure is not silent
+- **WHEN** the SDK is loaded on an installation where no platform package resolved and no fallback binary is present
+- **THEN** it SHALL raise an error naming the detected platform, the expected package and the local build command, rather than surfacing a dynamic-loader error
+
+#### Scenario: The shipped file list matches the documented fallback
+- **WHEN** the package's file list is compared against the fallback the documentation describes
+- **THEN** the fallback SHALL be present in the published package, or the documentation SHALL state that it is available only in a source checkout
 
 ### Requirement: One Binary Serves Every Supported Host Version
 

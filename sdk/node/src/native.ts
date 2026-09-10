@@ -8,6 +8,12 @@
  * one call into the core.
  */
 
+import {
+  NATIVE_PLATFORMS,
+  SDK_PACKAGE_NAME,
+  nativePlatformFor,
+  platformPackageName,
+} from './platforms.js';
 import { requireNative, runtimeDir } from './runtime-shim.js';
 
 /** One metadata pair, in declared order. The schema allows a repeated key. */
@@ -231,21 +237,16 @@ export function nativePackageName(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): string | null {
-  const triple: Record<string, string> = {
-    'linux-x64': 'linux-x64-gnu',
-    'linux-arm64': 'linux-arm64-gnu',
-    'darwin-x64': 'darwin-x64',
-    'darwin-arm64': 'darwin-arm64',
-    'win32-x64': 'win32-x64-msvc',
-  };
-  return triple[`${platform}-${arch}`] ? `@flezha/sdk-${triple[`${platform}-${arch}`]}` : null;
+  const entry = nativePlatformFor(platform, arch);
+  return entry ? platformPackageName(entry.suffix) : null;
 }
 
 /**
  * Where the addon is looked for, in order: an explicitly configured binary
  * first, so this repository's own suites run against a freshly built core;
  * then the installed per-platform package; then a locally built binary beside
- * the package, which is where the source-build fallback puts it.
+ * the package. The published package carries no binary of its own, so that
+ * last candidate resolves in a checkout and nowhere else.
  */
 export function nativeCandidates(
   platform: NodeJS.Platform = process.platform,
@@ -260,20 +261,28 @@ export function nativeCandidates(
   ];
 }
 
-/** What to do when none of the candidates resolved. */
+/**
+ * What to do when none of the candidates resolved: name the host, the package
+ * that was looked for and how to obtain a binary. npm treats an optional
+ * dependency it cannot resolve as a non-event, so an installation missing its
+ * platform package is indistinguishable from a healthy one until this throws.
+ */
 export function nativeResolutionError(
   attempts: string[],
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): Error {
   const pkg = nativePackageName(platform, arch);
+  const published = NATIVE_PLATFORMS.map((entry) => `${entry.os}-${entry.cpu}`).join(', ');
   return new Error(
-    `@flezha/sdk could not load its native binary for ${platform}-${arch}.\n` +
+    `${SDK_PACKAGE_NAME} could not load its native binary for ${platform}-${arch}.\n` +
       (pkg
-        ? `Expected the optional dependency ${pkg} to be installed.\n`
-        : 'No prebuilt binary is published for this platform; build from source.\n') +
-      "A source build needs a Rust toolchain (stable) and this repository's " +
-      'flz_core_ffi crate: cargo build -p flz_core_ffi --features napi --release.\n' +
+        ? `Expected the optional dependency ${pkg} to be installed; npm skips one ` +
+          'it cannot resolve without failing the install.\n'
+        : `No prebuilt binary is published for this platform. Published: ${published}.\n`) +
+      'The published package carries no binary of its own, so a source build means ' +
+      'a checkout of https://github.com/alfetahe/flezha, a stable Rust toolchain, and:\n' +
+      '  cargo build -p flz_core_ffi --features napi --release\n' +
       'Set FLEZHA_NATIVE_BINARY to an already-built addon to skip resolution.\n' +
       `Tried:\n  ${attempts.join('\n  ')}`,
   );
@@ -290,7 +299,9 @@ export function loadNative(): Native {
       loaded = requireNative(candidate) as Native;
       return loaded;
     } catch (cause) {
-      attempts.push(`${candidate}: ${(cause as Error).message}`);
+      // First line only: a `require` failure carries a multi-line resolution
+      // stack, and five of those are the loader noise this refusal replaces.
+      attempts.push(`${candidate}: ${(cause as Error).message.split('\n', 1)[0]}`);
     }
   }
   throw nativeResolutionError(attempts);
