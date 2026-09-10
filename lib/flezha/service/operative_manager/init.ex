@@ -14,6 +14,7 @@ defmodule Flezha.Service.OperativeManager.Init do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager.Teardown
   alias Flezha.Service.Validator
+  alias ProcessHub.Service.DeclaredChildren
 
   # Losing the id claim is not a failed start: another path already runs this
   # operative. Conceding is the WHOLE remedy — the winner is never stopped,
@@ -32,6 +33,127 @@ defmodule Flezha.Service.OperativeManager.Init do
     else
       {:error, %{operative_id: operative_id, node: node(), reason: Validator.id_in_use()}}
     end
+  end
+
+  # The declared set is written at start and at stop and has nowhere else to
+  # learn anything, so a setting changed while an operative runs never reaches
+  # the record a restart rebuilds it from. This is that update, and it lives
+  # here because `durable-operator-intent` puts every declared-set write behind
+  # the start authority: the plugin manager asks, it does not reach in.
+
+  # One re-check after a write that changed something, so a write that raced a
+  # concurrent one converges on the row both of them merged into, and a declared
+  # entry left stale by an earlier failure is repaired by the next write.
+  #
+  # Defence, not a demonstrated fix: `declared_mutate_contract_test.exs`'s
+  # concurrency case passes with this at 1 as well, so the interleaving it
+  # guards is one that test cannot force. A third pass would only repeat the
+  # second.
+  @redeclare_attempts 2
+
+  @doc """
+  Make `operative_id`'s declared child spec carry the plugins its registry row
+  carries, so a restart-driven start builds the operative from its current
+  plugin set rather than the one it was created with.
+
+  The row is the source, not the caller. `ProcessRegistry.update/4` applies its
+  transform inside the registry, so concurrent plugin writes for one operative
+  merge there atomically; building the new list in the caller instead would let
+  two concurrent enables each declare a list computed before the other's and
+  silently drop one, which is the defect this whole change exists to fix. The
+  write is re-checked for the same reason: whoever finishes last observes the
+  settled row and declares it.
+
+  A declared entry that already matches is left alone, so a no-op write never
+  reaches the leader.
+
+  `:ok` when durable starts are off: that mode declares nothing at start either,
+  so there is no entry to keep current and none is invented.
+  """
+  @spec redeclare_plugins(binary(), binary()) :: :ok | {:error, term()}
+  def redeclare_plugins(namespace, operative_id) do
+    if HubManager.durable_starts?() do
+      sync_declared_plugins(namespace, operative_id, @redeclare_attempts)
+    else
+      :ok
+    end
+  end
+
+  defp sync_declared_plugins(_namespace, _operative_id, 0), do: :ok
+
+  defp sync_declared_plugins(namespace, operative_id, attempts) do
+    hub_id = Identificator.hub(namespace)
+
+    with {:ok, hub} <- hub_state(hub_id),
+         {:ok, spec} <- declared_spec(hub, operative_id),
+         {:ok, row_plugins} <- HubManager.operative_plugins(namespace, operative_id) do
+      case HubManager.rewrite_cspec_plugins(spec, fn _ -> row_plugins end) do
+        ^spec ->
+          :ok
+
+        declared ->
+          with :ok <- declare(hub, hub_id, declared) do
+            sync_declared_plugins(namespace, operative_id, attempts - 1)
+          end
+      end
+    end
+  end
+
+  defp hub_state(hub_id) do
+    {:ok, GenServer.call(hub_id, :get_state, Durations.get(:hub_declared_mutate_ms))}
+  catch
+    :exit, _ -> {:error, :hub_unavailable}
+  end
+
+  # An upsert would declare an operative that was never declared, which would
+  # let a plugin write resurrect one a stop removed for good.
+  defp declared_spec(hub, operative_id) do
+    case DeclaredChildren.manifest(hub) do
+      %{entries: %{^operative_id => spec}} -> {:ok, spec}
+      _ -> {:error, :operative_not_declared}
+    end
+  end
+
+  # `{:add, [spec]}` is an upsert keyed on child id (`DeclaredChildren`'s
+  # `mutate_entries/2`), so re-declaring replaces that one entry in place and
+  # starts, stops or moves nothing. It must run on the leader, the one node that
+  # may bump the list version, and it shares the batch that coalesces every
+  # concurrent declared write into one write and one sync.
+  #
+  # `{:declared_mutate, _}` is process_hub's own leader-side entry point and is
+  # not part of its public API; `declared_mutate_contract_test.exs` fails loudly
+  # if a release moves it, and the tidy public wrapper replaces this the moment
+  # one ships.
+  defp declare(hub, hub_id, spec) do
+    case DeclaredChildren.leader(hub) do
+      leader when leader == node() -> call_declared_mutate(hub_id, spec)
+      leader -> remote_declared_mutate(leader, hub_id, spec)
+    end
+  catch
+    :exit, reason -> {:error, {:declared_mutate_failed, reason}}
+  end
+
+  @doc false
+  def call_declared_mutate(hub_id, spec) do
+    GenServer.call(
+      hub_id,
+      {:declared_mutate, {:add, [spec]}},
+      Durations.get(:hub_declared_mutate_ms)
+    )
+  end
+
+  # `:erpc.call/5` raises rather than exits when the node is gone, so this arm
+  # carries the extra rescue the local one does not need.
+  defp remote_declared_mutate(leader, hub_id, spec) do
+    :erpc.call(
+      leader,
+      __MODULE__,
+      :call_declared_mutate,
+      [hub_id, spec],
+      Durations.get(:hub_declared_mutate_rpc_ms)
+    )
+  rescue
+    error -> {:error, {:declared_mutate_failed, error}}
   end
 
   def init_operative(exist?, namespace, operative, attempt \\ 0) do

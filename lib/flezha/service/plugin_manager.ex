@@ -5,13 +5,14 @@ defmodule Flezha.Service.PluginManager do
   subscription into that operative's ProcessHub child-spec, so it survives an
   Overwatch restart, a controller restart and a cluster cold boot.
 
-  Ordering is canonicalise, then cspec write, then runtime mutation: an
+  Ordering is canonicalise, then durable write, then runtime mutation: an
   ill-typed or unknown subscription is refused before any durable record
   exists, so the convergence loop is never handed intent that cannot be
-  satisfied. A failed cspec write returns `{:error, :registry_unavailable}`
-  and touches no runtime, so the caller may retry; a failed runtime call
-  returns its own error with the durable record in place, and the next
-  `Overwatch.init/1` reconciles it.
+  satisfied. The durable write is two records at one seam, the hub's registry
+  row and its declared set, because only the declared set is read back after a
+  restart. A failed durable write touches no runtime, so the caller may retry;
+  a failed runtime call rolls both records back, so no surface is left claiming
+  a plugin whose enable never succeeded.
 
   Every call this manager makes into an operative it does not own carries a
   bound, because the manager is a node-wide singleton whose table starts empty:
@@ -20,6 +21,8 @@ defmodule Flezha.Service.PluginManager do
   """
 
   use GenServer
+
+  require Logger
 
   @behaviour Flezha.Shutdown.Step
   use Flezha.AuthZ.Verb
@@ -75,16 +78,59 @@ defmodule Flezha.Service.PluginManager do
   end
 
   defp enable_claimed(plugin_id, plugin) do
-    with :ok <- write_enable_to_cspec(plugin, plugin_id),
-         {:ok, pid} <- resolve_operative(plugin),
+    case write_enable_to_cspec(plugin, plugin_id) do
+      :ok ->
+        subscribe_claimed(plugin_id, plugin)
+
+      err ->
+        rollback_enable(plugin_id, plugin)
+        err
+    end
+  end
+
+  # Past the durable write, so a failure here removes it as well as the claim.
+  # Leaving it is worse than either outcome alone: the manager's table is what
+  # `flz plugin list` and `disable_plugin/1` read, so the plugin goes invisible
+  # while the durable records still carry it, and the next start subscribes it
+  # and parks
+  # the operative on `:plugin_prepare_failed` if it still cannot come up. A
+  # controller that DIES here runs no rollback, which is the crash case
+  # `auto-restore-on-boot` requires to self-heal on the next start.
+  defp subscribe_claimed(plugin_id, %Plugin{} = plugin) do
+    with {:ok, pid} <- resolve_operative(plugin),
          :ok <- Overwatch.plugin_subscribe(pid, plugin_id, plugin) do
       GenServer.cast(__MODULE__, {:confirm, plugin_id})
       {:ok, "plugin enabled"}
     else
       err ->
-        unregister_plugin(plugin_id)
+        rollback_enable(plugin_id, plugin)
         err
     end
+  end
+
+  # `unregister_plugin/1` alone is not the rollback: it is also the teardown
+  # path (`Flezha.Operative.Plugins.unregister/1`), where removing the durable
+  # entry would make every migration erase the manifest. The durable half
+  # belongs here, where only a failed enable reaches it.
+  defp rollback_enable(plugin_id, %Plugin{namespace: ns, operative_id: operative_id}) do
+    case write_disable_to_cspec(ns, operative_id, plugin_id) do
+      :ok ->
+        :ok
+
+      # The same unreachable hub or absent operative that failed the enable fails
+      # its removal, and there was nothing to leave behind either way.
+      {:error, reason}
+      when reason in [:registry_unavailable, :operative_not_found, :operative_not_declared] ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "[plugin_manager] rollback left #{plugin_id} on #{ns}/#{operative_id}: " <>
+            "#{inspect(reason)}; the next restart re-applies it from the declared set"
+        )
+    end
+
+    unregister_plugin(plugin_id)
   end
 
   # A group id names no operative — it names N of them. Enable runs once per
@@ -459,8 +505,24 @@ defmodule Flezha.Service.PluginManager do
     update_cspec_plugins(namespace, operative_id, RegistryUpdate.remove_plugin(plugin_id))
   end
 
+  # Two records, one mutation, and every plugin write goes through here. The row
+  # is what `flz operative info` and the convergence backstop read while the
+  # operative runs. The declared set is what a restart rebuilds it from, and it
+  # is the ONLY one a restart reads: an auto-recovery hub never replays its
+  # registry from disk (`ProcessHub.Initializer.setup_storage/3` forces
+  # `recovery_replay: false`, so the live registry starts empty), which is why a
+  # plugin written only to the row does not survive a controller restart.
+  #
+  # The row goes first and is the source the declared write copies from: its
+  # transform runs inside the registry, so concurrent writes for one operative
+  # merge there atomically rather than in two callers that cannot see each other.
+  #
+  # Both or neither. A failure at either half answers, no runtime mutation is
+  # issued, and `rollback_enable/2` removes from both.
   defp update_cspec_plugins(namespace, operative_id, update_fn) do
-    do_update_cspec_plugins(namespace, operative_id, update_fn, 0)
+    with :ok <- do_update_cspec_plugins(namespace, operative_id, update_fn, 0) do
+      OperativeManager.redeclare_plugins(namespace, operative_id)
+    end
   end
 
   defp do_update_cspec_plugins(namespace, operative_id, update_fn, attempt) do
@@ -473,8 +535,11 @@ defmodule Flezha.Service.PluginManager do
       true ->
         result =
           try do
-            # propagate: true — the manifest must be declared on every hub
-            # node so a restart driven from any node's registry restores it.
+            # propagate: true — every node's row must carry the plugin, because
+            # `flz operative info` and the convergence backstop read it from
+            # whichever node answers. It is NOT what survives a restart: this
+            # write reaches the registry row only, and no restart reads a row
+            # back. The declared set is written separately, by the caller.
             ProcessRegistry.update(
               hub_id,
               operative_id,

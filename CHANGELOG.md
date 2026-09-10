@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Fixed — an enabled plugin survives a controller restart
+
+A plugin enabled with `flz plugin enable` was silently lost when the controller
+restarted. The operative came back up, reported healthy, and carried no plugins;
+the data path stopped with nothing logged anywhere.
+
+The enable recorded the plugin in the hub's process registry row and nowhere
+else. That row is on disk and is copied to every node, but a controller with
+auto-restore on never reads its registry back after a restart: it rebuilds each
+operative from the hub's declared list instead, and the declared list is written
+when an operative is created and when it is deleted, so it never learned about
+the plugin. The self-healing loop that should have noticed reads the same row the
+restart had just overwritten, so it saw nothing to fix.
+
+A plugin mutation now reaches the declared list as well, through the same
+authority that starts and stops operatives, and a restart rebuilds the operative
+with the plugins it was last known to have. Disabling a plugin removes it from
+the same record, so a restart no longer switches one back on. An enable that
+fails part way now removes what it wrote instead of leaving a plugin that no
+command can see.
+
+**Upgrade note.** A plugin enabled before this release is recorded only in the
+row that is never read back, so the first restart after upgrading still loses it.
+Run `flz plugin enable` once more for each plugin already enabled; from then on
+it survives on its own.
+
 ### Fixed — a frame is refused rather than written with a truncated length
 
 The frame encoder wrote each metadata key's and value's length into one byte and

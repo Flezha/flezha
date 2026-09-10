@@ -210,10 +210,12 @@ defmodule Flezha.Operative.Plugins do
   A provider committed durable state of its own (the websocket provider's
   applied subscription set). It lands in two places for two restart kinds: the
   extension table, which `attempt_restart/3` re-runs `init_provider/1` from, and
-  the cspec, which a controller restart re-applies plugins from.
+  the durable plugin manifest, which a controller restart re-applies plugins
+  from.
 
-  The cspec half is a cluster-wide registry write with its own retry ladder, so
-  it runs in a task — the Overwatch loop carries the operative's data path.
+  The durable half writes the hub's declared set and its registry row through
+  one seam, and carries a retry ladder, so it runs in a task — the Overwatch
+  loop carries the operative's data path.
   """
   @spec persist_opt(Overwatch.t(), term(), term(), term()) :: Overwatch.t()
   def persist_opt(%Overwatch{} = state, plugin_id, key, value) do
@@ -231,8 +233,10 @@ defmodule Flezha.Operative.Plugins do
   `init_values` runs the `:on_operative_init` chain; a cold start with non-empty
   ones MUST NOT run it and uses the inline values as-is.
 
-  This is also the path for in-place restart plugin restoration — the cspec's
-  `operative.opts[:plugins]` list is re-subscribed by `prepare/2`. That is
+  This is also the path for in-place restart plugin restoration: the
+  `operative.opts[:plugins]` list of the cspec the operative was started with is
+  re-subscribed by `prepare/2`, and a restart-driven start builds that cspec
+  from the hub's declared set. That is
   independent of the per-Entity state restore, which rehydrates SDK-side
   WAL/snapshot state through the data plane. A HotSwap migration is handled in
   `Flezha.Operative.Handover` and never reaches here.

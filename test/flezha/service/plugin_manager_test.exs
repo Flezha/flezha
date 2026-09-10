@@ -83,14 +83,24 @@ defmodule Flezha.Service.PluginManagerTest do
       assert persisted.opts == %{topic: "p1.trades.v1"}
     end
 
-    test "subscribe failure leaves the cspec entry in place (durability precedes runtime)",
+    # Fails when: a failed enable releases its in-memory claim and leaves the
+    # durable entry it wrote one line earlier. The plugin is then invisible to
+    # `flz plugin list` and to `disable_plugin/1`, which both read the manager's
+    # table, while the row still carries it — so the next restart subscribes it
+    # and parks the operative if it still cannot start, naming nothing.
+    #
+    # This is not the crash case `auto-restore-on-boot` requires to self-heal: a
+    # controller that dies between the two runs no rollback at all, so its write
+    # stands. Rollback covers only a failure the enable itself answered for.
+    test "a failed subscribe rolls the durable entry back with the claim",
          %{store: store, overwatch: overwatch} do
       send(overwatch, {:reject_next, {:error, "boom"}})
 
       plugin = build_plugin("eager_durable", topic: "x")
 
       assert {:error, "boom"} = PluginManager.enable_plugin("eager_durable", plugin)
-      assert [{"eager_durable", _}] = read_plugins(store)
+      assert [] = read_plugins(store)
+      refute Map.has_key?(PluginManager.get_plugins(), "eager_durable")
     end
 
     test "cspec write failure surfaces :registry_unavailable without touching runtime" do

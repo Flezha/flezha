@@ -304,22 +304,38 @@ The system MUST detect a wall-clock vs monotonic-clock divergence indicating sle
 
 ### Requirement: Plugins are durable across controller restart
 
-When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persisted into the operative's ProcessHub cspec start-args **on every node of the hub cluster**, regardless of which node served the CLI call. The same cluster-wide propagation MUST apply to plugin disable and to the registry runner-tag write issued by Heal rebinds. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored operative MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running operative. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
+When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persisted into the hub's **declared-children set**, on every node of the hub cluster, regardless of which node served the CLI call. The declared set is named deliberately: the hub keeps two records of the same child, and an auto-recovery hub never replays its process registry from disk, so a plugin held only in the registry row is not read back by the restart it was written to survive. The registry row MUST continue to carry the plugin as the live view, written from the declared spec by every start, so the two records cannot disagree about a running operative. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored operative MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running operative. The same cluster-wide propagation MUST apply to plugin disable, to provider state persisted against a plugin, and to the registry runner-tag write issued by Heal rebinds. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
 
 #### Scenario: plugin survives recovery-mode restart
 - **GIVEN** `flz plugin enable btc_kraken kafka-producer` was executed
 - **WHEN** the controller is restarted in recovery mode
 - **THEN** `btc_kraken` shows kafka-producer and the producer functions within a few ticks of boot.
 
+#### Scenario: a restart-driven start SHALL NOT erase an enabled plugin
+- **GIVEN** an operative declared by `flz operative start` with no plugins, and a plugin enabled on it afterwards
+- **WHEN** the controller restarts and the reconcile round starts the operative from its declared entry
+- **THEN** that declared entry carries the enabled plugin, so the started operative's plugin table carries it
+- **AND** the registry row the start writes carries it too, so a later divergence is healable rather than invisible
+
+#### Scenario: a disabled plugin is not resurrected by a restart
+- **GIVEN** a plugin that was enabled and then disabled on a running operative
+- **WHEN** the controller restarts
+- **THEN** the declared entry no longer names it and the restored operative does not subscribe it
+
+#### Scenario: the operative reports the plugins it actually has
+- **GIVEN** an operative restored after a restart whose enabled plugins failed to re-instantiate
+- **WHEN** an operator runs `flz operative info`
+- **THEN** the operative SHALL NOT report `Health: healthy` with an empty plugin table while plugins are declared for it
+
 #### Scenario: a dropped plugin is re-instantiated on a running operative
 - **GIVEN** a declared plugin is force-unsubscribed at runtime while its operative stays up
 - **WHEN** the Loop ticks
-- **THEN** the Diff detects the missing plugin and the Heal re-subscribes it from the declared cspec.
+- **THEN** the Diff detects the missing plugin and the Heal re-subscribes it from the cspec the operative was started with.
 
 #### Scenario: plugin enabled via one node is declared on every node
 - **GIVEN** a two-node hub cluster with a operative registered on both nodes' registries
 - **WHEN** `flz plugin enable` is served by node B
-- **THEN** node A's registry row for the operative contains the plugin in its cspec start-args, and a operative restart driven from node A's cspec re-instantiates the plugin.
+- **THEN** the declared entry the leader wrote is visible to node A, and a operative restart driven from node A re-instantiates the plugin.
 
 #### Scenario: redistribution after node death restores a producing operative
 - **GIVEN** a operative whose plugins were enabled through any node of the cluster

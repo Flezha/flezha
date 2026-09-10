@@ -27,10 +27,12 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
+  alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PluginManager
   alias Flezha.State.DurabilityTier.DeclaredManifest
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.FleetStateHelper
@@ -203,6 +205,86 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
              5_000
            ),
            "the hub still holds queued work — the WorkerQueue died before reporting it complete"
+  end
+
+  # fails when: a plugin an operator enabled is erased by the very restart it
+  # was written to survive. The enable writes the hub's registry row; the
+  # reconcile round starts the operative from the DECLARED entry, whose spec
+  # was committed at `flz operative start` and carries no plugins, and that
+  # start writes its own spec into the row verbatim.
+  test "a restart-driven start does not erase an enabled plugin" do
+    hub_id = Identificator.hub(@namespace)
+    operative_id = "plugin_survives_restart_op"
+    plugin_id = "plugin_survives_restart_plugin"
+
+    seed_runner(@seeded_runner, "market")
+    {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+    assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+    :ok =
+      HubRegistryTestHelper.start_durable(@namespace, operative_id,
+        recorded_runner: nil,
+        opts: []
+      )
+
+    on_exit(fn -> PluginManager.unregister_plugin(plugin_id) end)
+    assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin(operative_id, plugin_id))
+
+    assert {:ok, [{^plugin_id, %Plugin{}}]} =
+             HubManager.operative_plugins(@namespace, operative_id),
+           "the enable did not reach a durable record at all"
+
+    restart_hub(hub_id)
+    assert await_bound_node(hub_id, operative_id, 10_000) == node()
+
+    # What a restored Overwatch would subscribe: `Lifecycle.complete_init/4`
+    # hands `operative.opts[:plugins]` from its own start argument to
+    # `Plugins.prepare/2`, and that list IS the extension table it builds.
+    refute started_plugins(hub_id, operative_id) == [],
+           "plugin table empty after restart: the restored operative was started " <>
+             "from a declared spec that carries no plugins"
+
+    # The convergence I2 backstop reads this. A fix that repaired only the
+    # started spec would leave the backstop blind to any later divergence.
+    assert {:ok, [{^plugin_id, %Plugin{}}]} =
+             HubManager.operative_plugins(@namespace, operative_id),
+           "the declared plugin set the convergence backstop reads is empty after a restart"
+  end
+
+  # fails when: a disable reaches only the live operative and the declared entry
+  # keeps the plugin, so the next restart switches back on what an operator
+  # deliberately switched off, and nothing short of a second disable stops it.
+  test "a restart-driven start does not resurrect a disabled plugin" do
+    hub_id = Identificator.hub(@namespace)
+    operative_id = "plugin_disabled_before_restart_op"
+    plugin_id = "plugin_disabled_before_restart_plugin"
+
+    seed_runner(@seeded_runner, "market")
+    {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+    assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+    :ok =
+      HubRegistryTestHelper.start_durable(@namespace, operative_id,
+        recorded_runner: nil,
+        opts: []
+      )
+
+    on_exit(fn -> PluginManager.unregister_plugin(plugin_id) end)
+    assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin(operative_id, plugin_id))
+
+    assert {:ok, [{^plugin_id, %Plugin{}}]} =
+             HubManager.operative_plugins(@namespace, operative_id)
+
+    assert {:ok, _} = PluginManager.disable_plugin(plugin_id)
+    assert {:ok, []} = HubManager.operative_plugins(@namespace, operative_id)
+
+    restart_hub(hub_id)
+    assert await_bound_node(hub_id, operative_id, 10_000) == node()
+
+    assert started_plugins(hub_id, operative_id) == [],
+           "the restart re-subscribed a plugin the operator disabled"
+
+    assert {:ok, []} = HubManager.operative_plugins(@namespace, operative_id)
   end
 
   # fails when: one persisted row whose start args match no known shape raises
@@ -606,6 +688,25 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     arg
   end
 
+  # What a restored Overwatch would subscribe: `Lifecycle.complete_init/4` hands
+  # `operative.opts[:plugins]` from its own start argument to `Plugins.prepare/2`,
+  # and that list IS the extension table it builds. `StubChild` stands in for the
+  # Overwatch, so it is asked what it was handed rather than what it did with it.
+  defp started_plugins(hub_id, operative_id) do
+    operative =
+      ProcessRegistry.dump(hub_id)
+      |> Map.fetch!(operative_id)
+      |> elem(1)
+      |> HubManager.live_pid()
+      |> HubRegistryTestHelper.StubChild.started_with()
+      |> then(fn
+        {_ns, operative} -> operative
+        {_ns, _runner, operative} -> operative
+      end)
+
+    Keyword.get(operative.opts, :plugins, [])
+  end
+
   # The owning runner recorded on a registry row (`metadata.tag`).
   defp registry_tag(dump, operative_id) do
     {_cspec, _node_pids, metadata} = Map.fetch!(dump, operative_id)
@@ -627,6 +728,21 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   defp seed_runner(runner_id, factory_id),
     do: HubRegistryTestHelper.seed_runner(@namespace, runner_id, factory_id)
+
+  defp plugin(operative_id, plugin_id) do
+    Plugin.new(
+      id: plugin_id,
+      provider: __MODULE__.NoopProvider,
+      opts: %{},
+      subscriptions: [{:on_output, []}],
+      namespace: @namespace,
+      operative_id: operative_id
+    )
+  end
+
+  defmodule NoopProvider do
+    @moduledoc false
+  end
 
   defp await_bound_node(hub_id, operative_id, timeout_ms) do
     NodeTestHelper.wait_until(

@@ -83,6 +83,12 @@ defmodule Flezha.Config.DurationRows do
     # ---- operatives: the calls the loop and the manager make ----------------
     {:hub_await_recovery_ms, :ms, 60_000, []},
     {:hub_cross_node_request_ms, :ms, 10_000, []},
+    # The declared-set rewrite a plugin mutation issues, and the same bound plus
+    # headroom for the hop when the leader is another node: the remote call must
+    # outlive the call it carries, or it reports a timeout the leader did not
+    # have.
+    {:hub_declared_mutate_ms, :ms, 5_000, []},
+    {:hub_declared_mutate_rpc_ms, :ms, nil, derived: {:headroom, :hub_declared_mutate_ms, 500}},
     {:hub_runner_assign_wait_ms, :ms, 2_000, key: true},
     {:hub_start_child_ms, :ms, 15_000, []},
     {:migrate_timeout_ms, :ms, 2_000, []},

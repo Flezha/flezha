@@ -75,29 +75,6 @@ When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub doe
 - **WHEN** ProcessHub fires `pre_recovery_replay` synchronously with no runner connected
 - **THEN** the handler emits `[:flezha, :boot, :pre_recovery_replay]` and returns without polling FleetManager, and replay proceeds
 
-### Requirement: Cspec-write-first ordering for plugin mutations on top of persistent registry
-
-`Flezha.Service.PluginManager.enable_plugin/2` and `disable_plugin/1` SHALL mutate the ProcessHub cspec via `ProcessHub.Service.ProcessRegistry.update/3` BEFORE issuing the runtime `:plugin_subscribe`/`:plugin_unsubscribe` to the Overwatch. ProcessHub's `durable-registry` capability ensures the cspec mutation is durable on disk before `update/3` returns.
-
-If the cspec write fails, the runtime mutation SHALL NOT be issued; the caller SHALL receive `{:error, :registry_unavailable}` (the propagated ProcessHub error).
-
-If the runtime mutation fails after a successful cspec write, the cspec is correct (claims plugin enabled); on next Operative restart, `Overwatch.init/1`'s existing `subscribe_initial_plugins/2` path subscribes the plugin from the cspec. Self-healing on next start; no operator action needed.
-
-The previous self-heal-on-next-procedure contract from `plugin-subscription-persistence` is no longer needed — the partial-failure window is closed by the registry-write-first ordering combined with the runtime mutation's retry-on-restart semantics.
-
-#### Scenario: Crash between cspec write and runtime subscribe self-heals on restart
-
-- **GIVEN** a operative `p1` running; `enable_plugin("kafka_p1", %Plugin{...})` succeeds in writing the cspec via `ProcessRegistry.update/3`; the controller VM crashes before the runtime `:plugin_subscribe` is issued
-- **WHEN** the controller restarts; ProcessHub's persistent registry contains `p1` with `opts[:plugins]` including `kafka_p1`
-- **AND** `p1`'s Overwatch is restored (via ProcessHub's recovery path or peer-redistribution)
-- **THEN** `Overwatch.init/1` reads `operative.opts[:plugins]` from the cspec; `subscribe_initial_plugins/2` subscribes `kafka_p1`; the plugin is live without any operator action
-
-#### Scenario: Cspec write fails — runtime mutation aborted
-
-- **GIVEN** ProcessHub's persistent registry backend is unreachable (DETS file IO error)
-- **WHEN** `enable_plugin/2` is called and `ProcessRegistry.update/3` returns `{:error, _}`
-- **THEN** the call returns `{:error, :registry_unavailable}` and no `:plugin_subscribe` is issued
-
 ### Requirement: Entity state restoration fires on first stream attach
 
 When an Entity's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Entity exactly once per Operative-startup BEFORE allowing input frames to flow.
@@ -550,4 +527,43 @@ Holding SHALL be bounded by nothing but the arrival of a runner: a namespace who
 
 - **WHEN** an operator starts an operative in a namespace whose runner disappears between admission and bind
 - **THEN** the start SHALL be refused with the bind's own reason, and the operative SHALL NOT be left running unbound
+
+### Requirement: Declared-set-write-first ordering for plugin mutations
+
+`Flezha.Service.PluginManager.enable_plugin/2`, `disable_plugin/1` and `persist_plugin_opt/5` SHALL commit the plugin mutation to the hub's declared-children set BEFORE issuing the runtime `:plugin_subscribe`/`:plugin_unsubscribe` to the Overwatch. The declared set is named here deliberately: the hub keeps two records of a child, and an auto-recovery hub never replays its process registry from disk, so the declared set is the only one a restart reads. A mutation held only in the registry row is lost by the restart it was written to survive.
+
+The declared-set mutation SHALL be issued through the single start authority (`Flezha.Service.OperativeManager`), per `durable-operator-intent`, and never by the plugin manager reaching into the hub's declared-set API directly. An operative with no declared entry SHALL be refused rather than have one invented for it, so a plugin mutation can never resurrect an operative a stop removed for good.
+
+Where durable starts are disabled, the declared set holds nothing at start either, so the mutation SHALL succeed without writing rather than fail or promise durability it cannot give.
+
+If the durable write fails, the runtime mutation SHALL NOT be issued and the caller SHALL receive the propagated error. A hub that refuses the write because its declared list is parked SHALL be reported as a refusal naming the reason; an enable SHALL NOT answer success while persisting nothing.
+
+If the runtime mutation fails after a successful durable write, and the controller is still running to observe it, the enable SHALL roll back: every durable record the enable wrote SHALL be removed along with the in-memory claim, so a failed enable leaves no entry behind on any surface. A controller that dies between the two runs no rollback, so its write stands and `Lifecycle.complete_init/4` subscribes the plugin from the restored spec on the next start. Self-healing on next start; no operator action needed.
+
+#### Scenario: Crash between the durable write and the runtime subscribe self-heals on restart
+
+- **GIVEN** a operative `p1` running; `enable_plugin("kafka_p1", %Plugin{...})` succeeds in committing the plugin to the declared set; the controller VM crashes before the runtime `:plugin_subscribe` is issued
+- **WHEN** the controller restarts and the reconcile round starts `p1` from its declared entry, which includes `kafka_p1` in `opts[:plugins]`
+- **AND** `p1`'s Overwatch is restored (via ProcessHub's recovery path or peer-redistribution)
+- **THEN** `Lifecycle.complete_init/4` reads `operative.opts[:plugins]` and `Plugins.prepare/2` subscribes `kafka_p1`; the plugin is live without any operator action
+
+#### Scenario: Durable write fails — runtime mutation aborted
+
+- **GIVEN** the hub's durable write is unavailable (the hub is not alive, no leader is reachable, or the declared list is parked)
+- **WHEN** `enable_plugin/2` is called and the durable write returns an error
+- **THEN** the call returns that error, names the reason, and no `:plugin_subscribe` is issued
+
+#### Scenario: Durable starts disabled — the mutation persists nothing and says so
+
+- **GIVEN** a controller running with auto-restore disabled, which declares nothing at operative start
+- **WHEN** `enable_plugin/2` is called
+- **THEN** no declared-set write is attempted, the runtime subscribe proceeds, and the caller is not told the plugin is durable
+
+#### Scenario: A failed enable leaves no durable entry
+
+- **GIVEN** `enable_plugin/2` commits the durable write and the subsequent runtime `:plugin_subscribe` fails
+- **WHEN** the enable rolls back
+- **THEN** every durable record that enable wrote is removed as well as the in-memory claim
+- **AND** a later restart SHALL NOT resurrect a plugin whose enable never succeeded
+- **AND** the rollback SHALL NOT run on the teardown path, where removing the entry would erase a migrating operative's whole plugin manifest
 

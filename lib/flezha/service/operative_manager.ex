@@ -22,6 +22,7 @@ defmodule Flezha.Service.OperativeManager do
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
   defdelegate await_runner(arg1, arg2, arg3, arg4, arg5 \\ fn _ -> true end), to: Placement
   defdelegate pick_runner(arg1, arg2), to: Placement
+  defdelegate redeclare_plugins(arg1, arg2), to: Init
   defdelegate runner_registered?(arg1), to: Placement
 
   def operative_registry(namespace) do

@@ -17,19 +17,37 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
     @moduledoc false
     use GenServer
 
-    def start_link({_ns, _operative}), do: GenServer.start_link(__MODULE__, :ok)
-    def start_link({_ns, _runner, _operative}), do: GenServer.start_link(__MODULE__, :ok)
+    def start_link({_ns, _operative} = arg), do: GenServer.start_link(__MODULE__, arg)
+    def start_link({_ns, _runner, _operative} = arg), do: GenServer.start_link(__MODULE__, arg)
+
+    @doc """
+    The start argument this instance was handed. An Overwatch reads its plugin
+    set out of exactly this argument (`Flezha.Operative.Lifecycle.complete_init/4`
+    hands `operative.opts[:plugins]` to `Plugins.prepare/2`), so a test that
+    cannot afford a live runner asks the stub what it would have subscribed.
+    """
+    def started_with(pid), do: GenServer.call(pid, :started_with)
 
     @impl true
-    def init(:ok), do: {:ok, %{}}
+    def init(arg), do: {:ok, %{arg: arg}}
 
     # Stands in for an Overwatch, which absorbs the binding re-assert nudge.
     @impl true
     def handle_info(_msg, state), do: {:noreply, state}
 
+    @impl true
+    def handle_call(:started_with, _from, state), do: {:reply, state.arg, state}
+
+    # The runtime half of an enable/disable. The stub has no extension table;
+    # answering `:ok` is what lets a test drive the durable half of
+    # `PluginManager.enable_plugin/2` without a bound runner.
+    def handle_call({:plugin_subscribe, _id, _plugin}, _from, state),
+      do: {:reply, :ok, state}
+
+    def handle_call({:plugin_unsubscribe, _id}, _from, state), do: {:reply, :ok, state}
+
     # Overwatch verbs (`:get_overwatch_state`, quota reads) probed by the stop
     # path must not kill the stub — answer as an unreadable operative instead.
-    @impl true
     def handle_call(_msg, _from, state), do: {:reply, {:error, :stub}, state}
   end
 
@@ -90,11 +108,18 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   Options: `:factory_id`, and `:recorded_runner` for the runner position of the
   start args. Passing `recorded_runner: nil` declares the two-element shape a
   real operative start submits, so the declared entry the reconcile replays is
-  the production one; the default names a runner instead.
+  the production one; the default names a runner instead. `:opts` puts an
+  option list on the declared operative, which is where a plugin manifest
+  lives; without it the operative carries no `:opts` key at all.
   """
   def start_durable(namespace, operative_id, opts \\ []) do
     factory_id = Keyword.get(opts, :factory_id, "market")
-    operative = %{id: operative_id, factory_id: factory_id}
+
+    operative =
+      case Keyword.fetch(opts, :opts) do
+        {:ok, operative_opts} -> %{id: operative_id, factory_id: factory_id, opts: operative_opts}
+        :error -> %{id: operative_id, factory_id: factory_id}
+      end
 
     arg =
       case Keyword.get(opts, :recorded_runner, @recorded_runner) do
