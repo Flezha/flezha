@@ -50,7 +50,7 @@ defmodule Flezha.Identificator do
   @kinds %{
     operative: %{min: 1, max: @operative_id_max_bytes, regex: nil},
     runner: %{min: 1, max: @stream_socket_id_max_bytes, regex: nil},
-    namespace: %{min: 1, max: 63, regex: ~r/\A[a-z][a-z0-9-]{0,62}\z/},
+    namespace: %{min: 1, max: 63, regex: ~r/\A[a-z][a-z0-9_-]{0,62}\z/},
     plugin: %{min: 1, max: 64, regex: ~r/^[a-z0-9][a-z0-9_]*$/},
     schedule_name: %{
       min: 1,

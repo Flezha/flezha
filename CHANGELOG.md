@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed: a namespace name may contain an underscore
+
+`flz namespace create java_test` was refused with `:invalid_namespace_name`, and
+so were a role binding and a runner token for that name. With authorization on,
+a runner had to use `java-test` instead, although the SDKs accept either and
+nothing in the controller needs the ban. Names now match `[a-z][a-z0-9_-]{0,62}`:
+an underscore is allowed after the leading letter, and a name still cannot start
+with one, which keeps that prefix for system namespaces such as `_system`.
+
 ### Changed: the controller reports ready in seconds instead of after 45
 
 `flz boot await`, `GET /readyz` and the image health check held every controller

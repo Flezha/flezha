@@ -106,15 +106,15 @@ defmodule Flezha.AuthZ.Namespace do
   Validate a namespace name.
 
   Returns `:ok` for `_system` and any string matching
-  `[a-z][a-z0-9-]{0,62}`. Other inputs return
+  `[a-z][a-z0-9_-]{0,62}`. Other inputs return
   `{:error, :invalid_namespace_name}`.
   """
   @spec validate_name(term()) :: :ok | {:error, :invalid_namespace_name}
   def validate_name(@system), do: :ok
 
-  # The rule is the `:namespace` row: lower-case, digit-or-dash after the first
-  # letter, and no leading underscore, which keeps that prefix for system-owned
-  # namespaces.
+  # The rule is the `:namespace` row. The leading letter is what keeps the
+  # underscore prefix for system-owned namespaces; an underscore after it is
+  # ordinary.
   def validate_name(name) when is_binary(name) do
     case Identificator.validate(:namespace, name) do
       :ok -> :ok

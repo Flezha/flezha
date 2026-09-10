@@ -47,6 +47,7 @@ defmodule FlezhaTest.Process.IdentificatorTest do
     test "a value the kind's regex refuses is malformed, and a non-binary is too" do
       assert {:error, {:malformed, :namespace}} = Identificator.validate(:namespace, "Upper")
       assert {:error, {:malformed, :namespace}} = Identificator.validate(:namespace, "9lead")
+      assert {:error, {:malformed, :namespace}} = Identificator.validate(:namespace, "_lead")
       assert {:error, {:malformed, :plugin}} = Identificator.validate(:plugin, "Has-Dash")
 
       assert {:error, {:malformed, :schedule_name}} =

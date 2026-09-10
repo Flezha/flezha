@@ -10,9 +10,10 @@ defmodule Flezha.AuthZ.NamespaceTest do
   end
 
   describe "validate_name/1" do
-    test "accepts _system and lowercase-hyphenated names" do
+    test "accepts _system and lowercase names with hyphens or underscores" do
       assert :ok = Namespace.validate_name("_system")
       assert :ok = Namespace.validate_name("team-orders")
+      assert :ok = Namespace.validate_name("team_orders")
       assert :ok = Namespace.validate_name("a")
       assert :ok = Namespace.validate_name(String.duplicate("a", 63))
     end
@@ -21,7 +22,7 @@ defmodule Flezha.AuthZ.NamespaceTest do
       assert {:error, :invalid_namespace_name} = Namespace.validate_name("Team-Orders")
       assert {:error, :invalid_namespace_name} = Namespace.validate_name("-leading-hyphen")
       assert {:error, :invalid_namespace_name} = Namespace.validate_name("1starts-with-digit")
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name("team_orders")
+      assert {:error, :invalid_namespace_name} = Namespace.validate_name("_team-orders")
 
       assert {:error, :invalid_namespace_name} =
                Namespace.validate_name(String.duplicate("a", 64))

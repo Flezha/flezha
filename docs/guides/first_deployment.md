@@ -96,8 +96,10 @@ flz namespace create java-test
 flz namespace show java-test
 ```
 
-Names match `[a-z][a-z0-9-]{0,62}`. **Underscores are not allowed**: `java_test`
-is refused, `java-test` is not. `_system` is reserved.
+Names match `[a-z][a-z0-9_-]{0,62}`: lower-case letters, digits, underscores and
+hyphens, starting with a letter, so `java_test` and `java-test` are both
+accepted. A name cannot start with an underscore; that prefix is kept for system
+namespaces such as `_system`, which is reserved.
 
 ## 5. Issue the runner credential
 
