@@ -300,23 +300,23 @@ one place and Rust/Java parity holds by construction.
 
 After the Java SDK opens a control channel and sends its handshake, it SHALL require the
 controller to send at least one frame within `FLEZHA_CONTROL_ACK_TIMEOUT_MS` (default
-10 s). If no frame arrives, the SDK SHALL treat the controller as non-servicing and drive
-its `ReconnectCoordinator` to reconnect, exactly as the Rust SDK does. The Java reader's
-blocking read SHALL honor the deadline. A handshake
-send failure SHALL drive reconnect, not strand a dead thread. The
-`assignLatch`-timeout path SHALL drive reconnect rather than warn-and-continue, and the
-`ReconnectCoordinator` wiring SHALL be free of the startup race that can drop the first
-connection-lost event.
+10 s), and SHALL reconnect when none arrives, exactly as the Rust SDK does. The Java SDK
+takes this bound from the shared core and carries no control reader, ack wait or
+reconnect ladder of its own: `FlzCore.start` crosses `flz_core_ffi`'s JNI binding into
+`flz_core`, whose control reader arms the ack deadline on its blocking read and, when a
+read outlives it, treats the controller as not servicing the runner and asks the core's
+coordinator to reconnect. A handshake send failure SHALL drive the same reconnect rather
+than strand the reader thread.
 
 #### Scenario: Controller accepts but never acknowledges → Java SDK reconnects
 - **GIVEN** a Java runner whose controller accepts the control socket then stays silent (mid-shutdown or being replaced)
 - **WHEN** `FLEZHA_CONTROL_ACK_TIMEOUT_MS` elapses with no controller frame
-- **THEN** the Java SDK SHALL trigger `ReconnectCoordinator` and SHALL NOT block its reader thread indefinitely
+- **THEN** the shared core's control reader SHALL ask for a reconnect and SHALL NOT block its reader thread indefinitely
 - **AND** the runner SHALL reconnect until it lands on a controller that completes registration
 
 #### Scenario: First controller frame clears the Java ack deadline
 - **WHEN** the controller sends its assign-runner-id command within the window
-- **THEN** the Java SDK SHALL clear the deadline and read subsequent frames with no timeout
+- **THEN** the control reader SHALL clear the ack deadline and read subsequent frames under the steady-state idle window (`FLEZHA_CONTROL_IDLE_TIMEOUT_MS`) instead
 
 ### Requirement: Steady-state control-channel liveness detects a post-handshake wedge
 

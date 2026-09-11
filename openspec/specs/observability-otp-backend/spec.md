@@ -224,3 +224,28 @@ The template's periodic half SHALL be a separate extension point from its pollin
 - **WHEN** a process declares `tick_interval_ms/1` and `handle_tick/1` and its tick fires
 - **THEN** the next tick SHALL be armed by the extension point, with no `handle_info` clause or re-arm helper of the process's own
 
+### Requirement: A stamp SHALL be collapsed within a runner to the latest reading a channel took
+
+The per-runner collapse SHALL reduce a slot declared `kind: :instant` to the latest
+stamp among the runner's channels that wrote one. A channel that never wrote a slot
+holds `0`, and for a stamp that `0` is absent rather than a reading: it SHALL NOT
+displace a stamp another channel of the same runner wrote, and a silence read from a
+stamp that no channel of the runner wrote SHALL be reported as not measured rather than
+as a value. The rule lives in the one per-runner collapse every reader of the channel
+rows uses, beside the rules the built-in transport source's requirement states for a
+mirrored runner fact and for a per-channel count.
+
+#### Scenario: A stamp one channel wrote survives the collapse
+- **GIVEN** a runner whose control channel wrote `last_control_frame_ms`, one of whose data channels wrote `last_send_ms`, and whose other channels wrote neither
+- **WHEN** the runner's liveness is read from its collapsed row
+- **THEN** `control_silent_ms` and `data_silent_ms` SHALL each be measured from the stamp its channel wrote, and neither SHALL read as not measured
+
+#### Scenario: A stamp no channel wrote reads as not measured
+- **GIVEN** a runner none of whose channels wrote `last_control_frame_ms` or `last_send_ms`
+- **WHEN** the runner's liveness is read from its collapsed row
+- **THEN** `control_silent_ms` and `data_silent_ms` SHALL both be absent, not zero
+
+#### Scenario: Two stamps keep the later one
+- **WHEN** two data channels of one runner wrote `last_send_ms` of `100` and `200`
+- **THEN** the collapsed `last_send_ms` SHALL be `200`, neither their sum nor the earlier stamp
+

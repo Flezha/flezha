@@ -118,9 +118,9 @@ This works identically across: ProcessHub-driven cold-boot replay, fresh `flz op
 
 ### Requirement: A migration whose handover is empty SHALL pull the source controller's Entity files
 
-`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, so a migration triggered by that runner's death necessarily ships an empty payload — and the source controller's disk then holds the only surviving copy.
+`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, falling back only to a snapshot its Overwatch was handed earlier, so a migration triggered by that runner's death ships an empty payload unless such a snapshot was taken, and the source controller's disk then holds the only surviving copy.
 
-`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Entity of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then drive the ordinary per-Entity replay (`{:kick_restore, runner_id}`).
+`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Entity of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then run the ordinary per-Entity replay, both through `Flezha.Operative.Replay.dispatch_restore/3`, the step every bind's restore runs.
 
 The pull SHALL be:
 
@@ -136,8 +136,8 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 
 #### Scenario: Controller loses all runners — operatives migrate with their state
 
-- **GIVEN** controller A hosting operative `p1` with Entity state on A's local disk; peer controller B with a runner for `p1`'s factory
-- **WHEN** A's last runner disconnects and `hub_migrate` drains the namespace hub
+- **GIVEN** controller A hosting operative `p1` with Entity state on A's local disk and no snapshot of `p1` held by its Overwatch; peer controller B with a runner for `p1`'s factory
+- **WHEN** A's last runner disconnects and A's convergence loop re-places `p1` with `replace_operative`, because no runner left on A advertises `p1`'s factory
 - **THEN** `p1` migrates to B through the consent gate
 - **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Entity files from A and replays them
 - **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them

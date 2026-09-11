@@ -138,6 +138,10 @@ A reason that only one transport can produce, because the wire only offers it th
 SHALL still be declared in the one set rather than written as a literal at the site
 that produces it.
 
+The NIF's client read path SHALL report a close for a stream whose peer ended it even
+while the rest of the connection lives on: one stream ending is that stream's close, and
+its reader SHALL NOT wait for the whole connection to die before it hears it.
+
 #### Scenario: A peer ending the stream reads the same over every transport
 
 - **WHEN** a connected peer ends a stream cleanly over UDS and, separately, over QUIC
@@ -155,4 +159,14 @@ that produces it.
 - **WHEN** the NIF's client read path reports a close
 - **THEN** it SHALL use the same declared reason set as the server drivers, so a reason
   read from a log does not depend on which side of the connection produced it
+
+#### Scenario: One stream of a live QUIC client connection ends
+
+- **WHEN** the peer ends one stream of a QUIC client connection, by a clean finish or by
+  a reset, while the connection itself stays up
+- **THEN** the client's reader of that stream SHALL read it as ended, as it reads a UDS
+  stream whose peer ended it, and the NIF's client read path SHALL report the close to
+  the stream's owner
+- **AND** the client SHALL NOT take the end of that one stream as the loss of the
+  connection
 
