@@ -38,7 +38,11 @@ without `RELEASE_COOKIE` mints one instead: 32 random bytes from `/dev/urandom`,
 written `0600` to `${FLEZHA_STATE_DIR}/cookie` (`FLEZHA_COOKIE_FILE` moves the
 file), read back on every later boot, and announced on each of them. That is
 enough to run and operate one node, and the value is one no other installation
-holds.
+holds. Only a command that starts a node (`start`, `start_iex`, `daemon`,
+`daemon_iex`) writes the file; every other release command, including the
+`flzvm rpc` behind each `flz` verb, only reads it. A verb run before the first
+start has nothing to read and reports the controller unreachable, which
+`flz boot await` waits out, rather than creating a cookie of its own.
 
 It is not enough for a cluster. Two nodes connect only under one cookie that was
 given to both, so a minted value leaves a node clustering with nobody. That is

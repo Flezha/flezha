@@ -42,8 +42,10 @@ Two things about the environment it starts in:
   authorization catalog the CLI cannot see.
 - **The distribution cookie is minted, not shipped.** With no `RELEASE_COOKIE`,
   the first boot writes 32 random bytes to
-  `<release root>/app_data/state/cookie` and reads them back afterwards. Fine
-  for one node; a cluster needs one provisioned value on every process.
+  `<release root>/app_data/state/cookie` and reads them back afterwards. `flz`
+  only reads that file: run before the first start, a verb reports the
+  controller unreachable. Fine for one node; a cluster needs one provisioned
+  value on every process.
 
 ## 3. Claim the bootstrap admin
 

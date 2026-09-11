@@ -69,9 +69,12 @@ under a value any other installation could hold. Where no cookie is provisioned,
 release MAY mint a node-local cookie from a cryptographically random source, persist
 it readable only by its owner, and reuse it on later boots; such a value SHALL be
 unique to the node that minted it, SHALL NOT appear in the source tree, and SHALL
-leave the node unable to cluster with any node that did not receive it explicitly. A
-release that can neither provision nor mint a cookie SHALL refuse to start
-distribution rather than proceed without one, and SHALL say so.
+leave the node unable to cluster with any node that did not receive it explicitly.
+Only a release command that starts a node SHALL mint and persist that value. Every
+other release command, including the one behind each CLI verb, SHALL only read it;
+with nothing to read it SHALL persist nothing, and its call SHALL reach no node and
+report the node unreachable. A node start that can neither be given nor mint a cookie
+SHALL refuse to start distribution rather than proceed without one, and SHALL say so.
 
 #### Scenario: Missing cookie refuses to cluster
 
@@ -96,8 +99,19 @@ distribution rather than proceed without one, and SHALL say so.
 
 #### Scenario: A cookie that cannot be minted refuses distribution
 
-- **WHEN** no cookie is provisioned and the release cannot generate or persist one
+- **WHEN** a node starts with no cookie provisioned and the release cannot generate or persist one
 - **THEN** it SHALL start with distribution disabled, SHALL log the reason, and SHALL NOT fail the boot
+
+#### Scenario: A CLI verb run before the first start creates no cookie
+
+- **GIVEN** no cookie is provisioned and no node has started with this cookie file
+- **WHEN** a CLI verb runs
+- **THEN** no cookie file SHALL be written, and the verb SHALL report the controller unreachable
+
+#### Scenario: A verb racing a first start leaves the node's cookie in the file
+
+- **WHEN** a CLI verb has found no cookie file and a node's first start writes one before the verb finishes
+- **THEN** the file SHALL hold the value the node started with, and a later verb SHALL read that value
 
 ### Requirement: CLI callers present a verifiable identity
 

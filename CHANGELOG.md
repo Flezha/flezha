@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed: a `flz` verb run during a controller's first start no longer locks the CLI out
+
+With no `RELEASE_COOKIE`, the release script minted a node-local cookie for every
+release command, the `flzvm rpc` behind each `flz` verb included. A verb run in the
+same instant as a controller's first start, such as `flz boot await` right after
+`flz controller start &`, could write a second value over the one the controller
+kept, and every later verb was refused until the controller restarted. Only a
+command that starts a node (`start`, `start_iex`, `daemon`, `daemon_iex`) now
+creates the cookie file; every other command only reads it. A verb run before the
+first start reports the controller unreachable, which `flz boot await` waits out.
+
 ### Changed: a controller refuses to boot on a socket directory over 60 bytes
 
 A controller whose UDS socket directory was 61 to 79 bytes booted, because its control

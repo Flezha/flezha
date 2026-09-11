@@ -150,37 +150,103 @@ defmodule Flezha.Transport.TransportAuthTest do
   end
 
   describe "release cookie" do
-    # Renders rel/env.sh.eex the way `mix release` would and sources it in a
-    # clean shell: the distribution posture must come from the script alone.
-    defp release_distribution_with(env_exports) do
-      script =
-        EEx.eval_file("rel/env.sh.eex", assigns: [release: %{name: :flezha_controller}])
+    defp cookie_file(), do: Path.join([tmp_base(), "state", "cookie"])
 
+    # rel/env.sh.eex rendered the way `mix release` renders it.
+    defp env_sh() do
+      script = EEx.eval_file("rel/env.sh.eex", assigns: [release: %{name: :flezha_controller}])
       path = Path.join(tmp_base(), "env.sh")
       File.write!(path, script)
+      path
+    end
+
+    # Sources the script in a clean shell as the release command `command`
+    # would: the distribution posture must come from the script alone.
+    defp source_env_sh(command, env \\ []) do
+      clean = %{
+        "RELEASE_COMMAND" => command,
+        "RELEASE_COOKIE" => nil,
+        "RELEASE_DISTRIBUTION" => nil,
+        "FLEZHA_STATE_DIR" => nil,
+        "FLEZHA_COOKIE_FILE" => cookie_file()
+      }
 
       {out, 0} =
         System.cmd(
           "sh",
-          ["-c", "#{env_exports} . #{path}; echo dist=$RELEASE_DISTRIBUTION"],
-          env: [{"RELEASE_COOKIE", nil}, {"RELEASE_DISTRIBUTION", nil}],
+          ["-c", ". #{env_sh()}; echo \"dist=$RELEASE_DISTRIBUTION cookie=$RELEASE_COOKIE\""],
+          env: Enum.to_list(Map.merge(clean, Map.new(env))),
           stderr_to_stdout: true
         )
 
-      out
+      [_, dist, cookie] = Regex.run(~r/^dist=(\S*) cookie=(\S*)$/m, out)
+      {out, dist, cookie}
     end
 
-    test "a missing cookie refuses to start distribution" do
-      out = release_distribution_with("")
+    test "a start that cannot mint a cookie refuses to start distribution" do
+      # A regular file where the state directory belongs: nothing can be written under it.
+      File.write!(Path.dirname(cookie_file()), "")
+
+      {out, dist, _cookie} = source_env_sh("start")
       assert out =~ "refusing to start Erlang distribution"
-      assert out =~ "dist=none"
+      assert dist == "none"
     end
 
     test "a provisioned cookie enables distribution without any constant fallback" do
-      out = release_distribution_with("RELEASE_COOKIE=provisioned-secret;")
+      {out, dist, cookie} = source_env_sh("start", [{"RELEASE_COOKIE", "provisioned-secret"}])
       refute out =~ "refusing"
-      assert out =~ "dist=name"
+      assert {dist, cookie} == {"name", "provisioned-secret"}
+      refute File.exists?(cookie_file())
       refute File.read!("rel/env.sh.eex") =~ "flezha_cluster_cookie"
+    end
+
+    test "only a command that starts a node mints the node-local cookie; the rest only read it" do
+      for command <- ~w(rpc eval remote stop restart pid version) do
+        {out, dist, cookie} = source_env_sh(command)
+        refute File.exists?(cookie_file()), "#{command} wrote a cookie"
+        # A value nobody keeps, so the call starts and finds no node to reach.
+        assert {dist, out =~ "[flezha]"} == {"name", false}, command
+        assert cookie =~ ~r/^[0-9a-f]{64}$/, command
+      end
+
+      for command <- ~w(start start_iex daemon daemon_iex) do
+        File.rm_rf!(Path.dirname(cookie_file()))
+
+        {out, "name", cookie} = source_env_sh(command)
+        assert File.read!(cookie_file()) == cookie <> "\n", command
+        assert mode_bits(cookie_file()) == 0o600
+        assert out =~ "using the node-local cookie in #{cookie_file()}"
+
+        assert {_, "name", ^cookie} = source_env_sh("rpc")
+      end
+    end
+
+    # The window a verb racing a first start falls into: it has found no cookie
+    # file and is still inside the script when the start writes one. `od` runs
+    # in exactly that window, so a stand-in for it runs the whole start there.
+    test "a verb racing a first start leaves one cookie in the file, the start's" do
+      shims = Path.join(tmp_base(), "shims")
+      started = Path.join(tmp_base(), "started")
+      File.mkdir_p!(shims)
+
+      File.write!(Path.join(shims, "od"), """
+      #!/bin/sh
+      if [ ! -e "#{started}.lock" ]; then
+        : >"#{started}.lock"
+        (RELEASE_COMMAND=start; . "#{env_sh()}"; printf %s "$RELEASE_COOKIE" >"#{started}") >/dev/null 2>&1
+      fi
+      exec #{System.find_executable("od")} "$@"
+      """)
+
+      File.chmod!(Path.join(shims, "od"), 0o755)
+
+      {_out, "name", _} =
+        source_env_sh("rpc", [{"PATH", shims <> ":" <> System.get_env("PATH")}])
+
+      # The start really ran inside the verb's window, and minted.
+      assert <<_::binary-size(64)>> = start_cookie = File.read!(started)
+      assert File.read!(cookie_file()) == start_cookie <> "\n"
+      assert {_, "name", ^start_cookie} = source_env_sh("rpc")
     end
   end
 

@@ -111,7 +111,7 @@ the value and the type.
 | `FLEZHA_CLUSTER_DISCOVERY` | `manual_discovery` | `:cluster_discovery`; also `k8s_pod_discovery` |
 | `FLEZHA_NODE_NAME` | `flezha` (`:test` derives a base per run) | `:node_base_name`; `rel/env.sh.eex` builds `RELEASE_NODE=<name>@<host>` from it, and the test harness starts distribution under the same `<name>@<host>` |
 | `FLEZHA_NODE_HOST` | `127.0.0.1` | the host half of `RELEASE_NODE` (`rel/env.sh.eex`); also sets `:node_host_name`, the host half the test harness names its node with |
-| `RELEASE_COOKIE` | minted per node | read by `rel/env.sh.eex`: set → `RELEASE_DISTRIBUTION=name`; unset → mint 32 random bytes into `FLEZHA_COOKIE_FILE` (default `<state root>/cookie`, `0600`), reuse it on later boots, and only where neither is possible → `none` (no clustering, `flz` verbs fail). A cluster still provisions one value on every node. |
+| `RELEASE_COOKIE` | minted per node | read by `rel/env.sh.eex`: set → `RELEASE_DISTRIBUTION=name`; unset → a node start (`start`, `start_iex`, `daemon`, `daemon_iex`) mints 32 random bytes into `FLEZHA_COOKIE_FILE` (default `<state root>/cookie`, `0600`), reuses it on later boots, and only where neither is possible → `none` (no clustering, `flz` verbs fail). Every other command, each `flz` verb included, only reads the file, and before the first start reports the controller unreachable. A cluster still provisions one value on every node. |
 | `FLEZHA_DIST_TLS_OPTFILE` | unset | read by `rel/env.sh.eex`: path of an `inet_tls_dist` option file, adds `-proto_dist inet_tls -ssl_dist_optfile` |
 | `FLEZHA_INITIAL_NODES` | `""` | `:initial_nodes`, comma list of node names |
 | `FLEZHA_RECONNECT_INTERVAL` | `1000` | `:reconnect_interval` |

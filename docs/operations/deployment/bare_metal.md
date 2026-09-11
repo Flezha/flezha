@@ -73,16 +73,17 @@ answers the question on demand whenever you do want it.
 ## Point the CLI at it
 
 `flz` runs the controller's own `flzvm` underneath, so it resolves the node the
-same way the controller did and needs only the cookie:
+same way the controller did and reads the same cookie file: with the same
+`FLEZHA_STATE_DIR` and `FLEZHA_COOKIE_FILE` as the controller, or neither, it
+needs nothing more. A controller started with `RELEASE_COOKIE` set needs the
+same value exported wherever `flz` runs.
 
-```bash
-export RELEASE_COOKIE=flezha_local
+Only the controller's start creates that file. A verb run before the first
+start, or with a cookie that is not the controller's, reports the controller
+unreachable:
+
 ```
-
-Without the cookie every verb stops before it starts, and says so:
-
-```
-[flezha] RELEASE_COOKIE is not set; refusing to start Erlang distribution.
+--rpc-eval : RPC failed with reason :noconnection
 ```
 
 ## Check it came up
