@@ -19,6 +19,8 @@ use crate::rpc::{controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 pub(crate) const YES: OptSpec = OptSpec::switch("--yes", "--yes");
 pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run");
 const INCLUDE_CERTS: OptSpec = OptSpec::switch("--include-certs", "--include-certs");
+const INCLUDE_DLQ: OptSpec = OptSpec::switch("--include-dlq", "--include-dlq");
+const INCLUDE_SCHEDULES: OptSpec = OptSpec::switch("--include-schedules", "--include-schedules");
 const INCLUDE_SOCKETS: OptSpec = OptSpec::switch("--include-sockets", "--include-sockets");
 const ALL: OptSpec = OptSpec::switch("--all", "--all");
 const PROBE_TIMEOUT_MS: OptSpec =
@@ -31,6 +33,8 @@ pub(crate) const OPTIONS: &[OptSpec] = &[
     YES,
     DRY_RUN,
     INCLUDE_CERTS,
+    INCLUDE_DLQ,
+    INCLUDE_SCHEDULES,
     INCLUDE_SOCKETS,
     ALL,
     OUTPUT,
@@ -48,6 +52,8 @@ struct Flags {
     yes: bool,
     dry_run: bool,
     include_certs: bool,
+    include_dlq: bool,
+    include_schedules: bool,
     include_sockets: bool,
     json: bool,
     probe_timeout_ms: u64,
@@ -55,7 +61,7 @@ struct Flags {
 }
 
 /// The flags the walk read, in the shape the plan below wants them. `--all` is
-/// the one that means two others.
+/// the one that means every `--include-` flag.
 fn flags(read: &Reading) -> Flags {
     let all = read.switch(ALL.long);
 
@@ -63,6 +69,8 @@ fn flags(read: &Reading) -> Flags {
         yes: read.switch(YES.long),
         dry_run: read.switch(DRY_RUN.long),
         include_certs: all || read.switch(INCLUDE_CERTS.long),
+        include_dlq: all || read.switch(INCLUDE_DLQ.long),
+        include_schedules: all || read.switch(INCLUDE_SCHEDULES.long),
         include_sockets: all || read.switch(INCLUDE_SOCKETS.long),
         json: read.output_format() == "json",
         probe_timeout_ms: read

@@ -3,38 +3,48 @@
 For operators who need a Controller to boot from a clean slate. `flz reset`
 clears the durable on-disk state under `app_data/` — every Entity's
 WAL/snapshot/outbox files and the ProcessHub durable registry, optionally the
-TLS material and UDS sockets — without deleting `app_data/` itself. It refuses
-to run while the Controller is up and never reaches into a remote durability
-backend.
+TLS material, parked DLQ records, schedules and UDS sockets — without deleting
+`app_data/` itself. It refuses to run while the Controller is up and never
+reaches into a remote durability backend.
 
 ## Scope
 
-`flz reset` resolves the three `app_data/` roots as `<app_data root>/<name>`.
+`flz reset` resolves every `app_data/` root as `<app_data root>/<name>`.
 The root is `--app-data-root`, else `FLEZHA_APP_DATA_ROOT`, else `./app_data`.
-Per-store path overrides such as `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` are not
-consulted: a store relocated that way is not found and not cleared.
+Per-store path overrides such as `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`,
+`FLEZHA_DLQ_DIR` and `FLEZHA_SCHEDULE_DIR` are not consulted: a store
+relocated that way is not found and not cleared, `--include-dlq` and
+`--include-schedules` included.
 
 Which subtrees exist and how each is treated is one declaration, read by both
 runtimes: `lib/flezha/layout/table.ex` on the controller's side and
-`cli/src/reset/plan.rs` on this one. The rows below are the ones that declare
-`by default` or a flag; every other subtree declares that reset never clears
-it.
+`cli/src/reset/plan.rs` on this one. Every row is reported on every run,
+cleared or kept, so the summary names everything a reset left behind.
 
 The socket directory is the exception, because the Controller resolves it from
 a different source. `flz reset` walks the same ladder the Controller, every
 runner and `flz runner check` walk, and clears the directory that is actually
 in use.
 
-| Directory                     | Contents                               | Cleared             |
-| ----------------------------- | -------------------------------------- | ------------------- |
-| `app_data/state/`             | per-Entity WAL, snapshot, outbox files | by default          |
-| `app_data/process_hub/`       | ProcessHub durable registry (`.dets`)  | by default          |
-| `app_data/certs/`             | TLS material                           | `--include-certs`   |
-| the resolved socket directory | Flezha's own UDS socket files          | `--include-sockets` |
+| Directory                     | Contents                               | Cleared               |
+| ----------------------------- | -------------------------------------- | --------------------- |
+| `app_data/state/`             | per-Entity WAL, snapshot, outbox files | by default            |
+| `app_data/process_hub/`       | ProcessHub durable registry (`.dets`)  | by default            |
+| `app_data/certs/`             | TLS material                           | `--include-certs`     |
+| `app_data/dlq/`               | parked dead-letter records             | `--include-dlq`       |
+| `app_data/schedules/`         | every schedule                         | `--include-schedules` |
+| the resolved socket directory | Flezha's own UDS socket files          | `--include-sockets`   |
+| `app_data/auth/`              | tokens, role bindings, namespaces      | never                 |
+| `app_data/audit/`             | the audit trail                        | never                 |
+| `app_data/plugins/`           | installed plugins                      | never                 |
+| `logs/`                       | the controller's log file              | never                 |
 
-`--all` is `--include-certs --include-sockets`. Every other subtree the layout
-declares — `auth/`, `audit/`, `dlq/`, `schedules/`, `plugins/`, `logs/` — is
-left alone; clearing `auth/` would destroy an operator's tokens.
+`--all` is every `--include-` flag above. A `never` row is reported as kept,
+`not reset's to clear`, whatever the flags: clearing `auth/` would destroy an
+operator's tokens, and an audit trail one command can erase is a weaker audit
+trail. `logs/` is named where the log file's default (`logs/flezha.log`) puts
+it, relative to the working directory: it is not under the data root, and
+`--app-data-root` does not move it.
 
 ## The socket directory
 
@@ -90,8 +100,10 @@ flz reset [OPTIONS]
 | `--yes`                  | Required to apply. Without it the command prints the plan and exits 1.        |
 | `--dry-run`              | Print the plan without touching the filesystem; exits 0.                      |
 | `--include-certs`        | Also clear `app_data/certs/*`.                                                 |
+| `--include-dlq`          | Also clear `app_data/dlq/*`: every parked dead-letter record.                 |
+| `--include-schedules`    | Also clear `app_data/schedules/*`: every schedule.                            |
 | `--include-sockets`      | Also unlink Flezha's socket files in the resolved socket directory (see above). |
-| `--all`                  | `--include-certs --include-sockets`.                                           |
+| `--all`                  | `--include-certs --include-dlq --include-schedules --include-sockets`.         |
 | `--app-data-root <PATH>` | Override the `app_data/` root (precedence over `FLEZHA_APP_DATA_ROOT`).        |
 | `--probe-timeout-ms <N>` | Live-node probe timeout in ms (default `1000`).                                |
 | `--json`                 | Machine-readable single-object output (`--output json` is the same request).   |
@@ -149,14 +161,20 @@ Human (default; `would clear` / `would keep` in plan-only mode):
 cleared     ./app_data/state/                                (12 files, 4.3 MiB)
 cleared     ./app_data/process_hub/                          (2 files, 16.0 KiB)
 kept        ./app_data/certs/                                (use --include-certs to clear)
-kept        ./app_data/sockets/                              (use --include-sockets to clear)
+kept        ./app_data/dlq/                                  (use --include-dlq to clear)
+kept        ./app_data/schedules/                            (use --include-schedules to clear)
+kept        socket directory                                 (use --include-sockets to clear)
+kept        ./app_data/auth/                                 (not reset's to clear)
+kept        ./app_data/audit/                                (not reset's to clear)
+kept        ./app_data/plugins/                              (not reset's to clear)
+kept        logs/                                            (not reset's to clear)
 reset complete in 41 ms
 ```
 
 `--json`:
 
 ```json
-{"cleared":[{"root":"./app_data/state","files":12,"bytes":4509876},{"root":"./app_data/process_hub","files":2,"bytes":16384}],"kept":[{"root":"./app_data/certs","reason":"use --include-certs to clear"},{"root":"./app_data/sockets","reason":"use --include-sockets to clear"}],"duration_ms":41,"dry_run":false}
+{"cleared":[{"root":"./app_data/state","files":12,"bytes":4509876},{"root":"./app_data/process_hub","files":2,"bytes":16384}],"kept":[{"root":"./app_data/certs","reason":"use --include-certs to clear"},{"root":"./app_data/dlq","reason":"use --include-dlq to clear"},{"root":"./app_data/schedules","reason":"use --include-schedules to clear"},{"root":"socket directory","reason":"use --include-sockets to clear"},{"root":"./app_data/auth","reason":"not reset's to clear"},{"root":"./app_data/audit","reason":"not reset's to clear"},{"root":"./app_data/plugins","reason":"not reset's to clear"},{"root":"logs","reason":"not reset's to clear"}],"duration_ms":41,"dry_run":false}
 ```
 
 `dry_run` is `true` for both `--dry-run` and a bare invocation.

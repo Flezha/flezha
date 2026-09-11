@@ -422,7 +422,17 @@ DESCRIPTION:
 
     Opt-in clears (off by default):
         app_data/certs/         (--include-certs)
+        app_data/dlq/           (--include-dlq)
+        app_data/schedules/     (--include-schedules)
         <socket directory>      (--include-sockets)
+
+    Never cleared, and reported as kept:
+        app_data/auth/, app_data/audit/, app_data/plugins/, logs/
+
+    Every app_data/ root is <data root>/<name>: a store moved by its own
+    variable (FLEZHA_DLQ_DIR, FLEZHA_SCHEDULE_DIR, ...) is neither found nor
+    cleared. logs/ is the log file's default directory, in the working
+    directory, and --app-data-root does not move it.
 
     The socket directory is resolved through the same ladder the Controller
     and its runners walk -- $FLEZHA_SOCKET_FILES_PATH, else
@@ -435,8 +445,10 @@ OPTIONS:
     --yes                     Apply the reset. REQUIRED for any destructive action.
     --dry-run                 Print the plan without touching the filesystem (exit 0).
     --include-certs           Also clear app_data/certs/
+    --include-dlq             Also clear app_data/dlq/ (every parked dead-letter record)
+    --include-schedules       Also clear app_data/schedules/ (every schedule)
     --include-sockets         Also clear Flezha's sockets in the resolved socket directory
-    --all                     Equivalent to --include-certs --include-sockets
+    --all                     Every opt-in clear above: certs, dlq, schedules and sockets
     --app-data-root <PATH>    Override the `app_data/` root (else FLEZHA_APP_DATA_ROOT or ./app_data)
     --probe-timeout-ms <N>    Live-node probe timeout (default 1000)
     --json                    Machine-readable output (--output json is the same request)
@@ -454,7 +466,7 @@ EXAMPLES:
     flz reset                          # plan only, exit 1
     flz reset --dry-run                # plan only, exit 0
     flz reset --yes                    # default scope (state, process_hub)
-    flz reset --yes --all              # also clear certs and sockets
+    flz reset --yes --all              # also clear certs, dlq, schedules, sockets
     flz reset --yes --json             # machine-readable output"#;
 
 pub(crate) const ROLE: Help = r#"flz role - Principal → role bindings

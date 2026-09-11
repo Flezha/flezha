@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed: `flz reset` can clear parked DLQ records and schedules, and names everything it keeps
+
+`flz reset` left `app_data/dlq/` and `app_data/schedules/` behind and did not
+mention them, so an operative re-created after a reset could meet its own old
+dead-letter records, and old schedules fired against a fresh state tree. Two
+new flags clear them: `--include-dlq` and `--include-schedules`. A plain reset
+still keeps both.
+
+**`--all` now also clears parked DLQ records and every schedule**, as well as
+the certificates and sockets it cleared before. A script that runs
+`flz reset --yes --all` and meant to keep either should name the flags it
+wants instead.
+
+The report now names every store a reset leaves behind, on every run and in
+`--json`: the two new ones with `use --include-dlq to clear` and
+`use --include-schedules to clear`, and `app_data/auth/`, `app_data/audit/`,
+`app_data/plugins/` and `logs/` with `not reset's to clear`. No flag clears
+those four; an audit trail one command can erase is a weaker audit trail. Like
+every other root, the two new ones are `<app_data root>/dlq` and
+`<app_data root>/schedules`; a store moved with `FLEZHA_DLQ_DIR` or
+`FLEZHA_SCHEDULE_DIR` is not found there.
+
+A script that reads `--json` sees two differences. The `kept` list is never
+empty any more: under `--all` it still names those four stores. And both
+lists follow the layout's order (defaults, then the flag rows with the socket
+directory last among them, then the four kept stores), so the socket entry is
+no longer the fourth root.
+
 ### Fixed: a `flz` verb run during a controller's first start no longer locks the CLI out
 
 With no `RELEASE_COOKIE`, the release script minted a node-local cookie for every

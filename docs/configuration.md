@@ -44,28 +44,34 @@ declares them: for each, the knob above that may move it, whether a directory
 claim is owed before the first write, and how `flz reset` treats it. Both
 runtimes read that declaration — the controller through
 `Flezha.Layout.Table.dir/1`, `flz reset` through the matching rows in
-`cli/src/reset/plan.rs` — so the directory the controller uses and the one an
-operator's reset reports are one path.
+`cli/src/reset/plan.rs` — so at the default settings the directory the
+controller uses and the one an operator's reset reports are one path. A knob
+that moves a subtree moves it for the controller only.
 
 | Subtree | Knob | `flz reset` |
 |---|---|---|
 | state | `FLEZHA_STATE_DIR` | cleared by default |
 | process_hub | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | cleared by default |
 | certs | `FLEZHA_CA_CERT_PATH` and its siblings | `--include-certs` |
+| dlq | `FLEZHA_DLQ_DIR` | `--include-dlq` |
+| schedules | `FLEZHA_SCHEDULE_DIR` | `--include-schedules` |
 | sockets | `FLEZHA_SOCKET_FILES_PATH` (the ladder) | `--include-sockets` |
 | auth | `FLEZHA_AUTHZ_DIR` | never |
 | audit | `FLEZHA_AUDIT_DIR` | never |
-| dlq | `FLEZHA_DLQ_DIR` | never |
 | plugins | `FLEZHA_PLUGIN_ROOT` | never |
-| schedules | `FLEZHA_SCHEDULE_DIR` | never |
 | logs | `FLEZHA_LOG_PATH` | never |
 
 Each knob's default and precedence are its row in the table below; this section
-states only which subtrees exist and what reset does with them. The `sockets`
-row is the one that is not a subdirectory of the data root: it is resolved by
+states only which subtrees exist and what reset does with them. `flz reset`
+reports every row, a `never` row as kept, and reads none of these knobs but the
+ladder's: it clears `<app_data root>/dlq`, not a directory `FLEZHA_DLQ_DIR`
+moved it to.
+Two rows are not subdirectories of the data root. `sockets` is resolved by
 the ladder described under
 [the socket-directory ladder](#the-socket-directory-ladder), is frequently outside
-`app_data/` altogether, and `--app-data-root` does not move it.
+`app_data/` altogether, and `--app-data-root` does not move it. `logs` defaults
+to `logs/`, relative to the working directory, and the data root does not move
+it either.
 
 ## Layer 1: environment variables
 

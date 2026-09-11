@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use flz_transport::utility::socket_dir::{self, Role};
 use flz_transport::utility::socket_probe::{diagnose, Diagnosis, Reach};
 
-use super::Flags;
+use super::{Flags, INCLUDE_CERTS, INCLUDE_DLQ, INCLUDE_SCHEDULES, INCLUDE_SOCKETS};
 
 #[derive(Clone, Copy)]
 pub(super) enum ClearMode {
@@ -17,6 +17,9 @@ pub(super) enum ClearMode {
     /// root is reported when they did not. The table names the flag and the
     /// field that carries it together, so the two cannot drift apart.
     OptIn(&'static str, fn(&Flags) -> bool),
+    /// Never in scope, whatever the flags. Still reported, so a run names every
+    /// root it left behind.
+    Never,
 }
 
 /// Where a root's path comes from — and therefore which of its entries this
@@ -29,6 +32,12 @@ pub(super) enum Source {
     /// A subdirectory of the `app_data/` root this command was given. Every
     /// entry in it is this command's.
     AppData(&'static str),
+    /// A subdirectory of the directory this command runs in, for the row whose
+    /// default is not under the data root: the log file's, `logs/flezha.log`.
+    /// The data root does not move it, for the Controller or for this command.
+    /// None of its entries is this command's: a directory named relative to
+    /// wherever the command runs may hold anything.
+    WorkingDir(&'static str),
     /// The shared socket-directory ladder — the one implementation the
     /// Controller, every runner and `flz runner check` reach. Its answer is
     /// frequently not under `app_data/` at all, so only the socket files
@@ -38,12 +47,12 @@ pub(super) enum Source {
 
 impl Source {
     /// The subtree name this source is declared under in
-    /// `test/fixtures/layout_rows.txt`. Only the fixture check reads it: the
-    /// run itself names a root by its path, not by its row.
+    /// `test/fixtures/layout_rows.txt`. Only the tests read it: the run itself
+    /// names a root by its path, not by its row.
     #[cfg(test)]
     fn row_name(self) -> &'static str {
         match self {
-            Source::AppData(name) => name,
+            Source::AppData(name) | Source::WorkingDir(name) => name,
             Source::SocketLadder => "sockets",
         }
     }
@@ -51,6 +60,7 @@ impl Source {
     pub(super) fn covers(self, file_name: &OsStr) -> bool {
         match self {
             Source::AppData(_) => true,
+            Source::WorkingDir(_) => false,
             Source::SocketLadder => file_name.to_str().is_some_and(socket_dir::is_flezha_socket),
         }
     }
@@ -61,23 +71,37 @@ impl Source {
 /// directory, or it was asked and refused.
 const UNRESOLVED_SOCKET_ROOT: &str = "socket directory";
 
-// The rows `flz reset` may clear, in the order it reports them. This is the
-// shell's half of one declaration: `test/fixtures/layout_rows.txt` carries the
-// whole subtree list with each row's reset mode, `Flezha.Layout.Table` is the
-// controller's half, and `agrees_with_the_shared_layout_rows` below reads the
-// fixture so the two cannot drift. A subtree the fixture calls `never` must
-// not appear here — clearing `auth` would destroy an operator's tokens.
-const CLEARABLE_ROOTS: &[(Source, ClearMode)] = &[
+// Every row of the layout and what `flz reset` does with it, in the order it
+// reports them. This is the shell's half of one declaration:
+// `test/fixtures/layout_rows.txt` carries the whole subtree list with each
+// row's reset mode, `Flezha.Layout.Table` is the controller's half, and
+// `agrees_with_the_shared_layout_rows` below holds this table equal to the
+// fixture so the two cannot drift.
+const ROOTS: &[(Source, ClearMode)] = &[
     (Source::AppData("state"), ClearMode::Default),
     (Source::AppData("process_hub"), ClearMode::Default),
     (
         Source::AppData("certs"),
-        ClearMode::OptIn("--include-certs", |f| f.include_certs),
+        ClearMode::OptIn(INCLUDE_CERTS.long, |f| f.include_certs),
+    ),
+    (
+        Source::AppData("dlq"),
+        ClearMode::OptIn(INCLUDE_DLQ.long, |f| f.include_dlq),
+    ),
+    (
+        Source::AppData("schedules"),
+        ClearMode::OptIn(INCLUDE_SCHEDULES.long, |f| f.include_schedules),
     ),
     (
         Source::SocketLadder,
-        ClearMode::OptIn("--include-sockets", |f| f.include_sockets),
+        ClearMode::OptIn(INCLUDE_SOCKETS.long, |f| f.include_sockets),
     ),
+    // An operator's tokens, the audit trail, installed plugins and the logs
+    // outlive a reset: an audit trail one command can erase is a weaker one.
+    (Source::AppData("auth"), ClearMode::Never),
+    (Source::AppData("audit"), ClearMode::Never),
+    (Source::AppData("plugins"), ClearMode::Never),
+    (Source::WorkingDir("logs"), ClearMode::Never),
 ];
 
 pub(super) enum Action {
@@ -132,13 +156,18 @@ impl Root {
 }
 
 pub(super) fn build_plan(flags: &Flags) -> Vec<Root> {
-    CLEARABLE_ROOTS
+    ROOTS
         .iter()
         .map(
             |&(source, mode)| match (source, out_of_scope(mode, flags)) {
                 (Source::AppData(name), kept) => Root::planned(
                     source,
                     Some(flags.app_data_root.join(name)),
+                    kept.unwrap_or(Action::Clear),
+                ),
+                (Source::WorkingDir(name), kept) => Root::planned(
+                    source,
+                    Some(PathBuf::from(name)),
                     kept.unwrap_or(Action::Clear),
                 ),
                 // Asking the ladder establishes a directory the way a Controller
@@ -158,6 +187,7 @@ fn out_of_scope(mode: ClearMode, flags: &Flags) -> Option<Action> {
         ClearMode::Default => None,
         ClearMode::OptIn(_, included) if included(flags) => None,
         ClearMode::OptIn(flag, _) => Some(Action::Keep(format!("use {} to clear", flag))),
+        ClearMode::Never => Some(Action::Keep("not reset's to clear".into())),
     }
 }
 
@@ -263,8 +293,10 @@ mod tests {
                 theirs
             );
             // The data roots are subdirectories this command owns, so every
-            // entry there is in scope.
+            // entry there is in scope; one named relative to wherever it runs
+            // is not its to empty.
             assert!(Source::AppData("state").covers(OsStr::new(theirs)));
+            assert!(!Source::WorkingDir("logs").covers(OsStr::new(theirs)));
         }
     }
 
@@ -294,9 +326,8 @@ mod tests {
     }
 
     /// The shell and the controller declare one layout. This reads the shared
-    /// fixture and holds `CLEARABLE_ROOTS` to it: every `default`/`flag` row
-    /// is here with the matching mode and in the fixture's order, and every
-    /// `never` row is absent.
+    /// fixture and holds `ROOTS` equal to it: every row, with its mode, in the
+    /// fixture's order.
     #[test]
     fn agrees_with_the_shared_layout_rows() {
         let fixture = include_str!("../../../test/fixtures/layout_rows.txt");
@@ -316,35 +347,135 @@ mod tests {
             declared.len()
         );
 
-        let clearable: Vec<(&str, &str)> = CLEARABLE_ROOTS
+        let table: Vec<(&str, &str)> = ROOTS
             .iter()
             .map(|(source, mode)| {
                 let word = match mode {
                     ClearMode::Default => "default",
                     ClearMode::OptIn(_, _) => "flag",
+                    ClearMode::Never => "never",
                 };
                 (source.row_name(), word)
             })
             .collect();
 
-        let expected: Vec<(&str, &str)> = declared
-            .iter()
-            .copied()
-            .filter(|(_, mode)| *mode != "never")
-            .collect();
         assert_eq!(
-            clearable, expected,
+            table, declared,
             "reset's rows disagree with the layout table"
         );
+    }
 
-        for (name, mode) in declared {
-            if mode == "never" {
-                assert!(
-                    !clearable.iter().any(|(cleared, _)| *cleared == name),
-                    "{} is declared `never` and reset would clear it",
-                    name
-                );
+    fn plain_flags() -> Flags {
+        Flags {
+            yes: true,
+            dry_run: false,
+            include_certs: false,
+            include_dlq: false,
+            include_schedules: false,
+            include_sockets: false,
+            json: false,
+            probe_timeout_ms: 0,
+            app_data_root: PathBuf::from("/nonexistent/app_data"),
+        }
+    }
+
+    fn planned<'a>(plan: &'a [Root], path: &Path) -> &'a Root {
+        plan.iter()
+            .find(|r| r.path.as_deref() == Some(path))
+            .unwrap_or_else(|| panic!("{} is kept and the report does not name it", path.display()))
+    }
+
+    /// Where a run reports each row no flag reaches. The log file's default,
+    /// `logs/flezha.log`, is not under the data root, so its row is not either.
+    fn never_cleared(flags: &Flags) -> [PathBuf; 4] {
+        let root = &flags.app_data_root;
+        [
+            root.join("auth"),
+            root.join("audit"),
+            root.join("plugins"),
+            PathBuf::from("logs"),
+        ]
+    }
+
+    /// Parked records and schedules are runtime data an operator resetting a
+    /// box usually wants gone, and data someone may have kept deliberately:
+    /// reset reaches each only through its own flag.
+    #[test]
+    fn the_dlq_and_the_schedules_are_cleared_only_by_their_own_flags() {
+        for (name, flag) in [
+            ("dlq", "--include-dlq"),
+            ("schedules", "--include-schedules"),
+        ] {
+            let mode = ROOTS
+                .iter()
+                .find(|(source, _)| matches!(source, Source::AppData(n) if *n == name))
+                .map(|&(_, mode)| mode)
+                .unwrap_or_else(|| panic!("{} is a row reset cannot reach", name));
+            assert!(
+                matches!(mode, ClearMode::OptIn(f, _) if f == flag),
+                "{} is not cleared by {}",
+                name,
+                flag
+            );
+        }
+    }
+
+    #[test]
+    fn a_plain_reset_names_every_store_it_keeps() {
+        let flags = plain_flags();
+        let plan = build_plan(&flags);
+        for (name, reason) in [
+            ("dlq", "use --include-dlq to clear"),
+            ("schedules", "use --include-schedules to clear"),
+        ] {
+            match &planned(&plan, &flags.app_data_root.join(name)).action {
+                Action::Keep(said) => assert_eq!(said, reason),
+                Action::Clear => panic!("a plain reset would clear {}", name),
             }
+        }
+    }
+
+    /// The stores no flag reaches are reported too, so a run names everything
+    /// it left behind rather than only what it could have cleared.
+    #[test]
+    fn a_plain_reset_names_the_stores_that_are_not_its_to_clear() {
+        let flags = plain_flags();
+        let plan = build_plan(&flags);
+        for path in never_cleared(&flags) {
+            match &planned(&plan, &path).action {
+                Action::Keep(said) => assert_eq!(said, "not reset's to clear"),
+                Action::Clear => panic!("a reset would clear {}", path.display()),
+            }
+        }
+    }
+
+    /// Every flag `--all` sets, sockets aside: asking the ladder would make
+    /// this a case about the machine it runs on.
+    #[test]
+    fn the_include_flags_bring_the_dlq_and_the_schedules_into_scope() {
+        let flags = Flags {
+            include_certs: true,
+            include_dlq: true,
+            include_schedules: true,
+            ..plain_flags()
+        };
+        let plan = build_plan(&flags);
+        for name in ["certs", "dlq", "schedules"] {
+            assert!(
+                matches!(
+                    planned(&plan, &flags.app_data_root.join(name)).action,
+                    Action::Clear
+                ),
+                "{} is kept although its flag was given",
+                name
+            );
+        }
+        for path in never_cleared(&flags) {
+            assert!(
+                matches!(planned(&plan, &path).action, Action::Keep(_)),
+                "{} is never reset's to clear, whatever the flags",
+                path.display()
+            );
         }
     }
 }

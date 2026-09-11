@@ -14,6 +14,36 @@ const STREAM_SOCKET: &str = "primary_stream_runner-1.sock";
 /// A file in the socket directory that is not Flezha's to unlink.
 const OPERATOR_FILE: &str = "operator-notes.txt";
 
+/// Every subtree of the data root the layout declares. The socket directory is
+/// the ladder's, and is populated on its own.
+const DATA_ROOTS: &[&str] = &[
+    "state",
+    "process_hub",
+    "certs",
+    "dlq",
+    "schedules",
+    "auth",
+    "audit",
+    "plugins",
+];
+
+/// The subtrees of the data root the layout declares `never`: no flag, `--all`
+/// included, reaches them.
+const NEVER_CLEARED: &[&str] = &["auth", "audit", "plugins"];
+
+/// The reason a root no flag reaches is reported kept for.
+const NOT_RESETS: &str = "not reset's to clear";
+
+/// What a plain run keeps under the data root, and the reason it gives.
+const KEPT_UNDER_THE_ROOT: &[(&str, &str)] = &[
+    ("certs", "use --include-certs to clear"),
+    ("dlq", "use --include-dlq to clear"),
+    ("schedules", "use --include-schedules to clear"),
+    ("auth", NOT_RESETS),
+    ("audit", NOT_RESETS),
+    ("plugins", NOT_RESETS),
+];
+
 /// A controller that died hard: a socket file nothing is listening on. It has
 /// to be a real bound socket — a regular file with the same name probes
 /// `Unreachable` (ENOTSOCK), not stale.
@@ -60,7 +90,7 @@ impl Fixture {
     fn populated() -> Self {
         let tmp = TempDir::new().expect("tempdir");
         let root = tmp.path().to_path_buf();
-        for name in ["state", "process_hub", "certs"] {
+        for name in DATA_ROOTS {
             let sub = root.join(name);
             fs::create_dir_all(sub.join("nested")).unwrap();
             fs::write(sub.join("a.bin"), vec![0u8; 7]).unwrap();
@@ -115,17 +145,44 @@ fn stderr_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+fn assert_the_never_rows_survive(f: &Fixture) {
+    for name in NEVER_CLEARED {
+        assert!(
+            !dir_is_empty(&f.root.join(name)),
+            "{} is never reset's to clear",
+            name
+        );
+    }
+}
+
 #[test]
-fn default_reset_clears_state_and_process_hub_keeps_certs_and_sockets() {
+fn default_reset_clears_state_and_process_hub_and_keeps_every_other_root() {
     let f = Fixture::populated();
     let out = f.cmd().arg("--yes").output().unwrap();
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
     assert!(dir_is_empty(&f.root.join("state")));
     assert!(dir_is_empty(&f.root.join("process_hub")));
-    assert!(!dir_is_empty(&f.root.join("certs")));
+    for name in ["certs", "dlq", "schedules"] {
+        assert!(!dir_is_empty(&f.root.join(name)), "{} needs its flag", name);
+    }
+    assert_the_never_rows_survive(&f);
     assert!(f.socket_dir().join(CONTROL_SOCKET).exists());
     // Root inode preserved.
     assert!(f.root.exists());
+}
+
+/// The report line naming `path` says it was kept, for `reason`.
+fn assert_kept(text: &str, path: &str, reason: &str) {
+    let label = format!("{}/", path);
+    let line = text
+        .lines()
+        .find(|line| line.split_whitespace().nth(1) == Some(label.as_str()))
+        .unwrap_or_else(|| panic!("{} is kept and not named:\n{}", label, text));
+    assert!(
+        line.starts_with("kept") && line.ends_with(&format!("({})", reason)),
+        "{}",
+        line
+    );
 }
 
 #[test]
@@ -133,11 +190,83 @@ fn all_flag_clears_every_root() {
     let f = Fixture::populated();
     let out = f.cmd().arg("--yes").arg("--all").output().unwrap();
     assert!(out.status.success(), "{}", stdout_of(&out));
-    for name in ["state", "process_hub", "certs"] {
+    for name in ["state", "process_hub", "certs", "dlq", "schedules"] {
         assert!(dir_is_empty(&f.root.join(name)), "{} should be empty", name);
     }
+    assert_the_never_rows_survive(&f);
+    let text = stdout_of(&out);
+    for name in NEVER_CLEARED {
+        assert_kept(&text, &f.root.join(name).display().to_string(), NOT_RESETS);
+    }
+    assert_kept(&text, "logs", NOT_RESETS);
     assert!(!f.socket_dir().join(CONTROL_SOCKET).exists());
     assert!(!f.socket_dir().join(STREAM_SOCKET).exists());
+}
+
+#[test]
+fn each_store_flag_clears_its_own_store_and_no_other() {
+    for (flag, cleared, kept) in [
+        ("--include-dlq", "dlq", "schedules"),
+        ("--include-schedules", "schedules", "dlq"),
+    ] {
+        let f = Fixture::populated();
+        let out = f.cmd().arg("--yes").arg(flag).output().unwrap();
+        assert!(out.status.success(), "{}: {}", flag, stderr_of(&out));
+        assert!(
+            dir_is_empty(&f.root.join(cleared)),
+            "{} left {}",
+            flag,
+            cleared
+        );
+        for other in [kept, "certs"] {
+            assert!(
+                !dir_is_empty(&f.root.join(other)),
+                "{} took {}",
+                flag,
+                other
+            );
+        }
+        assert_the_never_rows_survive(&f);
+    }
+}
+
+/// Every path a plain run keeps, with its reason. The log directory is named
+/// where the log file's default puts it, `logs/`, which is not under the data
+/// root.
+fn kept_by_a_plain_run(f: &Fixture) -> Vec<(String, &'static str)> {
+    let mut kept: Vec<(String, &'static str)> = KEPT_UNDER_THE_ROOT
+        .iter()
+        .map(|(name, reason)| (f.root.join(name).display().to_string(), *reason))
+        .collect();
+    kept.push(("logs".to_string(), NOT_RESETS));
+    kept
+}
+
+/// A plain run names every root it leaves behind and why, the ones it will
+/// never clear included, so the report says what a reset did not reach.
+#[test]
+fn a_plain_reset_names_every_root_it_keeps() {
+    let f = Fixture::populated();
+    let out = f.cmd().arg("--yes").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let text = stdout_of(&out);
+
+    for (path, reason) in kept_by_a_plain_run(&f) {
+        assert_kept(&text, &path, reason);
+    }
+}
+
+#[test]
+fn the_json_report_names_every_root_it_keeps() {
+    let f = Fixture::populated();
+    let out = f.cmd().arg("--dry-run").arg("--json").output().unwrap();
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let text = stdout_of(&out);
+
+    for (path, reason) in kept_by_a_plain_run(&f) {
+        let entry = format!("{{\"root\":\"{}\",\"reason\":\"{}\"}}", path, reason);
+        assert!(text.contains(&entry), "{} is not in {}", entry, text);
+    }
 }
 
 #[test]
@@ -381,7 +510,7 @@ fn app_data_root_does_not_move_the_socket_directory() {
         .unwrap();
     assert!(out.status.success(), "{}", stdout_of(&out));
 
-    // The three `app_data/` roots moved with the flag; the socket root did not.
+    // The `app_data/` roots moved with the flag; the socket root did not.
     assert!(dir_is_empty(&f.root.join("state")));
     assert!(dir_is_empty(&f.root.join("process_hub")));
     assert!(!live.join(CONTROL_SOCKET).exists());

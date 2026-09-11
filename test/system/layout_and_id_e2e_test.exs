@@ -45,49 +45,25 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
   end
 
   describe "the layout both runtimes read" do
-    test "reset plans exactly the rows the table declares it may touch" do
+    test "reset plans every row where the controller resolves it, with the row's own mode" do
       root = scratch_root()
-
-      for subtree <- Layout.subtrees(),
-          subtree != :sockets,
-          do: File.mkdir_p!(row_dir(root, subtree))
+      point_every_row_at(root)
 
       json = reset_json(root, ["--dry-run"])
       planned = Map.new(planned_rows(json))
 
       for subtree <- Layout.subtrees(), subtree != :sockets do
-        expected = Path.expand(row_dir(root, subtree))
+        dir = Path.expand(Layout.dir(subtree))
+        mode = Layout.reset_mode(subtree)
 
-        case Layout.reset_mode(subtree) do
-          :never ->
-            refute Map.has_key?(planned, expected),
-                   "#{subtree} is declared `never` and reset planned #{expected}"
-
-          mode ->
-            assert planned[expected] == mode,
-                   "#{subtree} declares #{mode}; reset planned #{inspect(planned[expected])}"
-        end
+        assert planned[dir] == mode,
+               "the controller uses #{dir} for #{subtree}, which declares #{mode}; " <>
+                 "reset planned #{inspect(planned[dir])} there, and #{inspect(Map.keys(planned))}"
       end
 
       # The ladder's row is planned by name, never as a subtree of the data root.
       assert Enum.any?(json["kept"], &(&1["root"] == "socket directory")),
              "the socket row is not planned through the ladder"
-    end
-
-    test "the controller resolves each row where reset reports it" do
-      root = scratch_root()
-      point_every_row_at(root)
-
-      json = reset_json(root, ["--dry-run", "--include-certs"])
-      planned = Map.new(planned_rows(json))
-
-      for subtree <- Layout.subtrees(),
-          subtree != :sockets,
-          Layout.reset_mode(subtree) != :never do
-        assert Path.expand(Layout.dir(subtree)) in Map.keys(planned),
-               "the controller uses #{Layout.dir(subtree)} for #{subtree}; " <>
-                 "reset plans #{inspect(Map.keys(planned))}"
-      end
     end
 
     test "reset clears the rows that declare it and leaves every other row standing" do
@@ -139,11 +115,15 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
     end
   end
 
-  # `{path, :default | :flag}` for every root the binary planned.
+  # `{absolute path, mode}` for every root the binary planned: a kept root's
+  # mode is read from the reason it is reported with.
   defp planned_rows(json) do
-    Enum.map(json["cleared"] || [], &{&1["root"], :default}) ++
-      Enum.map(json["kept"] || [], &{&1["root"], :flag})
+    Enum.map(json["cleared"] || [], &{Path.expand(&1["root"]), :default}) ++
+      Enum.map(json["kept"] || [], &{Path.expand(&1["root"]), kept_mode(&1["reason"])})
   end
+
+  defp kept_mode("not reset's to clear"), do: :never
+  defp kept_mode("use --include-" <> _flag), do: :flag
 
   defp row_dir(root, subtree), do: Path.join(root, Atom.to_string(subtree))
   defp witness(root, subtree), do: Path.join(row_dir(root, subtree), "witness.dat")
