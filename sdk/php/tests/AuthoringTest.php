@@ -94,6 +94,16 @@ final class AuthoringTest extends TestCase
             }),
             'a plugin sink is fed by a procedure',
         ];
+        // The one refusal the builder raises under the core's vocabulary reads
+        // the way the core's own verdicts do.
+        yield 'two procedures claiming one node identity' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $in = $c->input('in');
+                $in->into(Echoer::class, 'twin');
+                $in->into(Keyed::class, 'twin');
+            }),
+            'topology rejected [NodeIdentityCollision]',
+        ];
         // `Validate::spec` IS the submission: the record crosses the ABI and
         // the core's verdict comes back as this package's own refusal, in the
         // core's vocabulary.
@@ -133,6 +143,7 @@ final class AuthoringTest extends TestCase
             self::fail('the core refuses two keys before one into');
         } catch (DeclarationException $e) {
             self::assertSame(['DuplicateKeyBy'], $e->refusals);
+            self::assertStringStartsWith("under_test: topology rejected [DuplicateKeyBy]:\n  - ", $e->getMessage());
         }
     }
 

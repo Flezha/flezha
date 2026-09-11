@@ -7,6 +7,7 @@ import test, { after } from 'node:test';
 
 import {
   ACTIVATION_SCHEMA_VERSION,
+  DeclarationError,
   decodeValue,
   defineOperative,
   defineProcedure,
@@ -353,6 +354,40 @@ test('an unimportable specifier is named, with the original error chained', asyn
       error.message.includes('./definitely-not-here.mjs') &&
       error.message.includes('module specifier') &&
       error.cause instanceof Error,
+  );
+});
+
+// A graph is built at module scope, so a builder refusal is thrown while the
+// module is imported, and it reaches the author as itself.
+test('a refusal raised while a handler module is imported keeps its own name', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flezha-module-scope-'));
+  const module = join(dir, 'handlers.mjs');
+  writeFileSync(
+    module,
+    `import { defineOperative, defineProcedure } from '${new URL('../dist/esm/index.js', import.meta.url).pathname}';\n` +
+      `const A = defineProcedure({ name: 'twin', handle: (i) => i });\n` +
+      `const B = defineProcedure({ name: 'twin', handle: (i) => i });\n` +
+      `export default defineOperative({ factoryId: 'module_scope', channels: (c) => {\n` +
+      `  const s = c.input('in'); s.into(A); s.into(B);\n` +
+      `} });\n`,
+  );
+  await assert.rejects(
+    () => loadRegistry([module]),
+    (error) =>
+      error instanceof DeclarationError && error.refusals.includes('NodeIdentityCollision'),
+  );
+});
+
+test('a module that throws anything but a refusal is named, with the original error chained', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flezha-broken-'));
+  const module = join(dir, 'broken.mjs');
+  writeFileSync(module, 'export default { x: , };\n');
+  await assert.rejects(
+    () => loadRegistry([module]),
+    (error) =>
+      error.message.includes(module) &&
+      error.message.includes('module specifier') &&
+      error.cause instanceof SyntaxError,
   );
 });
 

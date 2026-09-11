@@ -274,12 +274,18 @@ export class DeclarationError extends Error {
     readonly handler: string | null,
     readonly defect: string,
     /**
-     * The core's own names for what it refused, when the verdict came from it.
-     * Empty for a refusal this SDK made on its own surface.
+     * The core's vocabulary names for what was refused: the core's verdict, or
+     * a refusal this SDK makes under one of them. Empty for a refusal of this
+     * SDK's own surface.
      */
     readonly refusals: readonly string[] = [],
   ) {
-    super(handler ? `${factoryId}: ${handler}: ${defect}` : `${factoryId}: ${defect}`);
+    // A named refusal reads the way the core renders its verdict. The core's
+    // own verdict arrives already rendered, header included.
+    const header = `topology rejected [${refusals.join(', ')}]:`;
+    const text =
+      refusals.length === 0 || defect.startsWith(header) ? defect : `${header}\n  - ${defect}`;
+    super(handler ? `${factoryId}: ${handler}: ${text}` : `${factoryId}: ${text}`);
     this.name = 'DeclarationError';
   }
 }

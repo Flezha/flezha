@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed: a topology refusal reaches a Node, Ruby or PHP author under its own name
+
+A Node operative builds its graph while its module loads, so a refusal its builder
+raised there reached the author as `could not import handler module ...`, with the
+refusal's name only on the chained cause. A declaration refusal thrown while the module
+loads now reaches the author as itself. Every other failure to load, a syntax error or
+a missing file, is still reported as `could not import handler module ...` naming the
+module, with the original error chained.
+
+The one refusal the Node, Python, Ruby and PHP builders raise under a name from the
+core's vocabulary, `NodeIdentityCollision` for two different procedures claiming one
+node name, carried its name only in the error's `refusals` list. Its message now reads the way the core's
+refusals do, for example `dup_node: plain: topology rejected [NodeIdentityCollision]:`
+followed by the sentence on its own line, so a Ruby or PHP runner that dies on it
+prints the name.
+
 ### Fixed: the controller's log names why a runner's tree could not start
 
 When the supervision tree of a connecting runner failed to start, the controller still

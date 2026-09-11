@@ -115,7 +115,7 @@ class AuthoringTest < Minitest::Test
 
     error = refusal { validate(klass.spec) }
 
-    assert_includes error.message, "topology rejected [DuplicateKeyBy]"
+    assert error.message.start_with?("dup_key_by: topology rejected [DuplicateKeyBy]:\n  - "), error.message
     assert_includes error.message, "declares .key_by(...) twice before one `.into(...)`"
     # And the names as DATA: the core hands the verdict out beside the rendered
     # message, so nothing here reads them out of the prose.
@@ -175,7 +175,13 @@ class AuthoringTest < Minitest::Test
       edge.named("hop").into(second)
     end
 
-    assert_includes refusal { klass.spec }.message, "two different procedures"
+    error = refusal { klass.spec }
+
+    # The one refusal this builder raises under a core name reads the way the core's do.
+    assert_equal ["NodeIdentityCollision"], error.refusals
+    assert error.message.start_with?(
+      "collide: same_name: topology rejected [NodeIdentityCollision]:\n  - two different procedures"
+    ), error.message
   end
 
   def test_an_undeclared_class_never_reaches_the_registry

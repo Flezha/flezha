@@ -41,7 +41,13 @@ const DEFAULT_RECV_TIMEOUT_MS = 1_000;
  */
 const STDIN_EOF_GRACE_MS = 5_000;
 
-/** Import a handler module, naming the specifier and chaining the cause. */
+/**
+ * Import a handler module, naming the specifier and chaining the cause. A
+ * declaration refusal passes through as thrown, because a graph built at module
+ * scope refuses while its module is imported. It is recognised by its
+ * `refusals` list rather than by `instanceof`, since the module may have loaded
+ * the SDK's other build.
+ */
 export async function importModule(specifier: string): Promise<unknown> {
   const resolved =
     specifier.startsWith('.') || specifier.startsWith('/')
@@ -50,6 +56,7 @@ export async function importModule(specifier: string): Promise<unknown> {
   try {
     return await import(resolved);
   } catch (cause) {
+    if (Array.isArray((cause as { refusals?: unknown } | null)?.refusals)) throw cause;
     throw new Error(
       `could not import handler module \`${specifier}\`; a runner registers handlers by ` +
         'module specifier so every dispatch loop can import them itself',

@@ -138,8 +138,30 @@ test('a refusal reaches the author under the core’s own names', () => {
     }),
   );
   assert.deepEqual(refused.refusals, ['EdgeAlreadyWired']);
-  assert.match(refused.message, /topology rejected \[EdgeAlreadyWired\]/);
+  assert.match(
+    refused.message,
+    /^edge_already_wired: topology rejected \[EdgeAlreadyWired\]:\n {2}- /,
+  );
   assert.match(refused.message, /already feeds procedure `target`/);
+});
+
+// The one refusal this builder raises under a core name reads the way the core's do.
+test('a node identity collision is refused under the core’s name, in the message too', () => {
+  const refused = refusal(() =>
+    defineOperative({
+      factoryId: 'collision',
+      channels: (c) => {
+        const entry = c.input('in');
+        entry.into(echo('twin'));
+        entry.into(echo('twin'));
+      },
+    }),
+  );
+  assert.deepEqual(refused.refusals, ['NodeIdentityCollision']);
+  assert.match(
+    refused.message,
+    /^collision: twin: topology rejected \[NodeIdentityCollision\]:\n {2}- two different procedures/,
+  );
 });
 
 test('a named edge names the channel, not the consuming node', () => {

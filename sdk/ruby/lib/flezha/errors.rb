@@ -14,9 +14,14 @@ module Flezha
       @factory_id = factory_id
       @handler = handler
       @defect = defect
-      # The core's own names for what it refused, when the verdict came from
-      # it. Empty for a refusal this SDK made on its own surface.
+      # The core's vocabulary names for what was refused: the core's verdict,
+      # or a refusal this SDK makes under one of them. Empty for a refusal of
+      # this SDK's own surface.
       @refusals = refusals
+      # A named refusal reads the way the core renders its verdict. The core's
+      # own verdict arrives already rendered, header included.
+      header = "topology rejected [#{refusals.join(', ')}]:"
+      defect = "#{header}\n  - #{defect}" unless refusals.empty? || defect.start_with?(header)
       super(handler ? "#{factory_id}: #{handler}: #{defect}" : "#{factory_id}: #{defect}")
     end
   end

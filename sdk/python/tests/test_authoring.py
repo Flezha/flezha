@@ -140,8 +140,13 @@ def test_a_node_identity_collision_is_refused() -> None:
         entry.into(first).sink("a")
         entry.into(second).sink("b")
 
-    with pytest.raises(DeclarationError, match="node identity"):
+    with pytest.raises(DeclarationError, match="node identity") as caught:
         declare(collision)
+    # The one refusal this builder raises under a core name reads the way the core's do.
+    assert caught.value.refusals == ["NodeIdentityCollision"]
+    assert str(caught.value).startswith(
+        "collision: shared: topology rejected [NodeIdentityCollision]:\n  - two different"
+    )
 
 
 # KI-122: three options, one implication. Each writes its own raw flag and the
@@ -180,7 +185,9 @@ def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
     with pytest.raises(DeclarationError) as caught:
         declare(already_wired)
     assert caught.value.refusals == ["EdgeAlreadyWired"]
-    assert "topology rejected [EdgeAlreadyWired]" in str(caught.value)
+    assert str(caught.value).startswith(
+        "edge_already_wired: topology rejected [EdgeAlreadyWired]:\n  - "
+    )
     assert "already feeds procedure `echo`" in str(caught.value)
 
 

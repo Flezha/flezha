@@ -177,16 +177,16 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     end
   end
 
+  # `dup_key_by` is refused by the core's check. `dup_node` is refused by the
+  # four veneer builders themselves, and a Node graph built at module scope
+  # raises it while the module loads.
   describe "the boot drill" do
-    for runtime <- PortPilot.runtimes() do
+    for runtime <- PortPilot.runtimes(), topology <- ~w(dup_key_by dup_node) do
       @runtime runtime
+      @topology topology
 
-      test "#{runtime} dies at boot naming the refusal it was given" do
-        rows =
-          ReferenceTopologies.refusal_rows()
-          |> Enum.filter(&(&1.refusal != "ok" and &1.needs == "-"))
-
-        row = Enum.find(rows, &(&1.topology == "dup_key_by")) || hd(rows)
+      test "#{runtime} dies at boot naming the refusal #{topology} was given" do
+        row = Enum.find(ReferenceTopologies.refusal_rows(), &(&1.topology == @topology))
 
         {output, status} = boot_with_fixture(@runtime, row.topology)
 

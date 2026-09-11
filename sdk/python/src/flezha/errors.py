@@ -62,9 +62,15 @@ class DeclarationError(FlezhaError):
         self.factory_id = factory_id
         self.handler = handler
         self.defect = defect
-        #: The core's own names for what it refused, when the verdict came from
-        #: it. Empty for a refusal this SDK made on its own surface.
+        #: The core's vocabulary names for what was refused: the core's verdict,
+        #: or a refusal this SDK makes under one of them. Empty for a refusal of
+        #: this SDK's own surface.
         self.refusals = refusals or []
+        # A named refusal reads the way the core renders its verdict. The
+        # core's own verdict arrives already rendered, header included.
+        header = f"topology rejected [{', '.join(self.refusals)}]:"
+        if self.refusals and not defect.startswith(header):
+            defect = f"{header}\n  - {defect}"
         super().__init__(
             f"{factory_id}: {handler}: {defect}" if handler else f"{factory_id}: {defect}"
         )
