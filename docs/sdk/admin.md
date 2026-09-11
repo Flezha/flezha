@@ -21,7 +21,7 @@ The operator side is
 | Blocking | yes: the call answers the controller's own result |
 
 ```sh
-flz role bind runner@team-orders team-orders app
+flz role bind runner@team-orders app team-orders
 ```
 
 That is the whole grant, once per namespace. `flz role unbind` revokes it, and

@@ -478,6 +478,12 @@ const CASES: &[(&[&str], Want)] = &[
         &["token", "issue", "runner@ns", "ns", "runner", "--ttl", "never"],
         Rpc("Flezha.Service.CliManager.authz_render_token_issue(\"runner@ns\", \"ns\", \"runner\", [ttl: :never])"),
     ),
+    // The binding an application needs: the role comes before the namespace,
+    // which is the order the controller reads them in.
+    (
+        &["role", "bind", "runner@ns", "app", "ns"],
+        Rpc("Flezha.Service.CliManager.authz_render_role_bind(\"runner@ns\", \"app\", \"ns\", [])"),
+    ),
     (
         &["controller", "stop", "--timeout-ms", "abc"],
         Refused("invalid --timeout-ms value 'abc'"),

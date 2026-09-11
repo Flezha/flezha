@@ -9,7 +9,7 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::new("bind", handle_bind).taking(&[
             Positional::required("<principal>"),
-            Positional::required("<viewer|operator|admin|runner>"),
+            Positional::required("<viewer|app|operator|admin|runner>"),
             Positional::required("<namespace>"),
         ]),
         Verb::new("unbind", |read| {
@@ -35,7 +35,7 @@ fn handle_bind(read: &Reading) {
         "authz_render_role_bind",
         &[
             text(read.pos("<principal>")),
-            text(read.pos("<viewer|operator|admin|runner>")),
+            text(read.pos("<viewer|app|operator|admin|runner>")),
             text(read.pos("<namespace>")),
         ],
         &[],

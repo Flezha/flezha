@@ -451,7 +451,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
 
   import ExUnit.CaptureIO
 
-  alias Flezha.AuthZ.{AuthState, Bootstrap, Config, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Bootstrap, Config, RoleStore, TokenStore}
 
   alias Flezha.Service.CliManager
 
@@ -553,6 +553,36 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       capture_io(:stderr, fn ->
         assert catch_exit(
                  CliManager.authz_render_role_bind("dave", "superuser", "render-ns", token: admin)
+               ) == {:shutdown, 1}
+      end)
+
+    assert out =~ "unknown_role"
+  end
+
+  test "a runner principal is bound to app, in the order the CLI takes" do
+    :ok = AuthState.set_enabled()
+    {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+
+    out =
+      capture_io(fn ->
+        CliManager.authz_render_role_bind("runner@render-ns", "app", "render-ns", token: admin)
+      end)
+
+    assert out =~ "bound runner@render-ns as app@render-ns"
+    assert {:ok, %{role: :app, namespace: "render-ns"}} = RoleStore.lookup("runner@render-ns")
+  end
+
+  test "no credential is issued for app, the role a runner principal is bound to" do
+    :ok = AuthState.set_enabled()
+    {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+
+    out =
+      capture_io(:stderr, fn ->
+        assert catch_exit(
+                 CliManager.authz_render_token_issue("carol", "render-ns", "app",
+                   ttl: 3_600,
+                   token: admin
+                 )
                ) == {:shutdown, 1}
       end)
 

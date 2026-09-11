@@ -23,6 +23,8 @@ defmodule Flezha.Service.OperativeManagerRoutingTest do
 
   defp unique_ns, do: "routing_ns_#{System.unique_integer([:positive])}"
 
+  defp caller(ns), do: %{source: :sdk, principal: "runner@" <> ns, namespace: ns}
+
   defp join(group) do
     test_pid = self()
     _ = Directory.sync_membership(MapSet.new([group]), MapSet.new())
@@ -70,16 +72,20 @@ defmodule Flezha.Service.OperativeManagerRoutingTest do
   end
 
   test "spawn_or_deliver with no capable node anywhere answers factory_unknown" do
+    ns = unique_ns()
+
     assert :factory_unknown =
-             OperativeManager.spawn_or_deliver(unique_ns(), "i1", "facx", "p", :deliver)
+             OperativeManager.spawn_or_deliver(ns, "i1", "facx", "p", :deliver, caller(ns))
   end
 
-  test "a routed spawn_or_deliver finding no local runner answers factory_unknown" do
+  test "a spawn whose factory only this node advertises answers factory_unknown" do
     ns = unique_ns()
+    # Self is excluded from the capable set, as for a plain start: the spawn
+    # must not forward onto its own node.
     join(Directory.factory_group(ns, "facy"))
 
     assert :factory_unknown =
-             OperativeManager.spawn_or_deliver(ns, "i2", "facy", "p", :deliver, routed: true)
+             OperativeManager.spawn_or_deliver(ns, "i2", "facy", "p", :deliver, caller(ns))
   end
 
   test "a routed pid lookup takes the local path and reports the dead hub" do

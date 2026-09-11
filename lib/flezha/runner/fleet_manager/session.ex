@@ -121,7 +121,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   which grants `runner.connect` and nothing else. Granting a namespace's
   application more than that is one command per namespace:
 
-      flz role bind runner@team-orders team-orders app
+      flz role bind runner@team-orders app team-orders
   """
   @spec runner_caller_context(binary()) :: Flezha.AuthZ.caller_context()
   def runner_caller_context(namespace) do

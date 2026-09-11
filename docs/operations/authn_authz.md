@@ -320,7 +320,7 @@ flz role unbind alice
 | Role | What it adds |
 | --- | --- |
 | `viewer` | the reads: operatives, plugins, entity state, audit, observability, the schedule registry |
-| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
+| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, including the start and the delivery a procedure's `ctx.spawn_workflow` asks for, enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
 | `operator` | app plus the rest of the operative and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
 | `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
@@ -338,7 +338,7 @@ every operator action until somebody says otherwise. Saying otherwise is one
 command, once per namespace:
 
 ```sh
-flz role bind runner@team-orders team-orders app
+flz role bind runner@team-orders app team-orders
 ```
 
 From then on that namespace's application code administers the namespace its
@@ -422,6 +422,7 @@ told nothing about whether the name exists.
 | `operative_scale` | `operative_scale` | `operative.scale` | operator | argument 1 (the namespace named) | after on `workflow_service` |
 | `operative_rewind` | `operative_rewind` | `operative.rewind` | operator | argument 1 (the namespace named) | after on `workflow_service` |
 | `operative_send` | `operative_send` | `operative.send` | app | argument 1 (the namespace named) | after on `operative_service` |
+| `spawn_deliver` | runner session only | `operative.send` | app | argument 1 (the namespace named) | - |
 | `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
 | `operative_listen` | `operative_listen` | `plugin.enable` | app | argument 1 (the namespace named) | after on `plugin_service` |
 | `entity_state` | `entity_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
@@ -489,6 +490,13 @@ own namespace rather than in `_system`. An `operator@_system` token — the
 credential above for managing schedules — can add, list and remove a schedule
 but cannot run one; a token bound to the schedule's namespace with
 `operative.start` (an `operator` or `admin` there), or `admin@_system`, can.
+
+**A spawn's delivery is judged and not recorded.** A procedure's `ctx.spawn_workflow`
+that names a running instance feeds it, and that delivery is judged as
+`operative.send` through the `spawn_deliver` row, which writes no record of a
+permitted delivery because it happens once per event. A refused one is audited as
+`authorization_denied`, like every refusal. The start a spawn makes is
+`operative_start` and is recorded like any other.
 
 **`flz auth whoami` is a gated read.** It answers the identity a token
 resolves to, so while authorization is enforced an invocation with no token is

@@ -810,7 +810,12 @@ channel the request arrived on, which makes cross-namespace spawning impossible
 by construction. Resolution runs off the control channel (it starts an
 operative, which awaits `AddOperative` on the same stream); concurrent requests
 for one `(namespace, instance_id)` race-resolve at the registry — one start
-wins, every loser converts to a delivery. See
+wins, every loser converts to a delivery. Each act is judged as the
+`runner@<namespace>` principal the connection proved, before it is performed: a
+start against the `operative_start` row, which records it, and a delivery as
+`operative.send`, recorded only when refused because it happens once per event.
+With authorization enforced, an unbound principal is `runner`, and a start or a
+delivery answers `refused`. See
 [`procedure_requested_spawn.md`](procedure_requested_spawn.md).
 
 ### SpawnWorkflowResponse

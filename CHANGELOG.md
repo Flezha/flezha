@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed: a spawn a procedure requests is judged like any other start
+
+`ctx.spawn_workflow` started a workflow instance, or fed a running one, without asking
+whether the runner's namespace was allowed to, and left no audit record of who asked.
+It is now judged as the identity the runner's connection proved. A start is judged the
+way `flz operative start` is and writes the same `start` record, naming
+`runner@<namespace>`. A delivery to a running instance is judged the way
+`flz operative send` is but recorded only when refused, because it happens once per
+event.
+
+With authorization on, the default in a release, a namespace whose procedures spawn
+workflows now needs `flz role bind runner@<namespace> app <namespace>`, the binding the
+administration surface already needs. Until it has one, every start or delivery a
+procedure asks for resolves `Refused`, with the refusal as its reason. With
+authorization disabled nothing is refused, and a start is still recorded, as every
+other start is.
+
+### Fixed: `flz role bind` binds the `app` role
+
+`flz role bind` refused `app` as an unknown role, so the binding an application needs
+to administer its own namespace, and now to spawn workflows, could not be made at all.
+The documentation also wrote the command with the role and the namespace swapped. It
+is `flz role bind runner@<namespace> app <namespace>`, and it binds. `flz token issue`
+still refuses `app`: a runner proves its namespace with a `runner` credential, and no
+credential is issued for `app`.
+
 ### Fixed: a websocket sink's re-sends show on the backoff telemetry
 
 Under `sink_ack_mode: "required"` the websocket plugin re-sends a frame the

@@ -161,6 +161,10 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :operative_service},
       target: [:_, :operative]
     ],
+    # A procedure's `ctx.spawn_workflow` feeding a running instance: the right
+    # `operative_send` judges, with no record of its own because it runs once per
+    # event. A refusal is still audited, by the policy point.
+    spawn_deliver: [action: :"operative.send", scope: {:argument, 1}],
     operative_replay: [
       action: :"operative.replay",
       scope: {:row, :namespace},

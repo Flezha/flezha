@@ -18,7 +18,7 @@ import javax.annotation.Nonnull;
  * operator grants a namespace's applications the authority once and revokes it
  * the same way, and a revocation takes effect on the next call:
  *
- * <pre>{@code flz role bind runner@team-orders team-orders app}</pre>
+ * <pre>{@code flz role bind runner@team-orders app team-orders}</pre>
  *
  * <p>Every method here is one line over a single native entry point, because
  * the verb travels as data. Adding a verb costs a method and no JNI.

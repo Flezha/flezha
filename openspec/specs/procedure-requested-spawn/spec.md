@@ -3,9 +3,7 @@
 ## Purpose
 
 The procedure-requested-spawn capability lets a running procedure ask the cluster for a workflow operative, closing the gap that made a workflow instance startable only from outside the cluster (`flz operative start`, `flz schedule`) and forced every pipeline needing a worker to bolt an external dispatcher onto the controller. One SDK call — `ctx.spawn_workflow` (Rust) / `ctx.spawnWorkflow` (Java) — spawns-or-delivers on a single `(namespace, instance_id)` in the requester's own namespace: a free id starts the factory with the payload as its first input, a taken id receives the payload as one more input or refuses. Concurrent requests race-resolve at the operative registry to exactly one instance. The call is fire-and-forget with an async result: quota, transport, and controller failures resolve the caller's handle and never fault the requesting procedure, its emit path, or its journaling. Spawning is a side effect of live processing only, so a replay never doubles the workers a run created. Everything else — quota, the durable inbox, exit triggers, `WorkflowCompleted` teardown, retention, `flz operative list` — is the existing workflow lifecycle, inherited unchanged.
-
 ## Requirements
-
 ### Requirement: A procedure SHALL be able to request spawn-or-deliver of a workflow operative
 
 Both SDKs (Rust and Java, released together) SHALL expose a context call `spawn_workflow(instance_id, factory_id, payload, if_running)` usable from inside any procedure. With `if_running: deliver` (default), the controller SHALL spawn a workflow instance of `factory_id` under `instance_id` if absent, or deliver `payload` to the existing instance's inbox if present. With `if_running: error`, an existing instance SHALL yield an `already_running` result to the requester. The spawned instance SHALL receive `payload` as its first inbox frame and SHALL follow all existing workflow lifecycle semantics (quota, exit triggers, `WorkflowCompleted`, teardown, retention).
@@ -66,3 +64,52 @@ The call SHALL return immediately with a local async result handle. Transport, q
 
 - **WHEN** a procedure that called `spawn_workflow` is replayed from the WAL
 - **THEN** the replay semantics SHALL be documented and deterministic: spawn requests are side effects executed on live processing only, not during replay
+
+### Requirement: A spawn request SHALL be judged as the act it performs
+
+The controller SHALL judge each act a spawn request performs as the identity the request's connection proved, at the same policy point as the operator-issued equivalent and in the connection's namespace: a start as `operative.start` through the `operative_start` row, and a delivery to a running instance as `operative.send`, the right the `operative_send` row judges. A permitted start SHALL write the `operative_start` row's audit record naming the connection's principal and the SDK as the surface. A permitted delivery SHALL write no record of its own, because a delivery happens once per event. A refused act SHALL start nothing and deliver nothing, its denial SHALL be audited, and the requester's result SHALL be `refused` with the refusal as its detail.
+
+The judgment SHALL be made on the controller node that received the request, and no start and no delivery SHALL be forwarded to another node or performed before it. While authorization is disabled every act SHALL be permitted, and a start SHALL still write its record, as every other start does.
+
+#### Scenario: A spawn by an identity that may not start is refused
+
+- **WHEN** authorization is enforced and a procedure on a runner whose
+  `runner@<namespace>` principal has no role binding requests
+  `spawn_workflow("w1", "worker", p, deliver)` while `w1` is free
+- **THEN** no instance SHALL start, the requester's result SHALL be `refused`
+  naming the refusal, and the denial SHALL be audited
+
+#### Scenario: A delivery by an identity that may not send is refused
+
+- **WHEN** authorization is enforced and the same unbound runner's request names
+  `w1` while it runs
+- **THEN** the payload SHALL NOT be delivered, the requester's result SHALL be
+  `refused`, and the denial SHALL be audited
+
+#### Scenario: A permitted spawn is recorded like an operator's start
+
+- **WHEN** `runner@team-orders` is bound to `app` on `team-orders` and a procedure
+  on that connection spawns `w1`
+- **THEN** `w1` SHALL start, and a `start` record on `operative_service` SHALL name
+  `w1`, the namespace `team-orders`, the principal `runner@team-orders` and the
+  surface `sdk`
+
+#### Scenario: A permitted delivery is judged and writes no record
+
+- **WHEN** the same bound runner's request names `w1` while it runs
+- **THEN** the payload SHALL be delivered, and no `send` record SHALL be written
+  on `operative_service`
+
+#### Scenario: A start another node would run is judged where it was asked
+
+- **WHEN** the only runner registering the factory is connected to another
+  controller node and the requesting identity may not start an operative
+- **THEN** the request SHALL be refused on the node that received it, and no start
+  SHALL be forwarded
+
+#### Scenario: Authorization disabled
+
+- **WHEN** authorization is disabled and a runner whose principal has no role
+  binding requests a spawn of a free id
+- **THEN** the instance SHALL start and its `start` record SHALL be written
+

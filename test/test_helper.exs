@@ -36,6 +36,7 @@ ExUnit.start(exclude: FlezhaTest.Tiers.excluded())
 
 Mimic.copy(KafkaEx)
 Mimic.copy(Flezha.Service.OperativeManager)
+Mimic.copy(Flezha.Service.OperativeManager.Placement)
 Mimic.copy(Flezha.Service.PluginManager)
 Mimic.copy(Flezha.Service.HubManager)
 Mimic.copy(Flezha.Runner.StreamChannel)

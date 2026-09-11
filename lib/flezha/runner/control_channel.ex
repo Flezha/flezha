@@ -24,6 +24,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.StreamPool
   alias Flezha.SafeCall
   alias Flezha.Service.Admin
@@ -48,10 +49,6 @@ defmodule Flezha.Runner.ControlChannel do
   # carries. Closes the UDS wedged-but-connected blind spot and makes UDS
   # symmetric with QUIC's idle timeout. Mirrors the data-plane `StreamChannel`
   # last_seen/threshold watchdog.
-
-  # OTP's own `GenServer.call/2` default, made explicit because `send_control/3`
-  # answers on it rather than letting a slow channel exit its caller. Tests pass
-  # a short one to reach that arm without waiting five seconds.
 
   def start_link({namespace, runner_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, nil},
@@ -681,9 +678,9 @@ defmodule Flezha.Runner.ControlChannel do
     end)
   end
 
-  # A procedure asked for a workflow instance (`ctx.spawn_workflow`). The
-  # namespace is this channel's — never the requester's claim — so a request
-  # cannot reach another namespace.
+  # A procedure asked for a workflow instance (`ctx.spawn_workflow`), judged as
+  # the identity this connection proved. The namespace is this channel's, never
+  # the requester's claim, so a request cannot reach another namespace.
   defp handle_spawn_workflow(state, request, reference_id) do
     %RunnerCommands.SpawnWorkflowRequest{
       instance_id: instance_id,
@@ -701,7 +698,8 @@ defmodule Flezha.Runner.ControlChannel do
           instance_id,
           factory_id,
           payload,
-          if_running(if_running)
+          if_running(if_running),
+          Session.runner_caller_context(namespace)
         )
 
       {name, error} = spawn_reply(outcome)

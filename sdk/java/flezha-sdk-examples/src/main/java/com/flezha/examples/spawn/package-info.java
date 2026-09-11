@@ -12,10 +12,14 @@
  * {@link com.flezha.sdk.procedure.IfRunning} selects that behaviour.
  *
  * <p>The call is fire-and-forget. It returns before the controller has decided anything, and a
- * refusal, whether from a quota, an unknown factory or an unreachable controller, resolves the
- * returned handle rather than failing the calling procedure. This is deliberate: a detector that
- * stops detecting because a worker could not be started is a worse outcome than a worker that was
- * not started. A handle nobody reads logs itself.
+ * refusal, whether from authorization, a quota, an unknown factory or an unreachable controller,
+ * resolves the returned handle rather than failing the calling procedure. This is deliberate: a
+ * detector that stops detecting because a worker could not be started is a worse outcome than a
+ * worker that was not started. A handle nobody reads logs itself.
+ *
+ * <p>With authorization on, the default in a release, the namespace's {@code runner@<namespace>}
+ * principal needs the {@code app} role, or every spawn is refused:
+ * {@code flz role bind runner@<namespace> app <namespace>}.
  *
  * <p>{@link com.flezha.examples.spawn.Main} declares both operatives on one runner, since the
  * requesting stream operative and the workflow operative it requests are ordinary declarations with

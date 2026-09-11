@@ -9,7 +9,7 @@
  * the same way, and a revocation takes effect on the next call:
  *
  * ```sh
- * flz role bind runner@team-orders team-orders app
+ * flz role bind runner@team-orders app team-orders
  * ```
  *
  * Every method here is one line over a single native entry point, because the

@@ -3,7 +3,7 @@ defmodule Flezha.Service.OperativeManager do
   Manages the operative startings and stoppings.
   """
 
-  alias Flezha.AuthZ.Quotas
+  alias Flezha.AuthZ.{Quotas, Verb}
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Operative.Builder, as: OperativeBuilder
@@ -87,8 +87,11 @@ defmodule Flezha.Service.OperativeManager do
   # instead of raising into the caller. Must exceed the remote start's own
   # internal budget (ProcessHub's 15s wait plus the :no_response retry ladder).
 
-  defp route_call(target, fun, args, on_error) do
-    :erpc.call(target, __MODULE__, fun, args, Durations.get(:route_call_timeout_ms))
+  defp route_call(target, fun, args, on_error),
+    do: route_call(target, __MODULE__, fun, args, on_error)
+
+  defp route_call(target, module, fun, args, on_error) do
+    :erpc.call(target, module, fun, args, Durations.get(:route_call_timeout_ms))
   catch
     kind, reason -> on_error.({:routed_call_failed, target, kind, reason})
   end
@@ -419,7 +422,7 @@ defmodule Flezha.Service.OperativeManager do
   `:duplicate` when that id is already claimed.
 
   Shared by every in-cluster spawner — a schedule's slot firing and a
-  procedure's `spawn_or_deliver/5`. The duplicate verdict itself is minted by
+  procedure's `spawn_or_deliver/6`. The duplicate verdict itself is minted by
   `start_operative/3`, the one start-authority seam.
   """
   @spec start_workflow(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
@@ -442,8 +445,8 @@ defmodule Flezha.Service.OperativeManager do
           :spawned | :delivered | :already_running | :factory_unknown | {:refused, String.t()}
 
   @doc """
-  Spawn-or-deliver `instance_id` in `namespace` — the controller half of an
-  procedure's `ctx.spawn_workflow`.
+  Spawn-or-deliver `instance_id` in `namespace`, the controller half of a
+  procedure's `ctx.spawn_workflow`, for the identity `caller_context` names.
 
   A free id spawns a workflow instance of `factory_id` carrying `payload` as its
   first input (`:seed_input`, ingested inside the instance's bind continue, so
@@ -452,6 +455,14 @@ defmodule Flezha.Service.OperativeManager do
   Concurrent requests for one id race-resolve at the registry: whoever loses the
   uniqueness check converts to the same delivery a later request would get, so
   exactly one instance exists and every payload lands exactly once.
+
+  Each act is judged on this node as the act it is: a start against the
+  `operative_start` row, which records it, and a delivery against `spawn_deliver`,
+  the `operative.send` right with no record, because a delivery happens once per
+  event. A refusal of either is audited. A start no local runner can take is
+  forwarded by `start_operative/3` inside that judgment, so no peer acts on a
+  request nobody judged. `:already_running` and `:factory_unknown` perform no
+  act and are answered without one.
   """
   @spec spawn_or_deliver(
           String.t(),
@@ -459,67 +470,62 @@ defmodule Flezha.Service.OperativeManager do
           String.t(),
           binary(),
           :deliver | :error,
-          keyword()
+          Flezha.AuthZ.caller_context()
         ) ::
           spawn_outcome()
-  def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running, opts \\ []) do
+  def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running, caller_context) do
     cond do
       exist?(namespace, instance_id) ->
-        resolve_running(namespace, instance_id, payload, if_running)
+        resolve_running(namespace, instance_id, payload, if_running, caller_context)
 
-      FleetManager.runners_for_factory(namespace, factory_id) != [] ->
-        spawn_fresh(namespace, instance_id, factory_id, payload, if_running)
-
-      # The loop guard: a forwarded request finding no local runner answers the
-      # honest refusal instead of forwarding again.
-      Keyword.get(opts, :routed, false) ->
+      FleetManager.runners_for_factory(namespace, factory_id) == [] and
+          capable_nodes(namespace, factory_id) == [] ->
         :factory_unknown
 
       true ->
-        route_spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running)
+        spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context)
     end
   end
 
-  # No local runner registers the factory — resolve cluster-wide and run the
-  # WHOLE call where the namespace hub is alive, so `exist?/2` and delivery
-  # execute against live truth. `:factory_unknown` is now an honest
-  # cluster-wide verdict.
-  defp route_spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running) do
-    case capable_nodes(namespace, factory_id) do
-      [] ->
-        :factory_unknown
-
-      nodes ->
-        target = Placement.pick_runner(nodes, instance_id)
-
-        route_call(
-          target,
-          :spawn_or_deliver,
-          [namespace, instance_id, factory_id, payload, if_running, [routed: true]],
-          &{:refused, inspect(&1)}
-        )
+  defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context) do
+    start = fn _call ->
+      start_workflow(namespace, instance_id, factory_id, %{}, seed_input: payload)
     end
-  end
 
-  defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running) do
-    case start_workflow(namespace, instance_id, factory_id, %{}, seed_input: payload) do
+    case Verb.run(:operative_start, caller_context, [namespace, instance_id], start) do
       {:ok, _} ->
         :spawned
 
       # Lost the id race: the winner spawned it, so this request becomes the
       # delivery a request arriving a moment later would have made.
       :duplicate ->
-        resolve_running(namespace, instance_id, payload, if_running)
+        resolve_running(namespace, instance_id, payload, if_running, caller_context)
 
       {:error, reason} ->
-        {:refused, inspect(reason)}
+        refused_start(reason, namespace, factory_id)
     end
   end
 
-  defp resolve_running(_namespace, _instance_id, _payload, :error), do: :already_running
+  # A start refused on a node where no runner advertises the factory, this one or
+  # a peer the directory still named, is a factory nobody registers. The map
+  # names the node the start ran on; a policy or quota refusal carries none.
+  defp refused_start(%{node: refusing, reason: text} = reason, namespace, factory_id)
+       when is_binary(text) do
+    placement =
+      route_call(refusing, FleetManager, :placement_refusal, [namespace, factory_id], & &1)
 
-  defp resolve_running(namespace, instance_id, payload, :deliver) do
-    case send_io_confirming(instance_id, namespace, payload, %{}) do
+    if placement == :no_such_factory, do: :factory_unknown, else: {:refused, inspect(reason)}
+  end
+
+  defp refused_start(reason, _namespace, _factory_id), do: {:refused, inspect(reason)}
+
+  defp resolve_running(_namespace, _instance_id, _payload, :error, _caller_context),
+    do: :already_running
+
+  defp resolve_running(namespace, instance_id, payload, :deliver, caller_context) do
+    deliver = fn _call -> send_io_confirming(instance_id, namespace, payload, %{}) end
+
+    case Verb.run(:spawn_deliver, caller_context, [namespace, instance_id], deliver) do
       {:error, reason} -> {:refused, inspect(reason)}
       _delivered_or_absorbed -> :delivered
     end

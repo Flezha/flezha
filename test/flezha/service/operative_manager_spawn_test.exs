@@ -1,11 +1,13 @@
 defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   @moduledoc """
-  `OperativeManager.spawn_or_deliver/5` — the controller half of a procedure's
+  `OperativeManager.spawn_or_deliver/6` — the controller half of a procedure's
   `ctx.spawn_workflow` (`procedure-requested-spawn`).
 
   The registry is `FakeStartRegistry`, whose `insert_new` is the same atomic
   claim ProcessHub's `start_child` performs, so the concurrency case exercises
-  the real race resolution rather than a serialized stand-in.
+  the real race resolution rather than a serialized stand-in. Authorization is
+  off here, so the caller context is judged and passes; the judgment itself is
+  `FlezhaTest.Runner.ControlChannelSpawnAuthzTest`.
   """
   # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
@@ -13,21 +15,28 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
+  alias Flezha.Cluster.Directory
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperativeManager.Placement
   alias Flezha.Service.Validator
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
 
   @namespace "spawn-or-deliver-test"
   @factory "worker"
+  @caller %{source: :sdk, principal: "runner@" <> @namespace, namespace: @namespace}
 
   setup :set_mimic_global_until_exit
 
   setup do
     %{registry: FakeStartRegistry.install(runners: ["runner-1"])}
   end
+
+  # The one request every case sends: instance "w1" in this module's namespace.
+  defp spawn_or_deliver(factory, payload, if_running),
+    do: OperativeManager.spawn_or_deliver(@namespace, "w1", factory, payload, if_running, @caller)
 
   defp instance_pid(registry, id) do
     {:ok, pid} = FakeStartRegistry.pid_of(registry, id)
@@ -36,7 +45,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
 
   test "a free id spawns, carrying the payload as the instance's seed input" do
     assert :spawned =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p1", :deliver)
+             spawn_or_deliver(@factory, "p1", :deliver)
 
     assert [operative] = FakeStartRegistry.started()
     assert operative.kind == :workflow
@@ -46,20 +55,20 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
 
   test "a taken id receives the payload as one more input", %{registry: registry} do
     assert :spawned =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p1", :deliver)
+             spawn_or_deliver(@factory, "p1", :deliver)
 
     assert :delivered =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p2", :deliver)
+             spawn_or_deliver(@factory, "p2", :deliver)
 
     assert Instance.ingested(instance_pid(registry, "w1")) == ["p2"]
   end
 
   test "the error policy reports instead of delivering", %{registry: registry} do
     assert :spawned =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p1", :deliver)
+             spawn_or_deliver(@factory, "p1", :deliver)
 
     assert :already_running =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p2", :error)
+             spawn_or_deliver(@factory, "p2", :error)
 
     assert Instance.ingested(instance_pid(registry, "w1")) == []
   end
@@ -71,7 +80,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
       1..8
       |> Task.async_stream(
         fn n ->
-          OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p#{n}", :deliver)
+          spawn_or_deliver(@factory, "p#{n}", :deliver)
         end,
         max_concurrency: 8,
         timeout: 10_000
@@ -90,14 +99,14 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
     registry: registry
   } do
     assert :spawned =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p1", :deliver)
+             spawn_or_deliver(@factory, "p1", :deliver)
 
     first = instance_pid(registry, "w1")
 
     :ets.delete(registry, "w1")
 
     assert :spawned =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p2", :deliver)
+             spawn_or_deliver(@factory, "p2", :deliver)
 
     refute instance_pid(registry, "w1") == first
   end
@@ -106,7 +115,19 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
     stub(FleetManager, :runners_for_factory, fn _ns, _factory -> [] end)
 
     assert :factory_unknown =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", "nobody", "p1", :deliver)
+             spawn_or_deliver("nobody", "p1", :deliver)
+  end
+
+  test "a start forwarded to a node whose runner has gone answers factory_unknown" do
+    # The directory still names a peer for the factory and the peer has lost its
+    # runner. The pick lands on this node, so the real forward runs and the
+    # refusal comes back exactly as a peer's would.
+    stub(FleetManager, :runners_for_factory, fn _ns, _factory -> [] end)
+    stub(Directory, :factory_nodes, fn _ns, _factory -> [:"stale-peer@127.0.0.1"] end)
+    stub(Placement, :pick_runner, fn _nodes, _id -> node() end)
+
+    assert :factory_unknown = spawn_or_deliver(@factory, "p1", :deliver)
+    assert FakeStartRegistry.started() == []
   end
 
   test "an exhausted quota refuses the spawn with the reason attached" do
@@ -115,7 +136,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
     end)
 
     assert {:refused, reason} =
-             OperativeManager.spawn_or_deliver(@namespace, "w1", @factory, "p1", :deliver)
+             spawn_or_deliver(@factory, "p1", :deliver)
 
     assert reason =~ "quota_exceeded"
   end

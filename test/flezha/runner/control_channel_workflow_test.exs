@@ -296,8 +296,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   } do
     test_pid = self()
 
-    expect(OperativeManager, :spawn_or_deliver, fn ns, id, factory, payload, if_running ->
-      send(test_pid, {:resolved, ns, id, factory, payload, if_running})
+    expect(OperativeManager, :spawn_or_deliver, fn ns, id, factory, payload, if_running, caller ->
+      send(test_pid, {:resolved, ns, id, factory, payload, if_running, caller})
       :spawned
     end)
 
@@ -308,12 +308,14 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
       if_running: "deliver"
     )
 
-    assert_receive {:resolved, @namespace, "w1", "worker", "p1", :deliver}
+    assert_receive {:resolved, @namespace, "w1", "worker", "p1", :deliver, caller}
+    # The identity is the connection's, never anything the frame said.
+    assert %{source: :sdk, namespace: @namespace, principal: "runner@" <> @namespace} = caller
     assert {"ref-spawn", %{outcome: "spawned", error: ""}} = await_response()
   end
 
   test "the error policy is carried through verbatim", %{channel: channel} do
-    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, :error ->
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, :error, _ ->
       :already_running
     end)
 
@@ -323,7 +325,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   end
 
   test "an unset policy reads as deliver rather than refusing the payload", %{channel: channel} do
-    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, if_running ->
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, if_running, _ ->
       assert if_running == :deliver
       :delivered
     end)
@@ -334,7 +336,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   end
 
   test "a refusal ships its reason so the requester can log something useful", %{channel: channel} do
-    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy ->
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy, _ ->
       {:refused, "quota_exceeded"}
     end)
 
@@ -346,7 +348,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   test "resolution never blocks the channel", %{channel: channel} do
     parent = self()
 
-    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy ->
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy, _ ->
       send(parent, {:resolving, self()})
       NodeTestHelper.park()
       :spawned

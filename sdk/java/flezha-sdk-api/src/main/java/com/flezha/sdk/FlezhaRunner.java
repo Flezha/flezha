@@ -244,7 +244,7 @@ public final class FlezhaRunner implements AutoCloseable {
      * <p>The controller judges every call as the identity this connection
      * proved, so no credential is held here and nothing expires. An operator
      * grants a namespace's applications the authority once, with
-     * {@code flz role bind runner@<namespace> <namespace> app}; until then
+     * {@code flz role bind runner@<namespace> app <namespace>}; until then
      * every call is refused.
      *
      * @throws IllegalStateException on a never-started runner.

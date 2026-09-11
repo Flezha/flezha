@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Authz do
 
   alias Flezha.AuthZ.Bootstrap
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Service.Cli.Context
@@ -64,7 +65,9 @@ defmodule Flezha.Service.Cli.Authz do
 
   @doc "CLI entry: `flz token issue <principal> <namespace> <role> [--ttl <seconds>]`."
   def authz_render_token_issue(principal, namespace, role_string, call) do
-    with {:ok, role} <- parse_role(role_string),
+    # `app` is what a runner principal is bound to, and a runner proves itself
+    # with a `runner` credential, so no credential is ever issued for `app`.
+    with {:ok, role} <- parse_role(role_string, Role.all() -- [:app]),
          {:ok, raw, entry} <-
            TokenStore.issue(principal, namespace, role, Keyword.fetch!(call.opts, :ttl),
              created_by_principal: actor(call),
@@ -198,17 +201,20 @@ defmodule Flezha.Service.Cli.Authz do
     |> Enum.each(fn {k, v} -> IO.puts("  #{k}: #{v}") end)
   end
 
-  defp parse_role(role_string) when is_binary(role_string) do
-    case role_string do
-      "viewer" -> {:ok, :viewer}
-      "operator" -> {:ok, :operator}
-      "admin" -> {:ok, :admin}
-      "runner" -> {:ok, :runner}
-      other -> {:error, {:unknown_role, other}}
+  # Resolved against the one enumeration, so a name nobody declared never
+  # becomes an atom and a declared role is never missing here.
+  defp parse_role(role, roles \\ Role.all())
+
+  defp parse_role(role_string, roles) when is_binary(role_string) do
+    case Enum.find(roles, &(Atom.to_string(&1) == role_string)) do
+      nil -> {:error, {:unknown_role, role_string}}
+      role -> {:ok, role}
     end
   end
 
-  defp parse_role(role) when is_atom(role), do: {:ok, role}
+  defp parse_role(role, roles) when is_atom(role) do
+    if role in roles, do: {:ok, role}, else: {:error, {:unknown_role, role}}
+  end
 
   # Quota overrides arrive as the CLI's `--X` JSON object; keys must name
   # documented quota fields, values must be non-negative integers (validated

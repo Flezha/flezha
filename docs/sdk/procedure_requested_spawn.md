@@ -57,9 +57,13 @@ re-seeded.
 |---|---|
 | `AlreadyRunning` | the id is taken and the request said `Error` |
 | `FactoryUnknown` | no connected runner **on any cluster node** registers that factory |
-| `Refused(reason)` | quota exhausted, controller shutting down, start failed |
+| `Refused(reason)` | authorization is on and `runner@<namespace>` is not bound to `app` ([`authn_authz.md`](../operations/authn_authz.md)); quota exhausted; controller shutting down; start failed |
 | `Timeout` | no answer within 30 s |
 | `Unavailable` | no control plane to request on |
+
+A start is judged the way `flz operative start` is and recorded the same way; a delivery
+is judged as `operative.send` and recorded only when refused, because it happens once per
+event.
 
 Factory resolution is cluster-wide: a controller node with no runner for the factory routes
 the call to a node that has one, so `FactoryUnknown` is an honest cluster-wide verdict.
