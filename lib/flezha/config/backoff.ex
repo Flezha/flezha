@@ -90,7 +90,7 @@ defmodule Flezha.Config.Backoff do
     {:kafka_force_replace, base: 2_000, cap: 2_000, reset: :per_call},
     {:forward_deliver, base: 250, cap: 5_000, reset: :on_success},
     {:ws_reconnect, base: 250, cap: 30_000, factor: 1.5, reset: :on_success},
-    {:ws_sink_ack, base: 1_000, cap: 30_000, reset: :per_call, give_up: 6}
+    {:ws_sink_ack, base: 1_000, cap: 30_000, reset: :on_success, give_up: 6}
   ]
 
   @ladders Map.new(@declared, fn {key, fields} ->

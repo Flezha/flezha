@@ -25,6 +25,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
@@ -153,13 +154,23 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     assert_surfaces(ctx, id, :healthy, "healthy")
   end
 
-  # A declared plugin that is not running: subscribed, activation impossible,
-  # so the loop's own `start_plugin` heal has something to do and the operative
-  # is degraded while it does.
+  # A declared plugin that is not running: the start declares it and its
+  # activation is impossible, so the loop's own `start_plugin` heal has
+  # something to do and the operative is degraded while it does. An enable
+  # cannot set this up: a failed one removes what it declared. Every attempt
+  # logs the refusal, so the operative is stopped inside the capture, before a
+  # later row's tick can retry it.
   defp row_degraded(ctx) do
-    id = start_operative(ctx, "degraded")
-    :ok = enable_plugin(ctx, id, id <> "_missing", @stuck_provider)
-    assert_surfaces(ctx, id, :degraded, "degraded", reason: "plugin_unhealthy")
+    plugin_id = "missing_#{System.unique_integer([:positive])}"
+
+    log =
+      capture_log(fn ->
+        id = start_operative(ctx, "degraded", [stuck_plugin(plugin_id)])
+        assert_surfaces(ctx, id, :degraded, "degraded", reason: "plugin_unhealthy")
+        :ok = OperativeManager.stop_operative(ctx.namespace, id)
+      end)
+
+    assert log =~ "activate failed for plugin_id=#{plugin_id}"
   end
 
   # The bind-time restore the SDK refused — the message `Operative.Replay`
@@ -168,7 +179,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     id = start_operative(ctx, "parked")
     {:ok, pid} = OperativeManager.get_operative_pid(ctx.namespace, id)
 
-    repark = fn -> repark(pid) end
+    repark = fn -> repark(ctx, id, pid) end
 
     assert repark.() == :ok
     assert_surfaces(ctx, id, :parked, "degraded", refresh: repark, reason: "parked")
@@ -176,10 +187,14 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # The park the loop is actively healing has to be re-declared before each
   # read, or the row would be asserting a state the loop has already cleared.
-  defp repark(pid) do
+  # The park ticks the loop at once, and that one tick publishes the record and
+  # heals the park, so the read waits for the record: a read that comes first
+  # sees the old one, and the tick it then asks for lands after the heal.
+  defp repark(ctx, id, pid) do
     if is_nil(:sys.get_state(pid).init_error) do
       send(pid, {:restore_refused, :drill})
       wait_until(fn -> not is_nil(:sys.get_state(pid).init_error) end, 5_000)
+      wait_until(fn -> record_state(ctx, id) == :parked end, 10_000)
     end
 
     :ok
@@ -390,9 +405,12 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # ---------- the fixture ----------
 
+  # Supervised, so it stops with the module: the `setup_all` process exits
+  # `:normal`, which a linked server ignores, and the registered name would
+  # then answer every later module's start with this one's port.
   defp start_healthz() do
     Application.put_env(:flezha, :healthz_port, 0)
-    {:ok, _pid} = Healthz.start_link([])
+    start_supervised!(Healthz)
     {:ok, port} = Healthz.listen_port()
     on_exit(fn -> Application.delete_env(:flezha, :healthz_port) end)
     port
@@ -418,25 +436,33 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     end
   end
 
-  defp start_operative(ctx, label) do
+  # `plugins` are declared by the start itself, the same record an enable
+  # writes to.
+  defp start_operative(ctx, label, plugins \\ []) do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
     builder = %Flezha.Operative.Builder{
       id: id,
       factory_id: "do_nothing",
       init_values: %{},
-      opts: [plugins: []]
+      opts: [plugins: plugins]
     }
 
     {:ok, _} = OperativeManager.start_operative(ctx.namespace, builder)
     id
   end
 
-  # The loop reads the DECLARED plugin set from the durable cspec, which only
-  # `PluginManager.enable_plugin/2` writes.
-  # The cspec is written before the subscribe, so an activation that fails
-  # still leaves the plugin DECLARED — which is the condition the degraded row
-  # needs: declared, and not running.
+  defp stuck_plugin(plugin_id) do
+    %Plugin{
+      id: plugin_id,
+      provider: @stuck_provider,
+      opts: %{},
+      subscriptions: [{:on_input, [position: 0]}]
+    }
+  end
+
+  # The loop reads the DECLARED plugin set from the durable cspec, which
+  # `PluginManager.enable_plugin/2` writes before it subscribes.
   defp enable_plugin(ctx, operative_id, plugin_id, provider) do
     result =
       PluginManager.enable_plugin(plugin_id, %Plugin{
@@ -450,7 +476,6 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
     case result do
       {:ok, _} -> :ok
-      {:error, {:activation_failed, _}} -> :ok
       other -> flunk("enable_plugin refused: #{inspect(other)}")
     end
   end

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: a websocket sink's re-sends show on the backoff telemetry
+
+Under `sink_ack_mode: "required"` the websocket plugin re-sends a frame the
+upstream has not acknowledged, on a ladder that starts at 1 s and gives up after
+six sends. That ladder never reached the backoff telemetry. Each re-send now
+announces the wait it served on `[:flezha, :backoff, :wait]` under ladder
+`:ws_sink_ack`, and the acknowledgement of a re-sent frame announces
+`[:flezha, :backoff, :reset]`. A frame acknowledged on its first send announces
+nothing.
+
 ### Fixed: a runner session is admitted only once its handshake completes
 
 A runner whose data sockets could not be connected was recorded as connected

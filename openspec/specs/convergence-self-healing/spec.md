@@ -672,8 +672,12 @@ walk over `lib/**/*.ex` finds no call to a remedy entry point — `Recovery.resy
 `lib/flezha/shutdown/`. One end-to-end drill in the system tier SHALL walk the same
 table and, per primitive, inject its fault through the real transport and assert the
 loop plans and executes that primitive, advances its key while the fault persists and
-resets it on repair. A new primitive or fact kind SHALL be covered by both with no test
-edit.
+resets it on repair. The one exception is a rebind whose fault leaves no runner able to
+serve the operative: that attempt is an unmet precondition and neither advances nor
+resets the ladder, so for it the drill SHALL assert instead that the rebind is planned
+again with no waiting key of the operative armed, and that no key is left armed once
+the operative binds to a runner that arrives. A new primitive or fact kind SHALL be
+covered by both with no test edit.
 
 #### Scenario: A direct resync outside the loop fails the walk
 - **WHEN** a call to `Recovery.resync/2` is added to a module outside `lib/flezha/convergence/`
@@ -690,7 +694,13 @@ edit.
 
 #### Scenario: The drill plans each primitive from its own fault
 - **WHEN** the system-tier drill injects, for every primitive, the fault the Diff plans it for
-- **THEN** `[:flezha, :convergence, :heal]` SHALL fire naming that primitive and target, the tick summary SHALL report the advanced rung while the fault is held, and the tick after repair SHALL plan nothing for the target
+- **THEN** `[:flezha, :convergence, :heal]` SHALL fire naming that primitive and target, the tick summary SHALL report the advanced rung while the fault is held, the unmet rebind below excepted, and the tick after repair SHALL plan nothing for the target
+
+#### Scenario: A rebind with no runner to place on arms no rung
+- **GIVEN** the drill's rebind row, whose runner is killed with no other runner able to serve the operative
+- **WHEN** the loop plans the rebind
+- **THEN** it SHALL plan it again, with no waiting key of the operative armed
+- **AND** once a runner arrives and the operative binds to it, no waiting key SHALL be left armed and the tick after SHALL plan nothing for the operative
 
 ### Requirement: One verdict record per subject SHALL be judged once and read everywhere
 

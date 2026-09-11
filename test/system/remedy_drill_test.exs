@@ -5,7 +5,9 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   real transport, against the Rust runner fixture, with a real
   `Convergence.Loop` — and asserting that `[:flezha, :convergence, :heal]`
   fires naming THAT primitive and target, that a fault held across the next
-  window advances the primitive's key, and that repair resets it.
+  window advances the primitive's key, and that repair resets it. A rebind with
+  no runner to place on is the exception: that is an unmet precondition, and it
+  arms no rung.
 
   The row set is read from the primitive table, so a new primitive fails here
   by name until its fault is written; a row whose fault this tier cannot
@@ -18,6 +20,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
   use Mimic
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.MimicGlobal
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
@@ -33,12 +36,13 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     ]
 
   alias Flezha.Config.Backoff
-  alias Flezha.Convergence.{Heal, Loop}
+  alias Flezha.Convergence.{Heal, Loop, Planner}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin
-  alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Extension.{Ctx, Table}
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{HubManager, OperativeManager, PluginManager}
   alias Flezha.Shutdown.Coordinator
@@ -52,22 +56,29 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   @grace_ms 30_000
   @heartbeat_ms 300
 
-  # A provider whose `init_provider/1` owns a pid: what a crashed subscriber is.
+  # A provider that declares a worker: the table starts it at activation and
+  # monitors it, so a killed worker is what a crashed subscriber is.
   defmodule OwnedPidProvider do
-    use Flezha.Plugin.ProviderBehaviour,
-      options: [
-        include_metadata: [type: :any, internal: true],
-        recv_pid: [type: :any, internal: true]
-      ]
+    use GenServer
+    use Flezha.Plugin.ProviderBehaviour, worker: [module: __MODULE__, restart: :temporary]
 
     @impl true
-    def init_provider(opts) do
-      pid = spawn(fn -> receive(do: (_ -> :ok)) end)
-      {:ok, Map.put(opts || %{}, :conn, pid), pid}
-    end
+    def worker_specs(opts), do: [{opts.source_plugin_id, %{}}]
 
     @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+
+    def start_link(%{name: name}), do: GenServer.start_link(__MODULE__, :ok, name: name)
+
+    @impl GenServer
+    def init(:ok), do: {:ok, nil}
+  end
+
+  # Module-wide, so the family outlives each test's namespace teardown, which
+  # stops the workers it holds.
+  setup_all do
+    start_supervised!({WorkerSup, name: WorkerSup.family(OwnedPidProvider)})
+    :ok
   end
 
   setup do
@@ -156,8 +167,10 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   # ---------- the rows ----------
 
-  # A runner dies with no survivor: the declared disconnect plans the rebind,
-  # which fails and walks the key; a runner arriving is the repair.
+  # A runner dies with no survivor: the declared disconnect plans the rebind.
+  # With no runner able to serve the operative the rebind is an unmet
+  # precondition, so it arms no rung and is planned again on the very next
+  # tick; a runner arriving is the repair.
   defp row(:rebind_operative, namespace) do
     {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
     id = start_operative(namespace, "rebound")
@@ -165,17 +178,21 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     start_loop()
 
     sigkill(os_pid(port_a))
-    assert_receive {:heal, %{primitive: :rebind_operative, target: ^id}}, 30_000
 
-    assert wait_until(fn -> attempt({:runner_disconnected, id}) >= 1 end, 10_000),
-           "a rebind with nowhere to place did not advance its key"
+    for _tick <- 1..2 do
+      assert_receive {:heal, %{primitive: :rebind_operative, target: ^id}}, 30_000
+    end
+
+    assert none_cooling?(namespace, id), "a rebind with nowhere to place armed a rung"
 
     {_port_b, runner_b} = boot_runner(namespace, unique_id_path("drill"), [])
 
     assert wait_until(fn -> bound_runner(namespace, id) == runner_b end, 30_000),
            "the operative never rebound onto the arriving runner"
 
-    assert wait_until(fn -> attempt({:runner_disconnected, id}) == 0 end, 10_000)
+    # A rebind that answered `:error` on its way here would have armed a rung
+    # that the quiet tick below cannot see.
+    assert none_cooling?(namespace, id), "the repair left a rung armed"
     assert quiet_tick()
   end
 
@@ -202,22 +219,30 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
     start_loop()
 
-    {owned, _ref} = owned_pid(pid, plugin_id)
-    Process.exit(owned, :kill)
+    owned = owned_pid(pid, plugin_id)
 
-    assert wait_until(fn -> Loop.tick_now() == :ok and heal?(:restart_plugin, id) end, 30_000),
-           "the loop never planned restart_plugin for the crashed subscriber"
+    # The kill is the fault, and its supervisor and the table both report it.
+    log =
+      capture_log(fn ->
+        Process.exit(owned, :kill)
 
-    assert wait_until(
-             fn ->
-               case owned_pid(pid, plugin_id) do
-                 {new, _} when new != owned -> Process.alive?(new)
-                 _ -> false
-               end
-             end,
-             10_000
-           ),
-           "the subscriber was never restarted"
+        assert wait_until(
+                 fn -> Loop.tick_now() == :ok and heal?(:restart_plugin, id) end,
+                 30_000
+               ),
+               "the loop never planned restart_plugin for the crashed subscriber"
+
+        assert wait_until(
+                 fn ->
+                   new = owned_pid(pid, plugin_id)
+                   is_pid(new) and new != owned and Process.alive?(new)
+                 end,
+                 10_000
+               ),
+               "the subscriber was never restarted"
+      end)
+
+    assert log =~ "subscriber #{plugin_id} crashed: :killed"
 
     assert attempt({:restart_plugin, {id, plugin_id}}) >= 1,
            "a restart is a ladder: the key stays armed until the stable window"
@@ -438,9 +463,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     id
   end
 
-  # The loop reads the DECLARED plugin set from the durable cspec, which only
-  # `PluginManager.enable_plugin/2` writes — a plugin handed to the builder is
-  # prepared on the Overwatch and invisible to the Intent.
+  # The loop reads the DECLARED plugin set from the durable cspec, which a
+  # start's own `plugins` and `PluginManager.enable_plugin/2` both write.
   defp enable_plugin(namespace, operative_id, plugin_id) do
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(plugin_id, %Plugin{
@@ -466,14 +490,13 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     }
   end
 
-  defp owned_pid(pid, plugin_id),
-    do: Map.get(:sys.get_state(pid).extensions.owned_pids, plugin_id)
+  defp owned_pid(pid, plugin_id), do: Table.owned_pid(:sys.get_state(pid).extensions, plugin_id)
 
   defp running?(pid, plugin_id),
-    do: plugin_id in Flezha.Plugin.Extension.Table.running_ids(:sys.get_state(pid).extensions)
+    do: plugin_id in Table.running_ids(:sys.get_state(pid).extensions)
 
   defp subscribed?(pid, plugin_id),
-    do: plugin_id in Flezha.Plugin.Extension.Table.subscribed_ids(:sys.get_state(pid).extensions)
+    do: plugin_id in Table.subscribed_ids(:sys.get_state(pid).extensions)
 
   # Every heal event collected so far names `primitive` for `target`. The
   # collector delivers into this process's mailbox, so a row can drive ticks
@@ -493,6 +516,11 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   end
 
   defp attempt(key), do: Backoff.attempt(:sys.get_state(Loop).backoff, key)
+
+  # Every cooldown key a rebind of `id` can be held on, none of them armed.
+  defp none_cooling?(namespace, id),
+    do: Enum.all?(Planner.waiting_keys({namespace, id}), &(attempt(&1) == 0))
+
   defp draining?(), do: Map.has_key?(:sys.get_state(Loop).facts, {:node_draining, node()})
 
   # The tick after repair plans nothing: drain the collected ticks, take the

@@ -31,6 +31,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Observability.Export.OtlpClient
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.SDK.Channels
@@ -39,6 +40,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.SdkOperativeHarness
+  alias FlezhaTest.Helper.WebsocketServer
   alias FlezhaTest.Kafka.ProducerFakes
 
   setup :set_mimic_global_until_exit
@@ -116,6 +118,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
           :cluster_reconnect,
           :sdk_retry,
           :ws_reconnect,
+          :ws_sink_ack,
           :kafka_produce
         ] do
       @key key
@@ -149,6 +152,21 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     end
   end
 
+  describe "a success after a retry announces the reset" do
+    # The upstream's echo is this ladder's success. A frame answered on its
+    # first send walked no rung, so only a retried one has a reset to announce.
+    test "ws_sink_ack" do
+      collect(:ws_sink_ack)
+      server = ws_sink_ack_device()
+
+      assert [%{attempt: 1}] = drain_waits(:ws_sink_ack, 1)
+      assert_receive {:ws_frame, frame}, 5_000
+      WebsocketServer.ack(server, Jason.decode!(frame)["req_id"])
+
+      assert_receive {:backoff, :reset, %{attempt: 0}}, 5_000
+    end
+  end
+
   # ---------- devices ----------
 
   defp devices() do
@@ -169,6 +187,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       sdk_retry: {&sdk_retry_device/0, 3, [base: 50]},
       # A socket that answers every upgrade with 429.
       ws_reconnect: {&ws_reconnect_device/0, 3, []},
+      # A socket whose peer takes every frame and acknowledges none.
+      ws_sink_ack: {&ws_sink_ack_device/0, 2, []},
       # A broker send that always fails.
       # Four waits: the worker announces the attempt it is about to make and
       # arms the one it is on, so a walk of two rungs shows as four events.
@@ -291,6 +311,26 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     on_exit(fn -> :gen_tcp.close(listener) end)
 
     :ok
+  end
+
+  # One output under `sink_ack_mode: "required"`: the socket re-sends it on
+  # every rung until an acknowledgement settles it. Answers the peer, so a test
+  # can acknowledge.
+  defp ws_sink_ack_device() do
+    server = WebsocketServer.start()
+
+    {:ok, opts, client} =
+      ProviderPrepare.prepare_and_activate(Websocket, %{
+        uri: "ws://127.0.0.1:#{server.port}/",
+        plugin_id: "ws_sink_drill_#{System.unique_integer([:positive])}",
+        subscribed_extensions: [:on_output],
+        sink_ack_mode: "required",
+        sink_template: ~s({"req_id":"{{req_id}}","d":"{{payload}}"})
+      })
+
+    ProviderPrepare.stop_on_exit(Websocket, client)
+    {:ok, _ctx} = Websocket.on_output(%Ctx.IO{message: "drill"}, opts)
+    server
   end
 
   defp kafka_device() do

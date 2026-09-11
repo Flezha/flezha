@@ -31,10 +31,6 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   @entity_placeholder "{{entity}}"
   @seq_placeholder "{{seq}}"
 
-  # The retry ladder for an unanswered `"required"` frame. Its first rung is the
-  # acknowledgement window too, so the two cannot drift apart.
-  @ack_ladder :ws_sink_ack
-
   @enforce_keys [:frame_type, :ack_mode, :queue_max]
   defstruct @enforce_keys ++
               [
@@ -137,11 +133,12 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   @doc """
   The acknowledgement window this sink waits before re-sending, or `nil` when it
   awaits none. The Client folds it into its watchdog tick, so the sink arms no
-  timer of its own.
+  timer of its own. It is the first rung of the `:ws_sink_ack` ladder, so the two
+  cannot drift apart.
   """
   @spec ack_window_ms(map()) :: pos_integer() | nil
   def ack_window_ms(%{sink: %__MODULE__{ack_mode: "required"}}),
-    do: Backoff.ladder(@ack_ladder).base
+    do: Backoff.ladder(:ws_sink_ack).base
 
   def ack_window_ms(_state), do: nil
 
@@ -272,8 +269,10 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
 
   defp settle_ack(state, req_id, accepted?) do
     case Map.fetch(state.sink.inflight, req_id) do
-      {:ok, {{_frame, metadata, _id}, _attempts, _sent_at}} when accepted? ->
+      {:ok, {{_frame, metadata, _id}, attempts, _sent_at}} when accepted? ->
         Outbox.confirm(metadata)
+        # Only a re-sent frame walked the ladder, so only its ack is a reset.
+        if attempts > 1, do: Backoff.reset(:ws_sink_ack, {state.plugin_id, req_id})
         %{state | sink: forget(state.sink, req_id)}
 
       # A refusal is not a delivery: the frame keeps its place in the in-flight
@@ -316,15 +315,18 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
 
   defp sweep_one({sink, frames}, state, req_id, {entry, attempts, sent_at}, now) do
     cond do
-      now - sent_at < Backoff.delay(@ack_ladder, attempts) ->
+      now - sent_at < Backoff.delay(:ws_sink_ack, attempts) ->
         {sink, frames}
 
-      Backoff.give_up?(@ack_ladder, attempts) ->
+      Backoff.give_up?(:ws_sink_ack, attempts) ->
         park(state, entry, attempts)
         {forget(sink, req_id), frames}
 
       true ->
         emit(:retried, %{attempt: attempts + 1}, state)
+        # The rung this re-send waited out, announced as the ladder attempt it
+        # is. A first send announces nothing: that path runs for every frame.
+        _ = Backoff.arm(:ws_sink_ack, attempts, {state.plugin_id, req_id})
         {frame, _md, _id} = entry
 
         {%{sink | inflight: Map.put(sink.inflight, req_id, {entry, attempts + 1, now})},

@@ -21,6 +21,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   alias Flezha.State.Outbox
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.ProviderPrepare
+  alias FlezhaTest.Helper.Telemetry
 
   import ExUnit.CaptureLog
 
@@ -269,6 +270,33 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
 
       assert settled.sink.inflight == %{}
       assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
+    end
+
+    # The per-frame path: a frame answered on its first send served no rung. The
+    # re-sent frame after it is the control that shows the capture would see one.
+    test "an ack on the first send announces no wait and no reset on the ack ladder",
+         %{entity_id: entity_id} do
+      Telemetry.capture([[:flezha, :backoff, :wait], [:flezha, :backoff, :reset]],
+        filter: &(Map.get(&1, :ladder) == :ws_sink_ack)
+      )
+
+      {{:reply, [{:text, body}], sent}, _ref} =
+        dispatch(state(required_opts()), "v1", guaranteed(entity_id, 1))
+
+      %{"req_id" => req_id} = Jason.decode!(body)
+
+      {:ok, settled} =
+        Client.handle_in({:text, Jason.encode!(%{"req_id" => req_id, "success" => true})}, sent)
+
+      assert settled.sink.inflight == %{}
+      refute_received {:telemetry, _event, _measurements, %{ladder: :ws_sink_ack}}
+
+      {{:reply, _frames, unanswered}, _ref} = dispatch(settled, "v2", guaranteed(entity_id, 2))
+      aged = age_inflight(unanswered, Backoff.delay(:ws_sink_ack, 1) + 1)
+      assert {:reply, [_frame], _resent} = Client.handle_info(:idle_check, aged)
+
+      assert_received {:telemetry, [:flezha, :backoff, :wait], %{attempt: 1},
+                       %{ladder: :ws_sink_ack}}
     end
 
     test "an unanswered frame is re-sent, and the hold stays open",

@@ -74,8 +74,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
              OperativeManager.start_operative(namespace, %Builder{
                id: unique.("d_#{factory}"),
                factory_id: factory,
-               kind: kind,
-               init_values: %{"seed" => "go"}
+               kind: kind
              })
 
     assert_receive {:declaration_metadata, metadata}, 60_000

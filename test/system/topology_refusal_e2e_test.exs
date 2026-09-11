@@ -27,11 +27,16 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   reads the app's exit status and stderr rather than a control frame.
 
   Tagged `:interop` as well as `:system`: the runtimes come from the manifests,
-  so every test app must be built. It runs in the nightly's interop job.
+  so every test app must be built. It runs in the nightly's interop job. The one
+  exception is the selected runtime's golden comparison, which also runs in the
+  ordinary `:system` pass, so a golden that drifts on that runtime fails its
+  next nightly run with no second runtime built.
   """
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
   use Mimic
+
+  import FlezhaTest.Helper.TierE2EHarness, only: [stop_namespace: 1, unique: 1]
 
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.DeclarationSnapshot
@@ -41,7 +46,10 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   @moduletag interop: true
   @moduletag timeout: 300_000
 
-  @moduletag skip: FlezhaTest.Tiers.skip_unless_included(:interop)
+  # A `skip:` tag on a describe or a test replaces this one rather than adding
+  # to it, so every narrower `skip:` below restates it.
+  @interop_skip FlezhaTest.Tiers.skip_unless_included(:interop)
+  @moduletag skip: @interop_skip
 
   @fixture "test/fixtures/reference_topologies.txt"
 
@@ -137,14 +145,22 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   # here, now over every runtime rather than the one a run selected.
   for {capability, factories} <- DeclarationSnapshot.by_capability() do
     describe "declared surface: #{capability}" do
-      @describetag capability: capability,
-                   skip: FlezhaTest.SystemCase.deferral(capability)
+      @describetag capability: capability
+
+      setup :own_namespace
 
       @factories factories
 
       for runtime <- PortPilot.runtimes() do
         @runtime runtime
 
+        # The selected runtime needs no second one built, so it runs in the
+        # ordinary pass too; every other runtime waits for the interop tier.
+        # Each test binds one runtime, so the deferral that skips it is that
+        # runtime's own.
+        @tag skip:
+               (runtime != NodeTestHelper.runtime() and @interop_skip) ||
+                 FlezhaTest.SystemCase.deferral(capability, runtime)
         test "#{runtime}'s #{capability} declarations equal their goldens", ctx do
           NodeTestHelper.start_runner(ctx.namespace, runtime: @runtime)
 
@@ -153,7 +169,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
               ctx.namespace,
               factory,
               kind_of(factory),
-              &"#{&1}_#{@runtime}_#{System.unique_integer([:positive])}"
+              &unique/1
             )
           end
         end
@@ -187,6 +203,14 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
                """
       end
     end
+  end
+
+  # A namespace per test: the runner it starts is the only one its factories
+  # can be placed on, so the declaration compared is that runtime's own.
+  defp own_namespace(_ctx) do
+    namespace = unique("declared")
+    on_exit(fn -> stop_namespace(namespace) end)
+    %{namespace: namespace}
   end
 
   # Each app writes its report once per run; the drill reads it rather than

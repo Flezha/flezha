@@ -45,10 +45,13 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     {:ok, token_b, _} = TokenStore.issue("op-beta", @ns_b, :operator, 3_600)
 
     # Live runners, one per namespace — connecting is itself the §3.1 check:
-    # under enforcement the connect handshake authorizes `runner.connect`
-    # with the transport-bound `runner@<ns>` principal.
-    runner_a = NodeTestHelper.start_runner(@ns_a)
-    runner_b = NodeTestHelper.start_runner(@ns_b)
+    # under enforcement a connect first proves its namespace with that
+    # namespace's runner credential, then authorizes `runner.connect` for the
+    # `runner@<ns>` principal.
+    {secret_a, _hash} = AuthTestHelper.issue_runner_credential(@ns_a)
+    {secret_b, _hash} = AuthTestHelper.issue_runner_credential(@ns_b)
+    runner_a = NodeTestHelper.start_runner(@ns_a, env: [{"FLEZHA_NAMESPACE_SECRET", secret_a}])
+    runner_b = NodeTestHelper.start_runner(@ns_b, env: [{"FLEZHA_NAMESPACE_SECRET", secret_b}])
 
     on_exit(fn ->
       for ns <- [@ns_a, @ns_b] do
@@ -66,7 +69,13 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
       end
     end)
 
-    %{token_a: token_a, token_b: token_b, runner_a: runner_a, runner_b: runner_b}
+    %{
+      token_a: token_a,
+      token_b: token_b,
+      secret_a: secret_a,
+      runner_a: runner_a,
+      runner_b: runner_b
+    }
   end
 
   test "authenticated runners connected under enforcement, one per tenant" do
@@ -125,7 +134,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
              OperativeManager.start_operative(@ns_b, operative)
   end
 
-  test "a runner for a namespace at max_runners is refused observably" do
+  test "a runner for a namespace at max_runners is refused observably", %{secret_a: secret_a} do
     {:ok, _} = NamespaceStore.set_quotas(@ns_a, %{max_runners: 1})
     on_exit(fn -> {:ok, _} = NamespaceStore.set_quotas(@ns_a, %{}) end)
 
@@ -134,8 +143,14 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     assert [_] = FleetManager.active_runners(@ns_a)
     :ok = QuotaCounters.set(@ns_a, :runners, 1)
 
+    # A proven namespace, so the refusal is the quota's and not the proof's.
     assert {:error, {:quota_exceeded, :max_runners, %{current: 1, limit: 1}}} =
-             FleetManager.connect_handler(make_ref(), @ns_a, %{}, :uds)
+             FleetManager.connect_handler(
+               make_ref(),
+               @ns_a,
+               %{"namespace_secret" => secret_a},
+               :uds
+             )
   end
 
   test "the runner principal cannot act outside its own namespace" do

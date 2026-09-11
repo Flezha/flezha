@@ -34,13 +34,12 @@ defmodule FlezhaTest.SystemCase do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @doc """
-  The reason `capability` is skipped for the selected runtime, or `nil` when it
-  is carried — `nil` being what makes `skip:` inert.
+  The reason `capability` is skipped for `runtime` (the selected one unless a
+  scenario names its own), or `nil` when it is carried: `nil` is what makes
+  `skip:` inert.
   """
-  @spec deferral(atom()) :: String.t() | nil
-  def deferral(capability) do
-    runtime = NodeTestHelper.runtime()
-
+  @spec deferral(atom(), atom()) :: String.t() | nil
+  def deferral(capability, runtime \\ NodeTestHelper.runtime()) do
     if capability in NodeTestHelper.deferred(runtime) do
       "#{capability} is deferred by the #{runtime} SDK (#{NodeTestHelper.manifest_path(runtime)})"
     end
