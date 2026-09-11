@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed: a partition group keeps its members across a registry replay
+
+After a reconcile replay, whether inside a running hub or on a warm restart, a running
+partition group answered no members: the replay wrote each member's registry row without
+the partition identity the start had put there. Input forwarded to the group went to its
+base id, and a plain start could take a running group's id. A replay now keeps every key
+of the row it replaces. The fix is in process_hub 0.7.1, which this release needs.
+
 ### Changed: a spawn a procedure requests is judged like any other start
 
 `ctx.spawn_workflow` started a workflow instance, or fed a running one, without asking
