@@ -3,18 +3,19 @@
 For operators who need a Controller to boot from a clean slate. `flz reset`
 clears the durable on-disk state under `app_data/` — every Entity's
 WAL/snapshot/outbox files and the ProcessHub durable registry, optionally the
-TLS material, parked DLQ records, schedules and UDS sockets — without deleting
-`app_data/` itself. It refuses to run while the Controller is up and never
-reaches into a remote durability backend.
+TLS material, parked DLQ records, schedules, the auth store, the audit trail,
+installed plugins and UDS sockets — without deleting `app_data/` itself. It
+refuses to run while the Controller is up and never reaches into a remote
+durability backend.
 
 ## Scope
 
 `flz reset` resolves every `app_data/` root as `<app_data root>/<name>`.
 The root is `--app-data-root`, else `FLEZHA_APP_DATA_ROOT`, else `./app_data`.
 Per-store path overrides such as `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`,
-`FLEZHA_DLQ_DIR` and `FLEZHA_SCHEDULE_DIR` are not consulted: a store
-relocated that way is not found and not cleared, `--include-dlq` and
-`--include-schedules` included.
+`FLEZHA_DLQ_DIR`, `FLEZHA_SCHEDULE_DIR` and `FLEZHA_AUTHZ_DIR` are not
+consulted: a store relocated that way is not found and not cleared, whichever
+flag names it.
 
 Which subtrees exist and how each is treated is one declaration, read by both
 runtimes: `lib/flezha/layout/table.ex` on the controller's side and
@@ -33,18 +34,41 @@ in use.
 | `app_data/certs/`             | TLS material                           | `--include-certs`     |
 | `app_data/dlq/`               | parked dead-letter records             | `--include-dlq`       |
 | `app_data/schedules/`         | every schedule                         | `--include-schedules` |
+| `app_data/auth/`              | tokens, role bindings, namespaces      | `--include-auth`      |
+| `app_data/audit/`             | the audit trail                        | `--include-audit`     |
+| `app_data/plugins/`           | installed plugins                      | `--include-plugins`   |
 | the resolved socket directory | Flezha's own UDS socket files          | `--include-sockets`   |
-| `app_data/auth/`              | tokens, role bindings, namespaces      | never                 |
-| `app_data/audit/`             | the audit trail                        | never                 |
-| `app_data/plugins/`           | installed plugins                      | never                 |
 | `logs/`                       | the controller's log file              | never                 |
 
-`--all` is every `--include-` flag above. A `never` row is reported as kept,
-`not reset's to clear`, whatever the flags: clearing `auth/` would destroy an
-operator's tokens, and an audit trail one command can erase is a weaker audit
-trail. `logs/` is named where the log file's default (`logs/flezha.log`) puts
-it, relative to the working directory: it is not under the data root, and
-`--app-data-root` does not move it.
+`--all` is every `--include-` flag above. The `never` row is reported as kept,
+`not reset's to clear`, whatever the flags. `logs/` is named where the log
+file's default (`logs/flezha.log`) puts it, relative to the working directory:
+it is not under the data root, `--app-data-root` does not move it, and a
+controller started from another directory or with `FLEZHA_LOG_PATH` logs
+somewhere reset cannot see, so reset never empties it.
+
+## Clearing the auth store, the audit trail and plugins
+
+These three are data an operator keeps on purpose, so a plain reset keeps them
+and each has a flag of its own. `--all` clears all three.
+
+- **`--include-auth` removes every credential.** Every token, runner
+  credentials included, every role binding and every namespace but `_system`
+  is gone. With authorization enabled (the prod default), the next start
+  writes a fresh one-time token to `<auth_dir>/bootstrap.token` and names the
+  path in its log. Until it is claimed the controller is in its fresh-install
+  posture: operator verbs are refused, and every runner is admitted with no
+  credential into any namespace but `_system` it names. Claim it at once with
+  `flz auth bootstrap <token>`, above all when the reset was meant to revoke a
+  leaked secret, then bind roles and issue runner credentials again.
+- **`--include-audit` erases the audit trail.** Copy `app_data/audit/` first if
+  it must be kept.
+- **`--include-plugins` removes every installed plugin.** Install them again
+  after the next start.
+
+With a remote durability backend configured, the next boot restores the auth
+store from it, as it does the schedules; see "A clean slate needs
+`FLEZHA_DURABILITY_BACKEND=none`" below.
 
 ## The socket directory
 
@@ -102,8 +126,11 @@ flz reset [OPTIONS]
 | `--include-certs`        | Also clear `app_data/certs/*`.                                                 |
 | `--include-dlq`          | Also clear `app_data/dlq/*`: every parked dead-letter record.                 |
 | `--include-schedules`    | Also clear `app_data/schedules/*`: every schedule.                            |
+| `--include-auth`         | Also clear `app_data/auth/*`: every token and role binding (see above).       |
+| `--include-audit`        | Also clear `app_data/audit/*`: the audit trail.                               |
+| `--include-plugins`      | Also clear `app_data/plugins/*`: every installed plugin.                      |
 | `--include-sockets`      | Also unlink Flezha's socket files in the resolved socket directory (see above). |
-| `--all`                  | `--include-certs --include-dlq --include-schedules --include-sockets`.         |
+| `--all`                  | Every `--include-` flag above.                                                 |
 | `--app-data-root <PATH>` | Override the `app_data/` root (precedence over `FLEZHA_APP_DATA_ROOT`).        |
 | `--probe-timeout-ms <N>` | Live-node probe timeout in ms (default `1000`).                                |
 | `--json`                 | Machine-readable single-object output (`--output json` is the same request).   |
@@ -163,10 +190,10 @@ cleared     ./app_data/process_hub/                          (2 files, 16.0 KiB)
 kept        ./app_data/certs/                                (use --include-certs to clear)
 kept        ./app_data/dlq/                                  (use --include-dlq to clear)
 kept        ./app_data/schedules/                            (use --include-schedules to clear)
+kept        ./app_data/auth/                                 (use --include-auth to clear)
+kept        ./app_data/audit/                                (use --include-audit to clear)
+kept        ./app_data/plugins/                              (use --include-plugins to clear)
 kept        socket directory                                 (use --include-sockets to clear)
-kept        ./app_data/auth/                                 (not reset's to clear)
-kept        ./app_data/audit/                                (not reset's to clear)
-kept        ./app_data/plugins/                              (not reset's to clear)
 kept        logs/                                            (not reset's to clear)
 reset complete in 41 ms
 ```
@@ -174,7 +201,7 @@ reset complete in 41 ms
 `--json`:
 
 ```json
-{"cleared":[{"root":"./app_data/state","files":12,"bytes":4509876},{"root":"./app_data/process_hub","files":2,"bytes":16384}],"kept":[{"root":"./app_data/certs","reason":"use --include-certs to clear"},{"root":"./app_data/dlq","reason":"use --include-dlq to clear"},{"root":"./app_data/schedules","reason":"use --include-schedules to clear"},{"root":"socket directory","reason":"use --include-sockets to clear"},{"root":"./app_data/auth","reason":"not reset's to clear"},{"root":"./app_data/audit","reason":"not reset's to clear"},{"root":"./app_data/plugins","reason":"not reset's to clear"},{"root":"logs","reason":"not reset's to clear"}],"duration_ms":41,"dry_run":false}
+{"cleared":[{"root":"./app_data/state","files":12,"bytes":4509876},{"root":"./app_data/process_hub","files":2,"bytes":16384}],"kept":[{"root":"./app_data/certs","reason":"use --include-certs to clear"},{"root":"./app_data/dlq","reason":"use --include-dlq to clear"},{"root":"./app_data/schedules","reason":"use --include-schedules to clear"},{"root":"./app_data/auth","reason":"use --include-auth to clear"},{"root":"./app_data/audit","reason":"use --include-audit to clear"},{"root":"./app_data/plugins","reason":"use --include-plugins to clear"},{"root":"socket directory","reason":"use --include-sockets to clear"},{"root":"logs","reason":"not reset's to clear"}],"duration_ms":41,"dry_run":false}
 ```
 
 `dry_run` is `true` for both `--dry-run` and a bare invocation.

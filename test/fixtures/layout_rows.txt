@@ -6,9 +6,12 @@
 # an operator could not tell which one was right.
 #
 # `default` is cleared on every reset, `flag` only when the operator asks for
-# it by name, and `never` is not reset's to clear: clearing `auth` would
-# destroy an operator's tokens, and an audit trail one command can erase is a
-# weaker audit trail. Reset reports every row, `never` rows as kept.
+# it by name, and `never` is not reset's to clear. An operator's tokens, the
+# audit trail and installed plugins are data someone keeps on purpose, so each
+# is a flag of its own rather than part of every reset. The log directory is
+# `never`: it is named relative to wherever the controller runs, and reset
+# cannot tell which directory that was. Reset reports every row, `never` rows
+# as kept.
 #
 # Order is the order reset reports.
 state|default
@@ -16,8 +19,8 @@ process_hub|default
 certs|flag
 dlq|flag
 schedules|flag
+auth|flag
+audit|flag
+plugins|flag
 sockets|flag
-auth|never
-audit|never
-plugins|never
 logs|never

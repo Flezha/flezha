@@ -67,10 +67,10 @@ defmodule Flezha.Layout.Table do
     {:certs, {:dirname, :ca_cert_path}, :plain, :flag},
     {:dlq, :dlq_dir, :plain, :flag},
     {:schedules, :schedule_dir, :plain, :flag},
+    {:auth, :authz_auth_dir, :owner, :flag},
+    {:audit, :audit_log_dir, :plain, :flag},
+    {:plugins, :plugin_root, :plain, :flag},
     {:sockets, :socket_files_path, :ladder, :flag},
-    {:auth, :authz_auth_dir, :owner, :never},
-    {:audit, :audit_log_dir, :plain, :never},
-    {:plugins, :plugin_root, :plain, :never},
     {:logs, {:dirname, :log_path}, :plain, :never}
   ]
 

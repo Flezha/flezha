@@ -55,17 +55,19 @@ that moves a subtree moves it for the controller only.
 | certs | `FLEZHA_CA_CERT_PATH` and its siblings | `--include-certs` |
 | dlq | `FLEZHA_DLQ_DIR` | `--include-dlq` |
 | schedules | `FLEZHA_SCHEDULE_DIR` | `--include-schedules` |
+| auth | `FLEZHA_AUTHZ_DIR` | `--include-auth` |
+| audit | `FLEZHA_AUDIT_DIR` | `--include-audit` |
+| plugins | `FLEZHA_PLUGIN_ROOT` | `--include-plugins` |
 | sockets | `FLEZHA_SOCKET_FILES_PATH` (the ladder) | `--include-sockets` |
-| auth | `FLEZHA_AUTHZ_DIR` | never |
-| audit | `FLEZHA_AUDIT_DIR` | never |
-| plugins | `FLEZHA_PLUGIN_ROOT` | never |
 | logs | `FLEZHA_LOG_PATH` | never |
 
 Each knob's default and precedence are its row in the table below; this section
 states only which subtrees exist and what reset does with them. `flz reset`
-reports every row, a `never` row as kept, and reads none of these knobs but the
+reports every row, the `never` row as kept, and reads none of these knobs but the
 ladder's: it clears `<app_data root>/dlq`, not a directory `FLEZHA_DLQ_DIR`
-moved it to.
+moved it to. `--all` sets every flag in the table, so it also removes every
+credential and erases the audit trail; see [`operations/reset.md`](operations/reset.md)
+for the window until the fresh bootstrap token is claimed.
 Two rows are not subdirectories of the data root. `sockets` is resolved by
 the ladder described under
 [the socket-directory ladder](#the-socket-directory-ladder), is frequently outside

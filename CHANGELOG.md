@@ -34,33 +34,48 @@ branch-protection rule that requires the check still finds it.
 `mix bench.floor`, which printed the recorded floor for that job, is gone, and
 `docs/operations/benchmarking.md` no longer records a regression floor.
 
-### Changed: `flz reset` can clear parked DLQ records and schedules, and names everything it keeps
+### Changed: `flz reset` can clear every store under the data root, and names everything it keeps
 
-`flz reset` left `app_data/dlq/` and `app_data/schedules/` behind and did not
-mention them, so an operative re-created after a reset could meet its own old
-dead-letter records, and old schedules fired against a fresh state tree. Two
-new flags clear them: `--include-dlq` and `--include-schedules`. A plain reset
-still keeps both.
+`flz reset` left `app_data/dlq/`, `app_data/schedules/`, `app_data/auth/`,
+`app_data/audit/` and `app_data/plugins/` behind and did not mention them, so
+an operative re-created after a reset could meet its own old dead-letter
+records, and old schedules fired against a fresh state tree. Five new flags
+clear them: `--include-dlq`, `--include-schedules`, `--include-auth`,
+`--include-audit` and `--include-plugins`. A plain reset still keeps all five.
 
-**`--all` now also clears parked DLQ records and every schedule**, as well as
-the certificates and sockets it cleared before. A script that runs
-`flz reset --yes --all` and meant to keep either should name the flags it
-wants instead.
+**`flz reset --yes --all` now clears all five**, as well as the certificates
+and sockets it cleared before. That means it:
+
+- **removes every credential.** Every token, runner credentials included,
+  every role binding and every namespace but `_system` is gone. With
+  authorization enabled (the prod default), the next start writes a fresh
+  bootstrap token to `<auth_dir>/bootstrap.token`. Until it is claimed with
+  `flz auth bootstrap <token>`, operator verbs are refused and every runner is
+  admitted with no credential into any namespace but `_system` it names, as on
+  a fresh install, so claim it at once; then bind roles and issue runner
+  credentials again.
+- **erases the audit trail.**
+- **removes every installed plugin.**
+- clears parked DLQ records and every schedule.
+
+A script that runs `flz reset --yes --all` and meant to keep any of these
+should name the flags it wants instead. With a remote durability backend
+configured, the next boot restores the auth store and the schedules from it,
+unless the backend is set to `none` for that boot or its prefix is purged
+first.
 
 The report now names every store a reset leaves behind, on every run and in
-`--json`: the two new ones with `use --include-dlq to clear` and
-`use --include-schedules to clear`, and `app_data/auth/`, `app_data/audit/`,
-`app_data/plugins/` and `logs/` with `not reset's to clear`. No flag clears
-those four; an audit trail one command can erase is a weaker audit trail. Like
-every other root, the two new ones are `<app_data root>/dlq` and
-`<app_data root>/schedules`; a store moved with `FLEZHA_DLQ_DIR` or
-`FLEZHA_SCHEDULE_DIR` is not found there.
+`--json`: each of the five with the flag that clears it, such as
+`use --include-auth to clear`, and `logs/` with `not reset's to clear`. No flag
+clears `logs/`: it is named relative to the directory the controller ran in,
+and reset cannot tell which directory that was. Like every other root, the
+five are `<app_data root>/<name>`; a store moved with its own variable, such as
+`FLEZHA_DLQ_DIR` or `FLEZHA_AUTHZ_DIR`, is not found there.
 
 A script that reads `--json` sees two differences. The `kept` list is never
-empty any more: under `--all` it still names those four stores. And both
-lists follow the layout's order (defaults, then the flag rows with the socket
-directory last among them, then the four kept stores), so the socket entry is
-no longer the fourth root.
+empty any more: under `--all` it still names `logs`. And both lists follow the
+layout's order (defaults, then the flag rows with the socket directory last
+among them, then `logs`), so the socket entry is no longer the fourth root.
 
 ### Fixed: a `flz` verb run during a controller's first start no longer locks the CLI out
 

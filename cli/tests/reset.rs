@@ -27,22 +27,23 @@ const DATA_ROOTS: &[&str] = &[
     "plugins",
 ];
 
-/// The subtrees of the data root the layout declares `never`: no flag, `--all`
-/// included, reaches them.
-const NEVER_CLEARED: &[&str] = &["auth", "audit", "plugins"];
+/// The subtrees of the data root a plain run keeps, each with the flag that
+/// clears it. `--all` sets every one.
+const OPT_IN: &[(&str, &str)] = &[
+    ("certs", "--include-certs"),
+    ("dlq", "--include-dlq"),
+    ("schedules", "--include-schedules"),
+    ("auth", "--include-auth"),
+    ("audit", "--include-audit"),
+    ("plugins", "--include-plugins"),
+];
 
-/// The reason a root no flag reaches is reported kept for.
+/// The reason a root no flag reaches is reported kept for. The log directory
+/// is the one such root.
 const NOT_RESETS: &str = "not reset's to clear";
 
-/// What a plain run keeps under the data root, and the reason it gives.
-const KEPT_UNDER_THE_ROOT: &[(&str, &str)] = &[
-    ("certs", "use --include-certs to clear"),
-    ("dlq", "use --include-dlq to clear"),
-    ("schedules", "use --include-schedules to clear"),
-    ("auth", NOT_RESETS),
-    ("audit", NOT_RESETS),
-    ("plugins", NOT_RESETS),
-];
+/// The log file's default, relative to the directory the command runs in.
+const LOG_FILE: &str = "logs/flezha.log";
 
 /// A controller that died hard: a socket file nothing is listening on. It has
 /// to be a real bound socket — a regular file with the same name probes
@@ -145,16 +146,6 @@ fn stderr_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-fn assert_the_never_rows_survive(f: &Fixture) {
-    for name in NEVER_CLEARED {
-        assert!(
-            !dir_is_empty(&f.root.join(name)),
-            "{} is never reset's to clear",
-            name
-        );
-    }
-}
-
 #[test]
 fn default_reset_clears_state_and_process_hub_and_keeps_every_other_root() {
     let f = Fixture::populated();
@@ -162,10 +153,9 @@ fn default_reset_clears_state_and_process_hub_and_keeps_every_other_root() {
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
     assert!(dir_is_empty(&f.root.join("state")));
     assert!(dir_is_empty(&f.root.join("process_hub")));
-    for name in ["certs", "dlq", "schedules"] {
+    for (name, _) in OPT_IN {
         assert!(!dir_is_empty(&f.root.join(name)), "{} needs its flag", name);
     }
-    assert_the_never_rows_survive(&f);
     assert!(f.socket_dir().join(CONTROL_SOCKET).exists());
     // Root inode preserved.
     assert!(f.root.exists());
@@ -185,30 +175,38 @@ fn assert_kept(text: &str, path: &str, reason: &str) {
     );
 }
 
+/// `--all` reaches every root under the data root, the operator's tokens, the
+/// audit trail and the installed plugins included. The log directory is named
+/// relative to wherever the command runs, so the run owns a working directory
+/// with a log in it.
 #[test]
 fn all_flag_clears_every_root() {
     let f = Fixture::populated();
-    let out = f.cmd().arg("--yes").arg("--all").output().unwrap();
-    assert!(out.status.success(), "{}", stdout_of(&out));
-    for name in ["state", "process_hub", "certs", "dlq", "schedules"] {
+    let cwd = TempDir::new().unwrap();
+    let log = cwd.path().join(LOG_FILE);
+    fs::create_dir_all(log.parent().unwrap()).unwrap();
+    fs::write(&log, "a controller's log").unwrap();
+
+    let out = f
+        .cmd()
+        .current_dir(cwd.path())
+        .arg("--yes")
+        .arg("--all")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    for name in DATA_ROOTS {
         assert!(dir_is_empty(&f.root.join(name)), "{} should be empty", name);
     }
-    assert_the_never_rows_survive(&f);
-    let text = stdout_of(&out);
-    for name in NEVER_CLEARED {
-        assert_kept(&text, &f.root.join(name).display().to_string(), NOT_RESETS);
-    }
-    assert_kept(&text, "logs", NOT_RESETS);
+    assert!(log.exists(), "the log directory is not reset's to clear");
+    assert_kept(&stdout_of(&out), "logs", NOT_RESETS);
     assert!(!f.socket_dir().join(CONTROL_SOCKET).exists());
     assert!(!f.socket_dir().join(STREAM_SOCKET).exists());
 }
 
 #[test]
 fn each_store_flag_clears_its_own_store_and_no_other() {
-    for (flag, cleared, kept) in [
-        ("--include-dlq", "dlq", "schedules"),
-        ("--include-schedules", "schedules", "dlq"),
-    ] {
+    for (cleared, flag) in OPT_IN {
         let f = Fixture::populated();
         let out = f.cmd().arg("--yes").arg(flag).output().unwrap();
         assert!(out.status.success(), "{}: {}", flag, stderr_of(&out));
@@ -218,7 +216,7 @@ fn each_store_flag_clears_its_own_store_and_no_other() {
             flag,
             cleared
         );
-        for other in [kept, "certs"] {
+        for (other, _) in OPT_IN.iter().filter(|(name, _)| name != cleared) {
             assert!(
                 !dir_is_empty(&f.root.join(other)),
                 "{} took {}",
@@ -226,19 +224,21 @@ fn each_store_flag_clears_its_own_store_and_no_other() {
                 other
             );
         }
-        assert_the_never_rows_survive(&f);
     }
 }
 
 /// Every path a plain run keeps, with its reason. The log directory is named
 /// where the log file's default puts it, `logs/`, which is not under the data
 /// root.
-fn kept_by_a_plain_run(f: &Fixture) -> Vec<(String, &'static str)> {
-    let mut kept: Vec<(String, &'static str)> = KEPT_UNDER_THE_ROOT
+fn kept_by_a_plain_run(f: &Fixture) -> Vec<(String, String)> {
+    let mut kept: Vec<(String, String)> = OPT_IN
         .iter()
-        .map(|(name, reason)| (f.root.join(name).display().to_string(), *reason))
+        .map(|(name, flag)| {
+            let path = f.root.join(name).display().to_string();
+            (path, format!("use {} to clear", flag))
+        })
         .collect();
-    kept.push(("logs".to_string(), NOT_RESETS));
+    kept.push(("logs".to_string(), NOT_RESETS.to_string()));
     kept
 }
 
@@ -252,7 +252,7 @@ fn a_plain_reset_names_every_root_it_keeps() {
     let text = stdout_of(&out);
 
     for (path, reason) in kept_by_a_plain_run(&f) {
-        assert_kept(&text, &path, reason);
+        assert_kept(&text, &path, &reason);
     }
 }
 

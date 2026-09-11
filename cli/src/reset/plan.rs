@@ -7,16 +7,20 @@ use std::path::{Path, PathBuf};
 use flz_transport::utility::socket_dir::{self, Role};
 use flz_transport::utility::socket_probe::{diagnose, Diagnosis, Reach};
 
-use super::{Flags, INCLUDE_CERTS, INCLUDE_DLQ, INCLUDE_SCHEDULES, INCLUDE_SOCKETS};
+use super::{
+    Flags, INCLUDE_AUDIT, INCLUDE_AUTH, INCLUDE_CERTS, INCLUDE_DLQ, INCLUDE_PLUGINS,
+    INCLUDE_SCHEDULES, INCLUDE_SOCKETS,
+};
+use crate::args::OptSpec;
 
 #[derive(Clone, Copy)]
 pub(super) enum ClearMode {
     /// In scope on every run.
     Default,
     /// In scope only when the operator passes this flag, which is also how the
-    /// root is reported when they did not. The table names the flag and the
-    /// field that carries it together, so the two cannot drift apart.
-    OptIn(&'static str, fn(&Flags) -> bool),
+    /// root is reported when they did not. The row is the only place a flag is
+    /// paired with its root, and `--all` is every such row.
+    OptIn(&'static OptSpec),
     /// Never in scope, whatever the flags. Still reported, so a run names every
     /// root it left behind.
     Never,
@@ -80,29 +84,31 @@ const UNRESOLVED_SOCKET_ROOT: &str = "socket directory";
 const ROOTS: &[(Source, ClearMode)] = &[
     (Source::AppData("state"), ClearMode::Default),
     (Source::AppData("process_hub"), ClearMode::Default),
-    (
-        Source::AppData("certs"),
-        ClearMode::OptIn(INCLUDE_CERTS.long, |f| f.include_certs),
-    ),
-    (
-        Source::AppData("dlq"),
-        ClearMode::OptIn(INCLUDE_DLQ.long, |f| f.include_dlq),
-    ),
+    (Source::AppData("certs"), ClearMode::OptIn(&INCLUDE_CERTS)),
+    (Source::AppData("dlq"), ClearMode::OptIn(&INCLUDE_DLQ)),
     (
         Source::AppData("schedules"),
-        ClearMode::OptIn(INCLUDE_SCHEDULES.long, |f| f.include_schedules),
+        ClearMode::OptIn(&INCLUDE_SCHEDULES),
     ),
+    (Source::AppData("auth"), ClearMode::OptIn(&INCLUDE_AUTH)),
+    (Source::AppData("audit"), ClearMode::OptIn(&INCLUDE_AUDIT)),
     (
-        Source::SocketLadder,
-        ClearMode::OptIn(INCLUDE_SOCKETS.long, |f| f.include_sockets),
+        Source::AppData("plugins"),
+        ClearMode::OptIn(&INCLUDE_PLUGINS),
     ),
-    // An operator's tokens, the audit trail, installed plugins and the logs
-    // outlive a reset: an audit trail one command can erase is a weaker one.
-    (Source::AppData("auth"), ClearMode::Never),
-    (Source::AppData("audit"), ClearMode::Never),
-    (Source::AppData("plugins"), ClearMode::Never),
+    (Source::SocketLadder, ClearMode::OptIn(&INCLUDE_SOCKETS)),
+    // The controller logs relative to the directory it ran in, or wherever its
+    // own knob points, and this command reads neither.
     (Source::WorkingDir("logs"), ClearMode::Never),
 ];
+
+/// The long spelling of every flag a row opts in by, in report order.
+pub(super) fn opt_in_flags() -> impl Iterator<Item = &'static str> {
+    ROOTS.iter().filter_map(|(_, mode)| match mode {
+        ClearMode::OptIn(flag) => Some(flag.long),
+        _ => None,
+    })
+}
 
 pub(super) enum Action {
     Clear,
@@ -185,8 +191,8 @@ pub(super) fn build_plan(flags: &Flags) -> Vec<Root> {
 fn out_of_scope(mode: ClearMode, flags: &Flags) -> Option<Action> {
     match mode {
         ClearMode::Default => None,
-        ClearMode::OptIn(_, included) if included(flags) => None,
-        ClearMode::OptIn(flag, _) => Some(Action::Keep(format!("use {} to clear", flag))),
+        ClearMode::OptIn(flag) if flags.included.contains(&flag.long) => None,
+        ClearMode::OptIn(flag) => Some(Action::Keep(format!("use {} to clear", flag.long))),
         ClearMode::Never => Some(Action::Keep("not reset's to clear".into())),
     }
 }
@@ -352,7 +358,7 @@ mod tests {
             .map(|(source, mode)| {
                 let word = match mode {
                     ClearMode::Default => "default",
-                    ClearMode::OptIn(_, _) => "flag",
+                    ClearMode::OptIn(_) => "flag",
                     ClearMode::Never => "never",
                 };
                 (source.row_name(), word)
@@ -369,10 +375,7 @@ mod tests {
         Flags {
             yes: true,
             dry_run: false,
-            include_certs: false,
-            include_dlq: false,
-            include_schedules: false,
-            include_sockets: false,
+            included: Vec::new(),
             json: false,
             probe_timeout_ms: 0,
             app_data_root: PathBuf::from("/nonexistent/app_data"),
@@ -385,34 +388,34 @@ mod tests {
             .unwrap_or_else(|| panic!("{} is kept and the report does not name it", path.display()))
     }
 
-    /// Where a run reports each row no flag reaches. The log file's default,
+    /// Where a run reports the one row no flag reaches. The log file's default,
     /// `logs/flezha.log`, is not under the data root, so its row is not either.
-    fn never_cleared(flags: &Flags) -> [PathBuf; 4] {
-        let root = &flags.app_data_root;
-        [
-            root.join("auth"),
-            root.join("audit"),
-            root.join("plugins"),
-            PathBuf::from("logs"),
-        ]
-    }
+    const LOG_DIR: &str = "logs";
 
-    /// Parked records and schedules are runtime data an operator resetting a
-    /// box usually wants gone, and data someone may have kept deliberately:
-    /// reset reaches each only through its own flag.
+    /// Every data-root store a flag clears, with the flag that clears it.
+    const OPT_IN_STORES: [(&str, &str); 6] = [
+        ("certs", "--include-certs"),
+        ("dlq", "--include-dlq"),
+        ("schedules", "--include-schedules"),
+        ("auth", "--include-auth"),
+        ("audit", "--include-audit"),
+        ("plugins", "--include-plugins"),
+    ];
+
+    /// Parked records, schedules, an operator's tokens, the audit trail and
+    /// installed plugins are data an operator resetting a box usually wants
+    /// gone, and data someone may have kept deliberately: reset reaches each
+    /// only through its own flag.
     #[test]
-    fn the_dlq_and_the_schedules_are_cleared_only_by_their_own_flags() {
-        for (name, flag) in [
-            ("dlq", "--include-dlq"),
-            ("schedules", "--include-schedules"),
-        ] {
+    fn each_store_is_cleared_only_by_its_own_flag() {
+        for (name, flag) in OPT_IN_STORES {
             let mode = ROOTS
                 .iter()
                 .find(|(source, _)| matches!(source, Source::AppData(n) if *n == name))
                 .map(|&(_, mode)| mode)
                 .unwrap_or_else(|| panic!("{} is a row reset cannot reach", name));
             assert!(
-                matches!(mode, ClearMode::OptIn(f, _) if f == flag),
+                matches!(mode, ClearMode::OptIn(f) if f.long == flag),
                 "{} is not cleared by {}",
                 name,
                 flag
@@ -424,43 +427,35 @@ mod tests {
     fn a_plain_reset_names_every_store_it_keeps() {
         let flags = plain_flags();
         let plan = build_plan(&flags);
-        for (name, reason) in [
-            ("dlq", "use --include-dlq to clear"),
-            ("schedules", "use --include-schedules to clear"),
-        ] {
+        for (name, flag) in OPT_IN_STORES {
             match &planned(&plan, &flags.app_data_root.join(name)).action {
-                Action::Keep(said) => assert_eq!(said, reason),
+                Action::Keep(said) => assert_eq!(said, &format!("use {} to clear", flag)),
                 Action::Clear => panic!("a plain reset would clear {}", name),
             }
         }
     }
 
-    /// The stores no flag reaches are reported too, so a run names everything
-    /// it left behind rather than only what it could have cleared.
+    /// The row no flag reaches is reported too, so a run names everything it
+    /// left behind rather than only what it could have cleared.
     #[test]
-    fn a_plain_reset_names_the_stores_that_are_not_its_to_clear() {
-        let flags = plain_flags();
-        let plan = build_plan(&flags);
-        for path in never_cleared(&flags) {
-            match &planned(&plan, &path).action {
-                Action::Keep(said) => assert_eq!(said, "not reset's to clear"),
-                Action::Clear => panic!("a reset would clear {}", path.display()),
-            }
+    fn a_plain_reset_names_the_root_that_is_not_its_to_clear() {
+        let plan = build_plan(&plain_flags());
+        match &planned(&plan, Path::new(LOG_DIR)).action {
+            Action::Keep(said) => assert_eq!(said, "not reset's to clear"),
+            Action::Clear => panic!("a reset would clear {}", LOG_DIR),
         }
     }
 
     /// Every flag `--all` sets, sockets aside: asking the ladder would make
     /// this a case about the machine it runs on.
     #[test]
-    fn the_include_flags_bring_the_dlq_and_the_schedules_into_scope() {
+    fn the_include_flags_bring_every_store_into_scope() {
         let flags = Flags {
-            include_certs: true,
-            include_dlq: true,
-            include_schedules: true,
+            included: OPT_IN_STORES.iter().map(|&(_, flag)| flag).collect(),
             ..plain_flags()
         };
         let plan = build_plan(&flags);
-        for name in ["certs", "dlq", "schedules"] {
+        for (name, _) in OPT_IN_STORES {
             assert!(
                 matches!(
                     planned(&plan, &flags.app_data_root.join(name)).action,
@@ -470,12 +465,10 @@ mod tests {
                 name
             );
         }
-        for path in never_cleared(&flags) {
-            assert!(
-                matches!(planned(&plan, &path).action, Action::Keep(_)),
-                "{} is never reset's to clear, whatever the flags",
-                path.display()
-            );
-        }
+        assert!(
+            matches!(planned(&plan, Path::new(LOG_DIR)).action, Action::Keep(_)),
+            "{} is never reset's to clear, whatever the flags",
+            LOG_DIR
+        );
     }
 }

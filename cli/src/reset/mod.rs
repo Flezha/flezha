@@ -10,7 +10,7 @@ use std::process::exit;
 use std::time::Instant;
 
 use clear::measure_and_clear;
-use plan::{build_plan, preflight_guard, Action, Root};
+use plan::{build_plan, opt_in_flags, preflight_guard, Action, Root};
 use report::{print_human, print_json};
 
 use crate::args::{app_data_root, OptSpec, Reading, APP_DATA_ROOT, JSON_SWITCH, OUTPUT};
@@ -21,6 +21,9 @@ pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run");
 const INCLUDE_CERTS: OptSpec = OptSpec::switch("--include-certs", "--include-certs");
 const INCLUDE_DLQ: OptSpec = OptSpec::switch("--include-dlq", "--include-dlq");
 const INCLUDE_SCHEDULES: OptSpec = OptSpec::switch("--include-schedules", "--include-schedules");
+const INCLUDE_AUTH: OptSpec = OptSpec::switch("--include-auth", "--include-auth");
+const INCLUDE_AUDIT: OptSpec = OptSpec::switch("--include-audit", "--include-audit");
+const INCLUDE_PLUGINS: OptSpec = OptSpec::switch("--include-plugins", "--include-plugins");
 const INCLUDE_SOCKETS: OptSpec = OptSpec::switch("--include-sockets", "--include-sockets");
 const ALL: OptSpec = OptSpec::switch("--all", "--all");
 const PROBE_TIMEOUT_MS: OptSpec =
@@ -35,6 +38,9 @@ pub(crate) const OPTIONS: &[OptSpec] = &[
     INCLUDE_CERTS,
     INCLUDE_DLQ,
     INCLUDE_SCHEDULES,
+    INCLUDE_AUTH,
+    INCLUDE_AUDIT,
+    INCLUDE_PLUGINS,
     INCLUDE_SOCKETS,
     ALL,
     OUTPUT,
@@ -51,27 +57,24 @@ pub(crate) const CONFLICTS: &[(&str, &str)] = &[(YES.long, DRY_RUN.long)];
 struct Flags {
     yes: bool,
     dry_run: bool,
-    include_certs: bool,
-    include_dlq: bool,
-    include_schedules: bool,
-    include_sockets: bool,
+    /// The long spelling of every opt-in flag in effect.
+    included: Vec<&'static str>,
     json: bool,
     probe_timeout_ms: u64,
     app_data_root: PathBuf,
 }
 
 /// The flags the walk read, in the shape the plan below wants them. `--all` is
-/// the one that means every `--include-` flag.
+/// every flag a row of the plan opts in by.
 fn flags(read: &Reading) -> Flags {
     let all = read.switch(ALL.long);
 
     Flags {
         yes: read.switch(YES.long),
         dry_run: read.switch(DRY_RUN.long),
-        include_certs: all || read.switch(INCLUDE_CERTS.long),
-        include_dlq: all || read.switch(INCLUDE_DLQ.long),
-        include_schedules: all || read.switch(INCLUDE_SCHEDULES.long),
-        include_sockets: all || read.switch(INCLUDE_SOCKETS.long),
+        included: opt_in_flags()
+            .filter(|flag| all || read.switch(flag))
+            .collect(),
         json: read.output_format() == "json",
         probe_timeout_ms: read
             .num::<u64>(PROBE_TIMEOUT_MS.long)

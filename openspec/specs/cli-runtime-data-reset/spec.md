@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Entity WAL/snapshot tree, ProcessHub durable registry; optionally certs, parked DLQ records, schedules and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts and every root it kept, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
+The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Entity WAL/snapshot tree, ProcessHub durable registry; optionally certs, parked DLQ records, schedules, the auth store, the audit trail, installed plugins and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-auth`, `--include-audit`, `--include-plugins`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts and every root it kept, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
 ## Requirements
 ### Requirement: `flz reset` clears Controller durable runtime data on disk
 
@@ -11,9 +11,9 @@ The CLI SHALL provide a top-level `flz reset` subcommand that clears the Control
 - `app_data/state/` — per-Entity WAL/snapshot/outbox files written by `operative-state-persistence`.
 - `app_data/process_hub/` — ProcessHub durable registries written by `auto-restore-on-boot`.
 
-The command SHALL leave `app_data/certs/`, `app_data/dlq/`, `app_data/schedules/` and the socket directory intact unless explicitly requested via `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-sockets`, or `--all`, which requests all four. The socket directory is resolved through the shared ladder and is frequently not under `app_data/`.
+The command SHALL leave `app_data/certs/`, `app_data/dlq/`, `app_data/schedules/`, `app_data/auth/`, `app_data/audit/`, `app_data/plugins/` and the socket directory intact unless explicitly requested via `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-auth`, `--include-audit`, `--include-plugins`, `--include-sockets`, or `--all`, which requests all seven. The socket directory is resolved through the shared ladder and is frequently not under `app_data/`.
 
-The command SHALL NOT clear `app_data/auth/`, `app_data/audit/`, `app_data/plugins/` or the log directory under any flag, `--all` included: an operator's tokens, the audit trail, installed plugins and the logs outlive a reset.
+The command SHALL NOT clear the log directory under any flag, `--all` included: its default is relative to the directory the Controller ran in, and the command cannot tell which directory that was.
 
 The command SHALL NEVER delete `app_data/` itself, nor the socket directory itself; it only clears the contents of the listed roots. A path-equality assertion SHALL prevent unlinking `app_data/` or any of the cleared roots themselves.
 
@@ -21,25 +21,25 @@ The command SHALL be idempotent: a missing root directory is success, not error.
 
 #### Scenario: Default reset clears state and process_hub but keeps certs and sockets
 
-- **GIVEN** the Controller is not running and `app_data/` contains `state/`, `process_hub/`, `certs/`, `dlq/`, `schedules/` and `audit/` with files, and the resolved socket directory holds socket files
+- **GIVEN** the Controller is not running and `app_data/` contains `state/`, `process_hub/`, `certs/`, `dlq/`, `schedules/`, `auth/`, `audit/` and `plugins/` with files, and the resolved socket directory holds socket files
 - **WHEN** the operator runs `flz reset --yes`
-- **THEN** `app_data/state/` is empty, `app_data/process_hub/` is empty, and `app_data/certs/`, `app_data/dlq/`, `app_data/schedules/`, `app_data/audit/` and the socket directory are unchanged
+- **THEN** `app_data/state/` is empty, `app_data/process_hub/` is empty, and `app_data/certs/`, `app_data/dlq/`, `app_data/schedules/`, `app_data/auth/`, `app_data/audit/`, `app_data/plugins/` and the socket directory are unchanged
 - **AND** `app_data/` itself still exists with the same inode
 
 #### Scenario: Each store flag clears its own store and no other
 
-- **GIVEN** the Controller is not running and `app_data/` contains `certs/`, `dlq/`, `schedules/` and `audit/` with files
+- **GIVEN** the Controller is not running and `app_data/` contains `certs/`, `dlq/`, `schedules/`, `auth/`, `audit/` and `plugins/` with files
 - **WHEN** the operator runs `flz reset --yes --include-dlq`
-- **THEN** `app_data/dlq/` is empty, and `app_data/schedules/`, `app_data/certs/` and `app_data/audit/` are unchanged
-- **AND** `flz reset --yes --include-schedules` on the same starting tree empties `app_data/schedules/` and leaves `app_data/dlq/` unchanged
+- **THEN** `app_data/dlq/` is empty, and `app_data/certs/`, `app_data/schedules/`, `app_data/auth/`, `app_data/audit/` and `app_data/plugins/` are unchanged
+- **AND** each of `--include-certs`, `--include-schedules`, `--include-auth`, `--include-audit` and `--include-plugins`, on the same starting tree, empties its own store and leaves the other five unchanged
 
 #### Scenario: `--all` clears every documented root
 
-- **GIVEN** the Controller is not running, `app_data/` contains `state/`, `process_hub/`, `certs/`, `dlq/`, `schedules/` and `audit/`, and the resolved socket directory holds Flezha sockets
+- **GIVEN** the Controller is not running, `app_data/` contains `state/`, `process_hub/`, `certs/`, `dlq/`, `schedules/`, `auth/`, `audit/` and `plugins/`, the resolved socket directory holds Flezha sockets, and the log directory holds a log file
 - **WHEN** the operator runs `flz reset --yes --all`
-- **THEN** `app_data/state/`, `app_data/process_hub/`, `app_data/certs/`, `app_data/dlq/` and `app_data/schedules/` exist and are empty after the command returns
+- **THEN** `app_data/state/`, `app_data/process_hub/`, `app_data/certs/`, `app_data/dlq/`, `app_data/schedules/`, `app_data/auth/`, `app_data/audit/` and `app_data/plugins/` exist and are empty after the command returns
 - **AND** the Flezha sockets in the resolved socket directory are unlinked
-- **AND** `app_data/audit/` is unchanged
+- **AND** the log file is unchanged, and the log directory is reported kept with `not reset's to clear`
 
 #### Scenario: Idempotent over a missing root
 
@@ -127,14 +127,14 @@ The walk that computes file counts and bytes SHALL be the same in dry-run and ap
 #### Scenario: Human output enumerates roots
 
 - **WHEN** the operator runs `flz reset --yes` against a populated `app_data/`
-- **THEN** stdout contains lines such as `cleared app_data/state/ (12 files, 4.3 MiB)` for each cleared root, `kept app_data/certs/ (use --include-certs to clear)` for each root a flag would clear, `kept app_data/audit/ (not reset's to clear)` for each root no flag clears, and a final `reset complete in <N> ms` line
+- **THEN** stdout contains lines such as `cleared app_data/state/ (12 files, 4.3 MiB)` for each cleared root, `kept app_data/certs/ (use --include-certs to clear)` for each root a flag would clear, `kept logs/ (not reset's to clear)` for the root no flag clears, and a final `reset complete in <N> ms` line
 
 #### Scenario: A plain reset names every store it keeps
 
 - **GIVEN** the Controller is not running and `app_data/` holds every subtree the layout declares
 - **WHEN** the operator runs `flz reset --yes`, or `flz reset --dry-run --json`
-- **THEN** `app_data/dlq/` is reported kept with `use --include-dlq to clear` and `app_data/schedules/` with `use --include-schedules to clear`
-- **AND** `app_data/auth/`, `app_data/audit/`, `app_data/plugins/` and the log directory are each reported kept with `not reset's to clear`
+- **THEN** `app_data/dlq/` is reported kept with `use --include-dlq to clear`, `app_data/schedules/` with `use --include-schedules to clear`, `app_data/auth/` with `use --include-auth to clear`, `app_data/audit/` with `use --include-audit to clear` and `app_data/plugins/` with `use --include-plugins to clear`
+- **AND** the log directory is reported kept with `not reset's to clear`
 
 #### Scenario: The socket root names its rung
 
@@ -331,11 +331,11 @@ is reported as kept. Adding a subtree to the declaration SHALL NOT silently enla
 
 #### Scenario: A subtree the declaration marks `never` is not cleared
 
-- **GIVEN** the Controller is not running and the data root holds every declared subtree
+- **GIVEN** the Controller is not running, the data root holds every declared subtree, and
+  the log directory holds a log file
 - **WHEN** the operator runs `flz reset --yes --all`
-- **THEN** the subtrees declared `never` — among them the auth store and the audit log —
-  SHALL be untouched and reported as kept, and only the rows declaring `default` or a
-  flag SHALL be cleared
+- **THEN** the row declared `never`, the log directory, SHALL be untouched and reported as
+  kept, and only the rows declaring `default` or a flag SHALL be cleared
 
 #### Scenario: The socket row is not under the data root
 

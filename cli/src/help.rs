@@ -424,13 +424,23 @@ DESCRIPTION:
         app_data/certs/         (--include-certs)
         app_data/dlq/           (--include-dlq)
         app_data/schedules/     (--include-schedules)
+        app_data/auth/          (--include-auth)
+        app_data/audit/         (--include-audit)
+        app_data/plugins/       (--include-plugins)
         <socket directory>      (--include-sockets)
 
+    Clearing app_data/auth/ removes every token (runner credentials
+    included), every role binding and every namespace but _system. With
+    authorization on and no remote durability backend, the next start
+    writes a fresh bootstrap token. Until it is claimed, operator verbs
+    are refused and every runner is admitted with no credential, into
+    any namespace but _system it names: claim it at once.
+
     Never cleared, and reported as kept:
-        app_data/auth/, app_data/audit/, app_data/plugins/, logs/
+        logs/
 
     Every app_data/ root is <data root>/<name>: a store moved by its own
-    variable (FLEZHA_DLQ_DIR, FLEZHA_SCHEDULE_DIR, ...) is neither found nor
+    variable (FLEZHA_DLQ_DIR, FLEZHA_AUTHZ_DIR, ...) is neither found nor
     cleared. logs/ is the log file's default directory, in the working
     directory, and --app-data-root does not move it.
 
@@ -447,8 +457,11 @@ OPTIONS:
     --include-certs           Also clear app_data/certs/
     --include-dlq             Also clear app_data/dlq/ (every parked dead-letter record)
     --include-schedules       Also clear app_data/schedules/ (every schedule)
+    --include-auth            Also clear app_data/auth/ (every token and role binding)
+    --include-audit           Also clear app_data/audit/ (the audit trail)
+    --include-plugins         Also clear app_data/plugins/ (every installed plugin)
     --include-sockets         Also clear Flezha's sockets in the resolved socket directory
-    --all                     Every opt-in clear above: certs, dlq, schedules and sockets
+    --all                     Every opt-in clear above, auth and audit included
     --app-data-root <PATH>    Override the `app_data/` root (else FLEZHA_APP_DATA_ROOT or ./app_data)
     --probe-timeout-ms <N>    Live-node probe timeout (default 1000)
     --json                    Machine-readable output (--output json is the same request)
@@ -466,7 +479,7 @@ EXAMPLES:
     flz reset                          # plan only, exit 1
     flz reset --dry-run                # plan only, exit 0
     flz reset --yes                    # default scope (state, process_hub)
-    flz reset --yes --all              # also clear certs, dlq, schedules, sockets
+    flz reset --yes --all              # every opt-in clear too, auth included
     flz reset --yes --json             # machine-readable output"#;
 
 pub(crate) const ROLE: Help = r#"flz role - Principal → role bindings
