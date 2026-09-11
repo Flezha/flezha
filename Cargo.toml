@@ -44,7 +44,7 @@ thiserror = "1.0"
 tracing = "0.1"
 
 # Every crate opts in with `[lints] workspace = true`. The clippy ceiling is
-# docs/refactor/charter.md §7; its threshold lives in clippy.toml.
+# stated in docs/code_standards.md, "Ceilings"; its threshold lives in clippy.toml.
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)", "cfg(loom)"] }
 

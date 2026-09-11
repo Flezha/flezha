@@ -30,7 +30,7 @@ let _ = ctx.spawn_workflow(
 ctx.spawnWorkflow("triage@" + subject, "triage", input.getBytes(UTF_8), IfRunning.DELIVER);
 ```
 
-Worked examples: `sdk/rust/examples/spawn_workflow_worker.rs`, Java `E08_SpawnWorkflowWorker`.
+Worked example: `sdk/rust/examples/spawn_workflow_worker.rs`.
 
 ## One verb: spawn-or-deliver
 

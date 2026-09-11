@@ -22,6 +22,8 @@ gate is the enforcement; this page is the rule.
   second job, and splitting it on the state it mutates is almost always the cut.
 - **No function over 50 lines.** A macro body counts as a function; so does a
   builder method and a `match` arm block long enough to be one.
+- **No Rust function over cognitive complexity 25.** `cargo clippy --workspace
+  --all-targets` is the reading; the threshold is in `clippy.toml`.
 - **No new dependency cycle.** `mix xref graph --format cycles` is the reading
   for Elixir. A change may not add a module to an existing cycle either: a cycle
   that grows is a cycle that is getting harder to cut, and the count alone will

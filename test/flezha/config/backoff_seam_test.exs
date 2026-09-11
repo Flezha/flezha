@@ -1,12 +1,18 @@
 defmodule Flezha.Config.BackoffSeamTest do
   @moduledoc """
-  The two tables are the only place a wait or a duration is written.
+  The two tables are the only place in `lib/flezha` a wait or a duration is
+  written.
 
   Eight clauses: the tree carries no ladder arithmetic and no millisecond
   literal beside them; every row is read; every derivation holds; the
   environment translates each row once; the SDK's rows equal the constants
   `flz_core` compiles; the ladder's own arithmetic behaves; and the deployment
   manifests carry the grace the table derives.
+
+  The SDK rows pin the two ladders every SDK is held to, not every sleep in
+  `flz_core`. Its UDS socket-connect poll, in
+  `flz_core/src/command/streams_connect.rs`, is deliberately not a row: it is
+  no shared default, and nothing observes it across SDKs.
   """
   use ExUnit.Case, async: true
 
