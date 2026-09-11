@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed: a burst to a QUIC runner arrives at once again
+
+Earlier in this release a runner's QUIC client stopped letting one slow stream reader
+stall its whole connection: a reader 64 chunks behind now pauses only its own stream,
+and wakes the client when it has room again. That wake could be lost. When more than
+64 chunks arrived at once for a reader that was idle, the reader never woke the
+client, and the rest of the burst waited for the client's next timer, up to the 5 s
+keep-alive. The reader now wakes the client whenever it takes a chunk from a full
+queue, including a read that was already waiting when the burst arrived, so the
+burst arrives at once.
+
 ### Fixed: a partition group keeps its members across a registry replay
 
 After a reconcile replay, whether inside a running hub or on a warm restart, a running

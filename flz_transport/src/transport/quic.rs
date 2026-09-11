@@ -99,11 +99,7 @@ impl Read for ChannelReader {
         }
 
         // Buffer exhausted — wait for next chunk from driver, honoring the
-        // read deadline if one is armed. A full channel here is the driver
-        // holding this stream's next chunk, and this read is what makes the
-        // room, so the driver is woken once the chunk is in hand rather than
-        // left to resume at a timer the 5 s keep-alive can put seconds away.
-        let backed_up = self.rx.is_full();
+        // read deadline if one is armed.
         let chunk = match self.read_timeout {
             Some(d) => match self.rx.recv_timeout(d) {
                 Ok(c) => c,
@@ -120,7 +116,12 @@ impl Read for ChannelReader {
                 Err(_) => return Ok(0), // Channel closed = stream finished
             },
         };
-        if backed_up {
+        // A chunk taken from a full channel makes room for the one the driver
+        // holds, so the driver is woken rather than left to the 5 s keep-alive.
+        // Asked after the wait, not before it: a burst can fill the channel
+        // while this read waits. Only the driver adds to the channel and only
+        // this read takes from it, so a full one is never missed.
+        if self.rx.len() + 1 >= CHUNK_CHANNEL_DEPTH {
             if let Some(waker) = &self.waker {
                 let _ = waker.wake();
             }
