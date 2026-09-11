@@ -581,3 +581,39 @@ If the runtime mutation fails after a successful durable write, and the controll
 - **AND** a later restart SHALL NOT resurrect a plugin whose enable never succeeded
 - **AND** the rollback SHALL NOT run on the teardown path, where removing the entry would erase a migrating operative's whole plugin manifest
 
+### Requirement: `flz boot await` SHALL wait for a controller it cannot reach yet
+
+`flz boot await` SHALL treat a controller it cannot reach as not ready yet and ask
+again inside the same timeout, rather than exiting on the first failed connect, and
+SHALL print nothing while it waits. Its first request SHALL carry the whole timeout and
+each later request only what is left of it. A controller that answered SHALL be asked
+once: its verdict, ready or not, is the answer. A controller lost in the middle of the
+call answers nothing and fails the same way as one never reached, so it SHALL be asked
+again inside what is left of the timeout. When the timeout runs out with the controller
+still unreachable, the CLI SHALL exit 1 with a line naming the causes a failed connect
+cannot tell apart: a controller that is not up yet or stopped after it was reached, a
+cookie that is not the controller's, and a node name that is not the controller's. A
+timeout of zero SHALL ask exactly once.
+
+#### Scenario: A controller started a moment ago is waited for
+
+- **GIVEN** a controller launched with `flz controller start --mode daemon` whose distribution is not up yet
+- **WHEN** the operator runs `flz boot await --timeout 30`
+- **THEN** the CLI asks again until the controller answers, prints nothing while it cannot reach it, and exits with the controller's verdict
+- **AND** its first request asks the controller for 30 000 ms and every later one for less than the one before
+
+#### Scenario: A controller that never answers is given up on at the timeout
+
+- **WHEN** `flz boot await --timeout 1` cannot reach a controller
+- **THEN** the CLI asks more than once, then exits 1 with a line naming a controller not up yet or stopped after it was reached, the cookie and the node name
+
+#### Scenario: A controller that answers not ready is asked once
+
+- **WHEN** the controller answers a verdict below `:ready`
+- **THEN** the CLI exits non-zero with that verdict on stderr and does not ask again
+
+#### Scenario: A zero timeout asks once even when the controller is unreachable
+
+- **WHEN** `flz boot await --timeout 0` cannot reach a controller
+- **THEN** the CLI asks exactly once and exits 1
+

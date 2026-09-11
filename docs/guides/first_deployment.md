@@ -22,9 +22,14 @@ script it shells out to for every RPC.
 ## 2. Start the controller
 
 ```sh
-flz controller start
+flz controller start --mode daemon
 flz boot await          # blocks until the boot completes, 60s default
 ```
+
+`--mode daemon` returns once the controller is launched. Without it the
+controller runs in the foreground of this terminal and the next line never
+runs. A daemon's log is not on your terminal: see
+[where a daemon's output goes](../operations/deployment/bare_metal.md#where-a-daemons-output-goes).
 
 `flz boot`, not `flz controller status`: the boot verbs are public, so a
 liveness check needs no credential. You have none until step 3.

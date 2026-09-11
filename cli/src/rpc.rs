@@ -8,6 +8,7 @@
 //! and the caller's token joins that list here and nowhere else: no verb can be
 //! gated on the controller and token-less on the wire.
 
+use std::io::Write;
 use std::process::{exit, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 use std::{env, io};
@@ -115,7 +116,7 @@ pub(crate) fn run(
     );
 }
 
-/// The request `run` sends, for the two verbs that read the child's stdout.
+/// The request `run` sends, for the calls that do not go through `run`.
 pub(crate) fn expression(
     fun: &str,
     positional: &[String],
@@ -146,6 +147,38 @@ pub(crate) fn captured(expression: String, failure: Failure) -> String {
             String::new()
         }
     }
+}
+
+/// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
+/// node: one that is not up yet, one whose cookie is not this shell's, a name
+/// nobody holds, and a node lost mid-call all read the same. Its exit code is
+/// the one a reached node's refusal has, so this line is the only difference.
+const NOCONNECTION: &str = "--rpc-eval : RPC failed with reason :noconnection";
+
+/// `run`, for a verb whose job is to wait for the node: when the node could
+/// not be reached at all, the child's status comes back and nothing is printed
+/// or exited, so the verb can ask again. The child's stderr is held until it
+/// exits, which is why the verbs that stream a failure use `run`.
+pub(crate) fn run_if_reachable(expression: String, failure: Failure) -> Result<(), ExitStatus> {
+    let output = flzvm()
+        .arg("rpc")
+        .arg(expression)
+        .stdout(Stdio::inherit())
+        .output();
+
+    if let Ok(output) = &output {
+        if !output.status.success()
+            && String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .any(|line| line == NOCONNECTION)
+        {
+            return Err(output.status);
+        }
+        let _ = io::stderr().write_all(&output.stderr);
+    }
+
+    verdict(output.map(|output| output.status), failure);
+    Ok(())
 }
 
 /// Apply a failure policy to a child that has already been waited on.

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Fixed: `flz boot await` waits for a controller that is still starting
+
+For a few seconds after `flz controller start --mode daemon` the controller cannot be
+reached, and `flz boot await` failed at once with `--rpc-eval : RPC failed with reason
+:noconnection`, so a script that started a controller and then awaited it failed unless
+it retried the await itself. `flz boot await` now keeps asking inside the same
+`--timeout` until the controller answers, printing nothing meanwhile, and the
+controller's verdict is the answer. A controller it did reach is still asked once, and
+`--timeout 0` still asks once. When the timeout runs out with the controller still
+unreachable it exits 1, as a timeout always has, with a line saying what that can mean:
+the controller is not up yet or stopped after it was reached, or the shell's cookie or
+node name is not the controller's. The failed connect reads the same for all of them, so
+a wrong cookie or node name, or a controller that exited during its boot, is now reported
+when the timeout runs out rather than at once, and a controller that refuses the cookie
+logs two `Invalid challenge reply` errors per attempt meanwhile, about four a second,
+where the single attempt used to log two.
+
+The first-deployment guide now starts the controller with `--mode daemon`. Without it
+`flz controller start` stays in the foreground, and the guide's next line, `flz boot
+await`, never ran.
+
 ### Fixed: a topology refusal reaches a Node, Ruby or PHP author under its own name
 
 A Node operative builds its graph while its module loads, so a refusal its builder
