@@ -216,28 +216,26 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   # one the library is about to sleep.
   @impl Fresh
   def handle_disconnect(_code, _reason, state) do
-    {:reconnect, announce_reconnect(state)}
+    {_delay, state} = announce_reconnect(state)
+    {:reconnect, state}
   end
 
   @impl Fresh
   def handle_error(reason, state) do
-    Logger.warning("Websocket error: #{inspect(reason)}")
-    {:reconnect, announce_reconnect(state)}
+    {delay, state} = announce_reconnect(state)
+
+    Logger.warning(
+      "Websocket error: #{inspect(reason)}; " <>
+        "reconnect attempt #{state.reconnect_attempt} in #{delay} ms"
+    )
+
+    {:reconnect, state}
   end
 
   defp announce_reconnect(state) do
     attempt = Map.get(state, :reconnect_attempt, 0) + 1
-    _ = Backoff.delay(:ws_reconnect, attempt) |> announce_wait(attempt, state.plugin_id)
-    state |> Map.put(:websocket_established?, false) |> Map.put(:reconnect_attempt, attempt)
-  end
-
-  defp announce_wait(delay, attempt, plugin_id) do
-    :telemetry.execute([:flezha, :backoff, :wait], %{delay_ms: delay, attempt: attempt}, %{
-      ladder: :ws_reconnect,
-      target: plugin_id
-    })
-
-    delay
+    delay = Backoff.arm(:ws_reconnect, attempt, state.plugin_id)
+    {delay, Map.merge(state, %{websocket_established?: false, reconnect_attempt: attempt})}
   end
 
   # Any control frame (ping/pong) proves the socket is alive, so it

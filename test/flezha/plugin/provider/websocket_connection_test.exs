@@ -15,6 +15,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2, activate: 2]
 
   alias Flezha.Plugin.Provider.Websocket
@@ -270,6 +271,35 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
       refute_received {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}
       refute_received {:telemetry, [:flezha, :plugin, :websocket, :idle_reconnect], _, _}
       Process.exit(pid, :kill)
+    end
+  end
+
+  describe "a failed connect says which reconnect it is and how long it waits" do
+    setup do
+      # The suite's primary level is :error; this lets the warning through.
+      :ok = :logger.set_module_level(Websocket.Client, :all)
+      on_exit(fn -> :logger.unset_module_level(Websocket.Client) end)
+    end
+
+    test "the warning names the attempt and the delay the ladder announces" do
+      attach_telemetry([:flezha, :backoff, :wait])
+      plugin_id = "reconnect_log_#{System.unique_integer([:positive])}"
+      error = {:connecting_failed, %Mint.TransportError{reason: :econnrefused}}
+
+      log =
+        capture_log(fn ->
+          s = state(plugin_id: plugin_id, websocket_established?: false)
+          assert {:reconnect, s} = Websocket.Client.handle_error(error, s)
+          assert {:reconnect, _} = Websocket.Client.handle_error(error, s)
+        end)
+
+      for attempt <- [1, 2] do
+        assert_received {:telemetry, [:flezha, :backoff, :wait],
+                         %{attempt: ^attempt, delay_ms: delay},
+                         %{ladder: :ws_reconnect, target: ^plugin_id}}
+
+        assert log =~ "#{inspect(error)}; reconnect attempt #{attempt} in #{delay} ms"
+      end
     end
   end
 

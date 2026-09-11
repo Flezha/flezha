@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Changed: a websocket plugin's connection warning names the retry and its wait
+
+The `Websocket error:` warning a websocket plugin logs when its connection fails
+now ends with the retry it is about to make and how long it waits first, such as
+`; reconnect attempt 1 in 250 ms`, so a retry that has reached its 30 second
+ceiling no longer reads as a fixed interval.
+
+### Fixed: one slow reader no longer loses a QUIC runner its connection
+
+A stream reader that fell behind on a runner's QUIC client blocked the thread
+that serves the whole connection, so the keepalives stopped too and the
+controller declared the runner dead while the runner reported nothing wrong. A
+reader 64 chunks behind now pauses only its own stream, and QUIC's flow control
+asks the controller to slow down on it. Every other stream, the control channel
+included, keeps moving, and nothing is dropped or reordered.
+
+### Fixed: a runner the controller refuses backs off instead of reconnecting at once
+
+A runner the controller refused at connect reconnected with no pause at all,
+about 2 600 times a second, enough for one runner to keep the controller
+refusing it busy on two and a half cores. Every SDK now waits longer after each
+refusal, on the same ladder it already used when the controller could not be
+reached, never more than 30 seconds apart; a session the controller admits puts
+it back on the shortest wait.
+
+### Fixed: `flz namespace delete` refuses a namespace that does not exist
+
+Deleting a namespace the catalog did not hold reported success, so a typo in a
+teardown script read as a delete. It now prints
+`error: namespace delete: :not_found` on standard error and exits with status 1,
+the way `flz namespace create` already refuses a name that exists.
+
+### Fixed: a namespace that loses its runner no longer stops its hub starting operatives
+
+A durable operative whose namespace had no runner made the hub's periodic
+reconcile fail inside the worker that starts that namespace's operatives. The
+worker died with it, every start queued behind it was stranded, and the same
+failure came back every 30 seconds without healing. The reconcile now starts
+such an operative without a runner, where it waits for one to connect, and the
+namespace's other starts go through.
+
 ### Fixed: an in-node Elixir runner answers a refused data-stream bind instead of crashing
 
 An Elixir SDK runner started with `transport: :native` crashed with a
