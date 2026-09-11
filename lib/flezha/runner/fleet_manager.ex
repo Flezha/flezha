@@ -7,8 +7,8 @@ defmodule Flezha.Runner.FleetManager do
   question. The state it mutates is split by what it is — `Marks` (the
   takeover fence and the retiring mark), `Roster` (the runner index),
   `Factories` (the factory table and each factory's SDK language) and
-  `Session` (connect, disconnect, evict, reroute) — while the public API
-  stays here.
+  `Session` (the handshake, connect, disconnect, evict, reroute) — while the
+  public API stays here.
 
   Invariant: a disconnect drops the runner from the active set
   unconditionally; what varies is only what becomes of its operatives.
@@ -27,6 +27,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
+  alias Flezha.Runner.StreamPool
   alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
@@ -248,38 +249,28 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  Re-issue `ConnectSocket` to `runner_id` so the SDK re-opens its data sockets;
-  the `StreamAcceptor` binds each fresh stream to an unbound `StreamChannel`
-  and closes the rest (see `runner-controller-connection-healing`).
+  Rebuild `runner_id`'s data plane in its live session: every data channel lets
+  its stream go, then `ConnectSocket` is re-issued. The SDK opens a whole pair
+  set, and only a pool with every channel free binds all of it; one that still
+  holds the old streams closes the fresh ones it has no room for, and the runner
+  is left emitting on sockets nobody reads (see
+  `runner-controller-connection-healing`). The runner's `ControlChannel` calls
+  this when a data stream is lost.
 
-  Nothing calls this. It is the only expression of a remedy the platform does
-  not otherwise have: no heal primitive rebinds a data stream, so a channel
-  that unbinds while its runner stays connected is never rebound.
-
-  Re-issuing is not a safe remedy as it stands. The SDK opens a whole pair set
-  and moves its output path onto it, while the acceptor binds only as many
-  streams as it has unbound channels — so the runner can be left emitting on
-  sockets the acceptor closed.
-
-  Returns `:ok`, or `{:error, :no_control_unit}` when the runner's control
-  unit is not registered.
+  Answers what the runner answered: `{:ok, _}` once its pair set is up,
+  `{:error, reason}` for a refusal, and `{:error, :no_control_unit}` when the
+  control unit is gone or does not answer within `control_unit_reply_timeout_ms`.
   """
-  @spec rebind_data_streams(binary()) :: :ok | {:error, term()}
+  @spec rebind_data_streams(binary()) :: {:ok, binary()} | {:error, term()}
   def rebind_data_streams(runner_id) when is_binary(runner_id) do
-    control_unit = Identificator.control_unit(runner_id)
+    StreamPool.call_channels(runner_id, :release_stream)
 
-    case GenServer.whereis(control_unit) do
-      nil ->
-        {:error, :no_control_unit}
-
-      _ ->
-        SafeCall.bounded(
-          control_unit,
-          :command_sockets_connect,
-          Durations.get(:control_unit_reply_timeout_ms),
-          on_error: {:error, :no_control_unit}
-        )
-    end
+    SafeCall.bounded(
+      Identificator.control_unit(runner_id),
+      :command_sockets_connect,
+      Durations.get(:control_unit_reply_timeout_ms),
+      on_error: {:error, :no_control_unit}
+    )
   end
 
   def stop_namespace(namespace) do
@@ -312,6 +303,8 @@ defmodule Flezha.Runner.FleetManager do
        namespace_factories: %{},
        stable_sessions: %{},
        session_credentials: %{},
+       pending_handshakes: %{},
+       handshake_requests: :gen_server.reqids_new(),
        runner_loads: %{},
        directory_groups: MapSet.new()
      })}
@@ -409,6 +402,10 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call({:stop_namespace, namespace}, _from, state) do
+    # A session still in its handshake is the namespace's too, and would write
+    # the namespace back into the roster if it were left to complete.
+    {state, _} = Session.end_handshakes(state, &(&1.namespace == namespace), :namespace_stopped)
+
     {reply, runner_namespaces} =
       case Map.get(state.runner_namespaces, namespace, nil) do
         nil ->
@@ -460,21 +457,22 @@ defmodule Flezha.Runner.FleetManager do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
 
-      {:ok, _namespace, session_token} ->
-        Session.finish_runner_connect(state, session_token, connect)
+      {:ok, namespace, session_token} ->
+        state = Session.await_handshake(state, session_token, stream_ref, connect)
+        {:reply, {:ok, {namespace, session_token}}, state}
     end
   end
 
   @impl true
   def handle_call({:evict_credential, hash}, _from, state) do
     sessions = for {session, held} <- state.session_credentials, held == hash, do: session
+    state = Enum.reduce(sessions, state, &Session.do_evict_runner(&2, &1))
 
-    state =
-      sessions
-      |> Enum.reduce(state, &Session.do_evict_runner(&2, &1))
-      |> Session.sync_directory()
+    # A handshake the credential admitted is not live yet, and would be the day
+    # after the revocation if it were left to complete.
+    {state, pending} = Session.end_handshakes(state, &(&1.credential == hash), :revoked)
 
-    {:reply, length(sessions), state}
+    {:reply, length(sessions) + pending, Session.sync_directory(state)}
   end
 
   @impl true
@@ -524,10 +522,22 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_info(any, state) do
-    Logger.info("Received unexpected message at node manager: #{inspect(any)}")
+  def handle_info({:handshake_timeout, session_token}, state),
+    do: {:noreply, Session.end_handshake(state, session_token, :timeout)}
 
-    {:noreply, state}
+  # A handshake answer arrives as the reply to a request `Session.await_handshake/4`
+  # sent, which only the request collection can recognise.
+  @impl true
+  def handle_info(any, state) do
+    case :gen_server.check_response(any, state.handshake_requests, true) do
+      {response, {session_token, command}, requests} ->
+        state = %{state | handshake_requests: requests}
+        {:noreply, Session.handshake_answered(state, session_token, command, response)}
+
+      _not_an_answer ->
+        Logger.info("Received unexpected message at node manager: #{inspect(any)}")
+        {:noreply, state}
+    end
   end
 
   # The one definition of "which runners may take this work": every active

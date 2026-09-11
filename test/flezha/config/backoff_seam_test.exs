@@ -172,6 +172,22 @@ defmodule Flezha.Config.BackoffSeamTest do
       assert Durations.default(:control_liveness_window_ms) ==
                rust_const(liveness, "DEFAULT_IDLE_TIMEOUT_MS")
     end
+
+    test "both runtimes reset the reconnect ladder on a completed handshake, and only there" do
+      core = File.read!("flz_core/src/control_unit.rs")
+      sdk = File.read!("lib/flezha/sdk/runner_server.ex")
+
+      core_rule? = String.contains?(core, "note_session_end(live.handshake_completed())")
+
+      sdk_rule? =
+        String.contains?(sdk, "defp complete_handshake(%State{handshake: :answered") and
+          length(String.split(sdk, "Knob.reset(:sdk_reconnect")) == 2
+
+      assert core_rule? and sdk_rule?,
+             "the ladder's reset rule moved in one runtime alone: " <>
+               "flz_core/src/control_unit.rs resets on the completed handshake: #{core_rule?}; " <>
+               "lib/flezha/sdk/runner_server.ex does, and nowhere else: #{sdk_rule?}"
+    end
   end
 
   describe "the ladder's arithmetic" do

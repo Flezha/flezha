@@ -6,11 +6,16 @@ defmodule Flezha.Runner.FleetManager.Session do
   live session is resolved newest-wins — the old token is fenced, its operative
   bindings swap onto the new one, and the old session is evicted.
 
-  Invariant: a disconnect drops the runner from the active set unconditionally
-  and is declared to the convergence loop, which decides what becomes of the
-  operatives it held. The one thing this module keeps is the keepalive: the
-  last runner of a namespace nobody else serves is held `:inactive` for its
-  window rather than dropped.
+  A session is recorded only once its runner has answered both handshake
+  frames. Until then it is pending, and every way it can end (a refusal, the
+  reply bound, a disconnect, a revoked credential, its namespace stopping)
+  tears its tree down with no roster entry to undo.
+
+  Invariant: a disconnect drops the runner from the active set unconditionally,
+  whatever the roster holds, and is declared to the convergence loop, which
+  decides what becomes of the operatives it held. The one thing this module
+  keeps is the keepalive: the last runner of a namespace nobody else serves is
+  held `:inactive` for its window rather than dropped.
   """
 
   alias Flezha.AuthZ.QuotaCounters
@@ -28,14 +33,19 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.Runner.FleetSupervisor
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.StreamPool
-  alias Flezha.SafeCall
   alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
 
   require Logger
 
+  use Flezha.Process.Timer, keys: [:handshake]
+
   @behaviour Flezha.Shutdown.Step
+
+  # The frames that make a session, in the order the runner needs them:
+  # `ConnectSocket` is named by the id `AssignRunnerId` gives it.
+  @handshake [:command_assign_runner_id, :command_sockets_connect]
 
   # The `:namespace` walk's runners step: every active runner of the namespace
   # is marked retiring — so its channels read the close as one we asked for —
@@ -221,13 +231,25 @@ defmodule Flezha.Runner.FleetManager.Session do
   defp forget_credential(state, session_token),
     do: update_in(state, [:session_credentials], &Map.delete(&1 || %{}, session_token))
 
+  # The roster answers where a runner may be placed, not whether a session that
+  # ended is dismantled: a runner it no longer keys can still have its whole
+  # tree running. A session is standing while either one holds it, so a second
+  # disconnect finds neither and changes nothing, and a session still in its
+  # handshake was never recorded at all.
   def handle_runner_disconnect(state, namespace, runner_id) do
-    if Map.has_key?(state.runner_namespaces, namespace) do
-      do_handle_runner_disconnect(state, namespace, runner_id)
-    else
-      state
+    cond do
+      Map.has_key?(state.pending_handshakes, runner_id) ->
+        end_handshake(state, runner_id, :disconnected)
+
+      Roster.runner_active?(state, runner_id) or tree_standing?(runner_id) ->
+        do_handle_runner_disconnect(state, namespace, runner_id)
+
+      true ->
+        state
     end
   end
+
+  defp tree_standing?(runner_id), do: GenServer.whereis(Identificator.unit_sup(runner_id)) != nil
 
   defp detach_runner_operatives(namespace, runner_id) do
     HubManager.runner_operatives(namespace, runner_id)
@@ -249,7 +271,7 @@ defmodule Flezha.Runner.FleetManager.Session do
     Supervisor.delete_child(FleetSupervisor, runner_id)
   end
 
-  def do_handle_runner_disconnect(state, namespace, runner_id) do
+  defp do_handle_runner_disconnect(state, namespace, runner_id) do
     Marks.clear_runner_retiring(runner_id)
     stop_runner_sup(runner_id)
 
@@ -271,10 +293,17 @@ defmodule Flezha.Runner.FleetManager.Session do
     # The keepalive: the last runner of a namespace nobody else serves is held
     # `:inactive` for its window, so a reconnect swaps its bindings back rather
     # than re-placing them. Every other case simply drops it.
-    namespace_runners =
-      if other_runners? or other_nodes?,
-        do: drop_runner(state, namespace, runner_id),
-        else: runner_preserve(state, namespace, runner_id)
+    state =
+      cond do
+        not Map.has_key?(state.runner_namespaces, namespace) ->
+          state
+
+        other_runners? or other_nodes? ->
+          put_roster(state, namespace, drop_runner(state, namespace, runner_id))
+
+        true ->
+          put_roster(state, namespace, runner_preserve(state, namespace, runner_id))
+      end
 
     # The loop chooses what becomes of the operatives this runner held: a
     # rebind onto a surviving runner, or a re-place onto a peer's fleet, each
@@ -287,8 +316,11 @@ defmodule Flezha.Runner.FleetManager.Session do
       %{members: :local}
     )
 
-    put_in(state, [:runner_namespaces, namespace], namespace_runners)
+    state
   end
+
+  defp put_roster(state, namespace, runners),
+    do: put_in(state, [:runner_namespaces, namespace], runners)
 
   # Drop the dead runner from the active set unconditionally: a runner that
   # lingers reads as placeable to `active_runners/1`, and operatives get
@@ -304,13 +336,14 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   @doc """
-  Admit a connecting runner, or `throw` `{:runner_connect_failed, reason}`.
+  Start a connecting runner's session, or `throw` `{:runner_connect_failed, reason}`.
 
   Four pieces of state, in the order they must be taken: the namespace's hub,
   that hub's operative-insertion hook, this runner's supervision tree, and the
   stream itself. Each step refuses by throwing rather than by crashing —
   `FleetManager` serves every runner on the node, and its acceptor goes with
-  it.
+  it. The session is recorded only once the runner has answered its
+  handshake (`await_handshake/4`).
   """
   def runner_connect(stream_ref, namespace, transport) do
     runner_id = Identificator.unique_id(namespace)
@@ -318,10 +351,112 @@ defmodule Flezha.Runner.FleetManager.Session do
     ensure_hub(namespace)
     register_insertion_hook(namespace, runner_id)
     control_channel_pid = start_runner_tree(namespace, runner_id, stream_ref, transport)
-    hand_over_stream(stream_ref, control_channel_pid, Identificator.control_unit(runner_id))
+    Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
+    Flezha.Transport.Stream.set_active(stream_ref)
 
     {:ok, namespace, runner_id}
   end
+
+  @doc """
+  Ask the runner for its two handshake answers, and wait for neither.
+
+  `FleetManager` serves every namespace on the node, and an in-node runner is
+  blocked in its own `init/1` until the connect returns, so the answers come
+  back as messages (`handshake_answered/4`) and the session is recorded only
+  once both are in. One not in by `control_unit_reply_timeout_ms` ends the
+  session as a refusal does.
+  """
+  def await_handshake(state, session_token, stream_ref, connect) do
+    control_unit = Identificator.control_unit(session_token)
+
+    requests =
+      Enum.reduce(@handshake, state.handshake_requests, fn command, acc ->
+        :gen_server.send_request(control_unit, command, {session_token, command}, acc)
+      end)
+
+    bound = Durations.get(:control_unit_reply_timeout_ms)
+    pending = %{connect: connect, stream_ref: stream_ref, owed: @handshake}
+
+    %{
+      state
+      | handshake_requests: requests,
+        pending_handshakes: Map.put(state.pending_handshakes, session_token, pending)
+    }
+    |> arm_timer({:handshake, session_token}, bound, {:handshake_timeout, session_token})
+  end
+
+  @doc """
+  One handshake answer, as `:gen_server.check_response/3` resolved it. The
+  session completes on the last one owed and ends on the first refusal.
+  """
+  def handshake_answered(state, session_token, command, {:reply, {:ok, _raw}}) do
+    case Map.get(state.pending_handshakes, session_token) do
+      %{owed: [^command]} = pending ->
+        {_, state} = pop_in(state, [:pending_handshakes, session_token])
+
+        state
+        |> cancel_timer({:handshake, session_token})
+        |> finish_runner_connect(session_token, pending.connect)
+
+      %{owed: owed} = pending ->
+        put_in(state, [:pending_handshakes, session_token], %{pending | owed: owed -- [command]})
+
+      nil ->
+        state
+    end
+  end
+
+  def handshake_answered(state, session_token, command, {:reply, {:error, reason}}),
+    do: end_handshake(state, session_token, {command, reason})
+
+  def handshake_answered(state, session_token, command, {:error, {reason, _control_unit}}),
+    do: end_handshake(state, session_token, {command, {:control_unit_unavailable, reason}})
+
+  @doc """
+  End a session whose handshake did not complete: refused, timed out, revoked,
+  disconnected, or its namespace stopped. It was never recorded, so there is no
+  roster entry and no binding to undo; closing the stream is what tells the
+  runner, whose ladder counts it as a failed attempt.
+  """
+  def end_handshake(state, session_token, reason) do
+    case pop_in(state, [:pending_handshakes, session_token]) do
+      {nil, state} ->
+        state
+
+      {%{connect: %{namespace: namespace}} = pending, state} ->
+        Logger.log(
+          handshake_end_level(reason),
+          "runner #{session_token} on #{namespace} did not complete its handshake " <>
+            "(#{inspect(reason)}); ending the session"
+        )
+
+        stop_runner_sup(session_token)
+        _ = HubManager.unregister_handler(namespace, session_token)
+        Flezha.Transport.Stream.close(pending.stream_ref)
+        cancel_timer(state, {:handshake, session_token})
+    end
+  end
+
+  @doc """
+  End every handshake whose connect record `match?` selects, for a teardown that
+  reaches sessions the roster does not hold yet. Answers the state and how many
+  ended.
+  """
+  def end_handshakes(state, match?, reason) do
+    sessions =
+      for {session, %{connect: connect}} <- state.pending_handshakes,
+          match?.(connect),
+          do: session
+
+    {Enum.reduce(sessions, state, &end_handshake(&2, &1, reason)), length(sessions)}
+  end
+
+  # A refusal is the runner's or the control unit's fault and an operator's to
+  # read; a silent runner is the liveness watchdog's kind of warning; the rest
+  # are a teardown something else already reported.
+  defp handshake_end_level({_command, _reason}), do: :error
+  defp handshake_end_level(:timeout), do: :warning
+  defp handshake_end_level(_teardown), do: :info
 
   # On-demand hub creation takes the same cluster gate every hub-creating path
   # takes: a runner connecting during the boot window must not create a
@@ -370,21 +505,6 @@ defmodule Flezha.Runner.FleetManager.Session do
       {:error, reason} ->
         refuse(runner_id, namespace, "has no control channel (#{inspect(reason)})", reason)
     end
-  end
-
-  # Ownership of the stream passes to the ControlChannel process, and only then
-  # is the runner told who it is.
-  defp hand_over_stream(stream_ref, control_channel_pid, control_unit) do
-    Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
-    Flezha.Transport.Stream.set_active(stream_ref)
-
-    # A control unit that cannot take the handover is a failed connect, not a
-    # silent one: the refusal is thrown the way every other connect fault is.
-    bound = Durations.get(:control_unit_reply_timeout_ms)
-    on_error = &throw({:runner_connect_failed, {:control_unit_unavailable, &1}})
-
-    SafeCall.bounded(control_unit, :command_assign_runner_id, bound, on_error: on_error)
-    SafeCall.bounded(control_unit, :command_sockets_connect, bound, on_error: on_error)
   end
 
   defp refuse(runner_id, namespace, what, reason) do
@@ -472,7 +592,7 @@ defmodule Flezha.Runner.FleetManager.Session do
     {:runner_connect_failed, reason} -> {:error, reason}
   end
 
-  def finish_runner_connect(state, session_token, connect) do
+  defp finish_runner_connect(state, session_token, connect) do
     %{namespace: namespace, factories: factories, stable_id: stable_id, credential: credential} =
       connect
 
@@ -502,6 +622,6 @@ defmodule Flezha.Runner.FleetManager.Session do
       %{members: :local}
     )
 
-    {:reply, {:ok, {namespace, session_token}}, sync_directory(state)}
+    sync_directory(state)
   end
 end

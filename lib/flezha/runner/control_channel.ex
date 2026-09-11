@@ -9,6 +9,10 @@ defmodule Flezha.Runner.ControlChannel do
   it by reference id. Durable barriers are forwarded to
   `Flezha.Runner.ControlChannel.Commits` rather than journaled inline.
 
+  It also repairs the session's data plane: a data channel that loses its stream
+  asks for a rebind, one runs at a time, and the loss after the session's rebind
+  budget (`@rebinds`) ends it, so a data plane that cannot be bound is reclaimed.
+
   Invariant: this process is the only writer of control frames on the stream,
   which is what makes a reference id enough to pair a response with its
   request.
@@ -34,6 +38,9 @@ defmodule Flezha.Runner.ControlChannel do
 
   use GenServer
   use Flezha.Process.Timer, keys: [:liveness]
+
+  # The rebinds one session may spend before its next data-plane loss ends it.
+  @rebinds 3
 
   # Control-plane liveness: the SDK keepalive ping (and every other inbound
   # frame) re-arms `last_seen`; a jittered watchdog treats sustained silence
@@ -119,6 +126,10 @@ defmodule Flezha.Runner.ControlChannel do
     end
   end
 
+  @doc "Rebuild `runner_id`'s data plane inside its live session (see the moduledoc)."
+  def rebind_data_streams(runner_id),
+    do: GenServer.cast(Identificator.control_channel(runner_id), :rebind_data_streams)
+
   defp encode_request(reference_id, command) do
     request = %RunnerCommands.CommandRequest{reference_id: reference_id, command: command}
     {:ok, iodata, _size} = Protox.encode(request)
@@ -136,6 +147,8 @@ defmodule Flezha.Runner.ControlChannel do
        control_unit: Identificator.control_unit(runner_id),
        liveness_ref: LivenessCounters.register_channel(runner_id, :control),
        last_seen: System.monotonic_time(:millisecond),
+       rebinding?: false,
+       rebinds: 0,
        timers: Flezha.Process.Timer.new()
      }
      |> bump_last_seen()
@@ -192,6 +205,24 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_cast({:send_control_async, bin}, state) do
     _ = write_control(state, bin)
     {:noreply, state}
+  end
+
+  def handle_cast(:rebind_data_streams, %{rebinding?: true} = state), do: {:noreply, state}
+
+  def handle_cast(:rebind_data_streams, %{rebinds: n} = state) when n >= @rebinds do
+    Logger.warning("[control_channel] #{state.runner_id} lost its data plane after #{n} rebinds")
+    handle_connection_closed(state)
+  end
+
+  # Off this process, so the channel keeps serving the session while it waits.
+  def handle_cast(:rebind_data_streams, %{runner_id: runner_id} = state) do
+    channel = self()
+
+    Task.start_link(fn ->
+      send(channel, {:rebind_answered, FleetManager.rebind_data_streams(runner_id)})
+    end)
+
+    {:noreply, %{state | rebinding?: true, rebinds: state.rebinds + 1}}
   end
 
   # Every control frame leaves through this process, on its stream. `:unbound`
@@ -273,6 +304,14 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
     handle_connection_closed(state)
   end
+
+  # A refused rebind, whose reason the control unit logged, is asked for again,
+  # and the budget bounds the asking.
+  def handle_info({:rebind_answered, {:ok, _}}, state),
+    do: {:noreply, %{state | rebinding?: false}}
+
+  def handle_info({:rebind_answered, _refused}, state),
+    do: handle_cast(:rebind_data_streams, %{state | rebinding?: false})
 
   # A request `answer_off_process/2` resolved elsewhere; writing it is this
   # process's job, because it is the only writer of control frames.

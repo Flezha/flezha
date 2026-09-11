@@ -355,8 +355,8 @@ Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter 
 controller restart dropping many runners does not produce a synchronized reconnect
 storm. Attempts SHALL remain unbounded (the runner must keep trying until a live
 controller is found). The Elixir SDK, which inherits nothing from `flz_core`, SHALL
-carry the same schedule as the `:sdk_reconnect` row of the backoff table — base 100 ms,
-exponent capped at 8, delay capped at 30 s — and a test SHALL pin those three numbers,
+carry the same schedule as the `:sdk_reconnect` row of the backoff table, base 100 ms,
+exponent capped at 8, delay capped at 30 s, and a test SHALL pin those three numbers,
 and the `:sdk_retry` row (`base · 2^(n−1)` capped at 5 s), to the constants `flz_core`
 compiles, so the two runtimes cannot drift apart silently.
 
@@ -369,13 +369,20 @@ scenario SHALL NOT describe one runtime's spread as the other's.
 
 The rung SHALL be a property of the control channel rather than of one call into the
 connect loop, so a reconnect starts where the last one left off instead of at rung zero.
-A control session that ends without the controller admitting the runner SHALL count as a
-failed attempt, and the ladder SHALL be reset only by the controller's own answer — the
-`assign_runner_id` frame it writes on a handshake it accepts and writes on none it
-refuses. Reaching the socket is not admission: a refusal closes the connection after
-`connect(2)` has already succeeded, so an SDK that treats a successful connect as a
-successful session retries a refusing controller as fast as the kernel allows, which one
-runner can do fast enough to saturate the controller refusing it.
+A control session that ends before its handshake completed SHALL count as a failed
+attempt, and the ladder SHALL be reset only by a handshake that completed: the controller
+has written `assign_runner_id`, the runner has answered the `ConnectSocket` that follows
+it, and the controller has accepted that answer. Reaching the socket is not admission and
+neither is being admitted. A refusal closes the connection after `connect(2)` has already
+succeeded, and a handshake accepted at its first frame can still fail at its second, so an
+SDK that resets its rung on either one retries a controller that cannot finish a handshake
+with it as fast as the kernel allows, which one runner can do fast enough to saturate that
+controller.
+
+The ack window is a different question from admission and SHALL NOT be answered by the
+same stored fact. The deadline that distinguishes "no frame has arrived yet" from "the
+session is idle" SHALL keep reading the first inbound frame, while the ladder reset SHALL
+read the completed handshake, so that neither rule can be changed by editing the other.
 
 #### Scenario: Fleet reconnect does not thunder
 - **GIVEN** N runners whose controller restarts simultaneously
@@ -392,10 +399,21 @@ runner can do fast enough to saturate the controller refusing it.
 - **WHEN** the runner reconnects again and again
 - **THEN** each attempt SHALL wait one rung further up the ladder, up to the 30 s cap, rather than reconnecting immediately
 
-#### Scenario: An admitted session puts the ladder back on its first rung
-- **GIVEN** a runner whose handshake the controller admitted, however many refusals preceded it
+#### Scenario: A completed handshake puts the ladder back on its first rung
+- **GIVEN** a runner whose handshake completed, however many refusals preceded it
 - **WHEN** that session later ends and the runner reconnects
 - **THEN** the reconnect SHALL NOT be delayed by any earlier refusal
+
+#### Scenario: A handshake admitted and then failed climbs the ladder
+- **GIVEN** a controller that writes `assign_runner_id` and then fails the runner's `ConnectSocket` answer, or severs the data streams before the handshake completes
+- **WHEN** the runner reconnects into the same outcome repeatedly
+- **THEN** each attempt SHALL wait one rung further up the ladder rather than repeating at rung one
+- **AND** the runner SHALL NOT report every attempt as attempt 1
+
+#### Scenario: The ack window still opens on the first inbound frame
+- **GIVEN** a session whose handshake has not completed
+- **WHEN** the controller's first frame arrives within the ack timeout
+- **THEN** the connection SHALL switch to the idle deadline as it does today, and the reconnect ladder SHALL NOT be reset by that frame
 
 ### Requirement: Java SDK transport-edge and decode events SHALL NOT crash the runtime thread
 
@@ -823,4 +841,128 @@ the order it was written.
 - **WHEN** the reader of a suspended stream drains what it has
 - **THEN** the stream SHALL resume, and the reader SHALL receive every byte the
   peer wrote, exactly once and in the order it was written
+
+### Requirement: The controller SHALL NOT record a stream handover it has not been answered
+
+The controller SHALL treat a runner's own answer to `ConnectSocket` as the outcome of the
+handover, and SHALL NOT report the handover as successful before that answer arrives. A
+clause that stores a reference for a later reply SHALL leave its caller unanswered until
+the reply is resolved, so that a refusal reaches the caller instead of being logged into a
+reply nobody is waiting on.
+
+A handover the runner refuses SHALL end the control session rather than leave the runner
+admitted with no data plane. Ending the session is what makes the failure self-clearing:
+the controller reclaims the runner's operatives and places them somewhere that works.
+
+The decision SHALL NOT be held inside a node-wide process. `FleetManager` serves every
+namespace on the node, and the in-node (`:native`) transport runs the connect from inside
+the runner's own `init/1`, so a blocking wait there cannot be answered by the runner it is
+waiting for. The outcome SHALL therefore be resolved without any node-wide call blocking on
+an untrusted peer.
+
+#### Scenario: A refused socket connect fails the handshake
+- **GIVEN** a runner that answers `ConnectSocket` with an error
+- **WHEN** the controller resolves that answer
+- **THEN** the session SHALL NOT be recorded as connected, the control session SHALL end, and the runner's operatives SHALL be reclaimed for placement
+
+#### Scenario: An accepted socket connect completes the handshake
+- **GIVEN** a runner that answers `ConnectSocket` successfully
+- **WHEN** the controller resolves that answer
+- **THEN** the handover SHALL complete as it does today and the handshake SHALL count as completed for the reconnect ladder
+
+#### Scenario: No node-wide process waits on the peer
+- **WHEN** a runner is slow to answer or never answers `ConnectSocket`
+- **THEN** `FleetManager` SHALL continue to serve other namespaces throughout, and an in-node runner SHALL complete its own `init/1` rather than deadlocking against the wait
+
+### Requirement: A data-socket connect that cannot be completed SHALL be refused, never panicked
+
+The shared core SHALL surface every failure of a `ConnectSocket` execution to the
+controller as a refusal, and no production path under `flz_core/src/command/` SHALL
+`panic!`, `unwrap` or `expect` on it. The UDS handler SHALL take the same error channel the
+QUIC handler already takes, so that a refusal has somewhere to go instead of unwinding the
+coordinator thread that owns the control stream.
+
+The refusal SHALL be paired with the controller ending the session, because the thread
+death it replaces was self-clearing: the stream closed and the runner's operatives were
+reclaimed. A refusal that leaves the session alive and the runner unplaceable is worse than
+the panic it replaces, so it SHALL NOT be introduced on its own.
+
+#### Scenario: An unresolvable socket directory is refused
+- **GIVEN** a data socket directory that cannot be resolved
+- **WHEN** the runner executes `ConnectSocket`
+- **THEN** the core SHALL answer the controller with a refusal naming the directory, and the coordinator thread SHALL remain alive
+
+#### Scenario: A socket the controller has not bound is refused
+- **GIVEN** a data socket path the controller has not yet bound
+- **WHEN** the runner dials it
+- **THEN** the core SHALL answer with a refusal rather than panicking, and the controller SHALL end the session
+
+#### Scenario: A descriptor or lock failure is refused
+- **GIVEN** a `try_clone` that fails under descriptor exhaustion, or a poisoned stream-table lock
+- **WHEN** either is reached while installing the connected streams
+- **THEN** the core SHALL answer with a refusal rather than unwinding the thread
+
+### Requirement: A lost data plane SHALL be repaired inside the live session
+
+A runner whose data streams close while its control channel is still alive SHALL NOT tear
+down the control session to get them back. A data plane is whole or gone: a runner that
+loses one data stream lets the rest go, and that is its request for a rebind, carried on
+the wire it already has. The controller, which sees its own end of every data stream
+close, SHALL answer by re-issuing `ConnectSocket` for the live session, the remedy
+`FleetManager.rebind_data_streams/1` implements.
+
+The re-issue SHALL release every data channel of the session first. The runner opens a
+whole pair set, and a pool that still holds the old streams binds only as many fresh ones
+as it has free channels and closes the rest, which leaves the runner emitting on sockets
+nobody reads. One rebind runs at a time, because every channel of a severed data plane
+reports the same fault.
+
+Ending the control session for a data-plane fault is what turns one severed stream into a
+reconnect loop: the session ends, the runner reconnects, the controller admits it, the
+same fault severs it again, and the remedy is never reached because the runner tore the
+session down first. A repair inside the live session SHALL NOT touch the reconnect ladder,
+because the session did not end.
+
+A repair that cannot be completed SHALL end the session rather than repeat without bound:
+a session gets three rebinds, and the data-plane loss after them ends it, so a runner
+whose data plane cannot be bound is reclaimed and placed elsewhere. A runner whose data
+plane stays gone with no rebind arriving keeps its own heartbeat and write-failure ladders
+as the backstop.
+
+#### Scenario: Severed data streams are rebound without a reconnect
+- **GIVEN** a runner whose control channel is alive and every secondary stream breaks at the controller's end
+- **WHEN** the runner and the controller observe the breaks
+- **THEN** the runner SHALL NOT reconnect for it, the controller SHALL release the session's data channels and re-issue `ConnectSocket`, and production SHALL resume on the rebound streams
+- **AND** the session SHALL be the same one, with no reconnect attempt logged for that fault
+
+#### Scenario: A dead control channel still reconnects
+- **GIVEN** a runner whose control channel itself closes
+- **WHEN** the close is observed
+- **THEN** the existing reconnect path SHALL run unchanged, on the ladder rung the session left behind
+
+#### Scenario: A repair that cannot complete ends the session
+- **GIVEN** a controller that cannot bind the runner's data streams
+- **WHEN** the rebind is refused three times in one session
+- **THEN** the control session SHALL end, so the runner reconnects and its operatives are reclaimed and placed elsewhere
+
+### Requirement: A disconnect SHALL tear down the session's tree whatever the roster holds
+
+A runner disconnect SHALL run its teardown for the disconnecting session regardless of
+whether the roster still keys the runner's namespace. The roster records where a runner may
+be placed; it SHALL NOT gate whether a session that has ended is dismantled. A disconnect
+handler that returns early on a missing roster key leaves the runner's whole supervision
+tree running with no session behind it.
+
+Teardown SHALL be idempotent: a second disconnect for a runner already torn down SHALL be a
+no-op rather than an error.
+
+#### Scenario: A disconnect for an unkeyed namespace still tears down
+- **GIVEN** a runner whose namespace the roster no longer keys
+- **WHEN** its control session disconnects
+- **THEN** its operatives SHALL be detached and its supervision tree SHALL be stopped
+
+#### Scenario: A repeated disconnect changes nothing
+- **GIVEN** a runner whose tree has already been stopped by a disconnect
+- **WHEN** a second disconnect arrives for the same runner
+- **THEN** the handler SHALL make no further change and SHALL NOT raise
 

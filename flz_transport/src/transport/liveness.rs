@@ -5,6 +5,8 @@
 //! every inbound frame) that the runner's jittered keepalive ping keeps a
 //! healthy channel inside. Both are read timeouts on `FlezhaStream`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::env::env_ms;
@@ -70,11 +72,36 @@ pub enum ReadAction {
     Reconnect,
 }
 
-/// Tracks the control-channel ack/idle deadline across reads. Construct once
-/// per control connection; arm `current_deadline` before each read and call
-/// `note_frame` after each successful frame.
+/// The runner's own answer to its session's `ConnectSocket`: raised by the
+/// thread that executes the command, read by the control reader. One per
+/// session, so a reconnect never inherits the last session's answer.
+#[derive(Clone, Default)]
+pub struct ConnectAnswered(Arc<AtomicBool>);
+
+impl ConnectAnswered {
+    /// The pair set came up; the answer is about to be written.
+    pub fn note(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// Tracks the control-channel ack/idle deadline across reads, and whether the
+/// session's handshake completed. Construct once per control connection; arm
+/// `current_deadline` before each read and call `note_frame` after each
+/// successful frame.
+///
+/// Two facts, never one: the deadline asks whether any frame has arrived, the
+/// reconnect ladder asks whether the controller admitted the runner, and a
+/// controller can answer the first frame and still fail the handshake at the
+/// second.
 pub struct ControlLiveness {
     acked: bool,
+    completed: bool,
+    answered: ConnectAnswered,
     ack_timeout: Duration,
     idle_timeout: Duration,
 }
@@ -89,6 +116,8 @@ impl ControlLiveness {
     pub fn new() -> Self {
         ControlLiveness {
             acked: false,
+            completed: false,
+            answered: ConnectAnswered::default(),
             ack_timeout: control_ack_timeout(),
             idle_timeout: control_idle_timeout(),
         }
@@ -106,7 +135,13 @@ impl ControlLiveness {
 
     /// Record a successful frame. Returns `true` exactly once — when this is
     /// the first frame and the channel leaves the ack window.
+    ///
+    /// A frame read after the runner answered `ConnectSocket` completes the
+    /// handshake. The runner cannot see the controller accept its answer, only
+    /// the controller carrying on with the session; a refusal closes the
+    /// connection instead.
     pub fn note_frame(&mut self) -> bool {
+        self.completed |= self.answered.is_set();
         if self.acked {
             false
         } else {
@@ -117,6 +152,17 @@ impl ControlLiveness {
 
     pub fn acked(&self) -> bool {
         self.acked
+    }
+
+    /// Whether this session was admitted, which is what resets the reconnect
+    /// ladder.
+    pub fn handshake_completed(&self) -> bool {
+        self.completed
+    }
+
+    /// The handle the `ConnectSocket` executor raises for this session.
+    pub fn connect_answered(&self) -> ConnectAnswered {
+        self.answered.clone()
     }
 
     /// Classify a read error. A timeout (`WouldBlock`/`TimedOut`) is fatal in
@@ -146,14 +192,43 @@ mod tests {
         assert!(!live.acked());
         assert_eq!(live.current_deadline(), Duration::from_millis(700));
 
-        // First frame transitions out of the ack window exactly once.
+        // First frame transitions out of the ack window exactly once, and
+        // admits nothing.
         assert!(live.note_frame());
         assert!(live.acked());
         assert_eq!(live.current_deadline(), Duration::from_millis(9000));
         assert!(!live.note_frame());
+        assert!(!live.handshake_completed());
 
         std::env::remove_var("FLEZHA_CONTROL_ACK_TIMEOUT_MS");
         std::env::remove_var("FLEZHA_CONTROL_IDLE_TIMEOUT_MS");
+    }
+
+    #[test]
+    fn only_a_frame_after_the_connect_answer_completes_the_handshake() {
+        let mut live = ControlLiveness::new();
+        let answered = live.connect_answered();
+
+        // `assign_runner_id`, then `ConnectSocket`.
+        live.note_frame();
+        live.note_frame();
+        answered.note();
+        assert!(
+            !live.handshake_completed(),
+            "an answer the controller has not carried on from is not admission"
+        );
+
+        live.note_frame();
+        assert!(live.handshake_completed());
+    }
+
+    #[test]
+    fn a_new_session_does_not_inherit_the_last_answer() {
+        ControlLiveness::new().connect_answered().note();
+
+        let mut next = ControlLiveness::new();
+        next.note_frame();
+        assert!(!next.handshake_completed());
     }
 
     #[test]

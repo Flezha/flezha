@@ -140,6 +140,129 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
            "the route was seeded into the awaited runner's channels, not the live one's"
   end
 
+  describe "the handshake is recorded from the runner's answers" do
+    setup do
+      namespace = "handshake-#{System.unique_integer([:positive])}"
+      on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+      %{ns: namespace}
+    end
+
+    test "a refused socket connect ends the session instead of admitting it", %{ns: ns} do
+      {sdk, session} = stand_in_runner(ns, &refuse_the_connect/1)
+
+      assert_receive {:flz_closed, _, _},
+                     5_000,
+                     "the refused session was left standing: " <>
+                       inspect(FleetManager.active_runners(ns))
+
+      refute session in FleetManager.active_runners(ns)
+      refute tree_running?(session)
+      Flezha.Transport.Stream.close(sdk)
+    end
+
+    test "an accepted socket connect completes the handshake", %{ns: ns} do
+      {_sdk, session} = stand_in_runner(ns, &accept/1)
+
+      assert NodeTestHelper.wait_until(
+               fn -> session in FleetManager.active_runners(ns) end,
+               5_000
+             )
+    end
+
+    test "a handshake with no answer by its bound ends the session", %{ns: ns} do
+      {_sdk, session} = stand_in_runner(ns, fn _ -> :silent end)
+
+      # The bound's own timer, delivered now rather than waited for.
+      send(FleetManager, {:handshake_timeout, session})
+
+      assert_receive {:flz_closed, _, _}, 5_000
+      refute session in FleetManager.active_runners(ns)
+    end
+
+    test "no node-wide call waits on a runner that has not answered", %{ns: ns} do
+      {_sdk, _session} = stand_in_runner(ns, fn _ -> :silent end)
+
+      assert FleetManager.active_runners("another-namespace", 1_000) == []
+    end
+
+    test "a disconnect tears the tree down though the roster no longer keys the namespace",
+         %{ns: ns} do
+      {sdk, session} = stand_in_runner(ns, &accept/1)
+
+      assert NodeTestHelper.wait_until(
+               fn -> session in FleetManager.active_runners(ns) end,
+               5_000
+             )
+
+      :sys.replace_state(FleetManager, fn state ->
+        %{state | runner_namespaces: Map.delete(state.runner_namespaces, ns)}
+      end)
+
+      Flezha.Transport.Stream.close(sdk)
+
+      assert NodeTestHelper.wait_until(fn -> not tree_running?(session) end, 5_000),
+             "the runner's tree outlived its session because the roster had no key for #{ns}"
+    end
+
+    test "a repeated disconnect changes nothing", %{ns: ns} do
+      {sdk, session} = stand_in_runner(ns, &accept/1)
+
+      assert NodeTestHelper.wait_until(
+               fn -> session in FleetManager.active_runners(ns) end,
+               5_000
+             )
+
+      Flezha.Transport.Stream.close(sdk)
+      assert NodeTestHelper.wait_until(fn -> not tree_running?(session) end, 5_000)
+
+      before = :sys.get_state(FleetManager)
+      assert :ok = GenServer.call(FleetManager, {:runner_disconnected, ns, session})
+      assert :sys.get_state(FleetManager) == before
+    end
+  end
+
+  # A runner played by this process on a real in-node stream: it connects the
+  # way the in-node SDK does, then answers each handshake frame as `answer`
+  # says. `:silent` answers nothing.
+  defp stand_in_runner(namespace, answer) do
+    Flezha.Transport.Server.ensure_started(:native)
+    {sdk, controller_side} = Flezha.Transport.Local.Stream.open()
+    :ok = Flezha.Transport.Stream.controlling_process(sdk, self())
+    :ok = Flezha.Transport.Stream.set_active(sdk)
+
+    payload = %{
+      "namespace" => namespace,
+      "factory_ids" => [],
+      "factories" => [],
+      "stable_id" => "stand-in-#{System.unique_integer([:positive])}"
+    }
+
+    {:ok, session} = Flezha.Transport.Server.connect(payload, controller_side)
+
+    for _frame <- 1..2 do
+      assert_receive {:flz_data, _, "control_command", bin, _}, 5_000
+      {:ok, %{reference_id: ref, command: {kind, _}}} = Flezha.SDK.Codec.decode_command(bin)
+
+      with {status, errors} <- answer.(kind) do
+        response = Flezha.SDK.Codec.encode_response(ref, status, errors)
+        Flezha.Transport.Stream.send_frame(sdk, "control_command", response, %{})
+      end
+    end
+
+    {sdk, session}
+  end
+
+  defp accept(_kind), do: {"success", []}
+
+  defp refuse_the_connect(:connect_socket), do: {"error", ["no data socket"]}
+  defp refuse_the_connect(_kind), do: {"success", []}
+
+  defp tree_running?(session) do
+    Flezha.Runner.FleetSupervisor
+    |> Supervisor.which_children()
+    |> Enum.any?(fn {id, _, _, _} -> id == session end)
+  end
+
   # True when one of `session`'s primary StreamChannels routes `operative_id` to
   # `pid` — the mapping whose absence makes `stream_channel.ex` drop frames.
   defp mapped?(session, operative_id, pid) do

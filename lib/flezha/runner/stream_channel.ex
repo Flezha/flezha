@@ -9,7 +9,7 @@ defmodule Flezha.Runner.StreamChannel do
   durable-record fan-out and the credit handshake).
 
   Invariant: the published stream ref lives in a `:persistent_term` under this
-  module's name, written at init, bind and close only — `io_in/3` reads it
+  module's name, written at init, bind, close and release only — `io_in/3` reads it
   without a call, so a frame never queues behind this process.
   """
 
@@ -21,6 +21,7 @@ defmodule Flezha.Runner.StreamChannel do
   alias Flezha.Runner.StreamChannel.Records
   alias Flezha.State.CreditLedger
   alias Flezha.Transport.LivenessCounters
+  alias Flezha.Transport.Stream, as: TStream
 
   require Logger
 
@@ -241,6 +242,18 @@ defmodule Flezha.Runner.StreamChannel do
   @impl true
   def handle_call({:await_send_gate, pid}, _from, state) do
     {:reply, :held, Gate.record_waiter(state, :send_gate, pid)}
+  end
+
+  # A rebind replaces the runner's whole pair set, so every channel lets its
+  # stream go first and each fresh stream finds a free channel. A close this
+  # channel asks for is not reported back to it, so nothing here reads as a
+  # fault.
+  @impl true
+  def handle_call(:release_stream, _from, %{stream_ref: nil} = state), do: {:reply, :ok, state}
+
+  def handle_call(:release_stream, _from, state) do
+    TStream.close(state.stream_ref)
+    {:reply, :ok, unbind(state)}
   end
 
   # Takeover fence: unbind this channel from the Entity write path.
@@ -465,16 +478,10 @@ defmodule Flezha.Runner.StreamChannel do
       # convergence Loop triggers a rebind tick rather than waiting for the
       # Watchdog's 60s grace period to detect the dead socket.
       Records.emit_output_stall(state.operative_mapping)
+      ControlChannel.rebind_data_streams(state.runner_id)
     end
 
-    publish_stream(state.name, nil, state.liveness_ref)
-
-    # A sender held on this stream's gate is waiting for a buffer that will
-    # never drain now. It is told the stream went, so it reports the frame
-    # undelivered instead of waiting out its hold on a dead binding.
-    state = Gate.wake_waiters(state, :send_gate, {:send_gate, state.name, :closed})
-
-    {:noreply, %{state | stream_ref: nil} |> Records.reset_credit()}
+    {:noreply, unbind(state)}
   end
 
   # The only monitors this process holds are the route cache's, so a `:DOWN`
@@ -487,6 +494,17 @@ defmodule Flezha.Runner.StreamChannel do
     Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
 
     {:noreply, state}
+  end
+
+  defp unbind(state) do
+    publish_stream(state.name, nil, state.liveness_ref)
+
+    # A sender held on this stream's gate is waiting for a buffer that will
+    # never drain now. It is told the stream went, so it reports the frame
+    # undelivered instead of waiting out its hold on a dead binding.
+    state = Gate.wake_waiters(state, :send_gate, {:send_gate, state.name, :closed})
+
+    %{state | stream_ref: nil} |> Records.reset_credit()
   end
 
   @impl true

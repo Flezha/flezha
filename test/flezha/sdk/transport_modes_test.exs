@@ -448,23 +448,75 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
     refute_received {:output_stall, _}
   end
 
-  test "killing an SDK-side stream drives reconnect and the runner recovers", %{ns: ns} do
+  test "a closed control stream drives reconnect and the runner recovers", %{ns: ns} do
     handle = start_runner(ns, [EchoOp])
     on_exit(fn -> Flezha.SDK.close(handle) end)
 
-    [_runner] = FleetManager.active_runners(ns)
+    [runner] = FleetManager.active_runners(ns)
 
-    # Kill a Local.Stream process (an SDK-side data or control stream) — the peer
-    # monitor synthesizes {:flz_closed}, which drives the SDK's reconnect.
-    server = RunnerServer.whereis()
-    assert is_pid(server)
+    # The close a killed SDK-side Local.Stream's peer monitor synthesizes.
+    send(RunnerServer.whereis(), {:flz_closed, control_stream_id(), "test_injected"})
 
-    # Inject a stream close the way a killed SDK-side Local.Stream owner would
-    # (the peer monitor synthesizes {:flz_closed}); it drives the SDK reconnect.
-    send(server, {:flz_closed, 999_999, "test_injected"})
+    # The runner reconnects under a fresh session, which the binding swap lists
+    # in place of the old one.
+    assert NodeTestHelper.wait_until(
+             fn -> match?([session] when session != runner, FleetManager.active_runners(ns)) end,
+             15_000
+           )
+  end
 
-    # The runner reconnects and stays listed.
-    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
+  test "a severed data plane is rebound inside the session, with no reconnect", %{ns: ns} do
+    handle = start_runner(ns, [EchoOp])
+    on_exit(fn -> Flezha.SDK.close(handle) end)
+
+    [runner] = FleetManager.active_runners(ns)
+    severed = for channel <- secondary_channels(runner), do: :sys.get_state(channel).stream_ref
+
+    for ref <- severed, do: Flezha.Transport.Stream.close(ref)
+
+    assert NodeTestHelper.wait_until(
+             fn ->
+               refs =
+                 for channel <- secondary_channels(runner), do: :sys.get_state(channel).stream_ref
+
+               refs != [] and Enum.all?(refs, &(&1 != nil and &1 not in severed))
+             end,
+             15_000
+           ),
+           "the severed secondaries were never rebound"
+
+    assert FleetManager.active_runners(ns) == [runner], "the session was ended to repair it"
+  end
+
+  test "a data plane that cannot be rebound ends the session once its budget is spent", %{
+    ns: ns
+  } do
+    handle = start_runner(ns, [EchoOp])
+    on_exit(fn -> Flezha.SDK.close(handle) end)
+
+    [runner] = FleetManager.active_runners(ns)
+    test_pid = self()
+
+    set_mimic_global_until_exit()
+
+    stub(FleetManager, :rebind_data_streams, fn id ->
+      send(test_pid, {:rebind_refused, id})
+      {:error, :refused}
+    end)
+
+    # One stream is the whole data plane: the runner lets the rest go with it.
+    [channel | _] = secondary_channels(runner)
+    Flezha.Transport.Stream.close(:sys.get_state(channel).stream_ref)
+
+    for _attempt <- 1..3, do: assert_receive({:rebind_refused, ^runner}, 5_000)
+
+    assert NodeTestHelper.wait_until(
+             fn -> match?([session] when session != runner, FleetManager.active_runners(ns)) end,
+             15_000
+           ),
+           "the session outlived a data plane it could not rebind"
+
+    refute_received {:rebind_refused, ^runner}
   end
 
   test "a refused reconnect climbs the ladder instead of spinning at one rung", %{ns: ns} do
@@ -494,7 +546,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     {waits, _log} =
       with_log(fn ->
-        send(server, {:flz_closed, 999_999, "test_injected"})
+        send(server, {:flz_closed, control_stream_id(), "test_injected"})
 
         collected =
           for _ <- 1..3 do
@@ -626,11 +678,14 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   # The runner's secondary (heartbeat-carrying) stream channels.
-  defp secondary_channels(runner_id) do
-    prefix = runner_id <> "_scs_"
+  defp control_stream_id do
+    Flezha.Transport.Stream.stream_id(:sys.get_state(RunnerServer.whereis()).control_handle)
+  end
 
-    Registry.select(Flezha.Identificator, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
-    |> Enum.filter(fn {key, _pid} -> is_binary(key) and String.starts_with?(key, prefix) end)
-    |> Enum.map(&elem(&1, 1))
+  defp secondary_channels(runner_id) do
+    for name <- Flezha.Runner.StreamPool.stream_ids(runner_id, :secondary),
+        pid = GenServer.whereis(name),
+        is_pid(pid),
+        do: pid
   end
 end

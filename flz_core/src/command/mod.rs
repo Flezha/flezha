@@ -382,4 +382,36 @@ mod tests {
         assert_eq!(reply("delivered", ""), Ok("delivered".to_string()));
         assert_eq!(reply("refused", "quota"), Err("quota".to_string()));
     }
+
+    /// Every command runs on the coordinator thread, which owns the control
+    /// stream, so a panic in one ends the session without a word to the
+    /// controller. The production half of this directory refuses instead.
+    /// One directory, not the crate: `flz_core/src` holds more.
+    #[test]
+    fn no_command_can_panic_the_thread_that_runs_it() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/command");
+        let mut scanned = 0;
+
+        for entry in std::fs::read_dir(dir).expect("the command directory") {
+            let path = entry.expect("a directory entry").path();
+            let source = std::fs::read_to_string(&path).expect("a command source");
+            let production = source
+                .split("#[cfg(test)]\nmod ")
+                .next()
+                .unwrap_or_default();
+            for call in [".unwrap()", ".expect(", "panic!("] {
+                assert!(
+                    !production.contains(call),
+                    "{} calls `{call}` outside its tests",
+                    path.display()
+                );
+            }
+            scanned += 1;
+        }
+
+        assert!(
+            scanned > 1,
+            "the scan read {scanned} files and measured nothing"
+        );
+    }
 }

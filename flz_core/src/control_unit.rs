@@ -11,7 +11,7 @@ use flz_transport::service::payloader;
 use flz_transport::transport::config::{
     self as transport_config, get_transport_type, TransportType,
 };
-use flz_transport::transport::liveness::{self, ControlLiveness, ReadAction};
+use flz_transport::transport::liveness::{self, ConnectAnswered, ControlLiveness, ReadAction};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::last_good::LastGood;
@@ -44,11 +44,7 @@ static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
 /// controller.
 static FAILED_SESSIONS: AtomicU32 = AtomicU32::new(0);
 
-type ControlConn = (
-    thread::JoinHandle<()>,
-    Arc<FlezhaStream>,
-    Option<Arc<QuicClient>>,
-);
+type ControlConn = (ConnectAnswered, Arc<FlezhaStream>, Option<Arc<QuicClient>>);
 
 #[derive(Serialize)]
 struct FactoryInfo {
@@ -165,15 +161,13 @@ fn reconnect_backoff(attempt: u32) -> Duration {
 /// Record how a control session ended, before the reconnect it asks for is
 /// posted — the coordinator opens the next one off this count.
 ///
-/// "Admitted" is the controller's own answer: it writes `assign_runner_id` on
-/// a handshake it accepts and nothing at all on one it refuses, so the first
-/// inbound frame — `ControlLiveness`'s ack — is the whole definition, and a
-/// controller that restarts under a healthy fleet is reconnected to at once.
-/// The deliberate gap: a controller that admits a session and drops it at once
-/// resets every cycle, so that loop is unthrottled. It is a different failure
-/// — admission costs a full bind — from the cheap refusal this counts.
-fn note_session_end(acked: bool) {
-    if acked {
+/// Only a completed handshake resets the rung, so a controller that restarts
+/// under a healthy fleet is reconnected to at once. The first inbound frame is
+/// not admission: a controller that writes `assign_runner_id` and then fails
+/// the connect, or severs the data streams before the session is whole, would
+/// otherwise be retried as fast as the kernel allows.
+fn note_session_end(completed: bool) {
+    if completed {
         FAILED_SESSIONS.store(0, Ordering::Relaxed);
     } else {
         FAILED_SESSIONS.fetch_add(1, Ordering::Relaxed);
@@ -207,8 +201,8 @@ fn try_open(
     match get_transport_type() {
         #[cfg(unix)]
         TransportType::Uds => {
-            let (handle, stream) = try_open_uds(namespace, declared, itx, otx)?;
-            Ok((handle, stream, None))
+            let (answered, stream) = try_open_uds(namespace, declared, itx, otx)?;
+            Ok((answered, stream, None))
         }
         #[cfg(not(unix))]
         TransportType::Uds => Err(Error::Connect(
@@ -225,7 +219,7 @@ fn try_open_uds(
     declared: Arc<RwLock<Vec<String>>>,
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> Result<(thread::JoinHandle<()>, Arc<FlezhaStream>), Error> {
+) -> Result<(ConnectAnswered, Arc<FlezhaStream>), Error> {
     let socket_path = socket_dir::control_socket_path()?;
 
     let stream = UnixStream::connect(socket_path.clone()).map_err(|e| {
@@ -267,9 +261,9 @@ fn try_open_quic(
                 LAST_GOOD_QUIC.note(addr);
 
                 let stream_box = Arc::new(FlezhaStream::Quic(control_stream));
-                let (handle, stream) = sock_conn(namespace, declared, stream_box, itx, otx);
+                let (answered, stream) = sock_conn(namespace, declared, stream_box, itx, otx);
 
-                return Ok((handle, stream, Some(client)));
+                return Ok((answered, stream, Some(client)));
             }
             // Every failure names the address it was dialled against — a
             // failure that names no address cannot be acted on.
@@ -309,15 +303,17 @@ fn sock_conn(
     stream_box: Arc<FlezhaStream>,
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> (thread::JoinHandle<()>, Arc<FlezhaStream>) {
+) -> (ConnectAnswered, Arc<FlezhaStream>) {
     let stream_clone = Arc::clone(&stream_box);
 
-    let handle = thread::spawn(move || {
-        // Shared (Rust + Java) control-channel liveness: an ack-deadline until
-        // the controller's first frame, then a steady-state idle watchdog that
-        // re-arms on every frame. Catches both the warm-restart "accept but
-        // never ack" hang and a controller that wedges after the handshake.
-        let mut live = ControlLiveness::new();
+    // Shared (Rust + Java) control-channel liveness: an ack-deadline until
+    // the controller's first frame, then a steady-state idle watchdog that
+    // re-arms on every frame. Catches both the warm-restart "accept but
+    // never ack" hang and a controller that wedges after the handshake.
+    let mut live = ControlLiveness::new();
+    let answered = live.connect_answered();
+
+    thread::spawn(move || {
         let _ = stream_clone.set_read_timeout(Some(live.current_deadline()));
 
         // Present the self-owned stable identity on every connect (initial and
@@ -350,7 +346,7 @@ fn sock_conn(
         read_loop(&stream_clone, &otx, &mut live);
     });
 
-    (handle, stream_box)
+    (answered, stream_box)
 }
 
 /// Feed control frames to the coordinator until the channel fails, then ask
@@ -391,7 +387,7 @@ fn read_loop(
                             e
                         );
                     }
-                    note_session_end(live.acked());
+                    note_session_end(live.handshake_completed());
                     let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
                     return;
                 }

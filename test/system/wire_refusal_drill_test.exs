@@ -17,10 +17,11 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   control frame refused, a heartbeat owed nothing, a payload id the table does
   not name refused at the call — is proved over real streams by
   `test/flezha/sdk/hold_class_test.exs`, `test/flezha/sdk/record_hold_test.exs`
-  and `flz_core/src/state_sink.rs`'s own tests, one per runtime core. A drill
-  that severs a bound secondary was written and dropped: it measures a
-  pre-existing reconnect storm rather than the class, and that is filed rather
-  than fixed here.
+  and `flz_core/src/state_sink.rs`'s own tests, one per runtime core.
+
+  A data plane the controller severs is a wire that has gone for part of the
+  session only, and it is repaired inside that session: the runner does not
+  reconnect for it, and production resumes on the rebound streams.
   """
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
@@ -29,6 +30,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
 
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.StreamPool
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
@@ -98,12 +100,42 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
     NodeTestHelper.ensure_port_dead(port)
   end
 
+  @tag timeout: 300_000
+  test "severed data streams are rebound inside the session, and nothing reconnects",
+       %{namespace: namespace} do
+    # A ten-minute heartbeat, so no ladder of any kind can stand in for the repair.
+    {port, runner_id} = boot(namespace, [{"FLEZHA_DATA_HEARTBEAT_MS", "600000"}])
+    operative_id = "wr_sever_#{System.unique_integer([:positive])}"
+
+    assert {:ok, %{runner_id: ^runner_id}} =
+             OperativeManager.start_operative(namespace, builder(operative_id, self()))
+
+    assert produced?(operative_id, namespace, "before", 60_000)
+
+    # A break on the controller's end, as its driver reports one: the owner is
+    # told, then the stream is released.
+    for name <- StreamPool.stream_ids(runner_id, :secondary),
+        channel = GenServer.whereis(name),
+        ref = :sys.get_state(channel).stream_ref do
+      send(channel, {:flz_closed, Flezha.Transport.Stream.stream_id(ref), "severed"})
+      Flezha.Transport.Stream.close(ref)
+    end
+
+    resumed? = produced?(operative_id, namespace, "after", 60_000)
+    reconnects = count_lines(port, "reconnecting (attempt")
+
+    assert resumed?, "production never resumed; the runner logged #{reconnects} reconnects"
+    assert reconnects == 0, "the runner reconnected #{reconnects} times for a data-plane fault"
+    assert runner_id in FleetManager.active_runners(namespace)
+  end
+
   # ---------- helpers ----------
 
-  defp boot(namespace) do
+  defp boot(namespace, env \\ []) do
     {port, runner_id} =
       NodeTestHelper.start_runner_port(namespace,
         transport: :uds,
+        env: env,
         port_opts: [:stderr_to_stdout]
       )
 
@@ -141,6 +173,16 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
       500 ->
         System.monotonic_time(:millisecond) < deadline and
           feed_until(operative_id, namespace, input, deadline)
+    end
+  end
+
+  # The runner's own log, as the harness's port delivered it so far.
+  defp count_lines(port, needle) do
+    receive do
+      {^port, {:data, data}} ->
+        length(String.split(IO.iodata_to_binary(data), needle)) - 1 + count_lines(port, needle)
+    after
+      0 -> 0
     end
   end
 

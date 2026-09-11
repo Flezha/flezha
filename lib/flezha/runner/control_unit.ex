@@ -245,40 +245,19 @@ defmodule Flezha.Runner.ControlUnit do
     end
   end
 
+  # The two handshake commands are answered with what the runner answered, as
+  # every other command is: a caller told `:ok` on the write alone is a caller
+  # that records a refused connect as a working one.
   @impl true
   def handle_call(:command_assign_runner_id, from, state) do
-    case ControlChannel.send_control(
-           state.runner_id,
-           {
-             :assign_runner_id,
-             %RunnerCommands.AssignRunnerId{runner_id: state.runner_id}
-           }
-         ) do
-      {:ok, ref} ->
-        {:reply, :ok, store_ref(state, ref, from)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    command = %RunnerCommands.AssignRunnerId{runner_id: state.runner_id}
+    handle_call({:send_control, {:assign_runner_id, command}, false}, from, state)
   end
 
   @impl true
   def handle_call(:command_sockets_connect, from, state) do
-    sockets_count = Config.get(:concurrent_channel_count)
-
-    case ControlChannel.send_control(
-           state.runner_id,
-           {
-             :connect_socket,
-             %RunnerCommands.ConnectSocket{sockets_count: sockets_count}
-           }
-         ) do
-      {:ok, ref} ->
-        {:reply, :ok, store_ref(state, ref, from)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
+    command = %RunnerCommands.ConnectSocket{sockets_count: Config.get(:concurrent_channel_count)}
+    handle_call({:send_control, {:connect_socket, command}, false}, from, state)
   end
 
   @impl true

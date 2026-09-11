@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed: a runner session is admitted only once its handshake completes
+
+A runner whose data sockets could not be connected was recorded as connected
+anyway, and stayed that way with no data plane: the controller answered the
+connect before the runner had. The controller now waits for the runner's own
+answers, without holding up any other connect, and ends a session the runner
+refuses, does not answer within `control_unit_reply_timeout_ms`, or leaves before
+answering. On the default UDS transport such a connect used to crash the runner's
+control thread instead of refusing; it now refuses on both transports.
+
+The reconnect backoff now resets only on a completed handshake, so a controller
+that admits a runner and then fails it is retried with backoff rather than at
+once. A lost data stream no longer makes a runner reconnect: the controller
+rebinds the data plane inside the live session, up to three times, and ends the
+session after that. A disconnect now tears the runner's processes down even when
+its namespace has already left the controller's runner list.
+
 ### Changed: a namespace name may contain an underscore
 
 `flz namespace create java_test` was refused with `:invalid_namespace_name`, and

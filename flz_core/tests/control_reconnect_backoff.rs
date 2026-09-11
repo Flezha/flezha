@@ -8,13 +8,18 @@
 //! say nothing. The loop is the coordinator's — open, take the `Reconnect` the
 //! dead session posts, open again.
 //!
+//! The reset is the other half. A session is admitted only once its handshake
+//! completed: the runner answered `ConnectSocket` and the controller carried
+//! on with another frame. A controller that answers the first frame and closes
+//! is refusing too, and is charged the ladder like one.
+//!
 //! An integration test rather than a unit one: the ladder's state and the
 //! socket directory are both process-wide, so this needs a binary of its own.
 
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -39,26 +44,26 @@ const LADDER_CEILING: Duration = Duration::from_secs(3);
 struct Controller {
     path: String,
     accepted: Receiver<()>,
-    admit_next: Arc<AtomicBool>,
+    frames_next: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Controller {
-    /// Accept every connection and close it. With `admit_next` raised, answer
-    /// one control frame first — the `assign_runner_id` a real controller
-    /// writes once it has admitted the runner, and the only thing that tells
-    /// an accepted session from a refused one.
-    fn refusing(dir: &Path) -> Controller {
+    /// Accept every connection and close it. With `frames_next` raised, write
+    /// that many control frames first, each only after the runner's test has
+    /// released it: the `assign_runner_id` a real controller writes, then
+    /// whatever it sends once it has carried on with the session.
+    fn refusing(dir: &Path, release: Receiver<()>) -> Controller {
         let path = socket_dir::control_socket_path_in(dir).expect("control socket path");
         let listener = UnixListener::bind(&path).expect("bind control socket");
 
-        let admit_next = Arc::new(AtomicBool::new(false));
+        let frames_next = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         let (noted, accepted) = unbounded();
 
         let thread = {
-            let admit_next = Arc::clone(&admit_next);
+            let frames_next = Arc::clone(&frames_next);
             let stop = Arc::clone(&stop);
             thread::spawn(move || {
                 for conn in listener.incoming() {
@@ -66,16 +71,20 @@ impl Controller {
                         return;
                     }
                     let Ok(mut conn) = conn else { return };
-                    if admit_next.swap(false, Ordering::Relaxed) {
+                    let frames = frames_next.swap(0, Ordering::Relaxed);
+                    if frames > 0 {
                         let mut buf = [0u8; 4096];
                         let _ = conn.read(&mut buf);
-                        let ack = payloader::build_from_binary(
+                    }
+                    for _ in 0..frames {
+                        let _ = release.recv();
+                        let frame = payloader::build_from_binary(
                             "control_command",
                             b"\x08\x01",
                             std::collections::HashMap::new(),
                         )
                         .unwrap();
-                        let _ = conn.write_all(&ack);
+                        let _ = conn.write_all(&frame);
                     }
                     let _ = noted.send(());
                 }
@@ -85,14 +94,14 @@ impl Controller {
         Controller {
             path,
             accepted,
-            admit_next,
+            frames_next,
             stop,
             thread: Some(thread),
         }
     }
 
-    fn admit_next_session(&self) {
-        self.admit_next.store(true, Ordering::Relaxed);
+    fn write_next_session(&self, frames: usize) {
+        self.frames_next.store(frames, Ordering::Relaxed);
     }
 
     fn accepts(&self) -> usize {
@@ -116,8 +125,7 @@ fn declared() -> Arc<RwLock<Vec<String>>> {
     Arc::new(RwLock::new(vec!["probe".to_string()]))
 }
 
-/// Wait out the session's death. An admitted session forwards the frame it was
-/// admitted with before it dies, so the reconnect is the message after it.
+/// Wait out the session's death, skipping the frames it forwarded first.
 fn await_reconnect(orx: &Receiver<RunnerMessage>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -127,6 +135,15 @@ fn await_reconnect(orx: &Receiver<RunnerMessage>) {
             Err(e) => panic!("a session the controller closed must post a Reconnect: {e}"),
         }
     }
+}
+
+/// The next frame the session forwards, which is the reader having read it.
+fn await_frame(orx: &Receiver<RunnerMessage>) {
+    let frame = orx.recv_timeout(Duration::from_secs(5));
+    assert!(
+        matches!(frame, Ok(RunnerMessage::HandleCommandAction(..))),
+        "the controller's frame was not forwarded"
+    );
 }
 
 /// One reconnect: open it and wait for the `Reconnect` its death posts.
@@ -200,7 +217,8 @@ fn drive_refused_sessions(
 #[test]
 fn a_refused_session_backs_the_reconnect_ladder_off() {
     let dir = isolated_socket_dir();
-    let controller = Controller::refusing(&dir);
+    let (release, released) = unbounded();
+    let controller = Controller::refusing(&dir, released);
 
     let (otx, orx) = unbounded();
     let otx = Arc::new(Mutex::new(otx));
@@ -230,10 +248,35 @@ fn a_refused_session_backs_the_reconnect_ladder_off() {
 
     assert_a_fresh_start_does_not_wait(&otx, &orx);
 
-    // An admitted session — the controller answers one control frame — is
-    // what the ladder resets on: the reconnect after it must not wait.
-    controller.admit_next_session();
-    one_session(&otx, &orx);
+    // A controller that writes its first frame and closes has not admitted
+    // the runner: the rung climbs past the fresh start's zero.
+    controller.write_next_session(1);
+    let conn = control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone());
+    release.send(()).unwrap();
+    await_frame(&orx);
+    await_reconnect(&orx);
+    drop(conn);
+
+    let after_first_frame = one_session(&otx, &orx);
+    assert!(
+        after_first_frame >= Duration::from_millis(100),
+        "the reconnect after a session that only answered its first frame waited {:?}; \
+         the first frame reset the ladder",
+        after_first_frame
+    );
+
+    // A completed handshake is what the ladder resets on: the runner answers
+    // `ConnectSocket` and the controller carries on with a further frame.
+    controller.write_next_session(2);
+    let (answered, stream, quic) =
+        control_unit::open_reconnect("kb111_ns".to_string(), declared(), otx.clone());
+    release.send(()).unwrap();
+    await_frame(&orx);
+    answered.note();
+    release.send(()).unwrap();
+    await_frame(&orx);
+    await_reconnect(&orx);
+    drop((stream, quic));
 
     let after_admitted = one_session(&otx, &orx);
     assert!(

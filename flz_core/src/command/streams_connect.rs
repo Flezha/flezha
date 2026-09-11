@@ -6,6 +6,7 @@ use std::thread;
 
 use flz_transport::service::payloader;
 use flz_transport::transport::config::{get_transport_type, TransportType};
+use flz_transport::transport::quic::{QuicBidiStream, QuicClient};
 use flz_transport::transport::{protocol, FlezhaStream};
 #[cfg(unix)]
 use flz_transport::utility::socket_dir;
@@ -18,57 +19,91 @@ use crate::runner::RunnerNode;
 use crate::state_sink;
 
 impl CommandAction for ConnectSocket {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
-        match get_transport_type() {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+        let connected = match get_transport_type() {
             #[cfg(unix)]
-            TransportType::Uds => handle_uds(self, runner),
+            TransportType::Uds => connect_uds(self, runner),
             #[cfg(not(unix))]
-            TransportType::Uds => {
-                _errors.push("UDS transport is not available on this platform".to_string());
-                connected_reply()
-            }
-            TransportType::Quic => handle_quic(self, runner, _errors),
-        }
+            TransportType::Uds => Err("UDS transport is not available on this platform".into()),
+            TransportType::Quic => connect_quic(self, runner),
+        };
+        answer(runner, connected, errors)
     }
 }
 
+/// The `ConnectSocket` answer, one for both transports. A refusal is the
+/// command's error and ends the handshake at the controller; a pair set that
+/// came up is noted first, so the control reader takes the controller's next
+/// frame as the session carrying on.
+fn answer(runner: &RunnerNode, connected: Result<(), String>, errors: &mut Vec<String>) -> Reply {
+    match connected {
+        Ok(()) => runner.note_connect_answered(),
+        Err(refusal) => errors.push(refusal),
+    }
+    Reply {
+        payload_id: "connect_sockets",
+        bytes: Vec::new(),
+    }
+}
+
+/// One key's pair as a transport opened it: the primary, the secondary, and
+/// the secondary's handle the runner's table keeps.
+type OpenedPair = (FlezhaStream, FlezhaStream, FlezhaStream);
+
+/// The pair set over UDS. Controller→SDK reads on primary, SDK→Controller
+/// writes on secondary: reads and writes on one descriptor cost ~4× in
+/// throughput, and the Java SDK pairs them the same way.
 #[cfg(unix)]
-fn handle_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
-    let io_streams = runner.get_io_streams();
+fn connect_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Result<(), String> {
     let runner_id = runner.get_runner_id();
-
-    // Pair each primary with its secondary explicitly. Controller→SDK reads
-    // on primary; SDK→Controller writes on secondary. Putting reads + writes
-    // on the same FD hurts throughput ~4× (Java SDK writes on the
-    // secondary; matching that here keeps the throughput floor).
-    let mut stream_pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)> = Vec::new();
-
-    for key in 0..cmd.sockets_count {
-        let primary = connect_unix(&runner_id, "primary".to_string());
-        let secondary = connect_unix(&runner_id, "secondary".to_string());
-
-        let secondary_for_store = FlezhaStream::Unix(secondary.try_clone().unwrap());
-        io_streams.write().unwrap().insert(key, secondary_for_store);
-
-        let secondary_for_write = Arc::new(FlezhaStream::Unix(secondary));
-        stream_pairs.push((FlezhaStream::Unix(primary), secondary_for_write));
-    }
-
-    install_state_sink(&stream_pairs);
-    spawn_listener_uds(runner, stream_pairs);
-    connected_reply()
+    connect_pairs(cmd, runner, "uds", |_key| {
+        let primary = connect_unix(&runner_id, "primary")?;
+        let secondary = connect_unix(&runner_id, "secondary")?;
+        let stored = secondary
+            .try_clone()
+            .map_err(|e| format!("secondary stream clone failed: {e}"))?;
+        Ok((
+            FlezhaStream::Unix(primary),
+            FlezhaStream::Unix(secondary),
+            FlezhaStream::Unix(stored),
+        ))
+    })
 }
 
-fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode, errors: &mut Vec<String>) -> Reply {
-    if let Err(refusal) = connect_quic(cmd, runner) {
-        errors.push(refusal);
-    }
-    connected_reply()
+/// The pair set over QUIC, each stream opening with its type byte.
+fn connect_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Result<(), String> {
+    let client = runner
+        .get_quic_client()
+        .ok_or_else(|| "QUIC client not available".to_string())?;
+    connect_pairs(cmd, runner, "quic", |key| {
+        let primary = open_quic(&client, "primary", protocol::STREAM_TYPE_PRIMARY, key)?;
+        let secondary = open_quic(&client, "secondary", protocol::STREAM_TYPE_SECONDARY, key)?;
+        let stored = FlezhaStream::Quic(secondary.clone_handle());
+        Ok((
+            FlezhaStream::Quic(primary),
+            FlezhaStream::Quic(secondary),
+            stored,
+        ))
+    })
 }
 
-/// Bring up the pair set over QUIC, all of it or none of it. A step the
-/// runner cannot take fails its connect and says so, rather than ending the
-/// coordinator thread and with it the control channel.
+fn open_quic(
+    client: &QuicClient,
+    half: &str,
+    stream_type: u8,
+    key: u32,
+) -> Result<QuicBidiStream, String> {
+    let stream = client
+        .open_bidi_stream()
+        .map_err(|e| format!("{half} stream open failed: {e}"))?;
+    write_stream_type(&stream, stream_type, key)
+        .map_err(|e| format!("{half} stream type write failed: {e}"))?;
+    Ok(stream)
+}
+
+/// Bring up a pair set, all of it or none of it. A step the runner cannot take
+/// fails its connect and says so, rather than ending the coordinator thread and
+/// with it the control channel.
 ///
 /// Nothing is installed until every pair is up, which is the whole point: a
 /// half-installed set answers the data heartbeat on the secondaries it did
@@ -76,55 +111,34 @@ fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode, errors: &mut Vec<St
 /// never fires and nothing reconnects, while the primaries beside them have
 /// no reader. The runner reads healthy and loses every input. Leaving the map
 /// untouched keeps the failure visible instead.
-fn connect_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Result<(), String> {
-    let quic_client = runner
-        .get_quic_client()
-        .ok_or_else(|| "QUIC client not available".to_string())?;
-
+fn connect_pairs(
+    cmd: &ConnectSocket,
+    runner: &RunnerNode,
+    transport: &'static str,
+    mut open_pair: impl FnMut(u32) -> Result<OpenedPair, String>,
+) -> Result<(), String> {
     let mut stream_pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)> = Vec::new();
     let mut fresh: Vec<(u32, FlezhaStream)> = Vec::new();
 
     for key in 0..cmd.sockets_count {
-        let primary = quic_client
-            .open_bidi_stream()
-            .map_err(|e| format!("primary stream open failed: {e}"))?;
-        write_stream_type(&primary, protocol::STREAM_TYPE_PRIMARY, key)
-            .map_err(|e| format!("primary stream type write failed: {e}"))?;
-
-        let secondary = quic_client
-            .open_bidi_stream()
-            .map_err(|e| format!("secondary stream open failed: {e}"))?;
-        write_stream_type(&secondary, protocol::STREAM_TYPE_SECONDARY, key)
-            .map_err(|e| format!("secondary stream type write failed: {e}"))?;
-
-        fresh.push((key, FlezhaStream::Quic(secondary.clone_handle())));
-
-        let secondary_for_write = Arc::new(FlezhaStream::Quic(secondary));
-        stream_pairs.push((FlezhaStream::Quic(primary), secondary_for_write));
+        let (primary, secondary, stored) = open_pair(key)?;
+        fresh.push((key, stored));
+        stream_pairs.push((primary, Arc::new(secondary)));
     }
 
-    runner.get_io_streams().write().unwrap().extend(fresh);
+    runner
+        .get_io_streams()
+        .write()
+        .map_err(|_| "the data stream table is poisoned".to_string())?
+        .extend(fresh);
     install_state_sink(&stream_pairs);
-    spawn_listener_quic(runner, stream_pairs);
+    spawn_listener(runner, transport, stream_pairs);
     Ok(())
-}
-
-/// The `ConnectSocket` answer; the errors the caller collected are what say
-/// whether the pairs came up.
-fn connected_reply() -> Reply {
-    Reply {
-        payload_id: "connect_sockets",
-        bytes: Vec::new(),
-    }
 }
 
 /// The stream-type byte a fresh QUIC stream opens with, through the class so
 /// no writer on this wire chooses its own answer to a refusal.
-fn write_stream_type(
-    stream: &flz_transport::transport::quic::QuicBidiStream,
-    stream_type: u8,
-    key: u32,
-) -> std::io::Result<()> {
+fn write_stream_type(stream: &QuicBidiStream, stream_type: u8, key: u32) -> std::io::Result<()> {
     state_sink::write(
         state_sink::Class::Control,
         Some(&FlezhaStream::Quic(stream.clone_handle())),
@@ -166,15 +180,13 @@ fn install_state_sink(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
     }
 }
 
-#[cfg(unix)]
-fn spawn_listener_uds(runner: &RunnerNode, pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>) {
+fn spawn_listener(
+    runner: &RunnerNode,
+    transport: &'static str,
+    pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>,
+) {
     let handle = runner.operative_dispatch_handle();
-    let _ = thread::spawn(move || listen_incoming_uds(pairs, handle));
-}
-
-fn spawn_listener_quic(runner: &RunnerNode, pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>) {
-    let handle = runner.operative_dispatch_handle();
-    let _ = thread::spawn(move || listen_incoming_quic(pairs, handle));
+    let _ = thread::spawn(move || listen_incoming(transport, pairs, handle));
 }
 
 fn run_data_reader(
@@ -208,8 +220,8 @@ fn run_data_reader(
     );
 }
 
-#[cfg(unix)]
-fn listen_incoming_uds(
+fn listen_incoming(
+    transport: &'static str,
     pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>,
     handle: OperativeDispatchHandle,
 ) {
@@ -218,25 +230,7 @@ fn listen_incoming_uds(
         let handle = handle.clone();
         let primary = Arc::new(primary);
         let h = thread::spawn(move || {
-            run_data_reader("uds", key as u32, primary, secondary, handle);
-        });
-        handles.push(h);
-    }
-    for h in handles {
-        let _ = h.join();
-    }
-}
-
-fn listen_incoming_quic(
-    mut pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>,
-    handle: OperativeDispatchHandle,
-) {
-    let mut handles = Vec::new();
-    for (key, (primary, secondary)) in pairs.drain(..).enumerate() {
-        let handle = handle.clone();
-        let primary = Arc::new(primary);
-        let h = thread::spawn(move || {
-            run_data_reader("quic", key as u32, primary, secondary, handle);
+            run_data_reader(transport, key as u32, primary, secondary, handle);
         });
         handles.push(h);
     }
@@ -246,11 +240,11 @@ fn listen_incoming_quic(
 }
 
 #[cfg(unix)]
-fn connect_unix(runner_id: &str, stream_type: String) -> UnixStream {
+fn connect_unix(runner_id: &str, stream_type: &str) -> Result<UnixStream, String> {
     // Resolved from the directory the control channel actually reached, so a
     // data socket can never land in a different one.
-    let socket_path = socket_dir::stream_socket_path(runner_id, stream_type)
-        .unwrap_or_else(|e| panic!("Cannot resolve the data socket directory: {}", e));
+    let socket_path = socket_dir::stream_socket_path(runner_id, stream_type.to_string())
+        .map_err(|e| format!("{stream_type} stream socket unresolved: {e}"))?;
 
     // The controller binds the per-runner data sockets immediately before
     // sending ConnectSocket, but bind+connect can race on busy CI. Retry with
@@ -260,13 +254,12 @@ fn connect_unix(runner_id: &str, stream_type: String) -> UnixStream {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         match UnixStream::connect(&socket_path) {
-            Ok(s) => return s,
+            Ok(s) => return Ok(s),
             Err(e) => {
                 if std::time::Instant::now() >= deadline {
-                    panic!(
-                        "Failed to connect to the socket {} after {} attempts: {}",
-                        socket_path, attempt, e
-                    );
+                    return Err(format!(
+                        "{stream_type} stream open failed: {socket_path} after {attempt} attempts: {e}"
+                    ));
                 }
                 attempt += 1;
                 let backoff = std::cmp::min(
@@ -284,10 +277,14 @@ mod tests {
     use std::io::Read;
     use std::time::Duration;
 
+    use flz_transport::transport::liveness::ControlLiveness;
     use flz_transport::transport::quic::QuicClient;
     use flz_transport::transport::quic_pair::{cert_path, SocketPeer};
+    use prost::Message;
 
     use super::*;
+    use crate::pb::command_request::Command;
+    use crate::pb::{CommandRequest, CommandResponse};
 
     /// A runner dialled at `peer`, ready to be handed a `ConnectSocket`.
     fn runner_on(peer: &SocketPeer) -> (RunnerNode, Arc<QuicClient>) {
@@ -306,20 +303,13 @@ mod tests {
     #[test]
     fn a_connect_with_no_quic_client_refuses() {
         let mut runner = RunnerNode::new("connect_test".to_string());
-        let mut errors: Vec<String> = Vec::new();
 
-        let reply = handle_quic(
-            &ConnectSocket { sockets_count: 1 },
-            &mut runner,
-            &mut errors,
-        );
+        let refusal = connect_quic(&ConnectSocket { sockets_count: 1 }, &mut runner)
+            .expect_err("the refusal is the command's answer");
 
-        assert_eq!(reply.payload_id, "connect_sockets");
-        assert_eq!(errors.len(), 1, "the refusal is the command's answer");
         assert!(
-            errors[0].contains("QUIC client"),
-            "the refusal names what was missing: {}",
-            errors[0]
+            refusal.contains("QUIC client"),
+            "the refusal names what was missing: {refusal}"
         );
     }
 
@@ -345,19 +335,12 @@ mod tests {
             "the client's driver thread must have exited"
         );
 
-        let mut errors: Vec<String> = Vec::new();
-        let reply = handle_quic(
-            &ConnectSocket { sockets_count: 4 },
-            &mut runner,
-            &mut errors,
-        );
+        let refusal = connect_quic(&ConnectSocket { sockets_count: 4 }, &mut runner)
+            .expect_err("the first refusal ends the connect");
 
-        assert_eq!(reply.payload_id, "connect_sockets");
-        assert_eq!(errors.len(), 1, "the first refusal ends the connect");
         assert!(
-            errors[0].contains("primary"),
-            "the refusal names the stream it could not open: {}",
-            errors[0]
+            refusal.contains("primary"),
+            "the refusal names the stream it could not open: {refusal}"
         );
     }
 
@@ -380,14 +363,8 @@ mod tests {
             .unwrap()
             .insert(7, FlezhaStream::Quic(previous));
 
-        let mut errors: Vec<String> = Vec::new();
-        handle_quic(
-            &ConnectSocket { sockets_count: 2 },
-            &mut runner,
-            &mut errors,
-        );
-
-        assert_eq!(errors.len(), 1, "the fourth stream is refused");
+        connect_quic(&ConnectSocket { sockets_count: 2 }, &mut runner)
+            .expect_err("the fourth stream is refused");
         let io_streams = runner.get_io_streams();
         let installed = io_streams.read().unwrap();
         let mut keys: Vec<u32> = installed.keys().copied().collect();
@@ -407,19 +384,103 @@ mod tests {
         let peer = SocketPeer::listening(3);
         let (mut runner, _client) = runner_on(&peer);
 
+        let refusal = connect_quic(&ConnectSocket { sockets_count: 2 }, &mut runner)
+            .expect_err("the first refusal ends the connect");
+
+        assert!(
+            refusal.contains("secondary"),
+            "the refusal names the stream it could not open: {refusal}"
+        );
+    }
+
+    /// Only a pair set that came up tells the control reader the connect was
+    /// answered; a refusal is the command's error and admits nothing.
+    #[test]
+    fn only_a_connect_that_came_up_is_noted_as_answered() {
+        let mut runner = RunnerNode::new("connect_test".to_string());
+        let mut live = ControlLiveness::new();
+        runner.set_connect_answered(live.connect_answered());
         let mut errors: Vec<String> = Vec::new();
-        let reply = handle_quic(
-            &ConnectSocket { sockets_count: 2 },
-            &mut runner,
-            &mut errors,
+
+        let reply = answer(&runner, Err("refused".to_string()), &mut errors);
+        live.note_frame();
+        assert_eq!(reply.payload_id, "connect_sockets");
+        assert_eq!(errors, ["refused"]);
+        assert!(
+            !live.handshake_completed(),
+            "a refused connect admits nothing"
         );
 
-        assert_eq!(reply.payload_id, "connect_sockets");
-        assert_eq!(errors.len(), 1, "the first refusal ends the connect");
+        answer(&runner, Ok(()), &mut errors);
+        live.note_frame();
+        assert!(live.handshake_completed());
+    }
+
+    /// The default transport's two refusals, driven through the command
+    /// dispatch on a thread of its own, the way the coordinator runs it: that
+    /// thread owns the control stream, so it must answer and live.
+    #[cfg(unix)]
+    fn refused_uds_connect(socket_dir: &std::path::Path) -> CommandResponse {
+        let _guard = crate::runner::env_test_guard();
+        std::env::set_var("FLEZHA_TRANSPORT", "uds");
+        std::env::set_var("FLEZHA_SOCKET_FILES_PATH", socket_dir);
+
+        let (stream, controller) = crate::test_support::stream_pair();
+        let frame = CommandRequest {
+            reference_id: "ref-connect".to_string(),
+            command: Some(Command::ConnectSocket(ConnectSocket { sockets_count: 1 })),
+        }
+        .encode_to_vec();
+
+        let coordinator = thread::spawn(move || {
+            let mut runner = RunnerNode::new("connect_test".to_string());
+            runner.assign_runner_id("unbound".to_string());
+            crate::command::handle_command(&mut runner, &stream, "control_command", &frame);
+        });
+        let survived = coordinator.join().is_ok();
+
+        std::env::remove_var("FLEZHA_TRANSPORT");
+        std::env::remove_var("FLEZHA_SOCKET_FILES_PATH");
         assert!(
-            errors[0].contains("secondary"),
-            "the refusal names the stream it could not open: {}",
-            errors[0]
+            survived,
+            "the coordinator thread unwound on a refusable connect"
+        );
+
+        let (_, reply, _) = payloader::extract_payload(&controller).expect("an answer was written");
+        CommandResponse::decode(&reply[..]).expect("the answer decodes")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_data_socket_the_controller_has_not_bound_is_refused() {
+        let dir = std::env::temp_dir().join(format!("flezha-unbound-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("socket dir");
+
+        let response = refused_uds_connect(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(response.status, "error");
+        assert!(
+            response.errors[0].contains("primary_stream_unbound"),
+            "the refusal names the socket it could not dial: {:?}",
+            response.errors
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unresolvable_data_socket_directory_is_refused() {
+        // Longer than any Unix domain socket address, so nothing could bind a
+        // socket in it and nothing is dialled.
+        let dir = std::path::PathBuf::from(format!("/tmp/{}", "d".repeat(120)));
+
+        let response = refused_uds_connect(&dir);
+
+        assert_eq!(response.status, "error");
+        assert!(
+            response.errors[0].contains(&*dir.to_string_lossy()),
+            "the refusal names the directory: {:?}",
+            response.errors
         );
     }
 }
