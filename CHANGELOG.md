@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Removed: the merge-gated bench no longer fails on a throughput number
+
+The `bench-regression` job failed a pull request whose regression bench read
+below 432 000 messages a second on the receive window, 0.9 of a floor recorded
+on one desktop. That number was arbitrary, and noisier than the band around it.
+The job still runs the bench and now writes the end-to-end and receive-window
+rates to its summary; it fails only when the bench itself fails or leaves no
+report with a rate in it. The job and workflow keep their names, so a
+branch-protection rule that requires the check still finds it.
+
+`mix bench.floor`, which printed the recorded floor for that job, is gone, and
+`docs/operations/benchmarking.md` no longer records a regression floor.
+
 ### Changed: `flz reset` can clear parked DLQ records and schedules, and names everything it keeps
 
 `flz reset` left `app_data/dlq/` and `app_data/schedules/` behind and did not

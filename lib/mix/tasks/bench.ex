@@ -225,9 +225,8 @@ defmodule Mix.Tasks.Bench do
     })
   end
 
-  # The ratio the informational CI job reads. Taken over the end-to-end window
-  # like every other headline here, so a pool comparison and a floor check are
-  # the same measurement at different pool sizes.
+  # The ratio the informational CI job reads, taken over the end-to-end window
+  # like every other headline here.
   defp print_scaling_summary(results) do
     throughputs = Enum.map(results, fn {_pool, m} -> m.throughput_msg_per_sec end)
 

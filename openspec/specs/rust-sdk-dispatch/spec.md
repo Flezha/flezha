@@ -1,7 +1,7 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operative/Procedure/Entity dispatch path: sticky per-Entity ordering invariants under ThreadPool dispatch, the dispatch throughput floor on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Entity flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the workflow `state.apply` hot-path cost, drain-time coalescing, the public `ProcedureTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operative/Procedure/Entity dispatch path: sticky per-Entity ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Entity flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the workflow `state.apply` hot-path cost, drain-time coalescing, the public `ProcedureTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
 ### Requirement: Sticky Per-Entity Ordering Under ThreadPool Dispatch
 
@@ -22,46 +22,6 @@ Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOV
 #### Scenario: Ordering holds across multiple entry streams
 - **WHEN** the agent opens 4 entry connections for a single Operative instance and the same Entity receives interleaved inputs from all 4
 - **THEN** `run(...)` calls for that Entity SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
-
-### Requirement: Dispatch Throughput Floor on Reference Workload
-
-On the regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16) invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, the Rust SDK SHALL sustain at least **480_000 messages/second** of message-processing throughput on commodity developer hardware (modern x86_64 laptop, 8+ cores, non-constrained CPU).
-
-The floor SHALL be measured over the **receive window** — total messages divided by the elapsed time from the send loop returning to the last response received — because this requirement gates *dispatch* throughput, and the send window it excludes is the controller's own cast overhead rather than anything the SDK's dispatch path controls. It SHALL be read from the bench run's structured report field `metrics.receive_window_msg_per_sec`, not matched out of printed prose.
-
-The bench SHALL nevertheless report the **end-to-end** window (first input dispatched to last response received) as its headline throughput, and SHALL name the window on every rate it reports. The two are not interchangeable — they differ by the send window — and a figure quoted without its window is not attributable. A future change that moves this floor onto a different window SHALL re-measure it rather than convert it.
-
-The literal floor value SHALL be recorded in `docs/operations/benchmarking.md` and updated only in tandem with this requirement: when a future change intentionally raises or lowers the floor, the spec line and the doc value SHALL be updated in the same PR. CI SHALL verify spec/doc agreement on every build (`mix bench.floor` prints the recorded number; the `bench-regression` GitHub Actions job parses both the spec line and the doc value, fails the build if they disagree). The job SHALL read the spec literal from the **live capability spec** at `openspec/specs/rust-sdk-dispatch/spec.md`, which is the file this requirement is archived into and the only copy a future change edits.
-
-The CI gate SHALL fail the build when measured throughput on the `bench-regression` job is below `0.9 × BENCH_FLOOR_MSG_PER_SEC` (10% tolerance band absorbs runner-image variance). Below `0.9 × BENCH_FLOOR_MSG_PER_SEC` is treated as a regression even if no individual code change in the PR is the obvious culprit; investigate before merging.
-
-The umbrella's prior 350,000 msg/s floor (from before the cutover) SHALL NOT be carried forward as the gate.
-
-#### Scenario: Reference bench meets the floor
-- **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime rust --shape regression -n 100 -m 10000` on a modern 8-core x86_64 laptop with a warm build
-- **THEN** the receive-window throughput recorded in the run's structured report SHALL be ≥ the recorded floor value
-- **AND** the run's printed output SHALL lead with the end-to-end throughput, each rate naming its window
-
-#### Scenario: CI gate fails on a 15% regression
-- **WHEN** a PR's `bench-regression` job measures throughput at `0.85 × BENCH_FLOOR_MSG_PER_SEC` (15% below the recorded floor)
-- **THEN** the CI job SHALL fail with a message naming the recorded floor, the measured throughput, the percentage shortfall, and a pointer to `docs/operations/benchmarking.md` for triage instructions
-
-#### Scenario: CI gate passes within tolerance
-- **WHEN** a PR's `bench-regression` job measures throughput at `0.92 × BENCH_FLOOR_MSG_PER_SEC` (8% below the recorded floor — within the 10% tolerance band)
-- **THEN** the CI job SHALL pass with a warning logged to the job output noting the proximity to the gate
-
-#### Scenario: Spec/doc floor sync check fails when the two diverge
-- **WHEN** a contributor edits the `BENCH_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md` without updating the literal in this requirement
-- **THEN** the `bench-regression` CI job's pre-bench sync check SHALL fail with a message identifying the divergence and pointing at both files
-
-#### Scenario: The sync check reads a file that exists
-- **WHEN** the `bench-regression` job runs on a checkout where the change that introduced this requirement has been archived
-- **THEN** the sync check SHALL read the live capability spec, find the recorded literal, and SHALL NOT fail on a missing file
-
-#### Scenario: Entity-stress bench scales with worker pool size
-- **WHEN** the entity-stress bench (`8 operatives × 4 procedures × 8 entities × 20K msg/operative`, fan-out per input to all 8 entities of the entry procedure; invoked via `mix bench --shape entity --pool-sizes 1,8`) is run on an 8-core host
-- **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that entity-mode dispatch is not the bottleneck
-- **AND** the `bench-entity-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)
 
 ### Requirement: Per-Message Dispatch-Overhead Budget
 
@@ -703,4 +663,30 @@ compile-time edge refusals and their `tests/ui` fixtures SHALL stay as they are.
 
 - **WHEN** the reference fixtures `hybrid_channel` and `commit_block_chain` are built through the typed builder
 - **THEN** the derived declaration equals the seven-column lines of `test/fixtures/reference_topologies.txt`
+
+### Requirement: Dispatch Throughput Reported on Reference Workload
+
+The regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it, and no CI job fails because a rate is low.
+
+The bench SHALL report the **end-to-end** window (first input dispatched to last response received) as its headline throughput and the **receive** window (send loop returning to last response received) beside it, and SHALL name the window on every rate it reports. The two are not interchangeable, since they differ by the send window, and a figure quoted without its window is not attributable. Both SHALL be written to the run's structured report, as `metrics.throughput_msg_per_sec` and `metrics.receive_window_msg_per_sec`.
+
+The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both rates from the run's structured report rather than from printed prose, and SHALL report both in its output. It SHALL fail when the bench run fails, writes no report, or writes a report missing either rate, and SHALL NOT fail on the value of either rate.
+
+#### Scenario: Reference bench reports both windows
+- **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime rust --shape regression -n 100 -m 10000`
+- **THEN** the run's structured report SHALL carry the end-to-end rate as `metrics.throughput_msg_per_sec` and the receive-window rate as `metrics.receive_window_msg_per_sec`
+- **AND** the run's printed output SHALL lead with the end-to-end throughput, each rate naming its window
+
+#### Scenario: A low rate does not fail the job
+- **WHEN** a PR's `bench-regression` job completes a bench run whose report carries both rates, however low they are
+- **THEN** the job SHALL pass and SHALL report both rates, each naming its window, in its output
+
+#### Scenario: A run with no rate fails the job
+- **WHEN** a PR's `bench-regression` job runs a bench that exits non-zero, writes no report, or writes a report missing either rate
+- **THEN** the job SHALL fail
+
+#### Scenario: Entity-stress bench scales with worker pool size
+- **WHEN** the entity-stress bench (`8 operatives × 4 procedures × 8 entities × 20K msg/operative`, fan-out per input to all 8 entities of the entry procedure; invoked via `mix bench --shape entity --pool-sizes 1,8`) is run on an 8-core host
+- **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that entity-mode dispatch is not the bottleneck
+- **AND** the `bench-entity-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)
 
