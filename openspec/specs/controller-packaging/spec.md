@@ -493,3 +493,32 @@ the route the documentation leads with.
 - **WHEN** an operator reads the shipped ConfigMap
 - **THEN** it SHALL carry `ERL_FLAGS` as a commented key naming the documentation section, so the override is visible in the manifest an operator already edits
 
+### Requirement: Release SHALL ship every application a shipped dependency needs
+
+Every release `mix.exs` defines SHALL ship each Mix dependency of every application it ships, including a dependency a library declares `runtime: false`. Mix leaves such a dependency out of the library's `.app` file, so `mix release`, which follows only `applications` and `included_applications`, cannot reach it, while `mix test` loads it from the code path. The root `mix.exs` SHALL declare any such dependency itself.
+
+The default `mix test` suite SHALL check this for every release `mix.exs` defines. It SHALL compute the release's closure with the function `mix release` itself uses, compare it with each shipped application's dependencies as `Mix.Project.deps_tree/1` records them, and fail naming each dependency the closure leaves out and the shipped application that needs it. It SHALL fail rather than pass when the closure does not contain `:process_hub` or the tree does not carry process_hub's `runtime: false` edge to `:elector`. The check reads the test environment's build, so a dependency declared `only: :prod` is outside it.
+
+#### Scenario: A library's runtime-false dependency ships because the root declares it
+
+- **GIVEN** process_hub declares elector `runtime: false`, and the root `mix.exs` declares elector
+- **WHEN** the default `mix test` suite runs `test/flezha/deployment/release_closure_test.exs`
+- **THEN** the release closure SHALL contain `:elector` and the test SHALL pass
+
+#### Scenario: A dependency the release leaves out fails the default suite
+
+- **GIVEN** a root `mix.exs` that does not declare elector
+- **WHEN** the default `mix test` suite runs
+- **THEN** the release closure test SHALL fail with `release flezha leaves out [elector: :process_hub]`
+
+#### Scenario: A build tool the root declares runtime-false is not required
+
+- **GIVEN** the root declares credo `only: [:dev, :test], runtime: false`
+- **WHEN** the check runs in the test environment, where credo, bunt and file_system are compiled
+- **THEN** none of them SHALL be required in the release, because no shipped application depends on them
+
+#### Scenario: The check cannot pass without looking
+
+- **WHEN** the computed closure does not contain `:process_hub`
+- **THEN** the test SHALL fail on the `{:process_hub, :elector}` edge it requires, not pass with nothing compared
+
