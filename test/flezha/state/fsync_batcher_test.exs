@@ -4,7 +4,9 @@ defmodule Flezha.State.FsyncBatcherTest do
 
   import ExUnit.CaptureLog
 
+  alias Flezha.Process.Timer
   alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalWriter}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     case start_supervised({Elixir.Registry, keys: :unique, name: Supervisor.registry_name()}) do
@@ -175,6 +177,117 @@ defmodule Flezha.State.FsyncBatcherTest do
       assert MapSet.member?(FsyncBatcher.dirty_set(batcher), pid),
              "a sync that never happened was dropped from the dirty set"
     end
+  end
+
+  # Read from the batcher's own state: a tick that is not armed is a wake that
+  # cannot happen, which a window with no `:tick` in it could only suggest.
+  describe "the tick is armed only while something is dirty" do
+    test "an idle batcher arms none, a mark arms one a second mark keeps, the tick disarms it" do
+      id = TestHelpers.sample_entity_id("idle_batcher")
+      # Registered before the batcher starts, so `idle_batcher/0` sees it seeded
+      # and its tick armed.
+      {:ok, _} = Supervisor.find_or_start(id)
+      batcher = idle_batcher()
+
+      refute tick_armed?(batcher), "a batcher with nothing dirty kept its tick armed"
+
+      FsyncBatcher.mark_dirty(id, batcher)
+      assert %{timers: %{tick: armed}} = :sys.get_state(batcher)
+      FsyncBatcher.mark_dirty(id, batcher)
+
+      assert %{timers: %{tick: ^armed}} = :sys.get_state(batcher),
+             "a mark on an armed batcher re-armed its tick"
+
+      drained =
+        NodeTestHelper.wait_until(
+          fn ->
+            state = :sys.get_state(batcher)
+            MapSet.size(state.dirty_set) == 0 and state
+          end,
+          5_000,
+          10
+        )
+
+      assert drained, "the tick never drained the mark"
+      refute Timer.armed?(drained.timers, :tick), "the tick re-armed with nothing dirty"
+    end
+
+    test "a forget or flush that empties the set disarms it; an unreachable writer keeps it" do
+      id = TestHelpers.sample_entity_id("flushed")
+      {:ok, srv} = Supervisor.find_or_start(id)
+      batcher = idle_batcher()
+
+      FsyncBatcher.mark_dirty(id, batcher)
+      FsyncBatcher.forget(id, batcher)
+      refute tick_armed?(batcher), "a forget that emptied the set left the tick armed"
+
+      FsyncBatcher.mark_dirty(id, batcher)
+      :ok = FsyncBatcher.flush_now(batcher)
+      refute tick_armed?(batcher), "a flush that emptied the set left the tick armed"
+
+      # The writer is gone while its Registry entry is kept, as in "a writer
+      # that refuses its fsync stays dirty for the next drain" above.
+      partition =
+        Process.whereis(Module.concat(Supervisor.registry_name(), "PIDPartition0"))
+
+      :sys.suspend(partition)
+      on_exit(fn -> :sys.resume(partition) end)
+      ref = Process.monitor(srv)
+      :ok = WalWriter.close(srv)
+      assert_receive {:DOWN, ^ref, :process, ^srv, _}, 1_000
+
+      FsyncBatcher.mark_dirty(id, batcher)
+      :ok = FsyncBatcher.flush_now(batcher)
+      assert MapSet.member?(FsyncBatcher.dirty_set(batcher), id)
+      assert tick_armed?(batcher), "a writer the flush could not reach lost its retry"
+    end
+
+    test "a dormant mark waits for the rhythm the last tick set, not a whole interval" do
+      id = TestHelpers.sample_entity_id("rhythm")
+      batcher = idle_batcher()
+
+      # {ms since the last tick, ms after that tick the next one falls due}
+      for {since, due} <- [{0, 1_000}, {300, 1_000}, {2_300, 3_000}] do
+        %{last_tick_at: last_tick} =
+          :sys.replace_state(batcher, fn state ->
+            %{state | last_tick_at: System.monotonic_time(:millisecond) - since}
+          end)
+
+        FsyncBatcher.mark_dirty(id, batcher)
+        {earliest, latest} = tick_due(batcher)
+
+        assert earliest - last_tick <= due + 2 and latest - last_tick >= due - 1,
+               "#{since} ms after a tick, the next fell due #{earliest - last_tick}.." <>
+                 "#{latest - last_tick} ms after it, not #{due}"
+
+        FsyncBatcher.forget(id, batcher)
+      end
+    end
+  end
+
+  # An isolated batcher with nothing dirty: it seeds itself with every writer on
+  # the node, and arms its tick for them, so those are forgotten. The long
+  # interval keeps its tick from firing between two reads of its state.
+  defp idle_batcher() do
+    {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+    seeded = FsyncBatcher.dirty_set(batcher)
+
+    assert tick_armed?(batcher) == MapSet.size(seeded) > 0,
+           "a started batcher seeded with #{MapSet.size(seeded)} writer(s) armed the wrong tick"
+
+    for writer <- seeded, do: FsyncBatcher.forget(writer, batcher)
+    batcher
+  end
+
+  defp tick_armed?(batcher), do: Timer.armed?(:sys.get_state(batcher).timers, :tick)
+
+  # When the armed tick falls due, bracketed by the clock reads either side of
+  # reading the timer.
+  defp tick_due(batcher) do
+    {ref, :tick} = :sys.get_state(batcher).timers.tick
+    before = System.monotonic_time(:millisecond)
+    left = Process.read_timer(ref)
+    {before + left, System.monotonic_time(:millisecond) + left}
   end
 
   # init/1 returns its validation error before name registration, so we can

@@ -222,16 +222,34 @@ The query SHALL be exposed via the `flz state at <operative/procedure/entity> <s
 
 ### Requirement: Fsync batching at configurable cadence
 
-The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BEAM node. The batcher SHALL maintain a `MapSet` of dirty writer IDs (Entities whose `WalWriter`, or input-logs whose log process, has appended bytes since the last fsync). A writer SHALL mark itself dirty once per fsync window — on the first append after its last sync, not on every append. On each tick at interval `agent_fsync_interval_ms` (default 5; configurable via runtime config in range [1, 1000]), the batcher SHALL: (1) iterate the dirty set; (2) cast `:fsync` to each writer, so the writers sync concurrently in their own processes and a writer busy behind a deep mailbox delays no other writer's durability, credit release or outbox dispatch; (3) reset the set; (4) schedule the next tick via `Process.send_after/3`. `flush_now` and `flush_all` SHALL instead call each dirty writer synchronously, so their callers return with every sync done; a writer that does not confirm a synchronous sync SHALL stay in the dirty set for the next drain.
+The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BEAM node. The batcher SHALL maintain a `MapSet` of dirty writer IDs (Entities whose `WalWriter`, or input-logs whose log process, has appended bytes since the last fsync). A writer SHALL mark itself dirty once per fsync window — on the first append after its last sync, not on every append. On each tick at interval `agent_fsync_interval_ms` (default 5; configurable via runtime config in range [1, 1000]), the batcher SHALL: (1) iterate the dirty set; (2) cast `:fsync` to each writer, so the writers sync concurrently in their own processes and a writer busy behind a deep mailbox delays no other writer's durability, credit release or outbox dispatch; (3) reset the set. `flush_now` and `flush_all` SHALL instead call each dirty writer synchronously, so their callers return with every sync done; a writer that does not confirm a synchronous sync SHALL stay in the dirty set for the next drain.
+
+The tick SHALL be armed exactly while the dirty set is non-empty, so a batcher with nothing dirty never wakes. A mark that finds no tick armed SHALL arm one for the next point of the rhythm the last tick set: the last tick's time plus a whole number of intervals, and never sooner than one interval after that tick. The tick a mark arms therefore falls due no later than a tick that had kept running would have, and ticks that keep finding work fall due one interval apart. A mark while a tick is armed SHALL leave that tick as it is, so a steady stream of marks cannot push it back. A drain, a `forget` or a flush that leaves the set empty SHALL leave no tick armed; a flush that leaves a writer dirty SHALL leave the tick armed, so that writer is retried on it.
 
 A (re)started batcher SHALL seed its dirty set with every registered writer: with one mark per window, a dirty set lost with a crashed batcher would otherwise never be rebuilt, and a writer's un-synced tail would wait for its next append.
 
 `WalWriter` SHALL invoke `:file.datasync/1` on its file handle when receiving the `:fsync` message and SHALL update `fsync_durability_lag_ms` to `now - oldest_pending_record_timestamp`.
 
-#### Scenario: Default 5 ms tick = 200 Hz fsync rate
+#### Scenario: Default 5 ms tick while a writer is dirty
 
-- **WHEN** a runner does not configure `agent_fsync_interval_ms`
-- **THEN** the batcher SHALL tick every 5 ms (200 Hz) AND each dirty `WalWriter` SHALL fsync at most once per tick
+- **WHEN** a runner does not configure `agent_fsync_interval_ms` and writers keep marking themselves dirty
+- **THEN** the batcher SHALL tick at a 5 ms interval AND each dirty `WalWriter` SHALL fsync at most once per tick
+
+#### Scenario: A batcher with nothing dirty does not wake
+
+- **WHEN** a drain, a `forget` or a flush leaves the dirty set empty, as on a controller with no runner
+- **THEN** the batcher SHALL have no tick armed, and SHALL receive no tick until a writer marks itself dirty
+
+#### Scenario: A mark after a quiet spell waits for the rhythm, not a whole interval
+
+- **WHEN** a writer marks itself dirty while no tick is armed, some time after the last tick
+- **THEN** the batcher SHALL arm the tick for the first point, not before the mark, that lies a whole number of intervals after the last tick and at least one interval after it
+- **AND** a second mark before that tick SHALL leave it where it is
+
+#### Scenario: A writer a flush could not reach keeps its retry
+
+- **WHEN** `flush_now` or `flush_all` leaves a writer in the dirty set because it did not confirm its sync
+- **THEN** a tick SHALL stay armed, and that writer SHALL be drained on it
 
 #### Scenario: 5 ms + 5 ms = 10 ms total durability bound
 
@@ -241,7 +259,7 @@ A (re)started batcher SHALL seed its dirty set with every registered writer: wit
 #### Scenario: Runner-tightened bound
 
 - **WHEN** a runner sets `agent_fsync_interval_ms = 1`
-- **THEN** the batcher SHALL tick every 1 ms (1000 Hz); the durability bound SHALL be ~2 ms total at the cost of more frequent fsyncs
+- **THEN** the batcher SHALL tick at a 1 ms interval while a writer is dirty; the durability bound SHALL be ~2 ms total at the cost of more frequent fsyncs
 
 #### Scenario: One dirty mark per fsync window
 

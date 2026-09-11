@@ -73,7 +73,8 @@ per-record acking; planned stops drain to zero loss, and an operative that needs
 declares the effectively-once tier.
 
 **The fsync window.** The WAL writer does not fsync per record: `State.FsyncBatcher` casts one
-`:fsync` to every dirty writer per tick (`:agent_fsync_interval_ms`, default 5 ms) and each
+`:fsync` to every dirty writer per tick (`:agent_fsync_interval_ms`, default 5 ms; the tick runs
+only while a writer is dirty) and each
 writer runs its own `:file.datasync/1`. Records written inside the last tick can be lost on a
 hard kill; lowering the interval narrows the window at the cost of I/O pressure. Per-record WAL
 fsync is not supported (the audit log's `:per_record` mode is a separate writer).

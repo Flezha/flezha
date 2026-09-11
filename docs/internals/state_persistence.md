@@ -259,8 +259,11 @@ a deep mailbox delays no sibling's durability. `flush_now/0` and `flush_all/0` c
 writer that does not confirm stays dirty. A (re)started batcher seeds its dirty set from
 `Supervisor.registered_ids/0`. The tick is `:agent_fsync_interval_ms` (default 5 ms, legal range
 `[1, 1000]`; out of range fails `init/1` with `{:interval_out_of_range, ...}`) and emits
-`[:flezha, :state, :fsync, :tick]`. The input log syncs on a linked companion handle so the sync
-never sits in its append loop.
+`[:flezha, :state, :fsync, :tick]`. It is armed only while a writer is dirty, so an idle batcher
+never wakes: a mark that finds none armed arms it for the next point of the last tick's rhythm,
+never sooner than one interval after that tick, a mark on an armed tick leaves it alone, and a
+drain, flush or `forget` that leaves nothing dirty leaves no tick armed. The input log syncs on a
+linked companion handle so the sync never sits in its append loop.
 
 ## Snapshot lifecycle
 

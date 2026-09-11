@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed: an idle controller no longer spends a third of a core on its fsync tick
+
+A controller with no runner and nothing to write used about 37 % of a CPU core. The
+fsync batcher's 5 ms tick re-armed itself whether or not any write was waiting, so an
+idle node woke about 167 times a second, and the scheduler busy-waited after each wake.
+The tick now runs only while a write is waiting for its fsync, and an idle release
+measures about 2.6 % of a core. For a write that arrives after a quiet spell the tick
+falls due at the next point of the rhythm the last tick set, never later than before,
+and ticks that keep finding work keep the rhythm they had. On an otherwise idle machine
+the timer fires about half a millisecond late on average, because the core it runs on is
+now allowed to sleep. `agent_fsync_interval_ms` keeps its meaning.
+
 ### Fixed: a burst to a QUIC runner arrives at once again
 
 Earlier in this release a runner's QUIC client stopped letting one slow stream reader

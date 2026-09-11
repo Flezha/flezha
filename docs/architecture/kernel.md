@@ -159,7 +159,7 @@ sequenceDiagram
 
 The fsync batcher coalesces every writer's `datasync` into one call per writer per tick
 (`:agent_fsync_interval_ms`, default **5 ms**, accepted range 1–1000; it refuses to boot
-outside that). Under the tier, that tick is the added latency — and it is the only added
+outside that), and the tick runs only while a writer is dirty. Under the tier, that tick is the added latency — and it is the only added
 latency.
 
 Outbox state is three cursors on the writer: `outbox_durable_seq` (how far the fsync has
