@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
+import sys
 import threading
 from typing import Any
 
@@ -11,7 +13,7 @@ import pytest
 
 import flezha
 from conftest import FakeCore, demo, work_activation
-from flezha import logger
+from flezha import logger, native
 from flezha.errors import FlezhaError
 from flezha.runner import Runner
 
@@ -267,6 +269,37 @@ def test_the_drain_frees_the_context(runner: Any) -> None:
     r.drain()
     assert core.shut_down
     assert core.freed
+
+
+def test_a_boot_with_no_terminal_asks_the_core_to_watch_for_end_of_file(
+    monkeypatch: pytest.MonkeyPatch, runner: Any
+) -> None:
+    """The harness stops a runner by closing its standard input; a runner that
+    stopped asking would be one nothing can stop."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    core = FakeCore()
+    runner().define_stream(demo).start(core=core)
+    assert core.stdin_watch_grace_ms is not None
+
+
+def test_the_double_answers_every_call_a_host_can_make_on_a_core() -> None:
+    """``native.Core.ENTRY_POINTS`` is asserted against the extension in
+    ``test_native.py``; nothing held it against the double, which is hand written.
+
+    The name check is against the same set ``conftest`` generates, so it holds
+    the list closed and proves no behaviour; the second half pins what a
+    generated default does. What neither can see: a scripted method whose
+    parameters or answer have drifted from the core's. That is the job of the
+    test that drives the call.
+    """
+    reachable = {*native.Core.ENTRY_POINTS, "free"}
+    missing = sorted(reachable - set(dir(FakeCore)))
+    assert missing == [], "the double is missing calls a runner can make on its core"
+    # An unscripted one answers `None`, and refuses a call the wrapper would.
+    last_error = vars(FakeCore)["last_error"]
+    assert last_error(FakeCore()) is None
+    with pytest.raises(TypeError):
+        last_error(FakeCore(), "an argument the wrapper does not take")
 
 
 def test_a_quiet_library_installs_no_handler() -> None:

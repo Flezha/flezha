@@ -65,16 +65,15 @@ test('poll and the starvation wait are not reachable from JavaScript at all', ()
 
 test('every blocking entry point is asynchronous', () => {
   const blocking = native.nativeSurface().filter((entry) => entry.blocking);
-  assert.deepEqual(blocking.map((entry) => entry.name).sort(), [
-    'complete',
-    'localFeed',
-    'localNextOutput',
-    'localRunUntilIdle',
-    'spawnWorkflow',
-    'start',
-    'stopHost',
-    'workflowRecv',
-  ]);
+  // Held against the package's own typing of the addon rather than a list kept
+  // here: the table's blocking entries are exactly the `Native` members typed
+  // as a promise.
+  const typescript = readFileSync(resolve(here, '../src/native.ts'), 'utf8');
+  const at = typescript.indexOf('export interface Native {');
+  assert.notEqual(at, -1, 'src/native.ts declares no interface Native');
+  const body = typescript.slice(at, typescript.indexOf('\n}', at));
+  const promised = [...body.matchAll(/^ {2}(\w+)\([^;]*?\): Promise</gm)].map(([, name]) => name);
+  assert.deepEqual(blocking.map((entry) => entry.name).sort(), promised.sort());
   for (const entry of blocking) {
     assert.equal(typeof native[entry.name], 'function');
   }

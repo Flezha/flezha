@@ -172,6 +172,24 @@ class RunnerLifecycleTest {
     }
 
     @Test
+    @DisplayName(
+            "a workflow class is defined and removed through the workflow registry and declared beside the streams")
+    void workflowDefineAndRemoveReachTheWorkflowRegistry() {
+        FlezhaRunner runner = Flezha.createRunner("ns_workflow").defineWorkflow(WorkflowD.class);
+        assertThat(com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry.registeredIds())
+                .containsExactly("lifecycle_d");
+
+        runner.removeWorkflow(WorkflowD.class);
+        assertThat(com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry.registeredIds())
+                .as("a pre-start remove unregisters the runtime-side class")
+                .isEmpty();
+
+        runner.defineStream(OperativeA.class).defineWorkflow(WorkflowD.class).start();
+        assertThat(com.flezha.sdk.runtime.FlezhaImpl.LAST_DECLARED_SUPPLIER.get())
+                .containsExactly("lifecycle_a", "lifecycle_d");
+    }
+
+    @Test
     @DisplayName("removing a type with live instances throws OperativeTypeInUseException and keeps it defined")
     void removeWithLiveInstancesRefuses() {
         FlezhaRunner runner =

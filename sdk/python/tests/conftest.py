@@ -7,9 +7,11 @@ so a test of the executor tests the executor rather than a mock of it.
 
 from __future__ import annotations
 
+import inspect
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -182,9 +184,6 @@ class FakeCore:
     def free(self) -> None:
         self.freed = True
 
-    def guard(self) -> None:
-        pass
-
     def spawn_workflow(self, *args: Any) -> str:
         return "spawned"
 
@@ -214,6 +213,26 @@ class FakeCore:
     def idle_watch_free(self, watch_id: int) -> None:
         with self._lock:
             self.idle_freed.append(watch_id)
+
+
+def _unscripted(entry: str) -> Callable[..., None]:
+    """An entry point no test scripts: it takes what the wrapper takes and
+    answers ``None``, so a call the core would refuse for its shape fails here
+    too."""
+    signature = inspect.signature(getattr(native.Core, entry))
+
+    def call(self: FakeCore, *args: Any, **kwargs: Any) -> None:
+        signature.bind(self, *args, **kwargs)
+
+    call.__name__ = entry
+    return call
+
+
+# Generated from the wrapper's own list, so an entry point the veneer gains
+# reaches the double too. A test that needs a scripted answer defines the method
+# in the class body, which this skips.
+for _entry in set(native.Core.ENTRY_POINTS) - set(vars(FakeCore)):
+    setattr(FakeCore, _entry, _unscripted(_entry))
 
 
 def work_activation(

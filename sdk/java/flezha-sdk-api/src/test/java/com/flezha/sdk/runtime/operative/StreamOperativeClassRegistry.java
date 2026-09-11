@@ -1,6 +1,6 @@
 package com.flezha.sdk.runtime.operative;
 
-import com.flezha.sdk.operative.StreamOperative;
+import com.flezha.sdk.operative.Operative;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -11,14 +11,18 @@ import java.util.List;
  * Returns the factory id without topology validation — the lifecycle tests
  * exercise the guard, lifecycle, and declared-set contracts, not wiring.
  * Overwrite-on-insert + {@code unregisterClass}, mirroring the real one.
+ *
+ * <p>Open for {@code WorkflowOperativeClassRegistry}, the workflow kind's
+ * double, which inherits these statics: the runtime keeps one factory-id
+ * namespace across both kinds, so the doubles keep one list.
  */
-public final class StreamOperativeClassRegistry {
+public class StreamOperativeClassRegistry {
 
     private static final List<String> REGISTERED = new ArrayList<>();
 
-    private StreamOperativeClassRegistry() {}
+    protected StreamOperativeClassRegistry() {}
 
-    public static String registerClass(Class<? extends StreamOperative> operativeClass) throws Exception {
+    public static String registerClass(Class<? extends Operative> operativeClass) throws Exception {
         String factoryId = operativeClass.getDeclaredConstructor().newInstance().factoryId();
         synchronized (REGISTERED) {
             if (!REGISTERED.contains(factoryId)) {
@@ -28,7 +32,7 @@ public final class StreamOperativeClassRegistry {
         return factoryId;
     }
 
-    public static Class<? extends StreamOperative> unregisterClass(String factoryId) {
+    public static Class<? extends Operative> unregisterClass(String factoryId) {
         synchronized (REGISTERED) {
             REGISTERED.remove(factoryId);
         }
