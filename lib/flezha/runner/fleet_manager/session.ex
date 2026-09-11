@@ -487,18 +487,19 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   # A runner whose tree did not come up is refused rather than allowed to crash
-  # this manager.
+  # this manager, and with the start's own error: a tree that never started
+  # leaves no supervisor to ask, so asking it could only answer `:noproc`.
   defp start_runner_tree(namespace, runner_id, stream_ref, transport) do
-    Supervisor.start_child(
-      FleetSupervisor,
-      Cspec.build(
-        runner_id,
-        {RunnerSupervisor, :start_link, [{namespace, runner_id, stream_ref, transport}]},
-        :worker_permanent
-      )
-    )
+    tree = {RunnerSupervisor, :start_link, [{namespace, runner_id, stream_ref, transport}]}
+    spec = Cspec.build(runner_id, tree, :worker_permanent)
 
-    case RunnerSupervisor.find_control_channel(runner_id) do
+    control_channel =
+      case Supervisor.start_child(FleetSupervisor, spec) do
+        {:ok, _supervisor} -> RunnerSupervisor.find_control_channel(runner_id)
+        {:error, reason} -> {:error, {:runner_supervisor_down, reason}}
+      end
+
+    case control_channel do
       {:ok, pid} ->
         pid
 

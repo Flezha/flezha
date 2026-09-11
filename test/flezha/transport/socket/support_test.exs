@@ -11,9 +11,9 @@ defmodule Flezha.Socket.SupportTest do
   alias Flezha.State.TestHelpers
   alias Flezha.Transport.Native
 
-  # The longest socket directory `config/test.exs` and `NodeTestHelper` mint
-  # together (48 bytes), and a runner id at the width a late-scheduled module
-  # draws (40 characters).
+  # A socket directory of 48 bytes, the most `Environment.per_run/2` mints under
+  # `/tmp` (a 7-digit token, a 20-digit peer index), and a runner id at the width
+  # a late-scheduled module draws (40 characters).
   @peer_dir "/tmp/flezha_sockets/native_reject_peer@127.0.0.1"
   @long_id "schema_evolution_e2e_419362_660179359383"
 

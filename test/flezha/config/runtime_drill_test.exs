@@ -15,6 +15,8 @@ defmodule Flezha.Config.RuntimeDrillTest do
 
   alias Flezha.Config.Environment
   alias Flezha.Config.Keys
+  alias Flezha.Transport.Native
+  alias FlezhaTest.Helper.NodeTestHelper
 
   test "every variable reaches the key its row names, in prod and in test" do
     {values, keyed_rows} = environment()
@@ -51,6 +53,30 @@ defmodule Flezha.Config.RuntimeDrillTest do
 
     System.put_env("FLEZHA_STATE_DIR", "/tmp/an-operator-said-so")
     assert read!(:test)[:flezha][:state_root] == "/tmp/an-operator-said-so"
+  end
+
+  test "a peer's resources are its own and its socket directory holds any data socket" do
+    token = System.pid()
+    # A node name may run to 255 characters, so a peer is keyed by the index the
+    # harness mints for it and a name is refused; 2^64 has more digits than any
+    # run's `System.unique_integer/1` reaches.
+    assert_raise FunctionClauseError, fn -> Environment.per_run(token, node()) end
+    longest_id = String.duplicate("x", Native.stream_socket_id_max())
+
+    refused =
+      for peer <- [Integer.pow(2, 64), 1],
+          dir = Environment.per_run(token, peer).socket_files_path,
+          {:error, refusal} <- [Native.stream_socket_path(dir, longest_id, "secondary")],
+          do: refusal
+
+    assert refused == []
+
+    runs = [{token, nil}, {token, 1}, {token, 11}, {"#{token}1", 1}]
+
+    for key <- NodeTestHelper.owned_resources() do
+      values = for {run, peer} <- runs, do: Map.fetch!(Environment.per_run(run, peer), key)
+      assert Enum.uniq(values) == values, "two controllers were given one #{key}"
+    end
   end
 
   test "a production boot with no durability backend named resolves to the refusal" do

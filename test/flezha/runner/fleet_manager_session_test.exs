@@ -19,13 +19,18 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
   setup :set_mimic_global_until_exit
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.TestHelpers
+  alias Flezha.Transport.Server
   alias FlezhaTest.Helper.HubRegistryTestHelper
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "reconnect-binding-test"
@@ -218,6 +223,39 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       before = :sys.get_state(FleetManager)
       assert :ok = GenServer.call(FleetManager, {:runner_disconnected, ns, session})
       assert :sys.get_state(FleetManager) == before
+    end
+  end
+
+  describe "a runner whose supervision tree cannot start" do
+    setup do
+      namespace = "tree-#{System.unique_integer([:positive])}"
+      on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+      %{ns: namespace}
+    end
+
+    test "is refused naming the start's own error, not a missing process", %{ns: ns} do
+      # No data-socket name fits under this directory, so the runner's acceptor
+      # refuses to start and takes the tree with it.
+      too_long = Path.join(System.tmp_dir!(), String.duplicate("d", 70))
+      on_exit(TestHelpers.override_env(:socket_files_path, too_long))
+      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+
+      state = %{transport: :uds, pending_streams: %{7 => make_ref()}}
+      payload = Jason.encode!(%{"namespace" => ns, "factories" => []})
+
+      log =
+        capture_log(fn ->
+          Server.handle_info({:flz_data, 7, "connect_control_channel", payload, %{}}, state)
+        end)
+
+      assert_received {:rejected, %{count: 1}, %{reason: {:runner_supervisor_down, start_error}}}
+      refute match?({:noproc, _}, start_error)
+      assert inspect(start_error) =~ "Set FLEZHA_SOCKET_FILES_PATH to a shorter directory"
+
+      # The crash report names the path whatever the refusal says, so the
+      # refusal's own line is what is read.
+      refusal = log |> String.split("\n") |> Enum.find("", &(&1 =~ "on #{ns} has no control"))
+      assert refusal =~ "#{too_long}/primary_stream_"
     end
   end
 

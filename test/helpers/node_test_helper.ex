@@ -47,15 +47,16 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   A peer BEAM carrying this node's code paths and nothing else started on it —
   the cheapest second OS process on this host, for a scenario about what two
   processes may hold at once rather than about two controllers.
-  `start_peer_node/2` is this plus a controller.
+  `start_peer_node/2` is this plus a controller. `index` ends the node name;
+  minted once per peer, it is what `start_peer_node/2` scopes resources by.
   """
-  def start_bare_peer(name) do
+  def start_bare_peer(name, index \\ System.unique_integer([:positive])) do
     args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
     {:ok, peer_pid, node_name} =
       :peer.start_link(%{
         host: ~c"127.0.0.1",
-        name: peer_name(name),
+        name: peer_name(name, index),
         args: [args]
       })
 
@@ -73,7 +74,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   def start_peer_node(name, opts \\ []) do
-    {peer_pid, node_name} = start_bare_peer(name)
+    index = System.unique_integer([:positive])
+    {peer_pid, node_name} = start_bare_peer(name, index)
 
     # Adjust the environment for the peer node.
     :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])
@@ -91,7 +93,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # `registry.dets`. A caller may hand it this node's value instead — a
     # cross-controller state transfer needs the peer to hold this node's files,
     # and a co-location scenario drives the misconfiguration deliberately.
-    for {key, value} <- peer_resources(node_name, opts) do
+    for {key, value} <- peer_resources(index, opts) do
       :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
     end
 
@@ -129,8 +131,6 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     {peer_pid, node_name}
   end
 
-  # The socket directory stays beside this node's, so both stay under the one
-  # short runtime base `config/test.exs` chose (a UDS path must fit `SUN_LEN`).
   defp copy_env(node_name, app) do
     Enum.each(Application.get_all_env(app), fn {key, value} ->
       :erpc.call(node_name, Application, :put_env, [app, key, value])
@@ -138,13 +138,13 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   # A peer's resources come from the same derivation the run's own do
-  # (`Flezha.Config.Environment.per_run/2`), shifted by the peer's name — so a
+  # (`Flezha.Config.Environment.per_run/2`), shifted by the peer's index — so a
   # resource is added to the peer by adding it to the table, not here. A caller
   # may still hand the peer this node's value instead: a cross-controller state
   # transfer needs the peer to hold this node's files, and a co-location
   # scenario drives the misconfiguration deliberately.
-  defp peer_resources(node_name, opts) do
-    derived = Environment.per_run(Config.get(:run_token), node_name)
+  defp peer_resources(index, opts) do
+    derived = Environment.per_run(Config.get(:run_token), index)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(derived.state_root) end)
 
     for key <- @owned_resources,
@@ -153,9 +153,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   # `System.unique_integer/1` restarts low in every BEAM, so the run token is
   # what keeps two suites on one host from minting the same peer name.
-  defp peer_name(name) do
-    :"#{name}_#{Config.get(:run_token)}_#{System.unique_integer([:positive])}"
-  end
+  defp peer_name(name, index), do: :"#{name}_#{Config.get(:run_token)}_#{index}"
 
   @doc """
   Claim a fresh `<prefix>_<n>` directory under `System.tmp_dir!/0`.
@@ -194,47 +192,36 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     _, _ -> :ok
   end
 
-  def start_runner_remote(node, namespace) do
-    self = self()
-    :erpc.call(node, Kernel, :spawn, [__MODULE__, :start_runner_recv, [namespace, self]])
+  def start_runner_remote(node, namespace), do: on_peer(node, :start_runner_recv, [namespace])
+
+  def stop_runner_remote(node, namespace, runner_id),
+    do: on_peer(node, :stop_runner_recv, [namespace, runner_id])
+
+  # The step runs in a process on the peer that outlives its answer, because a
+  # runner's port closes with the process that opened it. A step that ends
+  # without answering, its runner's connect budget spent or the peer gone,
+  # ends this wait with the peer's own reason.
+  defp on_peer(node, step, args) do
+    tag = make_ref()
+    {_pid, monitor} = Node.spawn_monitor(node, __MODULE__, step, args ++ [{self(), tag}])
 
     receive do
-      {:remote_runner_connected, ^namespace, runner_id} -> runner_id
+      {^tag, answer} ->
+        Process.demonitor(monitor, [:flush])
+        answer
+
+      {:DOWN, ^monitor, :process, _pid, reason} ->
+        raise "#{step} on #{node} gave no answer: #{Exception.format_exit(reason)}"
     end
   end
 
-  def stop_runner_remote(node, namespace, runner_id) do
-    self = self()
+  def start_runner_recv(namespace, reply_to), do: reply(reply_to, start_runner(namespace))
 
-    :erpc.call(node, Kernel, :spawn, [
-      __MODULE__,
-      :stop_runner_recv,
-      [namespace, runner_id, self]
-    ])
+  def stop_runner_recv(namespace, runner_id, reply_to),
+    do: reply(reply_to, stop_runner(namespace, runner_id))
 
-    receive do
-      {:remote_runner_disconnected, ^namespace, ^runner_id} -> :ok
-    end
-  end
-
-  def start_runner_recv(namespace, recv_pid) do
-    runner_id = start_runner(namespace)
-
-    Process.send(recv_pid, {:remote_runner_connected, namespace, runner_id}, [])
-
-    receive do
-      :any -> :ok
-    end
-  end
-
-  def stop_runner_recv(namespace, runner_id, recv_pid) do
-    stop_runner(namespace, runner_id)
-
-    Process.send(
-      recv_pid,
-      {:remote_runner_disconnected, namespace, runner_id},
-      []
-    )
+  defp reply({pid, tag}, answer) do
+    send(pid, {tag, answer})
 
     receive do
       :any -> :ok

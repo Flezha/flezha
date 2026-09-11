@@ -93,10 +93,11 @@ defmodule Flezha.Runner.RunnerSupervisor do
   The runner's `ControlChannel` pid, or `{:error, reason}` when its supervisor
   is not there to ask.
 
-  A runner's own supervision tree can fail to come up — an acceptor whose
-  socket the kernel refuses, for one — and that is this runner's problem, not
-  the fleet's: the caller runs inside `FleetManager`, so an exit here would
-  take the manager down and every other runner with it.
+  A tree that failed to start is refused before this is asked, with its start
+  error. What the catch covers is a tree that started and died before
+  `which_children` reached it, and that is this runner's problem, not the
+  fleet's: the caller runs inside `FleetManager`, so an exit here would take
+  the manager down and every other runner with it.
   """
   def find_control_channel(runner_id) do
     Identificator.unit_sup(runner_id)

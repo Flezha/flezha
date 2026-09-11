@@ -706,8 +706,8 @@ mod tests {
         LAST_GOOD_DIR.forget();
     }
 
-    // A peer node's socket directory, the longest `config/test.exs` mints, and a
-    // runner id at the width a late-scheduled test module draws.
+    // A 48-byte socket directory, the most the Elixir test harness mints under
+    // `/tmp`, and a runner id at the width a late-scheduled test module draws.
     const PEER_DIR: &str = "/tmp/flezha_sockets/native_reject_peer@127.0.0.1";
     const LONG_ID: &str = "schema_evolution_e2e_419362_660179359383";
 

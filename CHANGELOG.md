@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: the controller's log names why a runner's tree could not start
+
+When the supervision tree of a connecting runner failed to start, the controller still
+asked that tree's supervisor for the runner's control channel, found no supervisor, and
+refused the connect as `{:runner_supervisor_down, {:noproc, ...}}`. The refusal named a
+missing process rather than the failure, such as a socket directory too long to hold the
+runner's data socket. The refusal now carries the start's own error, in its
+three log lines and in the `[:flezha, :transport, :connect_rejected]` event, for example
+`the socket path ... is 113 bytes; a Unix domain socket address holds 107. Set
+FLEZHA_SOCKET_FILES_PATH to a shorter directory.` The refusal keeps its
+`{:runner_supervisor_down, reason}` shape. The runner itself is told nothing new: its
+stream is closed, as for every refused connect.
+
 ### Fixed: an idle controller no longer spends a third of a core on its fsync tick
 
 A controller with no runner and nothing to write used about 37 % of a CPU core. The
