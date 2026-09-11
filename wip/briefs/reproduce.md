@@ -30,3 +30,17 @@ Report, in this shape and nothing longer:
 - **What a regression test would have to do** to be red today. One or two lines.
 
 Do not fix it. Do not write a proposal. Do not touch the boards.
+
+## Running one row ahead
+
+Usually you reproduce the NEXT row while another row is being coded in the same
+tree, so your reading is off the critical path. Then the tree is someone else's:
+
+- Create, change and delete nothing in the tree. Read, and run only commands
+  that leave no file behind in it (existing tests, the CLI, grep, git log).
+- Write any new regression test as a draft in the session scratchpad under
+  `repro/<row-id>/`, and give the exact path it belongs at in the tree. The
+  supervisor places it and runs it red when the row becomes current.
+- Run nothing that loads the machine (a release build, a full suite, a load
+  test) while the row in flight is measuring performance. The supervisor says so
+  in your brief when it is.

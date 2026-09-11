@@ -34,9 +34,41 @@ reliability, and a hot path needs interleaved A/B numbers; behaviour only this
 deployment needs is off by default and its knob is documented; English
 everywhere; no AI attribution in anything.
 
+**Before you report, close this checklist.** Each item is a finding a critic
+raised on a previous item, so a report that skips one comes back as another round
+of work. For each, give the evidence or "not applicable, because ...":
+
+1. **Everything that names what you changed.** Grep every symbol, command,
+   default and error text you touched across `docs/`, `openspec/specs/`,
+   `CHANGELOG.md`, the examples and doc comments of every SDK, and `test/apps/`.
+   A tracked sentence your change makes false is fixed now.
+2. **Every command your change tells someone to run** (docs, changelog, examples,
+   help text): run it, or drive its exact argument shape through the test that
+   covers that command. A documented command that cannot work is a blocker.
+3. **Every "no longer happens" claim** (no record, no telemetry, no wake, no log
+   line) is pinned by a test that fails if it does happen.
+4. **Every test you add or change** was shown red for the right reason, cannot
+   pass vacuously (it asserts the condition it tests really occurred), and proves
+   nothing by a sleep, a fixed timeout or an exact count over a race. A timing
+   test is also run with the machine loaded.
+5. **Every log line your tests provoke on purpose** is captured and asserted; a
+   run of each file you touched prints nothing else.
+6. **A shared function whose result shape, error text or side effect you changed**:
+   name every caller and show each behaves as before, or keep the change on your
+   own path.
+7. **A hot path** (per frame, message, event or delivery): interleaved A/B
+   numbers on this box, both arms the same kind of function, a control arm that
+   removes the new work, and the raw output saved to the session scratchpad.
+8. **A spec delta**: SHALL or MUST on each requirement's first body line, a
+   MODIFIED block carries every surviving scenario, and the text claims only what
+   the code and its tests do.
+9. **The ceilings** in `docs/code_standards.md`: no file over 800 lines, no
+   function over 50, tests included.
+10. **Review your own diff against `wip/briefs/critic.md`**, as the critic will.
+
 **Do not commit, do not stage, do not archive.** Stop and report.
 
 Report: what you did NOT do first. Then the red output, the fix, the sweep, the
-reuse decisions, net lines, gates run with their real output, and anything you
-found and did not fix (which goes to `wip/NEW-ISSUES.md`, written down, not
-fixed, unless it blocked you).
+reuse decisions, net lines, gates run with their real output, the checklist with
+its evidence, and anything you found and did not fix (which goes to
+`wip/NEW-ISSUES.md`, written down, not fixed, unless it blocked you).

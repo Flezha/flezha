@@ -47,15 +47,24 @@ its timebox is closed as not reproducible, and no code is written for it. Code
 written for a defect that was never real is worse than no code: it guards
 nothing and it has to be maintained.
 
-**Code, then criticise.** One agent implements. A different one reviews, and it
-is a fresh reader rather than a copy of the implementer, because a reader who
-already believes the change is correct finds nothing. The critic reports
-problems and never fixes them: correctness with a concrete failing scenario,
-hidden behaviour change, whether the test could ever have been red, reuse versus
-a new parallel layer, complexity and net lines, documentation and spec drift,
-performance, new dependencies, and whether the change quietly shapes the system
-to one deployment. Every finding is then ruled on: fix now, write it down, or
-dismiss with a reason.
+Reproduction runs **one row ahead**: while one item is being coded, the next is
+already being read and reproduced, without touching the tree. Its regression
+test waits as a draft until its row is current. Most of reproducing is reading,
+and reading does not have to wait its turn.
+
+**Code, then criticise.** One agent implements, and before it reports it closes
+a checklist of the findings reviews kept raising: stale documentation, a
+documented command nobody ran, an absence nothing tests, a test that could pass
+without testing anything, uncaptured log noise, a changed shared function, a hot
+path without numbers. A different agent then reviews, a fresh reader rather than
+a copy of the implementer, because a reader who already believes the change is
+correct finds nothing. The critic reports problems and never fixes them:
+correctness with a concrete failing scenario, hidden behaviour change, whether
+the test could ever have been red, reuse versus a new parallel layer, complexity
+and net lines, documentation and spec drift, performance, new dependencies, and
+whether the change quietly shapes the system to one deployment. Every finding is
+then ruled on: fix now, write it down, or dismiss with a reason. There is one
+review round unless its fixes changed production code the reviewer never saw.
 
 **Verify by reading the repository**, never by re-reading the report. A claim is
 a hypothesis until the command has been run and the code has been read.

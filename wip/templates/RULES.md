@@ -46,7 +46,13 @@ requirement is a gate rather than an intention.
 ## Subagents
 
 - Default: supervisor plus one coder, sequential, shared tree.
-- Critic: a fresh agent per review round, never a fork.
+- Reproduction runs one row ahead of the coder, read only, its test a draft
+  outside the tree (`wip/briefs/reproduce.md`), except while the row in flight
+  measures performance.
+- Critic: a fresh agent per review round, never a fork. The cheaper model for a
+  diff that is documentation, tests or wording; the default model where
+  correctness turns on concurrency, authorization, durability or a hot path.
+- Fix rounds go back to the same coder, which keeps its context.
 - Fan out to at most 5 for read only work: surveys, sweeps, reproductions.
 - Parallel writers only in separate git worktrees, one item each, never in the
   shared tree.
@@ -55,7 +61,9 @@ requirement is a gate rather than an intention.
 
 - Reproduction attempt: <30 minutes>, then the row closes as not reproducible.
 - One item: <4 hours> of worker time, then it goes to DECISIONS.md.
-- Critic rounds: at most 2, then the supervisor rules and the item moves.
+- Critic rounds: one; a second only when the fixes changed production code the
+  first critic did not see, or a fix-now finding was a correctness defect.
+  Then the supervisor rules and the item moves.
 
 ## Reporting
 

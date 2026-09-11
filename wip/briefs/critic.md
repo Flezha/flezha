@@ -30,8 +30,15 @@ Judge it against this list, in this order:
 9. **Generality.** Does this shape Flezha to one deployment? Is new behaviour
    off by default? Is every new knob documented?
 
+Start with the checklist the coder closed (`wip/briefs/code.md`): an item
+answered without evidence, or answered wrongly, is a finding.
+
+There is normally **one review round**. Report only what should hold the commit,
+be fixed before it, or be filed as a new issue. A preference is not a finding.
+
 Report each finding as: file and line, one sentence of what is wrong, the
 failing scenario, and how severe. Rank them, worst first. Say plainly which
-findings you are confident in and which you are not.
+findings you are confident in and which you are not. Keep to the word limit the
+supervisor gives you.
 
 Do not edit a file. Do not commit. Do not touch the boards.
