@@ -64,7 +64,10 @@ All sockets are `SOCK_STREAM`. The controller listens, the runner connects.
 `{base}` is the socket directory both sides resolve from one ladder —
 `FLEZHA_SOCKET_FILES_PATH` when set, then `$XDG_RUNTIME_DIR/flezha`,
 `/run/flezha`, `app_data/sockets` — always reported absolutely, and never
-re-derived per SDK (see [`../configuration.md`](../configuration.md)). The
+re-derived per SDK (see [`../configuration.md`](../configuration.md)). It is
+at most 60 bytes, so the longest data socket path fits the 107 bytes a Unix
+domain socket address holds, and a controller refuses to boot on a longer one.
+The
 per-runner listeners are created after the runner has its session token and
 are served by a `StreamAcceptor` per stream pair.
 

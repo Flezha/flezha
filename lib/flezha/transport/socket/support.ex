@@ -22,15 +22,17 @@ defmodule Flezha.Socket.Support do
   Establish this controller's socket directory, clearing whatever a previous
   controller left in it.
 
-  Refuses when a live peer is already listening there: the directory is one
-  instance's, and clearing it would take that instance's control socket and
-  every attached runner's stream socket with it. A socket nobody answers is a
-  controller that died hard and is cleared as normal, so a restart needs no
-  manual cleanup.
+  Refuses a directory too long to hold a runner's data socket, which would
+  otherwise boot and then refuse every runner whose id is long. Refuses when a
+  live peer is already listening there: the directory is one instance's, and
+  clearing it would take that instance's control socket and every attached
+  runner's stream socket with it. A socket nobody answers is a controller that
+  died hard and is cleared as normal, so a restart needs no manual cleanup.
   """
   def prepare_socket_dir() do
     base_path = socket_dir()
 
+    refuse_no_room!(base_path)
     refuse_live_peer!(base_path)
 
     File.rm_rf(base_path)
@@ -83,6 +85,19 @@ defmodule Flezha.Socket.Support do
   # both composers raise it rather than each unwrapping the same tuple.
   defp composed!({:ok, path}), do: path
   defp composed!({:error, refusal}), do: raise(refusal)
+
+  # The longest data socket name is a `secondary` one carrying an id at the
+  # ceiling, composed by the arithmetic every connect applies.
+  defp refuse_no_room!(path) do
+    id_max = Native.stream_socket_id_max()
+
+    with {:error, refusal} <-
+           Native.stream_socket_path(path, String.duplicate("x", id_max), "secondary") do
+      raise "the socket directory #{path} is #{byte_size(path)} bytes, which leaves no room " <>
+              "for the data socket of a runner whose id is #{id_max} bytes, the longest a " <>
+              "socket name carries: #{refusal}"
+    end
+  end
 
   # Liveness is `flz_transport`'s probe, the one every runner's diagnosis asks:
   # a second implementation here would be a second answer to drift from.

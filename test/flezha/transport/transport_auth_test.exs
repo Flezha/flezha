@@ -10,24 +10,27 @@ defmodule Flezha.Transport.TransportAuthTest do
 
   alias Flezha.Boot.Loader
   alias Flezha.Socket.Support
+  alias Flezha.State.TestHelpers
   alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Native
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.AuthTestHelper
 
-  @tmp_base "app_data/test_transport_auth"
-
   setup do
-    File.mkdir_p!(@tmp_base)
-    on_exit(fn -> File.rm_rf!(@tmp_base) end)
+    File.mkdir_p!(tmp_base())
+    on_exit(fn -> File.rm_rf!(tmp_base()) end)
     :ok
   end
+
+  # Under the temporary directory, not the checkout: a checkout may be cloned
+  # anywhere, and the boot refuses a socket directory over 60 bytes.
+  defp tmp_base(), do: Path.join(System.tmp_dir!(), "flz_auth_#{System.pid()}")
 
   # Point the controller's socket directory at a scratch path, optionally under
   # the group mode, and put both back afterwards.
   defp with_socket_dir(name, group, fun) do
     previous = Application.fetch_env!(:flezha, :socket_files_path)
-    base = Path.join(@tmp_base, name)
+    base = Path.join(tmp_base(), name)
 
     Application.put_env(:flezha, :socket_files_path, base)
     if group, do: Application.put_env(:flezha, :socket_dir_group, group)
@@ -47,7 +50,7 @@ defmodule Flezha.Transport.TransportAuthTest do
 
   describe "UDS socket permissions" do
     test "the control socket and its parent directory are owner-only" do
-      dir = Path.join(@tmp_base, "sockets")
+      dir = Path.join(tmp_base(), "sockets")
       socket_path = Path.join(dir, "auth_test.sock")
 
       {:ok, server_ref} = Native.start_uds_server(socket_path, self())
@@ -98,15 +101,13 @@ defmodule Flezha.Transport.TransportAuthTest do
 
   describe "the attach line" do
     test "names the absolute socket directory and the assignment that reaches it" do
-      with_socket_dir("attach_sockets", nil, fn base ->
-        # An operator can paste the line: the directory it names is absolute
-        # even when the configured value is not.
-        assert Path.type(base) == :relative
-        resolved = Support.socket_dir()
+      # An operator can paste the line: the directory it names is absolute
+      # even when the configured value is not.
+      on_exit(TestHelpers.override_env(:socket_files_path, "app_data/attach_sockets"))
+      resolved = Support.socket_dir()
 
-        assert Path.type(resolved) == :absolute
-        assert Loader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
-      end)
+      assert Path.type(resolved) == :absolute
+      assert Loader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
     end
 
     test "names the QUIC listen address when QUIC is enabled, and nothing when neither is" do
@@ -155,7 +156,7 @@ defmodule Flezha.Transport.TransportAuthTest do
       script =
         EEx.eval_file("rel/env.sh.eex", assigns: [release: %{name: :flezha_controller}])
 
-      path = Path.join(@tmp_base, "env.sh")
+      path = Path.join(tmp_base(), "env.sh")
       File.write!(path, script)
 
       {out, 0} =
@@ -185,7 +186,7 @@ defmodule Flezha.Transport.TransportAuthTest do
 
   describe "cert generator" do
     test "generates a client identity beside the server pair, keys owner-only" do
-      cert_dir = Path.join(@tmp_base, "certs")
+      cert_dir = Path.join(tmp_base(), "certs")
 
       overrides = %{
         ca_cert_path: Path.join(cert_dir, "ca.pem"),

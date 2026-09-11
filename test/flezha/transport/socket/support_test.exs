@@ -73,4 +73,33 @@ defmodule Flezha.Socket.SupportTest do
     assert error.message =~ "123 bytes"
     assert error.message =~ "107"
   end
+
+  test "a socket directory with no room for a runner's data socket refuses the boot" do
+    # 60 bytes is the room a runner id at its ceiling leaves under the address
+    # limit; the control socket's shorter name still fits in 61.
+    [fits, over] = Enum.map([60, 61], &scratch_dir/1)
+    kept = Path.join(over, "kept")
+    File.mkdir_p!(over)
+    File.write!(kept, "")
+
+    on_exit(TestHelpers.override_env(:socket_files_path, fits))
+    assert :ok = Support.prepare_socket_dir()
+
+    on_exit(TestHelpers.override_env(:socket_files_path, over))
+    assert {:ok, _control} = Native.control_socket_path_in(over)
+    error = assert_raise(RuntimeError, fn -> Support.prepare_socket_dir() end)
+
+    assert error.message =~ "#{over} is 61 bytes"
+    assert error.message =~ "holds 107"
+    assert error.message =~ "FLEZHA_SOCKET_FILES_PATH"
+    assert File.exists?(kept)
+  end
+
+  # An absolute directory of exactly `bytes` bytes, this run's own.
+  defp scratch_dir(bytes) do
+    prefix = "/tmp/flz_room_#{System.pid()}_"
+    dir = prefix <> String.duplicate("d", bytes - byte_size(prefix))
+    on_exit(fn -> File.rm_rf(dir) end)
+    dir
+  end
 end

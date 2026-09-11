@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed: a controller refuses to boot on a socket directory over 60 bytes
+
+A controller whose UDS socket directory was 61 to 79 bytes booted, because its control
+socket fitted, and then refused every runner with a long id at connect, which is every
+runner in a namespace of 11 bytes or more: a runner's data socket name is up to 46 bytes,
+and the whole path must fit the 107 bytes a Unix domain socket address holds. Such a
+controller now refuses to boot, before it removes anything in the directory, with a
+reason that names the directory, its length, the address limit and the variable:
+
+    the socket directory /srv/flezha/.../sockets is 61 bytes, which leaves no room for the
+    data socket of a runner whose id is 24 bytes, the longest a socket name carries: the
+    socket path ... is 108 bytes; a Unix domain socket address holds 107. Set
+    FLEZHA_SOCKET_FILES_PATH to a shorter directory.
+
+A deployment that booted from such a directory and served only runners with short ids
+now stops at boot: set `FLEZHA_SOCKET_FILES_PATH` to a directory of at most 60 bytes.
+The socket ladder's own candidates fit on an ordinary host, and so does the repository
+fallback `app_data/sockets` while the controller's working directory is at most 43
+bytes.
+
 ### Added: a `spawner` role, so a namespace can spawn workflows without the rest of `app`
 
 With authorization on, a procedure's `ctx.spawn_workflow` needs the runner's

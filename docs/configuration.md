@@ -90,7 +90,7 @@ the value and the type.
 | `FLEZHA_CLIENT_CERT_PATH` | `app_data/certs/client.pem` | `:client_cert_path` |
 | `FLEZHA_CLIENT_KEY_PATH` | `app_data/certs/client.key` | `:client_key_path` |
 | `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` | `:quic_client_ca_path`, trust anchor for QUIC client certificates |
-| `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | the UDS socket directory. Set, it is used outright; unset, the controller creates the first ladder candidate it can |
+| `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | the UDS socket directory. Set, it is used outright; unset, the controller creates the first ladder candidate it can. **At most 60 bytes**: a longer directory refuses the boot, naming the directory, its length and this variable, because a runner's data socket would not fit beside it (see the ladder below) |
 | `FLEZHA_SOCKET_DIR_GROUP` | unset (owner-only) | widens UDS traversal to one named group: the directory becomes `0750` owned by that group, warned on every boot. A group the controller's user does not belong to refuses the boot |
 | `FLEZHA_CONCURRENT_CHANNEL_COUNT` | `0` | `:concurrent_channel_count` |
 | `FLEZHA_EXTERNAL_PROCESSES` | `""` | `:external_processes`, comma list of commands the controller spawns (test mode hard-codes the Rust test runner) |
@@ -436,8 +436,18 @@ Two consequences worth knowing:
   same-user. Across users, set `FLEZHA_SOCKET_FILES_PATH` explicitly on both
   sides and use `FLEZHA_SOCKET_DIR_GROUP` on the controller.
 
-A UDS path must fit `SUN_LEN` (108 bytes) including the socket file name, which
-is another reason to prefer a short runtime directory over a deep checkout.
+**The socket directory is at most 60 bytes.** A Unix domain socket address holds
+107 bytes (`sun_path` less its NUL), and the longest name placed in the
+directory is a runner's data socket, `secondary_stream_<id>.sock`, whose id
+field is at most 24 bytes (a longer runner id is shortened to 24), so 46 bytes
+after the separating `/`. A controller with UDS enabled refuses to boot on a
+longer directory, before it removes anything in it, naming the directory,
+its length and `FLEZHA_SOCKET_FILES_PATH`; a directory of 61 to 79 bytes would
+otherwise hold the control socket and refuse every runner whose id is long at
+connect. The ladder's own candidates fit on an ordinary host, and the
+repository fallback fits while the controller's working directory is at most
+43 bytes, which is another reason to prefer a short runtime directory over a
+deep checkout.
 
 `flz runner check` runs this resolution and its probe from a shell, with no
 runner code and no running controller; see

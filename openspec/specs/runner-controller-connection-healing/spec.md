@@ -966,3 +966,24 @@ no-op rather than an error.
 - **WHEN** a second disconnect arrives for the same runner
 - **THEN** the handler SHALL make no further change and SHALL NOT raise
 
+### Requirement: A controller SHALL refuse to boot on a socket directory with no room for a data socket
+
+A controller with UDS enabled SHALL refuse to boot when its socket directory leaves no room for
+the longest data socket a runner can be given: a `secondary` data socket whose id field is at
+the bound the data socket name applies. It SHALL compose that path through the implementation
+that composes every data socket, so the boot and a runner's connect apply one arithmetic. The
+refusal SHALL name the directory, its byte length, the address limit and
+`FLEZHA_SOCKET_FILES_PATH`, and SHALL come before anything in the directory is removed.
+
+With a 24-byte id field under the 107-byte address limit, the directory is at most 60 bytes. A
+directory of 61 to 79 bytes still holds the control socket, so without this refusal a
+controller boots and then refuses at connect every runner whose id is long.
+
+#### Scenario: A directory with no room for a data socket refuses the boot
+- **WHEN** a controller prepares a socket directory of 61 bytes that already holds a file
+- **THEN** it refuses to boot, naming the directory, its length of 61 bytes, the 107-byte address limit and `FLEZHA_SOCKET_FILES_PATH`, and the file is still there
+
+#### Scenario: A directory at the limit is prepared
+- **WHEN** a controller prepares a socket directory of 60 bytes
+- **THEN** the directory is prepared
+
