@@ -109,7 +109,6 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
 
     on_exit(fn ->
       Application.delete_env(:flezha, :durability_tier)
-      Application.delete_env(:flezha, :state_root)
       _ = File.rm_rf(base)
     end)
 

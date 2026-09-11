@@ -60,4 +60,22 @@ defmodule FlezhaTest.CaseFixturesTest do
   test "an undeclared fixture is refused" do
     assert_raise ArgumentError, ~r/unknown fixture/, fn -> FlezhaTest.Case.install([:nope]) end
   end
+
+  # Expanding the template's `use` runs its guard without compiling a module,
+  # which under `async: true` would join the running suite.
+  test "a module declaring :env or :system_env cannot be async" do
+    for row <- [:env, :system_env] do
+      declared = quote do: FlezhaTest.Case.__using__(fixtures: [unquote(row)], async: true)
+
+      assert_raise ArgumentError, ~r/#{row}.*async: true/, fn ->
+        Macro.expand_once(declared, __ENV__)
+      end
+    end
+
+    # A directory of its own names no global, so `:tmp_dir` stays allowed.
+    Macro.expand_once(
+      quote(do: FlezhaTest.Case.__using__(fixtures: [:tmp_dir], async: true)),
+      __ENV__
+    )
+  end
 end

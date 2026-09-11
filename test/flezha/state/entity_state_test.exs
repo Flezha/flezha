@@ -368,7 +368,6 @@ defmodule Flezha.State.RetentionTest do
     TestHelpers.start_state_tree([Retention])
 
     on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
       Application.delete_env(:flezha, :time_travel_retention_hours)
       Application.delete_env(:flezha, :workflow_completed_retention_hours)
       File.rm_rf!(base)

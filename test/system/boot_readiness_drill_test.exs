@@ -58,7 +58,8 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     {:ok, port: port}
   end
 
-  test "no surface reports ready before the last precondition is met", %{port: port} do
+  @tag :tmp_dir
+  test "no surface reports ready before the last precondition is met", %{port: port, tmp_dir: tmp} do
     # 1. The boot sequence has not finished. This is the window the readiness
     #    probe used to read `200 healthy` through `/healthz`.
     assert_all_refuse(port, "booting", "boot_sequence_complete")
@@ -78,12 +79,16 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     Snapshot.observe_recovery(hub_id, :timeout)
     assert_all_refuse(port, "recovering", "hubs_recovered")
 
-    # 4. Hubs are back, but a durable registry on disk has not been reloaded.
+    # 4. Hubs are back, but a durable registry on disk has not been reloaded:
+    #    a hub this boot never started left one, and auto-restore is on.
     Snapshot.observe_recovery(hub_id, :normal)
+    on_exit(TestHelpers.override_env(:auto_restore_enabled, true))
+    on_exit(TestHelpers.override_env(:process_hub_registry_root, tmp))
+    registry = HubRegistryTestHelper.registry_file("drill-unloaded")
+    File.mkdir_p!(Path.dirname(registry))
+    File.write!(registry, "")
 
-    if HubManager.durable_registry_pending?() do
-      assert_all_refuse(port, "recovering", "durable_registry_loaded")
-    end
+    assert_all_refuse(port, "recovering", "durable_registry_loaded")
   end
 
   test "every surface flips to ready at the same sample, and not before", %{port: port} do
@@ -96,13 +101,11 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     # The one change: the hub reaches `:normal`. No restart, no re-boot.
     Snapshot.observe_recovery(hub_id, :normal)
 
-    unless HubManager.durable_registry_pending?() do
-      {readyz?, verb?, healthcheck?} = ready_verdict?(port)
+    {readyz?, verb?, healthcheck?} = ready_verdict?(port)
 
-      assert readyz?, "GET /readyz did not report ready"
-      assert verb?, "flz boot await --timeout 0 did not report ready"
-      assert healthcheck?, "the image HEALTHCHECK did not report ready"
-    end
+    assert readyz?, "GET /readyz did not report ready"
+    assert verb?, "flz boot await --timeout 0 did not report ready"
+    assert healthcheck?, "the image HEALTHCHECK did not report ready"
   end
 
   # Real hub, shipped recovery config: a node with nobody to wait for must not

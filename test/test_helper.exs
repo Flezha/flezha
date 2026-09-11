@@ -25,6 +25,23 @@ end
 
 ExUnit.start(exclude: FlezhaTest.Tiers.excluded())
 
+# The run's own state root and socket directory are derived from its token and
+# nothing else removes them. Only a path this run derived and still uses goes: a
+# path a variable named is not the suite's, nor is anything under `app_data/`.
+# They go when the VM exits, not after the suite: `--repeat-until-failure` runs
+# the suite again against the same live controller.
+run_dirs =
+  for {key, path} <-
+        Map.take(Flezha.Config.Environment.per_run(Flezha.Config.get(:run_token)), [
+          :state_root,
+          :socket_files_path
+        ]),
+      Application.get_env(:flezha, key) == path,
+      not String.starts_with?(path, Path.expand("app_data") <> "/"),
+      do: path
+
+System.at_exit(fn _status -> Enum.each(run_dirs, &File.rm_rf/1) end)
+
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests
 # intentionally drive failure paths (cross-node module-not-loaded during

@@ -28,7 +28,6 @@ defmodule Flezha.State.InputLogTest do
       # (`sweep/1` is a cast), so it must be closed — its queued cut done —
       # before the root under it goes away.
       TestHelpers.close_input_log(class)
-      Application.delete_env(:flezha, :state_root)
       File.rm_rf!(base)
     end)
 

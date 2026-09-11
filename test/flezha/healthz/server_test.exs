@@ -66,9 +66,7 @@ defmodule Flezha.Healthz.ServerTest do
   defp publish_tick(stalled, bound \\ 0, age_ms \\ 0) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond) - age_ms,
-      operative_health: operative_records(stalled, bound),
-      tick_latency_p99_ms: 0,
-      tick_breach_streak: 0
+      operative_health: operative_records(stalled, bound)
     })
   end
 
@@ -201,9 +199,7 @@ defmodule Flezha.Healthz.ServerTest do
           {op("bound"), :healthy, reason: :producing, phase: :running},
           {op("rebinding_a"), :unbound, reason: :no_binding},
           {op("rebinding_b"), :unbound, reason: :no_binding}
-        ]),
-      tick_latency_p99_ms: 0,
-      tick_breach_streak: 0
+        ])
     })
 
     {status, _headers, body} = get(port, "/healthz")
@@ -227,9 +223,7 @@ defmodule Flezha.Healthz.ServerTest do
         verdicts([
           {op("bound"), :healthy, reason: :producing, phase: :running},
           {{:channel, {"departed_runner", :control}}, :failed, reason: :dead_runner}
-        ]),
-      tick_latency_p99_ms: 0,
-      tick_breach_streak: 0
+        ])
     })
 
     {status, _headers, body} = get(port, "/healthz")
@@ -252,9 +246,7 @@ defmodule Flezha.Healthz.ServerTest do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
       operative_health: verdicts([{op("orphan"), :unbound, reason: :no_binding}]),
-      unmet_intent_ms: 5_000,
-      tick_latency_p99_ms: 0,
-      tick_breach_streak: 0
+      unmet_intent_ms: 5_000
     })
 
     {status, _headers, body} = get(port, "/healthz")
@@ -279,9 +271,7 @@ defmodule Flezha.Healthz.ServerTest do
       intended_operatives: 0,
       bound_operatives: 0,
       producing_operatives: 0,
-      pending_restore: true,
-      tick_latency_p99_ms: 0,
-      tick_breach_streak: 0
+      pending_restore: true
     })
 
     {status, _headers, body} = get(port, "/healthz")
@@ -303,9 +293,7 @@ defmodule Flezha.Healthz.ServerTest do
       intended_operatives: 0,
       bound_operatives: 0,
       producing_operatives: 0,
-      pending_restore: false,
-      tick_latency_p99_ms: 0,
-      tick_breach_streak: 0
+      pending_restore: false
     })
 
     {status, _headers, body} = get(port, "/healthz")

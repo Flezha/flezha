@@ -145,7 +145,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # scenario drives the misconfiguration deliberately.
   defp peer_resources(index, opts) do
     derived = Environment.per_run(Config.get(:run_token), index)
-    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(derived.state_root) end)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Enum.each([derived.state_root, derived.socket_files_path], &File.rm_rf/1)
+    end)
 
     for key <- @owned_resources,
         do: {key, Keyword.get_lazy(opts, key, fn -> Map.fetch!(derived, key) end)}

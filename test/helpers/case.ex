@@ -17,7 +17,9 @@ defmodule FlezhaTest.Case do
   one of these by hand and declares none.
 
   `async:` stays at the call site, because the fixture a module declares does
-  not decide whether it names a global; the module does.
+  not decide whether it names a global; the module does. When the module
+  compiles, `:env` or `:system_env` with `async: true` is refused; no other row
+  is checked.
 
   ## The rows
 
@@ -90,9 +92,8 @@ defmodule FlezhaTest.Case do
        fn %{__env_before__: before} ->
          restore(before, app_env(), &put_app_env/2, &drop_app_env/1)
        end},
-      # The same contract over the OS environment. Every module that writes one
-      # is already `async: false` because that environment is process-global;
-      # the row does not change that, it owns only the putting back.
+      # The same contract over the OS environment. Like `:env`, the row is
+      # refused in an async module; it owns only the putting back.
       {:system_env, fn _opts -> %{__system_env_before__: System.get_env()} end,
        fn %{__system_env_before__: before} ->
          restore(before, System.get_env(), &System.put_env/2, &System.delete_env/1)
@@ -165,12 +166,29 @@ defmodule FlezhaTest.Case do
     :ok
   end
 
+  # `:env` and `:system_env` delete what their snapshot did not hold, so in an
+  # async module the restore would also undo a concurrent module's writes.
+  defp refuse_async_environment(names, true) do
+    case Enum.filter(Enum.map(names, &elem(normalise(&1), 0)), &(&1 in [:env, :system_env])) do
+      [] ->
+        :ok
+
+      rows ->
+        raise ArgumentError,
+              "#{inspect(rows)} restore a process-global environment, " <>
+                "so a module declaring them cannot be async: true"
+    end
+  end
+
+  defp refuse_async_environment(_names, _async), do: :ok
+
   defp app_env(), do: Map.new(Application.get_all_env(:flezha))
   defp put_app_env(key, value), do: Application.put_env(:flezha, key, value)
   defp drop_app_env(key), do: Application.delete_env(:flezha, key)
 
   using opts do
     names = Keyword.get(opts, :fixtures, [])
+    refuse_async_environment(names, Keyword.get(opts, :async))
 
     quote do
       setup do

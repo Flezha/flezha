@@ -51,7 +51,6 @@ defmodule Flezha.State.GapRecoveryTest do
       # crashes (the resync leaves seq 4/5 dirty and unflushed).
       Supervisor.delete_entity(entity_id)
       Application.delete_env(:flezha, :state_resync_fun)
-      Application.delete_env(:flezha, :state_root)
       File.rm_rf!(base)
     end)
 
