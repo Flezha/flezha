@@ -47,8 +47,8 @@ requirement is a gate rather than an intention.
 
 - Default: supervisor plus one coder, sequential, shared tree.
 - Reproduction runs one row ahead of the coder, read only, its test a draft
-  outside the tree (`wip/briefs/reproduce.md`), except while the row in flight
-  measures performance.
+  under `wip/repro/<row-id>/` (`wip/briefs/reproduce.md`), except while the row
+  in flight measures performance.
 - Critic: a fresh agent per review round, never a fork. The cheaper model for a
   diff that is documentation, tests or wording; the default model where
   correctness turns on concurrency, authorization, durability or a hot path.
