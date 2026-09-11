@@ -96,19 +96,19 @@ jobs:
             --target-dir=./target
 
       - name: Generate the QUIC development certificates
-        # `flz_core`'s connect tests dial a real QUIC peer, and the peer's
-        # certificates live under `app_data/`, which is runtime data no
-        # checkout carries. The controller's own generator writes the set a
+        # The QUIC tests in `flz_core`, `flz_transport` and `flz_nif` handshake
+        # with the peer certificates under `app_data/`, which is runtime data
+        # no checkout carries. The controller's own generator writes the set a
         # boot would have written.
         run: mix run --no-start -e 'Flezha.Transport.CertGenerator.ensure_certs()'
 
-      - name: Run Rust SDK tests
-        # The only place the flz_core and flezha_runner crates' own unit and
-        # integration tests run in CI. `entity_timers`, `sugar_emit` and
-        # `simple_procedure` require the `testing` feature — without it cargo
-        # skips them silently.
+      - name: Run Rust tests
+        # The only place the flz_core, flz_transport, flz_nif and flezha_runner
+        # crates' own unit and integration tests run in CI. `entity_timers`,
+        # `sugar_emit` and `simple_procedure` require the `testing` feature, and
+        # without it cargo skips them silently.
         run: |
-          cargo test --quiet -p flz_core
+          cargo test --quiet -p flz_core -p flz_transport -p flz_nif
           cargo test --quiet \
             -p flezha_runner --features bench-internals,testing \
             --lib --tests

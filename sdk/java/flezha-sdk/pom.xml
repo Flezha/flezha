@@ -55,7 +55,9 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <!-- The installed POM must not declare the modules shaded in
+                                 here, or every consumer resolves each SDK class twice. -->
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <finalName>${project.artifactId}-${project.version}</finalName>
                             <filters>

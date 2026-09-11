@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed: the Java SDK's POM no longer pulls in the modules its jar already holds
+
+`com.flezha:flezha-sdk` is one jar that already contains `flezha-sdk-api`,
+`flezha-sdk-runtime`, `flezha-sdk-native` and the libraries they use, but the POM
+installed beside it still declared the three modules as dependencies. An
+application that depended on it resolved those jars as well, so every SDK class,
+and Jackson and Kryo with them, reached its classpath twice, and a module jar
+newer than the fat jar could put an old and a new copy of one class side by side.
+The installed POM now declares no dependencies, so the fat jar is the only copy on
+an application's compile and runtime classpath. Nothing an application imports
+moves: those classes are still inside the jar. An application that shades the SDK
+into its own jar also stops getting an overlapping-classes warning for each of
+those jars.
+
 ### Changed: a websocket plugin's connection warning names the retry and its wait
 
 The `Websocket error:` warning a websocket plugin logs when its connection fails

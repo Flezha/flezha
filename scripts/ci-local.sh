@@ -10,9 +10,11 @@
 #   scripts/ci-local.sh elixir java    # any combination
 #
 # Sections (each runs the verbatim sequence of commands from the YAML):
-#   elixir  mix deps.get, mix compile --warnings-as-errors, cargo test for
-#           the flezha_runner crate, mix test --warnings-as-errors, and the
-#           uncaptured-error-log gate (matches elixir.yml)
+#   elixir  mix deps.get, mix compile --warnings-as-errors, the QUIC
+#           development certificates, cargo test for the flz_core,
+#           flz_transport, flz_nif and flezha_runner crates,
+#           mix test --warnings-as-errors, and the uncaptured-error-log gate
+#           (matches elixir.yml)
 #   java    mvn verify with -P coverage,native-verify on the SDK reactor,
 #           then the shared smoke tier under FLEZHA_E2E_RUNTIME=java
 #           (matches java-sdk.yml's two jobs)
@@ -76,6 +78,14 @@ run_elixir() {
 
   bold ">>> mix compile --warnings-as-errors"
   mix compile --warnings-as-errors
+
+  # The QUIC tests below handshake with the certificates under `app_data/`,
+  # which no fresh checkout carries.
+  bold ">>> QUIC development certificates"
+  mix run --no-start -e 'Flezha.Transport.CertGenerator.ensure_certs()'
+
+  bold ">>> cargo test -p flz_core -p flz_transport -p flz_nif"
+  cargo test --quiet -p flz_core -p flz_transport -p flz_nif
 
   bold ">>> cargo test -p flezha_runner (Rust SDK unit + integration tests)"
   # `testing` is not optional here: six integration tests import
