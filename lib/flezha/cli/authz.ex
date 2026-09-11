@@ -65,9 +65,10 @@ defmodule Flezha.Service.Cli.Authz do
 
   @doc "CLI entry: `flz token issue <principal> <namespace> <role> [--ttl <seconds>]`."
   def authz_render_token_issue(principal, namespace, role_string, call) do
-    # `app` is what a runner principal is bound to, and a runner proves itself
-    # with a `runner` credential, so no credential is ever issued for `app`.
-    with {:ok, role} <- parse_role(role_string, Role.all() -- [:app]),
+    # `app` and `spawner` are what a runner principal is bound to, and a runner
+    # proves itself with a `runner` credential, so no credential is ever issued
+    # for either.
+    with {:ok, role} <- parse_role(role_string, Role.all() -- [:app, :spawner]),
          {:ok, raw, entry} <-
            TokenStore.issue(principal, namespace, role, Keyword.fetch!(call.opts, :ttl),
              created_by_principal: actor(call),

@@ -2,11 +2,13 @@ defmodule Flezha.AuthZ.Policy do
   @moduledoc """
   Compile-time role→action mapping.
 
-  Roles inherit upward: `admin` ⊇ `operator` ⊇ `app` ⊇ `viewer`, with one
-  exception. The `runner` role is outside the hierarchy and grants only
-  `runner.connect`; `app` is the role a runner principal is bound to, so it
-  holds that connect as well, and `operator` inherits everything `app` adds
-  except the connect. An operator credential is not a runner.
+  Roles inherit upward: `admin` ⊇ `operator` ⊇ `app` ⊇ `viewer`, with two
+  roles outside the hierarchy: `runner` grants only `runner.connect`, and
+  `spawner` adds to it only `operative.start` and `operative.send`, which a
+  procedure-requested spawn needs and which also judge the administration
+  surface's start and send. `app` holds everything `spawner` does, and `operator` inherits
+  everything `app` adds except the connect. An operator credential is not a
+  runner.
 
   Cross-namespace auth-state mutations are additionally gated in
   `Flezha.AuthZ.authorize/3` by requiring the bound namespace to be
@@ -35,18 +37,15 @@ defmodule Flezha.AuthZ.Policy do
     :"schedule.list"
   ]
 
+  # What a procedure-requested spawn performs: a start, or a delivery.
+  @spawn_actions [:"operative.start", :"operative.send"]
+
   # App adds the namespace-scoped lifecycle an application performs on its own
   # work, and nothing that destroys a record or moves work it did not create.
   # `operative.scale` is deliberately absent: rescaling moves live work between
   # partitions, which is an operator's call over a whole namespace rather than
   # an application's over its own instance.
-  @app_extra [
-    :"operative.start",
-    :"operative.stop",
-    :"operative.send",
-    :"plugin.enable",
-    :"plugin.disable"
-  ]
+  @app_extra @spawn_actions ++ [:"operative.stop", :"plugin.enable", :"plugin.disable"]
 
   # Operator adds the rest of the operative/plugin lifecycle, audit rotation,
   # observability mutate, schedule management, the dead-letter queue whole and
@@ -95,10 +94,11 @@ defmodule Flezha.AuthZ.Policy do
 
   @viewer MapSet.new(@viewer_actions)
   @runner MapSet.new(@runner_actions)
-  # `app` is the only role a runner principal is ever bound to, so it carries
-  # the connect that principal already held; `operator` takes the same extra
-  # actions without it, which is why the two unions are written out rather than
-  # chained through `@app`.
+  # `app` and `spawner` are the roles a runner principal is bound to, so each
+  # carries the connect that principal already held; `operator` takes app's
+  # extra actions without it, which is why the unions are written out rather
+  # than chained through `@app`.
+  @spawner MapSet.union(@runner, MapSet.new(@spawn_actions))
   @app @viewer |> MapSet.union(@runner) |> MapSet.union(MapSet.new(@app_extra))
   @operator MapSet.union(@viewer, MapSet.new(@app_extra ++ @operator_extra))
   @admin MapSet.union(@operator, MapSet.new(@admin_extra))
@@ -108,7 +108,8 @@ defmodule Flezha.AuthZ.Policy do
     app: @app,
     operator: @operator,
     admin: @admin,
-    runner: @runner
+    runner: @runner,
+    spawner: @spawner
   }
 
   @doc """

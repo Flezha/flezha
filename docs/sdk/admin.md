@@ -26,6 +26,9 @@ flz role bind runner@team-orders app team-orders
 
 That is the whole grant, once per namespace. `flz role unbind` revokes it, and
 the revocation takes effect on the next call rather than the next reconnect.
+A namespace bound to `spawner` instead, the role for procedures that spawn
+workflows, reaches `Operative.start` and `Operative.send` here and none of the
+other verbs in the table below.
 
 ## The surface
 

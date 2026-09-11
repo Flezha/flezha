@@ -4,7 +4,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   any other act, as the identity its connection proved: a start against the
   `operative_start` row, which records it, and a delivery to a running instance
   against `spawn_deliver`, the `operative.send` right with no record of a
-  permitted delivery. Every refusal is audited.
+  permitted delivery. Every refusal is audited. `spawner` is the role that
+  grants those two rights in its own namespace and nothing else.
 
   The frame is the one every SDK sends, written into a real control channel;
   the start runs the real `OperativeManager` path over `FakeStartRegistry`, so
@@ -23,12 +24,15 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.RoleStore
+  alias Flezha.AuthZ.Verb
   alias Flezha.Cluster.Directory
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
   alias Flezha.Operative.Builder
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Session
+  alias Flezha.Service.Admin
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ControlFrameTestHelper, as: ControlFrame
@@ -90,8 +94,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     assert denial.metadata.reason == :role_insufficient
   end
 
-  test "a permitted spawn writes its start record, naming the requester", ctx do
-    :ok = RoleStore.bind(@principal, @ns, :app)
+  test "a spawner's spawn starts and writes its start record, naming the requester", ctx do
+    :ok = RoleStore.bind(@principal, @ns, :spawner)
     boundary = System.monotonic_time(:microsecond)
 
     request_spawn(ctx)
@@ -119,8 +123,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     assert denial.metadata.reason == :role_insufficient
   end
 
-  test "a permitted delivery is made and leaves no send record", ctx do
-    :ok = RoleStore.bind(@principal, @ns, :app)
+  test "a spawner's delivery is made and leaves no send record", ctx do
+    :ok = RoleStore.bind(@principal, @ns, :spawner)
     instance = run_instance(ctx)
     boundary = System.monotonic_time(:microsecond)
 
@@ -133,6 +137,44 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     # settled ring buffer already holds any record the delivery wrote.
     TestSinks.settle(RingBufferSink)
     refute audit_record(:send, boundary)
+  end
+
+  test "a spawner may not stop an operative or enable or disable a plugin" do
+    :ok = RoleStore.bind(@principal, @ns, :spawner)
+    assert Session.runner_caller_context(@ns).role == :spawner
+
+    for {verb, args} <- [
+          {"Operative.stop", ~s(["o1"])},
+          {"PluginManager.enable", ~s(["p1", {"id": "p1"}])},
+          {"PluginManager.disable", ~s(["p1"])}
+        ] do
+      assert Admin.call(@ns, verb, args) == {:error, "forbidden: role_insufficient"}, verb
+    end
+  end
+
+  test "a spawner's grant stops at its own namespace", ctx do
+    :ok = RoleStore.bind(@principal, @ns, :spawner)
+    start = fn _call -> flunk("a start in another namespace ran") end
+
+    # The role check passes and the namespace check refuses: a grant the role
+    # did not hold would answer `role_insufficient` instead.
+    assert {:error, {:forbidden, :namespace_mismatch}} =
+             Verb.run(
+               :operative_start,
+               Session.runner_caller_context(@ns),
+               ["team-other", ctx.instance_id],
+               start
+             )
+  end
+
+  test "a spawner binding for another namespace spawns nothing here", ctx do
+    :ok = RoleStore.bind(@principal, "team-other", :spawner)
+
+    request_spawn(ctx)
+
+    assert {"ref-spawn", %{outcome: "refused", error: error}} = await_response()
+    assert error =~ "forbidden"
+    assert FakeStartRegistry.started() == []
   end
 
   test "with authorization off, a spawn starts as before and its start is recorded", ctx do

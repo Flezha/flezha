@@ -559,33 +559,39 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     assert out =~ "unknown_role"
   end
 
-  test "a runner principal is bound to app, in the order the CLI takes" do
-    :ok = AuthState.set_enabled()
-    {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+  for role <- [:app, :spawner] do
+    test "a runner principal is bound to #{role}, in the order the CLI takes" do
+      :ok = AuthState.set_enabled()
+      {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+      role = unquote(role)
 
-    out =
-      capture_io(fn ->
-        CliManager.authz_render_role_bind("runner@render-ns", "app", "render-ns", token: admin)
-      end)
+      out =
+        capture_io(fn ->
+          CliManager.authz_render_role_bind("runner@render-ns", "#{role}", "render-ns",
+            token: admin
+          )
+        end)
 
-    assert out =~ "bound runner@render-ns as app@render-ns"
-    assert {:ok, %{role: :app, namespace: "render-ns"}} = RoleStore.lookup("runner@render-ns")
-  end
+      assert out =~ "bound runner@render-ns as #{role}@render-ns"
+      assert {:ok, %{role: ^role, namespace: "render-ns"}} = RoleStore.lookup("runner@render-ns")
+    end
 
-  test "no credential is issued for app, the role a runner principal is bound to" do
-    :ok = AuthState.set_enabled()
-    {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+    test "no credential is issued for #{role}, a role only a runner principal is bound to" do
+      :ok = AuthState.set_enabled()
+      {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+      role = unquote(role)
 
-    out =
-      capture_io(:stderr, fn ->
-        assert catch_exit(
-                 CliManager.authz_render_token_issue("carol", "render-ns", "app",
-                   ttl: 3_600,
-                   token: admin
-                 )
-               ) == {:shutdown, 1}
-      end)
+      out =
+        capture_io(:stderr, fn ->
+          assert catch_exit(
+                   CliManager.authz_render_token_issue("carol", "render-ns", "#{role}",
+                     ttl: 3_600,
+                     token: admin
+                   )
+                 ) == {:shutdown, 1}
+        end)
 
-    assert out =~ "unknown_role"
+      assert out =~ "unknown_role"
+    end
   end
 end

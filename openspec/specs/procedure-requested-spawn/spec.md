@@ -88,8 +88,8 @@ The judgment SHALL be made on the controller node that received the request, and
 
 #### Scenario: A permitted spawn is recorded like an operator's start
 
-- **WHEN** `runner@team-orders` is bound to `app` on `team-orders` and a procedure
-  on that connection spawns `w1`
+- **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and a
+  procedure on that connection spawns `w1`
 - **THEN** `w1` SHALL start, and a `start` record on `operative_service` SHALL name
   `w1`, the namespace `team-orders`, the principal `runner@team-orders` and the
   surface `sdk`

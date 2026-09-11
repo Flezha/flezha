@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added: a `spawner` role, so a namespace can spawn workflows without the rest of `app`
+
+With authorization on, a procedure's `ctx.spawn_workflow` needs the runner's
+`runner@<namespace>` principal to hold the start and the delivery a spawn performs.
+Until now the only role that held them was `app`, which also lets the namespace's
+application code stop operatives and enable or disable plugins. A `spawner` binding lets
+the runner's own connection start and send to operatives in its namespace, through a
+procedure's spawn and through `Operative.start` and `Operative.send` on the SDK's
+administration surface, and nothing else: no stop, no plugins, no schedules, no other
+namespace and no token:
+
+    flz role bind runner@<namespace> spawner <namespace>
+
+`app` keeps everything it had, spawns included. `flz token issue` refuses `spawner` as it refuses `app`: both are
+roles for a runner's principal, and a runner proves its namespace with a `runner`
+credential.
+
 ### Fixed: `flz boot await` waits for a controller that is still starting
 
 For a few seconds after `flz controller start --mode daemon` the controller cannot be
@@ -94,9 +111,9 @@ way `flz operative start` is and writes the same `start` record, naming
 event.
 
 With authorization on, the default in a release, a namespace whose procedures spawn
-workflows now needs `flz role bind runner@<namespace> app <namespace>`, the binding the
-administration surface already needs. Until it has one, every start or delivery a
-procedure asks for resolves `Refused`, with the refusal as its reason. With
+workflows now needs `flz role bind runner@<namespace> spawner <namespace>` (or `app`,
+which adds stop and plugin enable and disable). Until it has one, every start or delivery
+a procedure asks for resolves `Refused`, with the refusal as its reason. With
 authorization disabled nothing is refused, and a start is still recorded, as every
 other start is.
 

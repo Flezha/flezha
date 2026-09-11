@@ -85,6 +85,17 @@ defmodule Flezha.AuthZ.PolicyTest do
       end
     end
 
+    test "spawner holds the connect and the two rights a requested spawn needs, and nothing else" do
+      assert Enum.filter(Action.all(), &Policy.grants?(:spawner, &1)) ==
+               [:"operative.start", :"operative.send", :"runner.connect"]
+    end
+
+    test "app holds every spawner grant" do
+      spawner = Enum.filter(Action.all(), &Policy.grants?(:spawner, &1))
+      assert spawner != []
+      assert Enum.reject(spawner, &Policy.grants?(:app, &1)) == []
+    end
+
     test "runner holds runner.connect and nothing else" do
       assert Policy.grants?(:runner, :"runner.connect")
       assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `runner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `app`, `operator`, `admin`, `runner`, `spawner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
 ## Requirements
 ### Requirement: Verified-principal model
 
@@ -74,7 +74,7 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly five roles: `viewer`, `app`, `operator`, `admin`, `runner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
+The system SHALL define exactly six roles: `viewer`, `app`, `operator`, `admin`, `runner`, `spawner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. `spawner` SHALL grant `:runner.connect`, `:operative.start` and `:operative.send` on the bound namespace and nothing else: the rights a procedure-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `app` SHALL grant every action `spawner` grants. Because a runner proves its namespace with a `runner` credential, the operator surface SHALL NOT issue a credential for `app` or `spawner`, the two roles only a runner principal is bound to. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
 
 A runner connection's role SHALL be resolved from the role store keyed on its principal rather than stamped by the connect path. A principal with no binding, or one whose binding names a namespace other than the one the connection proved, SHALL resolve to `runner`. The resolution SHALL be read per call, so that binding or unbinding a role takes effect on the next call without a reconnect.
 
@@ -117,6 +117,28 @@ A runner connection's role SHALL be resolved from the role store keyed on its pr
 - **WHEN** the `app` role's grants are enumerated
 - **THEN** they SHALL contain no action that drops a parked payload, rotates or
   deletes persisted state, or rewinds or replays work
+
+#### Scenario: The spawner grant is the connect and the two rights a spawn needs
+- **WHEN** the spawner role's grants are enumerated
+- **THEN** they SHALL contain `:runner.connect`, `:operative.start` and
+  `:operative.send` and nothing else, and `app` SHALL grant each of them
+
+#### Scenario: A spawner binding opens neither a stop nor the plugin verbs
+- **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and the
+  application code on that connection asks to stop an operative, or to enable or
+  disable a plugin
+- **THEN** each call SHALL be refused with `role_insufficient`
+
+#### Scenario: A spawner starts nothing in another namespace
+- **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and a start
+  is judged for that identity in `team-payments`
+- **THEN** it SHALL be refused with `namespace_mismatch`
+
+#### Scenario: No credential is issued for a runner principal's role
+- **WHEN** an operator asks `flz token issue` for a credential with the role
+  `app` or `spawner`
+- **THEN** the request SHALL be refused as an unknown role and no credential
+  SHALL be issued
 
 ### Requirement: Namespace catalog
 

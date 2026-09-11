@@ -306,7 +306,8 @@ session map. While the posture is not `:enforced`, every quota check passes.
 
 ## Role bindings
 
-Roles are a fixed enumeration: `viewer`, `app`, `operator`, `admin`, `runner`;
+Roles are a fixed enumeration: `viewer`, `app`, `operator`, `admin`, `runner`,
+`spawner`;
 the role→action map lives in `Flezha.AuthZ.Policy`. A principal holds at most
 one `(namespace, role)` binding, so cross-namespace presence means one
 principal identity per namespace.
@@ -324,10 +325,12 @@ flz role unbind alice
 | `operator` | app plus the rest of the operative and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
 | `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
+| `spawner` | runner plus the two rights a procedure's `ctx.spawn_workflow` needs in its own namespace, `operative.start` and `operative.send`, and nothing else. Those rights also open `Operative.start` and `Operative.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 
-`app` also carries `runner.connect`, because the only principal ever bound to
-it is a runner's; `operator` and `admin` do not, because an operator credential
-is not a runner.
+`app` and `spawner` also carry `runner.connect`, because the only principal
+ever bound to either is a runner's; `operator` and `admin` do not, because an
+operator credential is not a runner. For the same reason `flz token issue`
+refuses both: a runner proves its namespace with a `runner` credential.
 
 ### An application that administers its own namespace
 
@@ -354,6 +357,19 @@ grants nothing, and `flz role unbind` takes effect on the next call rather than
 the next reconnect, because the role is read per call rather than stamped at
 connect.
 
+A namespace whose procedures spawn workflows, and that needs nothing else from
+this surface, is bound to `spawner` instead. It grants the start and the
+delivery a `ctx.spawn_workflow` asks for, and not the stop or the plugin enable
+and disable that `app` adds:
+
+```sh
+flz role bind runner@team-orders spawner team-orders
+```
+
+Those two rights are also what `Operative.start` and `Operative.send` on this
+surface are judged against, so a `spawner` namespace's application code can
+call those two as well, and no other verb that changes anything.
+
 The SDK side is `docs/sdk/admin.md`.
 
 Auth-state mutations (`authz.*` actions) are admin-only on the bound namespace;
@@ -368,8 +384,10 @@ Every operator verb is one row of `Flezha.AuthZ.Verbs`, and one function —
 the published service API and the runner session. A row names the action the
 policy judges, the rule that resolves the namespace it is judged in, and the
 audit it leaves. The role column is the lowest role the action is granted to;
-`admin` inherits `operator`, which inherits `viewer`. `public` rows are served
-to any caller; `none` rows are wire names that are not verbs.
+`admin` inherits `operator`, which inherits `viewer`; `runner` and `spawner`
+sit outside that line, as roles of a runner connection rather than of an
+operator's token. `public` rows are served to any caller; `none` rows are wire
+names that are not verbs.
 
 A row whose scope is a stored row's field (a DLQ entry's namespace, a
 schedule's, an Entity's class) reads that row only for a caller that is bound
@@ -417,16 +435,16 @@ told nothing about whether the name exists.
 | `list_runners` | `list_runners` | `operative.list` | viewer | argument 1 (the namespace named) | - |
 | `operative_info` | `operative_info` | `operative.list` | viewer | argument 1 (the namespace named) | - |
 | `operative_classes` | published surface only | `operative.list` | viewer | the caller's own namespace | - |
-| `operative_start` | `operative_start` | `operative.start` | app | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_start` | `operative_start` | `operative.start` | spawner | argument 1 (the namespace named) | after on `operative_service` |
 | `operative_stop` | `operative_stop` | `operative.stop` | app | argument 1 (the namespace named) | after on `operative_service` |
 | `operative_scale` | `operative_scale` | `operative.scale` | operator | argument 1 (the namespace named) | after on `workflow_service` |
 | `operative_rewind` | `operative_rewind` | `operative.rewind` | operator | argument 1 (the namespace named) | after on `workflow_service` |
-| `operative_send` | `operative_send` | `operative.send` | app | argument 1 (the namespace named) | after on `operative_service` |
-| `spawn_deliver` | runner session only | `operative.send` | app | argument 1 (the namespace named) | - |
+| `operative_send` | `operative_send` | `operative.send` | spawner | argument 1 (the namespace named) | after on `operative_service` |
+| `spawn_deliver` | runner session only | `operative.send` | spawner | argument 1 (the namespace named) | - |
 | `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
 | `operative_listen` | `operative_listen` | `plugin.enable` | app | argument 1 (the namespace named) | after on `plugin_service` |
 | `entity_state` | `entity_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
-| `schedule_run` | `schedule_run` | `operative.start` | app | the stored row's `namespace` | after on `operative_service` |
+| `schedule_run` | `schedule_run` | `operative.start` | spawner | the stored row's `namespace` | after on `operative_service` |
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
 | `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
 | `list_installed_plugins` | `list_installed_plugins` | `plugin.list` | viewer | the caller's own namespace | - |

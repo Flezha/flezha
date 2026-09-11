@@ -18,8 +18,9 @@
  * worker that was not started. A handle nobody reads logs itself.
  *
  * <p>With authorization on, the default in a release, the namespace's {@code runner@<namespace>}
- * principal needs the {@code app} role, or every spawn is refused:
- * {@code flz role bind runner@<namespace> app <namespace>}.
+ * principal needs the {@code spawner} role, or every spawn is refused:
+ * {@code flz role bind runner@<namespace> spawner <namespace>}. The role also lets this runner's
+ * {@code admin()} start and send to operatives in its namespace, and nothing else.
  *
  * <p>{@link com.flezha.examples.spawn.Main} declares both operatives on one runner, since the
  * requesting stream operative and the workflow operative it requests are ordinary declarations with
