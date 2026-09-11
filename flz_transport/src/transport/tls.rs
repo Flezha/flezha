@@ -129,7 +129,7 @@ fn load_client_identity(
 /// the CA the server is verified against, the client identity for mutual TLS
 /// when its pair is on disk (the server requires it by default), and the
 /// `flezha` ALPN.
-pub fn build_quic_client_crypto(ca_cert_path: &str) -> io::Result<rustls::ClientConfig> {
+pub(crate) fn build_quic_client_crypto(ca_cert_path: &str) -> io::Result<rustls::ClientConfig> {
     let root_store = load_root_store(ca_cert_path)?;
     let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
 

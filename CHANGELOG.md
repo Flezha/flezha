@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Fixed: an in-node Elixir runner answers a refused data-stream bind instead of crashing
+
+An Elixir SDK runner started with `transport: :native` crashed with a
+`MatchError` when the controller had no free channel for one of its data
+streams, and the controller saw a `ConnectSocket` reply that never came. The
+runner now answers `ConnectSocket` with the error and closes every stream it had
+already bound in that round. A UDS or QUIC Elixir runner refused part-way
+through the same round now closes the streams it had opened too, instead of
+leaving them open.
+
+### Fixed: the Elixir SDK's schema refusal names the floor the Procedure declared
+
+An Elixir Procedure whose `min_readable_schema_version/0` is above its own
+`schema_version/0` reads only that version, and a record below it was refused
+naming the version instead of the declared floor. It now names the declared
+floor, as Rust and Java already did: a Procedure at version 2 declaring floor 5
+refuses a record stamped 1 with `record stamped schema_version 1 is below the
+readable floor 5 the running procedure declares`. What is refused is unchanged.
+
 ### Removed: the merge-gated bench no longer fails on a throughput number
 
 The `bench-regression` job failed a pull request whose regression bench read

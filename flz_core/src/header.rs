@@ -421,16 +421,6 @@ mod tests {
         ));
     }
 
-    /// A floor above the running version reads the running version only.
-    #[test]
-    fn a_floor_above_the_running_version_reads_only_the_running_one() {
-        assert_eq!(decide_schema(2, 2, 5).unwrap(), SchemaDecision::Decode);
-        assert!(matches!(
-            decide_schema(1, 2, 5).unwrap_err(),
-            RestoreError::SchemaTooOld { .. }
-        ));
-    }
-
     /// A Kryo-stamped record resolves for a Kryo class, not a postcard one.
     #[test]
     fn the_expected_format_comes_from_the_running_procedure() {

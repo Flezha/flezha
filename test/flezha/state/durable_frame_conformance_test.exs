@@ -225,9 +225,9 @@ defmodule Flezha.State.DurableFrameConformanceTest do
             assert {:error, reason} = result
             assert reason =~ "is above the running procedure's #{running}"
 
-          "too_old" ->
+          "too_old:" <> named ->
             assert {:error, reason} = result
-            assert reason =~ "is below the readable floor #{floor}"
+            assert reason =~ "is below the readable floor #{named} "
 
           "migrate:" <> from ->
             assert {:ok, {:migrate, ^stamped}} = result

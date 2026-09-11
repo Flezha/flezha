@@ -1,7 +1,9 @@
 defmodule Flezha.SDK.UnitTest do
   use ExUnit.Case, async: true
 
+  alias Flezha.Identificator
   alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Topology}
+  alias Flezha.SDK.Transport
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 
   # A ctx built without a procedure has no name to refuse with; the tests
@@ -556,5 +558,43 @@ defmodule Flezha.SDK.UnitTest do
 
     id = PersistentId.stable_id("ns", ["a"])
     assert id =~ ~r/^ns-[0-9a-f]{8}-[a-z0-9]{6}$/
+  end
+
+  # --- the in-node data stream bind ---
+
+  # A pool channel that takes every bind and hands the test what reaches it,
+  # which is the controller side of the stream it was given.
+  defmodule BindingChannel do
+    use GenServer
+
+    def start_link({test, name}), do: GenServer.start_link(__MODULE__, test, name: name)
+
+    @impl true
+    def init(test), do: {:ok, test}
+
+    @impl true
+    def handle_call({:bind, _stream}, _from, test), do: {:reply, :ok, test}
+
+    @impl true
+    def handle_info(msg, test) do
+      send(test, {:channel, msg})
+      {:noreply, test}
+    end
+  end
+
+  test "an in-node bind with no channel to take it is answered, not raised" do
+    runner_id = "sdk_unit_#{System.unique_integer([:positive])}"
+
+    assert {:error, :no_channel} = Transport.connect_sockets(:native, runner_id, 1, self(), nil)
+  end
+
+  test "a pair refused half way closes the stream already bound" do
+    runner_id = "sdk_unit_#{System.unique_integer([:positive])}"
+    name = Identificator.stream_channel_primary(runner_id, 1)
+    start_supervised!({BindingChannel, {self(), name}})
+
+    # The primary binds to the one channel there is; the secondary finds none.
+    assert {:error, :no_channel} = Transport.connect_sockets(:native, runner_id, 1, self(), nil)
+    assert_receive {:channel, {:flz_closed, _stream, "closed"}}
   end
 end

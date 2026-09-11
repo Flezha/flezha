@@ -55,6 +55,17 @@ struct StreamSlot {
 }
 
 impl StreamSlot {
+    /// The slot a freshly opened stream starts with.
+    fn new(read_tx: channel::Sender<Bytes>) -> Self {
+        Self {
+            read_tx,
+            write_buf: Vec::new(),
+            pending_write_replies: Vec::new(),
+            gate: SendGate::new(),
+            held_chunk: None,
+        }
+    }
+
     /// Hand one chunk to this stream's reader, and answer whether draining may
     /// go on. `try_send` and never `send`: a full channel is a reader that is
     /// behind, and waiting for it stops the one loop that also expires this
@@ -490,16 +501,7 @@ fn handle_command(
     match cmd {
         DriverCommand::OpenStream { read_tx, reply } => match connection.streams().open(Dir::Bi) {
             Some(stream_id) => {
-                streams.insert(
-                    stream_id,
-                    StreamSlot {
-                        read_tx,
-                        write_buf: Vec::new(),
-                        pending_write_replies: Vec::new(),
-                        gate: SendGate::new(),
-                        held_chunk: None,
-                    },
-                );
+                streams.insert(stream_id, StreamSlot::new(read_tx));
                 let _ = reply.send(Ok(stream_id));
             }
             None => {

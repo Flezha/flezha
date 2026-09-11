@@ -175,8 +175,8 @@ fn congested(
     let (slow_tx, slow_rx) = channel::bounded(CHUNK_CHANNEL_DEPTH);
     let (other_tx, other_rx) = channel::bounded(CHUNK_CHANNEL_DEPTH);
     let streams = HashMap::from([
-        (slow, client_tests::driver_slot(slow_tx)),
-        (other, client_tests::driver_slot(other_tx)),
+        (slow, StreamSlot::new(slow_tx)),
+        (other, StreamSlot::new(other_tx)),
     ]);
 
     let written = peer_writes(&mut pair, slow, frames);

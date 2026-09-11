@@ -471,26 +471,27 @@ mod tests {
                 let floor: u32 = row[2].parse().expect("min_readable");
                 let decided = decide_schema(stamped, running, floor);
 
-                match row[3].as_str() {
+                let (verdict, version) = row[3].split_once(':').unwrap_or((&row[3], ""));
+                match verdict {
                     "decode" => assert_eq!(decided.unwrap(), SchemaDecision::Decode),
                     "from_future" => assert!(matches!(
                         decided,
                         Err(RestoreError::SchemaFromTheFuture { .. })
                     )),
                     "too_old" => {
-                        assert!(matches!(decided, Err(RestoreError::SchemaTooOld { .. })))
-                    }
-                    other => {
-                        let from: u32 = other
-                            .strip_prefix("migrate:")
-                            .expect("a known verdict")
-                            .parse()
-                            .expect("from version");
-                        assert_eq!(
-                            decided.unwrap(),
-                            SchemaDecision::Migrate { from_version: from }
+                        let reason = decided.unwrap_err().to_string();
+                        assert!(
+                            reason.contains(&format!("is below the readable floor {version} ")),
+                            "row {row:?}: {reason}"
                         );
                     }
+                    "migrate" => assert_eq!(
+                        decided.unwrap(),
+                        SchemaDecision::Migrate {
+                            from_version: version.parse().expect("from version")
+                        }
+                    ),
+                    other => panic!("unknown verdict {other}"),
                 }
             }
         }
