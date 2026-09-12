@@ -131,6 +131,9 @@ defmodule Flezha.MixProject do
       {:mimic, "~> 1.11"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
+      # Syntax highlighting for the guides' code blocks. Makeup ships lexers
+      # for Elixir and Erlang only; this one carries the rest.
+      {:makeup_syntect, "~> 0.1", only: :dev, runtime: false},
       {:logger_file_backend, "~> 0.0.13"},
       {:logger_backends, "~> 1.0"},
       {:rustler, "~> 0.35"},

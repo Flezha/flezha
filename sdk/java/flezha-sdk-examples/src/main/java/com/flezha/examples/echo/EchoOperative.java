@@ -37,6 +37,8 @@ public final class EchoOperative implements StreamOperative {
      */
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoProcedure.class).named("out").sink("my_sink");
+        c.input(String.class, "in")
+            .into(EchoProcedure.class)
+            .sink("out");
     }
 }
