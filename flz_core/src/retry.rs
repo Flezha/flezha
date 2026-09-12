@@ -14,16 +14,62 @@ use std::time::Duration;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::noise::{noise, xorshift64};
 
-use crate::channel::RetryPolicy;
+use crate::channel::{ChannelDescriptor, RetryPolicy};
 use crate::operative::instance::StreamInstance;
 use crate::park::RETRIES_TOTAL;
 use crate::routing::{deliver_edge, route_to_consumers};
 
-/// The identity slot a park with no resolved channel takes. A name off the
-/// wire never becomes a path component: the controller makes this slot a
-/// DIRECTORY under the dead-letter root, and the name the frame asked for
-/// rides the row's `channel` field instead, which is where it is read from.
-pub(crate) const UNRESOLVED_PROCEDURE_ID: &str = "_unresolved";
+/// What a park is attributed to, and how hard the ladder tries first.
+///
+/// `channel` is the row's attribution and may be a name off the wire, while
+/// `procedure_id` is the identity slot the controller turns into a DIRECTORY
+/// and is always a value this side chose. They are one string for every
+/// declared channel and differ only where there is no channel, which is why
+/// the pairing is decided here rather than at each of the four call sites.
+#[derive(Clone, Copy)]
+pub(crate) struct ParkTarget<'a> {
+    channel: &'a str,
+    procedure_id: &'a str,
+    entity_suffix: &'a str,
+    retry: RetryPolicy,
+}
+
+impl<'a> ParkTarget<'a> {
+    /// A declared entry channel: its own name on both slots, its own budget.
+    pub(crate) fn entry(channel: &'a ChannelDescriptor) -> Self {
+        Self::declared(channel, "_entry")
+    }
+
+    /// A declared channel's consumer edge.
+    pub(crate) fn edge(channel: &'a ChannelDescriptor) -> Self {
+        Self::declared(channel, "_edge")
+    }
+
+    /// A name off the wire the operative does not declare: parked at a budget
+    /// of one, because the same declared set answers every re-attempt, and
+    /// under this side's own slot, because a frame-controlled name never
+    /// becomes a path component.
+    pub(crate) fn unresolved(requested: &'a str) -> Self {
+        Self {
+            channel: requested,
+            procedure_id: "_unresolved",
+            entity_suffix: "_entry",
+            retry: RetryPolicy {
+                max_attempts: 1,
+                backoff_base_ms: 0,
+            },
+        }
+    }
+
+    fn declared(channel: &'a ChannelDescriptor, entity_suffix: &'a str) -> Self {
+        Self {
+            channel: &channel.name,
+            procedure_id: &channel.name,
+            entity_suffix,
+            retry: channel.retry,
+        }
+    }
+}
 
 /// Count and log a retryable failure; how long to wait before the next
 /// attempt.
@@ -88,11 +134,8 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
         .expect("parsed entry channel carries a wrap_input");
     run_retry_park_ladder(
         &format!("entry channel `{}`", channel.name),
-        &channel.name,
-        &channel.name,
-        channel.retry,
+        ParkTarget::entry(channel),
         &ladder.instance.instance_id,
-        "_entry",
         ladder.consumed_offset,
         Some(ladder.bytes.clone()),
         ladder.first_error.clone(),
@@ -114,29 +157,26 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
     );
 }
 
-/// Re-attempt one step per `retry`'s budget, then park what still fails;
+/// Re-attempt one step per the target's budget, then park what still fails;
 /// `attempt_step` re-runs AND delivers, so the ladders differ only in the
-/// step. The name and the policy travel rather than a `ChannelDescriptor`,
-/// because a frame naming a channel the operative does not declare has no
-/// descriptor to park under and must park all the same.
-///
-/// `channel` is the row's attribution and may be a name off the wire.
-/// `procedure_id` is the identity slot, which the controller turns into a
-/// DIRECTORY, so it must be a value this side chose: a declared channel name,
-/// or [`UNRESOLVED_PROCEDURE_ID`] when there is none.
-#[allow(clippy::too_many_arguments)]
+/// step. A [`ParkTarget`] travels rather than a `ChannelDescriptor`, because a
+/// frame naming a channel the operative does not declare has no descriptor to
+/// park under and must park all the same.
 pub(crate) fn run_retry_park_ladder(
     label: &str,
-    channel: &str,
-    procedure_id: &str,
-    retry: RetryPolicy,
+    target: ParkTarget<'_>,
     instance_id: &str,
-    entity_suffix: &str,
     consumed_offset: Option<u64>,
     payload: Option<Vec<u8>>,
     first_error: String,
     mut attempt_step: impl FnMut() -> Result<(), String>,
 ) {
+    let ParkTarget {
+        channel,
+        procedure_id,
+        entity_suffix,
+        retry,
+    } = target;
     let mut attempt: u32 = 1; // the routing-thread run was attempt 1
     let mut error = first_error;
     while attempt < retry.max_attempts {
@@ -238,11 +278,8 @@ fn run_edge_ladder(ladder: EdgeLadder) {
         .unwrap_or_default();
     run_retry_park_ladder(
         &format!("channel `{}` edge into `{}`", channel.name, procedure),
-        &channel.name,
-        &channel.name,
-        channel.retry,
+        ParkTarget::edge(channel),
         &ladder.instance.instance_id,
-        "_edge",
         ladder.consumed_offset,
         None,
         ladder.first_error,
@@ -284,14 +321,18 @@ mod tests {
 
         run_retry_park_ladder(
             "entry channel `late`",
-            "late",
-            "late",
-            RetryPolicy {
-                max_attempts: 3,
-                backoff_base_ms: 1,
+            // Spelled out rather than built from a descriptor: this asserts
+            // what the ladder reads, which is the target and nothing else.
+            ParkTarget {
+                channel: "late",
+                procedure_id: "late",
+                entity_suffix: "_entry",
+                retry: RetryPolicy {
+                    max_attempts: 3,
+                    backoff_base_ms: 1,
+                },
             },
             "op-1",
-            "_entry",
             Some(9),
             Some(b"poison".to_vec()),
             "the routing thread's failure".to_string(),

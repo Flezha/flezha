@@ -18,7 +18,7 @@ use super::build::{
 use super::chains::derive_channels;
 use super::decl::{
     HostAckGranularity, HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock,
-    HostEntityModeDecl, HostLink, HostLoopMode, HostOverflow, HostProcedureDecl, HostWorkflowDecl,
+    HostEntityModeDecl, HostLoopMode, HostOverflow, HostProcedureDecl, HostWorkflowDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
 use crate::channel::ChannelKind;
@@ -45,14 +45,21 @@ pub struct Derived {
 #[derive(Debug, serde::Serialize)]
 pub struct DerivedChannel {
     pub index: u32,
-    /// The last `named` link if the record carried one, else the builder's
-    /// derived default. Read once, for every terminator (KI-120).
+    /// The last `named` link if the record carried one, else the name a `sink`
+    /// link carried, else the builder's derived default. Read once, for every
+    /// terminator (KI-120).
     pub name: String,
     pub kind: HostChannelKind,
     pub producer: Option<u32>,
     pub consumers: Vec<DerivedEdge>,
     /// The plugin descriptor this channel serializes onto.
     pub sink: Option<String>,
+    /// Which rung of [`name`](Self::name) answered: a `sink(...)` with no
+    /// `named(...)` beside it. Recorded where the naming links are read rather
+    /// than walked again, so a refusal about a name and the name itself cannot
+    /// come from different links. Not part of the derived answer a host parses.
+    #[serde(skip)]
+    pub named_by_sink: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -162,7 +169,7 @@ fn refuse_names(
     // collision to the author who wrote it, so it is refused under its own
     // name rather than as a bare duplicate.
     let mut from_sink: HashMap<&str, usize> = HashMap::new();
-    for channel in channels.iter().filter(|c| named_by_sink(decl, c)) {
+    for channel in channels.iter().filter(|c| c.named_by_sink) {
         *from_sink.entry(channel.name.as_str()).or_default() += 1;
     }
     let mut seen = HashSet::new();
@@ -192,25 +199,6 @@ fn refuse_names(
             });
         }
     }
-}
-
-/// Whether this channel took its name from its own `sink(...)`, rather than
-/// from a `named(...)` or the builder's default. Read off the record, because
-/// the derived answer is one string whichever rung supplied it.
-fn named_by_sink(decl: &HostClassDecl, channel: &DerivedChannel) -> bool {
-    let Some(links) = decl.channels.get(channel.index as usize) else {
-        return false;
-    };
-    let mut named = false;
-    let mut sink = false;
-    for link in links.chains.iter().flatten() {
-        match link {
-            HostLink::Named { .. } => named = true,
-            HostLink::Sink { name: Some(_) } => sink = true,
-            _ => {}
-        }
-    }
-    sink && !named
 }
 
 /// The class-level refusals; a run-sugar class is refused only on its

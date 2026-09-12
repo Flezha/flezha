@@ -67,32 +67,18 @@ pub(crate) fn capture_parks() -> Arc<std::sync::Mutex<Vec<CapturedPark>>> {
 }
 
 /// The identity and `ParkBody` inside a frame `build_entity_frame` wrote:
-/// `[id_len(2)][identity][seq(8)][header(16)][body_len(4)][body][crc(4)]`,
-/// where the identity is `encode_entity_identity`'s length-prefixed triple.
+/// `[id_len(2)][identity][seq(8)][header(16)][body_len(4)][body][crc(4)]`. The
+/// identity is read back with the flusher's own inverse, so a capture cannot
+/// disagree with what the controller decodes.
 #[cfg(test)]
 fn decode_park(frame: &[u8]) -> CapturedPark {
     let id_len = u16::from_be_bytes([frame[0], frame[1]]) as usize;
-    let identity = decode_identity(&frame[2..2 + id_len]);
+    let identity = crate::flusher::decode_entity_identity(&frame[2..2 + id_len])
+        .expect("a park frame carries an encoded entity identity");
     let rest = &frame[2 + id_len + 8 + 16..];
     let body_len = u32::from_be_bytes(rest[..4].try_into().expect("a 4-byte length")) as usize;
     let body = postcard::from_bytes(&rest[4..4 + body_len]).expect("a postcard ParkBody");
     CapturedPark { identity, body }
-}
-
-#[cfg(test)]
-fn decode_identity(bytes: &[u8]) -> (String, String, String) {
-    let take = |at: usize, len: usize| String::from_utf8_lossy(&bytes[at..at + len]).into_owned();
-    let class_len = bytes[0] as usize;
-    let proc_at = 1 + class_len + 1;
-    let proc_len = bytes[1 + class_len] as usize;
-    let key_at = proc_at + proc_len + 2;
-    let key_len =
-        u16::from_be_bytes([bytes[proc_at + proc_len], bytes[proc_at + proc_len + 1]]) as usize;
-    (
-        take(1, class_len),
-        take(proc_at, proc_len),
-        take(key_at, key_len),
-    )
 }
 
 /// A host class registered from JSON, shared by the command and activation

@@ -462,8 +462,7 @@ fn entry_channel_or_park<'a>(
             // A declared name of another kind — a sink, an inter-procedure
             // channel — is no more an entry channel than one declared
             // nowhere, so both park and both name the entry set.
-            ChannelLookup::WrongKind(_) => name,
-            ChannelLookup::Undeclared => name,
+            ChannelLookup::WrongKind(_) | ChannelLookup::Undeclared => name,
         },
         None => match topology.first_of_kind(ChannelKind::Entry) {
             Some(first) => return Some(first),
@@ -511,17 +510,10 @@ fn park_unresolved_entry(
     crate::retry::spawn_park_thread("flezha-unresolved-entry-park", move || {
         crate::retry::run_retry_park_ladder(
             &format!("entry channel `{requested}`"),
-            &requested,
-            // A frame-controlled name never reaches the identity slot the
-            // controller turns into a directory; the row's `channel` carries
-            // it, which is where the requirement puts it.
-            crate::retry::UNRESOLVED_PROCEDURE_ID,
-            crate::channel::RetryPolicy {
-                max_attempts: 1,
-                backoff_base_ms: 0,
-            },
+            // The budget of one, and the identity slot a frame-controlled name
+            // never reaches, are the target's to decide.
+            crate::retry::ParkTarget::unresolved(&requested),
             &instance_id,
-            "_entry",
             consumed_offset,
             Some(payload),
             error,

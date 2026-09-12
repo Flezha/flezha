@@ -42,9 +42,19 @@ fn derive_channel(
     merges: &mut HashMap<u32, (u32, Vec<usize>)>,
     issues: &mut Vec<TopologyIssue>,
 ) -> DerivedChannel {
-    refuse_double_name(channel_decl, issues);
+    // The two ways a record can name a channel, read once. The name the
+    // channel takes, the refusal two declarations raise, and which rung
+    // supplied the name are three readings of this one pair.
+    let (named, from_sink) = naming_declarations(channel_decl);
+    refuse_double_name(channel_decl, named, from_sink, issues);
     let mut derived = Chains {
-        name: derived_name(channel_decl),
+        // Three rungs: the LAST `named` link, else the name a `sink` link
+        // carries, else the builder's derived default. The first two never
+        // both apply — a channel a record names twice is refused above.
+        name: named
+            .or(from_sink)
+            .cloned()
+            .unwrap_or_else(|| channel_decl.name.clone()),
         sink: None,
         consumers: Vec::new(),
     };
@@ -59,48 +69,44 @@ fn derive_channel(
         walk_chain(&mut walk, links, &mut derived, issues);
     }
 
-    // Terminality is read off the wiring, never off which method was called:
-    // a sink with nothing consuming behind it IS the plugin-bound terminal,
-    // and a channel carrying both stays what it was declared.
-    let kind = if derived.sink.is_some() && derived.consumers.is_empty() {
-        HostChannelKind::Plugin
-    } else {
-        channel_decl.kind
-    };
-
     DerivedChannel {
         index: index as u32,
+        kind: derived_kind(channel_decl, &derived),
         name: derived.name,
-        kind,
         producer: channel_decl.producer,
         consumers: derived.consumers,
         sink: derived.sink,
+        named_by_sink: named.is_none() && from_sink.is_some(),
     }
 }
 
-/// The channel's name, in three rungs: the LAST `named` link, else the name a
-/// `sink` link carries, else the builder's derived default. Read once for the
-/// whole channel — the omission KI-120 closed was a pending name consumed by
-/// n−1 terminators, so a name read per terminator is the shape to keep
-/// impossible. The first two rungs never both apply: a channel a record names
-/// twice is refused by [`refuse_double_name`].
-fn derived_name(channel_decl: &HostChannelDecl) -> String {
-    let (named, sink) = naming_declarations(channel_decl);
-    named
-        .or(sink)
-        .cloned()
-        .unwrap_or_else(|| channel_decl.name.clone())
+/// Terminality is read off the wiring, never off which method was called: a
+/// sink with nothing consuming behind it IS the plugin-bound terminal, and a
+/// channel carrying both stays what it was declared.
+fn derived_kind(channel_decl: &HostChannelDecl, derived: &Chains) -> HostChannelKind {
+    if derived.sink.is_some() && derived.consumers.is_empty() {
+        HostChannelKind::Plugin
+    } else {
+        channel_decl.kind
+    }
 }
 
 /// A channel whose record carries both a `named` link and a `sink` that names
 /// it has been named twice. Refused rather than resolved by precedence, and
 /// refused even when the two strings agree: an exception for the consistent
 /// case would leave a redundant pair nobody can remember the rule for.
-fn refuse_double_name(channel_decl: &HostChannelDecl, issues: &mut Vec<TopologyIssue>) {
-    if let (Some(named), Some(sink)) = naming_declarations(channel_decl) {
+fn refuse_double_name(
+    channel_decl: &HostChannelDecl,
+    named: Option<&String>,
+    from_sink: Option<&String>,
+    issues: &mut Vec<TopologyIssue>,
+) {
+    if let (Some(named), Some(sink)) = (named, from_sink) {
         issues.push(TopologyIssue::ChannelNamedTwice {
-            // The builder's own default, because neither declared name wins
-            // and the author has to be told which channel this is.
+            // The record's own `name` field: neither declared name wins here,
+            // and the author still has to be told which channel this is. The
+            // core does not choose between the two, it reports the name the
+            // declaration arrived with.
             channel: channel_decl.name.clone(),
             named: named.clone(),
             sink: sink.clone(),
@@ -109,9 +115,13 @@ fn refuse_double_name(channel_decl: &HostChannelDecl, issues: &mut Vec<TopologyI
 }
 
 /// The two ways a record can name a channel: the LAST `named` link, and the
-/// FIRST `sink` that carries a name (a second sink is its own refusal). Read
-/// once, by the derivation and by the refusal, so the name a channel takes and
-/// the contradiction that refuses it cannot be read from different links.
+/// FIRST `sink` that carries a name (a second sink is its own refusal).
+///
+/// The one reader of a channel's naming links. The name the channel takes, the
+/// refusal two declarations raise, and which rung supplied the name all come
+/// off this pair, so they cannot be read from different links. The omission
+/// KI-120 closed was a pending name consumed by n−1 terminators, and reading
+/// the pair once per channel is what keeps that shape impossible.
 fn naming_declarations(channel_decl: &HostChannelDecl) -> (Option<&String>, Option<&String>) {
     let (mut named, mut sink) = (None, None);
     for link in channel_decl.chains.iter().flatten() {
