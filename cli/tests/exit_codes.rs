@@ -1,8 +1,11 @@
-//! What `flz` exits with when the `flzvm` it spawns refuses.
+//! What `flz` exits with when the `flzvm` it spawns refuses, and when there is
+//! no `flzvm` to spawn at all.
 //!
 //! Every verb here delegates to the sibling `flzvm` binary. A verb that
 //! answers 0 after that spawn failed is reporting a success it did not earn,
-//! and a script cannot tell it from a success (KI-79).
+//! and a script cannot tell it from a success (KI-79). A release that was
+//! never built is an ordinary operator condition and takes an ordinary
+//! refusal naming the path, not a Rust panic (KB-277).
 
 mod common;
 
@@ -77,6 +80,45 @@ fn every_dialect_keeps_its_code(cli: &Refusing) -> Vec<String> {
     ])
 }
 
+/// One verb per dialect again, with nothing to spawn: each names the path it
+/// looked for, says nothing about a backtrace, and exits with the code its
+/// policy falls back to. `audit list` and `operative stop` already diagnosed
+/// their own spawn, so they are the control arm that the shared sentence did
+/// not move a code.
+fn a_missing_flzvm_is_refused_rather_than_panicked() -> Vec<String> {
+    let cli = Shim::without_flzvm(FLZ_BIN);
+    let looked_for = cli.flzvm_path().display().to_string();
+
+    let cases: &[(&[&str], i32)] = &[
+        (&["dlq", "list", "--token", "t"], 1),
+        (&["controller", "status"], 3),
+        (&["operative", "list"], 1),
+        (&["audit", "list"], 3),
+        (&["operative", "stop", "op1"], 1),
+    ];
+
+    cases
+        .iter()
+        .filter_map(|(args, want)| {
+            let out = cli.run(args);
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let wrong = out.status.code() != Some(*want)
+                || stderr.contains("panicked")
+                || !stderr.contains(&looked_for);
+
+            wrong.then(|| {
+                format!(
+                    "flz {}: exit {:?} (want {}), stderr {:?}",
+                    args.join(" "),
+                    out.status.code(),
+                    want,
+                    stderr.trim()
+                )
+            })
+        })
+        .collect()
+}
+
 /// One `#[test]`, two phases: the fixture execs a *copy* of the binary, and a
 /// copy written while a sibling thread forks is `ExecutableFileBusy` in the
 /// child that inherited the write handle. One thread, one copy, no race.
@@ -86,6 +128,7 @@ fn every_verb_answers_a_refused_flzvm_with_the_code_it_promises() {
 
     let mut wrong = no_refusal_is_reported_as_success(&cli);
     wrong.extend(every_dialect_keeps_its_code(&cli));
+    wrong.extend(a_missing_flzvm_is_refused_rather_than_panicked());
 
     assert!(
         wrong.is_empty(),

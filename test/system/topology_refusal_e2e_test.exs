@@ -26,11 +26,14 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   its stderr. A runner that refuses at boot never connects, so the assertion
   reads the app's exit status and stderr rather than a control frame.
 
-  Tagged `:interop` as well as `:system`: the runtimes come from the manifests,
-  so every test app must be built. It runs in the nightly's interop job. The one
-  exception is the selected runtime's golden comparison, which also runs in the
-  ordinary `:system` pass, so a golden that drifts on that runtime fails its
-  next nightly run with no second runtime built.
+  Tagged `:interop` as well as `:system`: the whole sweep reads the runtimes
+  from the manifests, so it needs every test app built and only a run that
+  passes `--include interop` takes it. The exception is the SELECTED runtime,
+  `FLEZHA_E2E_RUNTIME`, the one a nightly job builds, whose clauses also run in
+  the ordinary `:system` pass. That is what makes the drill run in CI at all:
+  the nightly is one job per runtime and no job builds a second one, so a
+  workflow line asking for the whole sweep would be red on every runtime it did
+  not build.
   """
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
@@ -63,6 +66,12 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     for runtime <- PortPilot.runtimes() do
       @runtime runtime
 
+      # The selected runtime is the one this run has built, so its clauses need
+      # no second app and ride the ordinary `:system` pass; every other runtime
+      # waits for a run that includes `:interop`.
+      @selected_only runtime != NodeTestHelper.runtime() and @interop_skip
+
+      @tag skip: @selected_only
       test "#{runtime} ran or justified every row" do
         report = conformance_report(@runtime)
         rows = ReferenceTopologies.refusal_rows()
@@ -92,6 +101,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
         end
       end
 
+      @tag skip: @selected_only
       test "#{runtime} refuses every malformed row by the fixture's name" do
         report = conformance_report(@runtime)
         rows = ReferenceTopologies.refusal_rows()
@@ -120,6 +130,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
         end
       end
 
+      @tag skip: @selected_only
       test "#{runtime} derives the same bytes for every well-formed row" do
         report = conformance_report(@runtime)
 
@@ -184,7 +195,9 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     for runtime <- PortPilot.runtimes(), topology <- ~w(dup_key_by dup_node) do
       @runtime runtime
       @topology topology
+      @selected_only runtime != NodeTestHelper.runtime() and @interop_skip
 
+      @tag skip: @selected_only
       test "#{runtime} dies at boot naming the refusal #{topology} was given" do
         row = Enum.find(ReferenceTopologies.refusal_rows(), &(&1.topology == @topology))
 
@@ -242,9 +255,12 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     |> run_app([{"FLEZHA_REFUSAL_FIXTURE", topology}])
   end
 
+  # A manifest's launch line is a SHELL line, and one of them is
+  # `sh -c '<script>'`, so it goes to a shell whole, the way
+  # `PortPilot.open_port/2` spawns the same line. Splitting it on spaces breaks
+  # the quoting and the app never starts.
   defp run_app(command, env) do
-    [exe | args] = String.split(command, " ", trim: true)
-    System.cmd(exe, args, env: env, stderr_to_stdout: true, cd: File.cwd!())
+    System.cmd("sh", ["-c", command], env: env, stderr_to_stdout: true, cd: File.cwd!())
   end
 
   # The factories a runtime's manifest lists across every capability it did not

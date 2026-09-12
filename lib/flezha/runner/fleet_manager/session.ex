@@ -503,8 +503,13 @@ defmodule Flezha.Runner.FleetManager.Session do
     end
   end
 
+  # The hook is taken before the tree, so every refusal after it has to give it
+  # back: a runner retrying a refusal would otherwise add one handler per
+  # attempt, and no runner ever answers them. Cancelling is by name, so the
+  # refusal that never got as far as registering one is a no-op.
   defp refuse(runner_id, namespace, what, reason) do
     Logger.error("runner #{runner_id} on #{namespace} #{what}; refusing the connect")
+    _ = HubManager.unregister_handler(namespace, runner_id)
     throw({:runner_connect_failed, reason})
   end
 

@@ -333,15 +333,54 @@ mod tests {
         );
     }
 
+    /// The words a case adds to this verb's own, read. Named when the walk
+    /// accepted them, and when `saying` is given and the refusal does not say
+    /// it, so a caller collecting wrong answers collects nothing.
+    fn refusal_for(
+        path: &'static str,
+        verb: &'static Verb,
+        spec: &crate::args::OptSpec,
+        case: &[String],
+        saying: Option<String>,
+    ) -> Option<String> {
+        let mut argv = base_argv(verb, spec.long);
+        argv.extend(case.iter().cloned());
+        let read = crate::args::read(
+            path,
+            verb,
+            &owned(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
+        );
+
+        match (read, saying) {
+            (Ok(_), _) => Some(format!("{} {}: {:?} was accepted", path, verb.name, case)),
+            (Err(refusal), Some(want)) if !refusal.contains(&want) => Some(format!(
+                "{} {}: {:?} -> {:?}, want a refusal saying {:?}",
+                path, verb.name, case, refusal, want
+            )),
+            (Err(_), _) => None,
+        }
+    }
+
     /// fails when: a verb accepts an option written with nothing after it, or
-    /// a number it cannot read, or a word outside a closed set.
+    /// a number it cannot read, or a word outside a closed set, or a switch
+    /// written with a value, which read as present whatever was typed after the
+    /// `=` and so answered the opposite of the request (KB-258).
     #[test]
     fn every_declared_option_refuses_what_it_cannot_carry() {
-        let mut accepted: Vec<String> = Vec::new();
+        let mut wrong: Vec<String> = Vec::new();
 
         for (path, verb) in leaves() {
             for spec in verb.options {
                 if matches!(spec.kind, Kind::Switch) {
+                    // The refusal an operator reads is pinned here rather than
+                    // per verb: one sentence, every switch in the tree.
+                    wrong.extend(refusal_for(
+                        path,
+                        verb,
+                        spec,
+                        &[format!("{}=no", spec.long)],
+                        Some(format!("{} takes no value", spec.long)),
+                    ));
                     continue;
                 }
 
@@ -354,25 +393,16 @@ mod tests {
                 }
 
                 for case in cases {
-                    let mut argv = base_argv(verb, spec.long);
-                    argv.extend(case.iter().cloned());
-                    let read = crate::args::read(
-                        path,
-                        verb,
-                        &owned(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
-                    );
-                    if read.is_ok() {
-                        accepted.push(format!("{} {}: {:?}", path, verb.name, case));
-                    }
+                    wrong.extend(refusal_for(path, verb, spec, &case, None));
                 }
             }
         }
 
         assert!(
-            accepted.is_empty(),
-            "{} unreadable values were accepted:\n{}",
-            accepted.len(),
-            accepted.join("\n")
+            wrong.is_empty(),
+            "{} unreadable values were answered wrongly:\n{}",
+            wrong.len(),
+            wrong.join("\n")
         );
     }
 

@@ -666,6 +666,12 @@ fn claim(
 ) -> Result<Option<(&'static str, String, usize)>, String> {
     for spec in declared {
         let (written, width) = match resolve_spelling(&argv[i], spec.long, spec.short) {
+            // A switch is written or it is not, so a value attached to one is
+            // a word the verb cannot act on: reading it as present answers
+            // `--all=no` by clearing every root.
+            Spelling::Attached(_) if matches!(spec.kind, Kind::Switch) => {
+                return Err(takes_no_value(spec))
+            }
             Spelling::Attached(value) => (value.to_string(), 1),
             Spelling::Separated if matches!(spec.kind, Kind::Switch) => ("true".to_string(), 1),
             Spelling::Separated => match argv.get(i + 1) {
@@ -715,6 +721,10 @@ fn unknown_word(noun: &str, written: &str, words: &[&str]) -> String {
 
 fn requires_a_value(spec: &OptSpec) -> String {
     format!("Error: {} requires a value", spec.long)
+}
+
+fn takes_no_value(spec: &OptSpec) -> String {
+    format!("Error: {} takes no value", spec.long)
 }
 
 /// An argument list as `env::args()` would produce it. Every test module in

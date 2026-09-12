@@ -136,7 +136,11 @@ flz reset [OPTIONS]
 | `--json`                 | Machine-readable single-object output (`--output json` is the same request).   |
 
 `--yes` together with `--dry-run` is a usage error; so is any unknown argument —
-`--output` with a value other than `text` or `json` included.
+`--output` with a value other than `text` or `json` included. So is a switch
+written with a value: `--all=no` and `--yes=false` are refused as
+`Error: --all takes no value`, because a flag that is either written or not
+written cannot carry one, and reading it as written would clear what the
+operator asked to keep.
 
 ## Live-node guard
 

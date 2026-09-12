@@ -32,6 +32,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
 
   @namespace "reconnect-binding-test"
   @factory "do_nothing"
@@ -256,8 +258,29 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       # refusal's own line is what is read.
       refusal = log |> String.split("\n") |> Enum.find("", &(&1 =~ "on #{ns} has no control"))
       assert refusal =~ "#{too_long}/primary_stream_"
+
+      # The hook is taken before the tree, and a refused connect leaves it on
+      # the hub for its lifetime otherwise: a runner retrying a refusal adds
+      # one handler per attempt, none of which any runner will ever answer.
+      handlers = child_registered_handlers(ns)
+
+      assert :flezha_registry_written in handlers,
+             "read no handler table for #{ns}'s hub, so an empty insertion list proves nothing"
+
+      assert Enum.filter(handlers, &insertion_hook?/1) == []
     end
   end
+
+  # Every `child_registered` handler this namespace's hub holds, by id.
+  defp child_registered_handlers(namespace) do
+    hub = ProcessHub.Coordinator.get_hub(Identificator.hub(namespace))
+
+    hub.storage.hook
+    |> HookManager.registered_handlers(Hook.child_registered())
+    |> Enum.map(& &1.id)
+  end
+
+  defp insertion_hook?(id), do: is_binary(id) and String.ends_with?(id, "_hub_pid_insertion")
 
   # A runner played by this process on a real in-node stream: it connects the
   # way the in-node SDK does, then answers each handshake frame as `answer`

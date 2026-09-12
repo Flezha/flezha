@@ -44,8 +44,8 @@ pub(crate) struct Failure {
     /// child's exit status.
     refused: Option<&'static str>,
     exit: Exit,
-    /// Said on stderr as `"{what}: {error}"` when the child could not be
-    /// started at all. `None` panics, which is what most of the tree does.
+    /// What a verb calls a child it could not start at all; `None` takes the
+    /// shared sentence. Either way the line names the path and the reason.
     unspawnable: Option<&'static str>,
 }
 
@@ -92,6 +92,12 @@ pub(crate) const UNKNOWN_STATUS: Failure =
 
 /// Exit 1 adding nothing to what the RPC printed.
 pub(crate) const QUIET: Failure = Failure::new(Exit::Fixed(1));
+
+/// Said when a verb that named nothing of its own could not start `flzvm`. An
+/// unbuilt release and the wrong working directory are the same operator
+/// condition, and only the path says which: `flz` looks for its sibling next
+/// to itself and nowhere else.
+const UNSPAWNABLE: &str = "Error: could not run";
 
 /// One option a request carries: its key and its value already rendered as an
 /// Elixir literal — `text` for a string, `to_string` for a number, `"true"`.
@@ -185,15 +191,15 @@ pub(crate) fn run_if_reachable(expression: String, failure: Failure) -> Result<(
 pub(crate) fn verdict(status: io::Result<ExitStatus>, failure: Failure) {
     let status = match status {
         Ok(status) => status,
-        Err(e) => match failure.unspawnable {
-            Some(what) => {
-                eprintln!("{}: {}", what, e);
-                exit(failure.exit.fallback());
-            }
-            // The payload `.expect("Failed to execute command")` produced at
-            // every one of these sites before they shared this one.
-            None => panic!("Failed to execute command: {:?}", e),
-        },
+        Err(e) => {
+            eprintln!(
+                "{}: {} ({})",
+                failure.unspawnable.unwrap_or(UNSPAWNABLE),
+                flzvm_path(),
+                e
+            );
+            exit(failure.exit.fallback());
+        }
     };
 
     if status.success() {

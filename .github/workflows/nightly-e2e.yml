@@ -177,6 +177,12 @@ jobs:
         # excluded from the tiers above and invoked on its own. It rides the
         # java job because that is the one with both a JDK and the pre-built
         # rust_runner; the runtime axis does not apply to it.
+        #
+        # The topology refusal drill is `:interop` too and is deliberately NOT
+        # named here: it reads every runtime from the manifests, and this job
+        # builds two, so asking for the whole sweep would be red on the five it
+        # did not build. Each matrix job proves its own runtime instead, in the
+        # `--include system` step above.
         if: matrix.runtime == 'java'
         run: |
           mix test --include system --include interop \
