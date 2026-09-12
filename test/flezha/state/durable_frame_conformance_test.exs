@@ -34,6 +34,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     |> Enum.map(&(&1 |> String.split("|") |> Enum.map(fn f -> String.trim(f) end)))
     |> Enum.filter(&match?([^kind | _], &1))
     |> Enum.map(&tl/1)
+    |> tap(&assert &1 != [], "the fixture holds no #{kind} rows")
   end
 
   defp bytes("-"), do: <<>>
@@ -62,7 +63,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     end
 
     test "the byte walk reaches the fixture's verdict on every row" do
-      for [name, hex, verdict, seqs] <- rows("frame") do
+      Enum.each(rows("frame"), fn [name, hex, verdict, seqs] ->
         log = bytes(hex)
 
         result =
@@ -79,12 +80,12 @@ defmodule Flezha.State.DurableFrameConformanceTest do
             assert {:error, {refused, _last_seq, _offset}} = result, "row #{name}"
             assert Atom.to_string(refused) == reason, "row #{name}"
         end
-      end
+      end)
     end
 
     @tag :tmp_dir
     test "the device walk reaches the same verdict over the same bytes", %{tmp_dir: tmp} do
-      for [name, hex, verdict, seqs] <- rows("frame") do
+      Enum.each(rows("frame"), fn [name, hex, verdict, seqs] ->
         path = Path.join(tmp, "#{name}.log")
         File.write!(path, bytes(hex))
 
@@ -104,7 +105,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
             assert {:error, {refused, _last_seq, _offset}} = result, "row #{name}"
             assert Atom.to_string(refused) == reason, "row #{name}"
         end
-      end
+      end)
     end
 
     @tag :tmp_dir
@@ -159,7 +160,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
 
   describe "the header table both runtimes hold" do
     test "every allocated value decodes to the fields the fixture declares" do
-      for [name, hex, lang, version, schema, format, crc] <- rows("header") do
+      Enum.each(rows("header"), fn [name, hex, lang, version, schema, format, crc] ->
         assert {:ok, decoded} = RecordFrame.decode_header(bytes(hex)), "row #{name}"
 
         assert decoded == %{
@@ -170,7 +171,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
                  crc32: String.to_integer(crc, 16)
                },
                "row #{name}"
-      end
+      end)
     end
 
     test "a header of any other length is refused rather than guessed at" do
@@ -179,21 +180,22 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     end
 
     test "the language table names every allocated value" do
-      for [value, name] <- rows("lang") do
+      Enum.each(rows("lang"), fn [value, name] ->
         assert RecordFrame.sdk_lang_name(String.to_integer(value)) == name
-      end
+      end)
 
       assert RecordFrame.sdk_lang_name(200) == "unallocated"
     end
 
     test "the format table is the one the SDK stamps with" do
-      for [name, hex, _lang, _version, _schema, format, _crc] <- rows("header"),
-          String.starts_with?(name, "format_") do
-        codec = name |> String.trim_leading("format_") |> String.to_atom()
-        assert RecordFrame.format_id(codec) == String.to_integer(format)
-        assert {:ok, %{format_id: id}} = RecordFrame.decode_header(bytes(hex))
-        assert id == String.to_integer(format)
-      end
+      Enum.each(rows("header"), fn [name, hex, _lang, _version, _schema, format, _crc] ->
+        if String.starts_with?(name, "format_") do
+          codec = name |> String.trim_leading("format_") |> String.to_atom()
+          assert RecordFrame.format_id(codec) == String.to_integer(format)
+          assert {:ok, %{format_id: id}} = RecordFrame.decode_header(bytes(hex))
+          assert id == String.to_integer(format)
+        end
+      end)
     end
   end
 
@@ -201,7 +203,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     test "every listed case reaches the fixture's verdict" do
       body = <<1, 2, 3>>
 
-      for [stamped, running, floor, verdict] <- rows("schema") do
+      Enum.each(rows("schema"), fn [stamped, running, floor, verdict] ->
         stamped = String.to_integer(stamped)
         running = String.to_integer(running)
         floor = String.to_integer(floor)
@@ -233,7 +235,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
             assert {:ok, {:migrate, ^stamped}} = result
             assert String.to_integer(from) == stamped
         end
-      end
+      end)
     end
   end
 

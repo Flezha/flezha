@@ -805,7 +805,9 @@ backoff prevent heal-induced churn", and the rest here — the OTLP post's
 `250 ms → 4 s` in five attempts, the cluster reconnect's `1 s` doubling to its
 `:reconnect_max_backoff_ms` knob, the hub-call retry's `150 ms → 5 s` in eight attempts,
 the schedule's `1 s → 60 s`, the shipper's `500 ms → 30 s`, the websocket socket
-reconnect's `250 ms × 1.5 → 30 s` and the SDK's `50 ms → 5 s` and `100 ms → 30 s`. A row
+reconnect's `250 ms × 1.5 → 30 s`, the websocket sink's ack retry `1 s` doubling to
+`30 s` and given up after six unacknowledged sends, and the SDK's `50 ms → 5 s` and
+`100 ms → 30 s`. A row
 retuned later SHALL be retuned in the one requirement that states it, so no second copy
 of a ladder's values can go stale.
 

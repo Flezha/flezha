@@ -10,7 +10,7 @@ Startup order::
     declare classes -> (fork, if the operator forks at all) -> start
 
 The core must NOT be started before a fork: it owns native threads that
-``fork(2)`` does not carry, and :meth:`Core.guard <flezha.native.Core.guard>`
+``fork(2)`` does not carry, and :meth:`Core._call <flezha.native.Core._call>`
 raises naming that rule rather than letting a child serve nothing.
 """
 

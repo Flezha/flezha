@@ -212,8 +212,10 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   defp answer(state, frames), do: {:reply, frames, state}
 
   # Fresh owns the reconnect timer; the row owns the schedule it walks, and
-  # this is where the wait becomes visible — the delay announced here is the
-  # one the library is about to sleep.
+  # this is where the wait becomes visible. The announced delay is the row's
+  # rung for this attempt, not the exact sleep: Fresh starts and stops on the
+  # row's base and cap but compounds `round(prev * 1.5)` one step at a time,
+  # so from attempt 4 its own wait runs a few milliseconds longer.
   @impl Fresh
   def handle_disconnect(_code, _reason, state) do
     {_delay, state} = announce_reconnect(state)

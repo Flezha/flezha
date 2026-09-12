@@ -487,8 +487,8 @@ told nothing about whether the name exists.
 | `install_plugin` | `install_plugin` | `plugin.install` | admin | `_system` | after on `plugin_service` |
 | `upgrade_plugin` | `upgrade_plugin` | `plugin.upgrade` | admin | `_system` | after on `plugin_service` |
 | `uninstall_plugin` | `uninstall_plugin` | `plugin.uninstall` | admin | `_system` | after on `plugin_service` |
-| `installer_enable_plugin` | `installer_enable_plugin` | `plugin.enable` | operator | `_system` | after on `plugin_service` |
-| `installer_disable_plugin` | `installer_disable_plugin` | `plugin.disable` | operator | `_system` | after on `plugin_service` |
+| `installer_enable_plugin` | `installer_enable_plugin` | `plugin.enable` | app | `_system` | after on `plugin_service` |
+| `installer_disable_plugin` | `installer_disable_plugin` | `plugin.disable` | app | `_system` | after on `plugin_service` |
 | `observability_sources` | `observability_render_sources` | `observability.query` | viewer | the caller's own namespace | - |
 | `observability_sinks` | `observability_render_sinks` | `observability.query` | viewer | the caller's own namespace | - |
 | `observability_query` | published surface only | `observability.query` | viewer | the caller's own namespace | - |

@@ -63,8 +63,8 @@ defmodule FlezhaTest.CaseFixturesTest do
 
   # Expanding the template's `use` runs its guard without compiling a module,
   # which under `async: true` would join the running suite.
-  test "a module declaring :env or :system_env cannot be async" do
-    for row <- [:env, :system_env] do
+  test "a module declaring a fixture that writes a process-global cannot be async" do
+    for row <- [:env, :system_env, :tmp_app_data, :auth_stores, :isolated_dlq_dir] do
       declared = quote do: FlezhaTest.Case.__using__(fixtures: [unquote(row)], async: true)
 
       assert_raise ArgumentError, ~r/#{row}.*async: true/, fn ->

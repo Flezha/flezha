@@ -372,7 +372,7 @@ fn read_loop(
                 ReadAction::Retry => continue,
                 ReadAction::Reconnect => {
                     let reason = classify_reconnect_reason(&e, live.acked());
-                    if !live.acked() {
+                    if ack_window_elapsed(&e, live.acked()) {
                         tracing::warn!(
                             target: "flezha::transport",
                             reason, idle_deadline = ?live.current_deadline(),
@@ -450,6 +450,17 @@ pub fn spawn_data_heartbeat(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::J
             break;
         }
     })
+}
+
+/// True when the ack window really elapsed: the read waited it out and no ack
+/// arrived. Any other error ended the session before a window could pass, so
+/// the warning must not claim one was waited out.
+fn ack_window_elapsed(e: &io::Error, acked: bool) -> bool {
+    !acked
+        && matches!(
+            e.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        )
 }
 
 /// A read error as the controller's `reason` string: a post-ack timeout is
@@ -571,6 +582,18 @@ mod tests {
     // never cascades into the others (and so they also serialize against
     // the `fast` tests that touch FLEZHA_RUNNER_ID_PATH).
     use crate::runner::env_test_guard;
+
+    #[test]
+    fn the_ack_window_warning_is_the_timeouts_alone() {
+        let timeout = io::Error::new(io::ErrorKind::TimedOut, "");
+        let eof = io::Error::new(io::ErrorKind::UnexpectedEof, "");
+
+        // A pre-ack read that timed out really did wait the window out; a
+        // controller that took the socket and closed it at once did not.
+        assert!(ack_window_elapsed(&timeout, false));
+        assert!(!ack_window_elapsed(&eof, false));
+        assert!(!ack_window_elapsed(&timeout, true));
+    }
 
     // A controller that accepts the socket but never acknowledges (one
     // mid-shutdown) must not hold the reader: the ack deadline drives a

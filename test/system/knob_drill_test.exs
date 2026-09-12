@@ -193,8 +193,11 @@ defmodule FlezhaTest.System.KnobDrillTest do
   defp scratch(%{type: :int}), do: free_port()
   defp scratch(%{type: :string, surface: {:healthz, :bind}}), do: "127.0.0.1"
 
-  defp scratch(%{name: name}),
-    do: NodeTestHelper.claim_tmp_dir("knob_drill_#{name}")
+  defp scratch(%{name: name}) do
+    dir = NodeTestHelper.claim_tmp_dir("knob_drill_#{name}")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
+  end
 
   defp free_port() do
     {:ok, socket} = :gen_tcp.listen(0, [])

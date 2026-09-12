@@ -63,11 +63,17 @@ fn handle_start(read: &Reading) {
         _ => "start",
     };
 
+    // A daemon mode returns once the node is launched; an attached one returns
+    // when the controller has stopped, so it has no start left to announce.
+    let detached = matches!(command_mode, "daemon" | "daemon_iex");
+
     println!("Starting flezha controller...");
 
     rpc::verdict(rpc::flzvm().arg(command_mode).status(), START_FAILED);
 
-    println!("Controller started successfully.");
+    if detached {
+        println!("Controller started successfully.");
+    }
 }
 
 /// The controller could not be reached at all: there is no outcome to report,

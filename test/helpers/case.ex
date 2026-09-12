@@ -64,6 +64,11 @@ defmodule FlezhaTest.Case do
   # stays one row instead of forking into a second for every option set.
   # `cleanup` takes the map the setup returned, so a row that has something to
   # put back reads back what it claimed rather than looking it up again.
+  # Rows whose setup or restore writes a process-global environment: an async
+  # module's restore would undo a concurrent module's writes, so a module
+  # declaring one with `async: true` is refused.
+  @process_global [:env, :system_env, :tmp_app_data, :auth_stores, :isolated_dlq_dir]
+
   defp table do
     [
       # A state root of this test's own, registered as `:state_root`.
@@ -166,10 +171,8 @@ defmodule FlezhaTest.Case do
     :ok
   end
 
-  # `:env` and `:system_env` delete what their snapshot did not hold, so in an
-  # async module the restore would also undo a concurrent module's writes.
   defp refuse_async_environment(names, true) do
-    case Enum.filter(Enum.map(names, &elem(normalise(&1), 0)), &(&1 in [:env, :system_env])) do
+    case Enum.filter(Enum.map(names, &elem(normalise(&1), 0)), &(&1 in @process_global)) do
       [] ->
         :ok
 

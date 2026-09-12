@@ -119,7 +119,40 @@ fn a_missing_flzvm_is_refused_rather_than_panicked() -> Vec<String> {
         .collect()
 }
 
-/// One `#[test]`, two phases: the fixture execs a *copy* of the binary, and a
+/// An attached start returns when the controller has STOPPED: `flzvm start`
+/// runs the node in the foreground, so the success line under it announced a
+/// start at the moment the controller went away. Only a daemon mode returns on
+/// a launch, and only a daemon mode has a start to report.
+fn only_a_daemon_start_announces_a_start() -> Vec<String> {
+    let cli = Shim::new(FLZ_BIN, "#!/bin/sh\nexit 0\n");
+
+    let cases: &[(&[&str], bool)] = &[
+        (&["controller", "start", "--mode", "daemon"], true),
+        (&["controller", "start", "--mode", "daemon_iex"], true),
+        (&["controller", "start"], false),
+        (&["controller", "start", "--mode", "attached"], false),
+        (&["controller", "start", "--mode", "attached_iex"], false),
+    ];
+
+    cases
+        .iter()
+        .filter_map(|(args, want)| {
+            let out = cli.run(args);
+            let said = String::from_utf8_lossy(&out.stdout).contains("Controller started");
+
+            (said != *want).then(|| {
+                format!(
+                    "flz {}: announced a start = {} (want {})",
+                    args.join(" "),
+                    said,
+                    want
+                )
+            })
+        })
+        .collect()
+}
+
+/// One `#[test]`, several phases: the fixture execs a *copy* of the binary, and a
 /// copy written while a sibling thread forks is `ExecutableFileBusy` in the
 /// child that inherited the write handle. One thread, one copy, no race.
 #[test]
@@ -129,10 +162,11 @@ fn every_verb_answers_a_refused_flzvm_with_the_code_it_promises() {
     let mut wrong = no_refusal_is_reported_as_success(&cli);
     wrong.extend(every_dialect_keeps_its_code(&cli));
     wrong.extend(a_missing_flzvm_is_refused_rather_than_panicked());
+    wrong.extend(only_a_daemon_start_announces_a_start());
 
     assert!(
         wrong.is_empty(),
-        "flzvm refused with exit 7 and:\n{}",
+        "flz answered its sibling wrongly:\n{}",
         wrong.join("\n")
     );
 }
