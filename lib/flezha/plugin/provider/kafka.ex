@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     Producer-behaviour opts (all optional, defaults below):
       * `:partition`                       — int, default `0`
-      * `:channel`                         — gate produces by metadata "channel" tag
+      * `:channel`                         — gate produces by metadata "channel" tag, one name or several comma-separated
       * `:required_acks`                   — int, default `-1` (acks=all). BREAKING: was `1`.
       * `:retries`                         — int, default `5`
       * `:retry_backoff_ms`                — int, default `100`
@@ -65,12 +65,14 @@ defmodule Flezha.Plugin.Provider.Kafka do
         topic: [type: :string, required: true, doc: "Destination topic"],
         plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
         channel: [
-          type: :string,
-          doc: "The channel this plugin is attached to: only records naming it are produced"
+          type: :names,
+          doc:
+            "The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all"
         ],
         channel_out: [
-          type: :string,
-          doc: "Produce only records whose metadata channel matches; the explicit spelling"
+          type: :names,
+          doc:
+            "Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all"
         ],
         partition: [type: :int, default: 0, min: 0, doc: "Destination partition"],
         required_acks: [type: :int, default: -1, doc: "Broker acks; -1 is acks=all"],

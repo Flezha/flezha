@@ -183,7 +183,12 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     rows = [
       {%{channel: "feed_a"}, :on_interval, "feed_a", nil},
       {%{channel: "feed_b"}, :on_interval, "feed_b", nil},
-      {%{channel_in: "requests", channel_out: "responses"}, :on_output, "requests", "responses"}
+      {%{channel_in: "requests", channel_out: "responses"}, :on_output, "requests",
+       ["responses"]},
+      # The operator's own comma-separated spelling, through the real verb: one
+      # filter naming two channels, resolved to the set the dispatch reads.
+      {%{channel_in: "requests", channel_out: "alerts,audit"}, :on_output, "requests",
+       ["alerts", "audit"]}
     ]
 
     for {flags, extension, entry, filter} <- rows do

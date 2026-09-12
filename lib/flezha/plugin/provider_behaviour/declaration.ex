@@ -258,7 +258,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   end
 
   @row_keys [:type, :default, :required, :min, :max, :values, :internal, :transient, :doc]
-  @row_types [:int, :bool, :string, :enum, :pid, :json, :map, :list, :any]
+  @row_types [:int, :bool, :string, :names, :enum, :pid, :json, :map, :list, :any]
 
   defp validate_rows!(env, rows) do
     Enum.each(rows, fn

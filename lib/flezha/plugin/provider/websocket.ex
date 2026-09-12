@@ -83,18 +83,19 @@ defmodule Flezha.Plugin.Provider.Websocket do
         doc: "`\"none\"` commits a delta on successful send instead of on the server's ack"
       ],
       channel: [
-        type: :string,
+        type: :names,
         doc:
-          "The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent"
+          "The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent. One name, since it names the entry channel too"
       ],
       channel_in: [
-        type: :string,
-        doc: "Entry channel inbound frames are injected on, for a plugin whose two names differ"
+        type: :names,
+        doc:
+          "Entry channel inbound frames are injected on, for a plugin whose two names differ. One name"
       ],
       channel_out: [
-        type: :string,
+        type: :names,
         doc:
-          "Send only outputs whose metadata channel matches, for a plugin whose two names differ"
+          "Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all"
       ],
       sink_frame_type: [
         type: :enum,
@@ -218,9 +219,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
         :ok
 
       option ->
+        # The filter half is a SET of names. An operator reads back the spelling
+        # they wrote — `"alerts,audit"` — never the list the resolution holds.
         {:error,
          "websocket payload_metadata names channel #{inspect(bag)} and a channel option " <>
-           "names #{inspect(option)}; write one of the two"}
+           "names #{inspect(Enum.join(List.wrap(option), ","))}; write one of the two"}
     end
   end
 

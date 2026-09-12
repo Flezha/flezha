@@ -61,14 +61,18 @@ across every provider; one of the two is required, and writing both is refused.
 `channel_out` is not a parameter here: the poller never acts on the records
 passing through the operative, so the option would have nothing to read.
 
+Either spelling takes exactly one name. A body is injected on exactly one channel, so
+several names comma-separated — `trades,quotes` — are refused when the plugin is enabled
+rather than read as a channel whose name contains a comma.
+
 ## Parameters
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `url` | string | &mdash; | yes | The resource to GET each interval |
-| `channel` | string | &mdash; | no | The channel this plugin is attached to: the entry channel the body is injected on. Required, unless `channel_in` names it |
-| `channel_in` | string | &mdash; | no | Entry channel the body is injected on; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel the body is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | &mdash; | no | Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to the redacted URL |
 | `headers` | json | `%{}` | no | Request headers, as a JSON object |
 | `interval_ms` | int | `60000` | no | Milliseconds between polls |

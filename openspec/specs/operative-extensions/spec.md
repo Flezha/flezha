@@ -1036,3 +1036,52 @@ A `"channel"` key inside a provider's general metadata bag SHALL continue to sel
 - **WHEN** a `websocket` plugin is enabled with both a metadata bag carrying `"channel"` and a `channel` option
 - **THEN** the enable SHALL be refused, naming both
 
+### Requirement: A channel filter SHALL match any of the names it carries
+
+A plugin's channel filter SHALL accept one or more channel names and SHALL act on a record whose channel metadata matches any of them. A filter carrying no name SHALL continue to match every record, which is what makes an unfiltered plugin receive everything.
+
+The names SHALL be written as a comma-separated list in the operator-facing spelling, parsed by the option-row vocabulary rather than by any provider, so a provider reads a resolved set and cannot observe whether the operator wrote one name or a list of one. A name that is empty after trimming SHALL be refused rather than dropped, because an empty segment is a typo and accepting it would filter on a name nobody wrote.
+
+The names form a set. Order SHALL NOT be significant and a repeated name SHALL NOT be refused, since neither can change which records match.
+
+This filter selects records; it does not merge channels. Each record SHALL keep its own channel metadata, so a plugin receiving two channels can still tell them apart and a downstream consumer is unaffected.
+
+The entry channel a plugin injects on SHALL remain a single name. A payload is injected on exactly one channel, so a list has no meaning there and SHALL be refused: on `channel_in`, and on `channel` wherever the plugin's provider feeds the operative, because `channel` names the entry channel there too. A feeding plugin filters several channels with `channel_out`.
+
+#### Scenario: Two names select both channels
+
+- **GIVEN** a plugin configured with the filter `alerts,audit` on an operative that also produces `metrics`
+- **WHEN** one record is released on each of the three channels
+- **THEN** the plugin SHALL act on the `alerts` and the `audit` record, and the `metrics` record SHALL pass through the chain unchanged
+
+#### Scenario: One name behaves as before
+
+- **WHEN** a plugin is configured with the filter `alerts`
+- **THEN** it SHALL act on exactly the records it acts on when that filter is a single name today
+
+#### Scenario: No filter still matches everything
+
+- **WHEN** a plugin is configured with no channel filter
+- **THEN** it SHALL act on every record, whatever channel each names
+
+#### Scenario: Each record keeps its own channel
+
+- **GIVEN** a plugin configured with the filter `alerts,audit`
+- **WHEN** it acts on a record released on `audit`
+- **THEN** that record's channel metadata SHALL still read `audit`
+
+#### Scenario: An empty segment is refused
+
+- **WHEN** a plugin is enabled with the filter `alerts,,audit`
+- **THEN** the enable SHALL be refused, naming the option
+
+#### Scenario: A repeated name is accepted
+
+- **WHEN** a plugin is enabled with the filter `alerts,alerts`
+- **THEN** the enable SHALL succeed and the plugin SHALL act on exactly the `alerts` records
+
+#### Scenario: A list on the entry side is refused
+
+- **WHEN** a plugin that feeds the operative is enabled with more than one name in `channel_in`, or in `channel`
+- **THEN** the enable SHALL be refused, stating that a payload is injected on exactly one channel
+

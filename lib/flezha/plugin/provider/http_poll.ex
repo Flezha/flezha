@@ -39,14 +39,14 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
       # One of the two is required and a row can only say so of itself, so each
       # says it of the pair — this is what both operator surfaces render.
       channel: [
-        type: :string,
+        type: :names,
         doc:
-          "The channel this plugin is attached to: the entry channel the body is injected on. Required, unless `channel_in` names it"
+          "The channel this plugin is attached to: the entry channel the body is injected on, and one name. Required, unless `channel_in` names it"
       ],
       channel_in: [
-        type: :string,
+        type: :names,
         doc:
-          "Entry channel the body is injected on; the explicit spelling of `channel`. Required, unless `channel` names it"
+          "Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it"
       ],
       plugin_id: [type: :string, doc: "Plugin id; defaults to the redacted URL"],
       headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object"],
@@ -75,16 +75,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     ],
     worker: [module: PollWorker, restart: :temporary]
 
-  # A channel written as an atom, which an Elixir-side spec may carry.
+  # A channel written as an atom, which an Elixir-side spec may carry. It hands
+  # the name back to the row rather than answering a binary of its own, so every
+  # spelling reaches the option's type and resolves to the same shape.
   #
-  # An empty name used to be refused here and is now refused by the shared
-  # resolution, for all three spellings on every provider. What that no longer
-  # covers is `build/1`, the CLI struct builder, which answers `{:ok, %HttpPoll{
-  # channel: ""}}` where this clause answered a refusal — the struct reaches
-  # nothing (`flz plugin enable` builds a `%Plugin{}` and lets the table
-  # normalise), and the enable path still refuses.
+  # An empty name was refused by a clause here, then by the shared channel
+  # resolution, and is now refused by the row's `:names` type. That is wider than
+  # either: it reaches `build/1`, the CLI struct builder the resolution never
+  # ran for.
   defp convert_value(field, value) when field in [:channel, :channel_in] and is_atom(value),
-    do: {:ok, Atom.to_string(value)}
+    do: convert_value(field, Atom.to_string(value))
 
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first

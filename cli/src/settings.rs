@@ -499,6 +499,25 @@ mod tests {
         );
     }
 
+    /// The comma-separated channel filter the plugin pages teach is one
+    /// value, in both spellings a `--X` flag takes: the comma separates names
+    /// for the provider that reads them and nothing for this parser, and the
+    /// document carries it as a JSON string rather than as a list.
+    #[test]
+    fn a_comma_separated_setting_is_carried_whole() {
+        let flags = extract_x_flags(&v(&["--Xchannel=alerts,audit"]));
+        assert_eq!(
+            flags,
+            vec![("channel".to_string(), "alerts,audit".to_string())]
+        );
+        assert_eq!(serialize_flags(&flags), r#"{"channel": "alerts,audit"}"#);
+
+        assert_eq!(
+            extract_x_flags(&v(&["--Xchannel_out", "alerts,audit"])),
+            vec![("channel_out".to_string(), "alerts,audit".to_string())]
+        );
+    }
+
     /// The `=` is what carries the bare spelling. Without dashes there is
     /// nothing else to separate a setting from a positional word, so a bare
     /// `X<key>` names nothing and eats nothing.

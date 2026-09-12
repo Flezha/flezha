@@ -338,17 +338,19 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   end
 
   @doc """
-  Does this record belong to the channel a sink is restricted to? `nil` is no
-  restriction.
+  Does this record belong to the set of channels a sink is restricted to? `nil`
+  is no restriction, and any one of the names is a match.
 
   The ONE reading of a resolved `:filter_channel`. A provider that read the
   option rows here and re-derived their meaning would let two sinks on one
   operative disagree about which records a channel names, and would pay the
-  resolution once per record instead of once per enable.
+  resolution once per record instead of once per enable. The set is what the
+  resolution answers however the operator spelled it, so one name and a list of
+  one are the same thing here and no provider can tell them apart.
   """
-  @spec in_channel?(map(), binary() | nil) :: boolean()
+  @spec in_channel?(map(), [binary()] | nil) :: boolean()
   def in_channel?(_metadata, nil), do: true
-  def in_channel?(metadata, channel), do: Map.get(metadata, "channel") == channel
+  def in_channel?(metadata, channels), do: Map.get(metadata, "channel") in channels
 
   @doc "Has the worker's queue reached its bound?"
   @spec saturated?(struct()) :: boolean()
@@ -577,9 +579,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :subscribed_extensions,
     # The two halves the `channel`, `channel_in` and `channel_out` rows resolve
     # to, written by `Options.normalise_opts/2` and read by the injection sites
-    # and `in_channel?/2`. They are host-derived rather than settable, which is
-    # what keeps the resolution a pure function of the rows an operator wrote:
-    # re-preparing a plugin resolves them again from the same three values.
+    # and `in_channel?/2`. They differ in shape because their jobs do: the entry
+    # channel is ONE name, since a payload is injected on exactly one, and the
+    # filter is the SET of names a record's channel may match. They are
+    # host-derived rather than settable, which is what keeps the resolution a
+    # pure function of the rows an operator wrote: re-preparing a plugin
+    # resolves them again from the same three values.
     :entry_channel,
     :filter_channel,
     # A partition group's fan-out merges these into EVERY plugin of every

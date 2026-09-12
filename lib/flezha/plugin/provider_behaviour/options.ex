@@ -21,7 +21,6 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # only the spellings it can honour, so a spelling for a direction a provider
   # never works in is refused as an unknown option.
   @channel_rows [channel: :either, channel_in: :in, channel_out: :out]
-  @channel_keys Keyword.keys(@channel_rows)
   @explicit_key for {key, job} <- @channel_rows, job != :either, do: {job, key}
 
   import ProviderBehaviour,
@@ -164,9 +163,9 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp resolve_channels(%Decl{name: name} = decl, opts, converted) do
     jobs = ProviderBehaviour.channel_jobs(decl, opts)
 
-    with :ok <- refuse_empty_channel(converted),
-         :ok <- refuse_two_spellings(name, converted),
-         :ok <- refuse_unreadable_channel(name, converted, jobs) do
+    with :ok <- refuse_two_spellings(name, converted),
+         :ok <- refuse_unreadable_channel(name, converted, jobs),
+         :ok <- refuse_entry_set(name, converted, jobs) do
       {:ok,
        Map.merge(converted, %{
          entry_channel: attached(:in, jobs, converted),
@@ -178,21 +177,41 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # The name that reaches one job: its own spelling, else the one `channel`
   # gives both jobs at once — and nothing at all when the plugin does not do it.
   defp attached(job, jobs, converted) do
-    if job in jobs, do: converted[@explicit_key[job]] || converted[:channel]
+    if job in jobs do
+      names = converted[@explicit_key[job]] || converted[:channel]
+      if names, do: shaped(job, names)
+    end
   end
 
-  # `:string` accepts `""`, and an empty name is a channel nothing can be
-  # attached to in either direction.
-  defp refuse_empty_channel(converted) do
-    Enum.find_value(@channel_keys, :ok, fn key ->
-      if converted[key] == "", do: refuse_value(key, "")
-    end)
+  # The two halves differ in shape and this is where that is settled: the entry
+  # side is the ONE name an injection writes into a record — a set there is
+  # refused above, so there is never a second name to lose — and the filter side
+  # the set `ProviderBehaviour.in_channel?/2` tests membership in. `List.wrap/1`
+  # makes both true of a row typed as a plain string too, so the per-record
+  # reading never asks.
+  defp shaped(:in, names), do: names |> List.wrap() |> List.first()
+  defp shaped(:out, names), do: List.wrap(names)
+
+  # A payload is injected on exactly one channel, so a set of names has nothing
+  # to mean on the entry side however many the filter side carries.
+  defp refuse_entry_set(name, converted, jobs) do
+    entry = named(converted, &(:in in jobs_named(&1, jobs)))
+
+    case Enum.find(entry, &match?([_, _ | _], converted[&1])) do
+      nil ->
+        :ok
+
+      key ->
+        {:error,
+         "#{name} names several channels in #{key}; a payload is injected on exactly one " <>
+           "channel, so the entry side takes one name"}
+    end
   end
 
   # `channel` already names both directions, so a second spelling beside it is a
   # mistake rather than a precedence question.
   defp refuse_two_spellings(name, converted) do
-    with true <- is_binary(converted[:channel]),
+    with [_ | _] <- named(converted, &(&1 == :either)),
          [_ | _] = keys <- named(converted, &(&1 != :either)) do
       {:error,
        "#{name} names channel together with #{Enum.join(keys, " and ")}; channel already " <>
@@ -206,7 +225,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # could never take effect, and a feed that goes nowhere or a filter that
   # matches nothing is not something to discover in flight.
   defp refuse_unreadable_channel(name, converted, jobs) do
-    case named(converted, &undone?(&1, jobs)) do
+    case named(converted, &(jobs_named(&1, jobs) == [])) do
       [] -> :ok
       [key | _] -> {:error, "#{name} names #{key}, but #{undone(@channel_rows[key])}"}
     end
@@ -214,12 +233,16 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
   # The channel keys this plugin wrote whose job answers `predicate`.
   defp named(converted, predicate) do
-    for {key, job} <- @channel_rows, is_binary(converted[key]), predicate.(job), do: key
+    for {key, job} <- @channel_rows, converted[key], predicate.(job), do: key
   end
 
-  # `channel` needs either job; each explicit key needs its own.
-  defp undone?(:either, jobs), do: jobs == []
-  defp undone?(job, jobs), do: job not in jobs
+  # The jobs a channel key really names on this plugin: its own when the plugin
+  # does it, and every job the plugin has where `channel` names them all. One
+  # table-aware reading, and every question above is asked of it — a key that
+  # names nothing could never take effect, and a key naming the entry job takes
+  # one name.
+  defp jobs_named(:either, jobs), do: jobs
+  defp jobs_named(job, jobs), do: if(job in jobs, do: [job], else: [])
 
   defp undone(:in),
     do: "the provider does not feed the operative, so nothing would ever be injected"
@@ -383,6 +406,17 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp coerce(:string, field, value, _row), do: refuse_value(field, value)
   defp coerce(:list, _field, value, _row) when is_list(value), do: {:ok, value}
   defp coerce(:list, field, value, _row), do: refuse_value(field, value)
+
+  # A set of names: the comma-separated spelling an operator writes where a flag
+  # carries only a string, and the already-built list a manifest — or a plugin
+  # re-prepared from the options it already holds — carries. `:list` cannot do
+  # the first and this cannot replace it: its two rows are fed programmatically
+  # and neither wants a string split.
+  defp coerce(:names, field, value, _row) when is_binary(value),
+    do: names(field, value, String.split(value, ","))
+
+  defp coerce(:names, field, value, _row) when is_list(value), do: names(field, value, value)
+  defp coerce(:names, field, value, _row), do: refuse_value(field, value)
   defp coerce(:map, _field, value, _row) when is_map(value), do: {:ok, value}
   defp coerce(:map, field, value, _row), do: refuse_value(field, value)
 
@@ -402,6 +436,17 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # `:any` is a deliberate verdict, not an omission: the value is whatever the
   # provider's own clause made of it, or a shape no type describes.
   defp coerce(_type, _field, value, _row), do: {:ok, value}
+
+  # An empty member is a typo — `alerts,,audit`, `alerts,` — and dropping it
+  # would select a set nobody wrote. A member that is not a string at all is
+  # refused by the same reading.
+  defp names(field, value, parts) do
+    trimmed = Enum.map(parts, fn part -> if is_binary(part), do: String.trim(part) end)
+
+    if trimmed != [] and Enum.all?(trimmed, &(&1 not in [nil, ""])),
+      do: {:ok, trimmed},
+      else: refuse_value(field, value)
+  end
 
   defp bound(value, field, row) when is_integer(value) do
     cond do

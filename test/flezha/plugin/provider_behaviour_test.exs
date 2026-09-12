@@ -27,6 +27,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
+  @names_rows [channel_out: [type: :names]]
+
   @catalog Host.build_catalog(
              [{:on_input, :transform, Ctx.IO}],
              %{file: __ENV__.file, line: __ENV__.line}
@@ -381,7 +383,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # one no first-party provider can produce, because both that declare the row
     # also feed.
     use Flezha.Plugin.ProviderBehaviour,
-      options: [channel_in: [type: :string, doc: "Entry channel"]]
+      options: [channel_in: [type: :names, doc: "Entry channel"]]
   end
 
   describe "a provider declares whether it feeds the operative" do
@@ -416,17 +418,17 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
     defp poll_opts(extra), do: Map.merge(%{url: "https://example.invalid/c"}, extra)
 
+    defp kafka_opts(extra), do: Map.merge(%{hosts: [{"h", 1}], topic: "t"}, extra)
+
     test "`channel` fills the half the plugin has, and only that half" do
       assert {:ok, %{entry_channel: "cfg", filter_channel: nil}} =
                normalised(HttpPoll, poll_opts(%{channel: "cfg"}))
 
-      assert {:ok, %{entry_channel: nil, filter_channel: "out"}} =
-               normalised(Kafka.Producer, %{
-                 hosts: [{"h", 1}],
-                 topic: "t",
-                 channel: "out",
-                 subscribed_extensions: [:on_input]
-               })
+      assert {:ok, %{entry_channel: nil, filter_channel: ["out"]}} =
+               normalised(
+                 Kafka.Producer,
+                 kafka_opts(%{channel: "out", subscribed_extensions: [:on_input]})
+               )
     end
 
     test "either spelling satisfies a provider that requires an entry channel" do
@@ -454,8 +456,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       assert {:error, message} = normalised(HttpPoll, poll_opts(%{channel_out: "x"}))
       assert message == "unknown option(s) for http_poll: channel_out"
 
-      assert {:error, message} =
-               normalised(Kafka.Producer, %{hosts: [{"h", 1}], topic: "t", channel_in: "x"})
+      assert {:error, message} = normalised(Kafka.Producer, kafka_opts(%{channel_in: "x"}))
 
       assert message == "unknown option(s) for kafka: channel_in"
     end
@@ -467,8 +468,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "`channel` on a plugin doing neither job is refused" do
-      assert {:error, message} =
-               normalised(Kafka.Producer, %{hosts: [{"h", 1}], topic: "t", channel: "x"})
+      assert {:error, message} = normalised(Kafka.Producer, kafka_opts(%{channel: "x"}))
 
       assert message =~ "kafka names channel"
       assert message =~ "nothing would read it"
@@ -480,6 +480,11 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       assert {:error, "Invalid value for channel_in: "} =
                normalised(HttpPoll, poll_opts(%{channel_in: ""}))
+
+      # The row's type refuses it, so the struct builder answers the same
+      # sentence — which the resolution alone never reached.
+      assert {:error, "Invalid value for channel: "} =
+               HttpPoll.build(%{"url" => "https://example.invalid/c", "channel" => ""})
     end
 
     test "a channel written as an atom still names the same channel" do
@@ -499,6 +504,109 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       assert Map.take(twice, [:channel, :channel_in, :entry_channel]) ==
                Map.take(once, [:channel, :channel_in, :entry_channel])
+    end
+  end
+
+  describe "a channel filter names a set" do
+    defp names_row(value), do: ProviderOptions.convert_row(:channel_out, value, @names_rows)
+
+    defp kafka_out(channel),
+      do:
+        normalised(
+          Kafka.Producer,
+          kafka_opts(Map.put(channel, :subscribed_extensions, [:on_input]))
+        )
+
+    test "one name is a set of one, and several are the set they spell" do
+      assert names_row("alerts") == {:ok, ["alerts"]}
+      assert names_row("alerts,audit") == {:ok, ["alerts", "audit"]}
+      assert names_row(" alerts , audit ") == {:ok, ["alerts", "audit"]}
+    end
+
+    # The shape a manifest carries, and the shape a plugin re-prepared from the
+    # options it already holds carries: parsing it again must answer itself.
+    test "an already-built list passes through unchanged" do
+      assert names_row(["alerts", "audit"]) == {:ok, ["alerts", "audit"]}
+
+      # The one way to name a channel whose name contains a comma, which the
+      # comma-separated spelling cannot reach.
+      assert names_row(["alerts,audit"]) == {:ok, ["alerts,audit"]}
+    end
+
+    test "a repeated name is accepted, since it selects the same records" do
+      assert names_row("alerts,alerts") == {:ok, ["alerts", "alerts"]}
+    end
+
+    test "an empty member is refused rather than dropped, naming the option" do
+      for value <- ["alerts,,audit", "alerts,", ",", "", " ", ["alerts", ""]] do
+        assert {:error, "Invalid value for channel_out: " <> _} = names_row(value)
+      end
+    end
+
+    test "a value that is no name at all is refused" do
+      assert {:error, "Invalid value for channel_out: 7"} = names_row(7)
+      assert {:error, "Invalid value for channel_out: [\"a\", 7]"} = names_row(["a", 7])
+    end
+
+    test "the filter matches any of its names, and no filter matches everything" do
+      assert ProviderBehaviour.in_channel?(%{"channel" => "alerts"}, nil)
+      assert ProviderBehaviour.in_channel?(%{}, nil)
+      assert ProviderBehaviour.in_channel?(%{"channel" => "alerts"}, ["alerts"])
+      refute ProviderBehaviour.in_channel?(%{"channel" => "metrics"}, ["alerts"])
+      assert ProviderBehaviour.in_channel?(%{"channel" => "audit"}, ["alerts", "audit"])
+      assert ProviderBehaviour.in_channel?(%{"channel" => "alerts"}, ["alerts", "alerts"])
+      refute ProviderBehaviour.in_channel?(%{"channel" => "metrics"}, ["alerts", "audit"])
+      refute ProviderBehaviour.in_channel?(%{}, ["alerts", "audit"])
+    end
+
+    test "a plugin that only acts on the chain filters several through `channel`" do
+      assert {:ok, %{filter_channel: ["alerts", "audit"]}} = kafka_out(%{channel: "alerts,audit"})
+
+      assert {:ok, %{filter_channel: ["alerts", "audit"]}} =
+               kafka_out(%{channel_out: "alerts,audit"})
+    end
+
+    test "the entry side takes one name, whichever spelling names it" do
+      for opts <- [%{channel: "alerts,audit"}, %{channel_in: "alerts,audit"}] do
+        assert {:error, message} = normalised(HttpPoll, poll_opts(opts))
+        assert message =~ "http_poll names several channels in channel"
+        assert message =~ "a payload is injected on exactly one channel"
+      end
+    end
+
+    # A websocket plugin's `channel` names the entry channel too, so a set there
+    # is refused for the same reason and `channel_out` is where it belongs.
+    test "a feeding plugin's `channel` is refused a set, and its `channel_out` is not" do
+      ws = %{uri: "wss://example.invalid/s", subscribed_extensions: [:on_output]}
+
+      assert {:error, message} = normalised(Websocket, Map.put(ws, :channel, "alerts,audit"))
+      assert message =~ "websocket names several channels in channel"
+
+      assert {:ok, %{entry_channel: nil, filter_channel: ["alerts", "audit"]}} =
+               normalised(Websocket, Map.put(ws, :channel_out, "alerts,audit"))
+    end
+
+    test "resolving an already-resolved set answers the same thing" do
+      assert {:ok, once} = kafka_out(%{channel_out: "alerts,audit"})
+      assert {:ok, twice} = normalised(Kafka.Producer, once)
+
+      assert twice.filter_channel == ["alerts", "audit"]
+      keys = [:channel, :channel_out, :filter_channel]
+      assert Map.take(twice, keys) == Map.take(once, keys)
+    end
+
+    # The resolution answers a set to `in_channel?/2` and one name to the
+    # injection sites, and it reads whatever the row's type left behind. A row
+    # typed as a plain string would make that a second reading of the option.
+    test "every declared channel row is typed as a name set" do
+      drifted =
+        for {id, module} <- Flezha.Plugin.Providers.all(),
+            {name, row} <- module.__provider__().options,
+            name in [:channel, :channel_in, :channel_out],
+            row[:type] != :names,
+            do: "#{id}.#{name} is #{inspect(row[:type])}"
+
+      assert drifted == []
     end
   end
 

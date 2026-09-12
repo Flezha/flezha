@@ -106,14 +106,31 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
       assert message =~ "payload_metadata names channel \"eu\""
       assert message =~ "names \"us\""
     end
+
+    # The filter half is a set, and an operator reads back what they typed.
+    test "a filter of several names is named in the operator's own spelling" do
+      assert {:error, message} =
+               prepared(
+                 %{channel_out: "alerts,audit", payload_metadata: %{"channel" => "eu"}},
+                 [:on_output]
+               )
+
+      assert message =~ "names \"alerts,audit\""
+      refute message =~ "["
+    end
+  end
+
+  # A plugin whose sink worker is registered where the real one registers: a
+  # negative assertion needs it as much as a positive one, since a provider with
+  # no worker at all refuses the ask whatever its filter says.
+  defp stub_sink(_ctx) do
+    plugin_id = "ws_sink_#{System.unique_integer([:positive])}"
+    ProviderPrepare.stub_sink_worker(Websocket, plugin_id)
+    {:ok, plugin_id: plugin_id}
   end
 
   describe "one plugin, both directions" do
-    setup do
-      plugin_id = "ws_both_#{System.unique_integer([:positive])}"
-      ProviderPrepare.stub_sink_worker(Websocket, plugin_id)
-      {:ok, plugin_id: plugin_id}
-    end
+    setup :stub_sink
 
     defp ctx(metadata) do
       %Ctx.IO{operative_id: "op", namespace: :default, message: "out", metadata: metadata}
@@ -151,6 +168,22 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
       {:ok, opts} = prepared(%{plugin_id: plugin_id, channel_out: "prices"}, [:on_output])
 
       assert injected_with(opts) == %{}
+    end
+  end
+
+  describe "a filter naming several channels" do
+    setup :stub_sink
+
+    test "each named channel is shipped and no other is", %{plugin_id: plugin_id} do
+      {:ok, opts} = prepared(%{plugin_id: plugin_id, channel_out: "alerts,audit"}, [:on_output])
+
+      for channel <- ["alerts", "audit"] do
+        assert {:ok, _} = Websocket.on_output(ctx(%{"channel" => channel}), opts)
+        assert_receive {:shipped, "out", %{"channel" => ^channel}}, 1_000
+      end
+
+      assert {:ok, _} = Websocket.on_output(ctx(%{"channel" => "metrics"}), opts)
+      refute_receive {:shipped, _, _}, 200
     end
   end
 

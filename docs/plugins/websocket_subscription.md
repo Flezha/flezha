@@ -186,6 +186,21 @@ flz plugin enable prices operative_websocket \
 with the same meaning the Kafka producer gives it; with no restriction every
 output is sent.
 
+It takes several names, comma-separated, and sends the outputs of all of them:
+`--Xchannel_out alerts,audit` on an operative that also produces `metrics` sends
+the first two and leaves the third alone. This **selects** outputs; it does not
+merge channels. Each frame still carries the channel its record named, so the
+far end can tell the two apart. Whitespace around a name is trimmed, so
+`alerts, audit` names the same two channels as `alerts,audit`. An empty segment
+— `alerts,,audit`, `alerts,` — is refused when the plugin is enabled, and a
+channel whose name contains a comma, or a leading or trailing space, is not
+reachable from this flag.
+
+A set belongs on `channel_out` rather than on `channel`, because `channel` names
+the entry channel inbound frames are injected on as well, and a payload is
+injected on exactly one channel. Several names in `channel` or `channel_in` are
+refused when the plugin is enabled, saying so.
+
 `channel` names the channel this plugin is attached to in BOTH directions:
 inbound frames are injected on it AND only outputs naming it are sent. Within
 one operative an entry channel and an output channel never share a name, so a
@@ -269,9 +284,9 @@ direction would close that cycle and hang the operative permanently.
 | `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
 | `unsubscribe_template` | string | &mdash; | no | Frame template carrying the items to drop |
 | `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
-| `channel` | string | &mdash; | no | The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent |
-| `channel_in` | string | &mdash; | no | Entry channel inbound frames are injected on, for a plugin whose two names differ |
-| `channel_out` | string | &mdash; | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent. One name, since it names the entry channel too |
+| `channel_in` | names | &mdash; | no | Entry channel inbound frames are injected on, for a plugin whose two names differ. One name |
+| `channel_out` | names | &mdash; | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all |
 | `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
 | `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{entity}}/{{seq}} available |
 | `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |

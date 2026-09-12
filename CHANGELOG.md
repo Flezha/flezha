@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Added: a plugin's channel filter names a set of channels
+
+A plugin that acts on the records passing through an operative could restrict
+itself to one channel or to none. One destination carrying two of an
+operative's four output channels had neither answer: naming one channel dropped
+the other, and naming none pulled in the two the operator did not want. The
+workaround was to enable the same plugin twice, which opens two upstream
+connections for what is one destination.
+
+The filter now takes several names, comma-separated:
+
+```
+flz plugin enable alerts operative_kafka_producer \
+  --extension=on_output \
+  --Xhosts=broker-1:9092 \
+  --Xtopic=alerts \
+  --Xchannel=alerts,audit
+```
+
+A websocket plugin writes the same set in `channel_out`, because its `channel`
+also names the entry channel its inbound frames are injected on. One name
+behaves exactly as it did, no filter still matches every record, and the set
+selects rather than merges: each record keeps its own channel metadata, so a
+consumer downstream can still tell the two apart.
+
+Order does not matter and a repeated name changes nothing. An empty segment is
+a typo rather than a shorthand, so `alerts,,audit` and `alerts,` are refused
+when the plugin is enabled, naming the option.
+
+**Breaking for a channel whose name contains a comma, or surrounding
+whitespace.** A comma in these three options now separates names, so
+`--Xchannel=a,b` selects `a` and `b` where it used to name the single channel
+`a,b`. Each name is also trimmed, so `--Xchannel=" alerts "` selects `alerts`
+where it used to match only records whose channel carried the spaces — a plugin
+relying on that stops matching after the upgrade, with no refusal to announce
+it. On the entry side — `channel_in`, and
+`channel` on a plugin whose provider feeds the operative, such as `http_poll`
+and the websocket — several names are refused rather than quietly read as one,
+since a payload is injected on exactly one channel. A caller that builds the
+options itself can still pass a list, which is how a name containing a comma is
+written.
+
 ### Changed: a host SDK reuses its encode buffer instead of allocating one per value
 
 Every value crossing between two procedures is encoded to bytes, because the

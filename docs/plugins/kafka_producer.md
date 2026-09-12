@@ -70,8 +70,8 @@ identical key, header and partition:
 | `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
 | `topic` | string | &mdash; | yes | Destination topic |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
-| `channel` | string | &mdash; | no | The channel this plugin is attached to: only records naming it are produced |
-| `channel_out` | string | &mdash; | no | Produce only records whose metadata channel matches; the explicit spelling |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
+| `channel_out` | names | &mdash; | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
 | `partition` | int | `0` | no | Destination partition |
 | `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
 | `retries` | int | `5` | no | Attempts per batch before parking it |
@@ -106,6 +106,32 @@ restriction, for an operator writing one vocabulary across every provider. Writi
 or writing either on a plugin subscribed to neither `on_input` nor `on_output`, is
 refused when the plugin is enabled, because nothing would read it. There is no
 `channel_in`: the producer never feeds the operative.
+
+Either spelling takes several names, comma-separated, and produces the records of all of
+them: `--Xchannel alerts,audit` on an operative that also produces `metrics` produces the
+first two and leaves the third to pass through the chain untouched.
+
+```
+flz plugin enable alerts operative_kafka_producer \
+  --extension=on_output \
+  --Xhosts=broker-1:9092 \
+  --Xtopic=alerts \
+  --Xchannel=alerts,audit
+```
+
+This **selects** records; it does not merge channels. Each record keeps its own `channel`
+metadata, so a consumer reading the topic can still tell an `alerts` record from an
+`audit` one. Merging two outputs into one stream is a different question, and the answer
+to it is a procedure that carries both rather than a plugin that groups them.
+
+Order does not matter and a repeated name changes nothing, since neither can change which
+records match. Whitespace around a name is trimmed, so `alerts, audit` names the same two
+channels as `alerts,audit` and a channel whose own name carries a leading or trailing space
+is not reachable this way. An empty segment is a typo rather than a shorthand, so
+`alerts,,audit`, `alerts,` and `,` are each refused when the plugin is enabled, naming the
+option. A channel
+whose name itself contains a comma cannot be written with this flag; a caller building the
+options programmatically can still pass the list.
 
 Passwords are redacted in the persisted and returned opts.
 
