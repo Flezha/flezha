@@ -99,6 +99,39 @@ class WorkflowDispatchTest extends DispatchTestBase {
     }
 
     @Test
+    @DisplayName("A handoff is journaled with nothing declared")
+    void aHandoffIsJournaledWithNothingDeclared() {
+        // Durable, and the chain says nothing about how the value between two
+        // procedures is encoded: the core derives the journal codec from the
+        // channel's kind, and this SDK hands it bytes either way.
+        WorkflowOperativeClassRegistry.registerClass(DurableHandoffWorkflow.class);
+        ItemEffect effect = soleEffect(work("durable_handoff_workflow", 0, Optional.empty(), 0, input(0, "v", 1)));
+
+        assertThat(effect.outputs()).hasSize(1);
+        Output released = effect.outputs().get(0);
+        assertThat(released.target()).isInstanceOf(OutputTarget.Edge.class);
+        assertThat(new KryoCodec(List.of(), false).deserialize(released.payload(), Object.class))
+                .as("the handoff carried into the proc-commit barrier")
+                .isEqualTo("mid:v");
+    }
+
+    /** A DURABLE structured chain that declares nothing about its handoff. */
+    public static final class DurableHandoffWorkflow implements com.flezha.sdk.operative.WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "durable_handoff_workflow";
+        }
+
+        @Override
+        public void procedures(com.flezha.sdk.channel.ChannelBuilder c) {
+            c.input(String.class, "seed")
+                    .into(MidProc.class)
+                    .named("wf_durable")
+                    .into(KeyRecorder.class);
+        }
+    }
+
+    @Test
     @DisplayName("CompensateRun decodes the recorded outputs and collects the undo emits")
     void compensateRunUndoesWithDecodedOutputs() {
         WorkflowOperativeClassRegistry.registerClass(SagaWorkflow.class);

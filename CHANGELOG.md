@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### Removed: the workflow handoff codec declaration, from the Rust and Java builders
+
+**Breaking for the Rust and Java SDKs.** `codec()` and `codec_with(...)` are
+gone from the Rust stream handle, `codec()` and `codecWith(...)` from the Java
+one. A chain that calls any of them no longer compiles: there is no shim and no
+deprecation window. Delete the calls; nothing replaces them.
+
+The runtime derives the journal codec for every inter-procedure channel now,
+which is what every host over the erased poll core already did. In Java the
+methods never did anything at all — the handoff bytes have always come from the
+instance's own Kryo codec, and the declared encoder was written down and never
+read back. In Rust the codec is derived from the producing procedure's declared
+`Output` type, at the moment the channel is created.
+
+That makes the Rust `Procedure::Output` and `SimpleProcedure::Output` types
+**writable to bytes and readable back**, unconditionally, the way `State`
+already was. A procedure whose output has no serde derives stops compiling, with
+a message naming the type and the journal rather than serde. The bound cannot be
+narrowed to workflows: whether a class journals is an operator's setting at
+deploy time, not a fact the compiler has. Three types in this repository failed
+it and gained the derives — `TickInput`, `Ticker` and `Candle`, all in test
+fixtures — and nothing else moved. (Two more, in a compile-fail fixture, gained
+them so that its snapshot stays about the input-type mismatch it is there to
+pin.)
+
+Two registration refusals change with it. `MissingInterProcCodec` is deleted —
+no channel can be missing a codec now — and `LoopTerminalWithoutCodec` becomes
+`LoopTerminalWithoutHandoff`, which asks the question that is left: a durable
+chained loop seeds each iteration from its terminal procedure's journaled
+handoff, and only an **inter-procedure** channel carries one.
+
+**One shape stops registering.** A durable `Chained` loop whose terminal
+procedure's only output is a plugin sink is now refused in every SDK. The
+runtime attaches a journal codec to inter-procedure channels and to nothing
+else, so that loop shipped an empty handoff at its iteration commit and a
+crash-resumed run read the empty seed as convergence and stopped — truncating
+the run with no error. In Java, Node, Python, Ruby and PHP that was already the
+behaviour, because a declared codec never reached the core; in Rust the shape
+worked if the author had written `.codec()` on that channel.
+
+Two ways out. Take the sink off the terminal's own channel — a channel with a
+producer and no consumer is legal, and is exactly what a retained loop output
+already is — or declare `PerInput`. Simply wiring another procedure behind the
+sink does not help by itself: that procedure becomes the new terminal and the
+same rule applies to it.
+
+Nothing else about the journal moves: the codec still rides an inter-procedure
+channel and no other kind, and the same value produces the same postcard bytes,
+so a journal written before this change re-seeds after it. There is no wire
+change. The Node, Python, Ruby, PHP and Elixir SDKs never offered the method and
+change no code.
+
 ### Removed: the entry-input idle signal, from every SDK
 
 **Breaking for every SDK.** The per-entry-channel idle signal is gone: the

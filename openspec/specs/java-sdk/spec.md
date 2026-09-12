@@ -554,7 +554,7 @@ A replay SHALL NOT lower the event-time high-water mark.
 
 The Java SDK SHALL implement the `workflow-proc-journal` capability. At every proc barrier of a durable structured workflow class, the SDK SHALL ship `ProcCommit` (tag 28) carrying the procs that ran and the channel-tagged handoff blobs, and SHALL block on the controller's `ProcCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation.
 
-Inter-proc channels of a durable structured workflow class SHALL declare a codec; a missing codec SHALL fail registration with `MissingInterProcCodec` naming the channel. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
+The SDK SHALL declare no inter-procedure codec and SHALL offer no method to declare one: it hands the core bytes, so the core derives the journal codec from the channel's kind. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
 
 On resume, the SDK SHALL read the journal state shipped on `AddOperative.proc_journal`, SHALL **skip** procs already recorded as committed, and SHALL seed the next proc's batch from the journaled handoff via the channel codec.
 
@@ -563,10 +563,10 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperative.proc_jo
 - **WHEN** a durable workflow class commits proc A, then the runner is SIGKILLed, then the operative is rebound with a journal recording proc A as committed
 - **THEN** proc A's `run` SHALL NOT be invoked again, and proc B SHALL run seeded from proc A's journaled handoff
 
-#### Scenario: A missing inter-proc codec fails registration
+#### Scenario: A handoff is journaled with nothing declared
 
-- **WHEN** a durable structured workflow class declares an inter-proc channel without a codec
-- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `MissingInterProcCodec` and naming the channel
+- **WHEN** a durable structured workflow class wires proc A into proc B and declares nothing about how the value between them is encoded
+- **THEN** registration SHALL succeed, and A's handoff SHALL be journaled at the commit barrier and re-seeded on resume
 
 #### Scenario: An opted-out class re-runs from the top
 
@@ -603,7 +603,7 @@ Compensation output SHALL ride the same handshake with `compensating` set.
 
 The Java SDK SHALL implement the `workflow-durable-loop` and `workflow-durable-suspension` capabilities. `WorkflowOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
 
-At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, and the terminal handoff, and SHALL await `IterCommitResponse` (tag 31). Registration SHALL reject a loop on `run`-sugar (`LoopWithoutChain`) and a durable `CHAINED` loop whose terminal proc has no codec'd output channel (`LoopTerminalWithoutCodec`).
+At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, and the terminal handoff, and SHALL await `IterCommitResponse` (tag 31). Registration SHALL reject a loop on `run`-sugar (`LoopWithoutChain`). A durable `CHAINED` loop whose terminal proc releases no inter-procedure channel — whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec — SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
 
 When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The SDK SHALL read its inbox offset from the inbound `flz.inbox_offset` metadata key.
 
@@ -627,10 +627,10 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 - **WHEN** a workflow class authored with `run`-sugar declares a non-`ONCE` `loopMode()`
 - **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `LoopWithoutChain`
 
-#### Scenario: A durable chained loop whose terminal proc has no codec is refused
+#### Scenario: A durable chained loop whose terminal proc releases nothing is refused
 
-- **WHEN** a durable `CHAINED` workflow class's terminal proc has no codec'd output channel
-- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `LoopTerminalWithoutCodec`
+- **WHEN** a durable `CHAINED` workflow class's terminal proc has no output channel, or has one whose only wiring is a plugin sink
+- **THEN** declaring the class to the core SHALL fail, with an error naming the terminal procedure and stating that it releases no inter-procedure handoff
 
 ### Requirement: Java SDK implements the workflow entity retry ladder
 

@@ -216,7 +216,16 @@ public final class WorkflowSpec {
         return new WorkflowSpec(operativeClass, probe, Optional.empty(), List.of(), LoopMode.ONCE, Optional.empty());
     }
 
-    /** The declared DAG: its ordered chain, and the codecs durability needs. */
+    /**
+     * The declared DAG and its ordered chain. Nothing about the handoffs is
+     * judged here: the journal codec is the core's to derive, and the one rule
+     * a durable CHAINED loop still owes — a terminal procedure releasing an
+     * inter-procedure channel, the only kind the journal carries — is refused
+     * once in `flz_core`'s `register_structured_workflow`, which every host
+     * reaches through `declareClass`. Restating it here would be a second
+     * implementation of a core rule, which is how `BranchingChainedLoop` is
+     * already handled.
+     */
     @Nonnull
     private static WorkflowSpec buildStructured(
             Class<? extends WorkflowOperative> operativeClass,
@@ -224,42 +233,8 @@ public final class WorkflowSpec {
             String factoryId,
             StreamOperativeTopology topology) {
         List<Integer> chain = chainOrder(factoryId, topology, entryChannelOf(factoryId, topology));
-        requireInterProcCodecs(factoryId, probe, topology, chain);
         return new WorkflowSpec(
                 operativeClass, probe, Optional.of(topology), chain, probe.loopMode(), probe.wakeAfter());
-    }
-
-    /**
-     * A durable class journals its inter-proc handoff at every proc barrier, so
-     * every inter-proc channel needs a codec; an opted-out class re-runs from
-     * the top by design and needs none. A durable CHAINED loop additionally
-     * re-seeds each iteration from the terminal proc's journaled handoff: with
-     * no codec there it re-seeds EMPTY on a crash-resume, which the loop reads
-     * as "converged" and stops, silently truncating the run.
-     */
-    private static void requireInterProcCodecs(
-            String factoryId, WorkflowOperative probe, StreamOperativeTopology topology, List<Integer> chain) {
-        if (!probe.persistenceEnabled()) {
-            return;
-        }
-        for (ChannelDescriptor channel : topology.channels()) {
-            boolean interProc = channel.kind() == ChannelKind.INTER_PROCEDURE
-                    && !channel.consumers().isEmpty();
-            if (interProc && channel.interProcCodec().isEmpty()) {
-                throw WorkflowOperativeConfigurationException.missingInterProcCodec(factoryId, channel.name());
-            }
-        }
-        if (probe.loopMode() != LoopMode.CHAINED) {
-            return;
-        }
-        int terminalProc = chain.get(chain.size() - 1);
-        boolean terminalHasCodec = topology.channels().stream()
-                .anyMatch(c -> c.producer().isPresent()
-                        && c.producer().getAsInt() == terminalProc
-                        && c.interProcCodec().isPresent());
-        if (!terminalHasCodec) {
-            throw WorkflowOperativeConfigurationException.loopTerminalWithoutCodec(factoryId);
-        }
     }
 
     /** Resolve the retry ladder, rejecting a hot-spinning zero backoff. */

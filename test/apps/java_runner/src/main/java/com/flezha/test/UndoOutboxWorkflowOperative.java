@@ -30,7 +30,6 @@ public final class UndoOutboxWorkflowOperative implements WorkflowOperative {
         c.input(String.class, "in")
                 .into(UndoOutboxA.class)
                 .named("mid")
-                .codec()
                 .sink("undo_sink", s -> ("out:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(UndoC.class);
     }

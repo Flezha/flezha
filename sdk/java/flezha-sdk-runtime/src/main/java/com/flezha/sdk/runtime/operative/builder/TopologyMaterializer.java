@@ -79,11 +79,7 @@ final class TopologyMaterializer {
                     pluginSink,
                     entry.overflowPolicy,
                     new RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs),
-                    entry.keyed,
-                    entry.interProcEncoder == null
-                            ? Optional.empty()
-                            : Optional.of(new ChannelDescriptor.InterProcCodec(
-                                    entry.interProcEncoder, entry.interProcDecoder))));
+                    entry.keyed));
         }
         return descriptors;
     }

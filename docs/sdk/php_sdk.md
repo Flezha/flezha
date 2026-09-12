@@ -436,9 +436,9 @@ besides, and defers one.
 The deferral is about **fixtures, not mechanism**: the workflow kind is
 implemented here and reached through the same core the Rust and Java arms
 prove it on. What is missing is the fixture-by-fixture proof against the
-reference, which needs two builder surfaces every veneer lacks — an
-inter-procedure `codec()` and a hybrid `sink()->into()` — and is owed to the
-follow-up that adds them, alongside the Node, Ruby and Python SDKs.
+reference, which needs the one builder surface every veneer lacks — a hybrid
+`sink()->into()` — and is owed to the follow-up that adds it, alongside the
+Node, Ruby and Python SDKs.
 
 Keyed channels are not on that list, and were not implemented here until
 `Ctx::stampIdentity` minted `flz.entity` / `flz.seq` / `flz.key`: the capability

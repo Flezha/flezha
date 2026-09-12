@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelBuilder;
+import com.flezha.sdk.native_.FlezhaNativeException;
+import com.flezha.sdk.native_.FlzCore;
+import com.flezha.sdk.operative.LoopMode;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.WorkflowOperative;
 import com.flezha.sdk.operative.WorkflowOperativeCtx;
@@ -489,6 +492,66 @@ class HostClassDeclarationTest {
     void checkpointOptionsWithoutTier() {
         assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(NoTierBatchedOperative.class))
                 .hasMessageContaining("CheckpointAckWithoutTier");
+    }
+
+    @Test
+    @DisplayName("A durable chained loop whose terminal proc releases nothing is refused")
+    void chainedLoopTerminalWithoutHandoffIsRefusedByTheCore() {
+        // The refusal is the core's, raised where every host reaches it —
+        // declareClass — and is not restated in this SDK, exactly as the
+        // branching-chained-loop refusal already is. Only an inter-procedure
+        // channel carries a journal codec, so a terminal whose only wiring is a
+        // plugin sink ships an empty handoff and the crash-resumed loop reads
+        // that as convergence.
+        WorkflowSpec spec = WorkflowSpec.build(ChainedTerminalIntoSinkWorkflow.class);
+        WorkflowOperativeClassRegistry.registerClass(ChainedTerminalIntoSinkWorkflow.class);
+        byte[] declaration = HostClassDeclaration.forWorkflow(spec);
+
+        long ctx = FlzCore.newContext();
+        try {
+            assertThatThrownBy(() -> FlzCore.declareClass(ctx, declaration))
+                    .isInstanceOf(FlezhaNativeException.class)
+                    .hasMessageContaining("releases no inter-procedure handoff")
+                    .hasMessageContaining("decl_chained_sink_proc");
+        } finally {
+            FlzCore.contextFree(ctx);
+        }
+    }
+
+    /** A durable CHAINED loop whose terminal proc's only output is a plugin sink. */
+    public static final class ChainedTerminalIntoSinkWorkflow implements WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "decl_chained_sink";
+        }
+
+        @Override
+        public LoopMode loopMode() {
+            return LoopMode.CHAINED;
+        }
+
+        @Override
+        public void procedures(ChannelBuilder c) {
+            c.input(String.class, "in").into(ChainedSinkProc.class).named("out").sink("s");
+        }
+    }
+
+    public static final class ChainedSinkProc extends StatelessTestProcedure<String, Object, String> {
+        @Override
+        public String name() {
+            return "decl_chained_sink_proc";
+        }
+
+        @Override
+        protected Object initState(Optional<String> entityKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx)
+                throws com.flezha.sdk.procedure.ProcedureException {
+            ctx.emit(input);
+        }
     }
 
     public static final class BatchedOutputsOperative implements StreamOperative {

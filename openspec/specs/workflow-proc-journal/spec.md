@@ -3,9 +3,7 @@
 ## Purpose
 
 The workflow-proc-journal capability is the controller-side durable proc-progress store for durable structured workflow operatives: one append-only `proc.journal` per instance on the shared WalWriter/FsyncBatcher substrate, recording each completed procedure and its serialized inter-proc handoff batch. At every procedure barrier the SDK ships a `ProcCommit` control-channel request and blocks until the controller has fsynced the `proc_committed` entry and replied — the durable point later changes gate staged output flushes and iteration commits on. On crash-resume the journal state rides the bind itself (`AddOperative.proc_journal`) — it is instance-scoped, and a class with no per-Entity state receives no per-Entity restore at all — so committed procedures are skipped (not redone) and the first uncommitted procedure is re-seeded from the journaled handoff; compensation-in-flight resume takes precedence unchanged. Inter-procedure channels of durable structured classes carry a symmetric byte codec so the handoff is journal-able; the journal shares the instance's file lifecycle (retention, delete, reset) and is inspectable via `flz state journal`. Opted-out classes (`PERSISTENCE_ENABLED = false`) write no journal and keep the re-run-from-top contract.
-
 ## Requirements
-
 ### Requirement: Each durable workflow instance has an append-only proc-journal on the shared state substrate
 
 The controller SHALL maintain one append-only proc-journal file per durable workflow
@@ -81,17 +79,36 @@ as acked. Opted-out classes SHALL skip the handshake entirely.
 
 ### Requirement: Inter-proc channels of a durable structured class carry a byte codec
 
-Inter-procedure channels SHALL support a symmetric byte codec (typed→bytes and
-bytes→typed) so the handoff batch can be journaled and re-seeded. Registering a
-**durable** structured workflow class with an inter-proc channel that lacks the
-codec SHALL fail at registration with an error naming the channel. An oversized
-handoff batch (above the configured journal frame bound) SHALL fail the commit
-with a typed error directing the author to keep bulk data in Entity state.
+Inter-procedure channels SHALL carry a symmetric byte codec (typed→bytes and bytes→typed) so the
+handoff batch can be journaled and re-seeded, and the runtime SHALL derive that codec rather than
+accept a declaration of it. No SDK SHALL offer a way to declare one, so a channel of a durable
+structured class cannot lack it and there is no registration refusal for a missing codec.
 
-#### Scenario: Missing codec is rejected at registration
+The codec SHALL ride an **inter-procedure** channel and no other kind. A channel whose only
+wiring is a plugin sink is the class's terminal egress: nothing re-seeds from it, and journaling
+every plugin payload at every barrier would be journal volume no reader asks for. Registration of
+a durable handoff-chained loop SHALL therefore fail when its terminal procedure releases no
+inter-procedure channel — whether it owns no output channel at all or only a plugin-bound one —
+because the iteration commit would otherwise ship an empty handoff and the crash-resumed loop
+would read that as convergence and stop.
 
-- **WHEN** a durable structured workflow class declares an inter-proc channel without a byte codec
-- **THEN** registration SHALL fail with an error identifying that channel
+An oversized handoff batch (above the configured journal frame bound) SHALL fail the commit with
+a typed error directing the author to keep bulk data in Entity state.
+
+#### Scenario: A handoff is journaled with nothing declared
+
+- **WHEN** a durable structured workflow class wires procedure A into procedure B and declares nothing about how the value between them is encoded
+- **THEN** registration SHALL succeed, the A→B channel SHALL carry the codec the runtime derived, and A's handoff SHALL be journaled at the commit barrier and re-seeded on crash-resume
+
+#### Scenario: A plugin-bound terminal carries no journal codec
+
+- **WHEN** a procedure's only output wiring is a plugin sink, so the channel derives plugin-bound
+- **THEN** that channel SHALL carry no journal codec, and the commit SHALL ship an empty handoff for it
+
+#### Scenario: A durable chained loop whose terminal releases no inter-proc handoff is refused
+
+- **WHEN** a durable `Chained` workflow class's terminal procedure owns no output channel, or owns one whose only wiring is a plugin sink
+- **THEN** registration SHALL fail with an error naming the terminal procedure
 
 #### Scenario: Oversized handoff fails the commit with a typed error
 
@@ -205,3 +222,4 @@ procedure committed in the in-flight iteration) from the journal alone.
 
 - **WHEN** the journal holds `proc_committed` entries covering every declared leaf procedure of the in-flight iteration
 - **THEN** the controller SHALL report the operative complete from the journal alone
+

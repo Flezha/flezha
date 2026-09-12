@@ -43,7 +43,6 @@ public final class ChatLoopWorkflowOperative implements WorkflowOperative {
         c.input(String.class, "in")
                 .into(ChatSteps.Turn.class)
                 .named("mid")
-                .codec()
                 .into(ChatSteps.Reply.class)
                 .named("out")
                 .sink("chat_sink");

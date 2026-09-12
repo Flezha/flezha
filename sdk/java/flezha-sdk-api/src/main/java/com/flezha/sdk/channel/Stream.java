@@ -21,9 +21,8 @@ import javax.annotation.Nonnull;
  *       <b>in</b>: the mentions unify into ONE node, which accumulates both
  *       producers' contributions.
  *   <li>Per-channel configuration ({@link #named}, {@link #keyed},
- *       {@link #codec}, {@link #onFull}, {@link #retryMax},
- *       {@link #retryBackoffMs}, {@link #sink}) chains in any order
- *       relative to consumer wiring.
+ *       {@link #onFull}, {@link #retryMax}, {@link #retryBackoffMs},
+ *       {@link #sink}) chains in any order relative to consumer wiring.
  * </ul>
  *
  * <p>Chaining, which is the common case, reads in flow order:
@@ -86,20 +85,6 @@ public abstract class Stream<T> implements EdgeStream<T> {
      */
     @Nonnull
     public abstract Stream<T> keyed();
-
-    /**
-     * Declare a codec for this channel's payload, using the SDK's default
-     * JSON serialization. <b>Required</b> on every inter-procedure channel of
-     * a durable structured workflow operative — the handoff between two
-     * procedures is journaled at the proc barrier and re-seeded from that blob
-     * on crash-resume.
-     */
-    @Nonnull
-    public abstract Stream<T> codec();
-
-    /** {@link #codec()} with an explicit encoder/decoder pair. */
-    @Nonnull
-    public abstract Stream<T> codecWith(Function<T, byte[]> encoder, Function<byte[], T> decoder);
 
     /**
      * {@inheritDoc}

@@ -21,8 +21,8 @@
  * <p>{@link com.flezha.sdk.operative.WorkflowOperative} declares ordered steps that must not be
  * re-executed as a unit after a partial failure, such as a transaction spanning external systems.
  * Each completed step is journaled at its boundary, so a crash resumes at the next step rather than
- * the first, and every inter-procedure channel must declare a codec because the value passed
- * between steps is written down there. {@link com.flezha.sdk.operative.RollbackMode} selects
+ * the first, and the value passed between steps is written down there — encoded by a codec the
+ * runtime derives, which no channel declares. {@link com.flezha.sdk.operative.RollbackMode} selects
  * whether an exhausted retry ladder unwinds completed steps through their {@code compensate}
  * methods or retains progress. {@link com.flezha.sdk.operative.LoopMode} and {@code wakeAfter()}
  * turn a workflow into a long-lived loop: one durable iteration per inbound message, optionally

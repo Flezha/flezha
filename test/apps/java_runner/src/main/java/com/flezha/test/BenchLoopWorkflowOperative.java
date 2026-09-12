@@ -42,7 +42,6 @@ public final class BenchLoopWorkflowOperative implements WorkflowOperative {
         c.input(String.class, "in")
                 .into(BenchSteps.Turn.class)
                 .named("mid")
-                .codec()
                 .into(ChatSteps.Reply.class)
                 .named("out")
                 .sink("bench_sink");

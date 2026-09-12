@@ -52,22 +52,6 @@ class WorkflowSpecValidationTest {
     }
 
     @Test
-    @DisplayName("a durable chain requires a codec on every inter-proc channel")
-    void durableChainWithoutCodecIsRefused() {
-        assertThatThrownBy(() -> WorkflowSpec.build(DurableNoCodecWorkflow.class))
-                .isInstanceOf(WorkflowOperativeConfigurationException.class)
-                .hasMessageContaining("codec");
-    }
-
-    @Test
-    @DisplayName("a durable CHAINED loop whose terminal proc has no codec'd output cannot re-seed")
-    void chainedLoopTerminalWithoutCodecIsRefused() {
-        assertThatThrownBy(() -> WorkflowSpec.build(ChainedNoTerminalCodecWorkflow.class))
-                .isInstanceOf(WorkflowOperativeConfigurationException.class)
-                .hasMessageContaining("terminal");
-    }
-
-    @Test
     @DisplayName("an entry-channel edge closure is refused — the workflow seed names no channel")
     void entryEdgeClosureIsRefused() {
         assertThatThrownBy(() -> WorkflowSpec.build(EntryClosureWorkflow.class))
@@ -176,35 +160,6 @@ class WorkflowSpecValidationTest {
         @Override
         public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
             ctx.complete(args);
-        }
-    }
-
-    public static final class DurableNoCodecWorkflow implements WorkflowOperative {
-        @Override
-        public String factoryId() {
-            return "vb_no_codec";
-        }
-
-        @Override
-        public void procedures(ChannelBuilder c) {
-            c.input(String.class, "seed").into(EchoProc.class).into(SinkProc.class);
-        }
-    }
-
-    public static final class ChainedNoTerminalCodecWorkflow implements WorkflowOperative {
-        @Override
-        public String factoryId() {
-            return "vb_chained_no_terminal";
-        }
-
-        @Override
-        public LoopMode loopMode() {
-            return LoopMode.CHAINED;
-        }
-
-        @Override
-        public void procedures(ChannelBuilder c) {
-            c.input(String.class, "seed").into(SinkProc.class);
         }
     }
 

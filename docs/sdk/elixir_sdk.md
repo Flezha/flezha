@@ -499,7 +499,7 @@ The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_
 `deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
 the conformance gate ([`conformance.md`](conformance.md)). In prose: the workflow kind (`kind: workflow` on `AddOperative` is
 refused: `workflow kind is not supported by the Elixir stream SDK`); `merge`, `route_latest`,
-`branch`, `codec`. A builder/ctx call into a deferred surface fails registration loudly,
+`branch`. A builder/ctx call into a deferred surface fails registration loudly,
 naming the operative module.
 
 One more, outside the vocabulary because no capability names it: the hex package

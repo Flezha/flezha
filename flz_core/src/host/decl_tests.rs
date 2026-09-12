@@ -546,3 +546,96 @@ mod sdk_version_decl_tests {
         }
     }
 }
+
+mod journal_codec_tests {
+    //! Which channels the journal carries, decided once at the host boundary.
+    //!
+    //! A durable chained loop re-seeds iteration N+1 from its terminal handoff,
+    //! and `encode_handoff` ships an empty batch for a channel with no codec —
+    //! which the resumed loop reads as "converged". So the rule that a codec
+    //! rides an inter-procedure channel and nothing else is what makes the
+    //! registration refusal on the typed side decisive, and it is pinned here
+    //! rather than left to the one line that implements it.
+
+    use super::factory;
+    use crate::channel::ChannelKind;
+    use crate::host::build::build_channels;
+    use crate::host::register::check_class_json;
+
+    fn channels(json: &str) -> Vec<(ChannelKind, bool)> {
+        let derived = check_class_json(json.as_bytes()).expect("the class is well formed");
+        build_channels(&derived.decl, &derived.channels)
+            .0
+            .into_iter()
+            .map(|c| (c.kind, c.codec.is_some()))
+            .collect()
+    }
+
+    fn chained_loop(terminal_links: &str) -> String {
+        format!(
+            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+                 "workflow":{{"loop_mode":"chained"}},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
+                             {{"name":"out","kind":"inter_proc","producer":0,
+                               "chains":[{terminal_links}]}}],
+                 "procedures":[{{"name":"p0"}}]}}"#,
+            factory("chained_terminal")
+        )
+    }
+
+    /// The refusal every host reaches. Java, Node, Python, Ruby and PHP all
+    /// register through `declare_class`, so this is the site that covers them;
+    /// the typed Rust SDK refuses the same shape in its own vocabulary because
+    /// it never passes through here.
+    #[test]
+    fn a_durable_chained_loop_whose_terminal_only_sinks_is_refused() {
+        let err = super::decl(&chained_loop(r#"[{"link":"sink","name":"s"}]"#))
+            .expect_err("a plugin-bound terminal carries no handoff");
+        assert!(
+            err.contains("releases no inter-procedure handoff") && err.contains("p0"),
+            "the refusal names the shape and the terminal procedure: {err}"
+        );
+    }
+
+    /// The same class with a consumer behind the terminal channel keeps the
+    /// channel inter-procedure, so the journal carries it and it registers.
+    #[test]
+    fn a_durable_chained_loop_with_an_inter_proc_terminal_registers() {
+        let ok = format!(
+            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+                 "workflow":{{"loop_mode":"chained"}},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
+                             {{"name":"out","kind":"inter_proc","producer":0,
+                               "chains":[[{{"link":"sink","name":"s"}}],[{{"link":"into","procedure":1}}]]}},
+                             {{"name":"tail","kind":"inter_proc","producer":1,"chains":[[]]}}],
+                 "procedures":[{{"name":"p0"}},{{"name":"p1"}}]}}"#,
+            factory("chained_ok")
+        );
+        super::decl(&ok).expect("an inter-procedure terminal carries the handoff");
+    }
+
+    #[test]
+    fn a_codec_rides_an_inter_proc_channel_and_nothing_else() {
+        let rows = channels(
+            r#"{"factory_id":"codec_kinds","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+                 "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","procedure":0}]]},
+                             {"name":"mid","kind":"inter_proc","producer":0,
+                              "chains":[[{"link":"into","procedure":1}]]},
+                             {"name":"out","kind":"inter_proc","producer":1,
+                              "chains":[[{"link":"sink","name":"out"}]]}],
+                 "procedures":[{"name":"p0"},{"name":"p1"}]}"#,
+        );
+
+        assert_eq!(
+            rows,
+            vec![
+                (ChannelKind::Entry, false),
+                (ChannelKind::InterProcedure, true),
+                // Declared inter_proc, derived plugin-bound: a sink with no
+                // consumer behind it IS the terminal, and nothing re-seeds from
+                // it, so the journal does not carry it.
+                (ChannelKind::PluginBound, false),
+            ]
+        );
+    }
+}

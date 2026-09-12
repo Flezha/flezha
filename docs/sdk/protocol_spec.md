@@ -1419,8 +1419,7 @@ message ProcCommitResponse { string operative_id = 1; uint32 proc_idx = 2; strin
 Emitted at each procedure barrier of a **durable structured** workflow
 instance: procedure `proc_idx` completed forward on `entities_ran` and released
 the inter-proc handoff batch, serialized through the producing channel's byte
-codec (`.codec()` / `.codec_with(...)`, required at registration for durable
-structured classes). The driver **blocks** until `ProcCommitResponse` — the
+codec, which the runtime derives and no SDK declares. The driver **blocks** until `ProcCommitResponse` — the
 next procedure must not race ahead of the committed record. Opted-out classes
 (`PERSISTENCE_ENABLED = false`) and the `run`-sugar form skip the barrier and
 keep the direct at-least-once wire path.

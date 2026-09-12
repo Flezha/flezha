@@ -16,10 +16,11 @@ public enum LoopMode {
      * Each iteration is seeded by the previous iteration's terminal handoff, so
      * the chain feeds itself until it converges.
      *
-     * <p>A durable {@code CHAINED} loop requires a codec on its terminal proc's
+     * <p>A durable {@code CHAINED} loop requires its terminal proc to release an
      * output channel: a crash-resumed iteration re-seeds FROM that journaled
-     * handoff, and without one it would re-seed empty — which the loop would read
-     * as "converged" and stop, silently truncating the run.
+     * handoff, and a proc nothing consumes and that names no sink has none, so
+     * the loop would re-seed empty — which it reads as "converged" and stops,
+     * silently truncating the run.
      */
     CHAINED
 }

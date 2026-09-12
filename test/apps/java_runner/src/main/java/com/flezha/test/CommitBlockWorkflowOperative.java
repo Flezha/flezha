@@ -25,7 +25,7 @@ public final class CommitBlockWorkflowOperative implements WorkflowOperative {
     @Override
     public void procedures(ChannelBuilder c) {
         var sCommitA = c.input(String.class, "in").into(CommitA.class);
-        sCommitA.named("mid").codec().into(BlockB.class);
+        sCommitA.named("mid").into(BlockB.class);
     }
 
     /** Proc A: commits idempotent durable Entity state, then hands input to proc B. */

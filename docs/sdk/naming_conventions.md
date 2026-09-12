@@ -107,9 +107,10 @@ having no further wiring, not by a second method. `.sealed()` is the optional
 terminator: it returns a non-chainable `Channel<T>` so a later consumer or
 transform does not compile, and changes nothing about the topology.
 
-Channel config (`codec`, `keyed`, `onFull` / `on_full`, `retryMax` /
-`retry_max`, `retryBackoffMs` / `retry_backoff_ms`, `named`) chains on the
-handle in any order relative to consumer wiring. Branching is handle reuse
+Channel config (`keyed`, `onFull` / `on_full`, `retryMax` / `retry_max`,
+`retryBackoffMs` / `retry_backoff_ms`, `named`) chains on the handle in any
+order relative to consumer wiring. There is no codec method on any handle: the
+runtime derives an inter-procedure channel's journal codec. Branching is handle reuse
 (hold the handle in a variable, wire it twice) or the equivalent
 `branch(arm1, arm2, ...)` sugar; fan-in is two streams naming one consumer, or
 `merge` for an explicit multi-input edge.

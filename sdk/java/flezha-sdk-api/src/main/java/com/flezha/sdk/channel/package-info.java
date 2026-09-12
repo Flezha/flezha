@@ -20,9 +20,8 @@
  * and test feeds; unlabelled, a channel takes the producing procedure's name. {@code into} wires a
  * further procedure as a consumer, which is how multi-stage graphs are expressed. {@code sink}
  * attaches a plugin, {@code keyed} declares that emits carry a natural key supplied through
- * {@code emitKeyed}, and {@code codec} declares the payload codec for a channel, which is required
- * on every inter-procedure channel of a durable workflow operative because the handoff is journaled
- * at the step boundary.
+ * {@code emitKeyed}. A durable workflow operative journals the handoff at every step boundary; the
+ * payload codec it uses there is derived by the runtime and is declared nowhere.
  *
  * <p>{@link com.flezha.sdk.channel.EdgeStream} carries the transforms applied on the wiring itself:
  * {@code filter} discards values, {@code map} and {@code flatMap} reshape or expand them, and

@@ -124,25 +124,6 @@ final class StreamImpl<T> extends Stream<T> implements EdgeSite {
 
     @Override
     @Nonnull
-    public Stream<T> codec() {
-        // Reuse the SDK's default JSON serialization — the same Jackson
-        // mapper a plugin-bound channel falls back to.
-        return codecWith(
-                PayloadCodecs.defaultSerializer(payloadType()), PayloadCodecs.defaultDeserializer(payloadType()));
-    }
-
-    @Override
-    @Nonnull
-    public Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder) {
-        owner.checkMutable();
-        ChannelEntry entry = owner.channel(channelId());
-        entry.interProcEncoder = value -> encoder.apply(cast(value));
-        entry.interProcDecoder = bytes -> decoder.apply(bytes);
-        return this;
-    }
-
-    @Override
-    @Nonnull
     public Stream<T> onFull(@Nonnull OverflowPolicy policy) {
         edge.onFull(policy);
         return this;

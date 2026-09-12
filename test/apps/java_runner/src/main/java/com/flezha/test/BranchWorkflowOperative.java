@@ -49,11 +49,9 @@ public final class BranchWorkflowOperative implements WorkflowOperative {
         var mid = c.input(String.class, "in")
                 .into(BranchA.class)
                 .named("mid")
-                .codec()
                 .sink("branch_sink", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
         mid.into(BranchB.class)
                 .named("bmid")
-                .codec()
                 .sink("branch_sink", s -> ("b:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(BranchD.class)
                 .named("d_out")

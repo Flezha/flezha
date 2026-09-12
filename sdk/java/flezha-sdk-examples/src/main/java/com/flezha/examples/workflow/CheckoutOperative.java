@@ -36,19 +36,14 @@ public final class CheckoutOperative implements WorkflowOperative {
 
     @Override
     public void procedures(@Nonnull ChannelBuilder c) {
-        // codec() on every handoff, and it is required here rather than optional. The value between
-        // two steps is written down at that boundary, which is what lets a workflow that died after
-        // charging resume at shipping instead of starting over.
-        //
-        // A plain stream operative does not need it, because nothing is journaled between stages
-        // there.
+        // The value between two steps is written down at that boundary, which is what lets a
+        // workflow that died after charging resume at shipping instead of starting over. Nothing
+        // here declares how it is written: the runtime derives that from the channel.
         c.input(String.class, "order")
                 .into(Reserve.class)
                 .named("reserved")
-                .codec()
                 .into(Charge.class)
                 .named("charged")
-                .codec()
                 .into(Ship.class)
                 .named("shipped")
                 .sink("orders_sink");

@@ -29,7 +29,6 @@ public final class TierCommitBlockWorkflowOperative implements WorkflowOperative
         c.input(String.class, "in")
                 .into(TierCommitA.class)
                 .named("mid")
-                .codec()
                 .keyed()
                 .sink("tier_sink", s -> s.getBytes(StandardCharsets.UTF_8))
                 .into(CommitBlockWorkflowOperative.BlockB.class);

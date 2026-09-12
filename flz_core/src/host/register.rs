@@ -21,6 +21,7 @@ use super::decl::{
     HostEntityModeDecl, HostLoopMode, HostOverflow, HostProcedureDecl, HostWorkflowDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
+use crate::channel::ChannelKind;
 use crate::error::Error;
 use crate::operative::topology::OperativeTopology;
 use crate::workflow::spec::{graph_order, GraphSeed, ProcDag};
@@ -549,6 +550,50 @@ fn register(derived: Derived) -> Result<(), Error> {
     }
 }
 
+/// A durable handoff-chained loop seeds iteration N+1 from iteration N's
+/// terminal handoff, and only an inter-procedure channel carries one: the
+/// journal codec rides that kind and no other (`build::build_channel`). A
+/// terminal that owns no output channel, or one whose only wiring is a plugin
+/// sink, would therefore ship an empty handoff at the iteration commit, and
+/// `resume::seed_for_mode` reads an empty seed as convergence — the loop stops
+/// and the run reports completed, truncated and silent.
+///
+/// It lives here rather than in each SDK because this is the one registration
+/// every host reaches: Java, Node, Python, Ruby and PHP all declare through
+/// `declare_class`. The typed Rust SDK refuses the same shape in its own
+/// vocabulary, because it never passes through here.
+fn refuse_loop_terminal_without_handoff(
+    decl: &HostClassDecl,
+    workflow: &HostWorkflowDecl,
+    topology: &OperativeTopology,
+    dag: &ProcDag,
+) -> Result<(), Error> {
+    if !decl.persistent || workflow.loop_mode != HostLoopMode::Chained {
+        return Ok(());
+    }
+    let Some(terminal) = dag
+        .single_leaf()
+        .and_then(|leaf| topology.procedure(dag.order[leaf]))
+    else {
+        return Ok(());
+    };
+    let carries_handoff = terminal
+        .output_channel_id
+        .and_then(|cid| topology.channel(cid))
+        .is_some_and(|ch| ch.kind == ChannelKind::InterProcedure);
+    if carries_handoff {
+        return Ok(());
+    }
+    Err(Error::Declaration(format!(
+        "a durable handoff-chained loop's terminal procedure `{}` releases no inter-procedure \
+         handoff; iteration N+1 is seeded from iteration N's terminal batch, and a procedure that \
+         owns no output channel, or whose only output is plugin-bound, has nothing the journal \
+         carries. Take the sink off the terminal's own channel, or declare the loop `per_input`; \
+         wiring another procedure behind the sink only moves the rule onto that one",
+        terminal.name
+    )))
+}
+
 /// A structured chain: its DAG from the topology, a chained loop decided
 /// against it.
 fn register_structured_workflow(
@@ -564,6 +609,7 @@ fn register_structured_workflow(
             dag.leaves().count()
         )));
     }
+    refuse_loop_terminal_without_handoff(decl, workflow, &topology, &dag)?;
     let loop_mode = match workflow.loop_mode {
         HostLoopMode::Once => LoopMode::Once,
         HostLoopMode::PerInput => LoopMode::PerInput,

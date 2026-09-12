@@ -28,7 +28,6 @@ public final class SyncDurableWorkflowOperative implements WorkflowOperative {
         c.input(String.class, "in")
                 .into(CommitBlockWorkflowOperative.CommitA.class)
                 .named("mid")
-                .codec()
                 .into(CommitBlockWorkflowOperative.BlockB.class);
     }
 }

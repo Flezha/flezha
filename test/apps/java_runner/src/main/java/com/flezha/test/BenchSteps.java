@@ -29,7 +29,7 @@ public final class BenchSteps {
     public static void chain(ChannelBuilder c, int procs) {
         Stream<String> s = c.input(String.class, "in").into(CHAIN.get(0));
         for (int i = 1; i < procs; i++) {
-            s = s.named("edge_BenchS" + i).codec().into(CHAIN.get(i));
+            s = s.named("edge_BenchS" + i).into(CHAIN.get(i));
         }
         s.named("out").sink("bench_sink");
     }

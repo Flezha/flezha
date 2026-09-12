@@ -24,7 +24,6 @@ public final class OutboxBlockWorkflowOperative implements WorkflowOperative {
         c.input(String.class, "in")
                 .into(CommitBlockWorkflowOperative.CommitA.class)
                 .named("mid")
-                .codec()
                 .sink("outbox_sink", s -> ("a-out:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(CommitBlockWorkflowOperative.BlockB.class);
     }

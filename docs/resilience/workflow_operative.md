@@ -54,8 +54,11 @@ frame addressed to a running instance is routed to its inbox, never dropped.
 ## Durable loop and suspension
 
 Loop modes are declared with `loop_mode()` / `loopMode()`. Registration refuses a loop on a
-`run`-sugar class (`LoopWithoutChain`) and a durable `Chained` loop whose terminal procedure has no
-codec'd output channel (`LoopTerminalWithoutCodec` — a crash would re-seed empty, read as converged).
+`run`-sugar class (`LoopWithoutChain`) and a durable `Chained` loop whose terminal procedure
+releases no inter-procedure channel (`LoopTerminalWithoutHandoff`). Two shapes fail that: a
+terminal nothing consumes and that names no sink owns no output channel at all, and one whose only
+wiring is a plugin sink gets no journal codec, because the runtime attaches one to inter-procedure
+channels and nothing else. Either way a crash would re-seed empty, read as converged.
 
 **The iteration boundary.** `IterCommit` rides the same commit worker as `ProcCommit` (below).
 After the ack the worker runs the post-ack cleanup in order: a boundary snapshot
@@ -230,10 +233,10 @@ The driver's wait is `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 000). An expir
 the same frame under the same `reference_id`, after the class's retry backoff, up to
 `barrier_retry_attempts()` / `barrierRetryAttempts()` sends (default 3); the waiter stays
 registered across the ladder, so a late ack continues the chain, and only the exhausted ladder
-is a terminal error. Every inter-procedure channel of a durable structured class must declare
-`.codec()` (postcard) or `.codec_with(enc, dec)` — registration fails `MissingInterProcCodec`
-naming the channel — and a journal entry is bounded by `:wal_high_watermark_bytes` (16 MiB):
-keep bulk data in Entity state and hand off references. Every flushed item is stamped
+is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
+journal codec, in Rust from the producing procedure's declared `Output` type — and a journal entry
+is bounded by `:wal_high_watermark_bytes` (16 MiB): keep bulk data in Entity state and hand off
+references. Every flushed item is stamped
 `flz.entity`, `flz.seq = <proc_idx>.<seq_in_proc>` (an undo's seq carries a trailing `.1`,
 numeric so the Postgres sink's guard still orders it), `flz.epoch` and `channel`; there is no
 `flz.key`. Flush contract: [`data_durability.md`](data_durability.md#workflow-operatives-staged-commit-and-the-transactional-outbox).

@@ -43,7 +43,6 @@ Java SDK implements the effectively-once output tier :: A poisoned tier invocati
 Java SDK implements the effectively-once output tier :: A tier class with a non-keyed plugin channel fails registration
 Java SDK implements the effectively-once output tier :: A tier invocation ships one effect record, not separate frames
 Java SDK implements the effectively-once output tier :: Effect-record bytes are byte-identical to the Rust encoder
-Java SDK implements the workflow durable loop and suspension :: A durable chained loop whose terminal proc has no codec is refused
 Java SDK implements the workflow durable loop and suspension :: A loop on run-sugar is refused
 Java SDK implements the workflow durable loop and suspension :: A resumed loop restarts at the journaled iteration
 Java SDK implements the workflow durable loop and suspension :: An idle loop parks instead of completing
@@ -54,7 +53,6 @@ Java SDK implements the workflow entity retry ladder :: An exhausted ladder comp
 Java SDK implements the workflow entity retry ladder :: attempts > 1 with a zero backoff is refused
 Java SDK implements the workflow proc-journal and ProcCommit handshake :: A commit timeout triggers compensation
 Java SDK implements the workflow proc-journal and ProcCommit handshake :: A committed proc is skipped on resume, not re-run
-Java SDK implements the workflow proc-journal and ProcCommit handshake :: A missing inter-proc codec fails registration
 Java SDK implements the workflow proc-journal and ProcCommit handshake :: An opted-out class re-runs from the top
 Java SDK implements workflow branching :: A branching chain runs its branches and joins
 Java SDK implements workflow branching :: Compensation runs in reverse-topological order

@@ -739,8 +739,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         public int retryMaxAttempts = RetryPolicy.DEFAULT.maxAttempts();
         public long retryBackoffBaseMs = RetryPolicy.DEFAULT.backoffBaseMs();
         public boolean keyed;
-        Function<Object, byte[]> interProcEncoder;
-        Function<byte[], Object> interProcDecoder;
         /** Entry channels only: wire bytes → typed payload. */
         Function<byte[], Object> entryParser;
         /**

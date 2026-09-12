@@ -503,9 +503,10 @@ Today: **every FFI SDK carries the whole vocabulary** — Rust, Java, Node, Pyth
 PHP. The Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
 the reference every other is checked against, and no veneer manifest defers a capability.
-An inter-procedure `codec()` is owed to no veneer at all — the core derives the journal
-codec from the channel's kind (`flz_core/src/host/register.rs`) and the declaration carries
-no codec key. The Elixir SDK is its own core: it carries `state_persistence`,
+An inter-procedure `codec()` is owed to nobody: no SDK declares one. The runtime derives
+the journal codec — from the channel's kind for a host that ships bytes
+(`flz_core/src/host/register.rs`), from the declared `Output` type in Rust — and the
+declaration carries no codec key. The Elixir SDK is its own core: it carries `state_persistence`,
 `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers` and
 `effectively_once` as re-expressions of the kernel's rules — the record header and the
 External Term Format body, the fold, compaction, the live read, the credit window, the

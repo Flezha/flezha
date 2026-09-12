@@ -28,30 +28,6 @@ public class WorkflowOperativeConfigurationException extends RuntimeException {
                 + "declare procedures() or drop the loop mode");
     }
 
-    /**
-     * A durable CHAINED loop re-seeds each iteration from the terminal proc's
-     * journaled handoff. With no codec it would re-seed EMPTY on a crash-resume,
-     * which the loop reads as "converged" — silently truncating the run.
-     */
-    public static WorkflowOperativeConfigurationException loopTerminalWithoutCodec(String factoryId) {
-        return new WorkflowOperativeConfigurationException("LoopTerminalWithoutCodec: workflow operative `" + factoryId
-                + "` declares a durable CHAINED loop but its terminal procedure has no codec'd output channel; "
-                + "a crash-resumed iteration would re-seed empty and read as converged");
-    }
-
-    /**
-     * Raised when a durable structured workflow class declares an
-     * inter-procedure channel with no codec. The handoff between two procedures
-     * is journaled at the proc barrier and a crash-resumed run re-seeds the next
-     * procedure from that blob — with no codec there is nothing to journal, so
-     * the resume would silently degrade to re-running the chain from the top.
-     */
-    public static WorkflowOperativeConfigurationException missingInterProcCodec(String factoryId, String channel) {
-        return new WorkflowOperativeConfigurationException("MissingInterProcCodec: workflow operative `" + factoryId
-                + "` channel `" + channel + "` carries an inter-procedure handoff but declares no `.codec()`; "
-                + "a durable workflow class journals that handoff so a resume can skip committed procedures");
-    }
-
     public WorkflowOperativeConfigurationException(String message) {
         super(message);
     }

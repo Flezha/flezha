@@ -13,9 +13,9 @@
 #
 # `commit_block_chain` is this file's name for the second shape because no
 # veneer registers a workflow fixture yet; it is `tier_commit_block_workflow`'s
-# topology with the `codec()` call dropped, which declares nothing (the core
-# derives an inter-procedure channel's journal codec from the channel kind —
-# `flz_core/src/host/register.rs`).
+# topology, which declares nothing about its handoffs — no SDK does, because the
+# runtime derives an inter-procedure channel's journal codec (from the channel
+# kind for a host that ships bytes, `flz_core/src/host/register.rs`).
 #
 # Five readers pin it: `sdk/node/test/decl-keys.test.mjs`,
 # `sdk/ruby/test/decl_keys_test.rb`, `sdk/php/tests/DeclKeysTest.php` and

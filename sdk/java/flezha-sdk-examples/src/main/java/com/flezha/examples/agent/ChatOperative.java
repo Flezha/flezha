@@ -35,7 +35,6 @@ public final class ChatOperative implements WorkflowOperative {
         c.input(String.class, "message")
                 .into(ReplyProcedure.class)
                 .named("reply")
-                .codec()
                 .sink("chat_sink");
     }
 }

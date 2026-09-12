@@ -8,10 +8,9 @@
  * {@code compensate}.
  *
  * <p>{@link com.flezha.examples.workflow.CheckoutOperative} declares the chain and its failure
- * policy. Every handoff between steps declares {@code codec()}, which is required here and absent
- * from a plain stream operative: the value passed between two steps is written down at that
- * boundary, and that record is what allows a workflow that died after charging to resume at
- * dispatch rather than at reservation.
+ * policy, and nothing about how the handoffs are encoded. The value passed between two steps is
+ * written down at that boundary, and that record is what allows a workflow that died after
+ * charging to resume at dispatch rather than at reservation; the runtime derives how to write it.
  *
  * <p>Two details govern correctness in the compensating path.
  * {@link com.flezha.examples.workflow.Reserve} derives its reservation identifier from

@@ -6,9 +6,9 @@ import java.util.function.Function;
 
 /**
  * The SDK's default payload codecs: what an entry channel decodes with when the
- * author supplies no parser, and what {@code codec()} / {@code sink(...)} apply
- * when they are given no encoder. {@code byte[]} is passthrough, {@code String}
- * is UTF-8, everything else is Jackson JSON.
+ * author supplies no parser, and what {@code sink(...)} applies when it is given
+ * no encoder. {@code byte[]} is passthrough, {@code String} is UTF-8, everything
+ * else is Jackson JSON.
  */
 final class PayloadCodecs {
 
@@ -35,24 +35,6 @@ final class PayloadCodecs {
                 return DEFAULT_MAPPER.readValue(bytes, (Class) payloadType);
             } catch (Exception e) {
                 throw new RuntimeException("entry channel: JSON deserialization failed: " + e.getMessage(), e);
-            }
-        };
-    }
-
-    /** Mirror of {@link #defaultSerializer}: the decode half of a default {@code codec()}. */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    static <T> Function<byte[], T> defaultDeserializer(Class<T> payloadType) {
-        if (payloadType == byte[].class) {
-            return (Function) (Function<byte[], byte[]>) (b -> b);
-        }
-        if (payloadType == String.class) {
-            return (Function) (Function<byte[], String>) (b -> new String(b, StandardCharsets.UTF_8));
-        }
-        return bytes -> {
-            try {
-                return DEFAULT_MAPPER.readValue(bytes, payloadType);
-            } catch (Exception e) {
-                throw new RuntimeException("inter-proc codec (Jackson) decode failed: " + e.getMessage(), e);
             }
         };
     }

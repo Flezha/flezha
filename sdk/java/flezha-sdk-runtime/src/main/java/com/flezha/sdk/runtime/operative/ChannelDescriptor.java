@@ -26,7 +26,6 @@ public final class ChannelDescriptor {
     private final OverflowPolicy overflowPolicy;
     private final RetryPolicy retry;
     private final boolean keyed;
-    private final Optional<InterProcCodec> interProcCodec;
 
     public ChannelDescriptor(
             @Nonnull String name,
@@ -39,9 +38,7 @@ public final class ChannelDescriptor {
             @Nonnull Optional<PluginSink> pluginSink,
             @Nonnull OverflowPolicy overflowPolicy,
             @Nonnull RetryPolicy retry,
-            boolean keyed,
-            @Nonnull Optional<InterProcCodec> interProcCodec) {
-        this.interProcCodec = interProcCodec;
+            boolean keyed) {
         this.name = name;
         this.kind = kind;
         this.producer = producer;
@@ -63,21 +60,6 @@ public final class ChannelDescriptor {
     public boolean keyed() {
         return keyed;
     }
-
-    /**
-     * Codec for this inter-procedure channel's payload, when declared. The
-     * workflow proc-journal encodes the handoff between two procedures with it, so a
-     * crash-resumed run can re-seed the next procedure instead of re-running the
-     * chain from the top.
-     */
-    @Nonnull
-    public Optional<InterProcCodec> interProcCodec() {
-        return interProcCodec;
-    }
-
-    /** Encoder/decoder pair for an inter-procedure handoff payload. */
-    public record InterProcCodec(
-            @Nonnull Function<Object, byte[]> encoder, @Nonnull Function<byte[], Object> decoder) {}
 
     @Nonnull
     public String name() {

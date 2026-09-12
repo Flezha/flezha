@@ -306,24 +306,14 @@ pub enum BuildWorkflowError {
     LoopWithoutChain { factory_id: &'static str },
 
     #[error(
-        "workflow operative `{factory_id}` is durable but its inter-procedure channel `{channel}` \
-         has no byte codec; declare `.codec()` (standard serde payloads) or `.codec_with(...)` \
-         so the proc-journal can persist and re-seed the stage handoff, or opt the class out with \
-         `PERSISTENCE_ENABLED = false`"
-    )]
-    MissingInterProcCodec {
-        factory_id: &'static str,
-        channel: String,
-    },
-
-    #[error(
         "workflow operative `{factory_id}` is a durable handoff-chained loop, but its terminal \
-         procedure `{procedure}` releases no codec'd output channel; iteration N+1 is seeded from \
-         iteration N's terminal batch, which the iteration commit must be able to journal. Give \
-         the terminal procedure an output channel with `.codec()`, or switch to \
-         `LoopMode::PerInput`"
+         procedure `{procedure}` releases no inter-procedure handoff; iteration N+1 is seeded \
+         from iteration N's terminal batch, and a procedure that owns no output channel, or whose \
+         only output is plugin-bound, has nothing the journal carries. Give the terminal \
+         procedure an output channel that is not plugin-bound — taking the sink off its own \
+         channel is enough — or switch to `LoopMode::PerInput`"
     )]
-    LoopTerminalWithoutCodec {
+    LoopTerminalWithoutHandoff {
         factory_id: &'static str,
         procedure: String,
     },

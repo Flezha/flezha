@@ -167,8 +167,12 @@ pub struct ChannelDescriptor {
     pub keyed: bool,
     pub overflow_policy: OverflowPolicy,
     pub retry: RetryPolicy,
-    /// Byte codec for inter-procedure payloads; required on every inter-proc
-    /// channel of a durable structured workflow, whose handoffs are journaled.
+    /// Byte codec for inter-procedure payloads, derived by the runtime and
+    /// declared by no SDK. `Some` exactly when `kind` is
+    /// [`ChannelKind::InterProcedure`], because that is the channel the journal
+    /// reads back: a durable structured workflow re-seeds a resumed procedure
+    /// through it, and nothing re-seeds from an entry or a plugin-bound
+    /// terminal.
     pub codec: Option<ChannelCodec>,
 }
 

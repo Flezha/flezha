@@ -52,9 +52,9 @@ import javax.annotation.Nonnull;
  * }</pre>
  *
  * <p>A multi-step workflow overrides {@link #procedures} instead, and declares its chain on the
- * same builder a stream operative uses. Every handoff between steps needs {@code codec()}, because
- * the value passed between them is written down at that boundary and is what allows a resumed
- * workflow to pick up there:
+ * same builder a stream operative uses. The value passed between two steps is written down at that
+ * boundary, which is what allows a resumed workflow to pick up there; the runtime derives how to
+ * write it, so the chain declares nothing about it:
  *
  * <pre>{@code
  * @Override
@@ -62,10 +62,8 @@ import javax.annotation.Nonnull;
  *     c.input(String.class, "order")
  *             .into(Reserve.class)
  *             .named("reserved")
- *             .codec()
  *             .into(Charge.class)
  *             .named("charged")
- *             .codec()
  *             .into(Ship.class)
  *             .sink("orders_sink");
  * }

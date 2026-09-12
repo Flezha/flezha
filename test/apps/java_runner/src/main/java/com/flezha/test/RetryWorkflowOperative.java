@@ -29,7 +29,6 @@ public final class RetryWorkflowOperative implements WorkflowOperative {
         c.input(String.class, "in")
                 .into(RetryA.class)
                 .named("mid")
-                .codec()
                 .sink("retry_sink", s -> ("res:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(RetryFlaky.class)
                 .named("out")

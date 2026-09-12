@@ -262,9 +262,8 @@ bare mutable global holds any of it.
 ## Deferred fixtures
 
 The manifest defers one capability's end-to-end fixture set — `workflow` —
-to the follow-up that owes the two builder surfaces every veneer lacks, an
-inter-procedure `codec()` and a hybrid `sink().into()`, shared with the Node,
-PHP and Python apps. The Elixir app defers more, because its SDK is its own
+to the follow-up that owes the one builder surface every veneer lacks, a
+hybrid `sink().into()`, shared with the Node, PHP and Python apps. The Elixir app defers more, because its SDK is its own
 core.
 
 This is a deferral of **fixtures, not mechanism**: the dispatcher answers every
