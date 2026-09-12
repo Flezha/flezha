@@ -76,6 +76,12 @@ export interface NativeActivation {
   outputs?: Buffer[];
 }
 
+/**
+ * One output, in both directions. The payload a host writes is whatever its
+ * encoder produced — the glue's reader takes any typed array, a `Buffer`
+ * included — so nothing is copied into a `Buffer` first. The payload the core
+ * hands back is always a `Buffer`, which `local.ts` is the only reader of.
+ */
 export interface NativeOutput {
   target: 'edge' | 'plugin';
   channel?: number;
@@ -84,8 +90,11 @@ export interface NativeOutput {
   key?: string;
   eventTime?: bigint;
   metadata?: NativeMeta[];
-  payload: Buffer;
+  payload: Uint8Array;
 }
+
+/** A `NativeOutput` the core itself built: its payload is always a `Buffer`. */
+export type CoreOutput = NativeOutput & { payload: Buffer };
 
 export interface NativeTimerOp {
   kind: 'event_time' | 'processing_time';
@@ -103,7 +112,7 @@ export interface NativeDlqEntry {
 export interface NativeItemEffect {
   verdict: 'ok' | 'retryable' | 'non_retryable';
   message?: string;
-  changes?: Buffer[];
+  changes?: Uint8Array[];
   outputs?: NativeOutput[];
   consumedOffset?: bigint;
   eventTime: bigint;
@@ -135,13 +144,13 @@ export interface NativeActivationResult {
   token: bigint;
   outcome: NativeOutcome;
   effects?: NativeItemEffect[];
-  state?: Buffer;
-  json?: Buffer;
+  state?: Uint8Array;
+  json?: Uint8Array;
   prepared?: NativePrepareAnswer[];
   error?: string;
   nonRetryable?: boolean;
   workflowCompleted?: boolean;
-  workflowResult?: Buffer;
+  workflowResult?: Uint8Array;
 }
 
 export interface NativeExport {
@@ -185,20 +194,21 @@ export interface Native {
   /** The alternative to `start`: the declared graph runs here, no controller. */
   localStart(factoryId: string, operativeId: string): void;
   localOnSink(channel: string): void;
-  localFeed(channel: string, payload: Buffer): Promise<void>;
-  localNextOutput(timeoutMs: number): Promise<NativeOutput | null>;
+  localFeed(channel: string, payload: Uint8Array): Promise<void>;
+  /** The core built this one, so its payload is a `Buffer` and says so. */
+  localNextOutput(timeoutMs: number): Promise<CoreOutput | null>;
   localRunUntilIdle(timeoutMs: number): Promise<void>;
   localStop(): void;
   complete(result: NativeActivationResult): Promise<void>;
   abandon(token: bigint): void;
   shutdown(): void;
-  workflowEmit(instanceId: string, payload: Buffer): void;
+  workflowEmit(instanceId: string, payload: Uint8Array): void;
   workflowRecv(instanceId: string, timeoutMs: number): Promise<Buffer | null>;
   workflowCancelled(instanceId: string): boolean;
   spawnWorkflow(
     instanceId: string,
     factoryId: string,
-    payload: Buffer,
+    payload: Uint8Array,
     ifRunning: string,
   ): Promise<string>;
   adminCall(verb: string, args: string): Promise<string>;

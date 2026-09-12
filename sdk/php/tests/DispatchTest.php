@@ -6,6 +6,7 @@ namespace Flezha\Tests;
 
 use Flezha\Dispatch\Dispatcher;
 use Flezha\Dispatch\Registry;
+use Flezha\Codec\Json;
 use Flezha\Ffi\Core;
 use Flezha\Graph\Validate;
 use Flezha\Logger;
@@ -467,6 +468,22 @@ final class DispatchTest extends TestCase
         );
         self::assertNull($outputs[0]['key']);
         self::assertNull($outputs[0]['event_time']);
+    }
+
+    /**
+     * `Json::encode` hands back the finished string, so the frame carries it
+     * as it stands. A host that layers nothing on its encoder satisfies the
+     * edge-output rule by doing nothing, and this is what says so.
+     */
+    public function testAnEdgePayloadIsTheEncodersOwnString(): void
+    {
+        $outputs = $this->work('wf_emit_stream', 0, [self::input('10')])['effects'][0]['outputs'];
+
+        self::assertCount(3, $outputs);
+        foreach ($outputs as $index => $output) {
+            $value = Json::decode($output['payload']);
+            self::assertSame(Json::encode($value), $output['payload'], "output {$index}");
+        }
     }
 
     public function testTheSameGraphOnAStreamClassReleasesOneOutputPerConsumer(): void

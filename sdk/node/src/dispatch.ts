@@ -354,7 +354,7 @@ function snapshot(
   return {
     token: activation.token,
     outcome: 'snapshot',
-    state: Buffer.from(codec ? codec.encode(state as never) : encodeValue(state)),
+    state: codec ? Buffer.from(codec.encode(state as never)) : encodeValue(state),
   };
 }
 
@@ -425,7 +425,7 @@ async function runWorkflow(
     token: activation.token,
     outcome: 'workflow_done',
     workflowCompleted: completed,
-    workflowResult: Buffer.from(encodeValue(ctx.completed ? ctx.result : returned)),
+    workflowResult: encodeValue(ctx.completed ? ctx.result : returned),
   };
 }
 

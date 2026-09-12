@@ -22,7 +22,7 @@ export interface SpawnBridge {
   spawnWorkflow(
     instanceId: string,
     factoryId: string,
-    payload: Buffer,
+    payload: Uint8Array,
     ifRunning: string,
   ): Promise<string>;
 }
@@ -62,7 +62,7 @@ function metaList(metadata: Record<string, string> | undefined, procedure: strin
  * per-invocation ordinal `stableId` counts is exactly this object's lifetime.
  */
 export class Invocation implements Ctx<unknown, unknown, unknown> {
-  readonly changes: Buffer[] = [];
+  readonly changes: Uint8Array[] = [];
   readonly outputs: NativeOutput[] = [];
   readonly timers: NativeTimerOp[] = [];
   checkpointed = false;
@@ -119,7 +119,10 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       );
     }
     const codec = definition.changeCodec;
-    this.changes.push(Buffer.from(codec ? codec.encode(change) : encodeValue(change)));
+    // The rule every host->core bytes site here follows: msgpack's own
+    // output goes over as it stands, and a user encoder's is copied into a
+    // `Buffer`, because what it returned is only typed as bytes.
+    this.changes.push(codec ? Buffer.from(codec.encode(change)) : encodeValue(change));
     // Fold it live through the same function the restore fold uses, so the
     // live path and the replay path cannot drift.
     definition.applyChange(this.live, change);
@@ -164,7 +167,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key: undefined,
       eventTime: undefined,
       metadata: [],
-      payload: Buffer.from(encodeValue(value)),
+      payload: encodeValue(value),
     };
   }
 
@@ -197,7 +200,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key,
       eventTime: extractor ? BigInt(extractor(transformed)) : undefined,
       metadata: metaList(options?.metadata, this.input.node.name),
-      payload: Buffer.from(encodeValue(transformed)),
+      payload: encodeValue(transformed),
     };
   }
 
@@ -227,7 +230,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key,
       eventTime: undefined,
       metadata,
-      payload: Buffer.from(channel.sinkEncode ? channel.sinkEncode(value) : encodeValue(value)),
+      payload: channel.sinkEncode ? Buffer.from(channel.sinkEncode(value)) : encodeValue(value),
     };
   }
 
@@ -290,7 +293,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
     return this.input.bridge.spawnWorkflow(
       instanceId,
       factoryId,
-      Buffer.from(encodeValue(payload)),
+      encodeValue(payload),
       options?.ifRunning ?? 'deliver',
     );
   }

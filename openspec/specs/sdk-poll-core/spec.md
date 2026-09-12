@@ -502,3 +502,45 @@ behind it. Reaching the bound SHALL be reported.
   entity and the consumer that is behind, because the heartbeat's cross-SDK
   contract carries counters and not identities
 
+### Requirement: A host encodes an output without allocating a buffer per value
+
+A host that must encode a value into bytes to hand the core an edge output SHALL reuse one
+encode buffer per thread rather than allocate a buffer, a stream or a reader for each value, and
+SHALL NOT copy the encoder's own output a second time before handing it over. The only copy the
+host MAY make is the one that transfers ownership of the finished bytes out of a reused buffer,
+because a later encode overwrites that buffer.
+
+This governs only how the bytes are produced. Which bytes they are is settled by the existing
+edge-output requirement and does not change: the same value encodes to the same bytes before and
+after.
+
+Reuse makes the buffer shared mutable state for the duration of one encode. A host SHALL
+therefore guarantee that an encode nested inside another encode on the same thread does not
+share its buffer, either by construction or by detecting the nesting and refusing it. A host
+that cannot make that guarantee SHALL allocate per value instead, and its spec SHALL say so.
+
+A host whose encoder already hands back the finished bytes, with nothing layered on top,
+satisfies this requirement as written and needs no buffer of its own. A host that does not
+encode on the hop at all, because it owns its core and passes the value itself, is outside this
+requirement.
+
+#### Scenario: Two encodes on one thread return independent bytes
+
+- **WHEN** one host thread encodes value A and then value B through the same codec, and both
+  returned byte sequences are read after the second encode completes
+- **THEN** A's bytes SHALL still be A's bytes, unchanged by the encode of B
+
+#### Scenario: The bytes are the same as before the buffer was reused
+
+- **WHEN** the same value is encoded by a host that reuses its buffer and by one that allocates
+  per value
+- **THEN** the two byte sequences SHALL be identical, so no journal, replay or cross-SDK
+  fixture changes meaning
+
+#### Scenario: A host that layers nothing on its encoder adds no buffer
+
+- **WHEN** a host's encoder returns the finished bytes directly, as MessagePack and JSON
+  encoders in the Python and PHP SDKs do
+- **THEN** that host SHALL hand those bytes over unchanged and SHALL NOT introduce a buffer, a
+  copy or a conversion to satisfy this requirement
+

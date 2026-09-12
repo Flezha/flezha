@@ -66,7 +66,7 @@ module Flezha
       end
 
       codec = definition.change_codec
-      @changes << (codec ? codec.encode(change) : Codec.encode(change)).b
+      @changes << (codec ? codec.encode(change).b : Codec.encode(change))
       # Fold it live through the same method the restore fold uses, so the live
       # path and the replay path cannot drift. `apply_change` mutates the state
       # in place and its answer is ignored — the same contract Rust's
@@ -129,7 +129,7 @@ module Flezha
       # issue it twice, and a timer must — a timer is internal state.
       return "skipped_on_replay" if @replay
 
-      @bridge.spawn_workflow(instance_id, factory_id, Codec.encode(payload).b, if_running.to_s)
+      @bridge.spawn_workflow(instance_id, factory_id, Codec.encode(payload), if_running.to_s)
     end
 
     # The effect record for this item, as the core folds it.
@@ -167,7 +167,7 @@ module Flezha
       payload = Codec.encode(value)
       {
         target: "edge", channel: channel.index, consumer: edge.procedure,
-        plugin_channel: nil, key: nil, event_time: nil, metadata: [], payload: payload.b
+        plugin_channel: nil, key: nil, event_time: nil, metadata: [], payload: payload
       }
     end
 
@@ -189,7 +189,7 @@ module Flezha
         key: resolved,
         event_time: definition.event_time? ? definition.event_time_of(transformed) : nil,
         metadata: meta_list(metadata),
-        payload: payload.b
+        payload: payload
       }
     end
 
@@ -205,10 +205,13 @@ module Flezha
 
       pairs = meta_list(metadata)
       stamp_identity(pairs, channel, resolved)
-      payload = channel.sink_encode ? channel.sink_encode.call(value) : Codec.encode(value)
+      # A user serializer's string carries whatever encoding the user gave it,
+      # so that one is copied into bytes; MessagePack already hands back
+      # ASCII-8BIT, and `String#b` copies it even when the encoding matches.
+      payload = channel.sink_encode ? channel.sink_encode.call(value).b : Codec.encode(value)
       {
         target: "plugin", channel: nil, consumer: nil, plugin_channel: channel.name,
-        key: resolved, event_time: nil, metadata: pairs, payload: payload.b
+        key: resolved, event_time: nil, metadata: pairs, payload: payload
       }
     end
 
@@ -260,7 +263,7 @@ module Flezha
 
     # Emit one output payload. Best-effort and at-least-once.
     def emit(value)
-      @native.workflow_emit(@instance_id, Codec.encode(value).b)
+      @native.workflow_emit(@instance_id, Codec.encode(value))
       nil
     end
 

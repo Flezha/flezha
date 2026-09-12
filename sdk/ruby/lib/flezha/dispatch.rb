@@ -253,7 +253,7 @@ module Flezha
       codec = node.definition.state_codec
       state = registered.state_of(node, activation[:entity_key])
       { token: activation[:token], outcome: "snapshot",
-        state: (codec ? codec.encode(state) : Codec.encode(state)).b }
+        state: (codec ? codec.encode(state).b : Codec.encode(state)) }
     end
 
     def prepare(activation, registered)
@@ -310,7 +310,7 @@ module Flezha
       {
         token: activation[:token], outcome: "workflow_done",
         workflow_completed: completed,
-        workflow_result: Codec.encode(ctx.completed? ? ctx.result : returned).b
+        workflow_result: Codec.encode(ctx.completed? ? ctx.result : returned)
       }
     end
 

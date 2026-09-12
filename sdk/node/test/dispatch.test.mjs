@@ -608,6 +608,23 @@ test('a structured workflow releases one untransformed edge output per emit', as
   assert.equal(outputs[0].eventTime, undefined);
 });
 
+test("an edge payload is the encoder's own bytes, with nothing layered on top", async () => {
+  const result = await answer(
+    activationFor('wf_emit_stream')({ items: [inputItem(10)] }),
+    depsFor(StreamTwinSpec),
+  );
+  const outputs = result.effects[0].outputs;
+  for (const output of outputs) {
+    assert.ok(output.payload instanceof Uint8Array);
+    assert.equal(
+      Buffer.isBuffer(output.payload),
+      false,
+      "msgpack's own bytes were copied into a Buffer on the way to the core",
+    );
+  }
+  assert.deepEqual(outputs[1].payload, encodeValue(10));
+});
+
 test('the same graph on a stream class releases one output per consumer', async () => {
   const result = await answer(
     activationFor('wf_emit_stream')({ items: [inputItem(10)] }),

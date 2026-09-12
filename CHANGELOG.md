@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed: a host SDK reuses its encode buffer instead of allocating one per value
+
+Every value crossing between two procedures is encoded to bytes, because the
+core owns the queue between them and cannot hold a JVM or a JavaScript object.
+The encode is unavoidable; the work three SDKs piled on top of it was not.
+
+The Java SDK's `KryoCodec` kept a fresh `ByteArrayOutputStream`, a fresh
+`Output` and a fresh `Input` for every value. It now keeps one growable buffer
+and one reader per thread. Measured in isolation, a 40-byte `String` round trip
+went from 424 ns to 136 ns and a `Double` from 364 ns to 49 ns. The Node and
+Ruby SDKs stopped copying bytes their own encoder had already finished. The
+Python and PHP SDKs never did, and needed no change.
+
+The same values encode to the same bytes, so nothing on disk or on the wire
+moves.
+
+**Breaking for a custom Kryo serializer that calls back into `KryoCodec`.** One
+buffer per thread is shared for the duration of one call, so a serializer that
+re-enters the codec would write into the buffer it is nested inside. Both
+directions now refuse, naming the type. An encode nested inside an encode
+produced silently wrong bytes before and is no loss. A **decode nested inside a
+decode worked** before this change and no longer does: it would re-point the one
+`Input` the outer decode is mid-read of. Give the nested value a `KryoCodec` of
+its own. A decode nested inside an *encode* is unaffected — those are different
+buffers — and a test pins that it stays working.
+
 ### Changed: one plugin `channel` option, one meaning in both directions
 
 **Breaking for websocket plugins that filter their output with `channel`.** The

@@ -421,6 +421,34 @@ def test_a_structured_workflow_releases_one_untransformed_edge_output(
     assert effect["outputs"][0]["event_time"] is None
 
 
+def test_an_edge_payload_is_the_encoders_own_bytes(
+    fake_core: FakeCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MessagePack hands back finished bytes, so nothing is layered on them.
+
+    The requirement this arms says a host whose encoder returns the bytes
+    already satisfies it by doing nothing; a copy or a conversion introduced
+    here would be exactly what it forbids.
+    """
+    produced: list[bytes] = []
+    encode = codec.encode
+
+    def recording(value: Any) -> bytes:
+        made = encode(value)
+        produced.append(made)
+        return made
+
+    monkeypatch.setattr(codec, "encode", recording)
+    deps = deps_for(_wf_emit_stream, fake_core)
+    (effect,) = answered(work_activation(43, 10, factory="wf_emit_stream"), deps)["effects"]
+
+    assert len(effect["outputs"]) == 3
+    for output in effect["outputs"]:
+        assert any(made is output["payload"] for made in produced), (
+            "the frame carries a copy of the bytes MessagePack returned, not the bytes"
+        )
+
+
 def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer(
     fake_core: FakeCore,
 ) -> None:

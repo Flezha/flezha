@@ -15,7 +15,7 @@
  */
 import { Registry, dispatch, dispatchDeps } from './dispatch.js';
 import { toHostClassDecl, validate } from './graph.js';
-import { loadNative, type Native, type NativeOutput } from './native.js';
+import { loadNative, type CoreOutput, type Native } from './native.js';
 import { ACTIVATION_SCHEMA_VERSION, workflowContext } from './runner.js';
 import type { ClassSpec } from './authoring.js';
 
@@ -87,7 +87,7 @@ export class LocalOperative {
   }
 
   /** Feed one value's wire bytes to a declared entry channel. */
-  async feed(channel: string, payload: Buffer | string): Promise<this> {
+  async feed(channel: string, payload: Uint8Array | string): Promise<this> {
     await this.#native.localFeed(
       channel,
       typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload,
@@ -131,7 +131,7 @@ export class LocalOperative {
   /** One released value per pass, handed to whoever registered its channel. */
   async #drain(): Promise<void> {
     while (!this.#closed) {
-      let output: NativeOutput | null;
+      let output: CoreOutput | null;
       try {
         output = await this.#native.localNextOutput(OUTPUT_POLL_MS);
       } catch {
@@ -144,7 +144,7 @@ export class LocalOperative {
     }
   }
 
-  #deliver(output: NativeOutput): void {
+  #deliver(output: CoreOutput): void {
     if (output.target !== 'plugin' || output.pluginChannel === undefined) {
       // The core queues what a sink released and nothing else; an edge output
       // is an in-process mailbox push that never leaves.

@@ -103,7 +103,7 @@ export function workflowContext(native: Native, instanceId: string): WorkflowSes
   return {
     instanceId,
     emit(value: unknown) {
-      native.workflowEmit(instanceId, Buffer.from(encodeValue(value)));
+      native.workflowEmit(instanceId, encodeValue(value));
     },
     async recv(timeoutMs = DEFAULT_RECV_TIMEOUT_MS) {
       const payload = await native.workflowRecv(instanceId, timeoutMs);

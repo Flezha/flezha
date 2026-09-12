@@ -410,6 +410,20 @@ class DispatchTest < Minitest::Test
     assert_nil outputs[0][:event_time]
   end
 
+  def test_an_edge_payload_is_the_encoders_own_string
+    produced = []
+    encode = Flezha::Codec.method(:encode)
+    outputs = Flezha::Codec.stub(:encode, ->(value) { encode.call(value).tap { produced << _1 } }) do
+      emit_arm_outputs(WfEmitStreamOperative, "wf_emit_stream")
+    end
+
+    outputs.each do |output|
+      assert_equal Encoding::ASCII_8BIT, output[:payload].encoding
+      assert produced.any? { _1.equal?(output[:payload]) },
+             "the frame carries a copy of what MessagePack returned, not the string itself"
+    end
+  end
+
   def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer
     outputs = emit_arm_outputs(WfEmitStreamOperative, "wf_emit_stream")
 

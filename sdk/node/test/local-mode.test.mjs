@@ -108,6 +108,29 @@ test('a declared graph runs locally and releases the recorded output', async () 
   }
 });
 
+test('the core reads a payload view, at its own offset, exactly as it reads a Buffer', async () => {
+  // What the host hands the core is no longer copied into a `Buffer` first, so
+  // the reader has to honour a view's `byteOffset` and `byteLength` rather than
+  // read its backing store from the start. A wrong reader answers the padding.
+  const line = 'alpha beta alpha';
+  const padded = Buffer.concat([bytes('PAD'), bytes(line), bytes('TAIL')]);
+  const view = new Uint8Array(padded.buffer, padded.byteOffset + 3, line.length);
+  assert.notEqual(view.byteOffset, 0, 'the fixture is only a test while the view is offset');
+
+  for (const payload of [view, bytes(line), line]) {
+    const released = [];
+    const run = LocalOperative.start(WordCount);
+    try {
+      run.onSink('totals', (output) => released.push(utf8(output.payload)));
+      await run.feed('lines', payload);
+      await run.runUntilIdle(20_000);
+    } finally {
+      await run.close();
+    }
+    assert.deepEqual(released.sort(), ['alpha 1', 'alpha 2', 'beta 1']);
+  }
+});
+
 test('a channel the class does not declare is refused by name', async () => {
   const run = LocalOperative.start(WordCount);
   try {
