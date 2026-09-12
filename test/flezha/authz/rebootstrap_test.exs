@@ -107,6 +107,33 @@ defmodule Flezha.AuthZ.RebootstrapTest do
   end
 
   describe "recovery against a RUNNING controller (§6.2)" do
+    test "an admin holding other roles in _system is removed whole" do
+      {lost_principal, _lost_token} = claim_bootstrap!()
+      :ok = RoleStore.bind(lost_principal, "_system", :operator)
+      assert {:ok, %{roles: [:operator, :admin]}} = RoleStore.lookup(lost_principal)
+
+      written = write_bootstrap_token_as_operator!()
+
+      capture_log(fn ->
+        assert {:ok, _} = Bootstrap.claim(written, principal: "recovered-admin")
+      end)
+
+      assert :error = RoleStore.lookup(lost_principal)
+    end
+
+    test "a claim leaves its principal holding exactly admin in _system" do
+      {_principal, _} = claim_bootstrap!()
+      :ok = RoleStore.bind("claimant", "team-a", :operator)
+
+      written = write_bootstrap_token_as_operator!()
+
+      capture_log(fn ->
+        assert {:ok, _} = Bootstrap.claim(written, principal: "claimant")
+      end)
+
+      assert {:ok, %{namespace: "_system", roles: [:admin]}} = RoleStore.lookup("claimant")
+    end
+
     test "the claim succeeds once, replaces the admin, and records the recovery" do
       {lost_principal, lost_token} = claim_bootstrap!()
       since = System.monotonic_time(:microsecond)
@@ -127,7 +154,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
       # The previous admin authorizes nothing, and exactly one admin survives.
       assert :error = RoleStore.lookup(lost_principal)
       assert {:error, :token_revoked} = TokenStore.verify(lost_token)
-      assert {:ok, %{namespace: "_system", role: :admin}} = RoleStore.lookup("recovered-admin")
+      assert {:ok, %{namespace: "_system", roles: [:admin]}} = RoleStore.lookup("recovered-admin")
       assert AuthState.enabled?()
 
       # Once: the file is unlinked, so a second claim of the same value is

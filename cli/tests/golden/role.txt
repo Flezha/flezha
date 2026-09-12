@@ -4,9 +4,12 @@ USAGE:
     flz role <COMMAND>
 
 COMMANDS:
-    bind <principal> <role> <namespace>   Bind a principal to a role in a namespace
-    unbind <principal>                    Remove a principal's binding
+    bind <principal> <role> <namespace>   Add a role to a principal in its namespace
+    unbind <principal> [<role>]           Remove one role, or every role when none is named
     list                                  List bindings visible to the caller
     help                                  Show this help message
+
+A principal holds a set of roles in one namespace, and an action is allowed
+when any of them grants it. A bind naming another namespace is refused.
 
 Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

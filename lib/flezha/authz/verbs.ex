@@ -91,7 +91,8 @@ defmodule Flezha.AuthZ.Verbs do
       action: :"authz.role_unbind",
       scope: {:row, :namespace},
       audit: {:after, :namespace_service},
-      target: [:subject]
+      # An empty role in the record means the principal's whole binding.
+      target: [:subject, :role]
     ],
     role_list: [action: :"authz.role_list", scope: :caller],
     namespace_create: [

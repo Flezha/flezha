@@ -141,7 +141,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
   test "a spawner may not stop an operative or enable or disable a plugin" do
     :ok = RoleStore.bind(@principal, @ns, :spawner)
-    assert Session.runner_caller_context(@ns).role == :spawner
+    assert Session.runner_caller_context(@ns).roles == [:spawner]
 
     for {verb, args} <- [
           {"Operative.stop", ~s(["o1"])},

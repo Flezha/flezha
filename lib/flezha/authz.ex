@@ -30,10 +30,17 @@ defmodule Flezha.AuthZ do
   eval over distribution, which the provisioned release cookie gates —
   the same trust boundary as node ownership.
 
-  An `:sdk` context's namespace is the one its connection proved and its role
-  is resolved from `RoleStore` per call, so an operator grants and revokes a
+  An `:sdk` context's namespace is the one its connection proved and its roles
+  are resolved from `RoleStore` per call, so an operator grants and revokes a
   namespace's applications without touching the connection. See
   `Flezha.Runner.FleetManager.Session.runner_caller_context/1`.
+
+  ## What a caller is judged with
+
+  An identity holds a SET of roles, and an action is allowed when any of them
+  grants it. `held_roles/1` answers the set, in the one order every caller kind
+  is resolved in: an internal caller, then a credential's own role, then a
+  connection's stamped set, then the store's set for the principal.
   """
 
   alias Flezha.AuthZ.Action
@@ -47,6 +54,7 @@ defmodule Flezha.AuthZ do
           optional(:principal) => Principal.t(),
           optional(:namespace) => binary() | nil,
           optional(:role) => atom() | nil,
+          optional(:roles) => [atom()] | nil,
           optional(:request_id) => binary() | nil
         }
 
@@ -171,9 +179,9 @@ defmodule Flezha.AuthZ do
     with :ok <- validate_action(action),
          :ok <- Scope.validate(scope),
          :ok <- check_principal_bound(caller_context, action, scope),
-         {:ok, role, bound_namespace} <- resolve_role(caller_context, action, scope),
-         :ok <- check_role_grants(role, action, caller_context, scope) do
-      check_namespace_scope(role, bound_namespace, action, caller_context, scope)
+         {:ok, held} <- resolve_roles(caller_context, action, scope),
+         {:ok, granting} <- check_role_grants(held, action, caller_context, scope) do
+      check_namespace_scope(held, granting, action, caller_context, scope)
     end
   end
 
@@ -206,67 +214,88 @@ defmodule Flezha.AuthZ do
     {:error, {:forbidden, :principal_not_bound}}
   end
 
-  # Internal source uses :admin@_system as its effective binding;
-  # this is safe because :internal can only be supplied by code
-  # paths inside the BEAM, not the wire.
-  defp resolve_role(%{source: :internal}, _action, _scope) do
-    {:ok, :admin, Namespace.system_name()}
-  end
+  @doc """
+  The roles a caller is judged with, and the namespace they are held in.
 
-  defp resolve_role(ctx, action, scope) do
-    # Prefer the role/namespace bound on the caller_context by the
-    # authentication layer; fall back to the role store keyed on
-    # the principal.
-    case {Map.get(ctx, :role), Map.get(ctx, :namespace)} do
-      {role, ns} when is_atom(role) and role != nil and is_binary(ns) ->
-        {:ok, role, ns}
+  In order: an internal caller is `admin` in `_system`; a credential's own role
+  is the WHOLE of that caller's authority, whatever the store holds for its
+  principal; a connection's stamped set is that set; otherwise the store's set
+  for the principal. `:error` when the principal holds none.
 
-      _ ->
-        principal = Map.get(ctx, :principal)
+  Public because the audit reads the same answer the judgment used.
+  """
+  @spec held_roles(caller_context()) :: {:ok, [atom(), ...], binary()} | :error
+  def held_roles(%{source: :internal}), do: {:ok, [:admin], Namespace.system_name()}
 
-        case RoleStore.lookup(principal) do
-          {:ok, %{role: role, namespace: ns}} ->
-            {:ok, role, ns}
+  def held_roles(%{role: role, namespace: ns})
+      when is_atom(role) and role != nil and is_binary(ns),
+      do: {:ok, [role], ns}
 
-          :error ->
-            emit_denial(principal, :no_role_binding, action, scope)
-            {:error, {:forbidden, :no_role_binding}}
-        end
+  def held_roles(%{roles: [_ | _] = roles, namespace: ns}) when is_binary(ns),
+    do: {:ok, roles, ns}
+
+  def held_roles(ctx) do
+    case RoleStore.lookup(Map.get(ctx, :principal)) do
+      {:ok, %{roles: roles, namespace: ns}} -> {:ok, roles, ns}
+      :error -> :error
     end
   end
 
-  defp check_role_grants(role, action, caller_context, scope) do
-    if Policy.grants?(role, action) do
-      :ok
-    else
-      emit_denial(Map.get(caller_context, :principal), :role_insufficient, action, scope)
-      {:error, {:forbidden, :role_insufficient}}
+  # What the caller was judged with, as one value: the set and the namespace it
+  # is held in always travel together, and both the decision below and the
+  # record it writes read them.
+  defp resolve_roles(caller_context, action, scope) do
+    case held_roles(caller_context) do
+      {:ok, roles, bound_ns} ->
+        {:ok, %{roles: roles, namespace: bound_ns}}
+
+      :error ->
+        principal = Map.get(caller_context, :principal)
+        emit_denial(principal, :no_role_binding, action, scope)
+        {:error, {:forbidden, :no_role_binding}}
+    end
+  end
+
+  # The roles that grant, so the namespace rule below reads `admin` from among
+  # them rather than from a single role. None granting is the refusal, and the
+  # record names the whole held set rather than the part that granted.
+  defp check_role_grants(%{roles: roles}, action, caller_context, scope) do
+    case Enum.filter(roles, &Policy.grants?(&1, action)) do
+      [] ->
+        emit_denial(Map.get(caller_context, :principal), :role_insufficient, action, scope, roles)
+        {:error, {:forbidden, :role_insufficient}}
+
+      granting ->
+        {:ok, granting}
     end
   end
 
   defp check_namespace_scope(
-         role,
-         bound_ns,
+         %{roles: roles, namespace: bound_ns},
+         granting,
          action,
          caller_context,
          %{namespace: target_ns} = scope
        ) do
+    admin? = :admin in granting
+
     cond do
       Policy.cross_namespace_admin_action?(action) ->
-        if role == :admin and Namespace.system?(bound_ns) do
+        if admin? and Namespace.system?(bound_ns) do
           :ok
         else
           # If the caller is admin on the target namespace, allow
           # mutations on its own auth state (e.g. issuing operator
           # tokens for the namespace the caller administers).
-          if role == :admin and bound_ns == target_ns do
+          if admin? and bound_ns == target_ns do
             :ok
           else
             emit_denial(
               Map.get(caller_context, :principal),
               :cross_namespace_admin_denied,
               action,
-              scope
+              scope,
+              roles
             )
 
             {:error, {:forbidden, :cross_namespace_admin_denied}}
@@ -276,7 +305,7 @@ defmodule Flezha.AuthZ do
       bound_ns == target_ns ->
         :ok
 
-      Namespace.system?(bound_ns) and role == :admin ->
+      Namespace.system?(bound_ns) and admin? ->
         # admin@_system can act on any namespace's non-auth-state
         # operator actions (e.g. list operatives cross-namespace for the
         # console). Read-only actions are also covered here.
@@ -287,14 +316,17 @@ defmodule Flezha.AuthZ do
           Map.get(caller_context, :principal),
           :namespace_mismatch,
           action,
-          scope
+          scope,
+          roles
         )
 
         {:error, {:forbidden, :namespace_mismatch}}
     end
   end
 
-  defp emit_denial(principal, reason, action, scope) do
+  # `caller_roles` is the set the refusal was judged with, and `nil` for a
+  # refusal that came before any role was resolved.
+  defp emit_denial(principal, reason, action, scope, roles \\ nil) do
     Bus.emit(
       Signal.new(%{
         kind: :event,
@@ -304,7 +336,8 @@ defmodule Flezha.AuthZ do
           principal: principal,
           reason: reason,
           action: action,
-          scope: scope
+          scope: scope,
+          caller_roles: roles
         }
       })
     )

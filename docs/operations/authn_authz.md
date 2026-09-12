@@ -311,16 +311,26 @@ session map. While the posture is not `:enforced`, every quota check passes.
 ## Role bindings
 
 Roles are a fixed enumeration: `viewer`, `app`, `operator`, `admin`, `runner`,
-`spawner`;
-the role→action map lives in `Flezha.AuthZ.Policy`. A principal holds at most
-one `(namespace, role)` binding, so cross-namespace presence means one
-principal identity per namespace.
+`spawner`, `stopper`;
+the role→action map lives in `Flezha.AuthZ.Policy`. A principal holds a SET of
+roles in ONE namespace, and an action is allowed when any role in the set grants
+it. Cross-namespace presence still means one principal identity per namespace.
 
 ```sh
-flz role bind alice operator team-orders
-flz role list
-flz role unbind alice
+flz role bind alice operator team-orders     # adds a role
+flz role bind runner@team-orders spawner team-orders
+flz role bind runner@team-orders stopper team-orders
+flz role list                                # alice  operator@team-orders
+                                             # runner@team-orders  spawner,stopper@team-orders
+flz role unbind runner@team-orders stopper   # removes one role
+flz role unbind alice                        # removes every role
 ```
+
+A bind naming a namespace other than the one the principal already holds roles
+in is refused, naming that namespace and changing nothing. Moving an identity is
+`flz role unbind <principal>`, judged in the namespace it leaves, followed by a
+bind in the new one. Unbinding the last role removes the binding, and unbinding
+a role the principal does not hold changes nothing.
 
 | Role | What it adds |
 | --- | --- |
@@ -330,19 +340,23 @@ flz role unbind alice
 | `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
 | `spawner` | runner plus the two rights a procedure's `ctx.spawn_workflow` needs in its own namespace, `operative.start` and `operative.send`, and nothing else. Those rights also open `Operative.start` and `Operative.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
+| `stopper` | runner plus `operative.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 
-`app` and `spawner` also carry `runner.connect`, because the only principal
-ever bound to either is a runner's; `operator` and `admin` do not, because an
-operator credential is not a runner. For the same reason `flz token issue`
-refuses both: a runner proves its namespace with a `runner` credential.
+`app`, `spawner` and `stopper` also carry `runner.connect`, because the only
+principal ever bound to any of them is a runner's; `operator` and `admin` do
+not, because an operator credential is not a runner. For the same reason
+`flz token issue` refuses all three: a runner proves its namespace with a
+`runner` credential, and the refusal is worked out from the connect grant
+rather than from a list of role names, so a role added to the enumeration with
+the connect is refused a credential with nothing edited here.
 
 ### An application that administers its own namespace
 
-A connected runner's role is read from the role store on every call, keyed on
-the `runner@<namespace>` principal the transport minted. Unbound, it is
+A connected runner's roles are read from the role store on every call, keyed on
+the `runner@<namespace>` principal the transport minted. Unbound, they are
 `runner`, which grants the connect and nothing else: an application is refused
 every operator action until somebody says otherwise. Saying otherwise is one
-command, once per namespace:
+command per role:
 
 ```sh
 flz role bind runner@team-orders app team-orders
@@ -358,8 +372,15 @@ record an operator's would, naming `runner@<namespace>` as the principal and
 
 A binding made for a different namespace than the one the connection proved
 grants nothing, and `flz role unbind` takes effect on the next call rather than
-the next reconnect, because the role is read per call rather than stamped at
+the next reconnect, because the roles are read per call rather than stamped at
 connect.
+
+A connection holds only those bound roles that grant `runner.connect`. So a
+runner principal bound to an operator's role (`viewer`, `operator`, `admin`)
+connects as `runner` and is refused every operator action, whatever `flz role
+list` shows for it. That is what keeps the administration surface's namespace
+and quota mutations out of reach of runner code: an identity holding `spawner`
+and `admin` connects as `spawner` alone.
 
 A namespace whose procedures spawn workflows, and that needs nothing else from
 this surface, is bound to `spawner` instead. It grants the start and the
@@ -373,6 +394,13 @@ flz role bind runner@team-orders spawner team-orders
 Those two rights are also what `Operative.start` and `Operative.send` on this
 surface are judged against, so a `spawner` namespace's application code can
 call those two as well, and no other verb that changes anything.
+
+A namespace that should also stop its own work, and still enable no plugin,
+holds both roles: the two sets combine, and nothing else does.
+
+```sh
+flz role bind runner@team-orders stopper team-orders
+```
 
 The SDK side is `docs/sdk/admin.md`.
 
@@ -388,9 +416,10 @@ Every operator verb is one row of `Flezha.AuthZ.Verbs`, and one function —
 the published service API and the runner session. A row names the action the
 policy judges, the rule that resolves the namespace it is judged in, and the
 audit it leaves. The role column is the lowest role the action is granted to;
-`admin` inherits `operator`, which inherits `viewer`; `runner` and `spawner`
-sit outside that line, as roles of a runner connection rather than of an
-operator's token. `public` rows are served to any caller; `none` rows are wire
+`admin` inherits `operator`, which inherits `viewer`; `runner`, `spawner` and
+`stopper` sit outside that line, as roles of a runner connection rather than of
+an operator's token. A caller holding several roles is granted the action when
+any one of them grants it. `public` rows are served to any caller; `none` rows are wire
 names that are not verbs.
 
 A row whose scope is a stored row's field (a DLQ entry's namespace, a
@@ -440,7 +469,7 @@ told nothing about whether the name exists.
 | `operative_info` | `operative_info` | `operative.list` | viewer | argument 1 (the namespace named) | - |
 | `operative_classes` | published surface only | `operative.list` | viewer | the caller's own namespace | - |
 | `operative_start` | `operative_start` | `operative.start` | spawner | argument 1 (the namespace named) | after on `operative_service` |
-| `operative_stop` | `operative_stop` | `operative.stop` | app | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_stop` | `operative_stop` | `operative.stop` | stopper | argument 1 (the namespace named) | after on `operative_service` |
 | `operative_scale` | `operative_scale` | `operative.scale` | operator | argument 1 (the namespace named) | after on `workflow_service` |
 | `operative_rewind` | `operative_rewind` | `operative.rewind` | operator | argument 1 (the namespace named) | after on `workflow_service` |
 | `operative_send` | `operative_send` | `operative.send` | spawner | argument 1 (the namespace named) | after on `operative_service` |
@@ -540,7 +569,12 @@ mutations, `dlq_service`, `schedule_service`, `operative_service`,
 `observability_service` and `audit_log` — in one record shape: the record's
 `name` is the verb, `metadata.action` the action it was judged as,
 `metadata.outcome` (`ok` or `error`) for a mutation, `namespace` where it was
-judged, and `caller` who asked and from which surface. Every declared source is
+judged, `metadata.caller_roles` the roles the caller was judged with (a token's
+one role, a runner connection's resolved set, or the set the store holds), and
+`caller` who asked and from which surface. An `:authorization_denied` record
+carries `caller_roles` too, with no value when the refusal came before any role
+was resolved. A record written before this key existed has none, and reads as
+one whose roles were not recorded. Every declared source is
 in the audit log's default allow-list by construction. Record shape, rotation
 and the `flz audit` verbs are in [audit_log.md](audit_log.md); the `flz audit`
 verbs carry `--token` like every other verb.
@@ -565,7 +599,7 @@ Precedence is env var > `config :flezha, :authn_authz` > default.
 ```text
 app_data/auth/               # mode 0700; DETS files are 0600
 ├── state.dets               # durable enabled (claimed) flag
-├── roles.dets               # principal → {namespace, role, bound_at, bound_by}
+├── roles.dets               # principal → {namespace, roles, role, bound_at, bound_by}
 ├── namespaces.dets          # name → {quotas, created_at, created_by}
 ├── tokens.dets              # SHA-256-hashed token registry, runner credentials included
 ├── quota_counters.dets      # per-namespace counters
@@ -630,6 +664,16 @@ connections and their credentials are untouched by a recovery: only
 the stores are additive DETS files and survive the round-trip.
 `FLEZHA_TRANSPORT_AUTH=off` restores unauthenticated QUIC. Both are node-wide
 switches, not per-namespace.
+
+**Identities holding several roles.** A `roles.dets` row is written with the set
+and, when the set has exactly one member, that one role in the field a release
+predating sets reads. So after a rollback an identity holding one role behaves
+exactly as before, and an identity holding several grants nothing there: every
+call it makes is refused `role_insufficient`, a runner connection's included,
+and nothing raises. Rebinding it with the older `flz` restores it. An identity
+holding `admin` among several roles in `_system` is not seen by the older boot
+check, which then writes a fresh `bootstrap.token`; a person's authority comes
+from tokens, which a recovery revokes anyway.
 
 ## See also
 

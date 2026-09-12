@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `app`, `operator`, `admin`, `runner`, `spawner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `app`, `operator`, `admin`, `runner`, `spawner`, `stopper`), a set of which is bound to a principal on one namespace, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
 ## Requirements
 ### Requirement: Verified-principal model
 
@@ -74,9 +74,9 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly six roles: `viewer`, `app`, `operator`, `admin`, `runner`, `spawner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. `spawner` SHALL grant `:runner.connect`, `:operative.start` and `:operative.send` on the bound namespace and nothing else: the rights a procedure-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `app` SHALL grant every action `spawner` grants. Because a runner proves its namespace with a `runner` credential, the operator surface SHALL NOT issue a credential for `app` or `spawner`, the two roles only a runner principal is bound to. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
+The system SHALL define exactly seven roles: `viewer`, `app`, `operator`, `admin`, `runner`, `spawner`, `stopper`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`, and a principal MAY hold several of these roles in its namespace, as the "An identity SHALL hold a set of roles in one namespace" requirement states. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. `spawner` SHALL grant `:runner.connect`, `:operative.start` and `:operative.send` on the bound namespace and nothing else: the rights a procedure-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `stopper` SHALL grant `:runner.connect` and `:operative.stop` on the bound namespace and nothing else: the right to stop any operative in that namespace, which authorizes the same principal's stop on the administration surface. `app` SHALL grant every action `spawner` and `stopper` grant. A role that grants `:runner.connect` is a role for a runner's principal; because a runner proves its namespace with a `runner` credential, the operator surface SHALL NOT issue a credential for any such role other than `runner` itself, which today excludes `app`, `spawner` and `stopper`, and that exclusion SHALL be derived from the grant rather than kept as a list of role names. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
 
-A runner connection's role SHALL be resolved from the role store keyed on its principal rather than stamped by the connect path. A principal with no binding, or one whose binding names a namespace other than the one the connection proved, SHALL resolve to `runner`. The resolution SHALL be read per call, so that binding or unbinding a role takes effect on the next call without a reconnect.
+A runner connection's roles SHALL be resolved from the role store keyed on its principal rather than stamped by the connect path. The connection SHALL hold every role bound to its principal in the namespace the connection proved that grants `:runner.connect`, and an action SHALL be authorized for it when any of those roles grants the action. A principal with no binding, one whose binding names a namespace other than the one the connection proved, or one none of whose bound roles grants `:runner.connect` SHALL resolve to `runner` alone; a bound role that does not grant `:runner.connect` SHALL NOT be held by a runner connection. The resolution SHALL be read per call, so that binding or unbinding a role takes effect on the next call without a reconnect.
 
 #### Scenario: Admin on team-orders cannot mutate team-payments
 - **WHEN** `admin@team-orders` invokes a service call whose `scope.namespace` is `team-payments` and whose action is `:authz.token_issue`
@@ -124,9 +124,9 @@ A runner connection's role SHALL be resolved from the role store keyed on its pr
   `:operative.send` and nothing else, and `app` SHALL grant each of them
 
 #### Scenario: A spawner binding opens neither a stop nor the plugin verbs
-- **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and the
-  application code on that connection asks to stop an operative, or to enable or
-  disable a plugin
+- **WHEN** `runner@team-orders` holds `spawner` and no other role on
+  `team-orders` and the application code on that connection asks to stop an
+  operative, or to enable or disable a plugin
 - **THEN** each call SHALL be refused with `role_insufficient`
 
 #### Scenario: A spawner starts nothing in another namespace
@@ -136,9 +136,51 @@ A runner connection's role SHALL be resolved from the role store keyed on its pr
 
 #### Scenario: No credential is issued for a runner principal's role
 - **WHEN** an operator asks `flz token issue` for a credential with the role
-  `app` or `spawner`
+  `app`, `spawner` or `stopper`
 - **THEN** the request SHALL be refused as an unknown role and no credential
   SHALL be issued
+
+#### Scenario: The issuable roles follow from the connect grant
+- **WHEN** the roles `flz token issue` accepts are enumerated
+- **THEN** they SHALL be `runner` and every role that does not grant
+  `:runner.connect`, and a role added to the enumeration with the connect SHALL
+  be refused a credential without any list of names being edited
+
+#### Scenario: The stopper grant is the connect and the stop
+- **WHEN** the stopper role's grants are enumerated
+- **THEN** they SHALL contain `:runner.connect` and `:operative.stop` and nothing
+  else, and `app` SHALL grant each of them
+
+#### Scenario: A stopper binding opens the stop and nothing else
+- **WHEN** `runner@team-orders` holds `stopper` and no other role on `team-orders`
+  and the application code on that connection asks to stop an operative there
+- **THEN** the stop SHALL be authorized, and a start, a send, and a plugin enable
+  or disable on that connection SHALL each be refused with `role_insufficient`
+
+#### Scenario: A stopper stops nothing in another namespace
+- **WHEN** `runner@team-orders` is bound to `stopper` on `team-orders` and a stop
+  is judged for that identity in `team-payments`
+- **THEN** it SHALL be refused with `namespace_mismatch`
+
+#### Scenario: Spawner and stopper combine
+- **WHEN** `runner@team-orders` is bound to `spawner` and then to `stopper` on
+  `team-orders`
+- **THEN** a start, a send and a stop by that connection in `team-orders` SHALL
+  each be authorized, and a plugin enable SHALL be refused with
+  `role_insufficient`
+
+#### Scenario: A runner connection never holds an operator's role
+- **WHEN** `runner@team-orders` is bound to `spawner` and to `admin` on
+  `team-orders`, and the application code on that connection asks to set the
+  namespace's quotas or to delete the namespace
+- **THEN** the connection SHALL hold `spawner` alone, and each call SHALL be
+  refused with `role_insufficient`
+
+#### Scenario: A runner principal bound only to an operator's role is a runner
+- **WHEN** `runner@team-orders` holds only `operator` on `team-orders` and a
+  runner connects for `team-orders`
+- **THEN** it SHALL resolve to `runner`, its connect SHALL be authorized, and
+  every operator action SHALL be refused
 
 ### Requirement: Namespace catalog
 
@@ -617,3 +659,160 @@ A rule that a different runtime enforces — the byte bound a runner id must sat
 - **WHEN** a kind of identifier is added to the system
 - **THEN** it SHALL be added as a row of the declaration, and no module SHALL gain a length constant or a name pattern of its own
 
+### Requirement: An identity SHALL hold a set of roles in one namespace
+
+The role store SHALL hold, for each principal, one namespace and a non-empty set of roles in it, and an action SHALL be authorized for a caller judged by its stored roles when any role in the set grants it, each role's grants and namespace rule being those of the role alone. Binding a role SHALL add it to the principal's set, and binding a role the principal already holds SHALL change nothing. Binding a role in a namespace other than the one the principal already holds roles in SHALL be refused, naming the namespace it is bound in, and SHALL change nothing; moving an identity is an unbind judged in the namespace it leaves followed by a bind. A caller whose credential carries a role, as a token does, SHALL be judged by that role alone, whatever the store holds for its principal, so that a token authorizes exactly what it authorized before this requirement. A bootstrap or break-glass claim SHALL leave its principal holding exactly `admin` in `_system`, whatever it held before, and a recovery SHALL remove every role of each identity that held `admin` in `_system`.
+
+#### Scenario: A second role is added, not substituted
+- **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and then to
+  `stopper` on `team-orders`
+- **THEN** its binding SHALL hold both `spawner` and `stopper` in `team-orders`
+
+#### Scenario: Binding a held role changes nothing
+- **WHEN** a principal is bound to a role it already holds in the same namespace
+- **THEN** its set, its `bound_at` and its `bound_by` SHALL be unchanged, and the
+  stored row SHALL NOT be rewritten
+
+#### Scenario: A bind in another namespace is refused
+- **WHEN** `runner@team-b` holds `app` on `team-b` and an admin of `team-a` binds
+  it to `viewer` on `team-a`
+- **THEN** the bind SHALL be refused naming `team-b`, and `runner@team-b` SHALL
+  still hold `app` on `team-b` and nothing on `team-a`
+
+#### Scenario: The policy point grants when any held role grants
+- **WHEN** a caller holds `spawner` and `stopper` in `team-orders` and asks to
+  start an operative, to stop one and to enable a plugin there, and to stop one in
+  `team-payments`
+- **THEN** the start SHALL be authorized by `spawner` and the stop by `stopper`,
+  the plugin enable SHALL be refused with `role_insufficient`, and the stop in
+  `team-payments` SHALL be refused with `namespace_mismatch`
+
+#### Scenario: A token is judged by its own role
+- **WHEN** `alice` holds `operator` on `team-orders` in the role store and presents
+  a token issued to her with the role `viewer` on `team-orders`, and asks to stop
+  an operative there
+- **THEN** the stop SHALL be refused with `role_insufficient`
+
+#### Scenario: A claim replaces the claimant's roles
+- **WHEN** the bootstrap token is claimed naming a principal that holds `operator`
+  on `team-a`
+- **THEN** that principal SHALL hold exactly `admin` in `_system` afterwards
+
+#### Scenario: A recovery removes the lost admin whole
+- **WHEN** a break-glass recovery runs while a principal holds `admin` and
+  `operator` in `_system`
+- **THEN** that principal SHALL hold no role afterwards
+
+### Requirement: `flz role` SHALL add a role, remove one role or every role, and list every role an identity holds
+
+`flz role bind <principal> <role> <namespace>` SHALL add `<role>` to the principal's roles and SHALL report the binding and the whole set it now holds. `flz role unbind <principal> <role>` SHALL remove that one role and SHALL delete the principal's binding when it removed the last one; `flz role unbind <principal>` with no role SHALL remove every role the principal holds. Both forms of unbind SHALL be idempotent and SHALL be judged in the namespace the principal is bound in, and a named role SHALL be resolved against the role enumeration so that an unknown name is refused as an unknown role. `flz role list` SHALL print one line per principal naming every role it holds and its namespace, and a principal holding one role SHALL print the line it printed before this requirement. The terminal SHALL always send the role argument of an unbind, empty when none was named, so that the controller reads the principal, the role and the options in fixed positions.
+
+#### Scenario: Unbinding one role keeps the others
+- **WHEN** `runner@team-orders` holds `spawner` and `stopper` and an admin runs
+  `flz role unbind runner@team-orders stopper`
+- **THEN** it SHALL hold `spawner` alone, and its next stop SHALL be refused
+  without a reconnect
+
+#### Scenario: Unbinding the last role removes the binding
+- **WHEN** `runner@team-orders` holds only `stopper` and an admin runs
+  `flz role unbind runner@team-orders stopper`
+- **THEN** the principal SHALL have no binding, and its connection SHALL resolve
+  to `runner`
+
+#### Scenario: Unbinding with no role removes every role
+- **WHEN** `runner@team-orders` holds `spawner` and `stopper` and an admin runs
+  `flz role unbind runner@team-orders`
+- **THEN** the principal SHALL have no binding
+
+#### Scenario: Unbinding a role not held changes nothing
+- **WHEN** an admin unbinds a role the principal does not hold
+- **THEN** the verb SHALL succeed and the principal's set SHALL be unchanged
+
+#### Scenario: The list names every role of an identity on one line
+- **WHEN** `runner@team-orders` holds `spawner` and `stopper` on `team-orders` and
+  `alice` holds `operator` on `team-orders`, and an admin runs `flz role list`
+- **THEN** the output SHALL contain the lines
+  `runner@team-orders  spawner,stopper@team-orders` and
+  `alice  operator@team-orders`
+
+#### Scenario: The terminal carries the role in the position the controller reads
+- **WHEN** `flz role unbind runner@ns spawner` and `flz role unbind runner@ns` are
+  invoked
+- **THEN** they SHALL request
+  `authz_render_role_unbind("runner@ns", "spawner", [])` and
+  `authz_render_role_unbind("runner@ns", "", [])` respectively, and
+  `flz role bind runner@ns stopper ns` SHALL request
+  `authz_render_role_bind("runner@ns", "stopper", "ns", [])`
+
+### Requirement: Role-store rows written before sets SHALL load as a set of one
+
+A `roles.dets` row in the one-role shape SHALL load as a principal holding that one role in its namespace, with no migration pass and no rewrite at boot, and SHALL be rewritten in the set shape only when that principal's roles next change. Every row the store writes SHALL carry the set, and SHALL also carry the one-role field an older release reads: the role itself when the set has exactly one member, and no role when it has several, so that an older release reads a one-role row as it always did, grants nothing from a row holding several, and raises on neither. A row matching neither shape SHALL be read as no binding.
+
+#### Scenario: A file written before sets loads as a set of one
+- **WHEN** the role store starts on a `roles.dets` written directly with the
+  one-role term `{"runner@team-orders", %{principal: "runner@team-orders",
+  namespace: "team-orders", role: :app, bound_at: _, bound_by: _}}` and an
+  `admin@_system` row in the same shape
+- **THEN** `runner@team-orders` SHALL hold `app` alone on `team-orders`, a runner
+  connection for `team-orders` SHALL hold `app`, and an `admin@_system` binding
+  SHALL be found
+
+#### Scenario: Loading rewrites nothing
+- **WHEN** the role store has started on a file of one-role rows and no role has
+  been bound or unbound
+- **THEN** every row on disk SHALL still be the term that was written before the
+  store started
+
+#### Scenario: A change to an old row writes the set shape
+- **WHEN** a principal loaded from a one-role row holding `app` is bound to
+  `stopper`
+- **THEN** its row on disk SHALL carry the set `app`, `stopper` and no one-role
+  value
+
+#### Scenario: A one-role row keeps its role for an older reader
+- **WHEN** a principal with no binding is bound to `spawner`
+- **THEN** its row on disk SHALL carry the set `spawner` and the one-role value
+  `spawner`
+
+#### Scenario: A row holding several roles names no single role
+- **WHEN** a principal holds `spawner` and `stopper`
+- **THEN** its row on disk SHALL carry the one-role field with no role in it, so
+  that a reader matching only that field grants nothing and does not raise
+
+#### Scenario: An unreadable row grants nothing
+- **WHEN** a row on disk matches neither the one-role nor the set shape
+- **THEN** its principal SHALL be read as having no binding, and a runner
+  connection for it SHALL resolve to `runner`
+
+### Requirement: An authorization record SHALL name the roles its caller was judged with
+
+Every act record the verb seam writes, and every `:authorization_denied` record, SHALL carry `metadata.caller_roles`: the roles the caller was judged with (a token's one role, a runner connection's resolved set, or the set the store holds for the principal), or no value when the refusal came before any role was resolved. The record SHALL name the set rather than a single granting role, because which held roles grant an action follows from the compile-time policy table. Every key an act record or a denial record carried before this requirement SHALL keep its name and meaning, and a record written before it, which has no `caller_roles`, SHALL be read as a record whose roles were not recorded.
+
+#### Scenario: A runner's act names its set
+- **WHEN** `runner@team-orders` holds `spawner` and `stopper` and its application
+  code stops operative `o1` through the administration surface
+- **THEN** the `stop` record on `operative_service` SHALL carry `caller_roles`
+  `["spawner", "stopper"]` beside the principal `runner@team-orders` and the
+  caller source `sdk`
+
+#### Scenario: A token's act names the token's role
+- **WHEN** an `operator` token stops an operative from `flz`
+- **THEN** the `stop` record SHALL carry `caller_roles` `["operator"]`
+
+#### Scenario: A denial names the set that did not grant
+- **WHEN** `runner@team-orders` holds `spawner` alone and its application code
+  asks to stop an operative
+- **THEN** the `:authorization_denied` record SHALL carry the reason
+  `role_insufficient` and `caller_roles` `["spawner"]`
+
+#### Scenario: A denial before resolution names no roles
+- **WHEN** a gated verb is invoked with no credential while authorization is
+  enforced
+- **THEN** the `:authorization_denied` record SHALL carry `caller_roles` with no
+  value
+
+#### Scenario: A record written before the key is read unchanged
+- **WHEN** `flz audit read` reads a file holding a record written before
+  `caller_roles` existed
+- **THEN** the record SHALL be decoded and rendered as it was before, with no
+  error

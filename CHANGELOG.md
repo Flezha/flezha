@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Added: an identity holds several roles, and a `stopper` role to combine
+
+`flz role bind <principal> <role> <namespace>` now ADDS a role instead of
+replacing the one the principal held, and an action is allowed when any role it
+holds grants it. `flz role unbind <principal> <role>` removes one role, and
+`flz role unbind <principal>` still removes every one. `flz role list` prints
+every role an identity holds on one line, which for an identity holding one role
+is the line it printed before.
+
+The new `stopper` role grants `runner.connect` and `operative.stop` in its
+namespace and nothing else, so an application bound to both `spawner` and
+`stopper` starts, sends and stops its own work and still enables no plugin:
+
+```sh
+flz role bind runner@team-orders spawner team-orders
+flz role bind runner@team-orders stopper team-orders
+```
+
+As with `app` and `spawner`, `flz token issue` issues no credential for
+`stopper`: a runner proves its namespace with a `runner` credential.
+
+Two behaviour changes come with it. A bind naming a namespace other than the one
+the principal already holds roles in is now REFUSED, naming that namespace;
+before, it moved the identity and silently dropped the role it held, which also
+let an admin of one namespace take a binding out of another. Moving an identity
+is now an unbind followed by a bind. And a runner principal bound only to an
+operator's role (`viewer`, `operator` or `admin`) now connects as `runner`;
+before, its connect was refused while a live session kept that role's rights
+until it reconnected. A connection holds only bound roles that grant
+`runner.connect`, which is what keeps the administration surface's namespace and
+quota mutations out of reach of runner code.
+
+Every act record and every authorization denial now carries
+`metadata.caller_roles`: the roles the caller was judged with, or no value when
+the refusal came before any role was resolved. No existing key changes, and a
+record written before this reads as one whose roles were not recorded.
+
+Tokens are unchanged: a caller presenting one is judged by the token's own role
+alone, whatever the store holds for its principal. Existing role bindings load
+as a set of one with no migration step.
+
 ### Fixed: the Java SDK's POM no longer pulls in the modules its jar already holds
 
 `com.flezha:flezha-sdk` is one jar that already contains `flezha-sdk-api`,

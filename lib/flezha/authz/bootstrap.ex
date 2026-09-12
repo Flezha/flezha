@@ -150,6 +150,12 @@ defmodule Flezha.AuthZ.Bootstrap do
       if RoleStore.admin_system_exists?(), do: invalidate_previous_admin("recovery-claim")
 
     with {:ok, principal, minted} <- resolve_principal(opts),
+         # A claim leaves its principal holding exactly `admin` in `_system`,
+         # whatever it held before: a break-glass claim must never be refused
+         # because the claimant already holds roles somewhere else. A crash
+         # between the two leaves it unbound, and the token file is still there
+         # to retry with.
+         :ok <- RoleStore.unbind(principal),
          :ok <- RoleStore.bind(principal, Namespace.system_name(), :admin, bound_by: principal),
          :ok <- AuthState.set_enabled() do
       _ = File.rm(path)
@@ -176,8 +182,10 @@ defmodule Flezha.AuthZ.Bootstrap do
   # "the previous admin no longer authorizes" is one rule and both paths owe it.
   defp invalidate_previous_admin(actor) do
     unbound =
-      for %{principal: principal, namespace: ns, role: :admin} <- RoleStore.list(),
+      for %{principal: principal, namespace: ns, roles: roles} <- RoleStore.list(),
+          :admin in roles,
           Namespace.system?(ns) do
+        # The whole identity: a lost admin keeps no other role either.
         :ok = RoleStore.unbind(principal)
         principal
       end

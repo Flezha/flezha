@@ -292,12 +292,15 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `:enforced`. Enforcement is the production default.
 - **Principal / role / token** — a **principal** is a verified identity string
   (`Flezha.AuthZ.Principal`); a **role** is one of `viewer`, `app`, `operator`, `admin`,
-  `runner`, `spawner` (`flz role bind|unbind|list`); a **token** is a scoped credential
-  (`flz token issue|revoke|list`) presented as `--token` or `FLEZHA_TOKEN`. See
+  `runner`, `spawner`, `stopper` (`flz role bind|unbind|list`), and an identity holds a
+  SET of roles in ONE namespace, an action being allowed when any of them grants it;
+  a **token** is a scoped credential (`flz token issue|revoke|list`) presented as
+  `--token` or `FLEZHA_TOKEN`, carrying one role and judged by that role alone. See
   [`operations/authn_authz.md`](operations/authn_authz.md).
 - **Transport-bound principal** — identity minted from the authenticated connection, never from a
   caller-supplied value: the verified token for CLI callers, `runner@<namespace>` for runner
-  connections (role `runner` until an operator binds it, to `app` or `spawner` for example).
+  connections (role `runner` until an operator binds it, to `spawner` and `stopper` for
+  example; a connection holds only bound roles that grant `runner.connect`).
   `source: :internal` is reachable only from inside the controller BEAM.
 - **Namespace claim** — the `Flezha.State.Paths` record that one operative class's durable
   state belongs to one namespace (`<state_root>/<namespace>/<class>/`): recorded at bind,

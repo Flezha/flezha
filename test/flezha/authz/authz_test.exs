@@ -121,6 +121,64 @@ defmodule Flezha.AuthZTest do
     assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("_system"))
   end
 
+  test "a stamped set grants when any role in it grants" do
+    ctx = %{
+      source: :sdk,
+      principal: "runner@team-orders",
+      namespace: "team-orders",
+      roles: [:spawner, :stopper]
+    }
+
+    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-orders"))
+
+    assert {:error, {:forbidden, :role_insufficient}} =
+             AuthZ.authorize(ctx, :"plugin.enable", Scope.build("team-orders"))
+
+    assert {:error, {:forbidden, :namespace_mismatch}} =
+             AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-payments"))
+  end
+
+  test "a stored set grants when any role in it grants" do
+    :ok = RoleStore.bind("carol", "team-orders", :spawner)
+    :ok = RoleStore.bind("carol", "team-orders", :stopper)
+    ctx = %{source: :cli, principal: "carol"}
+
+    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-orders"))
+
+    assert {:error, {:forbidden, :role_insufficient}} =
+             AuthZ.authorize(ctx, :"plugin.enable", Scope.build("team-orders"))
+  end
+
+  test "a credential's role is the whole of the caller's authority" do
+    # `alice` is an operator in the store and presents a viewer token: the
+    # token's role alone is judged, so the stop is refused.
+    :ok = RoleStore.bind("alice", "team-orders", :operator)
+    ctx = %{source: :cli, principal: "alice", role: :viewer, namespace: "team-orders"}
+
+    assert {:error, {:forbidden, :role_insufficient}} =
+             AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-orders"))
+  end
+
+  test "held_roles/1 answers what each kind of caller is judged with" do
+    :ok = RoleStore.bind("carol", "team-orders", :spawner)
+    :ok = RoleStore.bind("carol", "team-orders", :stopper)
+
+    assert AuthZ.held_roles(%{source: :internal}) == {:ok, [:admin], "_system"}
+
+    assert AuthZ.held_roles(%{source: :cli, principal: "x", role: :viewer, namespace: "ns"}) ==
+             {:ok, [:viewer], "ns"}
+
+    assert AuthZ.held_roles(%{source: :sdk, principal: "x", roles: [:spawner], namespace: "ns"}) ==
+             {:ok, [:spawner], "ns"}
+
+    assert AuthZ.held_roles(%{source: :cli, principal: "carol"}) ==
+             {:ok, [:spawner, :stopper], "team-orders"}
+
+    assert AuthZ.held_roles(%{source: :cli, principal: "nobody"}) == :error
+  end
+
   test "unclaimed enforcement is :bootstrap_pending; only the config opt-out is open" do
     :ok = AuthState.reset()
     refute AuthZ.enabled?()

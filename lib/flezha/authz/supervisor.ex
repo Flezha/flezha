@@ -5,7 +5,7 @@ defmodule Flezha.AuthZ.Supervisor do
   Children, in start order:
 
     1. `Flezha.AuthZ.AuthState` — durable `:enabled` flag.
-    2. `Flezha.AuthZ.RoleStore` — principal → {namespace, role}.
+    2. `Flezha.AuthZ.RoleStore` — principal → {namespace, roles}.
     3. `Flezha.AuthZ.NamespaceStore` — namespace catalog + quotas.
     4. `Flezha.AuthZ.TokenStore` — scoped-token registry.
     5. `Flezha.AuthZ.SourceRegistration` — one-shot worker that

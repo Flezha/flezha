@@ -44,7 +44,7 @@ defmodule Flezha.Service.CliManager do
 
   verb authz_render_role_list(opts \\ []), to: Cli.Authz, verb: :role_list
 
-  verb authz_render_role_unbind(principal, opts \\ []),
+  verb authz_render_role_unbind(principal, role \\ "", opts \\ []),
     to: Cli.Authz,
     verb: :role_unbind,
     row: &Cli.Authz.binding_row/1

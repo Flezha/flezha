@@ -485,6 +485,21 @@ const CASES: &[(&[&str], Want)] = &[
         Rpc("Flezha.Service.CliManager.authz_render_role_bind(\"runner@ns\", \"app\", \"ns\", [])"),
     ),
     (
+        &["role", "bind", "runner@ns", "stopper", "ns"],
+        Rpc("Flezha.Service.CliManager.authz_render_role_bind(\"runner@ns\", \"stopper\", \"ns\", [])"),
+    ),
+    // The role an unbind names is optional, and the terminal always sends the
+    // slot, so the controller reads principal, role and options in fixed
+    // positions.
+    (
+        &["role", "unbind", "runner@ns", "spawner"],
+        Rpc("Flezha.Service.CliManager.authz_render_role_unbind(\"runner@ns\", \"spawner\", [])"),
+    ),
+    (
+        &["role", "unbind", "runner@ns"],
+        Rpc("Flezha.Service.CliManager.authz_render_role_unbind(\"runner@ns\", \"\", [])"),
+    ),
+    (
         &["controller", "stop", "--timeout-ms", "abc"],
         Refused("invalid --timeout-ms value 'abc'"),
     ),

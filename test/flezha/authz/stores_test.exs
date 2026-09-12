@@ -13,7 +13,48 @@ defmodule Flezha.AuthZ.StoresTest do
     async: false
 
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.Layout.Table, as: Layout
+  alias Flezha.Runner.FleetManager.Session
   alias FlezhaTest.Helper.NodeTestHelper
+
+  @ns "team-orders"
+  @runner "runner@team-orders"
+
+  # The literal term the store wrote before it held sets, so the compatibility
+  # test reads a file an older release produced rather than one this code made.
+  defp old_row(principal, namespace, role) do
+    %{
+      principal: principal,
+      namespace: namespace,
+      role: role,
+      bound_at: 1_757_000_000,
+      bound_by: "admin-x"
+    }
+  end
+
+  defp seed_old_rows! do
+    seed_rows!([
+      {@runner, old_row(@runner, @ns, :app)},
+      {"admin@_system", old_row("admin@_system", "_system", :admin)}
+    ])
+  end
+
+  # Written with `:dets` directly, before the store opens the file.
+  defp seed_rows!(rows) do
+    path = Layout.file(:auth, "roles.dets")
+    File.mkdir_p!(Path.dirname(path))
+
+    {:ok, table} =
+      :dets.open_file(:flz_authz_roles_seed, type: :set, file: String.to_charlist(path))
+
+    Enum.each(rows, &:dets.insert(table, &1))
+    :ok = :dets.close(table)
+  end
+
+  defp stored_row(principal) do
+    [{^principal, value}] = :dets.lookup(:flz_authz_roles, principal)
+    value
+  end
 
   describe "AuthState" do
     test "starts disabled by default and flips durably" do
@@ -35,7 +76,7 @@ defmodule Flezha.AuthZ.StoresTest do
 
       :ok = RoleStore.bind("alice", "_system", :admin, bound_by: "bootstrap")
 
-      assert {:ok, %{principal: "alice", namespace: "_system", role: :admin}} =
+      assert {:ok, %{principal: "alice", namespace: "_system", roles: [:admin]}} =
                RoleStore.lookup("alice")
 
       assert RoleStore.admin_system_exists?()
@@ -50,12 +91,118 @@ defmodule Flezha.AuthZ.StoresTest do
       :ok = GenServer.stop(pid)
 
       {:ok, _} = RoleStore.start_link([])
-      assert {:ok, %{role: :operator}} = RoleStore.lookup("bob")
+      assert {:ok, %{roles: [:operator]}} = RoleStore.lookup("bob")
     end
 
     test "rejects invalid role" do
       {:ok, _} = RoleStore.start_link([])
       assert {:error, :unknown_role} = RoleStore.bind("eve", "_system", :superuser)
+    end
+
+    test "a second bind adds a role rather than replacing the first" do
+      {:ok, _} = RoleStore.start_link([])
+      :ok = RoleStore.bind(@runner, @ns, :stopper)
+      :ok = RoleStore.bind(@runner, @ns, :spawner)
+
+      assert {:ok, %{namespace: @ns, roles: [:spawner, :stopper]}} = RoleStore.lookup(@runner)
+    end
+
+    test "binding a role already held rewrites nothing" do
+      {:ok, _} = RoleStore.start_link([])
+      :ok = RoleStore.bind(@runner, @ns, :spawner, bound_by: "admin-1")
+      {:ok, first} = RoleStore.lookup(@runner)
+
+      :ok = RoleStore.bind(@runner, @ns, :spawner, bound_by: "admin-2")
+
+      assert {:ok, ^first} = RoleStore.lookup(@runner)
+      assert first.bound_by == "admin-1"
+    end
+
+    test "a bind in another namespace is refused naming the one it holds" do
+      {:ok, _} = RoleStore.start_link([])
+      :ok = RoleStore.bind(@runner, @ns, :app)
+
+      assert {:error, {:bound_elsewhere, @ns}} = RoleStore.bind(@runner, "team-payments", :viewer)
+      assert {:ok, %{namespace: @ns, roles: [:app]}} = RoleStore.lookup(@runner)
+    end
+
+    test "unbinding one role keeps the others, and the last removes the binding" do
+      {:ok, _} = RoleStore.start_link([])
+      :ok = RoleStore.bind(@runner, @ns, :spawner)
+      :ok = RoleStore.bind(@runner, @ns, :stopper)
+
+      assert :ok = RoleStore.unbind(@runner, :stopper)
+      assert {:ok, %{roles: [:spawner]}} = RoleStore.lookup(@runner)
+
+      # A role the principal does not hold changes nothing.
+      assert :ok = RoleStore.unbind(@runner, :stopper)
+      assert {:ok, %{roles: [:spawner]}} = RoleStore.lookup(@runner)
+
+      assert :ok = RoleStore.unbind(@runner, :spawner)
+      assert :error = RoleStore.lookup(@runner)
+    end
+
+    test "unbinding with no role removes every role" do
+      {:ok, _} = RoleStore.start_link([])
+      :ok = RoleStore.bind(@runner, @ns, :spawner)
+      :ok = RoleStore.bind(@runner, @ns, :stopper)
+
+      assert :ok = RoleStore.unbind(@runner)
+      assert :error = RoleStore.lookup(@runner)
+    end
+
+    test "the stored term carries the set and the one-role field an older release reads" do
+      {:ok, _} = RoleStore.start_link([])
+      :ok = RoleStore.bind(@runner, @ns, :spawner)
+
+      assert %{roles: [:spawner], role: :spawner} = stored_row(@runner)
+
+      :ok = RoleStore.bind(@runner, @ns, :stopper)
+
+      assert %{roles: [:spawner, :stopper], role: nil} = stored_row(@runner)
+    end
+
+    test "a file written before sets loads as a set of one and is not rewritten" do
+      seed_old_rows!()
+      {:ok, _} = RoleStore.start_link([])
+
+      assert {:ok, %{namespace: @ns, roles: [:app], bound_at: 1_757_000_000, bound_by: "admin-x"}} =
+               RoleStore.lookup(@runner)
+
+      assert RoleStore.admin_system_exists?()
+      assert Session.runner_caller_context(@ns).roles == [:app]
+
+      # Nothing was rewritten by the load itself.
+      assert stored_row(@runner) == old_row(@runner, @ns, :app)
+      assert stored_row("admin@_system") == old_row("admin@_system", "_system", :admin)
+
+      # The first change to the identity writes the new shape.
+      :ok = RoleStore.bind(@runner, @ns, :stopper)
+      assert %{roles: [:app, :stopper], role: nil} = stored_row(@runner)
+    end
+
+    test "a row this release cannot read grants nothing" do
+      seed_rows!([{@runner, %{principal: @runner}}])
+      {:ok, _} = RoleStore.start_link([])
+
+      assert :error = RoleStore.lookup(@runner)
+      assert RoleStore.list() == []
+      assert Session.runner_caller_context(@ns).roles == [:runner]
+    end
+
+    test "runner_roles/2 keeps only the roles that grant the connect" do
+      {:ok, _} = RoleStore.start_link([])
+
+      assert RoleStore.runner_roles(@runner, @ns) == [:runner]
+
+      :ok = RoleStore.bind(@runner, @ns, :spawner)
+      :ok = RoleStore.bind(@runner, @ns, :admin)
+      assert RoleStore.runner_roles(@runner, @ns) == [:spawner]
+
+      # A binding in another namespace, and a set with no connect at all.
+      assert RoleStore.runner_roles(@runner, "team-payments") == [:runner]
+      :ok = RoleStore.unbind(@runner, :spawner)
+      assert RoleStore.runner_roles(@runner, @ns) == [:runner]
     end
   end
 

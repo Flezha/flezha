@@ -197,6 +197,26 @@ defmodule Flezha.AuthZ.EnforcementTest do
                )
 
       assert signal.metadata.reason == :principal_not_bound
+      assert signal.metadata.caller_roles == nil
+    end
+
+    test "a denial after resolution names the set that did not grant" do
+      claim!()
+      :ok = RoleStore.bind("viewer-1", "_system", :viewer)
+      boundary = System.monotonic_time(:microsecond)
+
+      assert {:error, {:forbidden, :role_insufficient}} =
+               AuthZ.authorize(
+                 %{source: :cli, principal: "viewer-1"},
+                 :"state.delete",
+                 Scope.build("_system")
+               )
+
+      assert [signal | _] =
+               AuthTestHelper.await_platform_authz_events(:authorization_denied, boundary)
+
+      assert signal.metadata.reason == :role_insufficient
+      assert signal.metadata.caller_roles == [:viewer]
     end
   end
 end

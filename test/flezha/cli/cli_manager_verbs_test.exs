@@ -452,6 +452,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, Config, RoleStore, TokenStore}
+  alias Flezha.Observability.{RingBufferSink, TestSinks}
 
   alias Flezha.Service.CliManager
 
@@ -535,7 +536,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     assert {:error, :token_revoked} = TokenStore.verify(carol_token)
 
     # `flz role unbind` + `flz namespace delete` close the loop.
-    capture_io(fn -> CliManager.authz_render_role_unbind("carol", token: admin_token) end)
+    capture_io(fn -> CliManager.authz_render_role_unbind("carol", "", token: admin_token) end)
 
     delete_out =
       capture_io(fn ->
@@ -559,7 +560,151 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     assert out =~ "unknown_role"
   end
 
-  for role <- [:app, :spawner] do
+  describe "the role surface carries a set" do
+    setup do
+      :ok = AuthState.set_enabled()
+      {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
+      %{admin: admin}
+    end
+
+    test "a bind reports the whole set the identity now holds", %{admin: admin} do
+      bind = fn role ->
+        capture_io(fn ->
+          CliManager.authz_render_role_bind("runner@render-ns", role, "render-ns", token: admin)
+        end)
+      end
+
+      assert bind.("spawner") =~ "bound runner@render-ns as spawner@render-ns"
+      out = bind.("stopper")
+      assert out =~ "bound runner@render-ns as stopper@render-ns"
+      assert out =~ "runner@render-ns  spawner,stopper@render-ns"
+    end
+
+    test "a bind in another namespace is refused naming the one it holds", %{admin: admin} do
+      capture_io(fn ->
+        CliManager.authz_render_role_bind("runner@render-ns", "app", "render-ns", token: admin)
+      end)
+
+      out =
+        capture_io(:stderr, fn ->
+          assert catch_exit(
+                   CliManager.authz_render_role_bind("runner@render-ns", "viewer", "_system",
+                     token: admin
+                   )
+                 ) == {:shutdown, 1}
+        end)
+
+      assert out =~ "render-ns"
+
+      assert {:ok, %{roles: [:app], namespace: "render-ns"}} =
+               RoleStore.lookup("runner@render-ns")
+    end
+
+    test "unbind takes one role, the last role, or every role", %{admin: admin} do
+      for role <- ["spawner", "stopper"] do
+        capture_io(fn ->
+          CliManager.authz_render_role_bind("runner@render-ns", role, "render-ns", token: admin)
+        end)
+      end
+
+      out =
+        capture_io(fn ->
+          CliManager.authz_render_role_unbind("runner@render-ns", "stopper", token: admin)
+        end)
+
+      assert out =~ "unbound stopper from runner@render-ns"
+      assert out =~ "runner@render-ns  spawner@render-ns"
+
+      # A role the identity does not hold succeeds and changes nothing.
+      capture_io(fn ->
+        CliManager.authz_render_role_unbind("runner@render-ns", "stopper", token: admin)
+      end)
+
+      assert {:ok, %{roles: [:spawner]}} = RoleStore.lookup("runner@render-ns")
+
+      capture_io(fn ->
+        CliManager.authz_render_role_unbind("runner@render-ns", "spawner", token: admin)
+      end)
+
+      assert :error = RoleStore.lookup("runner@render-ns")
+
+      capture_io(fn ->
+        CliManager.authz_render_role_bind("runner@render-ns", "spawner", "render-ns",
+          token: admin
+        )
+      end)
+
+      out =
+        capture_io(fn ->
+          CliManager.authz_render_role_unbind("runner@render-ns", "", token: admin)
+        end)
+
+      assert out =~ "unbound runner@render-ns"
+      assert :error = RoleStore.lookup("runner@render-ns")
+    end
+
+    test "a token caller's act record names the token's one role", %{admin: admin} do
+      {:ok, operator, _} = TokenStore.issue("carol", "render-ns", :operator, 3_600)
+      boundary = System.monotonic_time(:microsecond)
+
+      # The stop itself fails (nothing is running); an authorized act that
+      # failed is still an act, so the record is written either way.
+      capture_io(:stderr, fn ->
+        capture_io(fn ->
+          catch_exit(CliManager.operative_stop("render-ns", "o1", token: operator))
+        end)
+      end)
+
+      TestSinks.settle(RingBufferSink)
+
+      assert Enum.any?(RingBufferSink.query(:operative_service, boundary), fn signal ->
+               signal.name == :stop and signal.metadata[:caller_roles] == [:operator]
+             end)
+
+      # The admin's own role verb names its role the same way.
+      boundary = System.monotonic_time(:microsecond)
+
+      capture_io(fn ->
+        CliManager.authz_render_role_unbind("carol", "", token: admin)
+      end)
+
+      TestSinks.settle(RingBufferSink)
+
+      assert Enum.any?(RingBufferSink.query(:namespace_service, boundary), fn signal ->
+               signal.metadata[:caller_roles] == [:admin]
+             end)
+    end
+
+    test "an unknown role on unbind is refused by name", %{admin: admin} do
+      out =
+        capture_io(:stderr, fn ->
+          assert catch_exit(
+                   CliManager.authz_render_role_unbind("carol", "superuser", token: admin)
+                 ) == {:shutdown, 1}
+        end)
+
+      assert out =~ "unknown_role"
+    end
+
+    test "the list prints one line per identity, one role or many", %{admin: admin} do
+      for {principal, role} <- [
+            {"runner@render-ns", "spawner"},
+            {"runner@render-ns", "stopper"},
+            {"alice", "operator"}
+          ] do
+        capture_io(fn ->
+          CliManager.authz_render_role_bind(principal, role, "render-ns", token: admin)
+        end)
+      end
+
+      out = capture_io(fn -> CliManager.authz_render_role_list(token: admin) end)
+
+      assert out =~ "runner@render-ns  spawner,stopper@render-ns"
+      assert out =~ "alice  operator@render-ns"
+    end
+  end
+
+  for role <- [:app, :spawner, :stopper] do
     test "a runner principal is bound to #{role}, in the order the CLI takes" do
       :ok = AuthState.set_enabled()
       {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
@@ -573,7 +718,9 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
         end)
 
       assert out =~ "bound runner@render-ns as #{role}@render-ns"
-      assert {:ok, %{role: ^role, namespace: "render-ns"}} = RoleStore.lookup("runner@render-ns")
+
+      assert {:ok, %{roles: [^role], namespace: "render-ns"}} =
+               RoleStore.lookup("runner@render-ns")
     end
 
     test "no credential is issued for #{role}, a role only a runner principal is bound to" do

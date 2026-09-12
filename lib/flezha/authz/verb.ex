@@ -209,7 +209,8 @@ defmodule Flezha.AuthZ.Verb do
         action: row.action,
         namespace: call.namespace,
         principal: Map.get(call.context, :principal),
-        caller_source: Map.get(call.context, :source)
+        caller_source: Map.get(call.context, :source),
+        caller_roles: caller_roles(call.context)
       })
       |> with_request_id(Map.get(call.context, :request_id))
 
@@ -224,6 +225,15 @@ defmodule Flezha.AuthZ.Verb do
     )
 
     :ok
+  end
+
+  # The roles the act was judged with, read from the context that was judged so
+  # the record and the judgment agree.
+  defp caller_roles(context) do
+    case AuthZ.held_roles(context) do
+      {:ok, roles, _namespace} -> roles
+      :error -> nil
+    end
   end
 
   defp with_request_id(metadata, nil), do: metadata

@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Authz do
 
   alias Flezha.AuthZ.Bootstrap
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.AuthZ.Policy
   alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
@@ -65,10 +66,13 @@ defmodule Flezha.Service.Cli.Authz do
 
   @doc "CLI entry: `flz token issue <principal> <namespace> <role> [--ttl <seconds>]`."
   def authz_render_token_issue(principal, namespace, role_string, call) do
-    # `app` and `spawner` are what a runner principal is bound to, and a runner
-    # proves itself with a `runner` credential, so no credential is ever issued
-    # for either.
-    with {:ok, role} <- parse_role(role_string, Role.all() -- [:app, :spawner]),
+    # A role carrying `runner.connect` is what a runner principal is bound to,
+    # and a runner proves itself with a `runner` credential, so no credential is
+    # issued for any of them. Worked out from the grant, so a role added to the
+    # enumeration with the connect needs no list edited here.
+    issuable = [:runner | Enum.reject(Role.all(), &Policy.runner_principal_role?/1)]
+
+    with {:ok, role} <- parse_role(role_string, issuable),
          {:ok, raw, entry} <-
            TokenStore.issue(principal, namespace, role, Keyword.fetch!(call.opts, :ttl),
              created_by_principal: actor(call),
@@ -128,27 +132,58 @@ defmodule Flezha.Service.Cli.Authz do
     with {:ok, role} <- parse_role(role_string),
          :ok <- RoleStore.bind(principal, namespace, role, bound_by: actor(call)) do
       IO.puts("bound #{principal} as #{role}@#{namespace}")
+      print_identity(principal)
     else
-      {:error, reason} -> Context.fail!("role bind: #{Context.format_reason(reason)}")
+      {:error, {:bound_elsewhere, held}} ->
+        Context.fail!(
+          "role bind: #{principal} holds roles in #{held}; " <>
+            "unbind it there before binding it in #{namespace}"
+        )
+
+      {:error, reason} ->
+        Context.fail!("role bind: #{Context.format_reason(reason)}")
     end
   end
 
-  @doc "CLI entry: `flz role unbind <principal>`."
-  def authz_render_role_unbind(principal, _call) do
+  @doc """
+  CLI entry: `flz role unbind <principal> [<role>]`.
+
+  An empty role is every role, which is what the bare command has always meant:
+  the one-command revocation for an identity that is compromised or retired, and
+  a mistake with it can only take rights away.
+  """
+  def authz_render_role_unbind(principal, "", _call) do
     :ok = RoleStore.unbind(principal)
     IO.puts("unbound #{principal}")
+  end
+
+  def authz_render_role_unbind(principal, role_string, _call) do
+    with {:ok, role} <- parse_role(role_string),
+         :ok <- RoleStore.unbind(principal, role) do
+      IO.puts("unbound #{role} from #{principal}")
+      print_identity(principal)
+    else
+      {:error, reason} -> Context.fail!("role unbind: #{Context.format_reason(reason)}")
+    end
   end
 
   @doc "CLI entry: `flz role list`."
   def authz_render_role_list(_call) do
     case RoleStore.list() do
-      [] ->
-        IO.puts("no role bindings")
+      [] -> IO.puts("no role bindings")
+      bindings -> Enum.each(bindings, &IO.puts(identity_line(&1)))
+    end
+  end
 
-      bindings ->
-        Enum.each(bindings, fn binding ->
-          IO.puts("#{binding.principal}  #{binding.role}@#{binding.namespace}")
-        end)
+  # One line per identity, shared by the three role verbs. An identity holding
+  # one role prints the line `role list` has always printed.
+  defp identity_line(%{principal: principal, roles: roles, namespace: namespace}),
+    do: "#{principal}  #{Enum.join(roles, ",")}@#{namespace}"
+
+  defp print_identity(principal) do
+    case RoleStore.lookup(principal) do
+      {:ok, binding} -> IO.puts(identity_line(binding))
+      :error -> :ok
     end
   end
 

@@ -96,6 +96,17 @@ defmodule Flezha.AuthZ.PolicyTest do
       assert Enum.reject(spawner, &Policy.grants?(:app, &1)) == []
     end
 
+    test "stopper holds the connect and the stop, and nothing else" do
+      assert Enum.filter(Action.all(), &Policy.grants?(:stopper, &1)) ==
+               [:"operative.stop", :"runner.connect"]
+    end
+
+    test "app holds every stopper grant" do
+      stopper = Enum.filter(Action.all(), &Policy.grants?(:stopper, &1))
+      assert stopper != []
+      assert Enum.reject(stopper, &Policy.grants?(:app, &1)) == []
+    end
+
     test "runner holds runner.connect and nothing else" do
       assert Policy.grants?(:runner, :"runner.connect")
       assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]
@@ -115,6 +126,13 @@ defmodule Flezha.AuthZ.PolicyTest do
     for role <- Role.all(), action <- Action.all() do
       assert is_boolean(Policy.grants?(role, action))
     end
+  end
+
+  test "runner_principal_role?/1 is the connect grant, not a list of names" do
+    assert Enum.filter(Role.all(), &Policy.runner_principal_role?/1) |> Enum.sort() ==
+             [:app, :runner, :spawner, :stopper]
+
+    for role <- [:viewer, :operator, :admin], do: refute(Policy.runner_principal_role?(role))
   end
 
   test "cross_namespace_admin_action?/1 covers auth-state mutations" do

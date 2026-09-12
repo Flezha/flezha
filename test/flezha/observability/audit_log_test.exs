@@ -89,6 +89,26 @@ defmodule Flezha.Observability.AuditLogTest do
       assert line =~ ~s("principal":null)
     end
 
+    test "a record written before caller_roles decodes and renders unchanged" do
+      # The line an earlier release wrote: metadata is an open map, so a record
+      # whose roles were never recorded reads as one that names none.
+      line =
+        Codec.encode(
+          Signal.new(%{
+            kind: :event,
+            source: :operative_service,
+            name: :stop,
+            measurements: %{count: 1},
+            metadata: %{caller_source: :cli, principal: "alice", operative: "o1"}
+          })
+        )
+
+      assert {:ok, decoded} = Codec.decode(line)
+      assert decoded["name"] == "stop"
+      assert decoded["metadata"]["operative"] == "o1"
+      refute Map.has_key?(decoded["metadata"], "caller_roles")
+    end
+
     test "decode rejects non-JSON lines" do
       assert {:error, _} = Codec.decode("not json\n")
     end

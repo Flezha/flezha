@@ -16,6 +16,7 @@ defmodule Flezha.Service.AdminTest do
   alias Flezha.AuthZ.Policy
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.Scope
+  alias Flezha.AuthZ.Verb
   alias Flezha.AuthZ.Verbs
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
@@ -28,10 +29,18 @@ defmodule Flezha.Service.AdminTest do
 
   defp bind_app!, do: :ok = RoleStore.bind(@principal, @ns, :app)
 
+  # Each verb's own smallest well-formed argument list: the calls below are
+  # asserted on their refusal, never on their result.
+  defp args_for("Operative.start"), do: ~s([{"id":"o1"}])
+  defp args_for("Operative.send"), do: ~s(["o1", "hello", "in"])
+  defp args_for("Operative.stop"), do: ~s(["o1"])
+  defp args_for("PluginManager.enable"), do: ~s(["p1", {"id": "p1"}])
+  defp args_for("PluginManager.disable"), do: ~s(["p1"])
+
   describe "the refusal this change starts from" do
     test "a connected runner's identity holds runner.connect and no operator action" do
       context = Session.runner_caller_context(@ns)
-      assert context.role == :runner
+      assert context.roles == [:runner]
 
       assert :ok = AuthZ.authorize(context, :"runner.connect", Scope.build(@ns))
 
@@ -56,22 +65,22 @@ defmodule Flezha.Service.AdminTest do
   describe "the role is resolved rather than stamped" do
     test "an unbound principal stays runner, so nothing existing gains authority" do
       assert RoleStore.lookup(@principal) == :error
-      assert Session.runner_caller_context(@ns).role == :runner
+      assert Session.runner_caller_context(@ns).roles == [:runner]
     end
 
     test "a binding takes effect on the next call, with no reconnect" do
-      assert Session.runner_caller_context(@ns).role == :runner
+      assert Session.runner_caller_context(@ns).roles == [:runner]
       bind_app!()
-      assert Session.runner_caller_context(@ns).role == :app
+      assert Session.runner_caller_context(@ns).roles == [:app]
     end
 
     test "unbinding takes effect on the next call, with no reconnect" do
       bind_app!()
-      assert Session.runner_caller_context(@ns).role == :app
+      assert Session.runner_caller_context(@ns).roles == [:app]
 
       :ok = RoleStore.unbind(@principal)
 
-      assert Session.runner_caller_context(@ns).role == :runner
+      assert Session.runner_caller_context(@ns).roles == [:runner]
 
       assert {:error, "forbidden: role_insufficient"} =
                Admin.call(@ns, "Operative.stop", ~s(["o1"]))
@@ -79,13 +88,101 @@ defmodule Flezha.Service.AdminTest do
 
     test "a binding made for another namespace grants nothing here" do
       :ok = RoleStore.bind(@principal, @other, :app)
-      assert Session.runner_caller_context(@ns).role == :runner
+      assert Session.runner_caller_context(@ns).roles == [:runner]
     end
 
     test "the namespace is the proven one whatever the store's binding says" do
       :ok = RoleStore.bind(@principal, @ns, :app)
       assert Session.runner_caller_context(@ns).namespace == @ns
       assert Session.runner_caller_context(@other).namespace == @other
+    end
+  end
+
+  describe "the roles a connection holds combine" do
+    test "spawner and stopper together start, send and stop, but enable no plugin" do
+      :ok = RoleStore.bind(@principal, @ns, :spawner)
+      :ok = RoleStore.bind(@principal, @ns, :stopper)
+
+      assert Session.runner_caller_context(@ns).roles == [:spawner, :stopper]
+
+      for verb <- ["Operative.start", "Operative.send", "Operative.stop"] do
+        refute Admin.call(@ns, verb, args_for(verb)) == {:error, "forbidden: role_insufficient"},
+               verb
+      end
+
+      assert Admin.call(@ns, "PluginManager.enable", args_for("PluginManager.enable")) ==
+               {:error, "forbidden: role_insufficient"}
+    end
+
+    test "a stopper alone stops, and nothing else" do
+      :ok = RoleStore.bind(@principal, @ns, :stopper)
+      assert Session.runner_caller_context(@ns).roles == [:stopper]
+
+      refute Admin.call(@ns, "Operative.stop", args_for("Operative.stop")) ==
+               {:error, "forbidden: role_insufficient"}
+
+      for verb <- [
+            "Operative.start",
+            "Operative.send",
+            "PluginManager.enable",
+            "PluginManager.disable"
+          ] do
+        assert Admin.call(@ns, verb, args_for(verb)) ==
+                 {:error, "forbidden: role_insufficient"},
+               verb
+      end
+    end
+
+    test "the record names the roles the caller was judged with" do
+      :ok = RoleStore.bind(@principal, @ns, :spawner)
+      :ok = RoleStore.bind(@principal, @ns, :stopper)
+      boundary = System.monotonic_time(:microsecond)
+
+      _ = Admin.call(@ns, "Operative.stop", ~s(["o1"]))
+      TestSinks.settle(RingBufferSink)
+
+      assert [record] = RingBufferSink.query(:operative_service, boundary)
+      assert record.name == :stop
+      assert record.metadata.caller_roles == [:spawner, :stopper]
+    end
+
+    test "a stopper stops nothing in another namespace" do
+      :ok = RoleStore.bind(@principal, @ns, :stopper)
+      context = Session.runner_caller_context(@ns)
+
+      assert {:error, {:forbidden, :namespace_mismatch}} =
+               AuthZ.authorize(context, :"operative.stop", Scope.build(@other))
+    end
+
+    test "an operator's role is never held by a connection, though the connect passes" do
+      :ok = RoleStore.bind(@principal, @ns, :operator)
+      context = Session.runner_caller_context(@ns)
+
+      assert context.roles == [:runner]
+      assert :ok = Verb.run(:runner_connect, context, [@ns], fn _call -> :ok end)
+
+      assert {:error, {:forbidden, :role_insufficient}} =
+               AuthZ.authorize(context, :"operative.stop", Scope.build(@ns))
+    end
+
+    test "spawner plus admin holds spawner alone, so the quota surface stays shut" do
+      :ok = RoleStore.bind(@principal, @ns, :spawner)
+      :ok = RoleStore.bind(@principal, @ns, :admin)
+
+      assert Session.runner_caller_context(@ns).roles == [:spawner]
+
+      assert Admin.call(@ns, "Namespace.delete", "[]") ==
+               {:error, "forbidden: role_insufficient"}
+
+      # `Namespace.set_quotas` takes an object the door hands on as a keyword
+      # list, which its own guard refuses before any policy runs, so the rule
+      # that keeps it shut is asserted at the policy point itself.
+      assert {:error, {:forbidden, :role_insufficient}} =
+               AuthZ.authorize(
+                 Session.runner_caller_context(@ns),
+                 :"authz.namespace_set_quota",
+                 Scope.build(@ns)
+               )
     end
   end
 

@@ -3,24 +3,23 @@ use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 
+/// The enumeration, spelled once: both verbs read the same label, so a role
+/// added to it cannot reach one of them and miss the other.
+const ROLE: &str = "<viewer|app|operator|admin|runner|spawner|stopper>";
+
 pub(crate) const TABLE: Command = Command {
     path: "flz role",
     help: help::ROLE,
     verbs: &[
         Verb::new("bind", handle_bind).taking(&[
             Positional::required("<principal>"),
-            Positional::required("<viewer|app|operator|admin|runner|spawner>"),
+            Positional::required(ROLE),
             Positional::required("<namespace>"),
         ]),
-        Verb::new("unbind", |read| {
-            rpc::one_arg(
-                read,
-                "<principal>",
-                "authz_render_role_unbind",
-                rpc::PROPAGATE,
-            )
-        })
-        .taking(&[Positional::required("<principal>")]),
+        Verb::new("unbind", handle_unbind).taking(&[
+            Positional::required("<principal>"),
+            Positional::optional(ROLE),
+        ]),
         Verb::new("list", |read| {
             rpc::token_only(read, "authz_render_role_list")
         }),
@@ -35,9 +34,21 @@ fn handle_bind(read: &Reading) {
         "authz_render_role_bind",
         &[
             text(read.pos("<principal>")),
-            text(read.pos("<viewer|app|operator|admin|runner|spawner>")),
+            text(read.pos(ROLE)),
             text(read.pos("<namespace>")),
         ],
+        &[],
+        read.token(),
+        rpc::PROPAGATE,
+    );
+}
+
+/// The role is always sent, empty when none was named, so the controller reads
+/// the principal, the role and the options in fixed positions.
+fn handle_unbind(read: &Reading) {
+    rpc::run(
+        "authz_render_role_unbind",
+        &[text(read.pos("<principal>")), text(read.pos(ROLE))],
         &[],
         read.token(),
         rpc::PROPAGATE,
