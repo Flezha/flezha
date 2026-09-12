@@ -11,13 +11,37 @@ provisional and the other six SDKs are not written yet.
 
 Every SDK ships the same example, so you can read it in one language and
 recognise it in another. It is three parts, and every Flezha application has
-these same three:
+these same three, whatever it grows into later.
 
-| Part | What it is |
-|---|---|
-| The procedure | your code, invoked once per message |
-| The operative | the graph that wires the procedure to an input and an output. This is the unit the controller schedules, restarts and moves |
-| The runner | a process that connects to the controller and serves the operative |
+**The procedure is your code.** The runtime hands it one message and it emits
+one message. It carries a stable name, and that name is durable: per-entity
+state is filed under it, so renaming a procedure later does not rename its
+state, it declares a different procedure with none. Two things it does not do
+are worth noticing, because they are what makes the rest possible. It does not
+say where its output goes, so the graph can be rewired without touching it. And
+it does not lock anything, because the runtime never runs two messages for the
+same key at the same time. Different keys do run at the same time, possibly on
+different machines.
+
+**The operative is the graph, and it holds no logic at all.** It says which
+channel feeds which procedure and where the result is delivered. A procedure on
+its own cannot be deployed, because nothing knows where its messages come from
+or where its output belongs; the operative supplies exactly that. It is
+therefore the unit the whole system works in: what the controller places on a
+runner, restarts after a crash, moves when a runner disappears, and splits
+across several runners when one is not enough. It carries its own durable
+identity, and that is the name you type when you start one.
+
+**The runner is a process you run.** It connects to the controller, tells it
+which operatives it is able to serve, and then waits. It decides nothing: it
+never picks what runs or where, it only offers capacity and does what the
+controller asks. One runner can serve many operatives, and many runners can
+offer the same one, which is how a deployment grows.
+
+None of the three knows about the others at runtime. You start a runner, the
+controller learns the operative exists and can be served, you ask for one by
+name, and the controller binds it to a runner that offered it. Messages then
+arrive on the channel the operative declared, and your procedure is called.
 
 <!-- tabs-open -->
 
@@ -51,16 +75,34 @@ public final class EchoProcedure
 }
 ```
 
-The six type arguments are, in order: the input, the per-entity state, the
-output, the change type, the clock, and the configuration. Two are opted out of
-here. `NoChange` says this procedure persists nothing, which switches the whole
-persistence machinery off, and `Void` says it takes no configuration.
+**The six type arguments** are, in order: the input, the per-entity state, the
+output, the change type, the clock, and the configuration. The runtime reads
+all six back off the `implements` clause at registration, which is why each one
+has to be a concrete class there rather than a variable.
 
-`name()` is durable. Durable state is keyed on it, so changing it later does not
-rename this procedure, it declares a different one.
+Two of the six are opted out of. `NoChange` declares that this procedure records
+no state changes, which switches the persistence machinery off entirely: nothing
+is journaled, no snapshot is written, and a restart begins with no history.
+`Void` declares that it takes no configuration. A procedure that needs to
+remember something replaces both, and that is the next example rather than this
+one.
 
-`ctx.emit` does not say where the value goes. The operative decides that, which
-is why the graph can be rewired without touching this file.
+**`name()` is durable, not cosmetic.** Per-entity state is filed under it. Change
+it in a later release and you have not renamed this procedure, you have declared
+a different one, and everything the old name accumulated is no longer associated
+with it. Choose it deliberately the first time.
+
+**`initState` builds the state for one entity,** called the first time a key is
+seen. Its two arguments are that key, and a payload present only when the entity
+is arriving from another runner rather than starting cold. On a resume the
+runtime restores the newest snapshot and folds the recorded changes over
+whatever this returns, so it only has to be right for the cold case. This
+procedure keeps nothing, so it returns an empty record.
+
+**`run` is the whole of the work.** `ctx` is the runtime handle: `emit` releases
+output, `now()` reads the declared clock, and `stableId()` gives an identifier
+that is the same again on a replay. Note what is missing: no destination, no
+channel name, no sink. `emit` says what, never where.
 
 **The operative.** The graph, and the thing the cluster actually schedules.
 
@@ -81,14 +123,27 @@ public final class EchoOperative implements StreamOperative {
 }
 ```
 
-One expression declares the whole application: an entry channel carrying
-strings, routed into the procedure, whose output is delivered to a plugin sink
-called `out`. Those names are identities rather than documentation. `out` is
-what a sink registers against, and `in` is what `flz operative send --channel`
-names.
+**One expression declares the whole application.** An entry channel called `in`
+carrying strings, routed into the procedure, whose output is delivered to a
+plugin sink called `out`. Read it left to right and you have the entire data
+path.
 
-`factoryId()` is durable in the same way `name()` is. It is what you pass to
-`flz operative start`.
+**Channels are never constructed directly.** Each call on the builder returns
+the next handle in the chain, and the finished declaration is validated as a
+whole before a single message is processed. A graph that cannot work is refused
+at startup rather than halfway through a run.
+
+**The names are identities, not labels.** `in` is what `flz operative send
+--channel` addresses, and `out` is what a sink registers against. Changing
+either changes an address that something outside this file is already using.
+
+**`factoryId()` is durable in the same way `name()` is.** The controller's
+registry and the durable state both key on it. It is also the second argument
+to `flz operative start <your-id> <factory-id>`, which is how you ask for one of
+these to be running.
+
+**`channels` runs once, at registration,** not per message. It describes the
+graph; it never touches data.
 
 **The runner.** A process that connects and serves.
 
@@ -100,9 +155,22 @@ public static void main(String[] args) throws Exception {
 }
 ```
 
-`createRunner` takes the namespace. Declare every operative this process should
-serve before calling `run()`, which connects and then blocks until shutdown.
-Use `start()` instead when you want to keep the calling thread.
+**`createRunner` takes the namespace,** which is the tenant this process belongs
+to. The controller admits it only if that namespace exists, and, with
+authorization enforced, only if the runner can prove it is entitled to it.
+
+**`defineStream` declares a class this process can serve.** Call it once per
+operative; one runner can offer as many as you like, and `defineWorkflow` is the
+same call for the workflow kind. Declaring a class does not start anything: it
+tells the controller this runner is capable of it, and the controller decides
+whether and where to use that.
+
+**`run()` connects and then blocks** until shutdown, which is either a SIGTERM
+or a `close()` from another thread. Use `start()` instead when the calling
+thread has something else to do. Either way the connection is the runner's own
+responsibility to keep. If it breaks, the runner re-dials by itself, retrying
+forever on a backoff that tops out at 30 seconds, and it keeps its operatives
+and their state across the gap rather than starting over.
 
 ### Rust
 
