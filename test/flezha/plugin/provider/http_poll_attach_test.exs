@@ -42,10 +42,13 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       assert {:error, message} = attach(%{channel: @channel})
       assert message =~ ":url"
 
+      # Either spelling names the entry channel, so the refusal for naming
+      # neither names both rather than one row.
       assert {:error, message} = attach(%{url: "http://x/y"})
-      assert message =~ ":channel"
+      assert message =~ "requires an entry channel"
 
       assert {:error, _} = attach(%{url: "http://x/y", channel: ""})
+      assert {:ok, _} = attach(%{url: "http://x/y", channel_in: @channel})
     end
 
     test "accepts an explicit idle window and rejects a malformed one" do

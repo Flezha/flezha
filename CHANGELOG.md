@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Changed: one plugin `channel` option, one meaning in both directions
+
+**Breaking for websocket plugins that filter their output with `channel`.** The
+option meant two opposite things depending on which provider read it: the
+`http_poll` source injected on it, while the Kafka producer and the websocket
+filtered outputs by it — and because the websocket's `channel` went to the
+filter, naming the entry channel its inbound frames arrive on was possible only
+by hiding a `"channel"` key inside `payload_metadata`, a general label bag that
+appears in no help screen.
+
+`channel` now names the channel a plugin is attached to, in whichever
+directions it works: a plugin that feeds the operative injects on it, a plugin
+subscribed to `on_input` or `on_output` filters on it, and a plugin that does
+both does both with that one name. `channel_in` and `channel_out` name one
+direction each, for a plugin whose two names differ.
+
+What breaks: a websocket plugin subscribed to `on_output` with
+`channel: "prices"` used to send only outputs naming `prices` while injecting
+its inbound frames on the operative's FIRST entry channel. It now also injects
+on `prices` — which, since an entry channel and an output channel never share a
+name inside one operative, means those frames are dead-lettered under that name
+instead of silently landing somewhere else. **Write `channel_out: "prices"` to
+keep exactly the old behaviour**, or write the pair `channel_in`/`channel_out`
+to name both ends. The shipped example in
+`docs/plugins/websocket_subscription.md` moved with it.
+
+Four shapes are now refused when the plugin is enabled rather than discovered
+in flight: `channel` together with `channel_in` or `channel_out`; a spelling for
+a direction the plugin does not work in (`channel_out` on a plugin subscribed to
+no chain extension); `channel` on a plugin that neither feeds the operative nor
+is subscribed to one, because nothing would read it; and a `"channel"` key
+inside a websocket's `payload_metadata` alongside any channel option. The bag on
+its own keeps working unchanged. `http_poll` still requires an entry channel and
+either spelling satisfies it.
+
 ### Added: the single-procedure shorthand names its entry channel
 
 The shorthand's entry channel used to be the literal string `input`, and that

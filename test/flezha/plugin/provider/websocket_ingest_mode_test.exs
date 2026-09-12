@@ -8,6 +8,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Websocket
+  alias FlezhaTest.Helper.WebsocketSourceFixtures
 
   defmodule StubOverwatch do
     use GenServer
@@ -30,26 +31,19 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
     end
   end
 
+  # The socket state `start_link/1` builds, from the one fixture every websocket
+  # test drives: this file overrides the ingest half and nothing else.
   defp conn_state(overwatcher, overrides) do
-    now = :erlang.monotonic_time(:millisecond)
-
-    Map.merge(
-      %{
-        uri: "wss://test.local",
-        plugin_id: "ingest_mode_ws",
-        post_connect: %{},
-        overwatcher_pid: overwatcher,
-        payload_metadata: %{"input_type" => "2"},
-        idle_timeout_ms: 0,
-        resubscribe_after_ms: 0,
-        ignore_pattern: nil,
-        websocket_established?: true,
-        frames_seen: 0,
-        last_frame_at: now,
-        last_data_frame_at: now,
-        last_resubscribe_at: now
-      },
-      Map.new(overrides)
+    WebsocketSourceFixtures.state(
+      Map.merge(
+        %{
+          plugin_id: "ingest_mode_ws",
+          overwatcher_pid: overwatcher,
+          payload_metadata: %{"input_type" => "2"},
+          subscription: nil
+        },
+        Map.new(overrides)
+      )
     )
   end
 

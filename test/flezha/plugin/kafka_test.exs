@@ -92,6 +92,9 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     )
   end
 
+  # `subscribed_extensions` is the host's, and the producer is a chain plugin:
+  # every test here drives `on_input`, and a `channel` option on a plugin
+  # subscribed to nothing is refused because nothing would read it.
   defp build_opts(plugin_id, partition, extras \\ %{}) do
     Map.merge(
       %{
@@ -99,7 +102,8 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         topic: @topic,
         partition: partition,
         plugin_id: plugin_id,
-        idempotent: false
+        idempotent: false,
+        subscribed_extensions: [:on_input]
       },
       extras
     )

@@ -133,7 +133,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     end
 
     test "an output naming the channel is sent", %{plugin_id: plugin_id} do
-      opts = sink!(%{plugin_id: plugin_id, channel: "prices"})
+      opts = sink!(%{plugin_id: plugin_id, channel_out: "prices"})
       ctx = ctx("tick", %{"channel" => "prices"})
 
       assert {:ok, ^ctx} = Websocket.on_output(ctx, opts)
@@ -142,7 +142,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
 
     test "an output naming another channel passes through untouched",
          %{plugin_id: plugin_id} do
-      opts = sink!(%{plugin_id: plugin_id, channel: "prices"})
+      opts = sink!(%{plugin_id: plugin_id, channel_out: "prices"})
       ctx = ctx("tick", %{"channel" => "trades"})
 
       assert {:ok, ^ctx} = Websocket.on_output(ctx, opts)

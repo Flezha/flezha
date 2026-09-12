@@ -45,6 +45,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @ms_fields Keyword.keys(@ms_defaults)
 
   use ProviderBehaviour,
+    feeds: true,
     options: [
       uri: [type: :string, required: true, doc: "The websocket endpoint to connect to"],
       plugin_id: [type: :string, doc: "Plugin id; defaults to the URI"],
@@ -81,7 +82,20 @@ defmodule Flezha.Plugin.Provider.Websocket do
         default: "required",
         doc: "`\"none\"` commits a delta on successful send instead of on the server's ack"
       ],
-      channel: [type: :string, doc: "Send only outputs whose metadata channel matches"],
+      channel: [
+        type: :string,
+        doc:
+          "The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent"
+      ],
+      channel_in: [
+        type: :string,
+        doc: "Entry channel inbound frames are injected on, for a plugin whose two names differ"
+      ],
+      channel_out: [
+        type: :string,
+        doc:
+          "Send only outputs whose metadata channel matches, for a plugin whose two names differ"
+      ],
       sink_frame_type: [
         type: :enum,
         values: ["text", "binary"],
@@ -172,7 +186,8 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # "Two-phase plugin lifecycle gated on SDK readiness".
   @impl true
   def init_provider(opts) do
-    with {:ok, subscription} <- Subscription.from_opts(opts),
+    with :ok <- one_channel_writer(opts),
+         {:ok, subscription} <- Subscription.from_opts(opts),
          {:ok, sink} <- Sink.from_opts(opts) do
       plugin_id = opts.plugin_id || opts.uri
       warn_best_effort_hop(opts, sink, plugin_id)
@@ -192,6 +207,24 @@ defmodule Flezha.Plugin.Provider.Websocket do
        })}
     end
   end
+
+  # `payload_metadata` stays the general label bag and its own "channel" key
+  # still selects the entry channel. Supplying it together with a channel option
+  # puts two writers on one key, and which of them won would be an
+  # implementation detail rather than a decision anybody made.
+  defp one_channel_writer(%{payload_metadata: %{"channel" => bag}} = opts) do
+    case opts[:entry_channel] || opts[:filter_channel] do
+      nil ->
+        :ok
+
+      option ->
+        {:error,
+         "websocket payload_metadata names channel #{inspect(bag)} and a channel option " <>
+           "names #{inspect(option)}; write one of the two"}
+    end
+  end
+
+  defp one_channel_writer(_opts), do: :ok
 
   # Warn, never refuse. A durable sink alongside a live websocket view is the
   # standard topology, and refusing it would push operators into a worse one.
@@ -229,7 +262,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   def on_output(%Ctx.IO{} = ctx, opts), do: ship(ctx, opts)
 
   defp ship(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
-    with true <- ProviderBehaviour.in_channel?(md, opts.channel),
+    with true <- ProviderBehaviour.in_channel?(md, opts.filter_channel),
          pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, opts.plugin_id) do
       # Take ownership of a delivery-guaranteed output before handing it over:
       # the socket answers the hold at handoff or on the upstream's ack, by
@@ -272,7 +305,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
          :ws_opts,
          :post_connect,
          :overwatcher_pid,
-         :payload_metadata,
          :idle_timeout_ms,
          :resubscribe_after_ms,
          :ignore_pattern,
@@ -283,8 +315,26 @@ defmodule Flezha.Plugin.Provider.Websocket do
          :source_namespace,
          :source_operative_id
        ])
-       |> Map.put(:sync_ingest?, opts[:effectively_once] || false)}
+       |> Map.put(:sync_ingest?, opts[:effectively_once] || false)
+       |> Map.put(:payload_metadata, ingest_metadata(opts))}
     ]
+  end
+
+  # The resolved entry channel rides the bag every injection already carries, so
+  # the socket holds one map and the frame path stays one send. Nothing can
+  # overwrite the operator's own "channel" key: naming it both ways is refused
+  # when the plugin is enabled.
+  #
+  # Both keys are read by access, never by pattern: the teardown path asks for
+  # the declared worker keys from a manifest's RAW options, where neither the
+  # host's resolution nor the row's default has been applied.
+  defp ingest_metadata(opts) do
+    bag = Map.get(opts, :payload_metadata) || %{}
+
+    case opts[:entry_channel] do
+      nil -> bag
+      channel -> Map.put(bag, "channel", channel)
+    end
   end
 
   @doc """

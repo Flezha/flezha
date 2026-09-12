@@ -11,7 +11,9 @@ the durability tiers are unaffected.
 ## Requirements
 ### Requirement: An `http_poll` source provider SHALL inject hash-gated entry frames
 
-A built-in provider `http_poll` SHALL be attachable as a plugin with config `{url, interval_ms ≥ 1000 (default 60000), channel, headers?, timeout_ms?, max_body_bytes? (default 1 MiB)}`. It SHALL poll `url` each interval and inject the response body as an entry frame on `channel` only when the body's SHA-256 differs from the last-injected hash. On provider start and on handover/recovery re-application, the first successful poll SHALL inject unconditionally (seed frame). Attach-time validation SHALL reject a scheme other than http/https, a URL with no host, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, a missing or empty `channel`, malformed headers, and any unrecognised option.
+A built-in provider `http_poll` SHALL be attachable as a plugin with config `{url, interval_ms ≥ 1000 (default 60000), channel | channel_in, headers?, timeout_ms?, max_body_bytes? (default 1 MiB)}`. It SHALL poll `url` each interval and inject the response body as an entry frame on the channel named by either spelling, only when the body's SHA-256 differs from the last-injected hash. On provider start and on handover/recovery re-application, the first successful poll SHALL inject unconditionally (seed frame). Attach-time validation SHALL reject a scheme other than http/https, a URL with no host, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, an empty or entirely missing entry channel, malformed headers, and any unrecognised option.
+
+The provider SHALL declare that it feeds the operative, so its `channel` resolves as the entry channel by the rule in `operative-extensions`. `channel_in` SHALL be accepted as the explicit spelling of the same name, one of the two SHALL be required, and supplying both SHALL be refused. `channel_out` SHALL NOT be a declared option of this provider: it never acts on records passing through the operative, so the option could not take effect, and it is refused as an option the provider does not offer.
 
 The `channel` name SHALL NOT be checked against the operative's declared entry channels: channel names are an SDK-side topology fact that never reaches the controller (`AddOperativeResponse.metadata` carries capability declarations only), and attach runs before the operative binds to a runner. A name that is not one of the operative's entry channels SHALL surface on the runner as a dead-letter park under that name, as a mistyped `flz operative send --channel` does, rather than as a dropped frame.
 
@@ -32,7 +34,7 @@ The `channel` name SHALL NOT be checked against the operative's declared entry c
 
 #### Scenario: Invalid attach is rejected
 
-- **WHEN** a plugin declares a non-http scheme, a hostless URL, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, a missing `channel`, or an unrecognised option
+- **WHEN** a plugin declares a non-http scheme, a hostless URL, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, neither `channel` nor `channel_in`, or an unrecognised option
 - **THEN** the attach SHALL fail with an error naming the offending option
 
 #### Scenario: A channel no entry channel matches parks rather than vanishing
@@ -40,6 +42,16 @@ The `channel` name SHALL NOT be checked against the operative's declared entry c
 - **GIVEN** an attached `http_poll` plugin whose `channel` names no entry channel of the operative it feeds
 - **WHEN** the first poll injects a body
 - **THEN** the frame SHALL be parked in the dead-letter store under that channel name, and SHALL be replayable onto the channel once the operative declares one of that name
+
+#### Scenario: The explicit spelling names the same channel
+
+- **WHEN** a plugin is attached with `channel_in` and no `channel`
+- **THEN** the attach SHALL succeed and frames SHALL be injected on that entry channel
+
+#### Scenario: The chain-side key is refused
+
+- **WHEN** a plugin is attached with `channel_out`
+- **THEN** the attach SHALL fail, naming `channel_out` as an option this provider does not offer
 
 ### Requirement: Polling SHALL be worker-based, non-blocking, and health-conformant
 

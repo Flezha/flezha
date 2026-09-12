@@ -377,11 +377,13 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   # The two providers whose `init_provider/1` refuses the minimal map: a forward
   # must not target its own operative, and a poll's request must fit inside its
-  # own interval.
+  # own interval and name the entry channel it injects on.
   defp extra_opts(Flezha.Plugin.Provider.OperativeForward),
     do: %{target_operative_id: "drill-target"}
 
-  defp extra_opts(Flezha.Plugin.Provider.HttpPoll), do: %{interval_ms: 60_000, timeout_ms: 1_000}
+  defp extra_opts(Flezha.Plugin.Provider.HttpPoll),
+    do: %{interval_ms: 60_000, timeout_ms: 1_000, channel: "drill-channel"}
+
   defp extra_opts(_provider), do: %{}
 
   defp page_for(provider) do
@@ -535,6 +537,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
           |> Map.values()
           |> Enum.find(&(&1 == provider))
           |> then(& &1.__provider__().options),
+        feeds: @real.__provider__().feeds,
         worker: [
           module: Flezha.Plugin.ProviderLifecycleTest.ConformanceWorker,
           restart: :temporary

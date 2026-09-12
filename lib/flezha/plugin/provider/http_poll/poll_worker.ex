@@ -54,7 +54,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
       opts
       |> Map.take([
         :url,
-        :channel,
+        :entry_channel,
         :headers,
         :plugin_id,
         :interval_ms,
@@ -192,7 +192,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     case Host.inject(
            state.overwatcher_pid,
            body,
-           %{"channel" => state.channel},
+           %{"channel" => state.entry_channel},
            :verdict,
            state.timeout_ms
          ) do
@@ -231,7 +231,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     %{state | consecutive_failures: failures, last_error: reason}
   end
 
-  defp labels(state), do: %{plugin_id: state.plugin_id, channel: state.channel}
+  defp labels(state), do: %{plugin_id: state.plugin_id, channel: state.entry_channel}
 
   defp elapsed(started), do: :erlang.monotonic_time(:millisecond) - started
 end

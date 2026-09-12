@@ -13,7 +13,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   `:idle_after_ms` is the age of the last SETTLED poll past which the worker
   reports `{:unhealthy, {:poll_idle, age_ms}}`; `0` means three `:interval_ms`.
 
-  Required opts `:url` and `:channel`; the rest: `docs/plugins/http_poll.md`.
+  Required opts `:url` and an entry channel, written `:channel` or `:channel_in`;
+  the rest: `docs/plugins/http_poll.md`.
   """
 
   alias Flezha.Config.Durations
@@ -32,9 +33,21 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @max_body_ceiling_bytes 64 * 1_048_576
 
   use ProviderBehaviour,
+    feeds: true,
     options: [
       url: [type: :string, required: true, doc: "The resource to GET each interval"],
-      channel: [type: :string, required: true, doc: "Entry channel the body is injected on"],
+      # One of the two is required and a row can only say so of itself, so each
+      # says it of the pair — this is what both operator surfaces render.
+      channel: [
+        type: :string,
+        doc:
+          "The channel this plugin is attached to: the entry channel the body is injected on. Required, unless `channel_in` names it"
+      ],
+      channel_in: [
+        type: :string,
+        doc:
+          "Entry channel the body is injected on; the explicit spelling of `channel`. Required, unless `channel` names it"
+      ],
       plugin_id: [type: :string, doc: "Plugin id; defaults to the redacted URL"],
       headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object"],
       interval_ms: [type: :int, default: 60_000, doc: "Milliseconds between polls"],
@@ -62,12 +75,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     ],
     worker: [module: PollWorker, restart: :temporary]
 
-  # An empty channel names nothing to inject on. The row says `:string`, which
-  # `""` satisfies; this is the shape the type cannot express.
-  defp convert_value(:channel, value) when value == "" or is_nil(value),
-    do: ProviderBehaviour.refuse_value(:channel, value)
-
-  defp convert_value(:channel, value) when is_atom(value), do: {:ok, Atom.to_string(value)}
+  # A channel written as an atom, which an Elixir-side spec may carry.
+  #
+  # An empty name used to be refused here and is now refused by the shared
+  # resolution, for all three spellings on every provider. What that no longer
+  # covers is `build/1`, the CLI struct builder, which answers `{:ok, %HttpPoll{
+  # channel: ""}}` where this clause answered a refusal — the struct reaches
+  # nothing (`flz plugin enable` builds a `%Plugin{}` and lets the table
+  # normalise), and the enable path still refuses.
+  defp convert_value(field, value) when field in [:channel, :channel_in] and is_atom(value),
+    do: {:ok, Atom.to_string(value)}
 
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first
@@ -77,7 +94,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   """
   @impl true
   def init_provider(opts) do
-    with {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
+    with :ok <- require_entry_channel(opts),
+         {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
          {:ok, url} <- HttpFetch.validate_url(raw_url, "http_poll"),
          {:ok, headers} <- HttpFetch.validate_headers(opts.headers, "http_poll"),
          :ok <- validate_interval(opts.interval_ms),
@@ -91,22 +109,19 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     end
   end
 
-  @impl true
-  def worker_specs(opts) do
-    [
-      {Map.fetch!(opts, :plugin_id),
-       Map.take(opts, [
-         :url,
-         :channel,
-         :headers,
-         :plugin_id,
-         :interval_ms,
-         :timeout_ms,
-         :max_body_bytes,
-         :overwatcher_pid
-       ])}
-    ]
+  # A poll with nowhere to deliver is not a poll. Either spelling names the
+  # channel, so the requirement is on the resolved value rather than on one row.
+  defp require_entry_channel(opts) do
+    if opts[:entry_channel],
+      do: :ok,
+      else: {:error, "http_poll requires an entry channel: write channel or channel_in"}
   end
+
+  # One worker, keyed by the plugin id `init_provider/1` settled. What it reads
+  # is narrowed where its state is built (`PollWorker.init/1`), so the list of
+  # fields it takes lives there and not in a second copy here.
+  @impl true
+  def worker_specs(opts), do: [{Map.fetch!(opts, :plugin_id), opts}]
 
   @doc """
   Teardown is the host's: it kills the pid `activate/1` returned, on both

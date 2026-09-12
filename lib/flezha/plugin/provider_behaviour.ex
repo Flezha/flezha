@@ -27,6 +27,10 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     lifecycle callbacks it overrode — both read from the module while it
     compiles, which is the same source a run-time export probe reads and one the
     host can trust without asking the code loader.
+
+    `feeds` is the one fact the module cannot be read for: whether the provider's
+    own worker injects payloads into the operative. It is declared, because a
+    callback list cannot say it — see `channel_jobs/2`.
     """
 
     @type worker :: %{
@@ -42,10 +46,20 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             options: [{atom(), keyword()}],
             extensions: [atom()],
             own: [atom()],
-            worker: worker() | nil
+            worker: worker() | nil,
+            feeds: boolean()
           }
 
-    defstruct [:module, :name, :type, :worker, options: [], extensions: [], own: []]
+    defstruct [
+      :module,
+      :name,
+      :type,
+      :worker,
+      options: [],
+      extensions: [],
+      own: [],
+      feeds: false
+    ]
 
     @doc "The rows an operator can write: everything but the internal ones."
     @spec public_options(t()) :: [{atom(), keyword()}]
@@ -307,12 +321,30 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   end
 
   @doc """
+  The jobs a plugin's channel option can name: `:in` when its provider feeds the
+  operative, `:out` when the plugin acts on the records passing through it.
+  Both, one, or neither.
+
+  The two are independent and neither implies the other. A subscription to
+  `on_input` means "act on a payload entering the operative", never "inject
+  one": the Kafka producer subscribed to `on_input` publishes what the operative
+  ingested and feeds nothing. So feeding is a provider DECLARATION and acting on
+  the chain is read from the host-injected `:subscribed_extensions`, which is
+  what `io_bound?/1` answers — the `:out` half, and the one read of that list.
+  """
+  @spec channel_jobs(Decl.t(), map()) :: [:in | :out]
+  def channel_jobs(%Decl{feeds: feeds}, opts) do
+    for {job, true} <- [in: feeds, out: io_bound?(opts)], do: job
+  end
+
+  @doc """
   Does this record belong to the channel a sink is restricted to? `nil` is no
   restriction.
 
-  The ONE reading of the `channel` option row. A provider that offered the row
-  and re-derived its meaning would let two sinks on one operative disagree about
-  which records a channel names.
+  The ONE reading of a resolved `:filter_channel`. A provider that read the
+  option rows here and re-derived their meaning would let two sinks on one
+  operative disagree about which records a channel names, and would pay the
+  resolution once per record instead of once per enable.
   """
   @spec in_channel?(map(), binary() | nil) :: boolean()
   def in_channel?(_metadata, nil), do: true
@@ -543,6 +575,13 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     # A provider that costs nothing until it is bound needs it: the declaration
     # says what it CAN do and this says what it was asked to do.
     :subscribed_extensions,
+    # The two halves the `channel`, `channel_in` and `channel_out` rows resolve
+    # to, written by `Options.normalise_opts/2` and read by the injection sites
+    # and `in_channel?/2`. They are host-derived rather than settable, which is
+    # what keeps the resolution a pure function of the rows an operator wrote:
+    # re-preparing a plugin resolves them again from the same three values.
+    :entry_channel,
+    :filter_channel,
     # A partition group's fan-out merges these into EVERY plugin of every
     # member (`Plugin.for_partition/3` over `Partition.provider_opts/1`), so a
     # provider that does not allow them refuses every enable on a partitioned

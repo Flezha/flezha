@@ -21,6 +21,10 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   Write the declaration into the provider: the attributes that hold it, the
   struct it derives, the contract functions it generates, and the default body
   for every lifecycle callback the provider does not write itself.
+
+  `feeds: true` declares that the provider's own worker injects payloads into
+  the operative. It defaults to false and only the two providers that call
+  `Flezha.Plugin.Host.inject/4` write it.
   """
   defmacro __using__(opts) do
     [
@@ -39,6 +43,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     worker = Keyword.get(opts, :worker)
     type = Keyword.get(opts, :type, :io_binding)
     name = Keyword.get(opts, :name)
+    feeds = Keyword.get(opts, :feeds, false)
 
     quote do
       @behaviour unquote(contract)
@@ -48,6 +53,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       @__provider_worker__ unquote(__MODULE__).__worker_decl__(unquote(worker))
       @__provider_type__ unquote(type)
       @__provider_name__ unquote(name) || unquote(Options).provider_name(__MODULE__)
+      @__provider_feeds__ unquote(feeds)
     end
   end
 
@@ -205,7 +211,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           options: @__provider_options__,
           extensions: unquote(extensions),
           own: unquote(own),
-          worker: @__provider_worker__
+          worker: @__provider_worker__,
+          feeds: @__provider_feeds__
         }
       end
     end

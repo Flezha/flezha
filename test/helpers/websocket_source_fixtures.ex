@@ -1,12 +1,14 @@
 defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
   @moduledoc """
-  The subscription-source fixture the `Plugin.Provider.Websocket` reconcile
-  tests are written against: a client state, a `Subscription`, one settled poll
-  driven through `handle_info/2`, and the readers that take a request id, a
-  method or an item list back out of a frame.
+  The `Plugin.Provider.Websocket` socket-process fixture: the state
+  `Client.start_link/1` builds, a `Subscription`, one settled poll driven
+  through `handle_info/2`, and the readers that take a request id, a method or
+  an item list back out of a frame.
 
   Driving the loop at its own seam rather than through a live socket is what
-  lets a test assert on the exact frames a given source transition produces.
+  lets a test assert on the exact frames a given transition produces, in both
+  directions: the reconcile tests override the source half, the ingest tests
+  the metadata half.
   """
 
   alias Flezha.Plugin.Provider.Websocket
@@ -39,6 +41,10 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
     )
   end
 
+  @doc """
+  The socket process's state as `Client.start_link/1` builds it, without a
+  socket. `overrides` is the half the test is about.
+  """
   def state(overrides \\ %{}) do
     now = :erlang.monotonic_time(:millisecond)
 
@@ -55,6 +61,8 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
         resubscribe_after_ms: 0,
         ignore_pattern: nil,
         websocket_established?: true,
+        sink: nil,
+        sync_ingest?: false,
         frames_seen: 0,
         last_frame_at: now,
         last_data_frame_at: now,

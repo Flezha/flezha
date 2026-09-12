@@ -15,6 +15,15 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Decl
 
+  # Every row that can name the channel a plugin is attached to, with the job it
+  # names: `channel` names whichever jobs the plugin has, the explicit pair one
+  # each. Every reading below derives from this one table. A provider declares
+  # only the spellings it can honour, so a spelling for a direction a provider
+  # never works in is refused as an unknown option.
+  @channel_rows [channel: :either, channel_in: :in, channel_out: :out]
+  @channel_keys Keyword.keys(@channel_rows)
+  @explicit_key for {key, job} <- @channel_rows, job != :either, do: {job, key}
+
   import ProviderBehaviour,
     only: [
       parse_bool: 2,
@@ -94,7 +103,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   """
   @spec normalise_opts(module(), map()) :: {:ok, map()} | {:error, binary()}
   def normalise_opts(provider, opts) when is_map(opts) do
-    %Decl{name: name, options: rows} = provider.__provider__()
+    %Decl{name: name, options: rows} = decl = provider.__provider__()
 
     with :ok <-
            reject_unknown(
@@ -103,6 +112,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
              name
            ),
          {:ok, converted} <- convert_declared(provider, rows, opts),
+         {:ok, converted} <- resolve_channels(decl, opts, converted),
          :ok <- require_declared(name, rows, converted) do
       {:ok, Map.merge(opts, converted)}
     end
@@ -136,6 +146,94 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
     end
   end
 
+  # The channel a plugin is attached to, resolved once from the three rows that
+  # can name it.
+  #
+  # `channel` names it in BOTH directions: the entry channel a plugin whose
+  # provider feeds the operative injects on, and the filter over records passing
+  # through the operative a plugin subscribed to a chain extension acts on.
+  # `channel_in` and `channel_out` name one each, for a plugin whose two names
+  # differ. The answer is the two host-side values the readers take —
+  # `:entry_channel` for the injection sites, `:filter_channel` for
+  # `ProviderBehaviour.in_channel?/2` — so no provider re-derives the meaning
+  # and dispatch pays nothing.
+  #
+  # It resolves BEFORE the required check, so a provider that requires an entry
+  # channel is satisfied by either spelling, and it reads only the rows an
+  # operator wrote, so re-preparing a plugin resolves the same answer again.
+  defp resolve_channels(%Decl{name: name} = decl, opts, converted) do
+    jobs = ProviderBehaviour.channel_jobs(decl, opts)
+
+    with :ok <- refuse_empty_channel(converted),
+         :ok <- refuse_two_spellings(name, converted),
+         :ok <- refuse_unreadable_channel(name, converted, jobs) do
+      {:ok,
+       Map.merge(converted, %{
+         entry_channel: attached(:in, jobs, converted),
+         filter_channel: attached(:out, jobs, converted)
+       })}
+    end
+  end
+
+  # The name that reaches one job: its own spelling, else the one `channel`
+  # gives both jobs at once — and nothing at all when the plugin does not do it.
+  defp attached(job, jobs, converted) do
+    if job in jobs, do: converted[@explicit_key[job]] || converted[:channel]
+  end
+
+  # `:string` accepts `""`, and an empty name is a channel nothing can be
+  # attached to in either direction.
+  defp refuse_empty_channel(converted) do
+    Enum.find_value(@channel_keys, :ok, fn key ->
+      if converted[key] == "", do: refuse_value(key, "")
+    end)
+  end
+
+  # `channel` already names both directions, so a second spelling beside it is a
+  # mistake rather than a precedence question.
+  defp refuse_two_spellings(name, converted) do
+    with true <- is_binary(converted[:channel]),
+         [_ | _] = keys <- named(converted, &(&1 != :either)) do
+      {:error,
+       "#{name} names channel together with #{Enum.join(keys, " and ")}; channel already " <>
+         "names both directions, so write it alone or write the pair instead"}
+    else
+      _ -> :ok
+    end
+  end
+
+  # Every channel key names a job. A key naming a job this plugin does not do
+  # could never take effect, and a feed that goes nowhere or a filter that
+  # matches nothing is not something to discover in flight.
+  defp refuse_unreadable_channel(name, converted, jobs) do
+    case named(converted, &undone?(&1, jobs)) do
+      [] -> :ok
+      [key | _] -> {:error, "#{name} names #{key}, but #{undone(@channel_rows[key])}"}
+    end
+  end
+
+  # The channel keys this plugin wrote whose job answers `predicate`.
+  defp named(converted, predicate) do
+    for {key, job} <- @channel_rows, is_binary(converted[key]), predicate.(job), do: key
+  end
+
+  # `channel` needs either job; each explicit key needs its own.
+  defp undone?(:either, jobs), do: jobs == []
+  defp undone?(job, jobs), do: job not in jobs
+
+  defp undone(:in),
+    do: "the provider does not feed the operative, so nothing would ever be injected"
+
+  defp undone(:out),
+    do:
+      "the plugin is subscribed to neither on_input nor on_output, so no record " <>
+        "would ever reach it"
+
+  defp undone(:either),
+    do:
+      "the plugin neither feeds the operative nor is subscribed to on_input or " <>
+        "on_output, so nothing would read it"
+
   defp put_converted(params, field, {:ok, converted}),
     do: {:cont, Map.put(params, field, converted)}
 
@@ -159,8 +257,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
     USAGE:
         flz plugin enable <plugin_id> #{String.downcase(name)} [OPTIONS]
     """ <>
-      param_block("REQUIRED", required) <>
-      param_block("OPTIONAL", all -- required) <>
+      param_block("REQUIRED", required, rows(module)) <>
+      param_block("OPTIONAL", all -- required, rows(module)) <>
       """
 
       COMMON OPTIONS:
@@ -174,16 +272,20 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   end
 
   # The REQUIRED and OPTIONAL sections are one rendering over two lists.
-  defp param_block(heading, fields) do
-    "\n#{heading} PARAMETERS (X-prefixed):\n" <> param_lines(fields)
+  defp param_block(heading, fields, rows) do
+    "\n#{heading} PARAMETERS (X-prefixed):\n" <> param_lines(fields, rows)
   end
 
-  defp param_lines([]), do: "    None\n"
+  defp param_lines([], _rows), do: "    None\n"
 
-  defp param_lines(fields) do
+  # The row's own `doc:` is what describes an option, so the help screen and the
+  # documented table render the same sentence. A row that declares none falls
+  # back to its name, which is all this screen ever said.
+  defp param_lines(fields, rows) do
     Enum.map_join(fields, "", fn field ->
       name = Atom.to_string(field)
-      "    --X#{name} <value>    #{String.capitalize(name)}\n"
+      doc = rows |> Keyword.get(field, []) |> Keyword.get(:doc) || String.capitalize(name)
+      "    --X#{name} <value>    #{doc}\n"
     end)
   end
 

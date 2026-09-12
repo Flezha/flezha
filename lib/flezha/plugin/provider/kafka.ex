@@ -64,7 +64,14 @@ defmodule Flezha.Plugin.Provider.Kafka do
         ],
         topic: [type: :string, required: true, doc: "Destination topic"],
         plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
-        channel: [type: :string, doc: "Produce only records whose metadata channel matches"],
+        channel: [
+          type: :string,
+          doc: "The channel this plugin is attached to: only records naming it are produced"
+        ],
+        channel_out: [
+          type: :string,
+          doc: "Produce only records whose metadata channel matches; the explicit spelling"
+        ],
         partition: [type: :int, default: 0, min: 0, doc: "Destination partition"],
         required_acks: [type: :int, default: -1, doc: "Broker acks; -1 is acks=all"],
         retries: [type: :int, default: 5, min: 0, doc: "Attempts per batch before parking it"],
@@ -317,7 +324,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def on_output(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)
 
     defp produce(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
-      if ProviderBehaviour.in_channel?(md, opts.channel),
+      if ProviderBehaviour.in_channel?(md, opts.filter_channel),
         do: do_produce(ctx, opts, msg, md),
         else: {:ok, ctx}
     end

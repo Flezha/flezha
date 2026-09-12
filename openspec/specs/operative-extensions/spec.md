@@ -946,3 +946,93 @@ sends.
 - **WHEN** an enable is issued with `--trigger on_input` or `--extension=on_input`
 - **THEN** the plugin MUST subscribe to `on_input` and every payload the operative ingests MUST be dispatched to the provider's `on_input/2`
 
+### Requirement: A provider SHALL declare whether it feeds the operative
+
+A provider declaration SHALL carry whether the provider injects payloads into the operative, defaulting to false. Only a provider whose own worker calls `Host.inject/4` declares it true.
+
+This cannot be inferred from the callback list. A subscription to `on_input` means "act on a payload entering the operative", not "inject one": the Kafka producer subscribed to `on_input` publishes what the operative ingested and feeds nothing. Feeding and acting on the chain are two unrelated jobs, and only the declaration tells them apart.
+
+#### Scenario: An injecting provider declares it
+
+- **WHEN** the `websocket` or `http_poll` provider declaration is read
+- **THEN** it SHALL report that the provider feeds the operative
+
+#### Scenario: A chain-only provider does not
+
+- **WHEN** the Kafka producer declaration is read
+- **THEN** it SHALL report that the provider does not feed the operative, whatever extensions a plugin using it subscribes to
+
+### Requirement: A channel option SHALL name the channel the plugin is attached to
+
+A plugin's `channel` option SHALL name the channel the plugin is attached to in both directions at once: the entry channel it injects on when its provider feeds the operative, and the filter over records passing through the operative when the plugin is subscribed to a chain extension. A plugin that does both jobs SHALL read both from that one name. The resolution SHALL be performed once, where the plugin's options are normalised, and SHALL produce the two concrete values the injection sites and `ProviderBehaviour.in_channel?/2` read, so no provider re-derives the meaning and dispatch is unchanged. It SHALL read only the options an operator wrote, so re-preparing a plugin from the options it already holds — which every plugin restart and every handover does — resolves the same answer again rather than refusing it.
+
+Whether a plugin feeds the operative comes from its provider declaration. Whether it acts on the chain comes from its subscribed extensions, which the host already merges into the options map.
+
+`channel_in` SHALL name the entry channel alone and `channel_out` the record filter alone, for a plugin whose two names differ. Within one operative an entry channel and an output channel never share a name, so a plugin that injects and is subscribed to `on_output` is such a plugin; the documentation SHALL say so beside the example.
+
+#### Scenario: A feeding plugin reads `channel` as its entry channel
+
+- **GIVEN** a plugin whose provider feeds the operative and which is subscribed to no chain extension
+- **WHEN** it is enabled with `channel: "trades"`
+- **THEN** every payload it injects SHALL carry `"trades"` as its channel
+
+#### Scenario: A chain plugin reads `channel` as its record filter
+
+- **GIVEN** a plugin subscribed to `on_output` whose provider does not feed the operative
+- **WHEN** it is enabled with `channel: "prices"`
+- **THEN** it SHALL act only on records whose metadata names `prices`, and other records SHALL pass through the chain unchanged
+
+#### Scenario: A plugin doing both jobs reads both from one name
+
+- **GIVEN** a plugin whose provider feeds the operative and which is subscribed to `on_input`
+- **WHEN** it is enabled with `channel: "requests"`
+- **THEN** it SHALL inject on `requests` and SHALL act only on records whose metadata names `requests`
+
+#### Scenario: A plugin doing both jobs names each explicitly
+
+- **GIVEN** a plugin whose provider feeds the operative and which is subscribed to `on_output`
+- **WHEN** it is enabled with `channel_in: "requests"` and `channel_out: "responses"`
+- **THEN** it SHALL inject on `requests` and act only on records naming `responses`
+
+### Requirement: An unresolvable channel option SHALL be refused when the plugin is enabled
+
+Enabling a plugin SHALL be refused when its channel options cannot take effect or contradict each other, and the refusal SHALL name both halves of the conflict. The refusal happens when the plugin is enabled, not when a frame moves, because the provider declaration and the subscription list answer every case before any payload exists.
+
+Three shapes are refused: `channel` supplied together with `channel_in` or `channel_out`, because resolving it by precedence would hide the mistake; an explicit key naming a job the plugin does not do, `channel_in` on a provider that does not feed the operative or `channel_out` on a plugin subscribed to no chain extension, because the option could never take effect; and `channel` on a plugin that neither feeds the operative nor is subscribed to a chain extension, because nothing could read it.
+
+A provider SHALL declare only the spellings it can honour. A spelling for a direction the provider never works in — `channel_out` on a source that only feeds, `channel_in` on a provider that only acts on the chain — is therefore not one of its options and is refused as an option that provider does not offer, by the same rule that refuses every unrecognised key.
+
+A `"channel"` key inside a provider's general metadata bag SHALL continue to select the entry channel on its own, and SHALL be refused when supplied together with any of the three channel options, because both would otherwise be live and the winner would be an implementation detail.
+
+#### Scenario: `channel` alongside an explicit key is refused
+
+- **WHEN** a plugin is enabled with both `channel` and `channel_out`
+- **THEN** the enable SHALL be refused, naming both keys
+
+#### Scenario: A key for a job the plugin does not do is refused
+
+- **GIVEN** a plugin whose provider declares `channel_out` and which is subscribed to no chain extension
+- **WHEN** it is enabled with `channel_out`
+- **THEN** the enable SHALL be refused, stating the job the plugin does not do
+
+#### Scenario: A spelling for a direction the provider never works in is not one of its options
+
+- **WHEN** a plugin of the `http_poll` provider is enabled with `channel_out`, or a plugin of the Kafka producer is enabled with `channel_in`
+- **THEN** the enable SHALL be refused, naming the key as an option that provider does not offer
+
+#### Scenario: `channel` on a plugin doing neither job is refused
+
+- **GIVEN** a plugin whose provider does not feed the operative and which is subscribed to no chain extension
+- **WHEN** it is enabled with `channel: "x"`
+- **THEN** the enable SHALL be refused, stating that nothing reads the option
+
+#### Scenario: The metadata bag alone still selects the entry channel
+
+- **WHEN** a `websocket` plugin is enabled with a metadata bag carrying `"channel" => "us"` and no channel option
+- **THEN** the enable SHALL succeed and every injected payload SHALL carry `"us"` as its channel
+
+#### Scenario: The metadata bag together with a channel option is refused
+
+- **WHEN** a `websocket` plugin is enabled with both a metadata bag carrying `"channel"` and a `channel` option
+- **THEN** the enable SHALL be refused, naming both
+

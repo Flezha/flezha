@@ -15,7 +15,7 @@ telemetry and limits.
 | Plugin type | `:io_binding` |
 | Extension points | `:on_terminate` — the poller drives itself; the subscription exists because every plugin needs at least one |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |
-| Injection | the response body, on `:channel`, only when its SHA-256 differs from the last delivered one |
+| Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only when its SHA-256 differs from the last delivered one |
 | Delivery | the confirming ingest — the hash advances only once the operative has taken the payload |
 | Seed | the first successful poll after a (re)start always injects |
 | Failure posture | inject nothing, keep the last hash, count toward health |
@@ -55,13 +55,20 @@ As a plugin spec at operative start (`flz operative start --plugins`):
 ]
 ```
 
+`channel` names the entry channel the body is injected on. `channel_in` is the
+explicit spelling of the same name, for an operator writing one vocabulary
+across every provider; one of the two is required, and writing both is refused.
+`channel_out` is not a parameter here: the poller never acts on the records
+passing through the operative, so the option would have nothing to read.
+
 ## Parameters
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `url` | string | &mdash; | yes | The resource to GET each interval |
-| `channel` | string | &mdash; | yes | Entry channel the body is injected on |
+| `channel` | string | &mdash; | no | The channel this plugin is attached to: the entry channel the body is injected on. Required, unless `channel_in` names it |
+| `channel_in` | string | &mdash; | no | Entry channel the body is injected on; the explicit spelling of `channel`. Required, unless `channel` names it |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to the redacted URL |
 | `headers` | json | `%{}` | no | Request headers, as a JSON object |
 | `interval_ms` | int | `60000` | no | Milliseconds between polls |
@@ -70,6 +77,10 @@ As a plugin spec at operative start (`flz operative start --plugins`):
 | `failure_threshold` | int | `3` | no | Consecutive failed polls before the plugin reports unhealthy |
 | `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the source is idle; 0 derives it from `interval_ms` |
 <!-- provider-options:end -->
+
+**One of `channel` and `channel_in` is required.** The Required column can only
+speak of one row at a time, so it reads `no` for both; a plugin naming neither is
+refused when it is enabled, with a message naming both spellings.
 
 Any other key is refused at attach rather than ignored — a POST body, an auth flow, a
 backoff ladder — so a config asking for something the provider does not offer fails
@@ -112,11 +123,12 @@ deterministic.
 
 ## Delivery is confirmed
 
-Injection is `GenServer.call(overwatch, {:ingest, body, %{"channel" => channel}})`, never
-the fire-and-forget `:io_in` cast, which drops silently in ordinary states — a parked
-operative, an unbound stream, a failed durable-inbox append. A refused or not-ready
-ingest is a failure like any other: it counts toward health and leaves the hash alone, so
-the next poll re-offers the same content. `{:ok, :absorbed}` (a duplicate the operative
+Injection is `GenServer.call(overwatch, {:ingest, body, %{"channel" => entry_channel}})`,
+where `entry_channel` is the name `channel` or `channel_in` resolved to when the plugin was
+enabled. It is never the fire-and-forget `:io_in` cast, which drops silently in ordinary
+states — a parked operative, an unbound stream, a failed durable-inbox append. A refused
+or not-ready ingest is a failure like any other: it counts toward health and leaves the
+hash alone, so the next poll re-offers the same content. `{:ok, :absorbed}` (a duplicate the operative
 already holds) and `{:ok, :suspended}` (journaled, delivered on wake) both count as
 delivered.
 

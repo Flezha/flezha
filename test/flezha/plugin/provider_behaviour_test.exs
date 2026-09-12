@@ -373,6 +373,135 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
   end
 
+  defmodule NoFeedSource do
+    @moduledoc false
+
+    # A provider offering the entry-side spelling and never declaring that it
+    # feeds the operative — the shape the `channel_in` refusal exists for, and
+    # one no first-party provider can produce, because both that declare the row
+    # also feed.
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [channel_in: [type: :string, doc: "Entry channel"]]
+  end
+
+  describe "a provider declares whether it feeds the operative" do
+    test "the two providers whose worker injects declare it, and no other does" do
+      feeding =
+        for {id, module} <- Flezha.Plugin.Providers.all(),
+            module.__provider__().feeds,
+            do: id
+
+      assert Enum.sort(feeding) == ["operative_http_poll", "operative_websocket"]
+    end
+
+    test "it cannot be inferred from the callback list" do
+      # The Kafka producer subscribes to `on_input` and feeds nothing: it
+      # publishes what the operative ingested.
+      assert :on_input in Kafka.Producer.__provider__().extensions
+      refute Kafka.Producer.__provider__().feeds
+    end
+
+    test "the jobs a plugin's channel can name are the declaration and the subscriptions" do
+      chain = %{subscribed_extensions: [:on_output]}
+
+      assert ProviderBehaviour.channel_jobs(Websocket.__provider__(), chain) == [:in, :out]
+      assert ProviderBehaviour.channel_jobs(Websocket.__provider__(), %{}) == [:in]
+      assert ProviderBehaviour.channel_jobs(Kafka.Producer.__provider__(), chain) == [:out]
+      assert ProviderBehaviour.channel_jobs(Kafka.Producer.__provider__(), %{}) == []
+    end
+  end
+
+  describe "one channel option per direction" do
+    defp normalised(provider, opts), do: ProviderOptions.normalise_opts(provider, opts)
+
+    defp poll_opts(extra), do: Map.merge(%{url: "https://example.invalid/c"}, extra)
+
+    test "`channel` fills the half the plugin has, and only that half" do
+      assert {:ok, %{entry_channel: "cfg", filter_channel: nil}} =
+               normalised(HttpPoll, poll_opts(%{channel: "cfg"}))
+
+      assert {:ok, %{entry_channel: nil, filter_channel: "out"}} =
+               normalised(Kafka.Producer, %{
+                 hosts: [{"h", 1}],
+                 topic: "t",
+                 channel: "out",
+                 subscribed_extensions: [:on_input]
+               })
+    end
+
+    test "either spelling satisfies a provider that requires an entry channel" do
+      assert {:ok, %{entry_channel: "cfg"}} = prepare(HttpPoll, poll_opts(%{channel_in: "cfg"}))
+      assert {:ok, %{entry_channel: "cfg"}} = prepare(HttpPoll, poll_opts(%{channel: "cfg"}))
+    end
+
+    test "naming neither is refused, and the refusal names both spellings" do
+      assert {:error, message} = prepare(HttpPoll, poll_opts(%{}))
+      assert message == "http_poll requires an entry channel: write channel or channel_in"
+    end
+
+    # A row can declare itself required and nothing can declare a PAIR required,
+    # so both operator surfaces would otherwise read "optional" for an option the
+    # enable refuses to do without. Both render the row's own `doc:`, which is
+    # where the rule is written.
+    test "both operator surfaces say the entry channel is required" do
+      for text <- [HttpPoll.help(), ProviderOptions.render_options_table(HttpPoll)] do
+        assert text =~ "Required, unless `channel_in` names it"
+        assert text =~ "Required, unless `channel` names it"
+      end
+    end
+
+    test "a spelling for a direction the provider does not work in is not a declared row" do
+      assert {:error, message} = normalised(HttpPoll, poll_opts(%{channel_out: "x"}))
+      assert message == "unknown option(s) for http_poll: channel_out"
+
+      assert {:error, message} =
+               normalised(Kafka.Producer, %{hosts: [{"h", 1}], topic: "t", channel_in: "x"})
+
+      assert message == "unknown option(s) for kafka: channel_in"
+    end
+
+    test "a spelling for a job the plugin was not wired for is refused" do
+      assert {:error, message} = normalised(NoFeedSource, %{channel_in: "us"})
+      assert message =~ "no_feed_source names channel_in"
+      assert message =~ "does not feed the operative"
+    end
+
+    test "`channel` on a plugin doing neither job is refused" do
+      assert {:error, message} =
+               normalised(Kafka.Producer, %{hosts: [{"h", 1}], topic: "t", channel: "x"})
+
+      assert message =~ "kafka names channel"
+      assert message =~ "nothing would read it"
+    end
+
+    test "an empty name is refused for every spelling" do
+      assert {:error, "Invalid value for channel: "} =
+               normalised(HttpPoll, poll_opts(%{channel: ""}))
+
+      assert {:error, "Invalid value for channel_in: "} =
+               normalised(HttpPoll, poll_opts(%{channel_in: ""}))
+    end
+
+    test "a channel written as an atom still names the same channel" do
+      assert {:ok, %{entry_channel: "cfg"}} = normalised(HttpPoll, poll_opts(%{channel: :cfg}))
+    end
+
+    # A plugin is re-prepared on every restart and handover from the options it
+    # already holds (`Extension.Table.attempt_restart/3`), so a resolution that
+    # rewrote the rows it reads would refuse its own output the second time.
+    test "resolving an already-resolved plugin answers the same thing" do
+      opts = poll_opts(%{channel_in: "cfg"})
+
+      assert {:ok, once} = normalised(HttpPoll, opts)
+      assert {:ok, twice} = normalised(HttpPoll, once)
+
+      assert twice.entry_channel == "cfg"
+
+      assert Map.take(twice, [:channel, :channel_in, :entry_channel]) ==
+               Map.take(once, [:channel, :channel_in, :entry_channel])
+    end
+  end
+
   # One vocabulary, one root. A provider that invents a second spelling for a
   # fact two others already report is unreachable by anything subscribing to
   # the family, and the divergence is invisible until someone greps for it —

@@ -13,9 +13,15 @@ exactly as it does today and SHALL start no queue, no timer and no additional pr
 The provider SHALL accept `sink_frame_type` (`"text"` or `"binary"`, default `"text"`),
 an optional `sink_template` whose `{{payload}}` placeholder is replaced by the dispatched
 payload and which SHALL be refused at enable time without that placeholder, and an optional
-`channel` restricting the plugin to outputs whose metadata names that channel, with the same
-meaning the Kafka producer gives it. With no `sink_template` the payload SHALL be sent
-verbatim as the frame body.
+`channel_out` restricting the plugin to outputs whose metadata names that channel, with the
+same meaning the Kafka producer's own restriction has. With no `sink_template` the payload
+SHALL be sent verbatim as the frame body.
+
+Because the websocket provider also feeds the operative, `channel` on it names both
+directions by the rule in `operative-extensions`: the outputs it sends and the entry channel
+its inbound frames are injected on. A plugin whose two names differ SHALL write `channel_out`
+for the restriction and `channel_in` for the entry channel, and `channel_out` SHALL be
+accepted as the explicit spelling of the restriction in every case.
 
 Outbound frames SHALL be handed to the connection only while it is established. The
 provider SHALL NOT use the connection library's public send function, whose disconnected
@@ -35,6 +41,16 @@ path discards a frame without an error.
 - **GIVEN** a plugin configured with `channel: "prices"`
 - **WHEN** an output whose metadata names a different channel is dispatched
 - **THEN** no frame SHALL be sent, and the output SHALL pass through the chain unchanged
+
+#### Scenario: The explicit spelling restricts the same way
+- **GIVEN** a plugin configured with `channel_out: "prices"`
+- **WHEN** an output whose metadata names a different channel is dispatched
+- **THEN** no frame SHALL be sent, and the output SHALL pass through the chain unchanged
+
+#### Scenario: One `channel` names both directions
+- **GIVEN** a plugin subscribed to `on_output` and configured with `channel: "prices"`, on an operative declaring an entry channel `prices`
+- **WHEN** an inbound frame arrives and an output naming `alerts` is dispatched
+- **THEN** the frame SHALL be injected on `prices`, and no frame SHALL be sent for the `alerts` output
 
 #### Scenario: An unsubscribed plugin costs nothing
 - **WHEN** a plugin is enabled with no `on_input` or `on_output` subscription

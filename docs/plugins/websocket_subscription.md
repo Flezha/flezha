@@ -37,6 +37,14 @@ out loud. Naming a trigger here binds the other direction too: `on_input` on
 this provider is the same send as `on_output`, so it makes a source echo every
 payload the operative ingests back out on the socket it arrived on.
 
+Those frames land on the operative's FIRST entry channel unless the plugin names
+one: `--Xchannel trades` makes every inbound frame an entry frame on `trades`.
+`--Xchannel_in trades` says the same thing in one direction only, and is what a
+plugin that also sends writes (see below). `payload_metadata` remains the
+general label bag merged into every injection, and its own `"channel"` key still
+selects the entry channel when no option names one — naming the channel both
+ways is refused when the plugin is enabled, rather than resolved by precedence.
+
 ## Contract
 
 | | |
@@ -170,15 +178,24 @@ payload it sees is sent as one frame on the connection it already holds:
 ```
 flz plugin enable prices operative_websocket \
   --Xuri wss://feed.example/stream \
-  --Xchannel prices \
+  --Xchannel_out prices \
   --extension on_output
 ```
 
-`channel` restricts the plugin to outputs whose metadata names that channel,
-with the same meaning the Kafka producer gives it; with no `channel` every
-output is sent. `sink_frame_type` chooses `text` or `binary`. With no
-`sink_template` the payload is the frame body, verbatim. A template wraps it,
-substituting four placeholders:
+`channel_out` restricts the plugin to outputs whose metadata names that channel,
+with the same meaning the Kafka producer gives it; with no restriction every
+output is sent.
+
+`channel` names the channel this plugin is attached to in BOTH directions:
+inbound frames are injected on it AND only outputs naming it are sent. Within
+one operative an entry channel and an output channel never share a name, so a
+plugin that both receives and sends names two channels and writes the pair —
+`--Xchannel_in requests --Xchannel_out responses`. Writing `channel` together
+with either is refused.
+
+`sink_frame_type` chooses `text` or `binary`. With no `sink_template` the
+payload is the frame body, verbatim. A template wraps it, substituting four
+placeholders:
 
 | Placeholder | Replaced by |
 |---|---|
@@ -252,7 +269,9 @@ direction would close that cycle and hang the operative permanently.
 | `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
 | `unsubscribe_template` | string | &mdash; | no | Frame template carrying the items to drop |
 | `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
-| `channel` | string | &mdash; | no | Send only outputs whose metadata channel matches |
+| `channel` | string | &mdash; | no | The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent |
+| `channel_in` | string | &mdash; | no | Entry channel inbound frames are injected on, for a plugin whose two names differ |
+| `channel_out` | string | &mdash; | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ |
 | `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
 | `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{entity}}/{{seq}} available |
 | `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |

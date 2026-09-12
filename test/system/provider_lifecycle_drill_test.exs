@@ -173,6 +173,59 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end
   end
 
+  # One plugin option decides the entry channel every inbound frame of a socket
+  # is injected on, so two plugins on one operative must not be able to feed the
+  # same channel by accident. Driven through the operator's own verb on the live
+  # operative: what the socket process is started with is the whole of what this
+  # decides, and delivering a frame that names a channel to that channel is the
+  # runner's, pinned in `flz_core/src/routing_tests.rs`.
+  test "each websocket plugin feeds the channel its own option names", ctx do
+    rows = [
+      {%{channel: "feed_a"}, :on_interval, "feed_a", nil},
+      {%{channel: "feed_b"}, :on_interval, "feed_b", nil},
+      {%{channel_in: "requests", channel_out: "responses"}, :on_output, "requests", "responses"}
+    ]
+
+    for {flags, extension, entry, filter} <- rows do
+      plugin_id = "drill-ws-channel-#{System.unique_integer([:positive])}"
+
+      opts =
+        flags
+        |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
+        |> cli_opts()
+        |> Map.put("extensions", [
+          %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
+        ])
+
+      scope = %{"namespace" => ctx.namespace, "operative_id" => ctx.operative_id}
+
+      # The verb prints its own confirmation; this test asserts on the table.
+      assert {:ok, _printed} =
+               ExUnit.CaptureIO.with_io(fn ->
+                 CliManager.enable_plugin(
+                   plugin_id,
+                   "operative_websocket",
+                   Jason.encode!(opts),
+                   Jason.encode!(scope)
+                 )
+               end)
+
+      stored = plugin_table(ctx).plugins[plugin_id].opts
+      assert stored.entry_channel == entry
+      assert stored.filter_channel == filter
+
+      # The map the socket process is started with, from the options the live
+      # table holds: this is what every injection of that socket carries.
+      assert [{^plugin_id, %{payload_metadata: %{"channel" => ^entry}}}] =
+               Provider.Websocket.worker_specs(stored)
+
+      assert {disabled, _printed} =
+               ExUnit.CaptureIO.with_io(fn -> CliManager.disable_plugin(plugin_id, []) end)
+
+      assert disabled in [:ok, {:ok, :disabled}]
+    end
+  end
+
   defp start_operative(namespace, label) do
     id = "#{label}_#{System.unique_integer([:positive])}"
 

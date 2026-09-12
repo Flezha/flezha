@@ -206,3 +206,35 @@ The provider SHALL accept `subscription_items` — a literal item list feeding t
 #### Scenario: Both sources declared is refused
 - **WHEN** opts declare both `subscription_url` and `subscription_items`
 - **THEN** the plugin is refused at init with an error naming the conflict
+
+### Requirement: A websocket plugin SHALL name its entry channel with an option
+
+`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `operative-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin is also subscribed to a chain extension, and `channel_in` names it alone in every case.
+
+Before this, the provider had no option naming its entry channel and an operator had to write the `"channel"` key into `payload_metadata`, the general label bag, which is neither discoverable in the provider's help screen nor distinguishable from the provider's own `channel` option pointing the other way.
+
+`payload_metadata` SHALL remain the general label bag and a `"channel"` key inside it SHALL continue to select the entry channel when no channel option is supplied, so a configuration that names nothing else keeps working unchanged.
+
+#### Scenario: A receive-only plugin names its entry channel
+
+- **GIVEN** a websocket plugin subscribed to no chain extension
+- **WHEN** it is enabled with `channel: "us"` and a frame arrives on its socket
+- **THEN** the frame SHALL be injected on the entry channel named `us`
+
+#### Scenario: The explicit spelling names the same channel
+
+- **WHEN** the same plugin is enabled with `channel_in: "us"` instead
+- **THEN** an arriving frame SHALL be injected on the entry channel named `us`
+
+#### Scenario: The metadata bag still works on its own
+
+- **WHEN** a websocket plugin is enabled with `payload_metadata` carrying `"channel" => "us"` and no channel option
+- **THEN** an arriving frame SHALL be injected on the entry channel named `us`
+
+#### Scenario: A plugin doing both jobs names each end
+
+- **GIVEN** a websocket plugin subscribed to `on_output`
+- **WHEN** it is enabled with `channel_in: "requests"` and `channel_out: "responses"`
+- **THEN** an arriving frame SHALL be injected on `requests`
+- **AND** only outputs whose metadata names `responses` SHALL be sent on the socket
+

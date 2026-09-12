@@ -70,7 +70,8 @@ identical key, header and partition:
 | `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
 | `topic` | string | &mdash; | yes | Destination topic |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
-| `channel` | string | &mdash; | no | Produce only records whose metadata channel matches |
+| `channel` | string | &mdash; | no | The channel this plugin is attached to: only records naming it are produced |
+| `channel_out` | string | &mdash; | no | Produce only records whose metadata channel matches; the explicit spelling |
 | `partition` | int | `0` | no | Destination partition |
 | `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
 | `retries` | int | `5` | no | Attempts per batch before parking it |
@@ -97,6 +98,14 @@ identical key, header and partition:
 | `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
 | `metadata_update_interval` | int | &mdash; | no | How often the shared broker client refreshes metadata |
 <!-- provider-options:end -->
+
+`channel` names the channel this plugin is attached to; the producer only acts on the
+records passing through the operative, so on it that means "produce only records whose
+metadata names this channel". `channel_out` is the explicit spelling of the same
+restriction, for an operator writing one vocabulary across every provider. Writing both,
+or writing either on a plugin subscribed to neither `on_input` nor `on_output`, is
+refused when the plugin is enabled, because nothing would read it. There is no
+`channel_in`: the producer never feeds the operative.
 
 Passwords are redacted in the persisted and returned opts.
 
