@@ -22,8 +22,7 @@ public final class CheckpointStoreStreamOperative implements StreamOperative {
         c.checkpointAck();
         c.input(String.class, "input")
                 .into(CheckpointStoreProcedure.class)
-                .named("sink")
                 .keyed()
-                .sink("tier_sink");
+                .sink("sink");
     }
 }

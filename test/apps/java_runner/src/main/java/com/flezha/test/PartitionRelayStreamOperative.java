@@ -35,9 +35,8 @@ public final class PartitionRelayStreamOperative implements StreamOperative {
         c.input(String.class, "in")
                 .keyBy(DynamicEntityStreamOperative::key)
                 .into(PartitionRelayProcedure.class)
-                .named("input")
                 .keyed()
-                .sink("relay_out");
+                .sink("input");
     }
 
     public static final class PartitionRelayProcedure

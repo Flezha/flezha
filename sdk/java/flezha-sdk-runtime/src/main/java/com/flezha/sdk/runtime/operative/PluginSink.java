@@ -9,4 +9,4 @@ import java.util.function.Function;
  * the {@link com.flezha.sdk.channel.ChannelKind#PLUGIN_BOUND} terminal, a kind
  * the builder derives from the wiring rather than from which method was called.
  */
-public record PluginSink(String name, Function<Object, byte[]> serializer) {}
+public record PluginSink(Function<Object, byte[]> serializer) {}

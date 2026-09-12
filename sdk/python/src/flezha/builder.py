@@ -387,9 +387,13 @@ class Edge(Generic[T]):
         )
         return Edge(self._builder, ("procedure", node), {})
 
-    def sink(self, name: str, *, encode: Callable[[Any], bytes] | None = None) -> Edge[T]:
-        """Attach this edge's channel to the named plugin sink, and answer the edge.
+    def sink(
+        self, name: str | None = None, *, encode: Callable[[Any], bytes] | None = None
+    ) -> Edge[T]:
+        """Terminate this edge's channel on the plugin layer, and answer the edge.
 
+        The name written here IS the channel's name, everywhere one appears;
+        ``sink()`` leaves it derived as it would be without a sink at all.
         ``sink(...).into(...)`` wires a consumer behind the sink, so one emit
         reaches both. A channel with no consumer behind it is the plugin-bound
         terminal — terminality is the absence of further wiring, not a
@@ -401,15 +405,19 @@ class Edge(Generic[T]):
             # there is nothing in it that says which end fed the plugin.
             raise DeclarationError(
                 self._builder.factory_id,
-                name,
+                name or "<derived>",
                 "a plugin sink is fed by a procedure; wire the entry channel into one first",
             )
         channel = self._channel()
         # A chain of its own: the sink terminates the channel rather than this
         # edge, so ``into(...)`` still chains after it.
-        channel.chains.append([{"link": "sink", "name": name}])
+        link: dict[str, Any] = {"link": "sink"}
+        if name is not None:
+            link["name"] = name
+            channel.name = name
+        channel.chains.append([link])
         if channel.sink is None:
-            channel.sink = name
+            channel.sink = channel.name
             channel.sink_encode = encode
         return self
 

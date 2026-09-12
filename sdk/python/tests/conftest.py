@@ -74,7 +74,7 @@ def echo(value: str) -> str:
 
 @flezha.stream_operative("demo")
 def demo(c: flezha.Channels) -> None:
-    c.input("input").into(echo).named("mid").into(count_up).named("out").sink("demo_sink")
+    c.input("input").into(echo).named("mid").into(count_up).sink("out")
 
 
 class FakeCore:
@@ -289,7 +289,7 @@ def solo_deps(proc: flezha.Procedure[Any, Any], core: FakeCore, factory: str = "
 
     @flezha.stream_operative(factory)
     def operative(c: flezha.Channels) -> None:
-        c.input("in").into(proc).sink("out")
+        c.input("in").into(proc).sink()
 
     return deps_for(operative, core)
 

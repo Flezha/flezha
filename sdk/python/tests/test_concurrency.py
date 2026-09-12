@@ -85,7 +85,7 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
 
     @flezha.stream_operative("blocking")
     def blocking(c: flezha.Channels) -> None:
-        c.input("in").into(blocks).sink("out")
+        c.input("in").into(blocks).sink()
 
     core = FakeCore(
         [work_activation(i, "x", factory="blocking") for i in range(8)],
@@ -117,7 +117,7 @@ def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
 
     @flezha.stream_operative("capped")
     def capped(c: flezha.Channels) -> None:
-        c.input("in").into(blocks).sink("out")
+        c.input("in").into(blocks).sink()
 
     core = FakeCore(
         [work_activation(i, "x", factory="capped") for i in range(20)],
@@ -246,7 +246,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
 
     @flezha.stream_operative("async_op")
     def async_op(c: flezha.Channels) -> None:
-        c.input("in").into(slow).sink("out")
+        c.input("in").into(slow).sink()
 
     core = FakeCore([work_activation(i, f"v{i}", factory="async_op") for i in range(4)])
     deps = deps_for(async_op, core)
@@ -275,7 +275,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
 
     @flezha.stream_operative("wedge")
     def wedge(c: flezha.Channels) -> None:
-        c.input("in").into(wedged).sink("out")
+        c.input("in").into(wedged).sink()
 
     core = FakeCore([work_activation(1, "x", factory="wedge")])
     deps = deps_for(wedge, core)

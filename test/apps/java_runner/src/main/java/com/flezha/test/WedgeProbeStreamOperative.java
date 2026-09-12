@@ -38,7 +38,7 @@ public final class WedgeProbeStreamOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(WedgeProbeProcedure.class).named("out").sink("wedge_sink");
+        c.input(String.class, "input").into(WedgeProbeProcedure.class).sink("out");
     }
 
     public static final class WedgeProbeProcedure

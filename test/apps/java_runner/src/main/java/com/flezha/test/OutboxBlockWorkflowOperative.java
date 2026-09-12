@@ -23,8 +23,7 @@ public final class OutboxBlockWorkflowOperative implements WorkflowOperative {
     public void procedures(ChannelBuilder c) {
         c.input(String.class, "in")
                 .into(CommitBlockWorkflowOperative.CommitA.class)
-                .named("mid")
-                .sink("outbox_sink", s -> ("a-out:" + s).getBytes(StandardCharsets.UTF_8))
+                .sink("mid", s -> ("a-out:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(CommitBlockWorkflowOperative.BlockB.class);
     }
 }

@@ -59,7 +59,7 @@ class Tally:
 def word_count(c: Channels) -> None:
     c.input("lines", decode=lambda raw: bytes(raw).decode()).into(split).key_by(
         lambda word: word
-    ).into(Tally).named("totals").keyed().sink("word_totals", encode=lambda text: text.encode())
+    ).into(Tally).keyed().sink("totals", encode=lambda text: text.encode())
 
 
 def scenario() -> tuple[list[str], Counter[str]]:

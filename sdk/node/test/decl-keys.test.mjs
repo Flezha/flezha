@@ -73,7 +73,7 @@ function fullyDeclaredStream() {
         .keyBy((input) => input.symbol)
         .into(dynamic)
         .keyed()
-        .sink('out');
+        .sink();
     },
   });
 }
@@ -87,7 +87,7 @@ function fullyDeclaredStatic() {
   });
   return defineOperative({
     factoryId: 'node_decl_static',
-    channels: (c) => c.input('in').into(statik).sink('out'),
+    channels: (c) => c.input('in').into(statik).sink(),
   });
 }
 
@@ -265,11 +265,7 @@ function hybridChannel() {
   return defineOperative({
     factoryId: 'hybrid_channel',
     channels: (c) => {
-      c.input('input')
-        .into(producer)
-        .named('hybrid_indicator')
-        .sink('hybrid_indicators', bytes)
-        .into(consumer);
+      c.input('input').into(producer).sink('hybrid_indicator', bytes).into(consumer);
     },
   });
 }
@@ -284,7 +280,7 @@ function commitBlockChain() {
     factoryId: 'commit_block_chain',
     channels: (c) => {
       c.effectivelyOnce();
-      c.input('in').into(commitA).named('mid').keyed().sink('tier_sink', bytes).into(blockB);
+      c.input('in').into(commitA).keyed().sink('mid', bytes).into(blockB);
     },
   });
 }

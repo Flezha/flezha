@@ -35,7 +35,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.input("in")
         |> Channels.into(EchoProc)
         |> Channels.named("echo")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   defmodule KeyedProc do
@@ -56,7 +56,7 @@ defmodule Flezha.SDK.UnitTest do
       |> Channels.key_by(fn s -> s end)
       |> Channels.into(KeyedProc)
       |> Channels.named("k")
-      |> Channels.sink("out")
+      |> Channels.sink()
     end
   end
 
@@ -88,7 +88,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.input("in")
         |> Channels.into(StaticProc)
         |> Channels.named("s")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   # --- entity mode derivation ---
@@ -193,7 +193,7 @@ defmodule Flezha.SDK.UnitTest do
   test "KeyedOnEntry — an entry channel has no output of its own to stamp" do
     defmodule KeyedEntry do
       def factory_id, do: "keyed_entry"
-      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink("out")
+      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink()
     end
 
     assert {:error, {:invalid_topology, [{:KeyedOnEntry, "in"}]}} = Topology.build(KeyedEntry)
@@ -221,7 +221,7 @@ defmodule Flezha.SDK.UnitTest do
       def sync_durability, do: true
 
       def channels(c),
-        do: c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.sink("out")
+        do: c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.sink()
     end
 
     assert {:KeyedChannelWithoutPluginWire, "echo"} = one_issue(KeyedNoWire)
@@ -296,7 +296,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.into(KeyedProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("out")
+        |> Channels.sink()
       end
     end
 
@@ -312,7 +312,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.into(KeyedProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("out")
+        |> Channels.sink()
       end
     end
 
@@ -337,7 +337,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(KeyedProc)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     assert {:CheckpointMaxDelayZero, _} = one_issue(DelayZero)
@@ -358,7 +358,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeProc)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     assert {:CorrectionWindowZero, _} = one_issue(PolicyWithoutWindow)
@@ -381,7 +381,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeProc)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     assert {:DroppingPolicyUnderEffectivelyOnce, "in", :drop_oldest} =
@@ -403,7 +403,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeProc)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     defmodule PolicyThenWindow do
@@ -419,7 +419,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeProc)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     assert {:ok, %{correction: %{window_ms: 600_000, beyond_window: :drop}}} =
@@ -442,7 +442,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EventTimeProc)
           |> Channels.named("sink")
           |> Channels.keyed()
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     assert {:ok, topo} = Topology.build(CandleShape)

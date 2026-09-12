@@ -18,7 +18,6 @@ public final class SessionOperative implements StreamOperative {
         c.input(String.class, "clicks")
                 .keyBy(click -> click.split(":")[0])
                 .into(SessionWindow.class)
-                .named("closed_sessions")
-                .sink("kafka");
+                .sink("closed_sessions");
     }
 }

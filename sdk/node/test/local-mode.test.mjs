@@ -49,9 +49,8 @@ const WordCount = defineOperative({
       .into(Split)
       .keyBy((word) => word)
       .into(Tally)
-      .named('totals')
       .keyed()
-      .sink('word_totals', bytes);
+      .sink('totals', bytes);
   },
 });
 

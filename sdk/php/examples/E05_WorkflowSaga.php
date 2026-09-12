@@ -65,8 +65,8 @@ final class CheckoutWorkflow extends WorkflowOperative
     {
         $c->input('orders')
             ->into(ReserveStock::class)->named('reserved')
-            ->into(ChargeCard::class)->named('charged')
-            ->sink('checkout_out');
+            ->into(ChargeCard::class)
+            ->sink('charged');
     }
 }
 

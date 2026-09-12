@@ -40,13 +40,13 @@
 # channel carries a plugin sink AND an inter-procedure consumer.
 # Procedures: 0 hybrid_producer_procedure, 1 hybrid_consumer_procedure.
 hybrid_channel | 0 | input | entry | - | 0 | -
-hybrid_channel | 1 | hybrid_indicator | inter_proc | 0 | 1 | hybrid_indicators
+hybrid_channel | 1 | hybrid_indicator | inter_proc | 0 | 1 | hybrid_indicator
 
 # commit_block_chain — a structured workflow class, effectively-once, with the
 # same hybrid shape mid-chain and a keyed producing channel.
 # Procedures: 0 tier_commit_a, 1 block_b.
 commit_block_chain | 0 | in | entry | - | 0 | -
-commit_block_chain | 1 | mid | inter_proc | 0 | 1 | tier_sink
+commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 
 # ---------------------------------------------------------------------------
 # refusals — one row per reference refusal. Columns, `|`-separated:
@@ -67,7 +67,8 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | tier_sink
 #   <x>.map.into(<proc>)       a transform link before the terminator
 #   <x>.key.into(<proc>)       a key link before the terminator
 #   <x>.map                    a chain nothing closes
-#   <x>.sink(<name>)           terminate x on a plugin descriptor
+#   <x>.sink(<name>)           terminate x on the plugin layer, naming it
+#   <x>.sink                   the same, leaving the name derived
 #   <x>.named(<name>)          override x's derived channel name
 #   <x>.keyed                  opt x into output identity
 #   <x>.retry_max(<n>)         the channel's attempt ceiling
@@ -116,7 +117,7 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | tier_sink
 # metadata region's one-byte length prefix, which is the whole of what the row
 # is testing. It is the one row whose steps column carries a literal that long.
 
-DuplicateChannel                   | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.sink(out)                           | -
+DuplicateChannel                   | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.sink                                | -
 NodeIdentityCollision              | dup_node         | entry(in); in.into(plain); in.into(twin)                                              | -
 ChannelNameTooLong                 | long_channel_name| entry(in); in.into(plain); plain.named(nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn) | -
 BranchTooFewArms                   | branch_one_arm   | entry(in); in.into(plain); branch(plain, 1)                                           | branch
@@ -133,6 +134,8 @@ MailboxCapacityZero                | mailbox_zero     | entry(in); in.into(plain
 MailboxCapacityTooLarge            | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
 DuplicatePluginSink                | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
 KeyedChannelWithoutPluginWire      | keyed_no_wire    | entry(in); in.into(plain); plain.keyed; plain.into(second)                            | -
+ChannelNamedTwice                  | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
+DuplicateSinkName                  | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
 UnservableClock                    | logical_nochange | entry(in); in.into(nochange)                                                          | -
 UnkeyedChannelUnderEffectivelyOnce | eo_unkeyed_sink  | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.sink(out)  | -
 RetryMaxZero                       | retry_zero       | entry(in); in.retry_max(0); in.into(plain)                                            | -
@@ -154,7 +157,8 @@ AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.
 # twins of the seven-column table above — cited, not re-spelled. Every other
 # `ok` row's derived lines follow it there under its own topology id.
 ok                                 | fan_in_noop      | entry(in); in.into(plain); in.into(plain)                                             | -
-ok                                 | named_sink       | entry(in); in.into(plain); plain.named(renamed); plain.sink(out)                       | -
+ok                                 | named_sink       | entry(in); in.into(plain); plain.named(renamed); plain.sink                            | -
+ok                                 | sink_names_channel | entry(in); in.into(plain); plain.sink(items_output)                                  | -
 ok                                 | checkpoint_ack   | class.persistent; class.effectively_once; class.checkpoint_ack; entry(in); in.into(plain) | -
 ok                                 | checkpoint_every | class.persistent; class.effectively_once; class.checkpoint_every(500); entry(in); in.into(plain) | -
 ok                                 | hold_outputs     | class.persistent; class.effectively_once; class.outputs_at_checkpoint(50); entry(in); in.into(plain) | -
@@ -165,7 +169,9 @@ ok                                 | commit_block_chain | cited above           
 # the two twins: topology | index | name | kind | producer | consumers | sink
 fan_in_noop | 0 | in | entry | - | 0 | -
 named_sink | 0 | in | entry | - | 0 | -
-named_sink | 1 | renamed | plugin | 0 | - | out
+named_sink | 1 | renamed | plugin | 0 | - | renamed
+sink_names_channel | 0 | in | entry | - | 0 | -
+sink_names_channel | 1 | items_output | plugin | 0 | - | items_output
 checkpoint_ack | 0 | in | entry | - | 0 | -
 checkpoint_every | 0 | in | entry | - | 0 | -
 hold_outputs | 0 | in | entry | - | 0 | -

@@ -41,9 +41,12 @@ public record HostLink(
         return new HostLink("named", name, null, null, null);
     }
 
-    /** Terminates the channel on a plugin descriptor. */
+    /**
+     * Terminates the channel on the plugin layer, naming it — or leaving the
+     * name derived, for the no-argument {@code sink()}.
+     */
     @Nonnull
-    public static HostLink sink(@Nonnull String name) {
+    public static HostLink sink(@Nullable String name) {
         return new HostLink("sink", name, null, null, null);
     }
 

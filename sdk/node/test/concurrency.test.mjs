@@ -47,7 +47,7 @@ const Spec = defineOperative({
       .keyBy((v) => v.key)
       .into(Accumulate)
       .keyed()
-      .sink('out'),
+      .sink(),
 });
 
 const deps = () => depsFor(Spec);

@@ -235,7 +235,13 @@ public final class ConformanceRun {
         }
         switch (call[0]) {
             case "named" -> producer.named(call[1]);
-            case "sink" -> producer.sink(call[1]);
+            case "sink" -> {
+                if (call[1].isEmpty()) {
+                    producer.sink();
+                } else {
+                    producer.sink(call[1]);
+                }
+            }
             case "keyed" -> producer.keyed();
             default -> throw new IllegalStateException(
                     "the fixture spells a link this interpreter does not map: " + call[0]);
@@ -410,7 +416,10 @@ public final class ConformanceRun {
             }
             ArrayNode consumers = node.putArray("consumers");
             channel.consumerIds().forEach(consumers::add);
-            channel.pluginSink().ifPresentOrElse(sink -> node.put("sink", sink.name()), () -> node.putNull("sink"));
+            // A sink names the channel it terminates, so the descriptor has no
+            // name of its own: the one name is the channel's.
+            channel.pluginSink()
+                    .ifPresentOrElse(sink -> node.put("sink", channel.name()), () -> node.putNull("sink"));
         }
         return channels;
     }

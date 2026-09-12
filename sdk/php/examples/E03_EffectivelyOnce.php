@@ -61,8 +61,8 @@ final class LedgerOperative extends StreamOperative
         $c->checkpointEvery(4);
         $c->input('entries')
             ->keyBy(static fn (array $e): string => (string) $e['account'])
-            ->into(Ledger::class)->named('balances')->keyed()
-            ->sink('balances_out');
+            ->into(Ledger::class)->keyed()
+            ->sink('balances');
     }
 }
 

@@ -54,7 +54,7 @@ defmodule Flezha.SDK.LocalTest do
       |> Channels.into(Tally)
       |> Channels.named("counts")
       |> Channels.keyed()
-      |> Channels.sink("counts_plugin")
+      |> Channels.sink()
     end
   end
 
@@ -70,7 +70,7 @@ defmodule Flezha.SDK.LocalTest do
       |> Channels.into(Normalise)
       |> Channels.named("out")
       |> Channels.keyed()
-      |> Channels.sink("out_plugin")
+      |> Channels.sink()
     end
   end
 
@@ -89,7 +89,7 @@ defmodule Flezha.SDK.LocalTest do
       |> Channels.input_with("lines", fn _bytes -> {:error, "unreadable"} end)
       |> Channels.into(Normalise)
       |> Channels.named("out")
-      |> Channels.sink("out_plugin")
+      |> Channels.sink()
     end
   end
 
@@ -121,7 +121,7 @@ defmodule Flezha.SDK.LocalTest do
       |> Channels.input("in")
       |> Channels.into(Held)
       |> Channels.named("out")
-      |> Channels.sink("out_plugin")
+      |> Channels.sink()
     end
   end
 

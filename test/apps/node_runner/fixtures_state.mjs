@@ -64,12 +64,7 @@ const keyedUpsert = (factoryId, options = {}) =>
     factoryId,
     ...options,
     channels: (c) => {
-      c.input('input', text)
-        .onFull('drop_nothing')
-        .into(TierStore)
-        .named('sink')
-        .keyed()
-        .sink('tier_sink', bytes);
+      c.input('input', text).onFull('drop_nothing').into(TierStore).keyed().sink('sink', bytes);
     },
   });
 
@@ -91,9 +86,8 @@ export const tierStore = defineOperative({
       .onFull('drop_nothing')
       .retryBackoffMs(300)
       .into(TierStore)
-      .named('sink')
       .keyed()
-      .sink('tier_sink', bytes);
+      .sink('sink', bytes);
   },
 });
 
@@ -101,7 +95,7 @@ export const checkpointStore = defineOperative({
   factoryId: 'checkpoint_store',
   channels: (c) => {
     c.effectivelyOnce().checkpointAck();
-    c.input('input', text).into(CheckpointStore).named('sink').keyed().sink('tier_sink', bytes);
+    c.input('input', text).into(CheckpointStore).keyed().sink('sink', bytes);
   },
 });
 
@@ -114,7 +108,7 @@ export const checkpointBatchedStore = defineOperative({
   factoryId: 'checkpoint_batched_store',
   channels: (c) => {
     c.effectivelyOnce().checkpointAck().outputsAtCheckpoint(1_500);
-    c.input('input', text).into(CheckpointStore).named('sink').keyed().sink('tier_sink', bytes);
+    c.input('input', text).into(CheckpointStore).keyed().sink('sink', bytes);
   },
 });
 
@@ -132,12 +126,7 @@ export const benchCheckpoint = defineOperative({
     if (process.env.FLEZHA_BENCH_CHECKPOINT_OUTPUTS === 'at_checkpoint') {
       c.outputsAtCheckpoint(envInt('FLEZHA_BENCH_CHECKPOINT_DELAY_MS', 50));
     }
-    c.input('input', text)
-      .onFull('drop_nothing')
-      .into(BenchCheckpoint)
-      .named('sink')
-      .keyed()
-      .sink('tier_sink', bytes);
+    c.input('input', text).onFull('drop_nothing').into(BenchCheckpoint).keyed().sink('sink', bytes);
   },
 });
 
@@ -159,7 +148,7 @@ const StoreInput = defineProcedure({
 export const storeInput = defineOperative({
   factoryId: 'store_input',
   channels: (c) => {
-    c.input('input', text).into(StoreInput).named('sink').sink('store_input_sink', bytes);
+    c.input('input', text).into(StoreInput).sink('sink', bytes);
   },
 });
 
@@ -255,7 +244,7 @@ const ResumeProbe = defineProcedure({
 export const resumeProbe = defineOperative({
   factoryId: 'resume_probe',
   channels: (c) => {
-    c.input('input', text).into(ResumeProbe).named('total').sink('resume_probe_out', bytes);
+    c.input('input', text).into(ResumeProbe).sink('total', bytes);
   },
 });
 
@@ -315,7 +304,7 @@ const evolvingCart = (factoryId, procedure) =>
   defineOperative({
     factoryId,
     channels: (c) => {
-      c.input('input', text).into(procedure).named('total').sink('schema_evolution_out', bytes);
+      c.input('input', text).into(procedure).sink('total', bytes);
     },
   });
 

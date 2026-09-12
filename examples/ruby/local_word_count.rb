@@ -45,8 +45,8 @@ class WordCount < Flezha::StreamOperative
      # One Entity per word: the hop from `Split` to `Tally` is the runtime's,
      # not this file's.
      .key_by { |word| word }
-     .into(Tally).named("totals").keyed
-     .sink("word_totals", encode: ->(v) { v.to_s.b })
+     .into(Tally).keyed
+     .sink("totals", encode: ->(v) { v.to_s.b })
   end
 end
 

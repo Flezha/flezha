@@ -45,7 +45,6 @@ public final class CheckoutOperative implements WorkflowOperative {
                 .into(Charge.class)
                 .named("charged")
                 .into(Ship.class)
-                .named("shipped")
-                .sink("orders_sink");
+                .sink("shipped");
     }
 }

@@ -17,6 +17,6 @@ public final class StoreInputStreamOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(StoreInputProcedure.class).named("sink").sink("store_input_sink");
+        c.input(String.class, "input").into(StoreInputProcedure.class).sink("sink");
     }
 }

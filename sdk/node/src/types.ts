@@ -209,13 +209,19 @@ export interface Stream<T> {
    */
   branch(arms: Array<(edge: Stream<T>) => void>): Stream<T>;
   /**
-   * Attach this edge's channel to the named plugin sink, and return the
-   * handle: `.sink(...).into(...)` wires a consumer behind the sink, so one
-   * emit reaches both. A channel with no consumer behind it is the
-   * plugin-bound terminal — terminality is the absence of further wiring,
-   * not a different method.
+   * Terminate this edge's channel on the plugin layer, and return the handle:
+   * `.sink(...).into(...)` wires a consumer behind the sink, so one emit
+   * reaches both. A channel with no consumer behind it is the plugin-bound
+   * terminal — terminality is the absence of further wiring, not a different
+   * method.
+   *
+   * A name given here IS the channel's name, which is the address a plugin
+   * filter and a local-mode callback use; the no-argument form leaves it
+   * derived. A function in the first position is the serializer.
    */
   sink(name: string, encode?: (value: T) => Uint8Array): Stream<T>;
+  sink(encode: (value: T) => Uint8Array): Stream<T>;
+  sink(): Stream<T>;
 }
 
 export interface ChannelBuilder {

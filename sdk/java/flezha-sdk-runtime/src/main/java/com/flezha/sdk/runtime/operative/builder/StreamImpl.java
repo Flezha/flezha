@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * The procedure's output stream handle: a node id into the enclosing builder.
@@ -145,23 +146,43 @@ final class StreamImpl<T> extends Stream<T> implements EdgeSite {
 
     @Override
     @Nonnull
-    public Stream<T> sink(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
-        owner.checkMutable();
-        ChannelEntry entry = owner.channel(channelId());
-        owner.closeChain(channelId(), null, HostLink.sink(pluginName));
-        // First call wins on the builder's own side; a second sink is recorded
-        // and the core refuses the class, so nothing is registered either way.
-        if (entry.pluginSinkName == null) {
-            entry.pluginSinkName = pluginName;
-            entry.pluginSinkSerializer = value -> serializer.apply(cast(value));
-        }
-        return this;
+    public Stream<T> sink(@Nonnull String channel, @Nonnull Function<T, byte[]> serializer) {
+        return attachSink(channel, serializer);
     }
 
     @Override
     @Nonnull
-    public Stream<T> sink(@Nonnull String pluginName) {
-        return sink(pluginName, PayloadCodecs.defaultSerializer(payloadType()));
+    public Stream<T> sink(@Nonnull String channel) {
+        return attachSink(channel, PayloadCodecs.defaultSerializer(payloadType()));
+    }
+
+    @Override
+    @Nonnull
+    public Stream<T> sink(@Nonnull Function<T, byte[]> serializer) {
+        return attachSink(null, serializer);
+    }
+
+    @Override
+    @Nonnull
+    public Stream<T> sink() {
+        return attachSink(null, PayloadCodecs.defaultSerializer(payloadType()));
+    }
+
+    private Stream<T> attachSink(@Nullable String channel, Function<T, byte[]> serializer) {
+        owner.checkMutable();
+        ChannelEntry entry = owner.channel(channelId());
+        owner.closeChain(channelId(), null, HostLink.sink(channel));
+        if (channel != null) {
+            // The record is what the core reads; this keeps the builder's own
+            // diagnostics naming the channel the author does.
+            entry.name = channel;
+        }
+        // First call wins on the builder's own side; a second sink is recorded
+        // and the core refuses the class, so nothing is registered either way.
+        if (entry.pluginSinkSerializer == null) {
+            entry.pluginSinkSerializer = value -> serializer.apply(cast(value));
+        }
+        return this;
     }
 
     @Override

@@ -68,9 +68,8 @@ impl StreamOperative for WordCount {
             .into::<Split>()                       // one line -> its words
             .key_by(|word: &String| word.clone())  // one Entity per word
             .into::<Tally>()                       // counts what it is handed
-            .named("totals")
             .keyed()
-            .sink("word_totals");
+            .sink_named("totals");
     }
 }
 
@@ -162,9 +161,8 @@ defmodule WordCount do
     |> Channels.into(Normalise)
     |> Channels.key_by(& &1)
     |> Channels.into(Tally)
-    |> Channels.named("counts")
     |> Channels.keyed()
-    |> Channels.sink("counts_plugin")
+    |> Channels.sink("counts")
   end
 end
 ```
@@ -203,9 +201,9 @@ deployed runner reads.
   channel's declared decoder runs. It blocks while the consumer's mailbox is
   full — the deployed entry path's own backpressure.
 - **`on_sink(channel, callback)`** registers against the sink's **channel**
-  name. A sink channel takes the producing procedure's name unless the
-  declaration `named` it, which is why the example says
-  `.named("totals").sink("word_totals")`.
+  name, and a sink names the channel it terminates — which is why the example
+  says `.sink_named("totals")` and registers `"totals"`. The no-name form
+  leaves the channel named after the producing procedure.
 - A channel name the declaration does not carry is refused, naming the channel,
   the operative and the channels that are declared. A value released on a sink
   with no callback is reported rather than discarded. A declaration that needs

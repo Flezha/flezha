@@ -32,9 +32,6 @@ public final class ChatOperative implements WorkflowOperative {
 
     @Override
     public void procedures(@Nonnull ChannelBuilder c) {
-        c.input(String.class, "message")
-                .into(ReplyProcedure.class)
-                .named("reply")
-                .sink("chat_sink");
+        c.input(String.class, "message").into(ReplyProcedure.class).sink("reply");
     }
 }

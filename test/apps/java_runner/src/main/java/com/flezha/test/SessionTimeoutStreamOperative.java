@@ -15,7 +15,6 @@ public final class SessionTimeoutStreamOperative implements StreamOperative {
     public void channels(ChannelBuilder c) {
         c.input(String.class, "input")
                 .into(SessionTimeoutProcedure.class)
-                .named("kafka")
-                .sink("test_kafka");
+                .sink("kafka");
     }
 }

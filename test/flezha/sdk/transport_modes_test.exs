@@ -39,7 +39,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ProbeProc) |> named("probe") |> sink("probe_out")
+      c |> input("in") |> into(ProbeProc) |> sink("probe")
     end
   end
 
@@ -176,7 +176,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ProbeProc) |> named("probe") |> sink("probe_out")
+      c |> input("in") |> into(ProbeProc) |> sink("probe")
     end
   end
 
@@ -304,7 +304,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoProc) |> named("echo") |> sink("lr_out")
+      c |> input("in") |> into(EchoProc) |> sink("echo")
     end
   end
 
@@ -314,7 +314,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoProc) |> named("echo") |> sink("lr_out2")
+      c |> input("in") |> into(EchoProc) |> sink("echo")
     end
   end
 
@@ -332,7 +332,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(StoreProc) |> named("store") |> sink("lr_store_out")
+      c |> input("in") |> into(StoreProc) |> sink("store")
     end
   end
 

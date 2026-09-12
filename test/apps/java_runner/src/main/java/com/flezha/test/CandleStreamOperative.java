@@ -20,6 +20,6 @@ public final class CandleStreamOperative implements StreamOperative {
     public void channels(ChannelBuilder c) {
         c.effectivelyOnce();
         c.correctionWindow(600_000);
-        c.input(String.class, "input").into(CandleProcedure.class).named("sink").keyed().sink("tier_sink");
+        c.input(String.class, "input").into(CandleProcedure.class).keyed().sink("sink");
     }
 }

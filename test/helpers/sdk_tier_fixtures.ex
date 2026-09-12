@@ -54,7 +54,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule CheckpointBatchedOp do
@@ -71,7 +71,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
       |> Channels.into(TierStoreProc)
       |> Channels.named("sink")
       |> Channels.keyed()
-      |> Channels.sink("tier_sink")
+      |> Channels.sink()
     end
   end
 
@@ -89,7 +89,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule CheckpointEveryOp do
@@ -106,7 +106,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule CheckpointHeldOp do
@@ -123,7 +123,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierStoreProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule TierTimerProc do
@@ -162,7 +162,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(TierTimerProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule HeldConsumerProc do
@@ -249,7 +249,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(StatelessTierProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   # The correction probes. Deliberately NOT the reference's `candle`: no bucket
@@ -292,7 +292,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(CorrectionProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule CorrectionDropOp do
@@ -310,7 +310,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.into(CorrectionProc)
         |> Channels.named("sink")
         |> Channels.keyed()
-        |> Channels.sink("tier_sink")
+        |> Channels.sink()
   end
 
   defmodule TierStoreNoPersistOp do

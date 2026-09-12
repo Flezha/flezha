@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+### Changed: `sink("x")` names the channel `x`, in every SDK
+
+**Breaking for every SDK.** A sink used to name a plugin attachment point and
+leave the channel named after the producing procedure, so `sink("items_output")`
+shipped frames stamped `channel = "accumulator_procedure"` while its author read
+`items_output` in the source. The string an author writes on a sink is now the
+channel's name, everywhere a channel name appears: wire metadata, journals,
+diagnostics, the address a plugin filter matches, and the name a local-mode
+callback registers under.
+
+`sink()` with no name is available in every SDK and changes nothing: the channel
+keeps the name it would have had without a sink at all — a `named(...)` override
+if the declaration carries one, else the producing procedure's identity. Java
+takes an overload; Node tells a string from a function in the first position;
+Python, Ruby, PHP and Elixir default the argument; Rust, which has neither
+overloading nor default arguments, spells the four combinations `sink()`,
+`sink_named(name)`, `sink_with(serializer)` and `sink_named_with(name,
+serializer)` — so the two existing Rust methods both change shape.
+
+**Two declarations stop registering.** A channel named by both `named("a")` and
+`sink("b")` is refused as `ChannelNamedTwice`, naming both, and is refused when
+the two strings agree as well: an exception for the consistent case would leave
+a redundant pair with a rule nobody remembers. And two channels naming one sink
+is now a duplicate channel name, refused as `DuplicateSinkName`. Nothing is lost
+in behaviour, only in expression — the shared string was read by no runtime
+path, so "two channels sharing a sink" has only ever meant two channels a plugin
+did not filter apart, and that shape is still written the same way by giving
+each channel its own name and the plugin no channel filter.
+
+Both code generators stop emitting the `.named(x).sink(x)` pair they needed to
+get the naming their users expected, so a sugared operative and a hand-written
+one now produce the same channel name for the same declaration. That
+disagreement is what this change exists to close.
+
+**Migrating.** A declaration reading `.named("x").sink("y")` keeps the channel
+name it has today by becoming `.sink("x")` — the sink's own string was read by
+nothing. One reading `.sink("y")` alone renames its channel from the producing
+procedure to `y`; write `.sink()` to keep the old name. The compiler cannot help
+with the second case in any SDK, and a plugin filtering on the old derived name
+stops matching, so sweep every `sink(...)` in a codebase before deploying.
+
+**Durable records written before the rename carry the old channel name as
+data**, and a replay re-emits them under it. Three consequences, all of them
+only for a channel whose name actually moves:
+
+- A dead-letter entry outside the effectively-once tier is keyed on
+  `channel:sha256(payload)`, where the channel is the one that fed the parking
+  procedure. Rename that channel and a payload parked before the upgrade,
+  re-sent or re-parked after it, computes a different entry id and lands as a
+  second row instead of deduplicating against the first. Drain the dead-letter
+  queue for the affected procedures before upgrading. Under the tier the key is
+  `entity_key@origin_offset` and carries no channel name, so it is unaffected.
+- A workflow instance that straddles the upgrade has both names in the staged
+  output set its rewind guard reads back from the journal. The guard's verdict
+  is unaffected — it decides by procedure index, and the names are only what
+  the refusal reports — but a refusal spanning the upgrade names channels under
+  both spellings.
+- A plugin filtering by channel sees nothing for replayed records under the old
+  name. Keep the old name with `sink()` if that matters more than the new one.
+
+An operative whose channel names do not change — every declaration that keeps
+its name through the migration above — needs none of this.
+
 ### Removed: the workflow handoff codec declaration, from the Rust and Java builders
 
 **Breaking for the Rust and Java SDKs.** `codec()` and `codec_with(...)` are

@@ -7,7 +7,7 @@ builds one:
 
     @flezha.stream_operative("echo")
     def echo(c: flezha.Channels) -> None:
-        c.input("input").into(echo_proc).named("out").sink("echo_sink")
+        c.input("input").into(echo_proc).sink("out")
 
 A workflow operative is either the same shape — a structured chain over a graph
 — or a run-sugar body over ``(args, ctx)``. Which one it is is read from the

@@ -84,7 +84,7 @@ class AuthoringTest < Minitest::Test
       clock :event_time
       def process(input, _ctx) = input
     end
-    graph = operative("no_extractor_op") { |c| c.input("in").into(klass).sink("out") }
+    graph = operative("no_extractor_op") { |c| c.input("in").into(klass).sink }
 
     # No core at all, which is the proof it was refused before the record
     # could reach one.
@@ -96,7 +96,7 @@ class AuthoringTest < Minitest::Test
   # value to serialize, and the core reads a sink as the terminal of the
   # channel it sits on — it cannot see that this one is fed by the controller.
   def test_a_plugin_sink_on_an_entry_channel_is_refused_here
-    klass = operative("entry_sink") { |c| c.input("in").sink("out") }
+    klass = operative("entry_sink") { |c| c.input("in").sink }
 
     assert_includes refusal { klass.spec }.message, "a plugin sink is fed by a procedure"
   end
@@ -130,7 +130,7 @@ class AuthoringTest < Minitest::Test
       c.outputs_at_checkpoint(250)
       c.checkpoint_ack
       c.checkpoint_every(4)
-      c.input("in").into(pass_through("p")).keyed.sink("out")
+      c.input("in").into(pass_through("p")).keyed.sink
     end
     decl = Flezha::Graph.to_host_class_decl(klass.spec)
 
@@ -145,7 +145,7 @@ class AuthoringTest < Minitest::Test
     klass = Class.new(Flezha::WorkflowOperative)
     klass.factory_id "both_shapes"
     klass.run { |args, _ctx| args }
-    klass.channels { |c| c.input("input").into(pass_through("w")).named("o").sink("s") }
+    klass.channels { |c| c.input("input").into(pass_through("w")).sink("o") }
 
     assert_includes refusal { klass.spec }.message, "one or the other"
   end
@@ -199,18 +199,18 @@ class AuthoringTest < Minitest::Test
   # what selects the receiving operative's entry channel.
   def test_a_named_edge_terminating_on_a_sink_names_the_channel_too
     klass = operative("named_sink") do |c|
-      c.input("input").into(pass_through("relay")).named("in").sink("relay_out")
+      c.input("input").into(pass_through("relay")).sink("in")
     end
 
     assert_equal %w[input in], klass.spec.channels.map(&:name)
   end
 
-  # `sdk-graph-authoring`: an underived channel name
-  # comes from the PRODUCER NODE, never from the sink it terminates on — the
-  # sink's name is the plugin's, and several channels may name one sink.
+  # `sdk-graph-authoring`: the no-argument `sink` names nothing, so the channel
+  # keeps the PRODUCER NODE's name — the derivation a channel with no sink at
+  # all would take.
   def test_an_unnamed_edge_terminating_on_a_sink_takes_the_producing_nodes_name
     klass = operative("unnamed_sink") do |c|
-      c.input("input").into(pass_through("plain")).sink("relay_out")
+      c.input("input").into(pass_through("plain")).sink
     end
 
     assert_equal %w[input plain], klass.spec.channels.map(&:name)
@@ -264,13 +264,45 @@ class AuthoringTest < Minitest::Test
 
   def test_sink_returns_the_edge_so_a_consumer_wires_behind_it
     klass = operative("hybrid") do |c|
-      c.input("in").into(pass_through("producer")).named("hybrid_indicator")
-       .sink("hybrid_indicators").into(pass_through("consumer"))
+      c.input("in").into(pass_through("producer"))
+       .sink("hybrid_indicator").into(pass_through("consumer"))
     end
 
     assert_equal [["in", "entry", nil, [0], nil],
-                  ["hybrid_indicator", "inter_proc", 0, [1], "hybrid_indicators"]],
+                  ["hybrid_indicator", "inter_proc", 0, [1], "hybrid_indicator"]],
                  channels_of(klass)
+  end
+
+  def test_the_sink_names_the_channel_and_the_no_argument_form_does_not
+    named = operative("sink_named") do |c|
+      c.input("in").into(pass_through("producer")).sink("items_output")
+    end
+    derived = operative("sink_derived") do |c|
+      c.input("in").into(pass_through("producer")).sink
+    end
+
+    assert_equal %w[in items_output], channels_of(named).map(&:first)
+    assert_equal %w[in producer], channels_of(derived).map(&:first)
+  end
+
+  def test_a_channel_named_twice_is_refused_naming_both
+    klass = operative("named_twice") do |c|
+      c.input("in").into(pass_through("producer")).named("a").sink("b")
+    end
+
+    error = assert_raises(Flezha::DeclarationError) { validate(klass.spec) }
+    assert_match(/ChannelNamedTwice/, error.message)
+    assert_match(/both name it/, error.message)
+  end
+
+  def test_two_channels_naming_one_sink_is_refused
+    klass = operative("one_sink_two_channels") do |c|
+      c.input("in").into(pass_through("a")).sink("shared")
+       .into(pass_through("b")).sink("shared")
+    end
+
+    error = assert_raises(Flezha::DeclarationError) { validate(klass.spec) }
+    assert_match(/DuplicateSinkName/, error.message)
   end
 
   def test_a_transform_before_one_into_reaches_that_consumer_only
@@ -314,7 +346,7 @@ class AuthoringTest < Minitest::Test
     klass.factory_id "tier_workflow"
     klass.channels do |c|
       c.effectively_once
-      c.input("in").into(pass_through("producer")).named("out").keyed.sink("out")
+      c.input("in").into(pass_through("producer")).keyed.sink("out")
     end
     validate(klass.spec)
 

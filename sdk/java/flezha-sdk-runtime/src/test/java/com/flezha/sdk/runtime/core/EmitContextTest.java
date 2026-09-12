@@ -48,6 +48,18 @@ class EmitContextTest extends DispatchTestBase {
     }
 
     @Test
+    @DisplayName("the sink names the channel the plugin output is addressed by")
+    void sinkNamesTheChannel() {
+        StreamOperativeClassRegistry.registerClass(SinkNamesChannelOperative.class);
+        ItemEffect effect = soleEffect(work("sink_names_channel", 0, Optional.empty(), 5, input(0, "v", 1_000)));
+
+        assertThat(effect.outputs()).hasSize(1);
+        assertThat(effect.outputs().get(0).target())
+                .as("`.sink(\"items_output\")` with no `.named(...)` names the channel")
+                .isEqualTo(new OutputTarget.Plugin("items_output"));
+    }
+
+    @Test
     @DisplayName("a keyed plugin emit carries flz.entity / flz.seq / flz.key and the schema key")
     void keyedEmitCarriesIdentityStamps() {
         StreamOperativeClassRegistry.registerClass(KeyedEmitOperative.class);

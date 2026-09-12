@@ -65,8 +65,8 @@ module Fixtures
   class KeyedUpsertOperative < Flezha::StreamOperative
     channels do |c|
       c.input("input", decode: TEXT).on_full(:drop_nothing)
-       .into(TierStore).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
+       .into(TierStore).keyed
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -91,8 +91,8 @@ module Fixtures
     channels do |c|
       c.effectively_once
       c.input("input", decode: TEXT).on_full(:drop_nothing).retry_backoff_ms(300)
-       .into(TierStore).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
+       .into(TierStore).keyed
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -101,8 +101,8 @@ module Fixtures
     channels do |c|
       c.effectively_once
       c.checkpoint_ack
-      c.input("input", decode: TEXT).into(CheckpointStore).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
+      c.input("input", decode: TEXT).into(CheckpointStore).keyed
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -117,8 +117,8 @@ module Fixtures
       c.effectively_once
       c.checkpoint_ack
       c.outputs_at_checkpoint(1_500)
-      c.input("input", decode: TEXT).into(CheckpointStore).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
+      c.input("input", decode: TEXT).into(CheckpointStore).keyed
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -139,8 +139,8 @@ module Fixtures
         c.outputs_at_checkpoint(ENV_INT.call("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50))
       end
       c.input("input", decode: TEXT).on_full(:drop_nothing)
-       .into(BenchCheckpoint).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
+       .into(BenchCheckpoint).keyed
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -161,8 +161,8 @@ module Fixtures
   class StoreInputOperative < Flezha::StreamOperative
     factory_id "store_input"
     channels do |c|
-      c.input("input", decode: TEXT).into(StoreInput).named("sink")
-       .sink("store_input_sink", encode: BYTES)
+      c.input("input", decode: TEXT).into(StoreInput)
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -258,8 +258,8 @@ module Fixtures
   class ResumeProbeOperative < Flezha::StreamOperative
     factory_id "resume_probe"
     channels do |c|
-      c.input("input", decode: TEXT).into(ResumeProbe).named("total")
-       .sink("resume_probe_out", encode: BYTES)
+      c.input("input", decode: TEXT).into(ResumeProbe)
+       .sink("total", encode: BYTES)
     end
   end
 
@@ -319,16 +319,16 @@ module Fixtures
   class SchemaEvolutionV1Operative < Flezha::StreamOperative
     factory_id "schema_evolution_v1"
     channels do |c|
-      c.input("input", decode: TEXT).into(EvolvingCartV1).named("total")
-       .sink("schema_evolution_out", encode: BYTES)
+      c.input("input", decode: TEXT).into(EvolvingCartV1)
+       .sink("total", encode: BYTES)
     end
   end
 
   class SchemaEvolutionV2Operative < Flezha::StreamOperative
     factory_id "schema_evolution_v2"
     channels do |c|
-      c.input("input", decode: TEXT).into(EvolvingCartV2).named("total")
-       .sink("schema_evolution_out", encode: BYTES)
+      c.input("input", decode: TEXT).into(EvolvingCartV2)
+       .sink("total", encode: BYTES)
     end
   end
 

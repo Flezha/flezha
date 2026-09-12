@@ -178,6 +178,28 @@ class FlezhaProcessorTest {
         assertThat(generated("t.Keyed", "t.KeyedProcedure", keyed)).contains("ctx.emitKeyed(t.Keyed.k(out), out);");
     }
 
+    /**
+     * The generator used to write {@code .named(x).sink(x)} because a sink
+     * named a plugin rather than a channel, so sugared and hand-written code
+     * shipped different wire names for the same operative.
+     */
+    @Test
+    void theGeneratedChannelsNamesTheChannelWithTheSinkAndNothingElse() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "sugar", sink = "items_output")
+                public class Sugared {
+                    public String run(String in) { return in; }
+                }
+                """;
+        String source = generated("t.Sugared", "t.SugaredStreamOperative", code);
+
+        assertThat(source).contains(".sink(\"items_output\")");
+        assertThat(source).doesNotContain(".named(");
+    }
+
     @Test
     void contextParameterRunEmitsThroughTheBody() {
         String stateless =

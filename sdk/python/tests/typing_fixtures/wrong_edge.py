@@ -40,4 +40,4 @@ def dispatch(shipment: Shipment) -> str:
 @flezha.stream_operative("mismatched")
 def mismatched(c: flezha.Channels) -> None:
     # `bill` produces Invoice; `dispatch` accepts Shipment.
-    c.input("orders").into(bill).named("invoices").into(dispatch).sink("shipped")
+    c.input("orders").into(bill).named("invoices").into(dispatch).sink()

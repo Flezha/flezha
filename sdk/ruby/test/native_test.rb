@@ -151,7 +151,7 @@ class NativeTest < Minitest::Test
     operative.channels do |c|
       c.effectively_once
       yield c
-      c.input("input").into(procedure).named("sink").keyed.sink("tier_sink")
+      c.input("input").into(procedure).keyed.sink("sink")
     end
     Flezha::Graph.to_host_class_decl(operative.spec)
   end
@@ -220,7 +220,7 @@ class NativeTest < Minitest::Test
     end
     operative = Class.new(Flezha::StreamOperative)
     operative.factory_id "native_echo_op"
-    operative.channels { |c| c.input("input").into(echo).named("out").sink("native_sink") }
+    operative.channels { |c| c.input("input").into(echo).sink("out") }
 
     decl = Flezha::Graph.to_host_class_decl(operative.spec)
     assert_equal 5, decl["sdk_lang"]

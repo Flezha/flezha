@@ -307,7 +307,9 @@ module Flezha
       Edge.new(@builder, [:procedure, node], {})
     end
 
-    # Attach this edge's channel to the named plugin sink, and answer the edge.
+    # Terminate this edge's channel on the plugin layer, and answer the edge.
+    # A name written here IS the channel's name, everywhere one appears;
+    # `sink` with none leaves it derived as it would be without a sink at all.
     #
     # `sink(...).into(...)` wires a consumer behind the sink, so one emit
     # reaches both. A channel with no consumer behind it is the plugin-bound
@@ -316,20 +318,27 @@ module Flezha
     # The one refusal left here: a channel with no producer has no value to
     # serialize, and the core reads a sink as the terminal of the channel it
     # sits on — it cannot see that this one is fed by the controller.
-    def sink(name, encode: nil)
+    def sink(name = nil, encode: nil)
       unless @from[0] == :procedure
         raise DeclarationError.new(
-          @builder.factory_id, name,
+          @builder.factory_id, name || "<derived>",
           "a plugin sink is fed by a procedure; wire the entry channel into one first"
         )
       end
 
       target = channel
-      @builder.link_chain(@from, @pending[:chain], { "link" => "sink", "name" => name.to_s })
+      link = { "link" => "sink" }
+      # The name written here IS the channel's name; `sink` with none leaves it
+      # derived as it would be without a sink at all.
+      unless name.nil?
+        link["name"] = name.to_s
+        target.name = name.to_s
+      end
+      @builder.link_chain(@from, @pending[:chain], link)
       # First call wins on the builder's own side, as the reference does; a
       # second `sink` link is what the core refuses the class for.
       if target.sink.nil?
-        target.sink = name.to_s
+        target.sink = target.name
         target.sink_encode = encode
       end
       self

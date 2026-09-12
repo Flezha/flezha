@@ -34,8 +34,7 @@ public final class StaticEntityStreamOperative implements StreamOperative {
                 .into(StaticEntryProcedure.class)
                 .named("hop")
                 .into(StaticDownstreamProcedure.class)
-                .named("kafka")
-                .sink("test_kafka");
+                .sink("kafka");
     }
 
     public static final class StaticEntryProcedure

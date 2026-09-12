@@ -12,7 +12,7 @@ class RunnerTest < Minitest::Test
 
   class EchoOperative < Flezha::StreamOperative
     factory_id "runner_echo_op"
-    channels { |c| c.input("input").into(Echo).named("out").sink("runner_sink") }
+    channels { |c| c.input("input").into(Echo).sink("out") }
   end
 
   def boot_recording
@@ -47,7 +47,7 @@ class RunnerTest < Minitest::Test
     events = core.events
     second = Class.new(Flezha::StreamOperative)
     second.factory_id "runner_second_op"
-    second.channels { |c| c.input("in").into(Echo, "second_node").named("o").sink("s") }
+    second.channels { |c| c.input("in").into(Echo, "second_node").sink("o") }
 
     runner = Flezha::Runner.new("test-ns").define_stream(EchoOperative).define_stream(second)
     Flezha::TestSupport.without_a_terminal do

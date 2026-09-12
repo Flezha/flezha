@@ -32,8 +32,7 @@ public final class MixedStreamOperative implements StreamOperative {
                 .into(MixedMacroEntryProcedure.class)
                 .named("hop")
                 .into(MixedHandDownstream.class)
-                .named("kafka")
-                .sink("test_kafka");
+                .sink("kafka");
     }
 
     public static final class MixedHandDownstream

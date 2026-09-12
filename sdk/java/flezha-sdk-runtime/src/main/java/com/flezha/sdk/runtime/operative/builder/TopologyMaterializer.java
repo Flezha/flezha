@@ -65,9 +65,8 @@ final class TopologyMaterializer {
         for (int index = 0; index < channels.size(); index++) {
             ChannelEntry entry = channels.get(index);
             DerivedDeclaration.Channel answer = derived.channel(index);
-            Optional<PluginSink> pluginSink = answer.sink() == null
-                    ? Optional.empty()
-                    : Optional.of(new PluginSink(answer.sink(), entry.pluginSinkSerializer));
+            Optional<PluginSink> pluginSink =
+                    answer.sink() == null ? Optional.empty() : Optional.of(new PluginSink(entry.pluginSinkSerializer));
             descriptors.add(new ChannelDescriptor(
                     answer.name(),
                     kindOf(answer.kind()),

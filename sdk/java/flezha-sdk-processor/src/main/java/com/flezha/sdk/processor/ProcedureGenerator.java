@@ -422,9 +422,7 @@ final class ProcedureGenerator {
                 .append(onFullCall)
                 .append(".into(")
                 .append(m.procedureSimple())
-                .append(".class).named(\"")
-                .append(m.sink())
-                .append("\").sink(\"")
+                .append(".class).sink(\"")
                 .append(m.sink())
                 .append("\");\n");
         b.append("    }\n}\n");

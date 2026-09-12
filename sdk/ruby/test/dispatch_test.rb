@@ -27,7 +27,7 @@ class DispatchTest < Minitest::Test
     factory_id "counter_op"
     channels do |c|
       c.input("input", decode: ->(b) { b.dup.force_encoding("UTF-8") })
-       .into(Counter).named("out").sink("counter_sink", encode: ->(v) { v.to_s.b })
+       .into(Counter).sink("out", encode: ->(v) { v.to_s.b })
     end
   end
 
@@ -258,7 +258,6 @@ class DispatchTest < Minitest::Test
       c.input("input", decode: ->(b) { b.dup.force_encoding("UTF-8") })
        .key_by { |_v| "ek" }
        .into(StampEmitter)
-       .named("keyed_out")
        .keyed
        .sink("keyed_out", encode: ->(v) { v.to_s.b })
     end
@@ -281,9 +280,9 @@ class DispatchTest < Minitest::Test
       c.input("input", decode: ->(b) { b.dup.force_encoding("UTF-8") })
        .key_by { |_v| "ek" }
        .branch(
-         ->(edge) { edge.into(PlainEmitter).named("plain_out").sink("plain_out", encode: ->(v) { v.to_s.b }) },
+         ->(edge) { edge.into(PlainEmitter).sink("plain_out", encode: ->(v) { v.to_s.b }) },
          lambda { |edge|
-           edge.into(StampEmitter).named("keyed_out").keyed
+           edge.into(StampEmitter).keyed
                .sink("keyed_out", encode: ->(v) { v.to_s.b })
          }
        )
@@ -378,7 +377,7 @@ class DispatchTest < Minitest::Test
     edge = c.input("in").into(WfProducer).named("handoff")
     edge.map { |value| value + 1 }.into(WfB)
     edge.into(WfC)
-    edge.sink("wf_out")
+    edge.sink
   end
 
   class WfEmitOperative < Flezha::WorkflowOperative

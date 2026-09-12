@@ -25,8 +25,7 @@ public final class TierStoreStreamOperative implements StreamOperative {
                 .onFull(OverflowPolicy.DROP_NOTHING)
                 .retryBackoffMs(300)
                 .into(TierStoreProcedure.class)
-                .named("sink")
                 .keyed()
-                .sink("tier_sink");
+                .sink("sink");
     }
 }

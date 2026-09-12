@@ -37,20 +37,16 @@ public final class DiamondWorkflowOperative implements WorkflowOperative {
         // (unnamed, same class) = the fan-in.
         var fan = c.input(String.class, "in")
                 .into(DiamA.class)
-                .named("dfan")
-                .sink("diamond_sink", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
+                .sink("dfan", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
         fan.into(DiamB1.class)
                 .named("db1")
                 .into(DiamB2.class)
-                .named("db2")
-                .sink("diamond_sink", s -> s.getBytes(StandardCharsets.UTF_8))
+                .sink("db2", s -> s.getBytes(StandardCharsets.UTF_8))
                 .into(DiamJoin.class);
         fan.into(DiamC.class)
-                .named("dc")
-                .sink("diamond_sink", s -> s.getBytes(StandardCharsets.UTF_8))
+                .sink("dc", s -> s.getBytes(StandardCharsets.UTF_8))
                 .into(DiamJoin.class)
-                .named("j_out")
-                .sink("diamond_sink");
+                .sink("j_out");
     }
 
     /** The shared root: commits durable state and fans out unchanged. */

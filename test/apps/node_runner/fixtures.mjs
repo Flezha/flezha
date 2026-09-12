@@ -26,7 +26,7 @@ const DoNothing = defineProcedure({
 export const doNothing = defineOperative({
   factoryId: 'do_nothing',
   channels: (c) => {
-    c.input('input', text).into(DoNothing).named('echo').sink('do_nothing_echo', bytes);
+    c.input('input', text).into(DoNothing).sink('echo', bytes);
   },
 });
 
@@ -36,11 +36,7 @@ export const doNothing = defineOperative({
 export const benchEcho = defineOperative({
   factoryId: 'bench_echo',
   channels: (c) => {
-    c.input('input', text)
-      .onFull('drop_nothing')
-      .into(DoNothing)
-      .named('echo')
-      .sink('bench_echo_sink', bytes);
+    c.input('input', text).onFull('drop_nothing').into(DoNothing).sink('echo', bytes);
   },
 });
 
@@ -57,7 +53,7 @@ const CompareFilter = defineProcedure({
 export const compareFilter = defineOperative({
   factoryId: 'compare_filter',
   channels: (c) => {
-    c.input('input', text).into(CompareFilter).named('sink').sink('compare_filter_sink', bytes);
+    c.input('input', text).into(CompareFilter).sink('sink', bytes);
   },
 });
 
@@ -95,23 +91,21 @@ export const staticEntity = defineOperative({
       .into(StaticEntry)
       .named('hop')
       .into(StaticDownstream)
-      .named('kafka')
-      .sink('test_kafka', bytes);
+      .sink('kafka', bytes);
   },
 });
 
 const MacroStaticEntry = staticEntry('macro_static_entry_procedure');
 const MacroStaticDownstream = passThrough('macro_static_downstream_procedure');
 
-// The reference pipeline sugar leaves the hop unnamed and names the plugin
-// channel after the plugin.
+// The reference pipeline sugar leaves the hop unnamed and lets the sink name
+// the producing channel.
 export const sugarStaticEntity = defineOperative({
   factoryId: 'sugar_static_entity',
   channels: (c) => {
     c.input('input', text)
       .into(MacroStaticEntry)
       .into(MacroStaticDownstream)
-      .named('test_kafka')
       .sink('test_kafka', bytes);
   },
 });
@@ -126,8 +120,7 @@ export const mixedOperative = defineOperative({
       .into(MixedMacroEntry)
       .named('hop')
       .into(MixedHandDownstream)
-      .named('kafka')
-      .sink('test_kafka', bytes);
+      .sink('kafka', bytes);
   },
 });
 
@@ -138,10 +131,7 @@ const SugarDoNothing = passThrough('sugar_do_nothing');
 export const sugarDoNothing = defineOperative({
   factoryId: 'sugar_do_nothing',
   channels: (c) => {
-    c.input('input', text)
-      .into(SugarDoNothing)
-      .named('sugar_do_nothing_echo')
-      .sink('sugar_do_nothing_echo', bytes);
+    c.input('input', text).into(SugarDoNothing).sink('sugar_do_nothing_echo', bytes);
   },
 });
 
@@ -160,10 +150,7 @@ const SugarStoreInput = defineProcedure({
 export const sugarStoreInput = defineOperative({
   factoryId: 'sugar_store_input',
   channels: (c) => {
-    c.input('input', text)
-      .into(SugarStoreInput)
-      .named('sugar_store_sink')
-      .sink('sugar_store_sink', bytes);
+    c.input('input', text).into(SugarStoreInput).sink('sugar_store_sink', bytes);
   },
 });
 
@@ -206,7 +193,7 @@ export const hybridChannel = defineOperative({
         // in-process fan-out already recorded — the reference's isolation.
         (edge) => edge.named('hybrid_indicator').into(HybridConsumer),
         (edge) =>
-          edge.sink('hybrid_indicators', (value) => {
+          edge.sink((value) => {
             if (value === HYBRID_SENTINEL) {
               throw new Error('hybrid_indicators: serializer rejected sentinel 0xDEADBEEF');
             }
@@ -245,8 +232,7 @@ export const entityStress = defineOperative({
       .into(StressC)
       .named('c_to_d')
       .into(StressD)
-      .named('echo')
-      .sink('entity_stress_echo', bytes);
+      .sink('echo', bytes);
   },
 });
 
@@ -266,11 +252,7 @@ const PoisonProbe = defineProcedure({
 export const poisonProbe = defineOperative({
   factoryId: 'poison_probe',
   channels: (c) => {
-    c.input('input', text)
-      .retryBackoffMs(25)
-      .into(PoisonProbe)
-      .named('out')
-      .sink('probe_sink', bytes);
+    c.input('input', text).retryBackoffMs(25).into(PoisonProbe).sink('out', bytes);
   },
 });
 
@@ -299,7 +281,7 @@ const WedgeProbe = defineProcedure({
 export const wedgeProbe = defineOperative({
   factoryId: 'wedge_probe',
   channels: (c) => {
-    c.input('input', text).into(WedgeProbe).named('out').sink('wedge_sink', bytes);
+    c.input('input', text).into(WedgeProbe).sink('out', bytes);
   },
 });
 
@@ -335,7 +317,7 @@ export const candle = defineOperative({
   factoryId: 'candle',
   channels: (c) => {
     c.effectivelyOnce().correctionWindow(600_000);
-    c.input('input', text).into(Candle).named('sink').keyed().sink('tier_sink', bytes);
+    c.input('input', text).into(Candle).keyed().sink('sink', bytes);
   },
 });
 
@@ -369,7 +351,7 @@ const SessionTimeout = defineProcedure({
 export const sessionTimeout = defineOperative({
   factoryId: 'session_timeout',
   channels: (c) => {
-    c.input('input', text).into(SessionTimeout).named('kafka').sink('test_kafka', bytes);
+    c.input('input', text).into(SessionTimeout).sink('kafka', bytes);
   },
 });
 
@@ -396,8 +378,7 @@ const boundedMailbox = (policy) =>
       c.input(`${policy}_input`, text)
         .onFull(policy)
         .into(boundedMailboxProcedure(`${policy}_test_procedure`))
-        .named(`${policy}_echo`)
-        .sink('bounded_mailbox_echo', bytes);
+        .sink(`${policy}_echo`, bytes);
     },
   });
 
@@ -429,12 +410,7 @@ const PartitionRelay = defineProcedure({
 export const partitionRelay = defineOperative({
   factoryId: 'partition_relay',
   channels: (c) => {
-    c.input('in', text)
-      .keyBy(prefix)
-      .into(PartitionRelay)
-      .named('input')
-      .keyed()
-      .sink('relay_out', bytes);
+    c.input('in', text).keyBy(prefix).into(PartitionRelay).keyed().sink('input', bytes);
   },
 });
 
@@ -465,7 +441,6 @@ export const dynamicEntity = defineOperative({
       .filter((input) => input !== 'drop')
       .keyBy(prefix)
       .into(DynamicEntity)
-      .named('kafka')
-      .sink('test_kafka', bytes);
+      .sink('kafka', bytes);
   },
 });

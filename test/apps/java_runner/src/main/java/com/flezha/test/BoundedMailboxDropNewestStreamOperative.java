@@ -17,8 +17,7 @@ public final class BoundedMailboxDropNewestStreamOperative implements StreamOper
         c.input(String.class, "drop_newest_input")
                 .onFull(OverflowPolicy.DROP_NEWEST)
                 .into(DropNewestTestProcedure.class)
-                .named("drop_newest_echo")
-                .sink("bounded_mailbox_echo");
+                .sink("drop_newest_echo");
     }
 
     public static final class DropNewestTestProcedure extends BoundedMailboxProcedure {

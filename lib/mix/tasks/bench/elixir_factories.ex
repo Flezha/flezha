@@ -38,7 +38,7 @@ defmodule Flezha.Bench.DoNothing do
 
   def channels(c) do
     import Flezha.SDK.Channels
-    c |> input("input") |> into(Flezha.Bench.EchoProc) |> named("echo") |> sink("do_nothing_echo")
+    c |> input("input") |> into(Flezha.Bench.EchoProc) |> sink("echo")
   end
 end
 
@@ -140,8 +140,7 @@ defmodule Flezha.Bench.EntityStress do
     |> into(Flezha.Bench.StressC)
     |> named("c_to_d")
     |> into(Flezha.Bench.StressD)
-    |> named("echo")
-    |> sink("entity_stress_echo")
+    |> sink("echo")
   end
 end
 
@@ -186,8 +185,7 @@ defmodule Flezha.Bench.DynamicEntity do
     |> filter(fn s -> s != "drop" end)
     |> key_by(fn s -> s |> to_string() |> String.split(":") |> hd() end)
     |> into(Flezha.Bench.DynamicProc)
-    |> named("kafka")
-    |> sink("test_kafka")
+    |> sink("kafka")
   end
 end
 
@@ -203,8 +201,7 @@ defmodule Flezha.Bench.BenchEcho do
     |> input("input")
     |> on_full(:drop_nothing)
     |> into(Flezha.Bench.EchoProc)
-    |> named("echo")
-    |> sink("bench_echo_sink")
+    |> sink("echo")
   end
 end
 
@@ -255,9 +252,8 @@ defmodule Flezha.Bench.BenchKeyed do
     |> input("input")
     |> on_full(:drop_nothing)
     |> into(Flezha.Bench.TierStoreProc)
-    |> named("sink")
     |> keyed()
-    |> sink("tier_sink")
+    |> sink("sink")
   end
 end
 
@@ -292,9 +288,8 @@ defmodule Flezha.Bench.TierStore do
     |> on_full(:drop_nothing)
     |> retry_backoff_ms(300)
     |> into(Flezha.Bench.TierStoreProc)
-    |> named("sink")
     |> keyed()
-    |> sink("tier_sink")
+    |> sink("sink")
   end
 end
 
@@ -339,9 +334,8 @@ defmodule Flezha.Bench.BenchCheckpoint do
     |> input("input")
     |> on_full(:drop_nothing)
     |> into(Flezha.Bench.BenchCheckpointProc)
-    |> named("sink")
     |> keyed()
-    |> sink("tier_sink")
+    |> sink("sink")
   end
 end
 

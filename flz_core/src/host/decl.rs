@@ -49,9 +49,13 @@ pub enum HostLink {
     Named {
         name: String,
     },
-    /// The plugin descriptor this channel serializes onto.
+    /// Terminates the channel on the plugin layer, and names it: the string
+    /// an author writes here IS the channel's name. Absent for the
+    /// no-argument `sink()`, which leaves the name derived as it would be
+    /// without a sink at all.
     Sink {
-        name: String,
+        #[serde(default)]
+        name: Option<String>,
     },
     /// Closes the chain onto a consumer edge into a procedure index.
     Into {

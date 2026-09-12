@@ -480,9 +480,10 @@ shared between them.
 Exactly **one** topology may be auto-wired: a single procedure from a
 controller input to one named sink (`input → procedure → plugin(sink)`). A
 sugared procedure that declares both an `id` and a `sink` generates that
-operative (entry channel `"input"`, the sink channel named after the plugin)
-and registers it automatically — the user writes no registration call. `sink`
-without `id`, or `sink` on a procedure with no output, is refused.
+operative (entry channel `"input"`, the producing channel named by the `sink`
+string, which is what a sink does everywhere) and registers it automatically —
+the user writes no registration call. `sink` without `id`, or `sink` on a
+procedure with no output, is refused.
 
 - **Multi-procedure topology stays explicit.** More than one procedure, or any
   fan-out / multi-input edge, requires an explicit `channels()` body (Rust and

@@ -413,7 +413,7 @@ defmodule Flezha.SDK.Workflow.DriverTest do
       |> Channels.input("in")
       |> Channels.into(Tagger)
       |> Channels.named("mid")
-      |> Channels.sink_with("out_sink", fn v -> "a-out:" <> v end)
+      |> Channels.sink_with(fn v -> "a-out:" <> v end)
       |> Channels.into(Join)
     end
   end

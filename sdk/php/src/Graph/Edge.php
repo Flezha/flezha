@@ -140,7 +140,9 @@ final class Edge
     }
 
     /**
-     * Attach this edge's channel to the named plugin sink, and answer the edge.
+     * Terminate this edge's channel on the plugin layer, and answer the edge.
+     * A name written here IS the channel's name, everywhere one appears;
+     * `sink()` leaves it derived as it would be without a sink at all.
      *
      * `sink(...)->into(...)` wires a consumer behind the sink, so one emit
      * reaches both. A channel with no consumer behind it is the plugin-bound
@@ -151,28 +153,38 @@ final class Edge
      * serialize, and the core reads a sink as the terminal of the channel it
      * sits on — it cannot see that this one is fed by the controller.
      *
-     * @param (callable(mixed):string)|null $encode
+     * @param string|(callable(mixed):string)|null $nameOrEncode
+     * @param (callable(mixed):string)|null         $encode
      */
-    public function sink(string $name, ?callable $encode = null): self
+    public function sink(string|callable|null $nameOrEncode = null, ?callable $encode = null): self
     {
+        // One method, two positions: a string names the channel, a callable is
+        // the serializer. PHP has no overloading, so telling them apart here is
+        // what keeps the serializer-only form from spelling `sink(null, $enc)`.
+        $name = is_string($nameOrEncode) ? $nameOrEncode : null;
+        $encode = is_callable($nameOrEncode) ? $nameOrEncode : $encode;
+
         if ($this->from[0] !== 'procedure') {
             throw new DeclarationException(
                 $this->builder->factoryId,
-                $name,
+                $name ?? '<derived>',
                 'a plugin sink is fed by a procedure; wire the entry channel into one first'
             );
         }
 
         $channel = $this->channel();
-        $this->builder->linkChain(
-            $this->from,
-            $this->pending['chain'] ?? null,
-            ['link' => 'sink', 'name' => $name],
-        );
+        // The name written here IS the channel's name; `sink()` with none
+        // leaves it derived as it would be without a sink at all.
+        $link = ['link' => 'sink'];
+        if ($name !== null) {
+            $link['name'] = $name;
+            $channel->name = $name;
+        }
+        $this->builder->linkChain($this->from, $this->pending['chain'] ?? null, $link);
         // First call wins on the builder's own side, as the reference does; a
         // second `sink` link is what the core refuses the class for.
         if ($channel->sink === null) {
-            $channel->sink = $name;
+            $channel->sink = $channel->name;
             $channel->sinkEncode = $encode;
         }
 

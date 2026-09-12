@@ -98,21 +98,23 @@ public final class EchoOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoProcedure.class).named("out").sink("my_sink");
+        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
     }
 }
 ```
 
 The wiring expression reads left to right: declare an entry channel named `in`
-carrying strings, route it to the echo procedure, label that procedure's output
-`out`, and deliver the labelled channel to a plugin sink named `my_sink`. Every
-call returns the next handle in the chain, so a graph of any size is expressed as
-one fluent expression, and the whole declaration is validated at registration
-rather than failing later during processing.
+carrying strings, route it to the echo procedure, and terminate that procedure's
+output on the plugin layer under the name `out`. Every call returns the next
+handle in the chain, so a graph of any size is expressed as one fluent
+expression, and the whole declaration is validated at registration rather than
+failing later during processing.
 
-The label supplied to `named` is an identity rather than documentation. It is
-what a sink registers against and what a test feeds or reads; unlabelled, a
-channel takes the producing procedure's name.
+The name a `sink` carries is an identity rather than documentation: it is the
+channel's name, what a plugin filter matches and what a test feeds or reads.
+The no-argument `sink()` leaves the channel named after its producing
+procedure, and `named(...)` renames a channel that has no sink to name it.
+Naming one channel both ways is refused.
 
 **The main** starts a runner: the process that connects to a controller and serves
 the operatives declared on it.

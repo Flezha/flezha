@@ -489,26 +489,40 @@ class StreamOperativeTopologyBuilderTest {
         @Test
         @DisplayName("a sink with no consumers is the terminal; sealed() changes nothing")
         void sinkTerminalityIsDerivedFromTheWiring() {
-            var terminal = StreamOperativeTopologyBuilder.build("g13", c -> c.input(String.class, "in")
-                    .into(SingleProcedure.class)
-                    .named("egress")
-                    .sink("plugin_u"));
+            var terminal = StreamOperativeTopologyBuilder.build(
+                    "g13",
+                    c -> c.input(String.class, "in").into(SingleProcedure.class).sink("egress"));
             var sealed = StreamOperativeTopologyBuilder.build("g14", c -> c.input(String.class, "in")
                     .into(SingleProcedure.class)
-                    .named("egress")
-                    .sink("plugin_u")
+                    .sink("egress")
                     .sealed());
             var hybrid = StreamOperativeTopologyBuilder.build("g15", c -> c.input(String.class, "in")
                     .into(SingleProcedure.class)
-                    .named("egress")
-                    .sink("plugin_u")
+                    .sink("egress")
                     .into(GraphStage1.class));
 
             assertThat(shape(sealed))
                     .as("`.sealed()` must add no topology difference")
                     .isEqualTo(shape(terminal));
-            assertThat(sinkShape(terminal)).isEqualTo(List.of(ChannelKind.PLUGIN_BOUND.name(), "0", "plugin_u"));
-            assertThat(sinkShape(hybrid)).isEqualTo(List.of(ChannelKind.INTER_PROCEDURE.name(), "1", "plugin_u"));
+            assertThat(sinkShape(terminal)).isEqualTo(List.of(ChannelKind.PLUGIN_BOUND.name(), "0", "egress"));
+            assertThat(sinkShape(hybrid)).isEqualTo(List.of(ChannelKind.INTER_PROCEDURE.name(), "1", "egress"));
+        }
+
+        @Test
+        @DisplayName("the sink names the channel, and the no-argument form leaves it derived")
+        void sinkNamesTheChannelAndTheNoArgumentFormDoesNot() {
+            var named = StreamOperativeTopologyBuilder.build(
+                    "g13a",
+                    c -> c.input(String.class, "in").into(SingleProcedure.class).sink("items_output"));
+            var derived = StreamOperativeTopologyBuilder.build(
+                    "g13b",
+                    c -> c.input(String.class, "in").into(SingleProcedure.class).sink());
+
+            assertThat(named.channels().get(1).name()).isEqualTo("items_output");
+            assertThat(derived.channels().get(1).name())
+                    .as("sink() derives exactly as a channel with no sink does")
+                    .isEqualTo("single_procedure");
+            assertThat(derived.channels().get(1).pluginSink()).isPresent();
         }
 
         @Test
@@ -535,7 +549,7 @@ class StreamOperativeTopologyBuilderTest {
             return List.of(
                     channel.kind().name(),
                     String.valueOf(channel.consumerIds().size()),
-                    channel.pluginSink().map(PluginSink::name).orElse("<none>"));
+                    channel.pluginSink().map(sink -> channel.name()).orElse("<none>"));
         }
 
         private java.util.List<String> shape(StreamOperativeTopology t) {
@@ -596,12 +610,36 @@ class StreamOperativeTopologyBuilderTest {
         void duplicatePluginSinkRefused() {
             assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build("r3", c -> c.input(String.class, "in")
                             .into(SingleProcedure.class)
-                            .named("egress")
-                            .sink("plugin_a")
-                            .sink("plugin_b")))
+                            .sink("egress")
+                            .sink()))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
                     .hasMessageContaining("DuplicatePluginSink")
                     .hasMessageContaining("channel `egress` was declared with `sink(...)` more than once");
+        }
+
+        @Test
+        @DisplayName("a channel named by both named() and sink() is refused naming both")
+        void channelNamedTwiceRefused() {
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build("r3b", c -> c.input(String.class, "in")
+                            .into(SingleProcedure.class)
+                            .named("a")
+                            .sink("b")))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("ChannelNamedTwice")
+                    .hasMessageContaining(".named(`a`) and .sink(`b`) both name it");
+        }
+
+        @Test
+        @DisplayName("two channels naming one sink is refused as a duplicate sink name")
+        void duplicateSinkNameRefused() {
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build("r3c", c -> {
+                        var in = c.input(String.class, "in");
+                        in.into(SingleProcedure.class).sink("shared");
+                        in.into(GraphStage1.class).sink("shared");
+                    }))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("DuplicateSinkName")
+                    .hasMessageContaining("channel `shared` is named by two plugin sinks");
         }
 
         @Test
@@ -609,10 +647,7 @@ class StreamOperativeTopologyBuilderTest {
         void unkeyedChannelUnderTheTierRefused() {
             assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build("r4", c -> {
                         c.effectivelyOnce();
-                        c.input(String.class, "in")
-                                .into(SingleProcedure.class)
-                                .named("egress")
-                                .sink("plugin_a");
+                        c.input(String.class, "in").into(SingleProcedure.class).sink("egress");
                     }))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
                     .hasMessageContaining("UnkeyedChannelUnderEffectivelyOnce")

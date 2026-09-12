@@ -71,8 +71,8 @@ final class DoNothingOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(DoNothing::class)->named('echo')
-            ->sink('do_nothing_echo', Wire::bytes(...));
+            ->into(DoNothing::class)
+            ->sink('echo', Wire::bytes(...));
     }
 }
 
@@ -87,8 +87,8 @@ final class BenchEchoOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)
-            ->into(DoNothing::class)->named('echo')
-            ->sink('bench_echo_sink', Wire::bytes(...));
+            ->into(DoNothing::class)
+            ->sink('echo', Wire::bytes(...));
     }
 }
 
@@ -118,8 +118,8 @@ final class CompareFilterOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(CompareFilter::class)->named('sink')
-            ->sink('compare_filter_sink', Wire::bytes(...));
+            ->into(CompareFilter::class)
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -185,14 +185,14 @@ final class StaticEntityOperative extends StreamOperative
     {
         $c->input('input', Wire::text(...))
             ->into(StaticEntry::class)->named('hop')
-            ->into(StaticDownstream::class)->named('kafka')
-            ->sink('test_kafka', Wire::bytes(...));
+            ->into(StaticDownstream::class)
+            ->sink('kafka', Wire::bytes(...));
     }
 }
 
 /**
- * The reference pipeline sugar leaves the hop unnamed and names the plugin
- * channel after the plugin.
+ * The reference pipeline sugar leaves the hop unnamed and lets the sink name
+ * the producing channel.
  */
 #[Operative(factoryId: 'sugar_static_entity')]
 final class SugarStaticEntityOperative extends StreamOperative
@@ -201,7 +201,7 @@ final class SugarStaticEntityOperative extends StreamOperative
     {
         $c->input('input', Wire::text(...))
             ->into(MacroStaticEntry::class)
-            ->into(MacroStaticDownstream::class)->named('test_kafka')
+            ->into(MacroStaticDownstream::class)
             ->sink('test_kafka', Wire::bytes(...));
     }
 }
@@ -223,8 +223,8 @@ final class MixedOperative extends StreamOperative
     {
         $c->input('input', Wire::text(...))
             ->into(MixedMacroEntry::class)->named('hop')
-            ->into(MixedHandDownstream::class)->named('kafka')
-            ->sink('test_kafka', Wire::bytes(...));
+            ->into(MixedHandDownstream::class)
+            ->sink('kafka', Wire::bytes(...));
     }
 }
 
@@ -241,7 +241,7 @@ final class SugarDoNothingOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(SugarDoNothing::class)->named('sugar_do_nothing_echo')
+            ->into(SugarDoNothing::class)
             ->sink('sugar_do_nothing_echo', Wire::bytes(...));
     }
 }
@@ -273,7 +273,7 @@ final class SugarStoreInputOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(SugarStoreInput::class)->named('sugar_store_sink')
+            ->into(SugarStoreInput::class)
             ->sink('sugar_store_sink', Wire::bytes(...));
     }
 }
@@ -325,7 +325,7 @@ final class HybridChannelOperative extends StreamOperative
             // The consumer edge first, so a refused plugin serialization leaves
             // the in-process fan-out already recorded — the reference's isolation.
             static fn ($edge) => $edge->named('hybrid_indicator')->into(HybridConsumer::class),
-            static fn ($edge) => $edge->sink('hybrid_indicators', static function (mixed $value): string {
+            static fn ($edge) => $edge->sink(static function (mixed $value): string {
                 if ($value === HybridProducer::SENTINEL) {
                     throw new \RuntimeException('hybrid_indicators: serializer rejected sentinel 0xDEADBEEF');
                 }
@@ -390,8 +390,8 @@ final class EntityStressOperative extends StreamOperative
             ->into(StressA::class)->named('a_to_b')
             ->into(StressB::class)->named('b_to_c')
             ->into(StressC::class)->named('c_to_d')
-            ->into(StressD::class)->named('echo')
-            ->sink('entity_stress_echo', Wire::bytes(...));
+            ->into(StressD::class)
+            ->sink('echo', Wire::bytes(...));
     }
 }
 
@@ -443,8 +443,8 @@ final class CandleOperative extends StreamOperative
     {
         $c->effectivelyOnce()->correctionWindow(600_000);
         $c->input('input', Wire::text(...))
-            ->into(Candle::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
+            ->into(Candle::class)->keyed()
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -495,8 +495,8 @@ final class SessionTimeoutOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(SessionTimeout::class)->named('kafka')
-            ->sink('test_kafka', Wire::bytes(...));
+            ->into(SessionTimeout::class)
+            ->sink('kafka', Wire::bytes(...));
     }
 }
 
@@ -545,8 +545,8 @@ final class BoundedMailboxDropNothingOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('drop_nothing_input', Wire::text(...))->onFull(Overflow::DropNothing)
-            ->into(DropNothingMailbox::class)->named('drop_nothing_echo')
-            ->sink('bounded_mailbox_echo', Wire::bytes(...));
+            ->into(DropNothingMailbox::class)
+            ->sink('drop_nothing_echo', Wire::bytes(...));
     }
 }
 
@@ -556,8 +556,8 @@ final class BoundedMailboxDropNewestOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('drop_newest_input', Wire::text(...))->onFull(Overflow::DropNewest)
-            ->into(DropNewestMailbox::class)->named('drop_newest_echo')
-            ->sink('bounded_mailbox_echo', Wire::bytes(...));
+            ->into(DropNewestMailbox::class)
+            ->sink('drop_newest_echo', Wire::bytes(...));
     }
 }
 
@@ -567,8 +567,8 @@ final class BoundedMailboxDropOldestOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('drop_oldest_input', Wire::text(...))->onFull(Overflow::DropOldest)
-            ->into(DropOldestMailbox::class)->named('drop_oldest_echo')
-            ->sink('bounded_mailbox_echo', Wire::bytes(...));
+            ->into(DropOldestMailbox::class)
+            ->sink('drop_oldest_echo', Wire::bytes(...));
     }
 }
 
@@ -608,8 +608,8 @@ final class PartitionRelayOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', Wire::text(...))->keyBy(Wire::prefix(...))
-            ->into(PartitionRelay::class)->named('input')->keyed()
-            ->sink('relay_out', Wire::bytes(...));
+            ->into(PartitionRelay::class)->keyed()
+            ->sink('input', Wire::bytes(...));
     }
 }
 
@@ -649,8 +649,8 @@ final class DynamicEntityOperative extends StreamOperative
             // core never mints an entity for it.
             ->filter(static fn (mixed $input): bool => $input !== 'drop')
             ->keyBy(Wire::prefix(...))
-            ->into(DynamicEntity::class)->named('kafka')
-            ->sink('test_kafka', Wire::bytes(...));
+            ->into(DynamicEntity::class)
+            ->sink('kafka', Wire::bytes(...));
     }
 }
 

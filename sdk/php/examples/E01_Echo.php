@@ -36,7 +36,7 @@ final class EchoOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input')->into(Echoer::class)->named('out')->sink('echo_sink');
+        $c->input('input')->into(Echoer::class)->sink('out');
     }
 }
 

@@ -74,8 +74,8 @@ final class SessionOperative extends StreamOperative
     {
         $c->input('events')
             ->keyBy(static fn (array $e): string => (string) $e['session'])
-            ->into(Session::class)->named('closed')->keyed()
-            ->sink('sessions_out');
+            ->into(Session::class)->keyed()
+            ->sink('closed');
     }
 }
 

@@ -66,7 +66,6 @@ const Spec = defineOperative({
     c.input('in')
       .keyBy((value) => String(value))
       .into(Counter)
-      .named('out')
       .keyed()
       .sink('out');
   },
@@ -103,7 +102,7 @@ test('a throwing handler is a retryable verdict and stops the batch', async () =
   });
   const spec = defineOperative({
     factoryId: 'throwing_op',
-    channels: (c) => c.input('in').into(Throwing).sink('out'),
+    channels: (c) => c.input('in').into(Throwing).sink(),
   });
   const result = await answer(
     activation({
@@ -127,7 +126,7 @@ test('a rejected promise is answered the same way a throw is', async () => {
   });
   const spec = defineOperative({
     factoryId: 'rejecting_op',
-    channels: (c) => c.input('in').into(Rejecting).sink('out'),
+    channels: (c) => c.input('in').into(Rejecting).sink(),
   });
   const result = await answer(
     activation({ factory: 'rejecting_op', entityKey: undefined, items: [inputItem(1)] }),
@@ -192,7 +191,7 @@ test('the JSON handover carries a bigint and a byte array without narrowing', as
   });
   const spec = defineOperative({
     factoryId: 'wide_op',
-    channels: (c) => c.input('in').into(Wide).sink('out'),
+    channels: (c) => c.input('in').into(Wide).sink(),
   });
   const source = depsFor(spec);
   const huge = (1n << 63n) + 7n;
@@ -269,7 +268,7 @@ test('one payload failing its prepare does not fail the others', async () => {
         .keyBy((v) => v.k)
         .into(Windowed)
         .keyed()
-        .sink('out'),
+        .sink(),
   });
   const result = await answer(
     activation({
@@ -337,7 +336,7 @@ test('a module specifier is imported and its operatives registered', async () =>
     module,
     `import { defineOperative, defineProcedure } from '${new URL('../dist/esm/index.js', import.meta.url).pathname}';\n` +
       `const Echo = defineProcedure({ name: 'echo', handle: (i) => i });\n` +
-      `export default defineOperative({ factoryId: 'from_specifier', channels: (c) => c.input('in').into(Echo).sink('out') });\n`,
+      `export default defineOperative({ factoryId: 'from_specifier', channels: (c) => c.input('in').into(Echo).sink() });\n`,
   );
   const registry = await loadRegistry([module]);
   assert.ok(registry.get('from_specifier'), "the module's operative was registered");
@@ -436,7 +435,6 @@ const StampSpec = defineOperative({
     c.input('in')
       .keyBy(() => 'ek')
       .into(StampEmitter)
-      .named('keyed_out')
       .keyed()
       .sink('keyed_out');
   },
@@ -457,8 +455,8 @@ const MixedSpec = defineOperative({
     c.input('in')
       .keyBy(() => 'ek')
       .branch([
-        (edge) => edge.into(PlainEmitter).named('plain_out').sink('plain_out'),
-        (edge) => edge.into(StampEmitter).named('keyed_out').keyed().sink('keyed_out'),
+        (edge) => edge.into(PlainEmitter).sink('plain_out'),
+        (edge) => edge.into(StampEmitter).keyed().sink('keyed_out'),
       ]);
   },
 });
@@ -533,7 +531,7 @@ test('user metadata survives beside the stamps and cannot spoof one', async () =
         .keyBy(() => 'ek')
         .into(UserMeta)
         .keyed()
-        .sink('keyed_out');
+        .sink();
     },
   });
   const activation = activationFor('stamps_user');
@@ -586,7 +584,7 @@ const workflowGraph = (c) => {
   const edge = c.input('in').into(WorkflowProducer).named('handoff');
   edge.map((value) => value + 1).into(record('wf_b'));
   edge.into(record('wf_c'));
-  edge.sink('wf_out');
+  edge.sink();
 };
 
 const WorkflowSpec = defineWorkflow({ factoryId: 'wf_emit', channels: workflowGraph });

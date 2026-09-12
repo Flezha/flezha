@@ -36,7 +36,6 @@ public final class PipelineOperative implements StreamOperative {
                 .into(Normalize.class)
                 .named("normalized")
                 .into(Shout.class)
-                .named("shouted")
-                .sink("my_sink");
+                .sink("shouted");
     }
 }

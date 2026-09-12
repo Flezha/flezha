@@ -39,7 +39,6 @@ public final class ChatRewindWorkflowOperative implements WorkflowOperative {
                 .into(ChatSteps.Turn.class)
                 .named("mid")
                 .into(ChatSteps.ReplyUndoable.class)
-                .named("out")
-                .sink("chat_sink");
+                .sink("out");
     }
 }

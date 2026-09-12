@@ -174,7 +174,7 @@ class Interpreter:
         if verb == "on_full":
             return edge.on_full(arg)
         if verb == "sink":
-            return edge.sink(arg)
+            return edge.sink(arg) if arg else edge.sink()
         if verb == "into":
             # The result is that procedure's output channel, addressed by role.
             self._handles[arg] = edge.into(self._procedure(arg))

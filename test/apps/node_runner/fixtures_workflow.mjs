@@ -142,8 +142,7 @@ export const optoutCommitBlock = defineWorkflow({
   channels: (c) => {
     c.input('in', text)
       .into(CommitA)
-      .named('mid')
-      .sink('optout_sink', (value) => bytes(`a-ran:${value}`))
+      .sink('mid', (value) => bytes(`a-ran:${value}`))
       .into(BlockB);
   },
 });
@@ -164,12 +163,7 @@ export const tierCommitBlockWorkflow = defineWorkflow({
   factoryId: 'tier_commit_block_workflow',
   channels: (c) => {
     c.effectivelyOnce();
-    c.input('in', text)
-      .into(TierCommitA)
-      .named('mid')
-      .keyed()
-      .sink('tier_sink', bytes)
-      .into(BlockB);
+    c.input('in', text).into(TierCommitA).keyed().sink('mid', bytes).into(BlockB);
   },
 });
 
@@ -204,8 +198,7 @@ export const outboxBlockWorkflow = defineWorkflow({
   channels: (c) => {
     c.input('in', text)
       .into(CommitA)
-      .named('mid')
-      .sink('outbox_sink', (value) => bytes(`a-out:${value}`))
+      .sink('mid', (value) => bytes(`a-out:${value}`))
       .into(BlockB);
   },
 });
@@ -235,8 +228,7 @@ export const undoOutboxWorkflow = defineWorkflow({
   channels: (c) => {
     c.input('in', text)
       .into(UndoOutboxA)
-      .named('mid')
-      .sink('undo_sink', (value) => bytes(`out:${value}`))
+      .sink('mid', (value) => bytes(`out:${value}`))
       .into(UndoC);
   },
 });
@@ -292,16 +284,13 @@ export const branchWorkflow = defineWorkflow({
     const mid = c
       .input('in', text)
       .into(BranchA)
-      .named('mid')
-      .sink('branch_sink', (value) => bytes(`a:${value}`));
+      .sink('mid', (value) => bytes(`a:${value}`));
     mid
       .into(BranchB)
-      .named('bmid')
-      .sink('branch_sink', (value) => bytes(`b:${value}`))
+      .sink('bmid', (value) => bytes(`b:${value}`))
       .into(BranchD)
-      .named('d_out')
-      .sink('branch_sink', bytes);
-    mid.into(BranchC).named('c_out').sink('branch_sink', bytes);
+      .sink('d_out', bytes);
+    mid.into(BranchC).sink('c_out', bytes);
   },
 });
 
@@ -339,22 +328,9 @@ export const diamondWorkflow = defineWorkflow({
     const fan = c
       .input('in', text)
       .into(DiamA)
-      .named('dfan')
-      .sink('diamond_sink', (value) => bytes(`a:${value}`));
-    fan
-      .into(DiamB1)
-      .named('db1')
-      .into(DiamB2)
-      .named('db2')
-      .sink('diamond_sink', bytes)
-      .into(DiamJoin);
-    fan
-      .into(DiamC)
-      .named('dc')
-      .sink('diamond_sink', bytes)
-      .into(DiamJoin)
-      .named('j_out')
-      .sink('diamond_sink', bytes);
+      .sink('dfan', (value) => bytes(`a:${value}`));
+    fan.into(DiamB1).named('db1').into(DiamB2).sink('db2', bytes).into(DiamJoin);
+    fan.into(DiamC).sink('dc', bytes).into(DiamJoin).sink('j_out', bytes);
   },
 });
 
@@ -390,11 +366,9 @@ export const retryWorkflow = defineWorkflow({
   channels: (c) => {
     c.input('in', text)
       .into(RetryA)
-      .named('mid')
-      .sink('retry_sink', (value) => bytes(`res:${value}`))
+      .sink('mid', (value) => bytes(`res:${value}`))
       .into(RetryFlaky)
-      .named('out')
-      .sink('retry_sink', bytes);
+      .sink('out', bytes);
   },
 });
 
@@ -459,12 +433,7 @@ export const chatLoopWorkflow = defineWorkflow({
   factoryId: 'chat_loop_workflow',
   ...loopKnobs,
   channels: (c) => {
-    c.input('in', text)
-      .into(ChatTurn)
-      .named('mid')
-      .into(ChatReply)
-      .named('out')
-      .sink('chat_sink', bytes);
+    c.input('in', text).into(ChatTurn).named('mid').into(ChatReply).sink('out', bytes);
   },
 });
 
@@ -472,7 +441,7 @@ export const statelessLoopWorkflow = defineWorkflow({
   factoryId: 'stateless_loop_workflow',
   ...loopKnobs,
   channels: (c) => {
-    c.input('in', text).into(ChatReply).named('out').sink('chat_sink', bytes);
+    c.input('in', text).into(ChatReply).sink('out', bytes);
   },
 });
 
@@ -480,12 +449,7 @@ export const chatRewindWorkflow = defineWorkflow({
   factoryId: 'chat_rewind_workflow',
   ...loopKnobs,
   channels: (c) => {
-    c.input('in', text)
-      .into(ChatTurn)
-      .named('mid')
-      .into(ChatReplyUndoable)
-      .named('out')
-      .sink('chat_sink', bytes);
+    c.input('in', text).into(ChatTurn).named('mid').into(ChatReplyUndoable).sink('out', bytes);
   },
 });
 
@@ -509,7 +473,7 @@ const benchChain = (factoryId, steps, persistent) =>
       for (let at = 1; at < steps; at += 1) {
         stream = stream.named(`edge_BenchS${at}`).into(benchSteps[at]);
       }
-      stream.named('out').sink('bench_sink', bytes);
+      stream.sink('out', bytes);
     },
   });
 
@@ -547,11 +511,6 @@ export const benchLoopWorkflow = defineWorkflow({
   maxDurationMs: 24 * 3_600_000,
   wakeAfterMs: Number.parseInt(process.env[WAKE_AFTER_ENV] ?? '', 10) || undefined,
   channels: (c) => {
-    c.input('in', text)
-      .into(BenchTurn)
-      .named('mid')
-      .into(ChatReply)
-      .named('out')
-      .sink('bench_sink', bytes);
+    c.input('in', text).into(BenchTurn).named('mid').into(ChatReply).sink('out', bytes);
   },
 });

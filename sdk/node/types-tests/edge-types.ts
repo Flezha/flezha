@@ -50,7 +50,7 @@ const Count = defineProcedure({
 export const wellTyped = defineOperative({
   factoryId: 'well_typed',
   channels: (c) => {
-    c.input<Trade>('trades').into(Ohlc).into(Publish).sink('out');
+    c.input<Trade>('trades').into(Ohlc).into(Publish).sink();
   },
 });
 
@@ -79,7 +79,7 @@ export const refusals = defineOperative({
 
     // A sink encoder is applied to the edge's own value.
     // @ts-expect-error the edge carries a string here, not a Trade
-    c.input<Trade>('f').into(Ohlc).into(Publish).sink('g', (value: Trade) => Buffer.from(value.symbol));
+    c.input<Trade>('f').into(Ohlc).into(Publish).sink((value: Trade) => Buffer.from(value.symbol));
 
     // A wrong overflow policy is a typo the compiler catches.
     // @ts-expect-error `drop_everything` is not an overflow policy

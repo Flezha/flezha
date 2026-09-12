@@ -54,7 +54,7 @@ class DeclKeysTest < Minitest::Test
       edge.named("hop").key_by { |value| value.to_s }.retry_max(5).retry_backoff_ms(50)
           .into(Downstream)
       edge.named("fan").into(Fanned)
-      c.input("second").into(Entry).named("sink").keyed.sink("out")
+      c.input("second").into(Entry).keyed.sink("sink")
     end
   end
 
@@ -159,8 +159,8 @@ class ReferenceTopologiesTest < Minitest::Test
   class HybridChannel < Flezha::StreamOperative
     factory_id "hybrid_channel"
     channels do |c|
-      c.input("input").into(HybridProducer).named("hybrid_indicator")
-       .sink("hybrid_indicators", encode: BYTES).into(HybridConsumer)
+      c.input("input").into(HybridProducer)
+       .sink("hybrid_indicator", encode: BYTES).into(HybridConsumer)
     end
   end
 
@@ -178,8 +178,8 @@ class ReferenceTopologiesTest < Minitest::Test
     factory_id "commit_block_chain"
     channels do |c|
       c.effectively_once
-      c.input("in").into(TierCommitA).named("mid").keyed
-       .sink("tier_sink", encode: BYTES).into(BlockB)
+      c.input("in").into(TierCommitA).keyed
+       .sink("mid", encode: BYTES).into(BlockB)
     end
   end
 

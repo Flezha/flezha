@@ -19,7 +19,7 @@ def echo(value: str) -> str:
 
 @flezha.stream_operative("echo")
 def echo_operative(c: flezha.Channels) -> None:
-    c.input("input").into(echo).named("out").sink("echo_sink")
+    c.input("input").into(echo).sink("out")
 
 
 flezha.create_runner("default").define_stream(echo_operative).run()

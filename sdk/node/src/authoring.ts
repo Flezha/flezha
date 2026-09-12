@@ -56,7 +56,7 @@ export type Link =
   | { link: 'transform' }
   | { link: 'key' }
   | { link: 'named'; name: string }
-  | { link: 'sink'; name: string }
+  | { link: 'sink'; name?: string }
   | { link: 'into'; procedure: number }
   | { link: 'branch'; arms: number };
 
@@ -467,14 +467,22 @@ class EdgeStream<T> implements Stream<T> {
     return new EdgeStream<TOut>(this.builder, { source: 'procedure', node }, { transforms: [] });
   }
 
-  sink(name: string, encode?: (value: T) => Uint8Array): Stream<T> {
+  sink(
+    nameOrEncode?: string | ((value: T) => Uint8Array),
+    encode?: (value: T) => Uint8Array,
+  ): Stream<T> {
+    // One method, two positions: a string names the channel, a function is the
+    // serializer. Telling them apart here is what keeps the serializer-only
+    // form from spelling `sink(undefined, encode)`.
+    const name = typeof nameOrEncode === 'string' ? nameOrEncode : undefined;
+    const serialize = typeof nameOrEncode === 'function' ? nameOrEncode : encode;
     if (this.from.source !== 'procedure') {
       // Not a topology rule the core states: a record whose entry channel
       // carries a sink derives a plugin channel with no producer, and there is
       // nothing in it that says which end fed the plugin.
       throw new DeclarationError(
         this.builder.factoryId,
-        name,
+        name ?? '<derived>',
         'a plugin sink is fed by a procedure; wire the entry channel into one first',
       );
     }
@@ -483,10 +491,13 @@ class EdgeStream<T> implements Stream<T> {
     // handle, so `.into(...)` still chains after it and the value reaches both
     // the consumer mailboxes and the sink. Terminality is the absence of
     // further wiring, not a different method.
-    channel.chains.push([{ link: 'sink', name }]);
+    channel.chains.push(name === undefined ? [{ link: 'sink' }] : [{ link: 'sink', name }]);
+    // The sink names the channel: `sink('x')` IS the name, and `sink()` leaves
+    // it derived. One string, which is what the core answers back.
+    if (name !== undefined) channel.name = name;
     if (channel.sink === undefined) {
-      channel.sink = name;
-      channel.sinkEncode = encode as ((value: unknown) => Uint8Array) | undefined;
+      channel.sink = channel.name;
+      channel.sinkEncode = serialize as ((value: unknown) => Uint8Array) | undefined;
     }
     return this;
   }

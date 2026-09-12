@@ -301,7 +301,7 @@ class HostClassDeclarationTest {
                     .retryBackoffMs(300)
                     .into(FullyDeclaredProc.class)
                     .keyed()
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                    .sink(s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -317,8 +317,7 @@ class HostClassDeclarationTest {
             c.input(String.class, "in")
                     .keyBy(input -> input.split(":")[0])
                     .into(FullyDeclaredDynamicProc.class)
-                    .named("out")
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                    .sink("out", s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -532,7 +531,7 @@ class HostClassDeclarationTest {
 
         @Override
         public void procedures(ChannelBuilder c) {
-            c.input(String.class, "in").into(ChainedSinkProc.class).named("out").sink("s");
+            c.input(String.class, "in").into(ChainedSinkProc.class).sink("out");
         }
     }
 
@@ -565,10 +564,7 @@ class HostClassDeclarationTest {
             c.effectivelyOnce();
             c.checkpointEvery(500);
             c.outputsAtCheckpoint(50);
-            c.input(String.class, "in")
-                    .into(DeclProc.class)
-                    .keyed()
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+            c.input(String.class, "in").into(DeclProc.class).keyed().sink(s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -581,10 +577,7 @@ class HostClassDeclarationTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.outputsAtCheckpoint(50);
-            c.input(String.class, "in")
-                    .into(DeclProc.class)
-                    .keyed()
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+            c.input(String.class, "in").into(DeclProc.class).keyed().sink(s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -598,10 +591,7 @@ class HostClassDeclarationTest {
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
             c.checkpointAck();
-            c.input(String.class, "in")
-                    .into(DeclProc.class)
-                    .keyed()
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+            c.input(String.class, "in").into(DeclProc.class).keyed().sink(s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -618,7 +608,7 @@ class HostClassDeclarationTest {
                     .into(VersionTwoProc.class)
                     .named("mid")
                     .into(VersionOneProc.class)
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                    .sink(s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -724,10 +714,7 @@ class HostClassDeclarationTest {
         public void procedures(ChannelBuilder c) {
             c.effectivelyOnce();
             c.checkpointAck();
-            c.input(String.class, "in")
-                    .into(DeclProc.class)
-                    .keyed()
-                    .sink("tier_sink", s -> s.getBytes(StandardCharsets.UTF_8));
+            c.input(String.class, "in").into(DeclProc.class).keyed().sink(s -> s.getBytes(StandardCharsets.UTF_8));
         }
 
         @Override

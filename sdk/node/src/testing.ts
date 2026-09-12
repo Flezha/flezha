@@ -94,7 +94,7 @@ export class ProcedureTestHarness<TIn, TOut, TState, TChange> {
         c
           .input('harness_in')
           .into(procedure as never)
-          .sink('harness_out'),
+          .sink(),
     });
     this.node = this.spec.procedures[0] as ProcNode;
     this.outgoing = this.spec.channels.filter((channel) => channel.producer !== undefined);

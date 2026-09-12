@@ -48,15 +48,12 @@ public final class BranchWorkflowOperative implements WorkflowOperative {
         // what BranchA released on it (held handle, wired twice).
         var mid = c.input(String.class, "in")
                 .into(BranchA.class)
-                .named("mid")
-                .sink("branch_sink", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
+                .sink("mid", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
         mid.into(BranchB.class)
-                .named("bmid")
-                .sink("branch_sink", s -> ("b:" + s).getBytes(StandardCharsets.UTF_8))
+                .sink("bmid", s -> ("b:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(BranchD.class)
-                .named("d_out")
-                .sink("branch_sink");
-        mid.into(BranchC.class).named("c_out").sink("branch_sink");
+                .sink("d_out");
+        mid.into(BranchC.class).sink("c_out");
     }
 
     /** The shared root. */

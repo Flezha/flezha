@@ -96,6 +96,19 @@ class ReferenceTopologyRowsTest {
                     var other = c.input(String.class, "other");
                     in.keyBy(value -> value).into(StreamOperativeTopologyBuilderTest.DynamicModeOnlyProcedure.class);
                     other.into(StreamOperativeTopologyBuilderTest.DynamicModeOnlyProcedure.class);
+                }),
+                // entry(in); in.into(plain); plain.named(a); plain.sink(b)
+                new Row("named_twice", c -> c.input(String.class, "in")
+                        .into(StreamOperativeTopologyBuilderTest.SingleProcedure.class)
+                        .named("a")
+                        .sink("b")),
+                // entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)
+                new Row("two_channels_one_sink", c -> {
+                    var in = c.input(String.class, "in");
+                    in.into(StreamOperativeTopologyBuilderTest.SingleProcedure.class)
+                            .sink("out");
+                    in.into(StreamOperativeTopologyBuilderTest.GraphStage1.class)
+                            .sink("out");
                 }));
     }
 
@@ -108,13 +121,17 @@ class ReferenceTopologyRowsTest {
                     in.into(StreamOperativeTopologyBuilderTest.SingleProcedure.class);
                     in.into(StreamOperativeTopologyBuilderTest.SingleProcedure.class);
                 }),
-                // entry(in); in.into(plain); plain.named(renamed); plain.sink(out)
+                // entry(in); in.into(plain); plain.named(renamed); plain.sink
                 new Row("named_sink", c -> {
                     var plain =
                             c.input(String.class, "in").into(StreamOperativeTopologyBuilderTest.SingleProcedure.class);
                     plain.named("renamed");
-                    plain.sink("out");
-                }));
+                    plain.sink();
+                }),
+                // entry(in); in.into(plain); plain.sink(items_output)
+                new Row("sink_names_channel", c -> c.input(String.class, "in")
+                        .into(StreamOperativeTopologyBuilderTest.SingleProcedure.class)
+                        .sink("items_output")));
     }
 
     @Test

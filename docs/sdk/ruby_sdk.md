@@ -56,8 +56,8 @@ class UpcaseOperative < Flezha::StreamOperative
   factory_id "upcase"
   channels do |c|
     c.input("input", decode: ->(bytes) { bytes.dup.force_encoding("UTF-8") })
-     .into(Upcase).named("out")
-     .sink("upcase_sink", encode: ->(value) { value.to_s.b })
+     .into(Upcase)
+     .sink("out", encode: ->(value) { value.to_s.b })
   end
 end
 

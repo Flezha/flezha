@@ -17,8 +17,7 @@ public final class BoundedMailboxDropNothingStreamOperative implements StreamOpe
         c.input(String.class, "drop_nothing_input")
                 .onFull(OverflowPolicy.DROP_NOTHING)
                 .into(DropNothingTestProcedure.class)
-                .named("drop_nothing_echo")
-                .sink("bounded_mailbox_echo");
+                .sink("drop_nothing_echo");
     }
 
     public static final class DropNothingTestProcedure extends BoundedMailboxProcedure {

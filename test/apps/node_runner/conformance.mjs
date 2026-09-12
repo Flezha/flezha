@@ -220,7 +220,7 @@ function specOf(row) {
             stream = stream.onFull(arg);
             break;
           case 'sink':
-            stream = stream.sink(arg);
+            stream = arg === '' ? stream.sink() : stream.sink(arg);
             break;
           case 'into':
             stream = stream.into(procedureFor(arg));

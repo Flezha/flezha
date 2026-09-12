@@ -40,7 +40,7 @@ do_nothing = passthrough("do_nothing_procedure")
 
 @flezha.stream_operative("do_nothing")
 def do_nothing_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(do_nothing).named("echo").sink("do_nothing_echo", encode=raw)
+    c.input("input", decode=text).into(do_nothing).sink("echo", encode=raw)
 
 
 @flezha.stream_operative("bench_echo")
@@ -50,9 +50,7 @@ def bench_echo_operative(c: flezha.Channels) -> None:
     ``do_nothing`` is the merge-blocking bench factory and must not change; this
     keeps the round-trip bench's back-pressure posture independent of it.
     """
-    c.input("input", decode=text).on_full("drop_nothing").into(do_nothing).named("echo").sink(
-        "bench_echo_sink", encode=raw
-    )
+    c.input("input", decode=text).on_full("drop_nothing").into(do_nothing).sink("echo", encode=raw)
 
 
 # -- compare_filter ----------------------------------------------------------
@@ -76,9 +74,7 @@ compare_filter = flezha.procedure(CompareFilter, name="compare_filter_procedure"
 
 @flezha.stream_operative("compare_filter")
 def compare_filter_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(compare_filter).named("sink").sink(
-        "compare_filter_sink", encode=raw
-    )
+    c.input("input", decode=text).into(compare_filter).sink("sink", encode=raw)
 
 
 # -- static_entity / sugar_static_entity / mixed_operative -------------------
@@ -127,18 +123,18 @@ macro_static_downstream = passthrough("macro_static_downstream_procedure")
 
 @flezha.stream_operative("static_entity")
 def static_entity_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(static_entry).named("hop").into(static_downstream).named(
-        "kafka"
-    ).sink("test_kafka", encode=raw)
+    c.input("input", decode=text).into(static_entry).named("hop").into(static_downstream).sink(
+        "kafka", encode=raw
+    )
 
 
 @flezha.stream_operative("sugar_static_entity")
 def sugar_static_entity_operative(c: flezha.Channels) -> None:
-    """The reference pipeline sugar leaves the hop unnamed and names the plugin
-    channel after the plugin."""
-    c.input("input", decode=text).into(macro_static_entry).into(macro_static_downstream).named(
-        "test_kafka"
-    ).sink("test_kafka", encode=raw)
+    """The reference pipeline sugar leaves the hop unnamed and lets the sink
+    name the producing channel."""
+    c.input("input", decode=text).into(macro_static_entry).into(macro_static_downstream).sink(
+        "test_kafka", encode=raw
+    )
 
 
 mixed_macro_entry = passthrough("mixed_macro_entry_procedure")
@@ -151,7 +147,7 @@ mixed_hand_downstream = passthrough("mixed_hand_downstream")
 def mixed_operative(c: flezha.Channels) -> None:
     c.input("input", decode=text).into(mixed_macro_entry).named("hop").into(
         mixed_hand_downstream
-    ).named("kafka").sink("test_kafka", encode=raw)
+    ).sink("kafka", encode=raw)
 
 
 # -- sugar_do_nothing / sugar_store_input ------------------------------------
@@ -162,9 +158,7 @@ sugar_do_nothing = passthrough("sugar_do_nothing")
 
 @flezha.stream_operative("sugar_do_nothing")
 def sugar_do_nothing_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(sugar_do_nothing).named("sugar_do_nothing_echo").sink(
-        "sugar_do_nothing_echo", encode=raw
-    )
+    c.input("input", decode=text).into(sugar_do_nothing).sink("sugar_do_nothing_echo", encode=raw)
 
 
 class SugarStoreInput:
@@ -184,9 +178,7 @@ sugar_store_input = flezha.procedure(SugarStoreInput, name="sugar_store_input")
 
 @flezha.stream_operative("sugar_store_input")
 def sugar_store_input_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(sugar_store_input).named("sugar_store_sink").sink(
-        "sugar_store_sink", encode=raw
-    )
+    c.input("input", decode=text).into(sugar_store_input).sink("sugar_store_sink", encode=raw)
 
 
 # -- hybrid_channel ----------------------------------------------------------
@@ -233,7 +225,7 @@ def hybrid_channel_operative(c: flezha.Channels) -> None:
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
         lambda edge: edge.named("hybrid_indicator").into(hybrid_consumer),
-        lambda edge: edge.sink("hybrid_indicators", encode=hybrid_encode),
+        lambda edge: edge.sink(encode=hybrid_encode),
     )
 
 
@@ -270,9 +262,7 @@ stress_d = flezha.procedure(StressToP0, name="stress_d", entity_keys=STRESS_KEYS
 def entity_stress_operative(c: flezha.Channels) -> None:
     c.input("input", decode=text).into(stress_a).named("a_to_b").into(stress_b).named(
         "b_to_c"
-    ).into(stress_c).named("c_to_d").into(stress_d).named("echo").sink(
-        "entity_stress_echo", encode=raw
-    )
+    ).into(stress_c).named("c_to_d").into(stress_d).sink("echo", encode=raw)
 
 
 # -- candle ------------------------------------------------------------------
@@ -311,7 +301,7 @@ candle = flezha.procedure(Candle, name="candle_procedure", clock="event_time")
 @flezha.stream_operative("candle")
 def candle_operative(c: flezha.Channels) -> None:
     c.effectively_once().correction_window(600_000)
-    c.input("input", decode=text).into(candle).named("sink").keyed().sink("tier_sink", encode=raw)
+    c.input("input", decode=text).into(candle).keyed().sink("sink", encode=raw)
 
 
 # -- poison_probe / wedge_probe ----------------------------------------------
@@ -330,9 +320,7 @@ def poison_probe(value: str) -> str:
 
 @flezha.stream_operative("poison_probe")
 def poison_probe_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).retry_backoff_ms(25).into(poison_probe).named("out").sink(
-        "probe_sink", encode=raw
-    )
+    c.input("input", decode=text).retry_backoff_ms(25).into(poison_probe).sink("out", encode=raw)
 
 
 _ABORTED = {"done": False}
@@ -362,7 +350,7 @@ def wedge_probe(value: str) -> str:
 
 @flezha.stream_operative("wedge_probe")
 def wedge_probe_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(wedge_probe).named("out").sink("wedge_sink", encode=raw)
+    c.input("input", decode=text).into(wedge_probe).sink("out", encode=raw)
 
 
 # -- session_timeout ---------------------------------------------------------
@@ -400,9 +388,7 @@ session_timeout = flezha.procedure(SessionTimeout, name="session_timeout_procedu
 
 @flezha.stream_operative("session_timeout")
 def session_timeout_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(session_timeout).named("kafka").sink(
-        "test_kafka", encode=_bytes_through
-    )
+    c.input("input", decode=text).into(session_timeout).sink("kafka", encode=_bytes_through)
 
 
 # -- bounded_mailbox_{drop_nothing,drop_newest,drop_oldest} ------------------
@@ -428,9 +414,9 @@ def _bounded_mailbox(policy: str) -> flezha.Operative:
 
     @flezha.stream_operative(f"bounded_mailbox_{policy}")
     def operative(c: flezha.Channels) -> None:
-        c.input(f"{policy}_input", decode=text).on_full(policy).into(procedure).named(
-            f"{policy}_echo"
-        ).sink("bounded_mailbox_echo", encode=raw)
+        c.input(f"{policy}_input", decode=text).on_full(policy).into(procedure).sink(
+            f"{policy}_echo", encode=raw
+        )
 
     return operative
 
@@ -462,8 +448,8 @@ partition_relay = flezha.procedure(
 
 @flezha.stream_operative("partition_relay")
 def partition_relay_operative(c: flezha.Channels) -> None:
-    c.input("in", decode=text).key_by(prefix).into(partition_relay).named("input").keyed().sink(
-        "relay_out", encode=raw
+    c.input("in", decode=text).key_by(prefix).into(partition_relay).keyed().sink(
+        "input", encode=raw
     )
 
 
@@ -490,7 +476,7 @@ def dynamic_entity_operative(c: flezha.Channels) -> None:
         # Filtered before keying: a dropped value answers no key, so the core
         # never mints an entity for it.
         lambda value: value != "drop"
-    ).key_by(prefix).into(dynamic_entity).named("kafka").sink("test_kafka", encode=raw)
+    ).key_by(prefix).into(dynamic_entity).sink("kafka", encode=raw)
 
 
 #: Every operative this app registers, in declaration order.

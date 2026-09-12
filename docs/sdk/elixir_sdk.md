@@ -84,7 +84,7 @@ defmodule MyOperative do
 
   def channels(c) do
     import Flezha.SDK.Channels
-    c |> input("in") |> into(MyProc) |> named("proc") |> sink("out")
+    c |> input("in") |> into(MyProc) |> sink("out")
   end
 end
 
@@ -130,12 +130,14 @@ invocation; the scheduled timestamp inside `on_timer/4`), `entity_key/1`, and th
 `input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`/`sealed`, with
 `map`/`filter`/`flat_map`/`key_by` as edge transforms (fused into one closure per consumer
 edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`. Fan-out is handle reuse;
-unnamed mentions of one module unify (fan-in). A sink frame is named by its producing node —
-`named/2`'s name, else the procedure's `name/0`, never the plugin — so `named("input") |>
-sink("relay_out")` reaches a forward target's `input` entry; the user's metadata rides the
+unnamed mentions of one module unify (fan-in). A sink names the channel it terminates:
+`sink("input")` makes the frame `channel = "input"`, which is what reaches a forward
+target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
+procedure's `name/0`. Naming one channel twice is refused. The user's metadata rides the
 frame. Entity mode is derived: non-empty `entity_keys/0` → static; a keyed edge into a
 keyless procedure → dynamic; else single. Refusals accumulate into one
 `{:error, {:invalid_topology, issues}}` — e.g. `TransformAfterKeyBy`, `RetryMaxZero`,
+`ChannelNamedTwice` (`named/2` beside a `sink` that names),
 `KeyedChannelWithoutPluginWire` (`keyed/1` on a channel with no sink),
 `DeferredBuilderSurface` (names the operative module).
 

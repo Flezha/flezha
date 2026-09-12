@@ -237,7 +237,7 @@ final class RowInterpreter
             'keyed' => $edge->keyed(),
             'retry_max' => $edge->retryMax((int) $arg),
             'on_full' => $edge->onFull(Overflow::from($arg)),
-            'sink' => $edge->sink($arg),
+            'sink' => $arg === '' ? $edge->sink() : $edge->sink($arg),
             'into' => $this->wire($edge, $arg),
             // Declared on the procedure in this SDK, and read as the palette
             // class was bound — one step earlier than the step that names it.

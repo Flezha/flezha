@@ -101,6 +101,24 @@ pub enum TopologyIssue {
     DuplicatePluginSink { channel: String },
 
     #[error(
+        "channel `{channel}` is named twice: .named(`{named}`) and .sink(`{sink}`) both name it. \
+         A sink names the channel it terminates, so write the name once — .sink(`{named}`) to \
+         keep the channel's name, or .named(`{named}`) with the no-argument .sink()"
+    )]
+    ChannelNamedTwice {
+        channel: String,
+        named: String,
+        sink: String,
+    },
+
+    #[error(
+        "channel `{channel}` is named by two plugin sinks; a sink names the channel it \
+         terminates, so two channels cannot name one sink. Give each its own name — a plugin \
+         still reaches both by attaching to the operative with no channel filter"
+    )]
+    DuplicateSinkName { channel: String },
+
+    #[error(
         "channel `{channel}` is declared .keyed() but has no plugin wire; output identity \
          stamps only exist on plugin-bound frames (add .sink(...))"
     )]
@@ -242,6 +260,8 @@ impl TopologyIssue {
             Self::MailboxCapacityZero { .. } => "MailboxCapacityZero",
             Self::MailboxCapacityTooLarge { .. } => "MailboxCapacityTooLarge",
             Self::DuplicatePluginSink { .. } => "DuplicatePluginSink",
+            Self::ChannelNamedTwice { .. } => "ChannelNamedTwice",
+            Self::DuplicateSinkName { .. } => "DuplicateSinkName",
             Self::KeyedChannelWithoutPluginWire { .. } => "KeyedChannelWithoutPluginWire",
             Self::UnservableClock { .. } => "UnservableClock",
             Self::UnkeyedChannelUnderEffectivelyOnce { .. } => "UnkeyedChannelUnderEffectivelyOnce",

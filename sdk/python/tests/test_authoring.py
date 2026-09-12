@@ -70,7 +70,7 @@ def test_declaring_performs_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
 
     @flezha.stream_operative("late")
     def late(c: flezha.Channels) -> None:
-        c.input("in").into(later).sink("out")
+        c.input("in").into(later).sink()
 
     declare(late)
     assert opened == []
@@ -94,8 +94,8 @@ def test_two_unnamed_mentions_of_one_procedure_are_one_node() -> None:
     @flezha.stream_operative("diamond")
     def diamond(c: flezha.Channels) -> None:
         entry = c.input("in")
-        entry.into(split).named("a").into(join, "join_a").sink("sink_a")
-        entry.into(split).named("b").into(join, "join_b").sink("sink_b")
+        entry.into(split).named("a").into(join, "join_a").sink()
+        entry.into(split).named("b").into(join, "join_b").sink()
 
     declare(diamond)
     assert [node.name for node in diamond.spec.procedures] == ["split", "join_a", "join_b"]
@@ -137,8 +137,8 @@ def test_a_node_identity_collision_is_refused() -> None:
     @flezha.stream_operative("collision")
     def collision(c: flezha.Channels) -> None:
         entry = c.input("in")
-        entry.into(first).sink("a")
-        entry.into(second).sink("b")
+        entry.into(first).sink()
+        entry.into(second).sink()
 
     with pytest.raises(DeclarationError, match="node identity") as caught:
         declare(collision)
@@ -163,7 +163,7 @@ def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -
         c.outputs_at_checkpoint(250)
         c.checkpoint_ack()
         c.checkpoint_every(4)
-        c.input("in").into(one).keyed().sink("out")
+        c.input("in").into(one).keyed().sink()
 
     assert declare(compose)["ack_granularity"] == "checkpoint"
     decl = graph.to_host_class_decl(compose.spec)
@@ -198,7 +198,7 @@ def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
 def test_a_procedure_that_folds_no_change_declares_it() -> None:
     @flezha.stream_operative("nochange")
     def nochange(c: flezha.Channels) -> None:
-        c.input("in").into(echo).sink("out")
+        c.input("in").into(echo).sink()
 
     declare(nochange)
     folds_nothing = graph.to_host_class_decl(nochange.spec)["procedures"][0]
@@ -340,7 +340,7 @@ def test_branch_and_two_into_statements_derive_the_identical_topology() -> None:
 def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
     @flezha.stream_operative("hybrid")
     def hybrid(c: flezha.Channels) -> None:
-        c.input("in").into(echo).named("hybrid_indicator").sink("hybrid_indicators").into(count_up)
+        c.input("in").into(echo).sink("hybrid_indicator").into(count_up)
 
     # A sink alongside a consumer stays inter-procedure: the value reaches both,
     # and the channel is journalled as the edge it still is.
@@ -350,10 +350,41 @@ def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
     ]
 
 
+def test_the_sink_names_the_channel_and_the_no_argument_form_does_not() -> None:
+    @flezha.stream_operative("sink_named")
+    def named(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("items_output")
+
+    @flezha.stream_operative("sink_derived")
+    def derived(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink()
+
+    assert [row[0] for row in _derived(named)] == ["in", "items_output"]
+    assert [row[0] for row in _derived(derived)] == ["in", "echo"]
+
+
+def test_a_channel_named_twice_is_refused_naming_both() -> None:
+    @flezha.stream_operative("named_twice")
+    def named_twice(c: flezha.Channels) -> None:
+        c.input("in").into(echo).named("a").sink("b")
+
+    with pytest.raises(DeclarationError, match="ChannelNamedTwice"):
+        declare(named_twice)
+
+
+def test_two_channels_naming_one_sink_is_refused() -> None:
+    @flezha.stream_operative("one_sink_two_channels")
+    def one_sink(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("shared").into(count_up).sink("shared")
+
+    with pytest.raises(DeclarationError, match="DuplicateSinkName"):
+        declare(one_sink)
+
+
 def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_a_sink() -> None:
     @flezha.stream_operative("keyed_hybrid")
     def keyed_hybrid(c: flezha.Channels) -> None:
-        c.input("in").into(echo).named("mid").keyed().sink("mid_sink").into(count_up)
+        c.input("in").into(echo).keyed().sink("mid").into(count_up)
 
     declare(keyed_hybrid)
     assert graph.to_host_class_decl(keyed_hybrid.spec)["channels"][1]["keyed"] is True
@@ -400,7 +431,7 @@ def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
     @flezha.workflow_operative("tier_workflow")
     def tier_workflow(c: flezha.Channels) -> None:
         c.effectively_once()
-        c.input("in").into(echo).named("out").keyed().sink("out")
+        c.input("in").into(echo).keyed().sink("out")
 
     declare(tier_workflow)
     assert tier_workflow.spec.effectively_once is True

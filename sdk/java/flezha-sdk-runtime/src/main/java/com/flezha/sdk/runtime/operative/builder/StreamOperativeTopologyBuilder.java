@@ -733,7 +733,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         /** Every chain declared on this channel's handles, in author order. */
         public final List<PendingEdge> chains = new ArrayList<>();
 
-        public String pluginSinkName;
         Function<Object, byte[]> pluginSinkSerializer;
         public OverflowPolicy overflowPolicy;
         public int retryMaxAttempts = RetryPolicy.DEFAULT.maxAttempts();

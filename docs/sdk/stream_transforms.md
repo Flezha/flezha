@@ -14,7 +14,7 @@ c.input::<Trade>("trades")
     .flat_map(|t: Trade| TIMEFRAMES.iter().map(move |tf| Slot::new(&t, tf)))
     .key_by(|s: &Slot| format!("{}@{}", s.symbol, s.timeframe))
     .into::<CandleProcedure>()
-    .sink("candles");
+    .sink_named("candles");
 ```
 
 ```java

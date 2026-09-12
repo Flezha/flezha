@@ -33,7 +33,7 @@ defmodule Flezha.SDK.RunnerBootTest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(BootProc) |> named("probe") |> sink("probe_out")
+      c |> input("in") |> into(BootProc) |> sink("probe")
     end
   end
 

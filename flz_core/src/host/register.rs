@@ -7,7 +7,7 @@
 //! What a validated record BECOMES — the descriptors, the facts, the DAG — is
 //! [`super::build`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
@@ -18,7 +18,7 @@ use super::build::{
 use super::chains::derive_channels;
 use super::decl::{
     HostAckGranularity, HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock,
-    HostEntityModeDecl, HostLoopMode, HostOverflow, HostProcedureDecl, HostWorkflowDecl,
+    HostEntityModeDecl, HostLink, HostLoopMode, HostOverflow, HostProcedureDecl, HostWorkflowDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
 use crate::channel::ChannelKind;
@@ -157,10 +157,24 @@ fn refuse_names(
     channels: &[DerivedChannel],
     issues: &mut Vec<TopologyIssue>,
 ) {
+    // Per name, how many of the channels claiming it were named by their own
+    // `sink(...)`: two of those is a shape that looks nothing like a naming
+    // collision to the author who wrote it, so it is refused under its own
+    // name rather than as a bare duplicate.
+    let mut from_sink: HashMap<&str, usize> = HashMap::new();
+    for channel in channels.iter().filter(|c| named_by_sink(decl, c)) {
+        *from_sink.entry(channel.name.as_str()).or_default() += 1;
+    }
     let mut seen = HashSet::new();
     for channel in channels {
         if !seen.insert(channel.name.as_str()) {
-            issues.push(TopologyIssue::DuplicateChannel(channel.name.clone()));
+            issues.push(if from_sink.get(channel.name.as_str()) >= Some(&2) {
+                TopologyIssue::DuplicateSinkName {
+                    channel: channel.name.clone(),
+                }
+            } else {
+                TopologyIssue::DuplicateChannel(channel.name.clone())
+            });
         }
         if channel.name.len() > MAX_METADATA_FIELD_LEN {
             issues.push(TopologyIssue::ChannelNameTooLong {
@@ -178,6 +192,25 @@ fn refuse_names(
             });
         }
     }
+}
+
+/// Whether this channel took its name from its own `sink(...)`, rather than
+/// from a `named(...)` or the builder's default. Read off the record, because
+/// the derived answer is one string whichever rung supplied it.
+fn named_by_sink(decl: &HostClassDecl, channel: &DerivedChannel) -> bool {
+    let Some(links) = decl.channels.get(channel.index as usize) else {
+        return false;
+    };
+    let mut named = false;
+    let mut sink = false;
+    for link in links.chains.iter().flatten() {
+        match link {
+            HostLink::Named { .. } => named = true,
+            HostLink::Sink { name: Some(_) } => sink = true,
+            _ => {}
+        }
+    }
+    sink && !named
 }
 
 /// The class-level refusals; a run-sugar class is refused only on its

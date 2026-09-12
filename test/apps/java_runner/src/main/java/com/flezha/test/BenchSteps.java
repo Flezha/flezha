@@ -31,7 +31,7 @@ public final class BenchSteps {
         for (int i = 1; i < procs; i++) {
             s = s.named("edge_BenchS" + i).into(CHAIN.get(i));
         }
-        s.named("out").sink("bench_sink");
+        s.sink("out");
     }
 
     public static final class S0 extends DurableStep { public String name() { return "bench_s0"; } }

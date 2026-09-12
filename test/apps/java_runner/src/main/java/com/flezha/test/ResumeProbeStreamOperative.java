@@ -29,7 +29,7 @@ public final class ResumeProbeStreamOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(ResumeProbeProcedure.class).named("total").sink("resume_probe_out");
+        c.input(String.class, "input").into(ResumeProbeProcedure.class).sink("total");
     }
 
     public static final class ResumeProbeProcedure

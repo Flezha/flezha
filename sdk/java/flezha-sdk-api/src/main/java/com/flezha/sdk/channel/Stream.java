@@ -32,8 +32,7 @@ import javax.annotation.Nonnull;
  *         .into(Normalize.class)
  *         .named("normalized")
  *         .into(Shout.class)
- *         .named("shouted")
- *         .sink("my_sink");
+ *         .sink("shouted");
  * }</pre>
  *
  * <p>Fan-out is the same handle used twice, so both consumers receive every value:
@@ -54,8 +53,8 @@ import javax.annotation.Nonnull;
  *
  * <p>The channel out of a node is created lazily on first use of the handle
  * and named by the node's identity string (the procedure's {@code name()}, or
- * the explicit node name given at wiring time) unless {@link #named(String)}
- * overrides it.
+ * the explicit node name given at wiring time) unless a {@link #sink(String)}
+ * name or a {@link #named(String)} override supplies one.
  *
  * <p>Handles are only usable inside {@code channels()} / {@code procedures()}:
  * the topology freezes at registration and a retained handle used afterwards
@@ -71,8 +70,10 @@ public abstract class Stream<T> implements EdgeStream<T> {
     /**
      * Override the auto-derived channel name (the producer node's identity)
      * everywhere the channel name appears: wire metadata, journals, errors.
-     * Derived, overridden, and entry names share one per-operative namespace
-     * with a duplicate check at registration.
+     * This is how a channel with no {@link #sink(String)} to name it is named;
+     * using both on one channel fails registration, naming both declarations.
+     * Derived, sink-supplied, overridden, and entry names share one
+     * per-operative namespace with a duplicate check at registration.
      */
     @Nonnull
     public abstract Stream<T> named(String name);
@@ -107,10 +108,10 @@ public abstract class Stream<T> implements EdgeStream<T> {
     public abstract Stream<T> retryBackoffMs(long baseMs);
 
     /**
-     * Attach this channel to the named plugin sink: every value emitted on it
-     * is serialized once and delivered to the controller's output layer
-     * stamped with the channel name, where the plugins attached to that name
-     * consume it. Several channels may name one sink.
+     * Terminate this channel on the plugin layer and name it {@code channel}:
+     * every value emitted on it is serialized once and delivered to the
+     * controller's output layer stamped with that name, which is the address a
+     * plugin filter and a local-mode callback use.
      *
      * <p>The handle is returned, so {@code .into(...)} consumer wiring chains
      * after it and the value then reaches both the consumer mailboxes (typed)
@@ -119,10 +120,12 @@ public abstract class Stream<T> implements EdgeStream<T> {
      * method. {@link #sealed()} states that in the type.
      *
      * <p>The serializer runs once per emit regardless of consumer count.
-     * Declaring a second sink on one channel fails registration.
+     * Declaring a second sink on one channel fails registration, and so does
+     * naming the channel here and with {@link #named(String)}, or naming two
+     * channels the same way.
      */
     @Nonnull
-    public abstract Stream<T> sink(String pluginName, Function<T, byte[]> serializer);
+    public abstract Stream<T> sink(String channel, Function<T, byte[]> serializer);
 
     /**
      * {@link #sink(String, Function)} with the default serialization rules:
@@ -130,7 +133,22 @@ public abstract class Stream<T> implements EdgeStream<T> {
      * otherwise.
      */
     @Nonnull
-    public abstract Stream<T> sink(String pluginName);
+    public abstract Stream<T> sink(String channel);
+
+    /**
+     * {@link #sink(String, Function)} leaving the channel's name derived as it
+     * would be without a sink — the producer node's identity, or a
+     * {@link #named(String)} override.
+     */
+    @Nonnull
+    public abstract Stream<T> sink(Function<T, byte[]> serializer);
+
+    /**
+     * {@link #sink()} with the default serialization rules: the no-argument
+     * form, where the channel keeps the name it already has.
+     */
+    @Nonnull
+    public abstract Stream<T> sink();
 
     /**
      * State that nothing follows this channel: the returned {@link Channel}

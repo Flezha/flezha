@@ -275,8 +275,8 @@ final class OptoutCommitBlock extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', Wire::text(...))
-            ->into(CommitA::class)->named('mid')
-            ->sink('optout_sink', static fn (mixed $v): string => "a-ran:$v")
+            ->into(CommitA::class)
+            ->sink('mid', static fn (mixed $v): string => "a-ran:$v")
             ->into(BlockB::class);
     }
 }
@@ -305,8 +305,8 @@ final class TierCommitBlockWorkflow extends WorkflowOperative
     {
         $c->effectivelyOnce();
         $c->input('in', Wire::text(...))
-            ->into(TierCommitA::class)->named('mid')->keyed()
-            ->sink('tier_sink', Wire::bytes(...))
+            ->into(TierCommitA::class)->keyed()
+            ->sink('mid', Wire::bytes(...))
             ->into(BlockB::class);
     }
 }
@@ -363,8 +363,8 @@ final class OutboxBlockWorkflow extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', Wire::text(...))
-            ->into(CommitA::class)->named('mid')
-            ->sink('outbox_sink', static fn (mixed $v): string => "a-out:$v")
+            ->into(CommitA::class)
+            ->sink('mid', static fn (mixed $v): string => "a-out:$v")
             ->into(BlockB::class);
     }
 }
@@ -405,8 +405,8 @@ final class UndoOutboxWorkflow extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', Wire::text(...))
-            ->into(UndoOutboxA::class)->named('mid')
-            ->sink('undo_sink', static fn (mixed $v): string => "out:$v")
+            ->into(UndoOutboxA::class)
+            ->sink('mid', static fn (mixed $v): string => "out:$v")
             ->into(UndoOutboxC::class);
     }
 }
@@ -491,13 +491,13 @@ final class BranchWorkflow extends WorkflowOperative
         // One channel, two consumers: THE fan-out. Both branches read exactly
         // what BranchA released on it (held edge, wired twice).
         $mid = $c->input('in', Wire::text(...))
-            ->into(BranchA::class)->named('mid')
-            ->sink('branch_sink', static fn (mixed $v): string => "a:$v");
-        $mid->into(BranchB::class)->named('bmid')
-            ->sink('branch_sink', static fn (mixed $v): string => "b:$v")
-            ->into(BranchD::class)->named('d_out')
-            ->sink('branch_sink', Wire::bytes(...));
-        $mid->into(BranchC::class)->named('c_out')->sink('branch_sink', Wire::bytes(...));
+            ->into(BranchA::class)
+            ->sink('mid', static fn (mixed $v): string => "a:$v");
+        $mid->into(BranchB::class)
+            ->sink('bmid', static fn (mixed $v): string => "b:$v")
+            ->into(BranchD::class)
+            ->sink('d_out', Wire::bytes(...));
+        $mid->into(BranchC::class)->sink('c_out', Wire::bytes(...));
     }
 }
 
@@ -571,16 +571,16 @@ final class DiamondWorkflow extends WorkflowOperative
         // Held edge wired twice = the fan-out; two arms naming DiamJoin with no
         // node name = the fan-in, since two unnamed mentions are one node.
         $fan = $c->input('in', Wire::text(...))
-            ->into(DiamA::class)->named('dfan')
-            ->sink('diamond_sink', static fn (mixed $v): string => "a:$v");
+            ->into(DiamA::class)
+            ->sink('dfan', static fn (mixed $v): string => "a:$v");
         $fan->into(DiamB1::class)->named('db1')
-            ->into(DiamB2::class)->named('db2')
-            ->sink('diamond_sink', Wire::bytes(...))
+            ->into(DiamB2::class)
+            ->sink('db2', Wire::bytes(...))
             ->into(DiamJoin::class);
-        $fan->into(DiamC::class)->named('dc')
-            ->sink('diamond_sink', Wire::bytes(...))
-            ->into(DiamJoin::class)->named('j_out')
-            ->sink('diamond_sink', Wire::bytes(...));
+        $fan->into(DiamC::class)
+            ->sink('dc', Wire::bytes(...))
+            ->into(DiamJoin::class)
+            ->sink('j_out', Wire::bytes(...));
     }
 }
 
@@ -635,10 +635,10 @@ final class RetryWorkflow extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', Wire::text(...))
-            ->into(RetryA::class)->named('mid')
-            ->sink('retry_sink', static fn (mixed $v): string => "res:$v")
-            ->into(RetryFlaky::class)->named('out')
-            ->sink('retry_sink', Wire::bytes(...));
+            ->into(RetryA::class)
+            ->sink('mid', static fn (mixed $v): string => "res:$v")
+            ->into(RetryFlaky::class)
+            ->sink('out', Wire::bytes(...));
     }
 }
 

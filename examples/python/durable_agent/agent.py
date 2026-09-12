@@ -178,8 +178,8 @@ def durable_agent(c: flezha.Channels) -> None:
     """
     c.input("prompts", decode=lambda body: bytes(body).decode()).retry_max(4).retry_backoff_ms(
         250
-    ).key_by(lambda prompt: prompt.split("|", 1)[0]).into(agent).named("answers").keyed().sink(
-        "agent_answers", encode=lambda answer: str(answer).encode()
+    ).key_by(lambda prompt: prompt.split("|", 1)[0]).into(agent).keyed().sink(
+        "answers", encode=lambda answer: str(answer).encode()
     )
 
 

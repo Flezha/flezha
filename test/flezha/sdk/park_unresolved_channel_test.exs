@@ -50,13 +50,13 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
       |> Channels.input("prices")
       |> Channels.into(ProcA)
       |> Channels.named("a")
-      |> Channels.sink("out_a")
+      |> Channels.sink()
 
       c
       |> Channels.input("volumes")
       |> Channels.into(ProcB)
       |> Channels.named("b")
-      |> Channels.sink("out_b")
+      |> Channels.sink()
     end
   end
 
@@ -72,13 +72,13 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
       |> Channels.input("volumes")
       |> Channels.into(ProcB)
       |> Channels.named("b")
-      |> Channels.sink("out_b")
+      |> Channels.sink()
 
       c
       |> Channels.input("prices")
       |> Channels.into(ProcA)
       |> Channels.named("a")
-      |> Channels.sink("out_a")
+      |> Channels.sink()
     end
   end
 

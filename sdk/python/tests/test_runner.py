@@ -25,7 +25,7 @@ def other(value: str) -> str:
 
 @flezha.stream_operative("other")
 def other_op(c: flezha.Channels) -> None:
-    c.input("in").into(other).sink("out")
+    c.input("in").into(other).sink()
 
 
 @pytest.fixture

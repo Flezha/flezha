@@ -43,8 +43,8 @@ final class PoisonProbeOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))->retryBackoffMs(25)
-            ->into(PoisonProbe::class)->named('out')
-            ->sink('probe_sink', Wire::bytes(...));
+            ->into(PoisonProbe::class)
+            ->sink('out', Wire::bytes(...));
     }
 }
 
@@ -89,7 +89,7 @@ final class WedgeProbeOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(WedgeProbe::class)->named('out')
-            ->sink('wedge_sink', Wire::bytes(...));
+            ->into(WedgeProbe::class)
+            ->sink('out', Wire::bytes(...));
     }
 }

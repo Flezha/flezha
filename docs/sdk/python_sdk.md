@@ -91,8 +91,8 @@ upcase = flezha.procedure(Upcase)
 
 @flezha.stream_operative("upcase")
 def upcase_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=lambda body: bytes(body).decode()).into(upcase).named("out").sink(
-        "upcase_sink", encode=lambda value: str(value).encode()
+    c.input("input", decode=lambda body: bytes(body).decode()).into(upcase).sink(
+        "out", encode=lambda value: str(value).encode()
     )
 
 

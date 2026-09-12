@@ -84,7 +84,7 @@ final class EchoOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input')->into(Echoer::class)->named('out')->sink('echo_sink');
+        $c->input('input')->into(Echoer::class)->sink('out');
     }
 }
 
@@ -93,7 +93,7 @@ final class CounterOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input')->into(Counter::class)->named('out')->sink('counter_sink');
+        $c->input('input')->into(Counter::class)->sink('out');
     }
 }
 
@@ -107,9 +107,8 @@ final class KeyedOperative extends StreamOperative
             ->filter(static fn (mixed $v): bool => $v !== 'drop')
             ->keyBy(static fn (mixed $v): string => explode(':', (string) $v)[0])
             ->into(Keyed::class)
-            ->named('out')
             ->keyed()
-            ->sink('keyed_sink');
+            ->sink('out');
     }
 }
 
@@ -148,7 +147,6 @@ final class StampOperative extends StreamOperative
         $c->input('input')
             ->keyBy(static fn (mixed $v): string => 'ek')
             ->into(StampEmitter::class)
-            ->named('keyed_out')
             ->keyed()
             ->sink('keyed_out');
     }
@@ -192,10 +190,10 @@ final class MixedStampOperative extends StreamOperative
         $c->input('input')
             ->keyBy(static fn (mixed $v): string => 'ek')
             ->branch(
-                static fn (Edge $e) => $e->into(PlainEmitter::class)->named('plain_out')
+                static fn (Edge $e) => $e->into(PlainEmitter::class)
                     ->sink('plain_out'),
                 static function (Edge $e): void {
-                    $keyed = $e->into(StampEmitter::class)->named('keyed_out')->keyed();
+                    $keyed = $e->into(StampEmitter::class)->keyed();
                     $keyed->flatMap(static fn (mixed $v): array => [$v . '1', $v . '2'])
                         ->into(FanTarget::class);
                     $keyed->sink('keyed_out');
@@ -222,7 +220,7 @@ final class PoisonOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input')->into(Poison::class)->named('out')->sink('poison_sink');
+        $c->input('input')->into(Poison::class)->sink('out');
     }
 }
 
@@ -247,7 +245,7 @@ final class SagaOperative extends \Flezha\WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('orders')->into(SagaStep::class)->named('done')->sink('saga_out');
+        $c->input('orders')->into(SagaStep::class)->sink('done');
     }
 }
 
@@ -354,7 +352,7 @@ trait WorkflowEmitGraph
         $edge = $c->input('in')->into(WfProducer::class)->named('handoff');
         $edge->map(static fn (mixed $v): mixed => $v + 1)->into(WfB::class);
         $edge->into(WfC::class);
-        $edge->sink('wf_out');
+        $edge->sink();
     }
 }
 

@@ -209,7 +209,6 @@ abstract class DispatchTestBase {
         public CounterOperative() {
             super("counter_op", c -> c.input(String.class, "in")
                     .into(CountProc.class)
-                    .named("out")
                     .sink("out", s -> ("seen:" + s).getBytes(StandardCharsets.UTF_8)));
         }
     }
@@ -258,7 +257,6 @@ abstract class DispatchTestBase {
         public MigratingCounterOperative() {
             super("migrating_counter_op", c -> c.input(String.class, "in")
                     .into(MigratingCountProc.class)
-                    .named("out")
                     .sink("out", s -> ("seen:" + s).getBytes(StandardCharsets.UTF_8)));
         }
     }
@@ -321,12 +319,24 @@ abstract class DispatchTestBase {
         }
     }
 
+    /**
+     * `sink("items_output")` and no `.named(...)` anywhere: the string an
+     * author can read in the source is the channel the frame is addressed by.
+     */
+    public static final class SinkNamesChannelOperative extends Op {
+        public SinkNamesChannelOperative() {
+            super("sink_names_channel", c -> c.input(String.class, "in")
+                    .into(StatelessStateProc.class)
+                    .sink("items_output", s -> s.getBytes(StandardCharsets.UTF_8)));
+        }
+    }
+
     public static final class KeyedEmitOperative extends Op {
         public KeyedEmitOperative() {
             super("keyed_op", c -> c.input(String.class, "in")
                     .into(KeyedProc.class)
                     .keyed()
-                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8)));
+                    .sink(s -> s.getBytes(StandardCharsets.UTF_8)));
         }
     }
 
@@ -334,7 +344,6 @@ abstract class DispatchTestBase {
         public StatelessStateOperative() {
             super("stateless_state_op", c -> c.input(String.class, "in")
                     .into(StatelessStateProc.class)
-                    .named("out")
                     .sink("out", s -> s.getBytes(StandardCharsets.UTF_8)));
         }
     }
@@ -594,10 +603,7 @@ abstract class DispatchTestBase {
             super("ckpt_op", c -> {
                 c.effectivelyOnce();
                 c.checkpointAck();
-                c.input(String.class, "in")
-                        .into(CkptProc.class)
-                        .keyed()
-                        .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                c.input(String.class, "in").into(CkptProc.class).keyed().sink(s -> s.getBytes(StandardCharsets.UTF_8));
             });
         }
     }

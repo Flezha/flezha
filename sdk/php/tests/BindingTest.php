@@ -241,7 +241,7 @@ final class CheckpointOutputsOnly extends StreamOperative
     {
         $c->effectivelyOnce();
         $c->outputsAtCheckpoint(1500);
-        $c->input('input')->into(CheckpointProcedure::class)->named('sink')->keyed()->sink('tier_sink');
+        $c->input('input')->into(CheckpointProcedure::class)->keyed()->sink('sink');
     }
 }
 
@@ -252,6 +252,6 @@ final class CheckpointAckOnly extends StreamOperative
     {
         $c->effectivelyOnce();
         $c->checkpointAck();
-        $c->input('input')->into(CheckpointProcedure::class)->named('sink')->keyed()->sink('tier_sink');
+        $c->input('input')->into(CheckpointProcedure::class)->keyed()->sink('sink');
     }
 }

@@ -38,7 +38,7 @@ public final class SchemaEvolutionStreamOperatives {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(Proc.class).named("total").sink("schema_evolution_out");
+            c.input(String.class, "input").into(Proc.class).sink("total");
         }
 
         public static final class CartV1 {
@@ -99,7 +99,7 @@ public final class SchemaEvolutionStreamOperatives {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(Proc.class).named("total").sink("schema_evolution_out");
+            c.input(String.class, "input").into(Proc.class).sink("total");
         }
 
         public static final class CartV2 {

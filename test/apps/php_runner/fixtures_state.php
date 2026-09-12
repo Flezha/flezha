@@ -110,8 +110,8 @@ abstract class KeyedUpsertOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)
-            ->into(TierStore::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
+            ->into(TierStore::class)->keyed()
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -143,8 +143,8 @@ final class TierStoreOperative extends StreamOperative
     {
         $c->effectivelyOnce();
         $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)->retryBackoffMs(300)
-            ->into(TierStore::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
+            ->into(TierStore::class)->keyed()
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -155,8 +155,8 @@ final class CheckpointStoreOperative extends StreamOperative
     {
         $c->effectivelyOnce()->checkpointAck();
         $c->input('input', Wire::text(...))
-            ->into(CheckpointStore::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
+            ->into(CheckpointStore::class)->keyed()
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -174,8 +174,8 @@ final class CheckpointBatchedOperative extends StreamOperative
     {
         $c->effectivelyOnce()->checkpointAck()->outputsAtCheckpoint(1_500);
         $c->input('input', Wire::text(...))
-            ->into(CheckpointStore::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
+            ->into(CheckpointStore::class)->keyed()
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -196,8 +196,8 @@ final class BenchCheckpointOperative extends StreamOperative
             $c->outputsAtCheckpoint(Wire::int(getenv('FLEZHA_BENCH_CHECKPOINT_DELAY_MS')) ?: 50);
         }
         $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)
-            ->into(BenchCheckpoint::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
+            ->into(BenchCheckpoint::class)->keyed()
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -231,8 +231,8 @@ final class StoreInputOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(StoreInput::class)->named('sink')
-            ->sink('store_input_sink', Wire::bytes(...));
+            ->into(StoreInput::class)
+            ->sink('sink', Wire::bytes(...));
     }
 }
 
@@ -384,8 +384,8 @@ final class ResumeProbeOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(ResumeProbe::class)->named('total')
-            ->sink('resume_probe_out', Wire::bytes(...));
+            ->into(ResumeProbe::class)
+            ->sink('total', Wire::bytes(...));
     }
 }
 
@@ -473,8 +473,8 @@ final class SchemaEvolutionV1Operative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(EvolvingCartV1::class)->named('total')
-            ->sink('schema_evolution_out', Wire::bytes(...));
+            ->into(EvolvingCartV1::class)
+            ->sink('total', Wire::bytes(...));
     }
 }
 
@@ -484,7 +484,7 @@ final class SchemaEvolutionV2Operative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('input', Wire::text(...))
-            ->into(EvolvingCartV2::class)->named('total')
-            ->sink('schema_evolution_out', Wire::bytes(...));
+            ->into(EvolvingCartV2::class)
+            ->sink('total', Wire::bytes(...));
     }
 }

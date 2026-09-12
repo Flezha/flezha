@@ -88,8 +88,8 @@ final class OrderTotalsOperative extends StreamOperative
     {
         $c->input('orders')
             ->keyBy(static fn (array $o): string => $o['customer'])
-            ->into(OrderTotals::class)->named('totals')->keyed()
-            ->sink('totals_out');
+            ->into(OrderTotals::class)->keyed()
+            ->sink('totals');
     }
 }
 

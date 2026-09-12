@@ -145,9 +145,10 @@ impl Default for RetryPolicy {
 }
 
 /// The channel's plugin egress (`sink(...)`): with consumers an emit reaches
-/// both; without, the channel is the plugin-bound terminal.
+/// both; without, the channel is the plugin-bound terminal. It carries no
+/// name of its own — a sink names the channel it terminates, so the one name
+/// is [`ChannelDescriptor::name`] and there is no second copy to disagree.
 pub struct PluginSink {
-    pub name: Arc<str>,
     pub serializer: PluginSerializeFn,
 }
 

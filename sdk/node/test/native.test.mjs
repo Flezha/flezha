@@ -128,9 +128,8 @@ const checkpointClass = (factoryId, declare) =>
       declare(c);
       c.input('input')
         .into(defineProcedure({ name: `${factoryId}_procedure`, handle: (input) => input }))
-        .named('sink')
         .keyed()
-        .sink('tier_sink');
+        .sink('sink');
     },
   });
 

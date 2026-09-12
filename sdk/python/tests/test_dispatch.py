@@ -126,7 +126,7 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
 
     @flezha.stream_operative("filtered")
     def filtered(c: flezha.Channels) -> None:
-        c.input("in").filter(lambda value: len(value) > 2).into(only_long).sink("out")
+        c.input("in").filter(lambda value: len(value) > 2).into(only_long).sink()
 
     deps = deps_for(filtered, fake_core)
 
@@ -145,7 +145,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
 
     @flezha.stream_operative("routed_op")
     def routed_op(c: flezha.Channels) -> None:
-        c.input("in").key_by(lambda value: value["k"]).into(routed).sink("out")
+        c.input("in").key_by(lambda value: value["k"]).into(routed).sink()
 
     deps = deps_for(routed_op, fake_core)
 
@@ -182,7 +182,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
 
     @flezha.stream_operative("picky_keys")
     def picky_keys(c: flezha.Channels) -> None:
-        c.input("in").key_by(key_of).into(routed).sink("out")
+        c.input("in").key_by(key_of).into(routed).sink()
 
     deps = deps_for(picky_keys, fake_core)
 
@@ -284,7 +284,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
 
     @flezha.stream_operative("keyed_sink")
     def keyed_sink(c: flezha.Channels) -> None:
-        c.input("in").into(keyless).named("out").keyed().sink("out")
+        c.input("in").into(keyless).keyed().sink("out")
 
     deps = deps_for(keyed_sink, fake_core)
     (effect,) = answered(work_activation(18, "x", factory="keyed_sink"), deps)["effects"]
@@ -365,7 +365,7 @@ def _workflow_graph(c: flezha.Channels) -> None:
     edge = c.input("in").into(_wf_producer).named("handoff")
     edge.map(lambda value: value + 1).into(_wf_b)
     edge.into(_wf_c)
-    edge.sink("wf_out")
+    edge.sink()
 
 
 @flezha.workflow_operative("wf_emit")

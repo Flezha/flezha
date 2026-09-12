@@ -151,7 +151,7 @@ module Conformance
       when "keyed" then edge.keyed
       when "retry_max" then edge.retry_max(Integer(arg))
       when "on_full" then edge.on_full(arg.to_sym)
-      when "sink" then edge.sink(arg)
+      when "sink" then arg.empty? ? edge.sink : edge.sink(arg)
       when "into" then wire(edge, arg)
       # Declared on the procedure in this SDK, and read as its class was
       # minted — one step earlier than the step that names it.

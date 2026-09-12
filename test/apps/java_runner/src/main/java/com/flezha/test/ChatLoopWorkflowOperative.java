@@ -44,7 +44,6 @@ public final class ChatLoopWorkflowOperative implements WorkflowOperative {
                 .into(ChatSteps.Turn.class)
                 .named("mid")
                 .into(ChatSteps.Reply.class)
-                .named("out")
-                .sink("chat_sink");
+                .sink("out");
     }
 }

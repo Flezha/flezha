@@ -142,8 +142,8 @@ module Fixtures
     factory_id "optout_commit_block"
     persistent false
     channels do |c|
-      c.input("in", decode: TEXT).into(CommitA).named("mid")
-       .sink("optout_sink", encode: ->(value) { BYTES.call("a-ran:#{value}") })
+      c.input("in", decode: TEXT).into(CommitA)
+       .sink("mid", encode: ->(value) { BYTES.call("a-ran:#{value}") })
        .into(BlockB)
     end
   end
@@ -165,8 +165,8 @@ module Fixtures
     factory_id "tier_commit_block_workflow"
     channels do |c|
       c.effectively_once
-      c.input("in", decode: TEXT).into(TierCommitA).named("mid").keyed
-       .sink("tier_sink", encode: BYTES)
+      c.input("in", decode: TEXT).into(TierCommitA).keyed
+       .sink("mid", encode: BYTES)
        .into(BlockB)
     end
   end
@@ -213,8 +213,8 @@ module Fixtures
   class OutboxBlockWorkflow < Flezha::WorkflowOperative
     factory_id "outbox_block_workflow"
     channels do |c|
-      c.input("in", decode: TEXT).into(CommitA).named("mid")
-       .sink("outbox_sink", encode: ->(value) { BYTES.call("a-out:#{value}") })
+      c.input("in", decode: TEXT).into(CommitA)
+       .sink("mid", encode: ->(value) { BYTES.call("a-out:#{value}") })
        .into(BlockB)
     end
   end
@@ -247,8 +247,8 @@ module Fixtures
   class UndoOutboxWorkflow < Flezha::WorkflowOperative
     factory_id "undo_outbox_workflow"
     channels do |c|
-      c.input("in", decode: TEXT).into(UndoOutboxA).named("mid")
-       .sink("undo_sink", encode: ->(value) { BYTES.call("out:#{value}") })
+      c.input("in", decode: TEXT).into(UndoOutboxA)
+       .sink("mid", encode: ->(value) { BYTES.call("out:#{value}") })
        .into(UndoOutboxC)
     end
   end
@@ -312,12 +312,12 @@ module Fixtures
     channels do |c|
       # One channel, two consumers: THE fan-out. Both branches read exactly
       # what BranchA released on it (held handle, wired twice).
-      mid = c.input("in", decode: TEXT).into(BranchA).named("mid")
-             .sink("branch_sink", encode: ->(value) { BYTES.call("a:#{value}") })
-      mid.into(BranchB).named("bmid")
-         .sink("branch_sink", encode: ->(value) { BYTES.call("b:#{value}") })
-         .into(BranchD).named("d_out").sink("branch_sink", encode: BYTES)
-      mid.into(BranchC).named("c_out").sink("branch_sink", encode: BYTES)
+      mid = c.input("in", decode: TEXT).into(BranchA)
+             .sink("mid", encode: ->(value) { BYTES.call("a:#{value}") })
+      mid.into(BranchB)
+         .sink("bmid", encode: ->(value) { BYTES.call("b:#{value}") })
+         .into(BranchD).sink("d_out", encode: BYTES)
+      mid.into(BranchC).sink("c_out", encode: BYTES)
     end
   end
 
@@ -366,13 +366,13 @@ module Fixtures
     channels do |c|
       # Held handle wired twice = the fan-out; two arms naming DiamJoin with no
       # node name = the fan-in, since two unnamed mentions are one node.
-      fan = c.input("in", decode: TEXT).into(DiamA).named("dfan")
-             .sink("diamond_sink", encode: ->(value) { BYTES.call("a:#{value}") })
+      fan = c.input("in", decode: TEXT).into(DiamA)
+             .sink("dfan", encode: ->(value) { BYTES.call("a:#{value}") })
       fan.into(DiamB1).named("db1")
-         .into(DiamB2).named("db2").sink("diamond_sink", encode: BYTES)
+         .into(DiamB2).sink("db2", encode: BYTES)
          .into(DiamJoin)
-      fan.into(DiamC).named("dc").sink("diamond_sink", encode: BYTES)
-         .into(DiamJoin).named("j_out").sink("diamond_sink", encode: BYTES)
+      fan.into(DiamC).sink("dc", encode: BYTES)
+         .into(DiamJoin).sink("j_out", encode: BYTES)
     end
   end
 
@@ -411,9 +411,9 @@ module Fixtures
   class RetryWorkflow < Flezha::WorkflowOperative
     factory_id "retry_workflow"
     channels do |c|
-      c.input("in", decode: TEXT).into(RetryA).named("mid")
-       .sink("retry_sink", encode: ->(value) { BYTES.call("res:#{value}") })
-       .into(RetryFlaky).named("out").sink("retry_sink", encode: BYTES)
+      c.input("in", decode: TEXT).into(RetryA)
+       .sink("mid", encode: ->(value) { BYTES.call("res:#{value}") })
+       .into(RetryFlaky).sink("out", encode: BYTES)
     end
   end
 
@@ -489,15 +489,15 @@ module Fixtures
     factory_id "chat_loop_workflow"
     channels do |c|
       c.input("in", decode: TEXT).into(ChatTurn).named("mid")
-       .into(ChatReply).named("out").sink("chat_sink", encode: BYTES)
+       .into(ChatReply).sink("out", encode: BYTES)
     end
   end
 
   class StatelessLoopWorkflow < LoopWorkflow
     factory_id "stateless_loop_workflow"
     channels do |c|
-      c.input("in", decode: TEXT).into(ChatReply).named("out")
-       .sink("chat_sink", encode: BYTES)
+      c.input("in", decode: TEXT).into(ChatReply)
+       .sink("out", encode: BYTES)
     end
   end
 
@@ -505,7 +505,7 @@ module Fixtures
     factory_id "chat_rewind_workflow"
     channels do |c|
       c.input("in", decode: TEXT).into(ChatTurn).named("mid")
-       .into(ChatReplyUndoable).named("out").sink("chat_sink", encode: BYTES)
+       .into(ChatReplyUndoable).sink("out", encode: BYTES)
     end
   end
 
@@ -529,7 +529,7 @@ module Fixtures
       channels do |c|
         edge = c.input("in", decode: TEXT).into(BENCH_STEPS[0])
         (1...steps).each { |at| edge = edge.named("edge_BenchS#{at}").into(BENCH_STEPS[at]) }
-        edge.named("out").sink("bench_sink", encode: BYTES)
+        edge.sink("out", encode: BYTES)
       end
     end
   end
@@ -572,7 +572,7 @@ module Fixtures
     wake_after_ms ENV[WAKE_AFTER_ENV].to_i if ENV[WAKE_AFTER_ENV].to_i.positive?
     channels do |c|
       c.input("in", decode: TEXT).into(BenchTurn).named("mid")
-       .into(ChatReply).named("out").sink("bench_sink", encode: BYTES)
+       .into(ChatReply).sink("out", encode: BYTES)
     end
   end
 

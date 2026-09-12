@@ -69,27 +69,39 @@ Using one stream handle to wire more than one consumer SHALL declare fan-out: ev
 
 ### Requirement: Channel names auto-derive from the producer node's identity
 
-A channel created by wiring out of a node SHALL be named by that node's identity string (the procedure's `name()`, or the explicit node name per the node-identity requirement) unless `.named("...")` overrides it. The override SHALL be honoured on every terminator the edge can take, the plugin `sink(...)` included: a sink names the plugin attachment point, never the channel, so an SDK whose `sink(name)` replaces the channel name discards a declaration the author wrote. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
+A channel created by wiring out of a node SHALL be named by that node's identity string (the procedure's `name()`, or the explicit node name per the node-identity requirement) unless a `sink("...")` name or a `.named("...")` override supplies one. Both declarations name the same channel and SHALL be honoured identically wherever the channel name appears: wire metadata, journals, diagnostics, the address a plugin filter matches, and the name a local-mode callback registers under. A channel named by both `sink("...")` and `.named("...")` SHALL fail registration naming both declarations, even when the two strings are equal, so no declaration an author wrote is ever discarded and no precedence rule has to be remembered. `sink()` with no name SHALL leave the channel named exactly as it would be without the sink. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, sink-supplied, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
 
-#### Scenario: Derived name ships on the wire
+#### Scenario: A sink name is the channel name
 
-- **WHEN** procedure `Validate` (whose `name()` returns `"validate"`) is wired via `.sink("audit_sink")` with no `.named(...)` override
-- **THEN** frames delivered to the `audit_sink` plugin SHALL carry `channel = "validate"` in their metadata
+- **WHEN** procedure `Validate` (whose `name()` returns `"validate"`) is wired via `.sink("audit_sink")` with no `.named(...)`
+- **THEN** the channel SHALL be named `"audit_sink"` and frames delivered to the plugin SHALL carry `channel = "audit_sink"` in their metadata
+
+#### Scenario: An unnamed sink derives as before
+
+- **WHEN** procedure `Validate` (whose `name()` returns `"validate"`) is wired via `.sink()` with no `.named(...)`
+- **THEN** the channel SHALL be named `"validate"` and frames delivered to the plugin SHALL carry `channel = "validate"` in their metadata
 
 #### Scenario: named() overrides the derived name
 
 - **WHEN** the declaration chains `.named("orders.validated")` on Validate's output stream
 - **THEN** the channel SHALL be recorded and stamped as `"orders.validated"` everywhere the channel name appears (wire metadata, journals, errors)
 
-#### Scenario: named() survives a plugin terminator
+#### Scenario: named() reaches a plugin terminator
 
-- **WHEN** the declaration chains `.named("input")` and then `.sink("relay_out")` on one edge
+- **WHEN** the declaration chains `.named("input")` and then `.sink()` on one edge
 - **THEN** the channel SHALL be named `"input"` and the frame SHALL carry `channel = "input"`, so a forward target resolves its entry channel by the name the author declared
+
+#### Scenario: Naming a channel twice is refused
+
+- **WHEN** the declaration chains `.named("a")` and then `.sink("b")` on one edge
+- **THEN** registration SHALL fail with an error naming both declarations
+- **AND** the same SHALL hold when both strings are equal
 
 #### Scenario: Name collision is refused
 
-- **WHEN** a `.named(...)` override or node name collides with another channel name in the same operative
+- **WHEN** a `.named(...)` override, a `sink(...)` name, or a node name collides with another channel name in the same operative
 - **THEN** registration SHALL fail with an error naming both colliding declarations
+- **AND** where the collision is two channels naming one sink, the error SHALL say so rather than reporting a bare duplicate name
 
 ### Requirement: Node identity permits reusing one Procedure class at several graph positions
 A graph node SHALL be identified by its Procedure class unless an explicit node name is supplied at wiring time (`.into(Filter.class, "spam_filter")` in Java, `into_named::<Filter>("spam_filter")` in Rust). Two unnamed mentions of the same class SHALL resolve to the same node. An explicit node name SHALL create a distinct node whose identity string replaces the procedure's `name()` for every purpose identity serves today: per-entity state directories, journal entries, derived channel names, and diagnostics. Node identity strings SHALL be unique per operative; a collision (with another node name or a procedure `name()`) SHALL fail registration.
@@ -152,17 +164,22 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 
 ### Requirement: Single `sink` egress with optional `sealed` terminator
 
-Plugin egress SHALL be declared by exactly one builder method in every SDK — `sink(name)` / `sink(name, serializer)` in Java, Node, Ruby, PHP and Python, and `sink(name)` / `sink_with(name, serializer)` in Rust. `sink` SHALL bind the producing procedure's output channel to the named plugin sink and SHALL return the stream handle, so inter-procedure consumers MAY be wired after it — a channel is terminal by having no further wiring, not by method choice. An SDK whose `sink` returns nothing SHALL NOT satisfy this requirement, because the hybrid declaration is unwritable in it. A channel carrying a plugin sink and no consumer SHALL be declared to the runtime as plugin-bound; a channel carrying a plugin sink **and** consumers SHALL keep its inter-procedure kind, and the host SHALL release both the consumer edge outputs and one plugin output for each emitted value. `sink(name)` without a serializer SHALL apply the same default serialization rules as the removed `output` (passthrough for bytes, UTF-8 for strings, default JSON otherwise). The name SHALL be destination-neutral: it identifies the attachment point the controller routes to by channel-name metadata; several channels MAY name the same plugin sink. A separate optional `.sealed()` terminator SHALL return a non-chainable handle and add no topology or runtime difference — it is a compile-time statement that no consumer follows, and SHALL exist only in the SDKs whose type system can enforce it. The former `output` / `alsoOutput` / `also_output` / `also_output_with` spellings SHALL NOT exist in any SDK; there SHALL be no coexistence period. The rename SHALL be scoped to user-called builder methods: wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
+Plugin egress SHALL be declared by exactly one builder method in every SDK, taking an optional channel name and an optional serializer. Java, Node, Ruby, PHP and Python SHALL spell the four combinations in their own idiom for an optional argument (an overload in Java, an optional parameter in Node, a default argument in Ruby, PHP and Python); Rust, which has neither overloading nor default arguments, SHALL spell them `sink()` / `sink_named(name)` / `sink_with(serializer)` / `sink_named_with(name, serializer)`; Elixir SHALL spell them `sink/1`, `sink/2`, `sink_with/2` and `sink_with/3`, the name defaulting in the middle argument. `sink` SHALL bind the producing procedure's output channel to the plugin egress and SHALL return the stream handle, so inter-procedure consumers MAY be wired after it — a channel is terminal by having no further wiring, not by method choice. An SDK whose `sink` returns nothing SHALL NOT satisfy this requirement, because the hybrid declaration is unwritable in it. A channel carrying a plugin sink and no consumer SHALL be declared to the runtime as plugin-bound; a channel carrying a plugin sink **and** consumers SHALL keep its inter-procedure kind, and the host SHALL release both the consumer edge outputs and one plugin output for each emitted value. A `sink` without a serializer SHALL apply the default serialization rules (passthrough for bytes, UTF-8 for strings, default JSON otherwise). The name a `sink` carries SHALL be the channel's name, which is the metadata the controller routes by; a channel SHALL therefore be named by at most one `sink`, and two channels naming one sink SHALL fail registration as a duplicate channel name. A separate optional `.sealed()` terminator SHALL return a non-chainable handle and add no topology or runtime difference — it is a compile-time statement that no consumer follows, and SHALL exist only in the SDKs whose type system can enforce it. The former `output` / `alsoOutput` / `also_output` / `also_output_with` spellings SHALL NOT exist in any SDK; there SHALL be no coexistence period. Wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
 
 #### Scenario: sink is hybrid by default
 
 - **WHEN** a stream declares `.sink("indicators", serializer)` and a consumer is wired from the same handle afterwards
-- **THEN** each emitted value SHALL reach the typed consumer and, serialized once, the `indicators` plugin — identical to the former `alsoOutput` behavior
+- **THEN** each emitted value SHALL reach the typed consumer and, serialized once, the plugin layer, stamped `channel = "indicators"`
 
 #### Scenario: Terminal by construction
 
 - **WHEN** a stream declares `.sink("pager_sink")` and nothing further is wired from the handle
-- **THEN** the resulting topology SHALL be identical to the former `.output("pager_sink")` declaration
+- **THEN** the channel SHALL be plugin-bound and named `"pager_sink"`
+
+#### Scenario: The no-name form is available in every SDK
+
+- **WHEN** a stream declares the no-name form in any SDK
+- **THEN** the channel SHALL be plugin-bound, its name SHALL be whatever it would have been without the sink, and the declaration SHALL compile or register in every SDK
 
 #### Scenario: sealed refuses further consumers at compile time
 
@@ -174,15 +191,15 @@ Plugin egress SHALL be declared by exactly one builder method in every SDK — `
 - **WHEN** user code calls `.output(...)`, `.alsoOutput(...)`, or `.also_output_with(...)` against the new SDK
 - **THEN** the code SHALL fail to compile; no transitional alias SHALL exist
 
-#### Scenario: Wire metadata is unchanged
+#### Scenario: Every SDK stamps one name for one declaration
 
-- **WHEN** a channel formerly declared with `alsoOutput("indicators", s)` is redeclared with `sink("indicators", s)`
-- **THEN** frames delivered to the plugin SHALL be byte-identical, including the `channel` name metadata and record keying
+- **WHEN** the same operative declaring `.sink("indicators", s)` is registered from a Rust host and from a host SDK
+- **THEN** frames delivered to the plugin SHALL be byte-identical, `channel = "indicators"` included, so the two naming sources cannot answer differently
 
 #### Scenario: A hybrid channel declared in a veneer SDK keeps one channel
 
-- **WHEN** a Node, Ruby, PHP or Python operative declares `.named("mid").sink("mid_sink", enc).into(Next)` on one handle
-- **THEN** the declaration SHALL carry exactly one channel produced by that procedure, named `mid`, of inter-procedure kind, listing `Next` as its consumer, and each emitted value SHALL reach both `Next` and the `mid_sink` plugin
+- **WHEN** a Node, Ruby, PHP or Python operative declares `.sink("mid", enc).into(Next)` on one handle
+- **THEN** the declaration SHALL carry exactly one channel produced by that procedure, named `mid`, of inter-procedure kind, listing `Next` as its consumer, and each emitted value SHALL reach both `Next` and the plugin layer
 
 ### Requirement: The channel-declaration API is replaced with no coexistence
 `ChannelDecl`, `.from(...)`, and the typed-and-named inter-procedure `channel(<type>, "name")` declaration SHALL be removed from both SDKs' public surface in the same change that introduces the graph builder. There SHALL be no transitional period in which both APIs are usable.

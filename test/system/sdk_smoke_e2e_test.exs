@@ -162,7 +162,8 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
         assert metadata["channel"] == "hybrid_indicator",
                "the plugin frame names #{inspect(metadata["channel"])}; one output channel per " <>
-                 "producing procedure means it carries the producing channel's name, not the sink's"
+                 "producing procedure, and the sink names it — `sink_named(\"hybrid_indicator\")` " <>
+                 "is the only naming call in the fixture, so this string is what a plugin filters on"
 
         said = runner_said(port, "hybrid_consumer_procedure: received 42")
 

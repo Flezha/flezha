@@ -31,14 +31,12 @@ public final class EchoOperative implements StreamOperative {
      * is validated as a whole before any message is processed.
      *
      * <p>The expression below declares an entry channel named {@code in} carrying strings, routes
-     * it to the echo procedure, labels that procedure's output {@code out}, and delivers the
-     * labelled channel to a plugin sink named {@code my_sink}. The label is an identity rather than
-     * documentation: it is what a sink registers against and what a test feeds or reads.
+     * it to the echo procedure, and terminates that procedure's output on the plugin layer under
+     * the name {@code out}. The name a sink carries is the channel's own: an identity rather than
+     * documentation, and what a plugin filter matches or a test reads.
      */
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(String.class, "in")
-            .into(EchoProcedure.class)
-            .sink("out");
+        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
     }
 }

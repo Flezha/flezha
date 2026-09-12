@@ -51,7 +51,7 @@ test('a graph builds and its topology reaches the declaration', () => {
   const spec = defineOperative({
     factoryId: 'chain',
     channels: (c) => {
-      c.input('in').into(first).into(second).sink('out');
+      c.input('in').into(first).into(second).sink();
     },
   });
   // The record carries the DECLARED kind; the plugin kind is the wiring rule,
@@ -97,7 +97,7 @@ test('keyBy declares a dynamic consumer and the key reaches the channel', () => 
         .keyBy((value) => value.symbol)
         .into(counter)
         .keyed()
-        .sink('out');
+        .sink();
     },
   });
   validate(spec);
@@ -118,7 +118,7 @@ test('a procedure that folds no change declares it, and a logical clock over it 
       c
         .input('in')
         .into(defineProcedure({ name: 'ticker', clock: 'logical', handle: (i) => i }))
-        .sink('out'),
+        .sink(),
   });
   assert.equal(toHostClassDecl(spec).procedures[0].change_is_nochange, true);
   assert.deepEqual(refusal(() => spec).refusals, ['UnservableClock']);
@@ -170,7 +170,7 @@ test('a named edge names the channel, not the consuming node', () => {
   const spec = defineOperative({
     factoryId: 'named_edge',
     channels: (c) => {
-      c.input('in').into(first).named('hop').into(second).sink('out');
+      c.input('in').into(first).named('hop').into(second).sink();
     },
   });
   validate(spec);
@@ -190,7 +190,7 @@ test('a second mention under its own node name is a second node', () => {
   const spec = defineOperative({
     factoryId: 'twice_over',
     channels: (c) => {
-      c.input('in').into(step).into(step, 'step_again').sink('out');
+      c.input('in').into(step).into(step, 'step_again').sink();
     },
   });
   validate(spec);
@@ -219,7 +219,7 @@ test('an event-time clock without an extractor is refused', () => {
     const proc = defineProcedure({ name: 'windowed', clock: 'event_time', handle: (i) => i });
     return defineOperative({
       factoryId: 'no_extractor',
-      channels: (c) => c.input('in').into(proc).sink('out'),
+      channels: (c) => c.input('in').into(proc).sink(),
     });
   });
   assert.match(
@@ -239,7 +239,7 @@ test('the checkpoint options compose in any order, and none clears another', () 
       c.outputsAtCheckpoint(250);
       c.checkpointAck();
       c.checkpointEvery(4);
-      c.input('in').into(echo('p')).keyed().sink('out');
+      c.input('in').into(echo('p')).keyed().sink();
     },
   });
   assert.equal(validate(spec).ack_granularity, 'checkpoint');
@@ -250,25 +250,81 @@ test('the checkpoint options compose in any order, and none clears another', () 
   assert.equal(decl.checkpoint_max_delay_ms, 250);
 });
 
-test('two procedures may name one plugin sink', () => {
+test('two procedures each terminate on their own sink, named by their node', () => {
   const a = echo('a');
   const b = echo('b');
   const spec = defineOperative({
     factoryId: 'one_sink_twice',
     channels: (c) => {
-      c.input('in').branch([
-        (edge) => edge.into(a).sink('out'),
-        (edge) => edge.into(b).sink('out'),
-      ]);
+      c.input('in').branch([(edge) => edge.into(a).sink(), (edge) => edge.into(b).sink()]);
     },
   });
   assert.deepEqual(
     validate(spec).channels.map((channel) => [channel.name, channel.kind, channel.sink]),
     [
       ['in', 'entry', null],
-      ['a', 'plugin', 'out'],
-      ['b', 'plugin', 'out'],
+      ['a', 'plugin', 'a'],
+      ['b', 'plugin', 'b'],
     ],
+  );
+});
+
+test('the sink names the channel, and the no-argument form leaves it derived', () => {
+  const named = defineOperative({
+    factoryId: 'sink_named',
+    channels: (c) => {
+      c.input('in').into(echo('producer')).sink('items_output');
+    },
+  });
+  const derived = defineOperative({
+    factoryId: 'sink_derived',
+    channels: (c) => {
+      c.input('in').into(echo('producer')).sink();
+    },
+  });
+
+  assert.deepEqual(
+    validate(named).channels.map((channel) => [channel.name, channel.sink]),
+    [
+      ['in', null],
+      ['items_output', 'items_output'],
+    ],
+  );
+  assert.deepEqual(
+    validate(derived).channels.map((channel) => [channel.name, channel.sink]),
+    [
+      ['in', null],
+      ['producer', 'producer'],
+    ],
+  );
+});
+
+test('a channel named by both named() and sink() is refused naming both', () => {
+  const spec = defineOperative({
+    factoryId: 'named_twice',
+    channels: (c) => {
+      c.input('in').into(echo('producer')).named('a').sink('b');
+    },
+  });
+  assert.throws(
+    () => validate(spec),
+    (error) => /ChannelNamedTwice/.test(error.message) && /both name it/.test(error.message),
+  );
+});
+
+test('two channels naming one sink is refused as a duplicate sink name', () => {
+  const spec = defineOperative({
+    factoryId: 'one_sink_two_channels',
+    channels: (c) => {
+      c.input('in').branch([
+        (edge) => edge.into(echo('a')).sink('shared'),
+        (edge) => edge.into(echo('b')).sink('shared'),
+      ]);
+    },
+  });
+  assert.throws(
+    () => validate(spec),
+    (error) => /DuplicateSinkName/.test(error.message),
   );
 });
 
@@ -345,15 +401,14 @@ test('a declared state that cannot be encoded is refused at definition', () => {
   );
 });
 
-test('a named edge terminating on a sink names the channel too, and the sink name is its default', () => {
-  // `.named()` is honoured on the inter-proc path and was dropped on the
-  // plugin path, so `.named('input').sink('relay_out')` produced a channel
-  // called `relay_out` — and the channel name is what a forwarded frame
-  // carries and what selects the receiving operative's entry channel.
+test('a sink names the channel a forwarded frame carries', () => {
+  // The channel name is what a forwarded frame carries and what selects the
+  // receiving operative's entry channel, so the name an author writes on the
+  // sink has to be the one that rides the wire.
   const spec = defineOperative({
     factoryId: 'named_sink',
     channels: (c) => {
-      c.input('in').into(echo('relay')).named('input').sink('relay_out');
+      c.input('in').into(echo('relay')).sink('input');
     },
   });
   validate(spec);
@@ -370,7 +425,7 @@ test('an unnamed edge terminating on a sink takes the producing node’s name', 
   const spec = defineOperative({
     factoryId: 'unnamed_sink',
     channels: (c) => {
-      c.input('in').into(echo('plain')).sink('relay_out');
+      c.input('in').into(echo('plain')).sink();
     },
   });
   validate(spec);
@@ -441,11 +496,7 @@ test('sink(...) returns the handle, so a consumer wires behind it', () => {
   const spec = defineOperative({
     factoryId: 'hybrid',
     channels: (c) => {
-      c.input('in')
-        .into(echo('producer'))
-        .named('hybrid_indicator')
-        .sink('hybrid_indicators')
-        .into(echo('consumer'));
+      c.input('in').into(echo('producer')).sink('hybrid_indicator').into(echo('consumer'));
     },
   });
   assert.deepEqual(
@@ -460,7 +511,7 @@ test('sink(...) returns the handle, so a consumer wires behind it', () => {
       ['in', 'entry', null, [0], null],
       // A sink alongside a consumer stays inter-procedure: the value reaches
       // both, and the channel is journalled as the edge it still is.
-      ['hybrid_indicator', 'inter_proc', 0, [1], 'hybrid_indicators'],
+      ['hybrid_indicator', 'inter_proc', 0, [1], 'hybrid_indicator'],
     ],
   );
 });
@@ -469,12 +520,7 @@ test('keyed() reaches the channel of a handle that also declares a sink', () => 
   const spec = defineOperative({
     factoryId: 'keyed_hybrid',
     channels: (c) => {
-      c.input('in')
-        .into(echo('producer'))
-        .named('mid')
-        .keyed()
-        .sink('mid_sink')
-        .into(echo('consumer'));
+      c.input('in').into(echo('producer')).keyed().sink('mid').into(echo('consumer'));
     },
   });
   validate(spec);
@@ -534,7 +580,7 @@ test('a workflow class carries its effectivelyOnce() declaration', () => {
     factoryId: 'tier_workflow',
     channels: (c) => {
       c.effectivelyOnce();
-      c.input('in').into(echo('producer')).named('out').keyed().sink('out');
+      c.input('in').into(echo('producer')).keyed().sink('out');
     },
   });
   validate(spec);

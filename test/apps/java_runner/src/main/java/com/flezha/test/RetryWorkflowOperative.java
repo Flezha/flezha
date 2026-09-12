@@ -28,11 +28,9 @@ public final class RetryWorkflowOperative implements WorkflowOperative {
     public void procedures(ChannelBuilder c) {
         c.input(String.class, "in")
                 .into(RetryA.class)
-                .named("mid")
-                .sink("retry_sink", s -> ("res:" + s).getBytes(StandardCharsets.UTF_8))
+                .sink("mid", s -> ("res:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(RetryFlaky.class)
-                .named("out")
-                .sink("retry_sink");
+                .sink("out");
     }
 
     /** Proc RA: durable, forwards on the hybrid channel, compensates with an undo record. */

@@ -31,8 +31,8 @@ module Fixtures
   class DoNothingOperative < Flezha::StreamOperative
     factory_id "do_nothing"
     channels do |c|
-      c.input("input", decode: TEXT).into(DoNothing).named("echo")
-       .sink("do_nothing_echo", encode: BYTES)
+      c.input("input", decode: TEXT).into(DoNothing)
+       .sink("echo", encode: BYTES)
     end
   end
 
@@ -43,8 +43,8 @@ module Fixtures
     factory_id "bench_echo"
     channels do |c|
       c.input("input", decode: TEXT).on_full(:drop_nothing)
-       .into(DoNothing).named("echo")
-       .sink("bench_echo_sink", encode: BYTES)
+       .into(DoNothing)
+       .sink("echo", encode: BYTES)
     end
   end
 
@@ -61,8 +61,8 @@ module Fixtures
   class CompareFilterOperative < Flezha::StreamOperative
     factory_id "compare_filter"
     channels do |c|
-      c.input("input", decode: TEXT).into(CompareFilter).named("sink")
-       .sink("compare_filter_sink", encode: BYTES)
+      c.input("input", decode: TEXT).into(CompareFilter)
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -111,18 +111,18 @@ module Fixtures
     factory_id "static_entity"
     channels do |c|
       c.input("input", decode: TEXT).into(StaticEntry).named("hop")
-       .into(StaticDownstream).named("kafka")
-       .sink("test_kafka", encode: BYTES)
+       .into(StaticDownstream)
+       .sink("kafka", encode: BYTES)
     end
   end
 
-  # The reference pipeline sugar leaves the hop unnamed and names the plugin
-  # channel after the plugin.
+  # The reference pipeline sugar leaves the hop unnamed and lets the sink name
+  # the producing channel.
   class SugarStaticEntityOperative < Flezha::StreamOperative
     factory_id "sugar_static_entity"
     channels do |c|
       c.input("input", decode: TEXT).into(MacroStaticEntry)
-       .into(MacroStaticDownstream).named("test_kafka")
+       .into(MacroStaticDownstream)
        .sink("test_kafka", encode: BYTES)
     end
   end
@@ -139,8 +139,8 @@ module Fixtures
     factory_id "mixed_operative"
     channels do |c|
       c.input("input", decode: TEXT).into(MixedMacroEntry).named("hop")
-       .into(MixedHandDownstream).named("kafka")
-       .sink("test_kafka", encode: BYTES)
+       .into(MixedHandDownstream)
+       .sink("kafka", encode: BYTES)
     end
   end
 
@@ -153,7 +153,7 @@ module Fixtures
   class SugarDoNothingOperative < Flezha::StreamOperative
     factory_id "sugar_do_nothing"
     channels do |c|
-      c.input("input", decode: TEXT).into(SugarDoNothing).named("sugar_do_nothing_echo")
+      c.input("input", decode: TEXT).into(SugarDoNothing)
        .sink("sugar_do_nothing_echo", encode: BYTES)
     end
   end
@@ -172,7 +172,7 @@ module Fixtures
   class SugarStoreInputOperative < Flezha::StreamOperative
     factory_id "sugar_store_input"
     channels do |c|
-      c.input("input", decode: TEXT).into(SugarStoreInput).named("sugar_store_sink")
+      c.input("input", decode: TEXT).into(SugarStoreInput)
        .sink("sugar_store_sink", encode: BYTES)
     end
   end
@@ -223,7 +223,7 @@ module Fixtures
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
         ->(edge) { edge.named("hybrid_indicator").into(HybridConsumer) },
-        ->(edge) { edge.sink("hybrid_indicators", encode: HYBRID_ENCODE) }
+        ->(edge) { edge.sink(encode: HYBRID_ENCODE) }
       )
     end
   end
@@ -263,8 +263,8 @@ module Fixtures
       c.input("input", decode: TEXT).into(StressA).named("a_to_b")
        .into(StressB).named("b_to_c")
        .into(StressC).named("c_to_d")
-       .into(StressD).named("echo")
-       .sink("entity_stress_echo", encode: BYTES)
+       .into(StressD)
+       .sink("echo", encode: BYTES)
     end
   end
 
@@ -286,8 +286,8 @@ module Fixtures
     factory_id "poison_probe"
     channels do |c|
       c.input("input", decode: TEXT).retry_backoff_ms(25)
-       .into(PoisonProbe).named("out")
-       .sink("probe_sink", encode: BYTES)
+       .into(PoisonProbe)
+       .sink("out", encode: BYTES)
     end
   end
 
@@ -321,8 +321,8 @@ module Fixtures
   class WedgeProbeOperative < Flezha::StreamOperative
     factory_id "wedge_probe"
     channels do |c|
-      c.input("input", decode: TEXT).into(WedgeProbe).named("out")
-       .sink("wedge_sink", encode: BYTES)
+      c.input("input", decode: TEXT).into(WedgeProbe)
+       .sink("out", encode: BYTES)
     end
   end
 
@@ -359,8 +359,8 @@ module Fixtures
     channels do |c|
       c.effectively_once
       c.correction_window(600_000)
-      c.input("input", decode: TEXT).into(Candle).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
+      c.input("input", decode: TEXT).into(Candle).keyed
+       .sink("sink", encode: BYTES)
     end
   end
 
@@ -402,8 +402,8 @@ module Fixtures
   class SessionTimeoutOperative < Flezha::StreamOperative
     factory_id "session_timeout"
     channels do |c|
-      c.input("input", decode: TEXT).into(SessionTimeout).named("kafka")
-       .sink("test_kafka", encode: BYTES)
+      c.input("input", decode: TEXT).into(SessionTimeout)
+       .sink("kafka", encode: BYTES)
     end
   end
 
@@ -430,8 +430,8 @@ module Fixtures
       factory_id "bounded_mailbox_#{policy}"
       channels do |c|
         c.input("#{policy}_input", decode: TEXT).on_full(policy.to_sym)
-         .into(procedure).named("#{policy}_echo")
-         .sink("bounded_mailbox_echo", encode: BYTES)
+         .into(procedure)
+         .sink("#{policy}_echo", encode: BYTES)
       end
     end
   end.freeze
@@ -461,8 +461,8 @@ module Fixtures
     factory_id "partition_relay"
     channels do |c|
       c.input("in", decode: TEXT).key_by { |value| PREFIX.call(value) }
-       .into(PartitionRelay).named("input").keyed
-       .sink("relay_out", encode: BYTES)
+       .into(PartitionRelay).keyed
+       .sink("input", encode: BYTES)
     end
   end
 
@@ -488,8 +488,8 @@ module Fixtures
        # never mints an entity for it.
        .filter { |input| input != "drop" }
        .key_by { |value| PREFIX.call(value) }
-       .into(DynamicEntity).named("kafka")
-       .sink("test_kafka", encode: BYTES)
+       .into(DynamicEntity)
+       .sink("kafka", encode: BYTES)
     end
   end
 

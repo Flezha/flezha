@@ -21,7 +21,6 @@ public final class BenchEchoStreamOperative implements StreamOperative {
         c.input(String.class, "input")
                 .onFull(OverflowPolicy.DROP_NOTHING)
                 .into(DoNothingProcedure.class)
-                .named("echo")
-                .sink("bench_echo_sink");
+                .sink("echo");
     }
 }

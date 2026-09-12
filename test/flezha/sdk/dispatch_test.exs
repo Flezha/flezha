@@ -39,7 +39,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(EchoProc)
         |> Channels.named("e")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   defmodule MetaEchoProc do
@@ -58,7 +58,7 @@ defmodule Flezha.SDK.DispatchTest do
     def factory_id, do: "unnamed_meta_op"
 
     def channels(c),
-      do: c |> Channels.input("in") |> Channels.into(MetaEchoProc) |> Channels.sink("out")
+      do: c |> Channels.input("in") |> Channels.into(MetaEchoProc) |> Channels.sink()
   end
 
   defmodule OrderedProc do
@@ -82,7 +82,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.key_by(fn _ -> "k" end)
       |> Channels.into(OrderedProc)
       |> Channels.named("o")
-      |> Channels.sink("out")
+      |> Channels.sink()
     end
   end
 
@@ -96,7 +96,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.key_by(fn v -> v end)
       |> Channels.into(OrderedProc)
       |> Channels.named("o")
-      |> Channels.sink("out")
+      |> Channels.sink()
     end
   end
 
@@ -130,7 +130,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(FlakyProc)
         |> Channels.named("f")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   defmodule PoisonProc do
@@ -159,7 +159,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.retry_backoff_ms(1)
         |> Channels.into(RaiserProc)
         |> Channels.named("r")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   defmodule PoisonOp do
@@ -172,7 +172,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(PoisonProc)
         |> Channels.named("p")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   # Blocks until released, so a dispatch can be observed mid-flight; the input
@@ -207,7 +207,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.into(GatedProc)
         |> Channels.named("g")
-        |> Channels.sink("out")
+        |> Channels.sink()
   end
 
   # --- helpers ---
@@ -342,7 +342,7 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.on_full(:drop_newest)
           |> Channels.into(SlowProc)
           |> Channels.named("s")
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     probe!()
@@ -394,7 +394,7 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.input("in")
           |> Channels.into(DefaultSlowProc)
           |> Channels.named("s")
-          |> Channels.sink("out")
+          |> Channels.sink()
     end
 
     probe!()

@@ -19,7 +19,6 @@ public final class ThermostatOperative implements StreamOperative {
                 .from(c.input(Reading.class, "readings"), DetectorInput::ofReading)
                 .from(c.input(Threshold.class, "config"), DetectorInput::ofThreshold)
                 .into(DetectorProcedure.class)
-                .named("alerts")
-                .sink("alerts_sink");
+                .sink("alerts");
     }
 }

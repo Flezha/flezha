@@ -186,9 +186,8 @@ class BoundedMailboxTopologyTest {
             c.input(String.class, "input")
                     .onFull(OverflowPolicy.DROP_NEWEST)
                     .into(A.class)
-                    .named("out")
                     .keyed()
-                    .sink("kafka");
+                    .sink("out");
         }
     }
 

@@ -43,9 +43,8 @@ const WordCount = defineOperative({
       // runtime's, not this file's.
       .keyBy((word) => word)
       .into(Tally)
-      .named('totals')
       .keyed()
-      .sink('word_totals', (text) => Buffer.from(text, 'utf8'));
+      .sink('totals', (text) => Buffer.from(text, 'utf8'));
   },
 });
 

@@ -42,6 +42,7 @@ fn derive_channel(
     merges: &mut HashMap<u32, (u32, Vec<usize>)>,
     issues: &mut Vec<TopologyIssue>,
 ) -> DerivedChannel {
+    refuse_double_name(channel_decl, issues);
     let mut derived = Chains {
         name: derived_name(channel_decl),
         sink: None,
@@ -77,21 +78,50 @@ fn derive_channel(
     }
 }
 
-/// The channel's name: the LAST `named` link if it carries one, else the
-/// builder's derived default. Read once for the whole channel — the omission
-/// KI-120 closed was a pending name consumed by n−1 terminators, so a name
-/// read per terminator is the shape to keep impossible.
+/// The channel's name, in three rungs: the LAST `named` link, else the name a
+/// `sink` link carries, else the builder's derived default. Read once for the
+/// whole channel — the omission KI-120 closed was a pending name consumed by
+/// n−1 terminators, so a name read per terminator is the shape to keep
+/// impossible. The first two rungs never both apply: a channel a record names
+/// twice is refused by [`refuse_double_name`].
 fn derived_name(channel_decl: &HostChannelDecl) -> String {
-    channel_decl
-        .chains
-        .iter()
-        .flatten()
-        .filter_map(|link| match link {
-            HostLink::Named { name } => Some(name.clone()),
-            _ => None,
-        })
-        .next_back()
+    let (named, sink) = naming_declarations(channel_decl);
+    named
+        .or(sink)
+        .cloned()
         .unwrap_or_else(|| channel_decl.name.clone())
+}
+
+/// A channel whose record carries both a `named` link and a `sink` that names
+/// it has been named twice. Refused rather than resolved by precedence, and
+/// refused even when the two strings agree: an exception for the consistent
+/// case would leave a redundant pair nobody can remember the rule for.
+fn refuse_double_name(channel_decl: &HostChannelDecl, issues: &mut Vec<TopologyIssue>) {
+    if let (Some(named), Some(sink)) = naming_declarations(channel_decl) {
+        issues.push(TopologyIssue::ChannelNamedTwice {
+            // The builder's own default, because neither declared name wins
+            // and the author has to be told which channel this is.
+            channel: channel_decl.name.clone(),
+            named: named.clone(),
+            sink: sink.clone(),
+        });
+    }
+}
+
+/// The two ways a record can name a channel: the LAST `named` link, and the
+/// FIRST `sink` that carries a name (a second sink is its own refusal). Read
+/// once, by the derivation and by the refusal, so the name a channel takes and
+/// the contradiction that refuses it cannot be read from different links.
+fn naming_declarations(channel_decl: &HostChannelDecl) -> (Option<&String>, Option<&String>) {
+    let (mut named, mut sink) = (None, None);
+    for link in channel_decl.chains.iter().flatten() {
+        match link {
+            HostLink::Named { name } => named = Some(name),
+            HostLink::Sink { name: Some(name) } => sink = sink.or(Some(name)),
+            _ => {}
+        }
+    }
+    (named, sink)
 }
 
 /// Where in the record the walk is: the class it reads procedure names from,
@@ -184,11 +214,15 @@ fn close_chain(
 ) {
     let channel = derived.name.clone();
     match link {
-        HostLink::Sink { name: descriptor } => {
+        // The sink's descriptor IS the channel's name: `sink("x")` named the
+        // channel `x` two rungs up, and `sink()` leaves it derived. One string,
+        // so local mode's "the sink's declared name" and the wire's channel
+        // name cannot be two different answers.
+        HostLink::Sink { .. } => {
             if derived.sink.is_some() {
                 issues.push(TopologyIssue::DuplicatePluginSink { channel });
             } else {
-                derived.sink = Some(descriptor.clone());
+                derived.sink = Some(channel);
             }
         }
         HostLink::Into { procedure } => {

@@ -27,10 +27,6 @@ public final class RollupOperative implements StreamOperative {
         c.effectivelyOnce();
         c.checkpointAck();
 
-        c.input(String.class, "ticks")
-                .into(RollupProcedure.class)
-                .named("rollups")
-                .keyed()
-                .sink("postgres_sink");
+        c.input(String.class, "ticks").into(RollupProcedure.class).keyed().sink("rollups");
     }
 }

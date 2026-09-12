@@ -283,7 +283,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       |> Channels.retry_backoff_ms(50)
       |> Channels.retry_max(4)
       |> Channels.into(FailingProcedure)
-      |> Channels.sink("out")
+      |> Channels.sink()
     end
   end
 

@@ -203,6 +203,7 @@ impl Interpreter {
                 "map" | "filter" | "flat_map" => r#"{"link":"transform"}"#.to_string(),
                 "key" => r#"{"link":"key"}"#.to_string(),
                 "named" => format!(r#"{{"link":"named","name":"{arg}"}}"#),
+                "sink" if arg.is_empty() => r#"{"link":"sink"}"#.to_string(),
                 "sink" => format!(r#"{{"link":"sink","name":"{arg}"}}"#),
                 "into" => {
                     let procedure = self.procedure(arg);
@@ -426,13 +427,20 @@ mod derivation {
     use super::*;
 
     fn derive(steps: &str) -> Derived {
-        let row = Row {
+        check(record_of(&row_of(steps))).expect("a well-formed record")
+    }
+
+    fn refuse(steps: &str) -> Vec<TopologyIssue> {
+        check(record_of(&row_of(steps))).expect_err("the steps break a rule")
+    }
+
+    fn row_of(steps: &str) -> Row {
+        Row {
             refusal: "ok".into(),
             topology: "derivation".into(),
             steps: steps.into(),
             needs: "-".into(),
-        };
-        check(record_of(&row)).expect("a well-formed record")
+        }
     }
 
     #[test]
@@ -447,7 +455,7 @@ mod derivation {
 
     #[test]
     fn a_named_link_renames_the_channel_for_every_terminator() {
-        let derived = derive("entry(in); in.into(plain); plain.named(renamed); plain.sink(out)");
+        let derived = derive("entry(in); in.into(plain); plain.named(renamed); plain.sink");
 
         assert_eq!(
             derived.channels[1].name, "renamed",
@@ -455,13 +463,63 @@ mod derivation {
         );
         assert_eq!(
             derived.channels[1].sink.as_deref(),
-            Some("out"),
-            "the record carries the sink the core was never told"
+            Some("renamed"),
+            "the sink IS the channel, so the descriptor is the channel's name"
         );
         assert_eq!(
             derived.channels[1].kind,
             HostChannelKind::Plugin,
             "a sink with no consumer IS the plugin terminal"
+        );
+    }
+
+    #[test]
+    fn a_sink_names_the_channel() {
+        let derived = derive("entry(in); in.into(plain); plain.sink(items_output)");
+
+        assert_eq!(
+            derived.channels[1].name, "items_output",
+            "the name written on the sink IS the channel's name"
+        );
+        assert_eq!(derived.channels[1].sink.as_deref(), Some("items_output"));
+    }
+
+    #[test]
+    fn a_nameless_sink_leaves_the_derived_name_alone() {
+        let derived = derive("entry(in); in.into(plain); plain.sink");
+
+        assert_eq!(
+            derived.channels[1].name, "plain_out",
+            "`sink()` derives the name exactly as a channel with no sink does"
+        );
+        assert_eq!(derived.channels[1].sink.as_deref(), Some("plain_out"));
+    }
+
+    #[test]
+    fn only_two_sink_named_channels_collide_as_a_duplicate_sink() {
+        // A `named(...)` channel colliding with a `sink(...)` one is a bare
+        // duplicate: nobody pointed two channels at one sink.
+        let mixed = refuse(
+            "entry(in); in.into(plain); in.into(second); plain.named(out); plain.sink;              second.sink(out)",
+        );
+        assert!(
+            mixed
+                .iter()
+                .any(|i| matches!(i, TopologyIssue::DuplicateChannel(name) if name == "out")),
+            "read {mixed:?}"
+        );
+    }
+
+    #[test]
+    fn a_channel_named_twice_is_refused_even_when_the_names_agree() {
+        let issues = refuse("entry(in); in.into(plain); plain.named(same); plain.sink(same)");
+
+        assert!(
+            issues.iter().any(|i| matches!(
+                i,
+                TopologyIssue::ChannelNamedTwice { named, sink, .. } if named == "same" && sink == "same"
+            )),
+            "an agreeing pair is still two declarations, read {issues:?}"
         );
     }
 

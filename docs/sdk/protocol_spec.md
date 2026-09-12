@@ -235,8 +235,9 @@ runtime stamps can never be spoofed or clobbered. Stamps are appended after
 user metadata; channels not declared `.keyed()` carry none.
 
 Channel names on the wire are hand-written identity strings (a non-entry
-channel's name derives from its producer node unless `.named(...)` overrides
-it), so renaming a language class never changes a wire or on-disk name. A
+channel's name derives from its producer node unless a `sink("...")` name or a
+`.named(...)` override supplies one; declaring both is refused), so renaming a
+language class never changes a wire or on-disk name. A
 plugin-bound frame is byte-identical whether or not the channel also fans out
 to inter-procedure consumers.
 

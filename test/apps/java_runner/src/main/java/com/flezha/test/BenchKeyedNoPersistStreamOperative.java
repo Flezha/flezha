@@ -26,8 +26,7 @@ public final class BenchKeyedNoPersistStreamOperative implements StreamOperative
         c.input(String.class, "input")
                 .onFull(OverflowPolicy.DROP_NOTHING)
                 .into(TierStoreProcedure.class)
-                .named("sink")
                 .keyed()
-                .sink("tier_sink");
+                .sink("sink");
     }
 }

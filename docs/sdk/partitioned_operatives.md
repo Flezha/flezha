@@ -186,9 +186,8 @@ saturate a core cannot be split by partitioning. Split it in the topology instea
 c.input::<Trade>("trades")
     .key_by(|t: &Trade| format!("{}#{}", t.symbol, t.trade_id % 8))
     .into::<PartialCandleProcedure>()
-    .named("partials")
     .keyed()
-    .sink("partial_candles");
+    .sink_named("partials");
 
 // Stage 2 — a single-partition merger, fed by forward: one Entity per symbol.
 c.input::<PartialCandle>("partial_candles")

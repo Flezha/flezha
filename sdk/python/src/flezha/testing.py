@@ -74,7 +74,7 @@ class ProcedureTestHarness(Generic[S]):
         # go — a procedure under test emits to be observed, not to be routed.
         # Driving the builder means the harness proves it too.
         channels = Channels("<harness>")
-        channels.input("in").into(proc).sink("out")
+        channels.input("in").into(proc).sink()
         self._spec = ClassSpec(
             factory_id="<harness>",
             kind="stream",

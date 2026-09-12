@@ -73,7 +73,7 @@ final class AuthoringTest extends TestCase
         // but not the class: only this package can see the method is missing.
         yield 'an event-time clock with no extractor' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(NoExtractor::class)->sink('out');
+                $c->input('in')->into(NoExtractor::class)->sink();
             }),
             'declares an event_time clock but no eventTime method',
         ];
@@ -90,7 +90,7 @@ final class AuthoringTest extends TestCase
         // the channel it sits on — it cannot see this one is controller-fed.
         yield 'a sink fed by an entry channel' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->sink('out');
+                $c->input('in')->sink();
             }),
             'a plugin sink is fed by a procedure',
         ];
@@ -196,9 +196,9 @@ final class AuthoringTest extends TestCase
     }
 
     /**
-     * `sdk-graph-authoring`: an underived channel name comes from the PRODUCER
-     * NODE, never from the sink it terminates on — the sink's name is the
-     * plugin's, and several channels may name one sink.
+     * `sdk-graph-authoring`: the no-argument `sink()` names nothing, so the
+     * channel keeps the PRODUCER NODE's name — the derivation a channel with
+     * no sink at all would take.
      */
     public function testAnUnnamedEdgeTerminatingOnASinkTakesTheProducingNodesName(): void
     {
@@ -326,6 +326,37 @@ final class AuthoringTest extends TestCase
         }
     }
 
+    /** The sink names the channel; the no-argument form leaves it derived. */
+    public function testTheSinkNamesTheChannelAndTheNoArgumentFormDoesNot(): void
+    {
+        self::assertSame(
+            ['in', 'input'],
+            array_column(self::derived(NamedSink::spec())['channels'], 'name'),
+        );
+        self::assertSame(
+            ['in', 'counter'],
+            array_column(self::derived(UnnamedSink::spec())['channels'], 'name'),
+        );
+    }
+
+    /** A channel both `named()` and `sink()` name is refused, naming both. */
+    public function testAChannelNamedTwiceIsRefusedNamingBoth(): void
+    {
+        $this->expectException(DeclarationException::class);
+        $this->expectExceptionMessage('ChannelNamedTwice');
+
+        self::derived(NamedTwice::spec());
+    }
+
+    /** Two channels naming one sink is a duplicate channel name. */
+    public function testTwoChannelsNamingOneSinkIsRefused(): void
+    {
+        $this->expectException(DeclarationException::class);
+        $this->expectExceptionMessage('DuplicateSinkName');
+
+        self::derived(OneSinkTwoChannels::spec());
+    }
+
     // -- one output channel per producing procedure --------------------------
     //
     // The model Rust and Java carry: a procedure node owns ONE output channel,
@@ -393,7 +424,7 @@ final class AuthoringTest extends TestCase
         self::assertSame(
             [
                 ['in', 'entry', null, [0], null],
-                ['hybrid_indicator', 'inter_proc', 0, [1], 'hybrid_indicators'],
+                ['hybrid_indicator', 'inter_proc', 0, [1], 'hybrid_indicator'],
             ],
             self::channelsOf(Hybrid::spec()),
         );
@@ -468,8 +499,8 @@ final class Hybrid extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in')->into(Counter::class)->named('hybrid_indicator')
-            ->sink('hybrid_indicators')->into(Echoer::class);
+        $c->input('in')->into(Counter::class)
+            ->sink('hybrid_indicator')->into(Echoer::class);
     }
 }
 
@@ -478,8 +509,8 @@ final class KeyedHybrid extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in')->into(Counter::class)->named('mid')->keyed()
-            ->sink('mid_sink')->into(Echoer::class);
+        $c->input('in')->into(Counter::class)->keyed()
+            ->sink('mid')->into(Echoer::class);
     }
 }
 
@@ -500,7 +531,7 @@ final class TierWorkflow extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->effectivelyOnce();
-        $c->input('in')->into(Counter::class)->named('out')->keyed()->sink('out');
+        $c->input('in')->into(Counter::class)->keyed()->sink('out');
     }
 }
 
@@ -518,7 +549,7 @@ final class NamedSink extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in')->into(Echoer::class)->named('input')->sink('relay_out');
+        $c->input('in')->into(Echoer::class)->sink('input');
     }
 }
 
@@ -527,7 +558,26 @@ final class UnnamedSink extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in')->into(Counter::class)->sink('relay_out');
+        $c->input('in')->into(Counter::class)->sink();
+    }
+}
+
+#[Operative(factoryId: 'named_twice')]
+final class NamedTwice extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Echoer::class)->named('a')->sink('b');
+    }
+}
+
+#[Operative(factoryId: 'one_sink_two_channels')]
+final class OneSinkTwoChannels extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Echoer::class)->sink('shared')
+            ->into(Counter::class)->sink('shared');
     }
 }
 
@@ -538,7 +588,7 @@ final class Diamond extends StreamOperative
     {
         $edge = $c->input('in')->into(Echoer::class);
         $edge->named('left')->into(Counter::class);
-        $edge->named('right')->sink('out');
+        $edge->sink();
     }
 }
 

@@ -28,8 +28,7 @@ public final class OptOutCommitBlockWorkflowOperative implements WorkflowOperati
     public void procedures(ChannelBuilder c) {
         c.input(String.class, "in")
                 .into(CommitBlockWorkflowOperative.CommitA.class)
-                .named("mid")
-                .sink("optout_sink", s -> ("a-ran:" + s).getBytes(StandardCharsets.UTF_8))
+                .sink("mid", s -> ("a-ran:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(CommitBlockWorkflowOperative.BlockB.class);
     }
 }

@@ -22,10 +22,6 @@ public final class CandleOperative implements StreamOperative {
         c.correctionWindow(FIVE_MINUTES_MS);
         c.beyondWindowPolicy(BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
 
-        c.input(String.class, "trades")
-                .into(CandleProcedure.class)
-                .named("candles")
-                .keyed()
-                .sink("postgres_sink");
+        c.input(String.class, "trades").into(CandleProcedure.class).keyed().sink("candles");
     }
 }

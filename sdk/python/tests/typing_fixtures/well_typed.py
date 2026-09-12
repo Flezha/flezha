@@ -30,4 +30,4 @@ def render(invoice: Invoice) -> str:
 
 @flezha.stream_operative("billing")
 def billing(c: flezha.Channels) -> None:
-    c.input("orders").into(bill).named("invoices").into(render).sink("rendered")
+    c.input("orders").into(bill).named("invoices").into(render).sink()

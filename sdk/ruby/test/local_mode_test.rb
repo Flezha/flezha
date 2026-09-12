@@ -39,8 +39,8 @@ class LocalModeTest < Minitest::Test
       c.input("lines", decode: ->(b) { b.dup.force_encoding("UTF-8") })
        .into(Split)
        .key_by { |word| word }
-       .into(Tally).named("totals").keyed
-       .sink("word_totals", encode: ->(v) { v.to_s.b })
+       .into(Tally).keyed
+       .sink("totals", encode: ->(v) { v.to_s.b })
     end
   end
 

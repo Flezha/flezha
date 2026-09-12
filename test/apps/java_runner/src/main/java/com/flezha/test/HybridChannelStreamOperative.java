@@ -31,7 +31,7 @@ public final class HybridChannelStreamOperative implements StreamOperative {
     @Override
     public void channels(ChannelBuilder c) {
         var sHybridProducerProcedure = c.input(String.class, "input").into(HybridProducerProcedure.class);
-        sHybridProducerProcedure.named("hybrid_indicator").sink("hybrid_indicators", v -> { if (v == 0xDEAD_BEEFL) { throw new RuntimeException("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF"); } return ByteBuffer.allocate(4) .order(ByteOrder.BIG_ENDIAN) .putInt(v.intValue()) .array(); }).into(HybridConsumerProcedure.class);
+        sHybridProducerProcedure.sink("hybrid_indicator", v -> { if (v == 0xDEAD_BEEFL) { throw new RuntimeException("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF"); } return ByteBuffer.allocate(4) .order(ByteOrder.BIG_ENDIAN) .putInt(v.intValue()) .array(); }).into(HybridConsumerProcedure.class);
     }
 
     public static final class HybridProducerProcedure

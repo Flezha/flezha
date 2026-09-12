@@ -76,8 +76,8 @@ final class WordCountOperative extends StreamOperative
             // One Entity per word: the hop from `Split` to `Tally` is the
             // runtime's, not this file's.
             ->keyBy(static fn (string $word): string => $word)
-            ->into(Tally::class)->named('totals')->keyed()
-            ->sink('word_totals', static fn (string $text): string => $text);
+            ->into(Tally::class)->keyed()
+            ->sink('totals', static fn (string $text): string => $text);
     }
 }
 

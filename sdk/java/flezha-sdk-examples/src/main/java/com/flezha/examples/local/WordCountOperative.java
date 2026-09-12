@@ -19,8 +19,7 @@ public final class WordCountOperative implements StreamOperative {
                 .into(Split.class)
                 .keyBy(word -> word)
                 .into(Tally.class)
-                .named("totals")
                 .keyed()
-                .sink("word_totals");
+                .sink("totals");
     }
 }

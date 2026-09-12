@@ -37,6 +37,6 @@ public final class StatelessLoopWorkflowOperative implements WorkflowOperative {
 
     @Override
     public void procedures(ChannelBuilder c) {
-        c.input(String.class, "in").into(ChatSteps.Reply.class).named("out").sink("chat_sink");
+        c.input(String.class, "in").into(ChatSteps.Reply.class).sink("out");
     }
 }

@@ -24,7 +24,7 @@ namespace Flezha;
  *     {
  *         public static function channels(Builder $c): void
  *         {
- *             $c->input('input')->into(Echo_::class)->named('out')->sink('echo_sink');
+ *             $c->input('input')->into(Echo_::class)->sink('out');
  *         }
  *     }
  *

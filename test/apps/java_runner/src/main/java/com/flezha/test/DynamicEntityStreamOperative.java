@@ -24,8 +24,7 @@ public final class DynamicEntityStreamOperative implements StreamOperative {
                 .filter(input -> !input.equals("drop"))
                 .keyBy(DynamicEntityStreamOperative::key)
                 .into(DynamicEntityProcedure.class)
-                .named("kafka")
-                .sink("test_kafka");
+                .sink("kafka");
     }
 
     /** Key = text before the first {@code :}; {@code partition_relay} shares it. */

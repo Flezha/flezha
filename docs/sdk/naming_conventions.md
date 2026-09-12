@@ -95,11 +95,14 @@ declares an entry channel (its name is explicit — an external address of the
 operative; an operative may declare several, one per external source, and the
 controller routes each inbound frame to its entry by `metadata["channel"]`),
 `.into(Proc)` wires a consumer and returns *that procedure's* output stream,
-and plugin egress is `sink(name)` / `sink(name, serializer)` (Rust:
-`sink(name)` / `sink_with(name, f)`) — destination-neutral: the operative
-declares a named attachment point, the controller routes to it by channel-name
-metadata, and several channels may name one sink. Without a serializer the
-defaults are passthrough for bytes, UTF-8 for strings, JSON otherwise.
+and plugin egress is `sink()` / `sink(name)` / `sink(name, serializer)` (Rust,
+which has no overloading: `sink()` / `sink_named(name)` / `sink_with(f)` /
+`sink_named_with(name, f)`). The name a sink carries IS the channel's name —
+the metadata the controller routes by and a plugin filter matches — so a
+channel is named by at most one sink, two channels cannot name one sink, and
+naming a channel with both a sink and `named(...)` is refused. The no-name form
+leaves the channel named as it would be without a sink. Without a serializer
+the defaults are passthrough for bytes, UTF-8 for strings, JSON otherwise.
 
 **There is exactly one egress method.** `sink` always returns the stream
 handle, so consumers wire after it; a channel is the plugin-bound terminal by

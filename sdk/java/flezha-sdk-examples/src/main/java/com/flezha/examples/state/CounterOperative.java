@@ -21,6 +21,6 @@ public final class CounterOperative implements StreamOperative {
 
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(String.class, "in").into(CountProcedure.class).named("out").sink("my_sink");
+        c.input(String.class, "in").into(CountProcedure.class).sink("out");
     }
 }

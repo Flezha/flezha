@@ -39,8 +39,7 @@ public final class EntityStressStreamOperative implements StreamOperative {
                 .into(StressProcedureC.class)
                 .named("c_to_d")
                 .into(StressProcedureD.class)
-                .named("echo")
-                .sink("entity_stress_echo");
+                .sink("echo");
     }
 
     /** Shared stateless surface of the four stress procedures; only the fan-out differs. */

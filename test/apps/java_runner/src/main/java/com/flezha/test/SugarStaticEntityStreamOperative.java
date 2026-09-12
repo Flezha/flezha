@@ -22,7 +22,6 @@ public class SugarStaticEntityStreamOperative implements com.flezha.sdk.operativ
         c.input(String.class, "input")
                 .into(SugarEntryProcedure.class)
                 .into(SugarDownstreamProcedure.class)
-                .named("test_kafka")
                 .sink("test_kafka");
     }
 }

@@ -123,8 +123,8 @@ final class ChatLoopWorkflow extends WorkflowOperative
     {
         $c->input('in', Wire::text(...))
             ->into(ChatTurn::class)->named('mid')
-            ->into(ChatReply::class)->named('out')
-            ->sink('chat_sink', Wire::bytes(...));
+            ->into(ChatReply::class)
+            ->sink('out', Wire::bytes(...));
     }
 }
 
@@ -135,8 +135,8 @@ final class StatelessLoopWorkflow extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', Wire::text(...))
-            ->into(ChatReply::class)->named('out')
-            ->sink('chat_sink', Wire::bytes(...));
+            ->into(ChatReply::class)
+            ->sink('out', Wire::bytes(...));
     }
 }
 
@@ -148,8 +148,8 @@ final class ChatRewindWorkflow extends WorkflowOperative
     {
         $c->input('in', Wire::text(...))
             ->into(ChatTurn::class)->named('mid')
-            ->into(ChatReplyUndoable::class)->named('out')
-            ->sink('chat_sink', Wire::bytes(...));
+            ->into(ChatReplyUndoable::class)
+            ->sink('out', Wire::bytes(...));
     }
 }
 
@@ -261,7 +261,7 @@ abstract class BenchChain extends WorkflowOperative
         for ($at = 1; $at < static::STEPS; $at++) {
             $edge = $edge->named("edge_BenchS$at")->into(self::STEP_CLASSES[$at]);
         }
-        $edge->named('out')->sink('bench_sink', Wire::bytes(...));
+        $edge->sink('out', Wire::bytes(...));
     }
 }
 
@@ -344,7 +344,7 @@ final class BenchLoopWorkflow extends WorkflowOperative
     {
         $c->input('in', Wire::text(...))
             ->into(BenchTurn::class)->named('mid')
-            ->into(ChatReply::class)->named('out')
-            ->sink('bench_sink', Wire::bytes(...));
+            ->into(ChatReply::class)
+            ->sink('out', Wire::bytes(...));
     }
 }

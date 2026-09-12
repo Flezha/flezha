@@ -16,4 +16,4 @@ def handle(value: str) -> str:
 
 @flezha.stream_operative("from_module")
 def from_module(c: flezha.Channels) -> None:
-    c.input("in").into(handle).sink("out")
+    c.input("in").into(handle).sink()

@@ -16,6 +16,6 @@ public final class CompareFilterStreamOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(CompareFilterProcedure.class).named("sink").sink("compare_filter_sink");
+        c.input(String.class, "input").into(CompareFilterProcedure.class).sink("sink");
     }
 }

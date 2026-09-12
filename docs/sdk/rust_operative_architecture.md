@@ -217,8 +217,7 @@ impl StreamOperative for MarketOperative {
             .into::<ParseProc>()          // ParseProc's output stream handle
             .named("trade.parsed")
             .into::<OhlcProc>()           // static-mode consumer, see below
-            .named("ohlc.candles")
-            .sink("ohlc_kafka");          // plugin-bound terminal
+            .sink_named("ohlc.candles");  // plugin-bound terminal, named here
     }
 }
 
@@ -476,9 +475,9 @@ fan-out pays one value clone per consumer.
 ### Plugin-bound emit
 
 On a channel with a plugin sink the dispatcher serializes the value once
-(`sink(name)` uses the default rules — passthrough for `Vec<u8>`, UTF-8 for
-`String`, JSON otherwise; `sink_with(name, serializer)` supplies a
-`Fn(&T) -> Vec<u8>`), builds a frame with `payloader::build_from_binary`
+(`sink()` / `sink_named(name)` use the default rules — passthrough for
+`Vec<u8>`, UTF-8 for `String`, JSON otherwise; `sink_with(serializer)` /
+`sink_named_with(name, serializer)` supply a `Fn(&T) -> Vec<u8>`), builds a frame with `payloader::build_from_binary`
 carrying `channel = <channel name>` in the metadata, and writes it on the
 `FlezhaStream` the originating input arrived on. The controller's plugin
 layer (for example `Flezha.Plugin.Provider.Kafka` with its `:channel` option)
@@ -496,9 +495,11 @@ replay-stable natural key (`KeyNotAllowedOnNonKeyedChannel` elsewhere).
 
 ### Hybrid and terminal: one `sink` method
 
-`sink` / `sink_with` on a producer's output handle attach the channel's
-`plugin_sink: Option<PluginSink>` — the one representation of plugin egress.
-`kind` is derived at build time: `InterProcedure` when consumers are wired
+`sink` / `sink_named` / `sink_with` / `sink_named_with` on a producer's output
+handle attach the channel's `plugin_sink: Option<PluginSink>` — the one
+representation of plugin egress. The `_named` half names the channel, which is
+what rides the frame; naming one channel with both a sink and `.named(...)` is
+`TopologyIssue::ChannelNamedTwice`. `kind` is derived at build time: `InterProcedure` when consumers are wired
 after the sink (hybrid — one typed value reaches the consumer mailboxes and,
 serialized, the plugin), `PluginBound` when nothing consumes the channel
 (terminal). Order of `sink_with` and `.into::<S>()` is irrelevant; a second
@@ -507,8 +508,7 @@ consumer after `.sealed()` is a compile error.
 
 ```rust
 sma_stream                       // SmaProc's output handle, from `.into::<SmaProc>()`
-    .named("sma_out")
-    .sink_with("indicators", sma_to_pb_bytes)
+    .sink_named_with("sma_out", sma_to_pb_bytes)
     .into::<BollingerProc>();
 ```
 

@@ -122,9 +122,7 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
     def operative(c: Any) -> None:
         c.effectively_once()
         declare(c)
-        c.input("input").into(echo, f"{factory_id}_procedure").named("sink").keyed().sink(
-            "tier_sink"
-        )
+        c.input("input").into(echo, f"{factory_id}_procedure").keyed().sink("sink")
 
     assert submit(operative)["ack_granularity"] == "checkpoint"
     return graph.to_host_class_decl(operative.spec)

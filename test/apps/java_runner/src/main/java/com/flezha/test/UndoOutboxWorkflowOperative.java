@@ -29,8 +29,7 @@ public final class UndoOutboxWorkflowOperative implements WorkflowOperative {
     public void procedures(ChannelBuilder c) {
         c.input(String.class, "in")
                 .into(UndoOutboxA.class)
-                .named("mid")
-                .sink("undo_sink", s -> ("out:" + s).getBytes(StandardCharsets.UTF_8))
+                .sink("mid", s -> ("out:" + s).getBytes(StandardCharsets.UTF_8))
                 .into(UndoC.class);
     }
 

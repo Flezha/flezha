@@ -25,8 +25,7 @@ public final class CheckpointBatchedStoreStreamOperative implements StreamOperat
         c.outputsAtCheckpoint(1_500);
         c.input(String.class, "input")
                 .into(CheckpointStoreProcedure.class)
-                .named("sink")
                 .keyed()
-                .sink("tier_sink");
+                .sink("sink");
     }
 }

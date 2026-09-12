@@ -316,7 +316,7 @@ final class FullStream extends StreamOperative
         $edge->named('hop')->keyBy(static fn (mixed $v): string => (string) $v)
             ->retryMax(5)->retryBackoffMs(50)->into(FullDownstream::class);
         $edge->named('fan')->into(FullFanned::class);
-        $c->input('second')->into(FullEntry::class)->named('sink')->keyed()->sink('out');
+        $c->input('second')->into(FullEntry::class)->keyed()->sink('sink');
     }
 }
 
@@ -365,8 +365,8 @@ final class HybridChannelTopology extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input')->into(HybridProducer::class)->named('hybrid_indicator')
-            ->sink('hybrid_indicators', static fn (mixed $v): string => (string) $v)
+        $c->input('input')->into(HybridProducer::class)
+            ->sink('hybrid_indicator', static fn (mixed $v): string => (string) $v)
             ->into(HybridConsumer::class);
     }
 }
@@ -398,8 +398,8 @@ final class CommitBlockChainTopology extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->effectivelyOnce();
-        $c->input('in')->into(TierCommitA::class)->named('mid')->keyed()
-            ->sink('tier_sink', static fn (mixed $v): string => (string) $v)
+        $c->input('in')->into(TierCommitA::class)->keyed()
+            ->sink('mid', static fn (mixed $v): string => (string) $v)
             ->into(BlockB::class);
     }
 }

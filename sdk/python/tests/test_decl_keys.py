@@ -109,12 +109,12 @@ def every_key(c: flezha.Channels) -> None:
     c.correction_window(60_000).beyond_window_policy("drop").compact_after_bytes(1 << 20)
     c.input("in").key_by(lambda value: str(value["k"])).into(keyed).retry_max(5).retry_backoff_ms(
         100
-    ).keyed().sink("out")
+    ).keyed().sink()
 
 
 @flezha.stream_operative("static_key")
 def static_key(c: flezha.Channels) -> None:
-    c.input("in").into(statics).sink("out")
+    c.input("in").into(statics).sink()
 
 
 @flezha.workflow_operative(
@@ -303,9 +303,9 @@ hybrid_consumer = flezha.procedure(HybridConsumer, name="hybrid_consumer_procedu
 
 @flezha.stream_operative("hybrid_channel")
 def hybrid_channel(c: flezha.Channels) -> None:
-    c.input("input").into(hybrid_producer).named("hybrid_indicator").sink(
-        "hybrid_indicators", encode=_bytes
-    ).into(hybrid_consumer)
+    c.input("input").into(hybrid_producer).sink("hybrid_indicator", encode=_bytes).into(
+        hybrid_consumer
+    )
 
 
 class TierCommitA:
@@ -325,9 +325,7 @@ block_b = flezha.procedure(BlockB, name="block_b")
 @flezha.workflow_operative("commit_block_chain")
 def commit_block_chain(c: flezha.Channels) -> None:
     c.effectively_once()
-    c.input("in").into(tier_commit_a).named("mid").keyed().sink("tier_sink", encode=_bytes).into(
-        block_b
-    )
+    c.input("in").into(tier_commit_a).keyed().sink("mid", encode=_bytes).into(block_b)
 
 
 def test_the_hybrid_stream_topology_is_the_reference() -> None:
