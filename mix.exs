@@ -20,7 +20,27 @@ defmodule Flezha.MixProject do
       # mis-named test files.
       test_ignore_filters: [&String.starts_with?(&1, "test/apps/")],
       deps: deps(),
-      aliases: aliases()
+      aliases: aliases(),
+      docs: docs()
+    ]
+  end
+
+  # `mix docs` renders the guides as a browsable site under `doc/`. The guides
+  # carry ExDoc tabsets (`<!-- tabs-open -->`), which are inert HTML comments
+  # anywhere else, so one file serves both GitHub and this.
+  defp docs do
+    [
+      main: "controller_deployment",
+      extras: [
+        "docs/guides/controller_deployment.md",
+        "docs/guides/runner_deployment.md",
+        "docs/configuration.md",
+        "docs/operations/authn_authz.md"
+      ],
+      groups_for_extras: [
+        Guides: ~r"docs/guides/",
+        Reference: ~r"docs/(configuration|operations)"
+      ]
     ]
   end
 
@@ -110,6 +130,7 @@ defmodule Flezha.MixProject do
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:logger_file_backend, "~> 0.0.13"},
       {:logger_backends, "~> 1.0"},
       {:rustler, "~> 0.35"},

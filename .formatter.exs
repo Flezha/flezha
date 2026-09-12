@@ -10,6 +10,7 @@
     "{mix,.formatter,.credo}.exs",
     "{config,lib,test}/**/*.{ex,exs}",
     "{bench,scripts}/**/*.exs",
-    "examples/plugins/**/*.exs"
+    "examples/plugins/**/*.exs",
+    "examples/elixir/**/*.{ex,exs}"
   ]
 ]

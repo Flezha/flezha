@@ -30,7 +30,8 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`first_deployment.md`](guides/first_deployment.md) | Build the release, start the controller, claim the bootstrap admin, create a namespace, issue a runner credential, connect a runner, start an operative, run the testnet, attach plugins |
+| [`controller_deployment.md`](guides/controller_deployment.md) | Running one controller: the Docker image, the release binaries, or your own Elixir application. Starting it, checking it is up, stopping it, and claiming the admin or turning authorization off |
+| [`runner_deployment.md`](guides/runner_deployment.md) | Connecting a runner to that controller and starting an operative on it |
 
 ## sdk
 
