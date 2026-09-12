@@ -3,12 +3,10 @@
 ## Purpose
 
 The rust-sdk-procedure-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::procedure]` attribute macro (signature-to-types inference, `&mut` state inference, entity/mailbox/clock opt-ins, static and dynamic modes), the `#[derive(flezha::State)]` derive (field-granular `Change` enum + `apply_change` journaled through the existing WAL), and the `flezha::operative!` declarative macro for linear pipelines, plus inventory-based auto-registration. All macros expand to the existing `StreamOperative`/`Procedure`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written procedures compose in the same operative.
-
 ## Requirements
-
 ### Requirement: `#[flezha::procedure]` attribute macro
 
-The Rust SDK SHALL provide a `#[flezha::procedure]` attribute macro applied to a single `run` function that generates a complete `Procedure` implementation conforming to the authoring contract.
+The Rust SDK SHALL provide a `#[flezha::procedure]` attribute macro applied to a single `run` function that generates a complete `Procedure` implementation conforming to the authoring contract. When the attribute declares `id` and `sink`, it SHALL accept an optional `input` key naming the generated operative's entry channel, and SHALL name that channel `input` when the key is absent. An `input` key on an attribute that declares no `sink` SHALL fail to compile, naming the key and the missing `sink`.
 
 #### Scenario: Stateless procedure collapses to a function
 
@@ -24,6 +22,26 @@ The Rust SDK SHALL provide a `#[flezha::procedure]` attribute macro applied to a
 
 - **WHEN** a procedure is generated from `fn static_entry(..)`
 - **THEN** a PascalCase procedure type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` body via `.from`/`.into`
+
+#### Scenario: The attribute keeps the default entry channel name
+
+- **WHEN** `#[flezha::procedure(id = "do_nothing", sink = "echo")]` declares no `input` key
+- **THEN** the generated operative's entry channel SHALL be named `input`
+
+#### Scenario: The attribute names the generated entry channel
+
+- **WHEN** `#[flezha::procedure(id = "do_nothing", sink = "echo", input = "prices")]` annotates a run function
+- **THEN** the generated operative's entry channel SHALL be named `prices`
+
+#### Scenario: An `input` key without a sink is refused
+
+- **WHEN** `#[flezha::procedure(id = "do_nothing", input = "prices")]` annotates a run function with no `sink`
+- **THEN** the macro fails to compile, naming `input` and the missing `sink`
+
+#### Scenario: An empty entry channel name is rejected
+
+- **WHEN** `#[flezha::procedure(id = "do_nothing", sink = "echo", input = "")]` annotates a run function
+- **THEN** the macro fails to compile, stating that an entry channel name may not be empty
 
 ### Requirement: Attribute opt-ins for entity and mailbox behavior
 
@@ -70,17 +88,27 @@ The Rust SDK SHALL provide a `#[derive(flezha::State)]` derive that generates a 
 
 ### Requirement: `flezha::operative!` linear-pipeline macro
 
-The Rust SDK SHALL provide a `flezha::operative!` declarative macro that generates an operative for a strictly linear pipeline and lowers to a normal `channels()` body.
+The Rust SDK SHALL provide a `flezha::operative!` declarative macro that generates an operative for a strictly linear pipeline and lowers to a normal `channels()` body. The pipeline's `input` head SHALL accept an optional channel name in the same position the `plugin` terminator takes one, and SHALL lower to the entry channel name `input` when none is written.
 
 #### Scenario: Linear pipeline removes the channels block
 
 - **WHEN** `flezha::operative!{ id: "static_entity", pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka") }` is written
-- **THEN** a registered operative is generated wiring input → `StaticEntry` → `StaticDownstream` → the `test_kafka` plugin
+- **THEN** a registered operative is generated wiring input → `StaticEntry` → `StaticDownstream` → the `test_kafka` plugin, whose entry channel is named `input`
+
+#### Scenario: The pipeline head names its entry channel
+
+- **WHEN** a pipeline head is written `input::<String>("prices")`
+- **THEN** the generated operative's entry channel SHALL be named `prices`
 
 #### Scenario: Non-linear graph is rejected
 
 - **WHEN** an `operative!` pipeline expresses fan-out or multi-input
 - **THEN** the macro fails to compile with a message directing the author to an explicit `channels()` body
+
+#### Scenario: An empty entry channel name is rejected
+
+- **WHEN** a pipeline head is written `input::<String>("")`
+- **THEN** the macro fails to compile, stating that an entry channel name may not be empty
 
 ### Requirement: Auto-registration without an explicit call
 
@@ -160,3 +188,4 @@ An operative SHALL be able to mix macro-generated procedures and hand-written pr
 
 - **WHEN** `#[flezha::procedure(init = …)]` is applied to a `run` with no `&mut State` parameter
 - **THEN** expansion emits a `compile_error!` stating `init` requires a state parameter
+

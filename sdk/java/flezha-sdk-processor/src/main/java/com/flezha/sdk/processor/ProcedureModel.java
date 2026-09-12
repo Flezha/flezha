@@ -24,6 +24,7 @@ record ProcedureModel(
         String emitKey,
         String id,
         String sink,
+        String input,
         String onFull,
         int capacity,
         boolean stateful,

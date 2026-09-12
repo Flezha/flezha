@@ -169,12 +169,18 @@ flezha_runner::operative! {
 
 A single-procedure `input → sink` operative adds `sink = "…"` to the attribute
 and needs neither `operative!` nor `define_stream`. Attribute opt-ins: `id`,
-`sink`, `emits`, `keys` + `entities_for` (static mode), `key`, `idle_ttl` +
-`max_entities` (dynamic-mode knobs — the key itself is declared on the wiring
-with `.key_by(f)`), `capacity`, `on_full`, `clock`. Auto-registered classes
-are harvested into the runner's declared set by `FlezhaRunner::start()`
+`sink`, `input`, `emits`, `keys` + `entities_for` (static mode), `key`,
+`idle_ttl` + `max_entities` (dynamic-mode knobs — the key itself is declared on
+the wiring with `.key_by(f)`), `capacity`, `on_full`, `clock`. Auto-registered
+classes are harvested into the runner's declared set by `FlezhaRunner::start()`
 (`register_inventory_operatives()` does the same without a runner). Fan-out
 and multi-input stay on an explicit `channels()` body.
+
+Both shorthands name their entry channel `input` unless the author says
+otherwise: `input = "prices"` on the attribute, `input::<String>("prices")` on
+the `operative!` pipeline head — the same position the `plugin` terminator
+takes its name in. `input` on a procedure with no `sink` is refused, because
+there is no generated operative for it to name a channel on.
 
 ## Escape hatch: the raw traits
 

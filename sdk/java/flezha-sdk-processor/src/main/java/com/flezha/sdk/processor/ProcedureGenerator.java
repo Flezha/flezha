@@ -110,7 +110,7 @@ final class ProcedureGenerator {
         ExecutableElement initState = findAnnotated(procedure, InitState.class);
         Procedure ann = procedure.getAnnotation(Procedure.class);
         List<String> keys = List.of(ann.keys());
-        if (!declarationsAgree(procedure, entitiesFor, initState, keys, stateful)) {
+        if (!declarationsAgree(procedure, entitiesFor, initState, ann, stateful)) {
             return null;
         }
         String emitsType = declaredEmits(ann);
@@ -137,6 +137,7 @@ final class ProcedureGenerator {
                 ann.key(),
                 ann.id().isEmpty() ? snake(simple) : ann.id(),
                 ann.sink(),
+                ann.input().isEmpty() ? "input" : ann.input(),
                 ann.onFull(),
                 ann.capacity(),
                 stateful,
@@ -201,8 +202,9 @@ final class ProcedureGenerator {
             TypeElement procedure,
             ExecutableElement entitiesFor,
             ExecutableElement initState,
-            List<String> keys,
+            Procedure ann,
             boolean stateful) {
+        List<String> keys = List.of(ann.keys());
         // Entity mode: static keying is the only mode a procedure can declare
         // — dynamic keying moved to the wiring.
         if (findAnnotated(procedure, EntityKey.class) != null) {
@@ -226,6 +228,13 @@ final class ProcedureGenerator {
         }
         if (!keys.isEmpty() && entitiesFor == null) {
             out.error(procedure, "@Procedure(keys = {...}) requires a @EntitiesFor method");
+            return false;
+        }
+        if (!ann.input().isEmpty() && ann.sink().isEmpty()) {
+            out.error(
+                    procedure,
+                    "@Procedure(input = \"" + ann.input() + "\") names the entry channel of the operative a"
+                            + " `sink` auto-wires; this class declares no `sink`, so there is no channel to name");
             return false;
         }
         return true;
@@ -418,7 +427,9 @@ final class ProcedureGenerator {
         b.append("    @Override public void channels(ChannelBuilder c) {\n");
         b.append("        c.input(")
                 .append(TypeMirrors.classLit(m.inputType()))
-                .append(", \"input\")")
+                .append(", \"")
+                .append(m.input())
+                .append("\")")
                 .append(onFullCall)
                 .append(".into(")
                 .append(m.procedureSimple())

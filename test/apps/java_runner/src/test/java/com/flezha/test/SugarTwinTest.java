@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.generated.GeneratedStreamOperatives;
 import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.WallClock;
 import com.flezha.sdk.testing.ProcedureTestHarness;
@@ -66,6 +67,17 @@ class SugarTwinTest {
         GeneratedStreamOperatives.defineAll(com.flezha.sdk.Flezha.createRunner("sugar_twin_ns"));
         assertThat(com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.factoryIds())
                 .contains("sugar_do_nothing", "sugar_store_input", "sugar_static_entity");
+    }
+
+    /**
+     * fails when: the generated shorthand stops naming its entry channel
+     * {@code input} — the address §6's conformance table and every operative
+     * in the tree ships under.
+     */
+    @Test
+    void theGeneratedShorthandKeepsTheDefaultEntryChannelName() {
+        var topology = StreamOperativeTopologyBuilder.build(new SugarDoNothingStreamOperative());
+        assertThat(topology.channels().get(0).name()).isEqualTo("input");
     }
 
     /**

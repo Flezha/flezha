@@ -305,6 +305,50 @@ class FlezhaProcessorTest {
         assertThat(change).contains("pollFirst()");
     }
 
+    @Test
+    void theGeneratedEntryChannelKeepsItsDefaultName() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "default_entry", sink = "echo")
+                public class DefaultEntry {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(generated("t.DefaultEntry", "t.DefaultEntryStreamOperative", code))
+                .contains("c.input(java.lang.String.class, \"input\")");
+    }
+
+    @Test
+    void theAnnotationNamesTheGeneratedEntryChannel() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "named_entry", sink = "echo", input = "prices")
+                public class NamedEntry {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(generated("t.NamedEntry", "t.NamedEntryStreamOperative", code))
+                .contains("c.input(java.lang.String.class, \"prices\")");
+    }
+
+    @Test
+    void rejectsAnEntryChannelNameWithoutASink() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "no_sink", input = "prices")
+                public class NoSink {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(diagnose("t.NoSink", code)).anyMatch(m -> m.contains("prices") && m.contains("sink"));
+    }
+
     /** Runs the processor over a well-formed source and returns the generated procedure's text. */
     private String generated(String fqn, String generatedFqn, String code) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();

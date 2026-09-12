@@ -39,6 +39,14 @@ public @interface Procedure {
     String sink() default "";
 
     /**
+     * Name of the entry channel of the operative {@link #sink()} auto-wires — the address an
+     * operator injects on and the name a forwarded frame has to match. Empty (the default)
+     * names it {@code input}. Setting it without a {@code sink} is an error: there is no
+     * generated operative for it to name a channel on.
+     */
+    String input() default "";
+
+    /**
      * Name of a {@code static String <name>(Output out)} method on this class supplying the
      * emit's natural key. Set it to feed a {@code .keyed()} channel: the generated run then
      * calls {@code ctx.emitKeyed(...)}, the only emit such a channel accepts. Requires a

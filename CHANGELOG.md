@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added: the single-procedure shorthand names its entry channel
+
+The shorthand's entry channel used to be the literal string `input`, and that
+string is not private: it is the address an operator types into a plugin option
+to inject on, and the name a forwarded frame has to match to reach the
+operative. An author who needed to choose it had to abandon the shorthand and
+write the whole topology by hand.
+
+All three spellings now take an optional name. Java is an annotation element,
+`@Procedure(id = "…", sink = "…", input = "prices")`. Rust is an attribute key,
+`#[flezha::procedure(id = "…", sink = "…", input = "prices")]`, and an optional
+name on the `flezha::operative!` pipeline head,
+`input::<String>("prices") -> … -> plugin::<Vec<u8>>("k")`, written in the same
+position the `plugin` terminator already takes its own name.
+
+**Nothing changes for a declaration that writes no name.** The generated
+topology is byte-identical to today's, entry channel included, so every
+existing operative, the cross-SDK conformance table and every fixture are
+untouched. Only Rust and Java have this shorthand; the other five SDKs have
+none to extend.
+
+A name written on a spelling that can omit its `sink` is refused at compile
+time, naming both — the Java processor generates no operative without a `sink`,
+and the Rust attribute already refused a `sink` without an `id` the same way.
+The `flezha::operative!` pipeline cannot omit its terminator, so it owes no such
+refusal; it does refuse an empty name, which would declare a channel nothing can
+address.
+
 ### Changed: `sink("x")` names the channel `x`, in every SDK
 
 **Breaking for every SDK.** A sink used to name a plugin attachment point and

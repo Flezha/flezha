@@ -124,6 +124,7 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Java, Ruby and PHP: the class name in snake_case |
 | `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
 | `on_full = …` / `onFull = "…"`                      | overflow policy of the auto-wired entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
+| `input = "…"` (Rust and Java)                       | name of the auto-wired entry channel (§5); absent, that channel is named `input` |
 
 A mutable-state parameter is **the single signal** that a procedure is
 stateful. Its presence sets `State` and selects the derived change type; its
@@ -480,10 +481,25 @@ shared between them.
 Exactly **one** topology may be auto-wired: a single procedure from a
 controller input to one named sink (`input → procedure → plugin(sink)`). A
 sugared procedure that declares both an `id` and a `sink` generates that
-operative (entry channel `"input"`, the producing channel named by the `sink`
-string, which is what a sink does everywhere) and registers it automatically —
-the user writes no registration call. `sink` without `id`, or `sink` on a
-procedure with no output, is refused.
+operative (the producing channel named by the `sink` string, which is what a
+sink does everywhere) and registers it automatically — the user writes no
+registration call. `sink` without `id`, or `sink` on a procedure with no
+output, is refused.
+
+- **The entry channel takes the name the author writes, and `input` when the
+  author writes none.** That name is the address an operator injects on and the
+  name a forwarded frame has to match, so growing out of the shorthand no
+  longer means abandoning it. Java spells it as an annotation element,
+  `@Procedure(id = "…", sink = "…", input = "prices")`; Rust spells it as an
+  attribute key, `#[flezha::procedure(id = "…", sink = "…", input = "prices")]`,
+  and as an optional name on the `flezha::operative!` pipeline head,
+  `input::<String>("prices")`, in the same position the `plugin` terminator
+  takes one. Omitted, the generated topology is unchanged, which is what keeps
+  §6's table and every existing operative still true. A name on a spelling that
+  can omit its `sink` is refused, naming both, because no operative is
+  generated for it to name a channel on; the `flezha::operative!` pipeline
+  cannot omit its terminator and owes no such refusal. Only Rust and Java have
+  a §5 shorthand at all.
 
 - **Multi-procedure topology stays explicit.** More than one procedure, or any
   fan-out / multi-input edge, requires an explicit `channels()` body (Rust and

@@ -93,12 +93,29 @@ The declarations are named for the Entity, not the Procedure. Static mode is dec
 - **THEN** it SHALL offer no `entity_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
 ### Requirement: Single-procedure auto-wiring and registration
-The contract SHALL define exactly one topology that may be auto-wired — a single procedure from a controller input to one sink — and SHALL define auto-registration so the user writes no explicit registration call for that case.
+The contract SHALL define exactly one topology that may be auto-wired — a single procedure from a controller input to one sink — and SHALL define auto-registration so the user writes no explicit registration call for that case. The auto-wired entry channel SHALL take a name the author may supply, and SHALL be named `input` when the author supplies none, so the generated address is choosable without becoming mandatory.
+
+An entry channel name supplied on a procedure that declares no `sink` SHALL be refused, naming both the supplied name and the missing `sink`, because no operative is generated for it to name a channel on; a spelling that cannot omit the sink owes no refusal.
 
 #### Scenario: Single-procedure input-to-sink is auto-wired
 
 - **WHEN** a sugared procedure declares an `id` and a `sink` and is the sole procedure
 - **THEN** the SDK generates an operative wiring controller input → procedure → named sink and registers it automatically
+
+#### Scenario: The auto-wired entry channel keeps its default name
+
+- **WHEN** a sugared procedure declares an `id` and a `sink` and no entry channel name
+- **THEN** the generated operative's entry channel SHALL be named `input`
+
+#### Scenario: The author names the auto-wired entry channel
+
+- **WHEN** a sugared procedure declares an `id`, a `sink` and the entry channel name `prices`
+- **THEN** the generated operative's entry channel SHALL be named `prices`, and a frame whose metadata names `prices` SHALL reach it
+
+#### Scenario: A name without a generated operative is refused
+
+- **WHEN** a sugared procedure declares an entry channel name but no `sink`, in a spelling that can omit one
+- **THEN** the SDK SHALL refuse at compile time, naming both the supplied name and the missing `sink`
 
 #### Scenario: Multi-procedure topology stays explicit
 

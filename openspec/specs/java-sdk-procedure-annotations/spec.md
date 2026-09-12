@@ -3,12 +3,10 @@
 ## Purpose
 
 The java-sdk-procedure-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Procedure` / `@State` / `@StreamOperative` / `@EntitiesFor` (and `@EntityKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Procedure` implementation, `applyChange`, and `FlezhaRunner.defineStream`. The processor mirrors the Rust SDK's signature-to-types, state, entity mode, and single-procedure auto-wiring inference rules so an equivalent operative expands to a structurally identical topology across both SDKs. Multi-procedure topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
-
 ## Requirements
-
 ### Requirement: `@Procedure` annotation processor
 
-The Java SDK SHALL provide an annotation processor that generates a complete `Procedure` implementation from an `@Procedure`-annotated class with a `run` method, conforming to the authoring contract.
+The Java SDK SHALL provide an annotation processor that generates a complete `Procedure` implementation from an `@Procedure`-annotated class with a `run` method, conforming to the authoring contract. The annotation SHALL carry an optional `input` element naming the generated operative's entry channel, defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`. An `input` element on a class that declares no `sink` SHALL fail compilation, naming both.
 
 #### Scenario: Stateless procedure generates type getters and impl
 
@@ -24,6 +22,21 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Pr
 
 - **WHEN** an `@Procedure` class `StaticEntry` is processed
 - **THEN** its generated `Procedure` type can be named in a `@StreamOperative` `channels()` body via `from`/`into`
+
+#### Scenario: The generated entry channel keeps its default name
+
+- **WHEN** a class annotated `@Procedure(id = "single_mode", sink = "sink")` declares no `input` element
+- **THEN** the generated operative's entry channel SHALL be named `input`
+
+#### Scenario: The annotation names the generated entry channel
+
+- **WHEN** a class is annotated `@Procedure(id = "single_mode", sink = "sink", input = "prices")`
+- **THEN** the generated operative's entry channel SHALL be named `prices`
+
+#### Scenario: An `input` element without a `sink` is refused
+
+- **WHEN** a class is annotated `@Procedure(id = "single_mode", input = "prices")` with no `sink`
+- **THEN** the processor SHALL fail compilation, naming both `prices` and the missing `sink`
 
 ### Requirement: `@State` change generation
 
@@ -136,3 +149,4 @@ The `@Procedure` annotation processor SHALL recognise an `@InitState`-annotated 
 
 - **WHEN** `@InitState` is declared on a `@Procedure` class whose `run` has no `@State` handle parameter
 - **THEN** the processor emits an error stating `@InitState` requires a stateful run, and generates no init delegation
+
