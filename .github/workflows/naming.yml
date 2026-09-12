@@ -76,6 +76,18 @@ name: Naming
 # .github/toolchains.json. Both read DISK rather than the git index, because a
 # file being written is exactly the work they should judge.
 #
+# check-openspec-order is the queue gate: every change in openspec/changes/
+# records the changes that must be archived before it as a `Depends-On:` first
+# line of its proposal.md, and the gate refuses a missing line, an id that
+# resolves to nothing, a change naming itself, a cycle, and a change that was
+# STARTED while a change it names is still open. A change that merely waits
+# behind an open predecessor is accepted, because a queue is allowed to hold
+# work that is not ready yet. It reads disk and not the git index for a reason
+# worth stating here: /openspec/changes is in .gitignore, so this job's checkout
+# carries none of it and the row reads an empty queue and says so. Where the
+# gate bites is a developer's tree, and the `--run @naming` made before an
+# archive.
+#
 # check-build-artifacts is the repository-weight gate: `tracked` refuses a
 # committed build artefact (native libraries and fat jars are build output —
 # `scripts/build-native.sh` produces the one triple a test needs, and a release

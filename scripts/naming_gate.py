@@ -303,6 +303,11 @@ GATES = (
      "argv": ["scripts/check-ci-toolchain.sh"]},
     {"id": "vm-args", "group": "naming",
      "argv": ["scripts/check-vm-args.sh"]},
+    # The queue's order. `/openspec/changes` is in .gitignore, so a CI checkout
+    # carries none of it and this row reads an empty queue and says so; where it
+    # bites is a developer's tree and the `--run @naming` made before an archive.
+    {"id": "openspec-order", "group": "naming",
+     "argv": ["scripts/check-openspec-order.sh"]},
     {"id": "build-artifacts-tracked", "group": "naming",
      "argv": ["scripts/check-build-artifacts.sh", "tracked"]},
     {"id": "naming-gate-self-test", "group": "naming",
