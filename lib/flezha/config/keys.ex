@@ -600,7 +600,8 @@ defmodule Flezha.Config.Keys do
 
     # ---- benchmarks ---------------------------------------------------------
     {:bench_log, :path, nil, runtimes: [:bench], env: "FLEZHA_BENCH_LOG"},
-    {:bench_skip_build, :bool, false, runtimes: [:bench], env: "FLEZHA_BENCH_SKIP_BUILD"},
+    {:bench_skip_build, :bool, false,
+     key: true, runtimes: [:bench], env: "FLEZHA_BENCH_SKIP_BUILD"},
     {:bench_checkpoint_every, :positive_int, 500,
      runtimes: [:bench], env: "FLEZHA_BENCH_CHECKPOINT_EVERY"},
     {:bench_checkpoint_outputs, :string, nil,

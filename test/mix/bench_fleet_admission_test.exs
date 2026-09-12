@@ -13,6 +13,8 @@ defmodule Mix.Tasks.Bench.FleetAdmissionTest do
     fixtures: [{:auth_stores, prefix: "flz_bench_admission", claim: true}],
     async: false
 
+  import ExUnit.CaptureIO
+
   alias Flezha.AuthZ
   alias Flezha.AuthZ.RunnerProof
   alias Mix.Tasks.Bench.Fleet
@@ -21,18 +23,29 @@ defmodule Mix.Tasks.Bench.FleetAdmissionTest do
 
   defp frame(secret), do: %{"namespace" => @namespace, "namespace_secret" => secret}
 
+  # Issuing a credential is the task telling an operator what it just did, so
+  # the test that provokes the line owns it: captured, and asserted rather than
+  # discarded, because a capture nobody reads would also pass if the line moved.
+  defp issue_credential do
+    {credential, printed} = with_io(fn -> Fleet.runner_credential(@namespace) end)
+
+    assert printed =~ "Issued a runner credential for namespace #{@namespace}"
+
+    credential
+  end
+
   test "the environment the harness hands a runner proves the namespace it claims" do
     assert AuthZ.enabled?()
 
-    assert [{"FLEZHA_NAMESPACE_SECRET", secret}] = Fleet.runner_credential(@namespace)
+    assert [{"FLEZHA_NAMESPACE_SECRET", secret}] = issue_credential()
 
     assert {:ok, %{namespace: @namespace}} =
              RunnerProof.prove(nil, @namespace, frame(secret), :uds)
   end
 
   test "the credential an earlier run left behind is retired by the next one" do
-    assert [{_var, first}] = Fleet.runner_credential(@namespace)
-    assert [{_var, second}] = Fleet.runner_credential(@namespace)
+    assert [{_var, first}] = issue_credential()
+    assert [{_var, second}] = issue_credential()
 
     assert {:error, :namespace_not_proven} =
              RunnerProof.prove(nil, @namespace, frame(first), :uds)

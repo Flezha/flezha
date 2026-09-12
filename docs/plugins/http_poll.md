@@ -88,7 +88,9 @@ refused when it is enabled, with a message naming both spellings.
 
 Any other key is refused at attach rather than ignored — a POST body, an auth flow, a
 backoff ladder — so a config asking for something the provider does not offer fails
-loudly. The check runs in `init_provider/1`, which is where a `--plugins` spec lands.
+loudly. The check runs while the options are prepared, in
+`Flezha.Plugin.ProviderBehaviour.Options.normalise_opts/2`, which the extension table
+calls before `init_provider/1` on the CLI path and the `--plugins` spec path alike.
 
 Every log line, telemetry label and attach error carries the URL with its userinfo and
 query stripped; config endpoints routinely carry an API key in the query string, and

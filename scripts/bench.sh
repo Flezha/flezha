@@ -2,8 +2,9 @@
 # Flezha benchmark runner — wrapper for `mix bench`.
 #
 # Picks the SDK runtime, transport, workload shape, and dimensions.
-# Everything is optional; defaults match the merge-blocking CI gate
-# (rust + uds + regression shape, 100 operatives x 100 msg).
+# Everything is optional; the defaults are the merge-blocking CI gate's runtime,
+# transport and shape (rust + uds + regression). Its dimensions are not: CI runs
+# -n 100 -m 10000, where this script defaults to 100 operatives x 100 msg.
 #
 # Quick examples:
 #   ./scripts/bench.sh                                # rust + uds, default dims

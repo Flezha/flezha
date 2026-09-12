@@ -95,7 +95,6 @@ defmodule Flezha.MixProject do
       flezha: [
         include_executables_for: [:unix],
         include_erts: true,
-        application: [:flezha],
         steps: [:assemble, &copy_release_extras/1]
       ]
     ]
