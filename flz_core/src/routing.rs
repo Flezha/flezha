@@ -15,12 +15,12 @@ use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
 use crate::admission::{admit_from_entity, admit_from_reader};
-use crate::channel::{ChannelDescriptor, ChannelKind, ConsumerEdge};
+use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
 use crate::entity::{make_entity_payload, EntityItem, EntitySlot};
 use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{Operative, OperativeRegistry};
-use crate::operative::topology::{EntityMode, ProcedureDescriptor};
+use crate::operative::topology::{ChannelLookup, EntityMode, ProcedureDescriptor};
 use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryParseLadder};
 
 /// Route one channel value to every consumer through its own edge — the one
@@ -331,9 +331,11 @@ pub struct OperativeDispatchHandle {
 
 impl OperativeDispatchHandle {
     /// A frame off the wire into the operative it names: the entry channel
-    /// resolved, the bytes wrapped, the value routed. The input-liveness
-    /// signal is taken before anything can decline the frame; a replay-end
-    /// broadcast defers behind a host class's staged slice members.
+    /// resolved, the bytes wrapped, the value routed. A name the operative
+    /// does not declare is parked under that name rather than dropped or
+    /// rerouted; past that, the input-liveness signal is taken before anything
+    /// can decline the frame. A replay-end broadcast defers behind a host
+    /// class's staged slice members.
     pub fn dispatch(
         &self,
         instance_id: &str,
@@ -350,12 +352,9 @@ impl OperativeDispatchHandle {
             return;
         }
 
-        let Some(channel_id) = resolve_entry_channel(&instance, instance_id, metadata) else {
+        let Some((channel_id, channel)) = entry_channel_or_park(&instance, &payload, metadata)
+        else {
             return;
-        };
-        let channel = match instance.topology.channel(channel_id) {
-            Some(c) => c,
-            None => return,
         };
 
         channel.observe_delivery();
@@ -442,39 +441,96 @@ fn route_inbox_frame(
     }
 }
 
-/// `metadata["channel"]`, or the first declared entry channel; `None` is
-/// reported.
-fn resolve_entry_channel(
-    instance: &StreamInstance,
-    instance_id: &str,
+/// The reason a frame that named no channel did not enter: there was nothing
+/// to default to. Both cores report it in these words.
+pub(crate) const NO_ENTRY_CHANNEL_ERROR: &str = "the operative declares no entry channel";
+
+/// The entry channel a frame enters: the one its `channel` metadata names, or
+/// the first declared entry channel when it names none. `None` when it names
+/// a channel the operative does not declare — the payload is then parked under
+/// that name, neither dropped nor routed to some other channel.
+fn entry_channel_or_park<'a>(
+    instance: &'a Arc<StreamInstance>,
+    payload: &[u8],
     metadata: &HashMap<String, String>,
-) -> Option<u32> {
+) -> Option<(ChannelId, &'a ChannelDescriptor)> {
     let topology = &instance.topology;
-    match metadata.get("channel") {
-        Some(name) => match topology.lookup_channel_id(name) {
-            Some(id) => Some(id),
-            None => {
-                eprintln!(
-                    "[flezha] operative {} has no channel `{}`",
-                    instance_id, name
-                );
-                None
-            }
+    // The name the frame asked for; empty when it asked for none and there is
+    // no entry channel to default to.
+    let requested: &str = match metadata.get("channel") {
+        Some(name) => match topology.channel_of_kind(name, ChannelKind::Entry) {
+            ChannelLookup::Found(id, channel) => return Some((id, channel)),
+            // A declared name of another kind — a sink, an inter-procedure
+            // channel — is no more an entry channel than one declared
+            // nowhere, so both park and both name the entry set.
+            ChannelLookup::WrongKind(_) => name,
+            ChannelLookup::Undeclared => name,
         },
-        None => {
-            match topology
-                .channels
-                .iter()
-                .position(|c| c.kind == ChannelKind::Entry)
-            {
-                Some(idx) => Some(idx as u32),
-                None => {
-                    eprintln!("[flezha] operative {} has no entry channels", instance_id);
-                    None
-                }
-            }
-        }
+        None => match topology.first_of_kind(ChannelKind::Entry) {
+            Some(first) => return Some(first),
+            None => "",
+        },
+    };
+    park_unresolved_entry(instance, requested, payload, metadata);
+    None
+}
+
+/// Why the frame did not enter: the name it asked for against the set the
+/// operative declares, or that it declares none at all.
+fn unresolved_entry_error(declared: &[&str], requested: &str) -> String {
+    if declared.is_empty() {
+        return NO_ENTRY_CHANNEL_ERROR.to_string();
     }
+    format!(
+        "no entry channel `{requested}`; the operative declares: {}",
+        declared.join(", ")
+    )
+}
+
+/// A frame naming a channel the operative does not declare: parked under the
+/// name it asked for, off the reader thread as every other park is. The budget
+/// is one — the same declared set answers every re-attempt — so the ladder
+/// parks without waiting.
+fn park_unresolved_entry(
+    instance: &Arc<StreamInstance>,
+    requested: &str,
+    payload: &[u8],
+    metadata: &HashMap<String, String>,
+) {
+    let declared = instance.topology.declared_names(ChannelKind::Entry);
+    let error = unresolved_entry_error(&declared, requested);
+    // The replay flag is deliberately not read: an input-log replay parks
+    // again, and the controller's store keys an entry on its ORIGIN identity
+    // (offset, or channel and payload hash) rather than on the park id, so a
+    // re-park of a frame that parked before is the same row. Skipping the
+    // replay would instead lose a frame that only became unresolved after the
+    // class changed.
+    let (consumed_offset, _replay) = frame_facts(metadata);
+    let instance_id = instance.instance_id.to_string();
+    let requested = requested.to_string();
+    let payload = payload.to_vec();
+    crate::retry::spawn_park_thread("flezha-unresolved-entry-park", move || {
+        crate::retry::run_retry_park_ladder(
+            &format!("entry channel `{requested}`"),
+            &requested,
+            // A frame-controlled name never reaches the identity slot the
+            // controller turns into a directory; the row's `channel` carries
+            // it, which is where the requirement puts it.
+            crate::retry::UNRESOLVED_PROCEDURE_ID,
+            crate::channel::RetryPolicy {
+                max_attempts: 1,
+                backoff_base_ms: 0,
+            },
+            &instance_id,
+            "_entry",
+            consumed_offset,
+            Some(payload),
+            error,
+            // Unreachable at a budget of one, and the truth at any other:
+            // the name is a fact of the frame.
+            || Err("an unresolved channel name cannot resolve on a re-attempt".to_string()),
+        );
+    });
 }
 
 /// The value a frame becomes on its entry channel, or `None` when it left
@@ -553,73 +609,5 @@ fn wrap_entry(
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use std::io::Read;
-    use std::os::unix::net::UnixStream;
-    use std::time::Duration;
-
-    use super::*;
-    use crate::flusher::SendFrameFn;
-    use crate::state_sink;
-
-    const OPERATIVE: &str = "op-plugin-emit";
-    const BODY: &[u8] = b"the operative's only output";
-
-    /// A stream whose peer is gone: the shape the controller leaves behind
-    /// when it closes the socket half of a rebound pair.
-    fn dead_stream() -> Arc<FlezhaStream> {
-        let (near, far) = UnixStream::pair().expect("a socket pair");
-        drop(far);
-        Arc::new(FlezhaStream::Unix(near))
-    }
-
-    fn sink_metadata() -> HashMap<String, String> {
-        HashMap::from([("channel".to_string(), "out".to_string())])
-    }
-
-    #[test]
-    fn a_plugin_frame_whose_write_fails_is_held_for_replay() {
-        let _guard = state_sink::test_guard();
-        state_sink::reset_for_test();
-
-        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &sink_metadata()).unwrap();
-
-        assert_eq!(
-            state_sink::ring_len_for_test(),
-            1,
-            "a plugin output whose write failed must be held, not dropped"
-        );
-        state_sink::reset_for_test();
-    }
-
-    #[test]
-    fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
-        let _guard = state_sink::test_guard();
-        state_sink::reset_for_test();
-
-        let metadata = sink_metadata();
-        let expected = payloader::build_from_binary(OPERATIVE, BODY, metadata.clone()).unwrap();
-        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &metadata).unwrap();
-
-        // The reconnect: a fresh secondary, then the sink install that replays
-        // the ring onto it.
-        let (near, mut far) = UnixStream::pair().expect("a socket pair");
-        far.set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("a read deadline, so a lost frame fails instead of hanging");
-        state_sink::set_secondary_stream(Some(Arc::new(FlezhaStream::Unix(near))));
-        let sink: SendFrameFn = Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(()));
-        state_sink::install_global_sink(sink);
-
-        let mut seen = vec![0u8; expected.len()];
-        far.read_exact(&mut seen)
-            .expect("the held frame must reach the fresh secondary");
-        assert_eq!(
-            seen, expected,
-            "the frame is replayed exactly as it was framed"
-        );
-        assert_eq!(state_sink::ring_len_for_test(), 0, "the ring is drained");
-
-        state_sink::set_secondary_stream(None);
-        state_sink::reset_for_test();
-    }
-}
+#[path = "routing_tests.rs"]
+mod tests;

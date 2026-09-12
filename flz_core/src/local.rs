@@ -25,6 +25,7 @@ use crate::channel::ChannelKind;
 use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::registry::OperativeRegistry;
+use crate::operative::topology::ChannelLookup;
 use crate::poll_core::PollCore;
 use crate::routing::OperativeDispatchHandle;
 
@@ -206,39 +207,23 @@ impl LocalRun {
 
     /// The declared channel of that kind; the refusal names the channel and
     /// the operative, because a name nothing matches is otherwise a value
-    /// that vanishes.
+    /// that vanishes. The lookup is the topology's own, shared with the
+    /// dispatch path so a feed and a frame off the wire cannot disagree about
+    /// what a name means.
     fn channel_of_kind(&self, channel: &str, kind: ChannelKind) -> Result<(), Error> {
         let topology = &self.instance.topology;
-        match topology
-            .lookup_channel_id(channel)
-            .and_then(|id| topology.channel(id))
-        {
-            Some(declared) if declared.kind == kind => Ok(()),
-            Some(declared) => Err(Error::Routing(format!(
-                "operative `{}` channel `{channel}` is {:?}, not {kind:?}",
-                self.instance.instance_id, declared.kind
+        match topology.channel_of_kind(channel, kind) {
+            ChannelLookup::Found(..) => Ok(()),
+            ChannelLookup::WrongKind(declared) => Err(Error::Routing(format!(
+                "operative `{}` channel `{channel}` is {declared:?}, not {kind:?}",
+                self.instance.instance_id
             ))),
-            None => Err(Error::Routing(format!(
-                "operative `{}` has no channel `{channel}`; it declares {kind:?} {}",
+            ChannelLookup::Undeclared => Err(Error::Routing(format!(
+                "operative `{}` has no channel `{channel}`; it declares {kind:?} {:?}",
                 self.instance.instance_id,
-                self.declared_names(kind)
+                topology.declared_names(kind)
             ))),
         }
-    }
-
-    /// The declared channel names of one kind, so a refusal answers the
-    /// question it raises. A sink channel takes the producing procedure's
-    /// name unless the declaration `named` it.
-    fn declared_names(&self, kind: ChannelKind) -> String {
-        let names: Vec<&str> = self
-            .instance
-            .topology
-            .channels
-            .iter()
-            .filter(|c| c.kind == kind)
-            .map(|c| &*c.name)
-            .collect();
-        format!("{names:?}")
     }
 }
 

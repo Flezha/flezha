@@ -106,7 +106,7 @@ fn free_one_slot(slot: &Arc<EntitySlot>) {
 #[test]
 fn no_record_carries_the_offset_until_the_edge_push_lands() {
     let id = format!("edge_order_{}", std::process::id());
-    let instance = host_class::instance(&id, &[], &[1]);
+    let instance = host_class::instance(&id, &["in"], &[], &[1]);
     let producer = Arc::clone(&instance.entities[0][0]);
     let consumer = Arc::clone(&instance.entities[1][0]);
     saturate_slot(&consumer);
@@ -151,7 +151,7 @@ fn no_record_carries_the_offset_until_the_edge_push_lands() {
 #[test]
 fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     let id = format!("edge_fanout_{}", std::process::id());
-    let instance = host_class::instance(&id, &[], &[1, 2, 3]);
+    let instance = host_class::instance(&id, &["in"], &[], &[1, 2, 3]);
     let producer = Arc::clone(&instance.entities[0][0]);
     let full = Arc::clone(&instance.entities[3][0]);
     saturate_slot(&full);

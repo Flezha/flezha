@@ -261,8 +261,10 @@ Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
 1. **Wire frame → entry channel** — `metadata["channel"]` is resolved through
    `OperativeTopology::name_to_id` (`HashMap<&'static str, ChannelId>`), then
    a `Vec` index into `topology.channels`. A frame with no `channel` key goes
-   to the class's first declared `Entry` channel; an unknown name is dropped
-   and logged. The channel's `wrap_input` turns the bytes into
+   to the class's first declared `Entry` channel; a name that is not one of the
+   class's `Entry` channels — undeclared, or declared as a sink or an
+   inter-procedure channel — is parked to the dead-letter store under the name
+   it asked for, with one attempt and no retry wait. The channel's `wrap_input` turns the bytes into
    `Arc<dyn Any + Send + Sync>` (see "Entry decoding").
 2. **Entry channel → consumer Entity** — per consumer Procedure: `Single`
    jumps to entity 0; `Static` does one HashMap lookup per key returned by

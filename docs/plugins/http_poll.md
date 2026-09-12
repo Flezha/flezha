@@ -181,7 +181,9 @@ plugin's health verdict, not on a failure-rate metric.
 - **`channel` is not validated at attach.** Channel names are an SDK-side topology fact
   that never reaches the controller (`AddOperativeResponse.metadata` carries capability
   facts only), and attach happens before the operative binds. An undeclared name surfaces
-  as a dispatch failure on the runner, exactly as a mistyped `flz operative send --channel`.
+  on the runner as a dead-letter park under that name, exactly as a mistyped
+  `flz operative send --channel` does: `flz dlq list` shows the frames and
+  `flz dlq replay` re-injects them once a channel of that name exists.
 - **HTTPS is verified** against the system CA store; a host with no usable store fails the
   poll rather than dropping to an unverified connection.
 - **Requests share the default `:httpc` profile** with the rest of the controller;

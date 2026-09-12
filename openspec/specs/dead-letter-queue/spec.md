@@ -113,3 +113,31 @@ that entry rather than a further copy.
 - **THEN** they SHALL be read back unchanged, under the same directories, by the
   same verbs
 
+### Requirement: A park with no resolved channel SHALL be attributed to the name that was requested
+
+A parked entry SHALL carry a channel attribution even when no declared channel resolved, and that
+attribution SHALL be the name the frame requested rather than a blank, a placeholder, or the name of
+some channel the operative happens to declare. The name the operator typed is the one fact that
+makes the row actionable, so it is the one the row records.
+
+The entry's error SHALL name the declared entry channels of the operative, so the row answers the
+question it raises. An operative declaring none SHALL say so rather than printing an empty set.
+
+#### Scenario: The row names the requested channel
+
+- **GIVEN** an operative declaring one entry channel `prices`
+- **WHEN** a frame naming `not_prices` is parked
+- **THEN** `flz dlq list` SHALL show the entry with channel `not_prices`
+
+#### Scenario: The error names the declared set
+
+- **GIVEN** an operative declaring entry channels `prices` and `config`
+- **WHEN** a frame naming `quotes` is parked
+- **THEN** the entry's error SHALL name both `prices` and `config`
+
+#### Scenario: A replayed entry is re-routed by the corrected name
+
+- **GIVEN** a parked entry recorded against the requested channel `not_prices`
+- **WHEN** the operator replays it after the operative is redeclared with a channel of that name
+- **THEN** the payload SHALL reach that channel
+

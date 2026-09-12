@@ -1,7 +1,9 @@
 //! The retry policy every ladder climbs — how long attempt `n` waits,
 //! counted and logged — and the two off-thread ladders the routing seam
 //! climbs: a poison entry parse and an unwinding edge closure, each parked to
-//! the dead-letter queue once exhausted.
+//! the dead-letter queue once exhausted. A third caller, the frame naming a
+//! channel the operative does not declare, walks the same ladder with a
+//! budget of one.
 
 use std::any::Any;
 use std::fmt::Display;
@@ -16,6 +18,12 @@ use crate::channel::RetryPolicy;
 use crate::operative::instance::StreamInstance;
 use crate::park::RETRIES_TOTAL;
 use crate::routing::{deliver_edge, route_to_consumers};
+
+/// The identity slot a park with no resolved channel takes. A name off the
+/// wire never becomes a path component: the controller makes this slot a
+/// DIRECTORY under the dead-letter root, and the name the frame asked for
+/// rides the row's `channel` field instead, which is where it is read from.
+pub(crate) const UNRESOLVED_PROCEDURE_ID: &str = "_unresolved";
 
 /// Count and log a retryable failure; how long to wait before the next
 /// attempt.
@@ -80,7 +88,9 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
         .expect("parsed entry channel carries a wrap_input");
     run_retry_park_ladder(
         &format!("entry channel `{}`", channel.name),
-        channel,
+        &channel.name,
+        &channel.name,
+        channel.retry,
         &ladder.instance.instance_id,
         "_entry",
         ladder.consumed_offset,
@@ -104,13 +114,22 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
     );
 }
 
-/// Re-attempt one step per the channel's budget, then park what still
-/// fails; `attempt_step` re-runs AND delivers, so the two ladders differ only
-/// in the step.
+/// Re-attempt one step per `retry`'s budget, then park what still fails;
+/// `attempt_step` re-runs AND delivers, so the ladders differ only in the
+/// step. The name and the policy travel rather than a `ChannelDescriptor`,
+/// because a frame naming a channel the operative does not declare has no
+/// descriptor to park under and must park all the same.
+///
+/// `channel` is the row's attribution and may be a name off the wire.
+/// `procedure_id` is the identity slot, which the controller turns into a
+/// DIRECTORY, so it must be a value this side chose: a declared channel name,
+/// or [`UNRESOLVED_PROCEDURE_ID`] when there is none.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_retry_park_ladder(
     label: &str,
-    channel: &crate::channel::ChannelDescriptor,
+    channel: &str,
+    procedure_id: &str,
+    retry: RetryPolicy,
     instance_id: &str,
     entity_suffix: &str,
     consumed_offset: Option<u64>,
@@ -120,8 +139,8 @@ pub(crate) fn run_retry_park_ladder(
 ) {
     let mut attempt: u32 = 1; // the routing-thread run was attempt 1
     let mut error = first_error;
-    while attempt < channel.retry.max_attempts {
-        let delay = note_failed_attempt(label, attempt, channel.retry, &error);
+    while attempt < retry.max_attempts {
+        let delay = note_failed_attempt(label, attempt, retry, &error);
         crate::util::sleep_interruptible(delay, None);
         attempt += 1;
         match attempt_step() {
@@ -135,16 +154,15 @@ pub(crate) fn run_retry_park_ladder(
         "[flezha] {} parking payload to DLQ after {} attempt(s): {}",
         label, attempt, error
     );
-    let identity =
-        crate::flusher::encode_entity_identity(instance_id, &channel.name, entity_suffix);
+    let identity = crate::flusher::encode_entity_identity(instance_id, procedure_id, entity_suffix);
     let body = crate::park::ParkBody {
         park_id: crate::park::mint_park_id(&format!(
             "{}/{}/{}",
-            instance_id, channel.name, entity_suffix
+            instance_id, procedure_id, entity_suffix
         )),
         origin_offset: consumed_offset,
         entry: crate::flusher::DlqEntryBody {
-            channel: channel.name.to_string(),
+            channel: channel.to_string(),
             error,
             attempts: attempt,
             payload,
@@ -220,7 +238,9 @@ fn run_edge_ladder(ladder: EdgeLadder) {
         .unwrap_or_default();
     run_retry_park_ladder(
         &format!("channel `{}` edge into `{}`", channel.name, procedure),
-        channel,
+        &channel.name,
+        &channel.name,
+        channel.retry,
         &ladder.instance.instance_id,
         "_edge",
         ladder.consumed_offset,
@@ -244,4 +264,61 @@ fn run_edge_ladder(ladder: EdgeLadder) {
             .map_err(|e| e.to_string())
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state_sink;
+    use crate::test_support::capture_parks;
+
+    /// The ladder every park path submits to, on the arm the unresolved-channel
+    /// caller never walks: a budget above one re-attempts and then parks under
+    /// the name and the policy it was handed, which is all it now reads.
+    #[test]
+    fn a_budget_above_one_retries_then_parks_under_the_name_it_was_given() {
+        let _guard = state_sink::test_guard();
+        state_sink::reset_for_test();
+        let parks = capture_parks();
+        let mut attempts = 0;
+
+        run_retry_park_ladder(
+            "entry channel `late`",
+            "late",
+            "late",
+            RetryPolicy {
+                max_attempts: 3,
+                backoff_base_ms: 1,
+            },
+            "op-1",
+            "_entry",
+            Some(9),
+            Some(b"poison".to_vec()),
+            "the routing thread's failure".to_string(),
+            || {
+                attempts += 1;
+                Err(format!("failure {attempts}"))
+            },
+        );
+
+        assert_eq!(
+            attempts, 2,
+            "attempt 1 was the caller's, so the ladder runs the other two"
+        );
+        let body = parks
+            .lock()
+            .expect("park capture poisoned")
+            .pop()
+            .expect("an exhausted ladder parks")
+            .body;
+        assert_eq!(body.entry.channel, "late");
+        assert_eq!(body.entry.attempts, 3);
+        assert_eq!(
+            body.entry.error, "failure 2",
+            "the last failure is the reason"
+        );
+        assert_eq!(body.origin_offset, Some(9));
+        assert_eq!(body.entry.payload.as_deref(), Some(&b"poison"[..]));
+        state_sink::reset_for_test();
+    }
 }

@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Changed: a frame naming a channel that is not an entry channel is parked
+
+An input frame whose `channel` metadata names something that is not one of the
+operative's entry channels — a name it declares nowhere, or one that is really a
+sink or an inter-procedure channel — used to be thrown away with one line on the
+runner's stderr, and, on the Elixir SDK, delivered to whichever entry channel
+happened to be first. It is now parked in the dead-letter store with its payload
+bytes, under the name it asked for, and an error naming the entry channels the
+operative does declare:
+
+```sh
+flz dlq list --token "$FLEZHA_TOKEN"
+# … channel: not_prices   error: no entry channel `not_prices`; the operative declares: config, prices
+```
+
+The park is immediate: the name will not resolve on a re-attempt, so the entry
+records one attempt and no retry delay is waited. `flz dlq replay` re-injects
+the payload on the recorded name, so once the operative declares a channel of
+that name the parked frames reach it.
+
+Two behaviour changes ride with it. The Elixir SDK's default entry channel — the
+one a frame carrying no `channel` key takes — is now the **first declared**
+entry channel, as it already was on every other SDK; it used to be whichever
+declared name sorted first, because the channels live in a map. Declare `volumes`
+before `prices` and an unaddressed frame now reaches `volumes`. And a parked
+entry that resolved no channel is stored under a fixed `_unresolved` identity
+rather than under the name the frame asked for, so `flz dlq list` groups them
+together; the name the frame asked for is still the entry's `channel`, which is
+what `flz dlq replay` re-injects on.
+
+The dead-letter store also stops taking `.`, `..` or an empty identity component
+as a directory move: each becomes underscores. No parked entry written by a
+released version is affected, because until now every one of those components was
+an author-declared channel or procedure name.
+
+The park is only as good as the transport under it, and that has not changed:
+with no controller transport installed the core logs the payload and drops it,
+and each park holds a thread until the controller acks, so a source misconfigured
+at a high rate parks a thread per frame. Those limits are the dead-letter path's,
+not this change's, and they are unchanged by it.
+
+**Breaking for the Elixir SDK.** Anything relying on an unresolved name landing
+on the first declared entry channel now sees a park instead. A frame carrying no
+`channel` key at all is unchanged: it still takes the first declared entry
+channel, which is what a source plugin sends by default.
+
 ### Added: an identity holds several roles, and a `stopper` role to combine
 
 `flz role bind <principal> <role> <namespace>` now ADDS a role instead of

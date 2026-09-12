@@ -213,7 +213,7 @@ than at emit.
 | Key | Direction | Meaning |
 |-----|-----------|---------|
 | `input_type` | controller → runner | Stamped by the controller on every entry-channel input from the Operative's `:default_input_type` (`"2"` unless declared; `"1"` binary, `"2"` text). The SDKs do not read it: payload bytes are converted by the entry channel's declared payload type (`Vec<u8>`/`byte[]` passthrough, `String` UTF-8, anything else through the channel's entry parser). |
-| `channel` | controller → runner | The Operative's entry channel that receives this input. Absent ⇒ the Operative's first declared input channel. |
+| `channel` | controller → runner | The Operative's entry channel that receives this input. Absent ⇒ the Operative's first declared input channel. A name that is not one of the Operative's entry channels — undeclared, or declared as a channel of another kind — is parked to the dead-letter store under that name, never dropped and never routed to another channel. |
 | `channel` | runner → controller | Set on every plugin-bound emit. Plugin providers match on it via their `:channel` option to select which channel's outputs they consume. |
 | `flz.entity` | runner → controller | Output-identity stamp on `.keyed()` channels: `<operative_instance_id>/<procedure_name>/<entity_key>` (empty key for single-mode). |
 | `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>` (stream) or `<proc_idx>.<seq_in_proc>` (workflow outbox). |
@@ -872,7 +872,9 @@ Stream frames use the §3 format with payload id = the target instance's
 **Input (primary streams).** The runner resolves the instance by payload id
 (an unknown instance is logged and the frame dropped). For a **stream**
 instance it resolves the entry channel from `metadata["channel"]` (absent ⇒
-the first declared input channel), wraps the payload bytes through that
+the first declared input channel; a name that is not one of its entry channels
+parks to the dead-letter queue under that name, with one attempt), wraps the payload
+bytes through that
 channel's declared type, and pushes the item onto every consumer Procedure's
 Entity mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
 `flz.replay_end` ride along as described in §11. For a **workflow** instance

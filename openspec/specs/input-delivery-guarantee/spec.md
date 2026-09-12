@@ -96,3 +96,76 @@ suite SHALL fail on a delivery regression rather than settling around it.
 - **WHEN** the test tree is searched for a loop that re-sends an input until it is observed forwarded
 - **THEN** there SHALL be none
 
+### Requirement: An entry frame naming an undeclared channel SHALL be parked, never dropped or rerouted
+
+A frame whose metadata names an entry channel SHALL be delivered to that channel, or parked when the
+operative declares no ENTRY channel of that name. A name the operative declares as a channel of
+another kind — a plugin sink, an inter-procedure channel — is not an entry channel and SHALL be
+parked the same way, because channel names are one namespace across every kind. The frame SHALL NOT
+be discarded, and it SHALL NOT be delivered to a different channel. Every SDK SHALL answer the same
+way: the six hosted on `flz_core` through the core's one resolution, and the Elixir SDK, which is
+its own core, by re-expressing it.
+
+The park SHALL record the requested name in the entry's channel field and nowhere else. A name off
+the wire SHALL NOT reach the identity the dead-letter store keys its row by, because the store makes
+that identity's procedure component a directory; the SDK SHALL supply a fixed component of its own
+for a park that resolved no channel.
+
+The park SHALL be immediate rather than laddered. The name is a fact of the frame, so a re-attempt
+resolves against the same declared set and fails identically; walking the channel's retry budget
+would delay the report without changing it.
+
+A frame carrying no channel in its metadata SHALL continue to resolve to the first declared entry
+channel. That is the default a source plugin relies on and it is not an unresolved name.
+
+An operative that declares no entry channel at all SHALL park such a frame with a reason naming that
+condition, rather than reporting an unresolved name against an empty set.
+
+#### Scenario: A named channel the operative does not declare is parked
+
+- **GIVEN** an operative declaring one entry channel `prices`
+- **WHEN** a frame arrives whose metadata carries `channel = "not_prices"`
+- **THEN** the frame SHALL be parked in the dead-letter store with its payload bytes, and SHALL NOT reach any procedure
+
+#### Scenario: The Elixir SDK stops rerouting an unresolved name
+
+- **GIVEN** an Elixir operative declaring entry channels `prices` and `config`
+- **WHEN** a frame arrives whose metadata carries `channel = "quotes"`
+- **THEN** the frame SHALL be parked, and neither `prices` nor `config` SHALL receive it
+
+#### Scenario: A frame with no channel still reaches the first entry channel
+
+- **GIVEN** an operative declaring one entry channel `prices`
+- **WHEN** a frame arrives whose metadata carries no `channel` key
+- **THEN** the frame SHALL be delivered to `prices`
+
+#### Scenario: The default is the first declared entry channel, whatever its name sorts as
+
+- **GIVEN** an operative declaring entry channels `volumes` and then `prices`, in that order
+- **WHEN** a frame arrives whose metadata carries no `channel` key
+- **THEN** the frame SHALL be delivered to `volumes`, on every SDK
+
+#### Scenario: A name the operative declares as another kind of channel is parked
+
+- **GIVEN** an operative declaring one entry channel `prices` and one plugin sink `out`
+- **WHEN** a frame arrives whose metadata carries `channel = "out"`
+- **THEN** the frame SHALL be parked under the name `out`, and SHALL NOT reach any procedure
+
+#### Scenario: A requested name never becomes a path component
+
+- **GIVEN** an operative declaring one entry channel `prices`
+- **WHEN** a frame arrives whose metadata carries a `channel` naming a parent directory
+- **THEN** the parked entry SHALL record that name as its channel, and the identity it is stored under SHALL carry the SDK's own fixed component instead
+
+#### Scenario: The park is immediate
+
+- **GIVEN** an operative whose entry channel declares a retry budget above one
+- **WHEN** a frame naming an undeclared channel arrives
+- **THEN** the parked entry SHALL record one attempt, and no retry delay SHALL be waited
+
+#### Scenario: An operative with no entry channel at all
+
+- **GIVEN** an operative declaring no entry channel
+- **WHEN** any frame arrives for it
+- **THEN** the frame SHALL be parked with a reason naming that the operative declares no entry channel
+

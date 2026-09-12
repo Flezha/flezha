@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn a_wedged_entity_is_omitted_from_the_ship_within_the_bound() {
-        let instance = host_class::instance("busy_ship", &[], &[1]);
+        let instance = host_class::instance("busy_ship", &["in"], &[], &[1]);
         let slot = Arc::clone(&instance.entities[0][0]);
         // The flag `try_assemble` sets for a handout, held for ever: the
         // host took the activation and never answered it.
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn a_read_naming_one_busy_entity_is_refused_not_answered_empty() {
-        let instance = host_class::instance("busy_read", &["k1"], &[1]);
+        let instance = host_class::instance("busy_read", &["in"], &["k1"], &[1]);
         let slot = Arc::clone(&instance.entities[0][0]);
         assert!(!slot.drain_active.swap(true, Ordering::AcqRel));
 

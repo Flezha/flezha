@@ -449,10 +449,20 @@ defmodule Flezha.Dlq.Store do
     end
   end
 
-  # Path-safety: identity entities come off the wire; never let them climb
-  # out of the DLQ root.
+  # Path-safety: identity components come off the wire; never let them climb
+  # out of the DLQ root. The character class permits `.` and `-`, so a
+  # component that is nothing but dots survives it unchanged and `Path.join/1`
+  # then reads it as a move rather than a name; an empty one disappears from
+  # the join and puts the file one level up. Each becomes underscores instead,
+  # so every component this returns is a name. `...` and longer are ordinary
+  # directory names and are left alone.
   defp safe(component) do
-    String.replace(component, ~r/[^A-Za-z0-9._-]/, "_")
+    case String.replace(component, ~r/[^A-Za-z0-9._-]/, "_") do
+      "" -> "_"
+      "." -> "_"
+      ".." -> "__"
+      cleaned -> cleaned
+    end
   end
 
   defp ok_or({:ok, value}, _default), do: value

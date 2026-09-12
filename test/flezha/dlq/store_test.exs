@@ -66,6 +66,47 @@ defmodule Flezha.Dlq.StoreTest do
     assert listed["generation"] == 1
   end
 
+  # `Flezha.Dlq.Store.path_component/1` is `safe/1`, the guard every identity
+  # component off the wire passes through before it becomes a directory. The
+  # character class permits `.` and `-`, so before this change `safe("..")`
+  # came back `".."` and `Path.join/1` read it as a move out of the class
+  # directory.
+  test "a path component that would climb out of the root is a name, not a move" do
+    assert Store.path_component("..") == "__"
+    assert Store.path_component(".") == "_"
+    assert Store.path_component("") == "_"
+    assert Store.path_component("...") == "...", "only `.` and `..` move"
+    assert Store.path_component("../../etc") == ".._.._etc"
+    assert Store.path_component("ohlc") == "ohlc", "an ordinary id is untouched"
+  end
+
+  # The park a frame naming no declared entry channel writes: the identity slot
+  # is `_unresolved`, chosen by the SDK, and the requested name is in the row's
+  # channel field where nothing joins it to a path.
+  test "an unresolved park lands in a listed procedure directory", %{store: store} do
+    assert {:ok, ref} =
+             Store.append(
+               store,
+               entry(%{procedure_id: "_unresolved", channel: "../../../../etc"})
+             )
+
+    assert [listed] = Store.list(store, nil)
+    assert listed["channel"] == "../../../../etc"
+    assert {"MarketOperative", "_unresolved"} in Store.procedures("MarketOperative")
+    assert {:ok, _entry, "poison-bytes"} = Store.get(store, ref)
+  end
+
+  # A runner mints a fresh `park_id` on every park, so an input-log replay of a
+  # frame that parked once arrives with the same bytes and a different id. The
+  # entry id is the ORIGIN identity, not the ack handle, which is what keeps a
+  # replay from writing a second row per restart, without bound.
+  test "a re-park under a fresh park_id is still one entry", %{store: store} do
+    assert {:ok, ref} = Store.append(store, entry(%{park_id: "unresolved/not_prices/_entry#0"}))
+    assert {:ok, ^ref} = Store.append(store, entry(%{park_id: "unresolved/not_prices/_entry#7"}))
+
+    assert length(Store.list(store, nil)) == 1
+  end
+
   test "tier-on parks dedup on entity@offset identity", %{store: store} do
     e = entry(%{origin_offset: 42, park_id: nil})
     assert {:ok, ref} = Store.append(store, e)

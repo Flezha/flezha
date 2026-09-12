@@ -385,7 +385,10 @@ failing invocation — returned error or panic/exception, same policy in both SD
 up to the channel's `retry_max` (default 3 attempts, exponential backoff with jitter); authors
 mark an error non-retryable with `ProcedureError::non_retryable` /
 `ProcedureException.NonRetryable` to park immediately. An unroutable forward into a partition
-group and the SDK's out-of-range key-group guard park with no invocation failure at all. After
+group, the SDK's out-of-range key-group guard, and a frame naming a channel that is not one of the
+Operative's entry channels park with no invocation failure at all; the last of those parks under
+the name the frame asked for, with an error naming the entry channels the Operative does declare,
+and after one attempt, because the same declared set answers every re-attempt. After
 exhaustion the payload is **durably parked** to the controller's DLQ store
 (`app_data/dlq/<operative_class>/<procedure_id>/`, JSONL index + payload blobs) and only then
 does the Entity advance:

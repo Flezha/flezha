@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::channel::{
-    ChannelDescriptor, ChannelId, DeserializeStateFn, EntitiesForFn, EntityBuilder, ProcedureId,
-    SerializeStateFn,
+    ChannelDescriptor, ChannelId, ChannelKind, DeserializeStateFn, EntitiesForFn, EntityBuilder,
+    ProcedureId, SerializeStateFn,
 };
 
 /// How a Procedure maps inputs to Entities: a declared keyset is `Static`, a
@@ -151,6 +151,17 @@ pub enum BeyondWindowPolicy {
     Drop,
 }
 
+/// What a channel name resolved to, for a caller that wants a channel of one
+/// kind. Names are one namespace across every kind, so a lookup that only
+/// asked "is this a declared name" would take a sink for an entry channel.
+pub enum ChannelLookup<'a> {
+    Found(ChannelId, &'a ChannelDescriptor),
+    /// Declared, but of another kind — an entry name that is really a sink.
+    WrongKind(ChannelKind),
+    /// No channel of that name at all.
+    Undeclared,
+}
+
 impl OperativeTopology {
     pub fn lookup_channel_id(&self, name: &str) -> Option<ChannelId> {
         self.name_to_id.get(name).copied()
@@ -162,5 +173,45 @@ impl OperativeTopology {
 
     pub fn procedure(&self, id: ProcedureId) -> Option<&ProcedureDescriptor> {
         self.procedures.get(id as usize)
+    }
+
+    /// The declared channel of `kind` under `name`. The one resolution every
+    /// caller submits to: a frame off the wire and a local-mode feed ask the
+    /// same question and get the same answer.
+    pub fn channel_of_kind(&self, name: &str, kind: ChannelKind) -> ChannelLookup<'_> {
+        match self
+            .lookup_channel_id(name)
+            .and_then(|id| self.channel(id).map(|channel| (id, channel)))
+        {
+            Some((id, declared)) if declared.kind == kind => ChannelLookup::Found(id, declared),
+            Some((_, declared)) => ChannelLookup::WrongKind(declared.kind),
+            None => ChannelLookup::Undeclared,
+        }
+    }
+
+    /// The first declared channel of `kind`, in declaration order — where a
+    /// frame naming no channel goes.
+    pub fn first_of_kind(&self, kind: ChannelKind) -> Option<(ChannelId, &ChannelDescriptor)> {
+        self.channels
+            .iter()
+            .position(|c| c.kind == kind)
+            .and_then(|idx| {
+                self.channel(idx as ChannelId)
+                    .map(|c| (idx as ChannelId, c))
+            })
+    }
+
+    /// The declared channel names of one kind, sorted, so every refusal and
+    /// every park names the same set in the same order — and so the Elixir
+    /// SDK, whose channels live in a map, can name it identically.
+    pub fn declared_names(&self, kind: ChannelKind) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .channels
+            .iter()
+            .filter(|c| c.kind == kind)
+            .map(|c| &*c.name)
+            .collect();
+        names.sort_unstable();
+        names
     }
 }

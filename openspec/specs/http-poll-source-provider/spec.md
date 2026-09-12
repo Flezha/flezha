@@ -13,7 +13,7 @@ the durability tiers are unaffected.
 
 A built-in provider `http_poll` SHALL be attachable as a plugin with config `{url, interval_ms ≥ 1000 (default 60000), channel, headers?, timeout_ms?, max_body_bytes? (default 1 MiB)}`. It SHALL poll `url` each interval and inject the response body as an entry frame on `channel` only when the body's SHA-256 differs from the last-injected hash. On provider start and on handover/recovery re-application, the first successful poll SHALL inject unconditionally (seed frame). Attach-time validation SHALL reject a scheme other than http/https, a URL with no host, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, a missing or empty `channel`, malformed headers, and any unrecognised option.
 
-The `channel` name SHALL NOT be checked against the operative's declared entry channels: channel names are an SDK-side topology fact that never reaches the controller (`AddOperativeResponse.metadata` carries capability declarations only), and attach runs before the operative binds to a runner. An undeclared name surfaces as a dispatch failure on the runner, as a mistyped `flz operative send --channel` already does.
+The `channel` name SHALL NOT be checked against the operative's declared entry channels: channel names are an SDK-side topology fact that never reaches the controller (`AddOperativeResponse.metadata` carries capability declarations only), and attach runs before the operative binds to a runner. A name that is not one of the operative's entry channels SHALL surface on the runner as a dead-letter park under that name, as a mistyped `flz operative send --channel` does, rather than as a dropped frame.
 
 #### Scenario: Unchanged content injects nothing
 
@@ -34,6 +34,12 @@ The `channel` name SHALL NOT be checked against the operative's declared entry c
 
 - **WHEN** a plugin declares a non-http scheme, a hostless URL, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, a missing `channel`, or an unrecognised option
 - **THEN** the attach SHALL fail with an error naming the offending option
+
+#### Scenario: A channel no entry channel matches parks rather than vanishing
+
+- **GIVEN** an attached `http_poll` plugin whose `channel` names no entry channel of the operative it feeds
+- **WHEN** the first poll injects a body
+- **THEN** the frame SHALL be parked in the dead-letter store under that channel name, and SHALL be replayable onto the channel once the operative declares one of that name
 
 ### Requirement: Polling SHALL be worker-based, non-blocking, and health-conformant
 
@@ -76,6 +82,7 @@ Injection SHALL use the operative's confirming ingest, and the recorded hash SHA
 
 - **WHEN** a poller has both exceeded its consecutive-failure threshold and gone idle past the window
 - **THEN** the verdict SHALL name the failure and its last error, not the idle age
+
 ### Requirement: The URL SHALL support partition placeholders rendered once at init
 The provider SHALL substitute `{{partition_index}}` and `{{partition_count}}` in the `url` opt exactly once, at `init_provider`, from the plugin's partition opts. URL validation SHALL run on the rendered URL. A URL containing these placeholders while the plugin has no partition opts SHALL be refused at init; all other URLs behave exactly as before.
 
@@ -90,6 +97,7 @@ The provider SHALL substitute `{{partition_index}}` and `{{partition_count}}` in
 #### Scenario: Validation sees the rendered URL
 - **WHEN** the rendered URL is invalid (for example the substitution lands in the host position)
 - **THEN** init refuses via the existing URL validation, not at request time
+
 ### Requirement: A poller that has stopped settling polls SHALL self-report unhealthy
 
 The `http_poll` provider SHALL track the age of its last SETTLED poll — any
