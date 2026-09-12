@@ -86,9 +86,12 @@ defmodule Flezha.MixProject do
     [
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      # a hex requirement, unless FLEZHA_PROCESS_HUB_PATH names a local
-      # checkout — see process_hub_dep/0.
-      {:process_hub, process_hub_dep()},
+      # Pinned to the dev branch until 0.7.1 is published: 0.7.0 ignores
+      # `cluster_settle_ms` without a word and restarts a replayed row with no
+      # metadata. A path dep could not reach the release build, which runs in a
+      # container that mounts no sibling checkout, so a release silently shipped
+      # 0.7.0. Back to `~> 0.7.0` once the release is on hex.
+      {:process_hub, github: "alfetahe/process-hub", branch: "dev"},
       # process_hub declares elector `runtime: false`, which keeps it out of
       # every release. Declared here so the namespace hubs' leader election
       # reaches the assembled release.
@@ -119,17 +122,6 @@ defmodule Flezha.MixProject do
       # zero runtime deps; passed explicitly as Tz.TimeZoneDatabase).
       {:tz, "~> 0.28"}
     ]
-  end
-
-  # `~> 0.7.0` admits 0.7.x and refuses 0.8: on a 0.x library a minor bump is
-  # where breaking changes are allowed to live, so widening is a deliberate edit.
-  # FLEZHA_PROCESS_HUB_PATH builds against a local checkout for iterating on
-  # process_hub itself; it names no version, so it is opt-in per build.
-  defp process_hub_dep do
-    case System.get_env("FLEZHA_PROCESS_HUB_PATH") do
-      path when is_binary(path) and path != "" -> [path: path]
-      _ -> "~> 0.7.0"
-    end
   end
 
   # TODO: Also copy windows binaries

@@ -362,7 +362,6 @@ The measurement protocol and the numbers behind every verdict here are in
 
 | Variable | Read by | Notes |
 |---|---|---|
-| `FLEZHA_PROCESS_HUB_PATH` | `mix.exs` | build a release against a local `process_hub` checkout instead of the published hex release |
 | `RUSTLER_SKIP_COMPILATION` | Rustler, via `mix compile` | `true` makes the build pick up a pre-built `priv/native/flz_nif.so` instead of invoking cargo (prod image Stage 2) |
 | `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; it bounds the wait for the controller's control socket. See [`operations/deployment/images.md`](operations/deployment/images.md) |
 | `FLEZHA_TESTNET_WS_PORT` | `config/runtime.exs` and `docker/prod/controller-entrypoint.sh` | the port the WS testnet daemon binds. `:test` derives it from the run (`4500` outside `:test`); the entrypoint starts the daemon only when it is set explicitly |

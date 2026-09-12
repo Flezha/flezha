@@ -91,10 +91,12 @@ one-line edit if a legitimate size change ships in the same PR.
 
 ## process_hub source
 
-`process_hub` comes from hex like every other dependency, at the version
-`mix.lock` pins. No build path sets `FLEZHA_PROCESS_HUB_PATH`
-(`mix.exs::process_hub_dep/0`), so nothing is baked in from a local checkout —
-a plain git clone is all the build context needs.
+`process_hub` comes from its `dev` branch on GitHub at the commit `mix.lock`
+pins, not from hex: 0.7.0 is the newest published version and it predates two
+fixes this controller needs. The build resolves it like any other dependency, so
+a plain git clone plus network access is all the build context needs, and every
+build gets the same commit. It goes back to a hex requirement once 0.7.1 is
+published.
 
 ## Publishing to Docker Hub
 

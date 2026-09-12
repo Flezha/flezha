@@ -547,7 +547,6 @@ defmodule Flezha.Config.Keys do
     {:data_dir, :path, nil, runtimes: [:shell], env: "FLEZHA_DATA_DIR"},
     {:container_user, :string, nil, runtimes: [:shell], env: "FLEZHA_CONTAINER_USER"},
     {:restore_wait_timeout_s, :int, 60, runtimes: [:shell], env: "FLEZHA_RESTORE_WAIT_TIMEOUT_S"},
-    {:process_hub_path, :path, nil, runtimes: [:build], env: "FLEZHA_PROCESS_HUB_PATH"},
     {:dist_tls_optfile, :path, nil, runtimes: [:shell], env: "FLEZHA_DIST_TLS_OPTFILE"},
     {:namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_NAMESPACE"},
     {:demo_namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_DEMO_NAMESPACE"},
