@@ -51,7 +51,6 @@ answer "what are the options"; a guide answers "what do I type".
 | [`stream_transforms.md`](sdk/stream_transforms.md) | Edge transforms and `key_by` keying |
 | [`multi_input_procedures.md`](sdk/multi_input_procedures.md) | Merged subscriptions: what a merge promises |
 | [`entity_timers.md`](sdk/entity_timers.md) | Per-Entity processing-time and event-time timers |
-| [`entry_input_idle.md`](sdk/entry_input_idle.md) | The per-entry-channel idle signal (`on_entry_idle`) |
 | [`procedure_requested_spawn.md`](sdk/procedure_requested_spawn.md) | `ctx.spawn_workflow`: a running procedure asks for a worker |
 | [`admin.md`](sdk/admin.md) | The surface an application administers its own namespace with, and the role that grants it |
 | [`partitioned_operatives.md`](sdk/partitioned_operatives.md) | One logical operative, N instances: key groups, sources, rescale |

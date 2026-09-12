@@ -166,23 +166,10 @@ test('the bare checkpoint opt-in registers with no cadence', () => {
   }
 });
 
-test('the monotonic clock advances and an unknown entry channel reads zero', () => {
+test('the monotonic clock advances', () => {
   const first = native.monotonicNanos();
   assert.equal(typeof first, 'bigint');
   assert.ok(native.monotonicNanos() >= first);
-  assert.equal(native.entryLastDeliveryNanos('never_declared'), 0n);
-});
-
-test('the idle latch lives in the core and is advanced through the veneer', () => {
-  const watch = native.idleWatchNew('never_declared', 0n);
-  assert.ok(watch > 0n);
-  assert.deepEqual(
-    native.idleWatchPoll(watch),
-    { status: 0, gapNanos: 0n },
-    'cold start: no episode',
-  );
-  native.idleWatchFree(watch);
-  assert.equal(native.idleWatchPoll(watch).status, -1, 'a freed id answers the ABI error');
 });
 
 test('both module systems import the package and expose the same surface', () => {

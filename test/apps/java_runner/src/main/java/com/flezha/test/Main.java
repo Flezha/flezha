@@ -35,7 +35,6 @@ public final class Main {
         // supply, so one FLEZHA_LOG_LEVEL governs every language in a drill.
         FlezhaRunner runner = Flezha.createRunner(namespace)
                 .logger(new ConsoleLogger(LogLevel.from(System.getenv(ConsoleLogger.FLEZHA_LOG_LEVEL), LogLevel.INFO)));
-        EntryIdleProbeStreamOperative.arm(runner);
         // One row of the refusal table instead of the fixture set: a refused
         // topology must not reach a connected runner.
         String refusalFixture = System.getenv("FLEZHA_REFUSAL_FIXTURE");
@@ -95,7 +94,6 @@ public final class Main {
                 .defineStream(PoisonProbeStreamOperative.class)
                 .defineStream(WedgeProbeStreamOperative.class)
                 .defineStream(CandleStreamOperative.class)
-                .defineStream(EntryIdleProbeStreamOperative.class)
                 .defineWorkflow(EchoWorkflowOperative.class)
                 .defineWorkflow(CommitBlockWorkflowOperative.class)
                 .defineWorkflow(SyncDurableWorkflowOperative.class)

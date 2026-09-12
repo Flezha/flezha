@@ -169,13 +169,6 @@ export interface NativeHostStats {
   abandoned: number;
 }
 
-/** One answer from `idleWatchPoll`: the ABI's status and the episode's gap. */
-export interface NativeIdleEpisode {
-  /** `0` no episode, `1` idle, `2` resumed, `-1` an id no watch has. */
-  status: number;
-  gapNanos: bigint;
-}
-
 /**
  * The addon's exports. Every blocking entry point is a promise whose work runs
  * on a thread the addon owns — never on this event loop, and never on libuv's
@@ -210,10 +203,6 @@ export interface Native {
   ): Promise<string>;
   adminCall(verb: string, args: string): Promise<string>;
   monotonicNanos(): bigint;
-  entryLastDeliveryNanos(channel: string): bigint;
-  idleWatchNew(channel: string, thresholdNanos: bigint): bigint;
-  idleWatchPoll(id: bigint): NativeIdleEpisode;
-  idleWatchFree(id: bigint): void;
   lastError(): string | null;
   setLogCallback(callback: ((line: NativeLogLine) => void) | null): void;
   setHostDrainedCallback(callback: (() => void) | null): void;

@@ -274,14 +274,6 @@ compensate run — and the gem's unit suite sweeps all of them. What is owed is
 the end-to-end coverage, and the conformance gate holds the deferral honest in
 both directions.
 
-`entry_idle` is carried with the gem's own host layer: `Runner#last_entry_delivery`
-and `Runner#on_entry_idle` (`lib/flezha/entry_idle.rb`) over the episode latch
-the core keeps by watch id, ticked by one Ruby thread woken through
-`Queue#pop(timeout:)` — never `sleep` — and proved end to end by the
-`entry_idle_probe` twin under both executors. Both calls are legal before
-`boot`, through `Core.context_free`. Contract and the per-host spellings:
-[`entry_input_idle.md`](entry_input_idle.md).
-
 `keyed_channels` left that list when the gem began minting the output identity
 stamps (`Flezha::Ctx#stamp_identity`): the capability is carried with the
 reference's `partition_relay` fixture and proved end to end. `state_persistence`,

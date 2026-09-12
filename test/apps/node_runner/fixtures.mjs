@@ -9,7 +9,7 @@
 
 import { BroadcastChannel } from 'node:worker_threads';
 
-import { createRunner, defineOperative, defineProcedure } from '@flezha/sdk';
+import { defineOperative, defineProcedure } from '@flezha/sdk';
 
 import { bytes, prefix, text } from './fixture_support.mjs';
 
@@ -300,63 +300,6 @@ export const wedgeProbe = defineOperative({
   factoryId: 'wedge_probe',
   channels: (c) => {
     c.input('input', text).into(WedgeProbe).named('out').sink('wedge_sink', bytes);
-  },
-});
-
-// -- entry_idle_probe -------------------------------------------------------
-//
-// An IdleObserver has no ctx and cannot emit, so the observer counts episodes
-// and a procedure reports them as `<absent_at_boot>:<episodes>:<resumes>`.
-// Two entry channels fan into ONE procedure: the core interns one observation
-// per channel NAME, so a frame on `idle_report` leaves `idle_input`'s stamp
-// untouched and the e2e can poll without ending the silence it measures.
-//
-// The observer runs on the loop that registered it — the main one — and under
-// FLEZHA_NODE_WORKERS the procedure runs on a worker isolate that imported
-// this module afresh. The counters therefore cross on a BroadcastChannel:
-// every isolate keeps a copy, and the one the observer runs on posts each
-// change. `absentAtBoot` is read where each isolate imports this module,
-// which is before the first frame in every configuration.
-
-export const ENTRY_IDLE_WATCHED = 'idle_input';
-const ENTRY_IDLE_THRESHOLD_MS = 1_000;
-
-const entryIdle = {
-  absentAtBoot: createRunner('entry_idle_probe').lastEntryDelivery(ENTRY_IDLE_WATCHED) === null,
-  episodes: 0,
-  resumes: 0,
-};
-const entryIdleCounters = new BroadcastChannel('entry_idle_probe');
-entryIdleCounters.unref();
-entryIdleCounters.onmessage = ({ data }) => Object.assign(entryIdle, data);
-
-function countEntryIdle(counter) {
-  entryIdle[counter] += 1;
-  entryIdleCounters.postMessage({ episodes: entryIdle.episodes, resumes: entryIdle.resumes });
-}
-
-/** Watch the channel from the runner — the entry script calls this before `run()`. */
-export function armEntryIdleProbe(runner) {
-  runner.onEntryIdle(ENTRY_IDLE_WATCHED, ENTRY_IDLE_THRESHOLD_MS, {
-    idle: () => countEntryIdle('episodes'),
-    resumed: () => countEntryIdle('resumes'),
-  });
-}
-
-const EntryIdleProbe = defineProcedure({
-  name: 'entry_idle_probe_procedure',
-  handle: () => `${entryIdle.absentAtBoot}:${entryIdle.episodes}:${entryIdle.resumes}`,
-});
-
-export const entryIdleProbe = defineOperative({
-  factoryId: 'entry_idle_probe',
-  channels: (c) => {
-    // Both channels wire the same procedure: one node, fan-in.
-    c.input(ENTRY_IDLE_WATCHED, text).into(EntryIdleProbe);
-    c.input('idle_report', text)
-      .into(EntryIdleProbe)
-      .named('report')
-      .sink('entry_idle_report', bytes);
   },
 });
 

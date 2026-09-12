@@ -20,8 +20,6 @@ import importlib
 import os
 import sys
 import threading
-from collections.abc import Callable
-from datetime import datetime
 from types import TracebackType
 from typing import Any, Self
 
@@ -29,7 +27,6 @@ from . import determinism, graph
 from .admin import Admin
 from .ctx import WorkflowCtx
 from .dispatch import DispatchDeps, Registry
-from .entry_idle import EntryIdleWatcher, IdleObserver, last_entry_delivery
 from .errors import FlezhaError
 from .executor import Executor
 from .executor import build as build_executor
@@ -59,7 +56,6 @@ class Runner:
         self._registry = Registry()
         self._core: Core | None = None
         self._executor: Executor | None = None
-        self._idle: EntryIdleWatcher | None = None
         self._executor_kind = os.environ.get("FLEZHA_PYTHON_EXECUTOR", "thread")
         self._executor_options: dict[str, Any] = {}
         self._started = False
@@ -145,19 +141,6 @@ class Runner:
         self._executor_options = options
         return self
 
-    def last_entry_delivery(self, channel: str) -> datetime | None:
-        """When the runner last delivered a frame to entry channel ``channel``.
-
-        ``None`` before its first frame — and for a name no declared operative
-        has; both mean "nothing has arrived here". Legal before :meth:`start`;
-        reading never blocks delivery.
-
-        The instant is the *signal*; whether the silence since then is
-        anomalous is the application's call. Register an observer with
-        :meth:`on_entry_idle` instead of polling this in a loop.
-        """
-        return last_entry_delivery(self._core or load_extension(), channel)
-
     def admin(self) -> Admin:
         """Administer this namespace from ordinary application code.
 
@@ -169,31 +152,6 @@ class Runner:
         call is refused.
         """
         return Admin(self._core or load_extension())
-
-    def on_entry_idle(
-        self,
-        channel: str,
-        threshold_ms: float,
-        observer: IdleObserver | Callable[[float], object],
-    ) -> Runner:
-        """Observe silence on entry channel ``channel``.
-
-        ``observer`` is notified once per idle episode, when the gap since the
-        last delivered frame first exceeds ``threshold_ms``, and once again when
-        a frame resumes it. Silence before the channel's very first frame is
-        never an episode.
-
-        Legal before and after :meth:`start`. Evaluation runs on one daemon
-        thread per runner — never on the delivery path — so an observer that
-        raises costs the data plane nothing. Several observers may watch one
-        channel.
-        """
-        if self._idle is None:
-            watcher = EntryIdleWatcher(self._core or load_extension())
-            self._teardown.append(watcher.stop)
-            self._idle = watcher
-        self._idle.register(channel, threshold_ms, observer)
-        return self
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -299,7 +257,6 @@ class Runner:
             self._core.free()
         self._core = None
         self._executor = None
-        self._idle = None
         self._started = False
         self._release_slot()
 

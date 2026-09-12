@@ -141,33 +141,25 @@ change; the directive-coverage tests in `sdk/rust/tests/diag.rs`
 sweeping the SDK crates' emit sites and failing on any target the directives
 discard at `warn`.
 
-### 12. A runtime fact the SDK alone knows is a plain accessor plus an `on<Event>` registration
+### 12. What happens on an event is spelled `on<Event>`, and a duration is spelled the SDK's own way
 
-The SDK owns the IO threads, so some facts are only observable from inside it.
-Each such fact gets two names: the accessor spelling the fact
-(`last_entry_delivery(channel)` / `lastEntryDelivery(channel)`, rule 5's
-`Option<Instant>` / `Optional<Instant>` for "nothing has happened yet") and,
-where polling it in a loop would be the wrong shape, an `on<Event>`
-registration taking the caller's own threshold and callback (`on_entry_idle` /
-`onEntryIdle`). `on*` is already the SDK's callback prefix (`on_full`,
-`on_timer`), so `addListener` / `subscribe` / `watch` synonyms are not used.
+Anything an SDK surface says about an event carries the `on<Event>` prefix,
+whichever shape it takes: `on_full` / `onFull` declares the policy for a full
+mailbox, `on_timer` / `onTimer` is the Procedure hook a timer firing calls, and
+`on_sink` / `onSink` registers a local-mode sink callback. `on*` is that prefix
+in every SDK, so `addListener`, `subscribe` and `watch` synonyms are not used
+for any of those shapes.
 
-The threshold and the reported gap are spelled in the SDK's own duration: a
-`Duration` where the language has one (Rust, Java), and milliseconds where the
-SDK's timers already speak milliseconds (`timerAfter(ms)`, `timer_after(ms)`,
-`retry_backoff_ms` — Node, Ruby, PHP, Python, Elixir). The accessor's instant
-is the host's wall-clock type (`Date`, `Time`, `DateTimeImmutable`,
-`datetime`, `DateTime`), derived from the monotonic gap.
-
-The registration never carries a default threshold or a default action. The
-*signal* is SDK knowledge; the *policy* — what value is anomalous, and what to
-do about it — is the application's domain knowledge, and an SDK-side default
-would be a policy the SDK cannot know is right. Contract:
-[`entry_input_idle.md`](entry_input_idle.md).
+Any duration such a surface takes, or reports back, is spelled in the SDK's own
+unit: a `Duration` where the language has one (Rust `timer_after(Duration)`,
+Java `timerAfter(Duration)`), and milliseconds where the SDK's timers already
+speak milliseconds (Node and PHP `timerAfter(ms)`, Ruby, Python and Elixir
+`timer_after(ms)`, and `retry_backoff_ms` on every builder). A surface taking
+seconds, or a `Duration` in a millisecond SDK, is the inconsistency this rule
+refuses.
 
 ## See also
 
 - [`authoring_contract.md`](authoring_contract.md) — the sugar these names expand from
 - [`stream_transforms.md`](stream_transforms.md) — `map` / `filter` / `flat_map` / `key_by` on the handle
-- [`entry_input_idle.md`](entry_input_idle.md) — the rule-12 accessor and registration
 - [`../architecture/runner.md`](../architecture/runner.md) — "One change, every SDK"

@@ -125,16 +125,6 @@ invocation; the scheduled timestamp inside `on_timer/4`), `entity_key/1`, and th
 `{:error, {:event_time_timer_without_event_time_clock, procedure, clock}}` /
 `{:error, {:timer_cap_exceeded, procedure, max}}`.
 
-Entry-input idle rides the handle: `Flezha.SDK.last_entry_delivery(handle, channel)` answers
-when an entry channel last received a frame (`nil` before its first — the handle is free, so
-the read is legal before `start/1`), and `Flezha.SDK.on_entry_idle(handle, channel,
-threshold_ms, observer)` reports silence past the threshold as episodes to a module
-implementing `Flezha.SDK.IdleObserver` (`idle/1`, optional `resumed/1`) or a fun of arity one;
-`child_spec/1` takes the same registrations as `idle_observers: [{channel, threshold_ms,
-observer}]`. Both layers are this SDK's own: `Flezha.SDK.EntryInput` keeps one `:atomics` cell
-per entry-channel name and `Flezha.SDK.EntryIdle` — one process per runner — the episode
-latch and the tick. Contract: [`entry_input_idle.md`](entry_input_idle.md).
-
 ## Graph builder (v1 subset)
 
 `input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`/`sealed`, with
@@ -547,12 +537,12 @@ does not reply with a refusal instead of exiting the caller: `{:error, :operativ
 
 A refusal is not a cancellation: the request is already in the target's mailbox and the work
 still runs. So the bound follows what the call does. A call that answers from the queue in
-front of it takes a flat bound — `sdk_control_call_ms` for the RunnerServer, an Operative, a
-local run and the entry-idle watcher, `sdk_entity_call_ms` for an Entity. A call whose
-duration grows with your state takes one derived from the controller bound that awaits it:
-`sdk_entity_restore_ms` inside `restore_await_timeout_ms`, `sdk_entity_snapshot_ms` inside
-`compaction_timeout_ms`, `sdk_entity_apply_ms` inside `control_unit_reply_timeout_ms`. The
-SDK never reports a failure while the controller is still waiting for the answer.
+front of it takes a flat bound — `sdk_control_call_ms` for the RunnerServer, an Operative and a
+local run, `sdk_entity_call_ms` for an Entity. A call whose duration grows with your state takes
+one derived from the controller bound that awaits it: `sdk_entity_restore_ms` inside
+`restore_await_timeout_ms`, `sdk_entity_snapshot_ms` inside `compaction_timeout_ms`,
+`sdk_entity_apply_ms` inside `control_unit_reply_timeout_ms`. The SDK never reports a failure
+while the controller is still waiting for the answer.
 
 Three calls wait with no bound, because there the wait is the protocol and the caller is one
 of the runner's own processes, never one of yours: `Flezha.SDK.Entity.enqueue_block/2` under

@@ -687,7 +687,6 @@ final class Fixtures
             CandleOperative::class,
             PoisonProbeOperative::class,
             WedgeProbeOperative::class,
-            EntryIdleProbeOperative::class,
             SessionTimeoutOperative::class,
             BoundedMailboxDropNothingOperative::class,
             BoundedMailboxDropNewestOperative::class,

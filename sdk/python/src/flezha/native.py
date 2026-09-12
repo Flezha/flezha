@@ -238,29 +238,8 @@ class Core:
     # -- context-free entry points ------------------------------------------
     #
     # These take no context, so they take no guard: they read a process-global
-    # clock and a process-global channel table, neither of which a fork breaks.
+    # clock, which a fork does not break.
 
     def monotonic_nanos(self) -> int:
         """The core's monotonic clock in nanoseconds."""
         return int(self._module.monotonic_nanos())
-
-    def entry_last_delivery_nanos(self, channel: str) -> int:
-        """When the named entry channel last received a frame, on the same clock."""
-        return int(self._module.entry_last_delivery_nanos(channel))
-
-    def idle_watch_new(self, channel: str, threshold_nanos: int) -> int:
-        """Register an episode latch over the named entry channel in the core.
-
-        The id, or ``0`` when the name is refused. The tick that advances it is
-        a thread of this host's own.
-        """
-        return int(self._module.idle_watch_new(channel, threshold_nanos))
-
-    def idle_watch_poll(self, watch_id: int) -> tuple[int, int]:
-        """Advance a watch's latch to now: ``(status, gap_nanos)``."""
-        status, gap = self._module.idle_watch_poll(watch_id)
-        return int(status), int(gap)
-
-    def idle_watch_free(self, watch_id: int) -> None:
-        """Drop a watch."""
-        self._module.idle_watch_free(watch_id)

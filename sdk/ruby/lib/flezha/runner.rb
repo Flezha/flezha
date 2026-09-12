@@ -4,7 +4,6 @@ require "json"
 
 require_relative "ctx"
 require_relative "dispatch"
-require_relative "entry_idle"
 require_relative "executor"
 require_relative "graph"
 require_relative "logger"
@@ -46,7 +45,6 @@ module Flezha
       @stopped = Thread::Queue.new
       @stopping = false
       @teardown = []
-      @idle = nil
     end
 
     # Register a stream operative class.
@@ -74,18 +72,6 @@ module Flezha
       self
     end
 
-    # When the runner last delivered a frame to entry channel `channel`, or
-    # nil before its first frame (and for a name no declared operative has —
-    # both mean "nothing has arrived here"). Legal before `boot`; reading
-    # never blocks delivery.
-    #
-    # The instant is the *signal*; whether the silence since then is anomalous
-    # is the application's call. Register an observer with `on_entry_idle`
-    # instead of polling this in a loop.
-    def last_entry_delivery(channel)
-      EntryIdleWatcher.last_entry_delivery(@core || Core.context_free, channel)
-    end
-
     # Administer this namespace from ordinary application code: start, stop and
     # feed operatives, enable and disable plugins, read what is running.
     #
@@ -95,22 +81,6 @@ module Flezha
     # `flz role bind runner@<namespace> app <namespace>`; until then every call
     # is refused.
     def admin = Admin.new(@core || Core.context_free)
-
-    # Observe silence on entry channel `channel`: `observer` (or the block) is
-    # notified once per idle episode, when the gap since the last delivered
-    # frame first exceeds `threshold_ms`, and once again when a frame resumes
-    # it. Silence before the channel's very first frame is never an episode.
-    #
-    # Legal before and after `boot`. Evaluation runs on one thread per runner
-    # — never on the delivery path — so an observer that raises costs the data
-    # plane nothing. Several observers may watch one channel.
-    def on_entry_idle(channel, threshold_ms, observer = nil, &block)
-      @idle ||= EntryIdleWatcher.new(@core || Core.context_free).tap do |watcher|
-        @teardown << -> { watcher.stop }
-      end
-      @idle.register(channel, threshold_ms, observer, &block)
-      self
-    end
 
     # Override the YJIT decision. `nil` (the default) means "decide", `false`
     # means "leave it off".

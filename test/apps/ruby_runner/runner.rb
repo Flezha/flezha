@@ -33,8 +33,6 @@ if (topology = ENV["FLEZHA_REFUSAL_FIXTURE"])
 else
   Fixtures::ALL.each { |operative| runner.define_stream(operative) }
   Fixtures::WORKFLOWS.each { |operative| runner.define_workflow(operative) }
-  # A runner-level registration, not a declaration: armed beside the fixtures.
-  Fixtures.arm_entry_idle_probe(runner)
 end
 
 # The harness stops a runner by closing its pipes. A write that lands after

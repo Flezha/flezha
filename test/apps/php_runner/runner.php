@@ -34,7 +34,6 @@ require __DIR__ . '/conformance.php';
 use Flezha\Flezha;
 use Flezha\Logger;
 use Flezha\TestApp\Conformance;
-use Flezha\TestApp\EntryIdleProbeCounters;
 use Flezha\TestApp\Fixtures;
 use Flezha\TestApp\WorkflowFixtures;
 
@@ -63,8 +62,6 @@ if ($topology !== false && $topology !== '') {
     foreach (WorkflowFixtures::all() as $operative) {
         $runner->defineWorkflow($operative);
     }
-    // A runner-level registration, not a declaration: armed beside the fixtures.
-    EntryIdleProbeCounters::arm($runner);
 }
 
 // The configuration this run is under, before it starts: readiness is the

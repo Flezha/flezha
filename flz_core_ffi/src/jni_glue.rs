@@ -503,29 +503,13 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_adminCall<'l>(
     }
 }
 
-/// The core's monotonic clock in nanoseconds — the reading
-/// [`Java_com_flezha_sdk_native_1_FlzCore_entryLastDeliveryNanos`] is measured
-/// against.
+/// The core's monotonic clock in nanoseconds.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_monotonicNanos(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
     crate::flz_core_monotonic_nanos() as jlong
-}
-
-/// When the named entry channel last received a frame, on the same monotonic
-/// clock; `0` when no frame ever has.
-#[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_entryLastDeliveryNanos(
-    mut env: JNIEnv,
-    _class: JClass,
-    channel: JString,
-) -> jlong {
-    match c_string(&mut env, "channel", &channel) {
-        Ok(channel) => veneer::entry_last_delivery_nanos(&channel) as jlong,
-        Err(_) => 0,
-    }
 }
 
 /// Wake every blocked poller and stop the runner loop.
@@ -582,10 +566,6 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("spawnWorkflow", "flz_core_spawn_workflow"),
     ("adminCall", "flz_core_admin_call"),
     ("monotonicNanos", "flz_core_monotonic_nanos"),
-    (
-        "entryLastDeliveryNanos",
-        "flz_core_entry_last_delivery_nanos",
-    ),
     ("shutdown", "flz_core_shutdown"),
     ("contextFree", "flz_core_context_free"),
 ];

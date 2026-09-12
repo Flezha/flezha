@@ -351,18 +351,6 @@ The harness drives the same `invoke` every activation kind goes through, and
 so what it proves is what the runner does, rather than something that agrees
 with it. It also drives `async def` handlers, so a test needs no event loop.
 
-## Entry-input idle
-
-`runner.last_entry_delivery(channel)` answers when an entry channel last
-received a frame (`None` before its first), and
-`runner.on_entry_idle(channel, threshold_ms, observer)` reports silence past
-the threshold as episodes — one `idle`, one `resumed` — to an `IdleObserver`
-subclass or a bare callable. Both are legal before `start()`. The tick is one
-daemon thread per runner, woken by `Event.wait` and never `time.sleep`, under
-either executor; it runs while the GIL is free, so a pure-Python body that
-holds the lock past the tick delays the report by its length and never changes
-the count. Contract: [`entry_input_idle.md`](entry_input_idle.md).
-
 ## Deferred, by name
 
 - **Sub-interpreter execution** (PEP 684/734), owed to `sdk-python-subinterpreters`.

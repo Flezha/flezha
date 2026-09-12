@@ -271,9 +271,6 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Sensor freshness** — a periodic sensor stamps its last completed pass into the snapshot
   (`Convergence.Snapshot.observe_sensor/3`); older than 3× its cadence reads as
   `200 degraded, sensor_stale`. Never stamped is not stale: boot is not a wedge.
-- **Idle episode** — one stretch of silence on an entry channel, reported once by the SDK
-  (`on_entry_idle`) when the gap since the last frame first exceeds an application-registered
-  threshold, never before the first frame. See [`sdk/entry_input_idle.md`](sdk/entry_input_idle.md).
 - **`/healthz`** — opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569): `healthy`, `recovering` and
   `degraded` are `200`; `unhealthy` `503` is reserved for a stopped convergence loop or a sustained
   fabric wedge, the two things only a process restart fixes.

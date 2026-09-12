@@ -56,7 +56,6 @@ fn c_abi_full_scenario() {
     let act = routes_two_entry_payloads(ctx, &stream);
     let act = abandon_re_hands_the_batch(ctx, act);
     let due_at = completes_from_another_thread(ctx, &act);
-    the_entry_delivery_stamp_crosses_the_abi();
     the_timer_fires_through_poll(ctx, due_at);
     a_ping_generates_no_activation(ctx, &controller);
     poll_honors_its_timeout(ctx);
@@ -241,85 +240,6 @@ fn completes_from_another_thread(ctx: *mut FlzContext, act: &schema::Activation)
     .join()
     .expect("cross-thread complete");
     due_at
-}
-
-/// The C ABI is the only view a non-Rust host has of the last-delivery stamp
-/// and of the episode latch over it, so the reads and the three watch calls
-/// are pinned here; the wire path that writes the stamp (`routing::dispatch`)
-/// is driven by the Rust SDK's `entry_idle` suite.
-fn the_entry_delivery_stamp_crosses_the_abi() {
-    let unknown = CString::new("no_such_entry_channel").unwrap();
-    assert_eq!(
-        unsafe { flz_core_entry_last_delivery_nanos(unknown.as_ptr()) },
-        0,
-        "a channel nothing has delivered to reads as the never-delivered sentinel"
-    );
-
-    // A watch registered before the first frame, with a zero threshold so the
-    // latch fires on the first reading later than a stamp — never a wait.
-    let name = CString::new("in").unwrap();
-    let watch = unsafe { flz_core_idle_watch_new(name.as_ptr(), 0) };
-    assert!(watch > 0, "the watch is registered by id");
-    let mut gap = 0u64;
-    assert_eq!(
-        unsafe { flz_core_idle_watch_poll(watch, &mut gap) },
-        FLZ_IDLE_NONE,
-        "a cold start is not an episode"
-    );
-
-    let instance = flz_core::runner::live_stream_instance("abi_probe").expect("the instance");
-    let channel = instance.topology.channel(0).expect("entry channel");
-    channel.observe_delivery();
-    let stamped = unsafe { flz_core_entry_last_delivery_nanos(name.as_ptr()) };
-    assert!(stamped > 0, "the delivery is visible through the ABI");
-    assert!(
-        stamped <= flz_core_monotonic_nanos(),
-        "the stamp and the clock it is read against are the same clock"
-    );
-
-    assert_eq!(poll_until(watch, FLZ_IDLE_IDLE), FLZ_IDLE_IDLE);
-    assert!(
-        gap_of(watch) == 0,
-        "latched: the silence continuing is not a second episode"
-    );
-    channel.observe_delivery();
-    assert_eq!(poll_until(watch, FLZ_IDLE_RESUMED), FLZ_IDLE_RESUMED);
-    flz_core_idle_watch_free(watch);
-    assert_eq!(
-        unsafe { flz_core_idle_watch_poll(watch, &mut gap) },
-        FLZ_ERR,
-        "a freed id answers the ABI error"
-    );
-}
-
-/// Poll `watch` until it answers `wanted`, giving up after a second — a
-/// zero-threshold latch fires within nanoseconds of the stamp, so this spins,
-/// never sleeps.
-fn poll_until(watch: u64, wanted: i32) -> i32 {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        let mut gap = 0u64;
-        let status = unsafe { flz_core_idle_watch_poll(watch, &mut gap) };
-        if status == wanted {
-            assert!(gap > 0, "an episode boundary carries its gap");
-            return status;
-        }
-        assert_eq!(status, FLZ_IDLE_NONE, "no other boundary is expected here");
-        assert!(
-            Instant::now() < deadline,
-            "the latch did not cross to {wanted} within a second"
-        );
-    }
-}
-
-/// One more poll's gap, which is `0` whenever the poll crossed no boundary.
-fn gap_of(watch: u64) -> u64 {
-    let mut gap = 0u64;
-    assert_eq!(
-        unsafe { flz_core_idle_watch_poll(watch, &mut gap) },
-        FLZ_IDLE_NONE
-    );
-    gap
 }
 
 /// The registered timer surfaces as a work batch of exactly one firing, and

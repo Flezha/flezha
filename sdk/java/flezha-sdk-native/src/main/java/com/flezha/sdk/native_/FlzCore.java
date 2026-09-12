@@ -181,17 +181,9 @@ public final class FlzCore {
 
     /**
      * The core's monotonic clock in nanoseconds since an arbitrary process
-     * origin — the reading {@link #entryLastDeliveryNanos(String)} is measured
-     * against. Context-free: the core records deliveries process-wide.
+     * origin: the one clock every host's {@code ctx} reads. Context-free.
      */
     public static native long monotonicNanos();
-
-    /**
-     * When the named entry channel last received a frame, on the same
-     * monotonic clock. {@code 0} means no frame ever has — which is also the
-     * answer for a channel no declared operative has.
-     */
-    public static native long entryLastDeliveryNanos(String channel);
 
     /** Wake every blocked poller and stop the runner loop. */
     public static native void shutdown(long ctx);

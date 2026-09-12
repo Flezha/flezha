@@ -15,8 +15,8 @@ policy a completion's routing push waits until the consumer's mailbox drains, an
 drains only when its handler runs. If the waiting thread is the event loop, the loop is the only
 thread that could run that handler, and no other thread can free it.
 
-Non-blocking entry points — abandon, buffer free, monotonic clock, entry-idle read and last-error —
-MAY be synchronous.
+Non-blocking entry points — abandon, buffer free, monotonic clock and last-error — MAY be
+synchronous.
 
 #### Scenario: A blocking entry point cannot be called from the event loop
 - **WHEN** the veneer's exported surface is enumerated in a test

@@ -15,7 +15,6 @@ import { Admin } from './admin.js';
 import { envPositive } from './env.js';
 import { toHostClassDecl, validate } from './graph.js';
 import { installDeterminismWarnings, uninstallDeterminismWarnings } from './determinism.js';
-import { EntryIdleWatcher, lastEntryDelivery, type IdleObserver } from './entry-idle.js';
 import { Registry, dispatch, dispatchDeps, type WorkflowSession } from './dispatch.js';
 import { consoleLogger, levelFromNative, log, setLogger, type Logger } from './logger.js';
 import { loadNative, type Native } from './native.js';
@@ -137,7 +136,6 @@ export class Runner {
   private registry: Registry | null = null;
   private dispatchId: number | null = null;
   private pool: WorkerPool | null = null;
-  private idle: EntryIdleWatcher | null = null;
   private stopping: Promise<void> | null = null;
   private readonly teardown: Array<() => void> = [];
 
@@ -199,44 +197,6 @@ export class Runner {
    */
   admin(): Admin {
     return new Admin(this.native ?? loadNative());
-  }
-
-  /**
-   * When the runner last delivered a frame to entry channel `channel`, or
-   * `null` before its first frame (and for a name no declared operative has —
-   * both mean "nothing has arrived here"). Legal before `run()`; reading never
-   * blocks delivery.
-   *
-   * The instant is the *signal*; whether the silence since then is anomalous
-   * is the application's call. Register an observer with `onEntryIdle`
-   * instead of polling this in a loop.
-   */
-  lastEntryDelivery(channel: string): Date | null {
-    return lastEntryDelivery(this.native ?? loadNative(), channel);
-  }
-
-  /**
-   * Observe silence on entry channel `channel`: `observer` is notified once
-   * per idle episode, when the gap since the last delivered frame first
-   * exceeds `thresholdMs`, and once again when a frame resumes it. Silence
-   * before the channel's very first frame is never an episode.
-   *
-   * Legal before and after `run()`. Evaluation runs on one timer per runner —
-   * never on the delivery path — so an observer that throws costs the data
-   * plane nothing. Several observers may watch one channel.
-   */
-  onEntryIdle(
-    channel: string,
-    thresholdMs: number,
-    observer: IdleObserver | ((gapMs: number) => void),
-  ): this {
-    if (!this.idle) {
-      const watcher = new EntryIdleWatcher(this.native ?? loadNative());
-      this.teardown.push(() => watcher.stop());
-      this.idle = watcher;
-    }
-    this.idle.register(channel, thresholdMs, observer);
-    return this;
   }
 
   /**

@@ -7,7 +7,6 @@ namespace Flezha\Ffi;
 use FFI;
 use FFI\CData;
 use Flezha\Exception\FlezhaException;
-use Flezha\EntryIdleBridge;
 use Flezha\SpawnBridge;
 
 /**
@@ -20,7 +19,7 @@ use Flezha\SpawnBridge;
  * frees.** {@see attach()} is the only way to get an un-owning handle, and
  * {@see free()} is a no-op on one.
  */
-final class Core implements SpawnBridge, EntryIdleBridge
+final class Core implements SpawnBridge
 {
     /**
      * The activation schema this package was built against, passed to
@@ -50,11 +49,9 @@ final class Core implements SpawnBridge, EntryIdleBridge
     }
 
     /**
-     * A handle with no context, for the entry points that take none: the two
-     * clock reads and the three watch calls read process-global tables, which
-     * is what lets a runner answer `lastEntryDelivery` and register an idle
-     * watch before `start()` has made its context. Every context-bound call
-     * refuses on it.
+     * A handle with no context, for the entry points that take none: the
+     * monotonic clock reads a process-global, so a caller can read it before
+     * `start()` has made its context. Every context-bound call refuses on it.
      */
     public static function contextFree(): self
     {
@@ -371,43 +368,6 @@ final class Core implements SpawnBridge, EntryIdleBridge
     public function monotonicNanos(): int
     {
         return (int) $this->ffi->flz_core_monotonic_nanos();
-    }
-
-    /** When entry channel `$channel` last received a frame, on that clock. */
-    public function entryLastDeliveryNanos(string $channel): int
-    {
-        return (int) $this->ffi->flz_core_entry_last_delivery_nanos($channel);
-    }
-
-    /**
-     * Register an episode latch over entry channel `$channel` in the core; the
-     * id, or 0 when the name is refused. The tick that advances it is the
-     * runner's, between polls.
-     */
-    public function idleWatchNew(string $channel, int $thresholdNanos): int
-    {
-        return (int) $this->ffi->flz_core_idle_watch_new($channel, $thresholdNanos);
-    }
-
-    /**
-     * Advance a watch's latch to now: `[status, gapNanos]`, the status one of
-     * {@see Binding::IDLE_NONE}, {@see Binding::IDLE_IDLE},
-     * {@see Binding::IDLE_RESUMED} or {@see Binding::ERR} for an unknown id.
-     *
-     * @return array{int, int}
-     */
-    public function idleWatchPoll(int $id): array
-    {
-        $gap = $this->ffi->new('uint64_t');
-        $status = (int) $this->ffi->flz_core_idle_watch_poll($id, FFI::addr($gap));
-
-        return [$status, (int) $gap->cdata];
-    }
-
-    /** Drop a watch. */
-    public function idleWatchFree(int $id): void
-    {
-        $this->ffi->flz_core_idle_watch_free($id);
     }
 
     /**

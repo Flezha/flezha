@@ -1,16 +1,11 @@
 defmodule Flezha.SDK.RunnerBootTest do
   @moduledoc """
-  A runner boots holding the idle observers it was declared with.
+  A runner boots and carries a `%State{}` its own later clauses can match on.
 
-  `RunnerServer.init/1` arms them by folding `register_idle/4` over its own
-  state, so that function's return shape is load-bearing at boot as well as at
-  the `on_entry_idle` call. Nothing else in the unit tree starts a RunnerServer
-  with `idle_observers`, so a shape change there was invisible until the
-  `system` tier ran — which `test/test_helper.exs` excludes by default.
-
-  One observer and two, because the two failures differ: with one the fold
-  yields a value the GenServer then carries as its state, and with two the
-  second iteration is handed something that is no longer a `%State{}`.
+  `RunnerServer.init/1` builds that state and hands it to the GenServer, so a
+  boot that yields any other shape dies on the first message rather than at
+  `start/1`. The `system` tier would catch it, and `test/test_helper.exs`
+  excludes that tier by default, so the unit tree asks the question here.
   """
   # async: false: the runner slot is a registered singleton and the controller's
   # fleet is live.
@@ -56,28 +51,24 @@ defmodule Flezha.SDK.RunnerBootTest do
     {:ok, ns: ns}
   end
 
-  for {label, channels} <- [{"one declared observer", ["in"]}, {"two", ["in", "second"]}] do
-    test "a runner boots and stays alive with #{label}", %{ns: ns} do
-      handle =
-        Enum.reduce(unquote(channels), Flezha.SDK.create_runner(ns, transport: :native), fn
-          channel, acc -> Flezha.SDK.on_entry_idle(acc, channel, 60_000, & &1)
-        end)
+  test "a runner boots and stays alive", %{ns: ns} do
+    handle =
+      Flezha.SDK.create_runner(ns, transport: :native)
+      |> Flezha.SDK.define_stream(BootOp)
+      |> Flezha.SDK.start()
 
-      handle = Flezha.SDK.define_stream(handle, BootOp) |> Flezha.SDK.start()
+    assert %Flezha.SDK{server: server} = handle, "start failed: #{inspect(handle)}"
+    on_exit(fn -> Flezha.SDK.close(handle) end)
 
-      assert %Flezha.SDK{server: server} = handle, "start failed: #{inspect(handle)}"
-      on_exit(fn -> Flezha.SDK.close(handle) end)
+    # The state `init/1` left is what every later clause matches on, so a runner
+    # that boots with anything else dies on the first message rather than here.
+    # Ask it something only a `%State{}` answers.
+    assert RunnerServer.namespace(server) == ns
+    assert Process.alive?(server)
 
-      # The state the fold left is what every later clause matches on, so a
-      # runner that boots with a tuple in place of its state dies on the first
-      # message rather than here. Ask it something only a `%State{}` answers.
-      assert RunnerServer.namespace(server) == ns
-      assert Process.alive?(server)
-
-      # And it survives its own scheduled work, which is where a malformed
-      # state raises first.
-      send(server, :data_heartbeat)
-      assert RunnerServer.namespace(server) == ns
-    end
+    # And it survives its own scheduled work, which is where a malformed state
+    # raises first.
+    send(server, :data_heartbeat)
+    assert RunnerServer.namespace(server) == ns
   end
 end

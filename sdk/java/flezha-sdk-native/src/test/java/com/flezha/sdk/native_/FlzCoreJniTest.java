@@ -56,10 +56,4 @@ class FlzCoreJniTest {
         }
         assertThat(later).isGreaterThan(first);
     }
-
-    @Test
-    @DisplayName("a channel nothing has delivered to reads as the never-delivered sentinel")
-    void unknownEntryChannelReadsZero() {
-        assertThat(FlzCore.entryLastDeliveryNanos("no_such_entry_channel")).isZero();
-    }
 }

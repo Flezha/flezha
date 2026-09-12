@@ -47,7 +47,6 @@ class FactoryIdsTest {
             "dynamic_entity",
             "echo_workflow",
             "entity_stress",
-            "entry_idle_probe",
             "hybrid_channel",
             "mixed_operative",
             "optout_commit_block",

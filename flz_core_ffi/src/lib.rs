@@ -48,13 +48,12 @@ pub mod ruby_glue;
 pub mod veneer;
 
 use std::ffi::{c_char, CStr, CString};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use dashmap::DashMap;
 pub use error::Error;
-use flz_core::entry_input::{Episode, IdleWatch};
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::schema;
@@ -74,12 +73,6 @@ pub const FLZ_POLL_SHUTTING_DOWN: i32 = 2;
 pub const FLZ_ERR: i32 = -1;
 /// Success for non-poll calls.
 pub const FLZ_OK: i32 = 0;
-/// [`flz_core_idle_watch_poll`] crossed no episode boundary.
-pub const FLZ_IDLE_NONE: i32 = 0;
-/// The watched channel's silence first exceeded the threshold: one episode.
-pub const FLZ_IDLE_IDLE: i32 = 1;
-/// A frame ended the episode and re-armed the latch.
-pub const FLZ_IDLE_RESUMED: i32 = 2;
 
 /// Opaque context handle.
 pub struct FlzContext {
@@ -698,89 +691,11 @@ pub unsafe extern "C" fn flz_core_admin_call(
 }
 
 /// The core's monotonic clock, in nanoseconds since an arbitrary process
-/// origin. The reading [`flz_core_entry_last_delivery_nanos`] is measured
-/// against — a host derives an idle gap by subtracting one from the other.
+/// origin: the one clock every host's `ctx` reads, so two hosts in one
+/// process date an event the same way.
 #[no_mangle]
 pub extern "C" fn flz_core_monotonic_nanos() -> u64 {
     flz_core::util::monotonic_nanos()
-}
-
-/// When entry channel `channel` last received a frame, on the clock
-/// [`flz_core_monotonic_nanos`] reads. `0` means no frame has ever been
-/// delivered to it — which is also the answer for a channel no declared
-/// operative has.
-///
-/// # Safety
-/// `channel` must be a NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn flz_core_entry_last_delivery_nanos(channel: *const c_char) -> u64 {
-    let Ok(channel) = CStr::from_ptr(channel).to_str() else {
-        return 0;
-    };
-    flz_core::entry_input::observation_of(channel)
-        .and_then(|cell| cell.last_delivery_nanos())
-        .unwrap_or(0)
-}
-
-/// Every idle watch a host registered, by the id it was handed. Process-global
-/// like the observation table it reads, so a watch needs no context and
-/// outlives none.
-static IDLE_WATCHES: LazyLock<DashMap<u64, IdleWatch>> = LazyLock::new(DashMap::new);
-static NEXT_IDLE_WATCH: AtomicU64 = AtomicU64::new(1);
-
-/// Register an episode latch over entry channel `channel` with a threshold of
-/// `threshold_nanos`, and hand back its id — `0` when `channel` is not UTF-8.
-/// Legal before the class is declared: the observation cell is interned by
-/// name. The latch is the core's so no host re-derives it; the tick is the
-/// host's, because a callback across this ABI is not something every host can
-/// receive on a thread it did not start — the host polls the id on a thread of
-/// its own and delivers what [`flz_core_idle_watch_poll`] answers.
-///
-/// # Safety
-/// `channel` must be a NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn flz_core_idle_watch_new(
-    channel: *const c_char,
-    threshold_nanos: u64,
-) -> u64 {
-    let Ok(channel) = CStr::from_ptr(channel).to_str() else {
-        return 0;
-    };
-    let id = NEXT_IDLE_WATCH.fetch_add(1, Ordering::Relaxed);
-    IDLE_WATCHES.insert(
-        id,
-        IdleWatch::new(channel, Duration::from_nanos(threshold_nanos)),
-    );
-    id
-}
-
-/// Advance watch `id`'s latch to now and report the boundary it crossed:
-/// [`FLZ_IDLE_NONE`], [`FLZ_IDLE_IDLE`] or [`FLZ_IDLE_RESUMED`], the episode's
-/// gap written to `gap_nanos` on either boundary; [`FLZ_ERR`] for an id no
-/// watch has. Any host thread may call it.
-///
-/// # Safety
-/// `gap_nanos` must be null or point to a writable `u64`.
-#[no_mangle]
-pub unsafe extern "C" fn flz_core_idle_watch_poll(id: u64, gap_nanos: *mut u64) -> i32 {
-    let Some(mut watch) = IDLE_WATCHES.get_mut(&id) else {
-        return FLZ_ERR;
-    };
-    let (status, gap) = match watch.evaluate(flz_core::util::monotonic_nanos()) {
-        None => return FLZ_IDLE_NONE,
-        Some(Episode::Idle(gap)) => (FLZ_IDLE_IDLE, gap),
-        Some(Episode::Resumed(gap)) => (FLZ_IDLE_RESUMED, gap),
-    };
-    if !gap_nanos.is_null() {
-        *gap_nanos = u64::try_from(gap.as_nanos()).unwrap_or(u64::MAX);
-    }
-    status
-}
-
-/// Drop watch `id`. An id no watch has is a no-op.
-#[no_mangle]
-pub extern "C" fn flz_core_idle_watch_free(id: u64) {
-    IDLE_WATCHES.remove(&id);
 }
 
 /// Free a buffer returned by [`flz_core_poll`].

@@ -210,17 +210,10 @@ def test_the_context_is_callable_from_a_thread_that_did_not_create_it() -> None:
         core.free()
 
 
-def test_the_clock_and_the_entry_probe_need_no_context() -> None:
+def test_the_clock_needs_no_context() -> None:
     core = native.Core.create()
     try:
         assert core.monotonic_nanos() > 0
-        assert core.entry_last_delivery_nanos("never-fed") == 0
-        # The idle latch lives in the core; the veneer only advances it.
-        watch = core.idle_watch_new("never-fed", 0)
-        assert watch > 0
-        assert core.idle_watch_poll(watch) == (0, 0), "cold start is not an episode"
-        core.idle_watch_free(watch)
-        assert core.idle_watch_poll(watch)[0] == -1, "a freed id answers the ABI error"
     finally:
         core.free()
 

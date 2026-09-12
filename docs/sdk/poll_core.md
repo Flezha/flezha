@@ -41,7 +41,7 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
-| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `procedure/`, `channel/` (builder DSL), `operative/` (typed dispatcher, poll pool), `entity/`, `workflow/`, `runner/`, `testing/` (harness), `diag.rs`, `entry_idle.rs` |
+| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `procedure/`, `channel/` (builder DSL), `operative/` (typed dispatcher, poll pool), `entity/`, `workflow/`, `runner/`, `testing/` (harness), `diag.rs` |
 | `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-processor` (annotation processor), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`ProcedureTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
 ## The core decides, the SDK brings the threads
@@ -380,16 +380,13 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   controller-side, re-forwarded on the next bind).
 - Ownership: whoever allocates frees. Activation buffers the core hands out are
   freed with `flz_core_buf_free`.
-- **Context-free reads**: `flz_core_monotonic_nanos()` and
-  `flz_core_entry_last_delivery_nanos(channel)` take no context — the core
-  records deliveries per entry channel process-wide, and the host derives an
-  idle gap by subtracting one from the other (`0` = no frame ever arrived).
-  This is what lets a non-Rust host observe input liveness without keeping a
-  second stamp in step; see [`entry_input_idle.md`](entry_input_idle.md).
+- **Context-free reads**: `flz_core_monotonic_nanos()` takes no context: it
+  reads a process-wide clock, so every host's `ctx` dates an event the same way
+  without keeping a second clock in step.
 
 The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
 drives connect, AddOperative over the real control path, input activations, a
-timer firing, the entry-input idle reads, a restore fold, a live state read, a
+timer firing, a restore fold, a live state read, a
 keyed dynamic route through the prepare crossing, an effectively-once floor
 skip, a workflow run-sugar lifecycle and shutdown entirely through the C ABI —
 a capability reachable in the crate API but not the ABI is a defect, not a
@@ -457,8 +454,7 @@ The Java SDK is a poll host over `flz_core`: its runtime binds to
 class — `schemaVersion()`, `contextNew(shimSchemaVersion)`,
 `declareClass(ctx, json)`, `start(ctx, namespace)`, `poll(ctx, timeoutMs)`,
 `complete(ctx, result)`, `workflowEmit` / `workflowRecv` / `workflowCancelled`,
-`spawnWorkflow`, `monotonicNanos()`, `entryLastDeliveryNanos(channel)`,
-`shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
+`spawnWorkflow`, `monotonicNanos()`, `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
 `poll → decode Activation → hand off → poll`; the kernel (transport, ordering,
 durability, retries, timers, credit, routing, the workflow driver, reconnect)
 lives entirely in the core.

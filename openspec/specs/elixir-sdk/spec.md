@@ -293,7 +293,7 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 
 ### Requirement: The SDK refuses rather than exiting a caller its own process will not answer
 
-Every call the Elixir SDK makes into one of its own processes SHALL wait a bound named by a row of the one configuration table and SHALL answer a target that does not reply with a refusal the caller can act on, never by exiting that caller. A runner runs inside a host application, so a wedged Entity, Operative, RunnerServer, local run or entry-idle watcher must not take a process the host supervises with it.
+Every call the Elixir SDK makes into one of its own processes SHALL wait a bound named by a row of the one configuration table and SHALL answer a target that does not reply with a refusal the caller can act on, never by exiting that caller. A runner runs inside a host application, so a wedged Entity, Operative, RunnerServer or local run must not take a process the host supervises with it.
 
 Three calls SHALL wait with no bound at all, because there the wait is the protocol and the caller is one of the runner's own processes: the `:drop_nothing` enqueue, whose guarantee is that an input is never dropped and never refused; the credit window's acquire, which parks a sender until a grant covers its frame; and the Entity rebind, whose caller replays that Entity's outputs after it returns and so must not proceed before its records reach the wire. None SHALL be given a bound, because a caller that abandoned one would lose an input, ship past a window the Controller is metering, or release outputs ahead of their own records.
 
@@ -436,22 +436,6 @@ The SDK SHALL stamp the same value at byte 0 of every durable record it ships â€
 #### Scenario: Every durable record is stamped and a foreign one is refused
 - **WHEN** an Elixir Entity ships a change record, and later a `RestoreInitState` for it carries a record stamped with the Rust SDK's byte
 - **THEN** the shipped record's byte 0 is `3`, and the restore is refused with the language-mismatch wording naming `elixir (3)` and `rust (1)` â€” never decoded, never reported as a malformed header
-
-### Requirement: The Elixir SDK records entry deliveries and reports idle episodes in both deployment modes
-
-The Elixir SDK SHALL carry the `entry_idle` capability with its own re-expression of both layers, since it inherits nothing from `flz_core`: one `:atomics` cell per entry-channel name, interned in `:persistent_term` when an Operative resolves its topology and never on the delivery path, stamped by one atomic store in the Operative's input handler after the channel is resolved and before the frame is parsed, on `System.monotonic_time/1` anchored at `:erlang.system_info(:start_time)` so that `0` means never delivered; and an SDK-owned process that holds the registrations, evaluates the episode latch on a `Process.send_after` tick at a quarter of the threshold clamped to `[250 ms, 1 s]`, and invokes the observer under `try/rescue/catch` so a raise, throw or exit becomes one warning. The handle SHALL expose `last_entry_delivery/2` (a `DateTime` derived from the gap, or `nil`) and `on_entry_idle/4` (a fun of arity one, or a module implementing `Flezha.SDK.IdleObserver` with `idle/1` and an optional `resumed/1`), both legal before and after `start/1` and identical in native and standalone modes; `start_link/1` SHALL accept `idle_observers:` for the supervised shape. `test/apps/elixir_runner` SHALL carry the `entry_idle_probe` twin and the manifest SHALL list `entry_idle` under `fixtures`.
-
-#### Scenario: A frame on one channel leaves another's stamp alone
-- **WHEN** an operative declares entry channels `idle_input` and `idle_report` fanning into one procedure, and a frame arrives on `idle_report`
-- **THEN** `last_entry_delivery/2` for `idle_input` is unchanged and for `idle_report` is at or after the frame
-
-#### Scenario: Registration before start is honoured after it
-- **WHEN** `on_entry_idle/4` is called on a handle that has not been started, and the runner is then started in native mode and later in standalone mode
-- **THEN** the observer fires once for the first silence past the threshold on the channel it named, in either mode, and once for the frame that ends it
-
-#### Scenario: A raising observer costs the runner nothing
-- **WHEN** a registered observer raises inside `idle/1`
-- **THEN** the SDK logs one warning naming the channel and the episode, the Entity processes and the tick continue, and the next episode invokes the observer again
 
 ### Requirement: The Elixir SDK persists per-Entity state in its own core
 

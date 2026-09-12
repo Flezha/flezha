@@ -18,7 +18,7 @@ defmodule Flezha.SDK.CallBoundsTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.SDK.{Commands, Credit, Entity, EntryIdle, Local, Operative, RunnerServer}
+  alias Flezha.SDK.{Commands, Credit, Entity, Local, Operative, RunnerServer}
   alias Flezha.State.Wire
   alias FlezhaTest.Helper.SourceWalk
 
@@ -95,7 +95,6 @@ defmodule Flezha.SDK.CallBoundsTest do
                entity_idle_for: {:answered, false},
                entity_read: {:answered, {:error, :busy}},
                entity_restore: {:answered, {:error, "entity_busy: the Entity did not answer"}},
-               entry_idle_register: {:answered, {:error, :idle_watcher_busy}},
                local_feed: {:answered, {:error, "the local run did not answer"}},
                local_on_sink: {:answered, {:error, "the local run did not answer"}},
                local_operative: {:answered, nil},
@@ -105,7 +104,6 @@ defmodule Flezha.SDK.CallBoundsTest do
                operative_lookup: {:answered, {:error, :operative_busy}},
                runner_define: {:answered, {:error, :runner_busy}},
                runner_namespace: {:answered, nil},
-               runner_on_entry_idle: {:answered, {:error, :runner_busy}},
                runner_remove: {:answered, {:error, :runner_busy}}
              }
     end
@@ -175,7 +173,6 @@ defmodule Flezha.SDK.CallBoundsTest do
       {:runner_define, fn -> RunnerServer.define(w, __MODULE__, %{}) end},
       {:runner_remove, fn -> RunnerServer.remove(w, __MODULE__) end},
       {:runner_namespace, fn -> RunnerServer.namespace(w) end},
-      {:runner_on_entry_idle, fn -> RunnerServer.on_entry_idle(w, "c", 1_000, & &1) end},
       {:operative_lookup, fn -> Operative.lookup(w, "p", "k") end},
       {:operative_entities, fn -> Operative.entities(w) end},
       {:local_on_sink, fn -> Local.on_sink(w, "c", & &1) end},
@@ -187,7 +184,6 @@ defmodule Flezha.SDK.CallBoundsTest do
       {:entity_apply_state, fn -> Entity.apply_state(w, %{}) end},
       {:entity_idle_for, fn -> Entity.idle_for?(w, 1, 100) end},
       {:entity_evict, fn -> Entity.evict(w) end},
-      {:entry_idle_register, fn -> EntryIdle.register(w, "c", nil, 1_000, & &1) end},
       {:commands_markers, fn -> restore_with_markers(lookup_only) end}
     ]
   end

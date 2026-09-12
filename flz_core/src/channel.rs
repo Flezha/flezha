@@ -170,32 +170,12 @@ pub struct ChannelDescriptor {
     /// Byte codec for inter-procedure payloads; required on every inter-proc
     /// channel of a durable structured workflow, whose handoffs are journaled.
     pub codec: Option<ChannelCodec>,
-    /// When this entry channel last received a frame, resolved once so the
-    /// delivery path never looks a name up; `None` on other kinds.
-    pub entry_observation: Option<Arc<crate::entry_input::EntryObservation>>,
 }
 
 impl ChannelDescriptor {
     pub fn consumer_ids(&self) -> impl Iterator<Item = ProcedureId> + '_ {
         self.consumers.iter().map(|e| e.procedure)
     }
-
-    /// A frame reached this channel; a no-op off an entry channel.
-    #[inline]
-    pub fn observe_delivery(&self) {
-        if let Some(observation) = &self.entry_observation {
-            observation.stamp();
-        }
-    }
-}
-
-/// The observation cell of an `Entry` channel, `None` for every other kind;
-/// the one place both construction sites resolve it.
-pub fn entry_observation_for(
-    kind: ChannelKind,
-    name: &str,
-) -> Option<Arc<crate::entry_input::EntryObservation>> {
-    (kind == ChannelKind::Entry).then(|| crate::entry_input::observation_for(name))
 }
 
 /// The byte codec of an inter-procedure channel's payload.

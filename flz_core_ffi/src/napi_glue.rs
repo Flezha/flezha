@@ -537,49 +537,6 @@ pub fn monotonic_nanos() -> BigInt {
     BigInt::from(crate::flz_core_monotonic_nanos())
 }
 
-/// When the named entry channel last received a frame, on the same clock;
-/// `0n` when no frame ever has.
-#[napi]
-pub fn entry_last_delivery_nanos(channel: String) -> Result<BigInt> {
-    let channel = veneer::c_string("channel", &channel)?;
-    Ok(BigInt::from(veneer::entry_last_delivery_nanos(&channel)))
-}
-
-/// One answer from `idleWatchPoll`: the ABI's status and the episode's gap.
-#[napi(object)]
-pub struct JsIdleEpisode {
-    /// `0` no episode, `1` idle, `2` resumed, `-1` an id no watch has.
-    pub status: i32,
-    /// The episode's gap in nanoseconds; `0n` with no episode.
-    pub gap_nanos: BigInt,
-}
-
-/// Register an episode latch over the named entry channel in the core; the
-/// tick that advances it is this host's own timer.
-#[napi]
-pub fn idle_watch_new(channel: String, threshold_nanos: BigInt) -> Result<BigInt> {
-    let channel = veneer::c_string("channel", &channel)?;
-    let threshold = from_big("thresholdNanos", &threshold_nanos)?;
-    Ok(BigInt::from(veneer::idle_watch_new(&channel, threshold)))
-}
-
-/// Advance a watch's latch to now.
-#[napi]
-pub fn idle_watch_poll(id: BigInt) -> Result<JsIdleEpisode> {
-    let (status, gap) = veneer::idle_watch_poll(from_big("id", &id)?);
-    Ok(JsIdleEpisode {
-        status,
-        gap_nanos: BigInt::from(gap),
-    })
-}
-
-/// Drop a watch.
-#[napi]
-pub fn idle_watch_free(id: BigInt) -> Result<()> {
-    veneer::idle_watch_free(from_big("id", &id)?);
-    Ok(())
-}
-
 /// The context's last recorded error, or `null`.
 #[napi]
 pub fn last_error() -> Option<String> {
@@ -658,13 +615,6 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("spawnWorkflow", "flz_core_spawn_workflow"),
         veneer("adminCall", "flz_core_admin_call"),
         veneer("monotonicNanos", "flz_core_monotonic_nanos"),
-        veneer(
-            "entryLastDeliveryNanos",
-            "flz_core_entry_last_delivery_nanos",
-        ),
-        veneer("idleWatchNew", "flz_core_idle_watch_new"),
-        veneer("idleWatchPoll", "flz_core_idle_watch_poll"),
-        veneer("idleWatchFree", "flz_core_idle_watch_free"),
         veneer("lastError", "flz_core_last_error"),
         host("setLogCallback", None, false),
         // The host's threads. `startHost` is how `flz_core_poll` is reached at

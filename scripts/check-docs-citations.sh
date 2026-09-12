@@ -98,7 +98,7 @@ SELF_FILES = {ALLOWLIST, "scripts/check-docs-citations.sh", ".github/workflows/n
 
 TRACKED = set(naming_gate.tracked_files())
 # Every tail of every tracked path, so a citation written from an SDK's own root
-# (`lib/flezha/entry_idle.rb`) or with a `.../` elision resolves without the
+# (`lib/flezha/runner.rb`) or with a `.../` elision resolves without the
 # gate having to know which roots this repository nests.
 SUFFIXES = set()
 for _path in TRACKED:

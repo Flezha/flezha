@@ -233,14 +233,11 @@ defmodule Flezha.Config.DurationRows do
     {:control_keepalive_ms, :ms, 15_000, runtimes: [:controller, :elixir_sdk, :rust]},
     {:data_heartbeat_ms, :ms, 10_000,
      env: "FLEZHA_DATA_HEARTBEAT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
-    {:entry_idle_tick_max_ms, :ms, 1_000, []},
-    {:entry_idle_tick_min_ms, :ms, 250, []},
     {:sdk_commit_ack_ms, :ms, 30_000,
      env: "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     # A call into one of the runner's own control processes: the RunnerServer,
-    # an Operative, a local run, the entry-idle watcher. None of them runs
-    # author code on the answering clause, so a wait here is a wedged process
-    # rather than a busy one.
+    # an Operative, a local run. None of them runs author code on the answering
+    # clause, so a wait here is a wedged process rather than a busy one.
     {:sdk_control_call_ms, :ms, 5_000, []},
     # A call into an Entity that answers from its queue rather than from its
     # state — the same question the serialise wait asks, kept as a row of its

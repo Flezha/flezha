@@ -33,7 +33,6 @@ pub mod dynamic;
 #[doc(hidden)]
 pub mod effect;
 pub mod entity;
-pub mod entry_input;
 pub mod error;
 #[doc(hidden)]
 pub mod flusher;

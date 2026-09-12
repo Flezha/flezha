@@ -513,7 +513,7 @@ shutdown notification, the identity stamps at its routing seam, the idle reaper 
 and eviction trace, the per-Procedure schema declaration with its migrations, the
 pending-timer set with its two firing paths and the clock kinds, the effect record with its
 staged interval, its consumed-offset floor and its park — and defers correction windows and
-the workflow kind, each owed to a re-expression in Elixir. `entry_idle`,
+the workflow kind, each owed to a re-expression in Elixir.
 `state_persistence`, `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`
 and `effectively_once` are carried by all seven and sit in the required set: their mechanisms
 live once in the shared core for the six `flz_core` hosts and are re-expressed in the Elixir

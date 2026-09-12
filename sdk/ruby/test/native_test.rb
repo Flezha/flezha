@@ -51,17 +51,6 @@ class NativeTest < Minitest::Test
                     wait_starvation complete workflow_recv spawn_workflow admin_call], blocking
   end
 
-  # The idle latch lives in the core; the veneer only advances it. A watch over
-  # a channel nothing fed answers no episode, and a freed id answers the error.
-  def test_an_idle_watch_is_advanced_through_the_veneer
-    watch = Flezha::Native.idle_watch_new("native_test_idle", 0)
-
-    assert_operator watch, :>, 0
-    assert_equal [0, 0], Flezha::Native.idle_watch_poll(watch), "cold start is not an episode"
-    Flezha::Native.idle_watch_free(watch)
-    assert_equal(-1, Flezha::Native.idle_watch_poll(watch).first, "a freed id answers the ABI error")
-  end
-
   # The guarded wrapper covers the whole surface. Without this, an entry point
   # added to the veneer and not to `ENTRY_POINTS` is a method that quietly does
   # not exist on `Core` — and one removed from the veneer is a delegation that

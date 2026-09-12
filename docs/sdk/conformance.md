@@ -118,7 +118,7 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 `runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
 `entity_timers`, `correction_window`, `keyed_channels`, `workflow`,
-`dynamic_entity`, `entry_idle`, `partitioned`, `schema_evolution`.
+`dynamic_entity`, `partitioned`, `schema_evolution`.
 
 A capability can carry no fixtures at all, where the scenarios that prove it
 need none of their own. Carrying fixtures and being required are independent:
@@ -140,7 +140,7 @@ two carries the second per test, with its own skip:
 manifest exactly once — under `deferred` or as a `fixtures` key — so one can be
 neither forgotten nor claimed twice. The **required set**
 (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
-`retry_ladder`, `partitioned`, `pool_wedge`, `entry_idle`, `state_persistence`,
+`retry_ladder`, `partitioned`, `pool_wedge`, `state_persistence`,
 `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`,
 `effectively_once`, `correction_window`) can never be deferred, and it holds
 **every capability no manifest defers**: a capability every SDK carries is one

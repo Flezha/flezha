@@ -193,6 +193,5 @@ Java `E12_SessionTimeout`.
 ## See also
 
 - [`stream_transforms.md`](stream_transforms.md) — `key_by`, which creates the per-key Entity a timer lives in.
-- [`entry_input_idle.md`](entry_input_idle.md) — silence on an entry channel, outside any Entity.
 - [`state_persistence.md`](state_persistence.md) — the change log and restore fold the pending set rides.
 - [`../architecture/kernel.md`](../architecture/kernel.md) — the effect record, compaction and the determinism contract.

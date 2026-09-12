@@ -11,57 +11,6 @@ fn factory(name: &str) -> String {
     format!("{name}_{}", std::process::id())
 }
 
-mod entry_observation_decl_tests {
-    //! A host-language class reaches the wire through the same `dispatch` the
-    //! typed Rust classes do, so its entry channels must carry the same
-    //! observation cell — that is what makes the input-liveness signal one
-    //! implementation for both SDKs rather than two.
-
-    use super::{decl, factory};
-    use crate::channel::ChannelKind;
-
-    #[test]
-    fn a_host_declared_entry_channel_carries_the_observation_its_peers_read() {
-        let id = factory("host_entry_observation");
-        decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
-                 "channels":[{{"name":"host_trades_in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
-                             {{"name":"host_out","kind":"plugin","producer":0,
-                              "chains":[[{{"link":"sink","name":"host_out"}}]]}}],
-                 "procedures":[{{"name":"p0"}}]}}"#
-        ))
-        .expect("the class registers");
-
-        let topology = crate::operative::registry::get_class(&id).expect("class registered");
-        let entry = topology
-            .channels
-            .iter()
-            .find(|c| c.kind == ChannelKind::Entry)
-            .expect("entry channel");
-        let cell = entry
-            .entry_observation
-            .as_ref()
-            .expect("an entry channel is observed");
-        assert!(
-            crate::entry_input::observation_of("host_trades_in")
-                .is_some_and(|shared| std::sync::Arc::ptr_eq(&shared, cell)),
-            "the descriptor caches the cell a reader reaches by name"
-        );
-
-        assert!(
-            topology
-                .channels
-                .iter()
-                .filter(|c| c.kind != ChannelKind::Entry)
-                .all(|c| c.entry_observation.is_none()),
-            "only entry channels are observed"
-        );
-
-        entry.observe_delivery();
-        assert!(crate::entry_input::last_delivery("host_trades_in").is_some());
-    }
-}
-
 mod checkpoint_interval_decl_tests {
     //! The checkpoint interval's declaration crosses the C ABI as JSON, so its
     //! refusals live here rather than in a typed SDK.

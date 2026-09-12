@@ -163,7 +163,6 @@ fn build_channel(
         // the lossless HostPayload wrapper, so a durable chained loop
         // can re-seed exactly what the live handoff carried.
         codec: (derived.kind == HostChannelKind::InterProc).then(|| host_payload_codec(channel_id)),
-        entry_observation: crate::channel::entry_observation_for(kind, name),
     }
 }
 

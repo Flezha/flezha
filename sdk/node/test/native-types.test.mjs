@@ -105,7 +105,6 @@ const MIRRORS = {
   JsNativeExport: 'NativeExport',
   JsHostStats: 'NativeHostStats',
   JsLogLine: 'NativeLogLine',
-  JsIdleEpisode: 'NativeIdleEpisode',
 };
 
 /** Every mirrored shape, whichever side declares it. */

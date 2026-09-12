@@ -100,9 +100,6 @@
     "dynamic_entity": [
       "dynamic_entity"
     ],
-    "entry_idle": [
-      "entry_idle_probe"
-    ],
     "entity_timers": [
       "session_timeout"
     ],

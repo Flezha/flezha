@@ -95,9 +95,6 @@
     "dynamic_entity": [
       "dynamic_entity"
     ],
-    "entry_idle": [
-      "entry_idle_probe"
-    ],
     "pool_wedge": [
       "wedge_probe"
     ],

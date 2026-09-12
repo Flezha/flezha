@@ -22,8 +22,7 @@
  * names the declaration responsible.
  *
  * <p>The remaining types in this package are the supporting surface for those two paths:
- * {@link com.flezha.sdk.SinkOutput} is the frame handed to a local-mode sink callback,
- * {@link com.flezha.sdk.IdleObserver} reports an entry channel that has gone quiet, and
+ * {@link com.flezha.sdk.SinkOutput} is the frame handed to a local-mode sink callback, and
  * {@link com.flezha.sdk.OperativeTypeInUseException} is raised when one operative id is declared
  * twice on a single runner.
  *

@@ -430,8 +430,8 @@ The manifest at `test/apps/php_runner/conformance.json` carries the seven
 capabilities every SDK must (`runner_lifecycle`, `connect_discovery`,
 `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge`),
 carries `keyed_channels`, `dynamic_entity`, `state_persistence`,
-`entity_timers`, `schema_evolution`, `effectively_once`, `correction_window`
-and `entry_idle` besides, and defers one.
+`entity_timers`, `schema_evolution`, `effectively_once` and `correction_window`
+besides, and defers one.
 
 The deferral is about **fixtures, not mechanism**: the workflow kind is
 implemented here and reached through the same core the Rust and Java arms
@@ -439,17 +439,6 @@ prove it on. What is missing is the fixture-by-fixture proof against the
 reference, which needs two builder surfaces every veneer lacks — an
 inter-procedure `codec()` and a hybrid `sink()->into()` — and is owed to the
 follow-up that adds them, alongside the Node, Ruby and Python SDKs.
-
-`entry_idle` is carried with this SDK's own host layer: `Runner::lastEntryDelivery()`
-and `Runner::onEntryIdle()` (`src/EntryIdle.php`, `IdleObserver`) over the
-episode latch the core keeps by watch id. The tick rides the poll loop of the
-thread that started the runner — between polls under `SyncExecutor`, between
-starvation waits under `SwooleExecutor` — so a body that runs past it delays
-the report and never changes the count. A worker interpreter's handle
-registers nothing: the entry script re-runs there, and only the thread that
-started the runner owns its observers, as it owns its signals. Both calls are
-legal before `start()`, through `Core::contextFree()`. Contract and the
-per-host spellings: [`entry_input_idle.md`](entry_input_idle.md).
 
 Keyed channels are not on that list, and were not implemented here until
 `Ctx::stampIdentity` minted `flz.entity` / `flz.seq` / `flz.key`: the capability

@@ -28,7 +28,6 @@ from .builder import DROPPED, Channels, Edge
 from .codec import TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
 from .entity_state import state
-from .entry_idle import IdleObserver
 from .errors import (
     CoreError,
     DeclarationError,
@@ -66,7 +65,6 @@ __all__ = [
     "Runner",
     "LocalOperative",
     "SinkOutput",
-    "IdleObserver",
     "configure_logging",
     # codec
     "TypeCodec",

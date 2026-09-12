@@ -573,32 +573,6 @@ fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
 }
 
-/// When the named entry channel last received a frame, on the same clock;
-/// `0` when no frame ever has.
-fn entry_last_delivery_nanos(channel: String) -> Result<u64, Error> {
-    let ruby = ruby();
-    let channel = veneer::c_string("channel", &channel).map_err(|r| raise(&ruby, r))?;
-    Ok(veneer::entry_last_delivery_nanos(&channel))
-}
-
-/// Register an episode latch over the named entry channel in the core; the
-/// tick that advances it is a Ruby thread of the host's own.
-fn idle_watch_new(channel: String, threshold_nanos: u64) -> Result<u64, Error> {
-    let ruby = ruby();
-    let channel = veneer::c_string("channel", &channel).map_err(|r| raise(&ruby, r))?;
-    Ok(veneer::idle_watch_new(&channel, threshold_nanos))
-}
-
-/// Advance a watch's latch to now: `[status, gap_nanos]`.
-fn idle_watch_poll(id: u64) -> (i32, u64) {
-    veneer::idle_watch_poll(id)
-}
-
-/// Drop a watch.
-fn idle_watch_free(id: u64) {
-    veneer::idle_watch_free(id)
-}
-
 /// The context's last recorded error, or `nil`.
 fn last_error() -> Option<String> {
     let ptr = CONTEXT.load(Ordering::Acquire);
@@ -659,13 +633,6 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("spawn_workflow", "flz_core_spawn_workflow"),
     ("admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
-    (
-        "entry_last_delivery_nanos",
-        "flz_core_entry_last_delivery_nanos",
-    ),
-    ("idle_watch_new", "flz_core_idle_watch_new"),
-    ("idle_watch_poll", "flz_core_idle_watch_poll"),
-    ("idle_watch_free", "flz_core_idle_watch_free"),
     ("last_error", "flz_core_last_error"),
     ("native_surface", "flz_core_schema_version"),
 ];
@@ -711,13 +678,6 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("spawn_workflow", function!(spawn_workflow, 4))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
-    native.define_module_function(
-        "entry_last_delivery_nanos",
-        function!(entry_last_delivery_nanos, 1),
-    )?;
-    native.define_module_function("idle_watch_new", function!(idle_watch_new, 2))?;
-    native.define_module_function("idle_watch_poll", function!(idle_watch_poll, 1))?;
-    native.define_module_function("idle_watch_free", function!(idle_watch_free, 1))?;
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;
     Ok(())

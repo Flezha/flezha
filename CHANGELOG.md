@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Removed: the entry-input idle signal, from every SDK
+
+**Breaking for every SDK.** The per-entry-channel idle signal is gone: the
+accessor `last_entry_delivery` / `lastEntryDelivery`, the registration
+`on_entry_idle` / `onEntryIdle`, the `IdleObserver` type each SDK carried, and
+the Elixir `start_link/1` option `idle_observers:`. Calls to any of them no
+longer compile, import or resolve, which is the intended trigger: there is no
+shim and no deprecation window.
+
+The C ABI loses `flz_core_entry_last_delivery_nanos`,
+`flz_core_idle_watch_new`, `flz_core_idle_watch_poll` and
+`flz_core_idle_watch_free`, and with them the `FLZ_IDLE_*` status constants. A
+host binding that declared them by hand must drop those declarations.
+`flz_core_monotonic_nanos` stays: it is the clock every host's `ctx` reads.
+
+`entry_idle` also leaves the conformance vocabulary and the required capability
+set, so a `conformance.json` that lists it under `fixtures` or `deferred` now
+fails the manifest gate.
+
+Nothing in the tree consumed the signal. The nearest supported replacement is
+the controller's own input-silence watchdog: set `input_silence_timeout_ms`
+(off by default, `docs/configuration.md`) and it emits
+`[:flezha, :state, :input_silence]` and one `[watchdog]` warning for an
+operative class that has gone quiet.
+
+**It is a coarser instrument, and the difference matters if you were using the
+removed signal.** The watchdog counts durable Change frames, not arriving
+input, and it latches per operative class rather than per entry channel. So:
+an operative with two entry channels whose first feed dies while the second
+keeps folding state is never flagged, because the class keeps writing changes;
+an operative that has never persisted a change is never watched at all, since
+the sweep only considers a class whose `last_persisted_seq` has moved; and only
+stream operatives are swept, because a workflow is quiet between stages by
+design and a checkpoint-acknowledging class is quiet between checkpoints. If you need
+per-channel silence, you now have to observe it in your own procedure, from the
+frames it receives.
+
+Plugin providers keep their own silence handling: the websocket's
+`idle_timeout_ms` and `resubscribe_after_ms` are untouched.
+
 ### Changed: a frame naming a channel that is not an entry channel is parked
 
 An input frame whose `channel` metadata names something that is not one of the
@@ -1225,10 +1265,10 @@ supervisor's answer to starvation is one more fetch-and-run **thread**, because
 a stalled loop cannot rescue itself. The SDK spawns no processes and refuses any
 core call after a fork, naming the rule.
 
-`test/apps/python_runner/` claims eight of the nine capability families every
+`test/apps/python_runner/` claims seven of the eight capability families every
 other veneer SDK defers — the persistence family, the effectively-once tier,
-timers, correction windows, keyed channels, dynamic-entity eviction, entry idle
-and schema evolution — each proved by the live suite over UDS and QUIC.
+timers, correction windows, keyed channels, dynamic-entity eviction and schema
+evolution — each proved by the live suite over UDS and QUIC.
 Claiming `keyed_channels` required minting the `flz.entity` / `flz.seq` /
 `flz.key` identity stamps in the SDK, which Java does and Node, Ruby and PHP do
 not. `workflow` is deferred by name to `sdk-durable-fixture-parity`.
@@ -1980,27 +2020,6 @@ as before.
   from the shared core; no wire, controller or API change.
 
 ### Added
-
-- **An application can now see that its input went quiet**
-  (`expose-entry-input-idle-signal`). The SDK owns the IO threads, so when a
-  feed goes silent every procedure simply stops being called: output freezes,
-  the process stays alive, and the only component that knows a frame arrived is
-  the SDK. Both SDKs now track, per entry channel, the instant the runner last
-  delivered a frame there — one relaxed atomic store on the delivery path — and
-  expose it plus an idle-observer registration on the runner handle:
-  `last_entry_delivery` / `on_entry_idle(channel, threshold, observer)` (Rust),
-  `lastEntryDelivery` / `onEntryIdle` (Java). The observer fires **once per idle
-  episode**, never before the channel's first frame (a cold start is not an
-  incident), and re-arms on a resume notification; it runs on an SDK background
-  tick, never on the delivery path, and a panic/throw is contained and logged.
-
-  The SDK ships **no default threshold and no default action** — the signal
-  (when a frame last arrived) is SDK knowledge, the policy (what gap is
-  anomalous — a quiet overnight market is not a dead feed) is the
-  application's. The stamp itself lives in the shared core, written on the one
-  entry-delivery seam, so the Java SDK — a poll host over that core — reads the
-  same fact through the C ABI rather than keeping a second copy in step.
-  `docs/sdk/entry_input_idle.md`.
 
 - **The authoring sugar can now feed a `.keyed()` channel.** A keyed output
   channel accepts only `emit_keyed`, but `#[flezha::procedure]` / `@Procedure`

@@ -357,7 +357,6 @@ impl OperativeDispatchHandle {
             return;
         };
 
-        channel.observe_delivery();
         let (consumed_offset, replay) = frame_facts(metadata);
 
         let Some(typed_payload) = enter_channel(

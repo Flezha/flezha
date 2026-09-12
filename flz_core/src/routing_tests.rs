@@ -72,15 +72,17 @@ fn queued(instance: &Arc<StreamInstance>) -> usize {
     instance.entities[0][0].mailbox.len()
 }
 
-fn delivery_stamp(instance: &Arc<StreamInstance>, channel_id: u32) -> Option<u64> {
-    instance
-        .topology
-        .channel(channel_id)
-        .expect("a declared channel")
-        .entry_observation
-        .as_ref()
-        .expect("an entry channel carries an observation cell")
-        .last_delivery_nanos()
+/// The entry channel the one queued frame resolved to: the host wrapper
+/// records the channel it was parsed for, so the mailbox itself says which
+/// entry channel took the frame.
+fn queued_channel(instance: &Arc<StreamInstance>) -> Option<u32> {
+    match instance.entities[0][0].mailbox.pop()? {
+        crate::entity::EntityItem::Input(payload) => payload
+            .value
+            .downcast_ref::<crate::host::HostPayload>()
+            .map(|host| host.channel),
+        _ => None,
+    }
 }
 
 #[test]
@@ -117,11 +119,6 @@ fn a_frame_naming_an_undeclared_entry_channel_is_parked_with_the_name_it_asked_f
         "the identity slot the controller makes a directory is this side's own"
     );
     assert_eq!(queued(&instance), 0, "no procedure received the frame");
-    assert_eq!(
-        delivery_stamp(&instance, 0),
-        None,
-        "a parked frame stamps no entry channel's observation"
-    );
     state_sink::reset_for_test();
 }
 
@@ -140,11 +137,11 @@ fn a_frame_with_no_channel_key_still_reaches_the_first_entry_channel() {
     // frame was delivered is what proves it was not parked; reading the
     // capture here would race the park thread and pass either way.
     assert_eq!(queued(&instance), 1, "the default entry channel took it");
-    assert!(
-        delivery_stamp(&instance, 0).is_some(),
-        "the first entry channel was delivered to"
+    assert_eq!(
+        queued_channel(&instance),
+        Some(0),
+        "the first entry channel was the one delivered to, not the second"
     );
-    assert_eq!(delivery_stamp(&instance, 1), None, "the second was not");
     state_sink::reset_for_test();
 }
 
@@ -159,13 +156,9 @@ fn a_frame_naming_a_declared_entry_channel_is_delivered_to_it() {
 
     assert_eq!(queued(&instance), 1, "the named channel's consumer took it");
     assert_eq!(
-        delivery_stamp(&instance, 0),
-        None,
-        "the first entry channel is untouched"
-    );
-    assert!(
-        delivery_stamp(&instance, 1).is_some(),
-        "the named one was delivered to"
+        queued_channel(&instance),
+        Some(1),
+        "the named channel took it, not the first"
     );
     state_sink::reset_for_test();
 }

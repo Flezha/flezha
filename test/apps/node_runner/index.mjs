@@ -17,8 +17,6 @@ import { fileURLToPath } from 'node:url';
 
 import { consoleLogger, createRunner } from '@flezha/sdk';
 
-import { armEntryIdleProbe } from './fixtures.mjs';
-
 const here = dirname(fileURLToPath(import.meta.url));
 const namespace = process.argv[2] || 'default';
 const fixtures = resolve(here, 'fixtures.mjs');
@@ -56,9 +54,6 @@ if (refusalFixture) {
   runner.defineStream(conformance);
 } else {
   runner.defineStream(fixtures).defineWorkflow(workflows);
-  // A runner-level registration, not a declaration: armed here, beside the
-  // fixtures the chain above registers by specifier.
-  armEntryIdleProbe(runner);
 }
 
 try {
