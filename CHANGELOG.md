@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed: a trailing channel option takes effect in Node, Python, Ruby and PHP
+
+Node, Python, Ruby and PHP apply `named`, `keyed` and the overflow and retry
+options when declared, so a trailing one is no longer dropped and a 256-byte
+name is refused.
+
 ### Fixed: `flz controller stop` ends the controller
 
 `flz controller stop` drained the controller and printed `outcome=clean`, but left

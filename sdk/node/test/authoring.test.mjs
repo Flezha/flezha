@@ -312,6 +312,28 @@ test('a channel named by both named() and sink() is refused naming both', () => 
   );
 });
 
+test('a channel option with nothing wired after it still reaches the channel', () => {
+  const renamed = defineOperative({
+    factoryId: 'trailing_named',
+    channels: (c) => {
+      c.input('in').into(echo('producer')).named('renamed');
+    },
+  });
+  assert.deepEqual(
+    derivedChannels(renamed).map(([name]) => name),
+    ['in', 'renamed'],
+  );
+  const keyed = refusal(() =>
+    defineOperative({
+      factoryId: 'trailing_keyed',
+      channels: (c) => {
+        c.input('in').into(echo('producer')).keyed();
+      },
+    }),
+  );
+  assert.deepEqual([...keyed.refusals], ['KeyedChannelWithoutPluginWire']);
+});
+
 test('two channels naming one sink is refused as a duplicate sink name', () => {
   const spec = defineOperative({
     factoryId: 'one_sink_two_channels',

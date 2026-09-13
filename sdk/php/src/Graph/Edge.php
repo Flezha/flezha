@@ -225,7 +225,12 @@ final class Edge
     /** @param array<string, mixed> $next */
     private function with(array $next): self
     {
-        return new self($this->builder, $this->from, [...$this->pending, ...$next]);
+        $edge = new self($this->builder, $this->from, [...$this->pending, ...$next]);
+        // Applied now, as the reference applies it: an option no terminator
+        // follows would otherwise be dropped.
+        $edge->channel();
+
+        return $edge;
     }
 
     /**
@@ -238,7 +243,8 @@ final class Edge
      */
     private function relink(array $link, array $next): self
     {
-        return $this->with([
+        return new self($this->builder, $this->from, [
+            ...$this->pending,
             ...$next,
             'chain' => $this->builder->linkChain($this->from, $this->pending['chain'] ?? null, $link),
         ]);

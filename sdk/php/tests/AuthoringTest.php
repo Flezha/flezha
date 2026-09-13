@@ -348,6 +348,19 @@ final class AuthoringTest extends TestCase
         self::derived(NamedTwice::spec());
     }
 
+    /** A channel option with nothing wired after it still reaches the channel. */
+    public function testAChannelOptionWithNothingWiredAfterItStillReachesTheChannel(): void
+    {
+        self::assertSame(
+            ['in', 'renamed'],
+            array_column(self::derived(TrailingNamed::spec())['channels'], 'name'),
+        );
+        $this->expectException(DeclarationException::class);
+        $this->expectExceptionMessage('KeyedChannelWithoutPluginWire');
+
+        self::derived(TrailingKeyed::spec());
+    }
+
     /** Two channels naming one sink is a duplicate channel name. */
     public function testTwoChannelsNamingOneSinkIsRefused(): void
     {
@@ -568,6 +581,24 @@ final class NamedTwice extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('in')->into(Echoer::class)->named('a')->sink('b');
+    }
+}
+
+#[Operative(factoryId: 'trailing_named')]
+final class TrailingNamed extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Echoer::class)->named('renamed');
+    }
+}
+
+#[Operative(factoryId: 'trailing_keyed')]
+final class TrailingKeyed extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Echoer::class)->keyed();
     }
 }
 

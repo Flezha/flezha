@@ -428,7 +428,11 @@ class Edge(Generic[T]):
         return self._pending.get("transforms", [])
 
     def _with(self, **pending: Any) -> Edge[Any]:
-        return Edge(self._builder, self._from, {**self._pending, **pending})
+        # Applied now, as the reference applies it: an option no terminator
+        # follows would otherwise be dropped.
+        edge = Edge(self._builder, self._from, {**self._pending, **pending})
+        edge._channel()
+        return edge
 
     def _record(self, channel: ChannelSpec, link: Link) -> dict[str, Any]:
         """Record one link on this edge's chain, forking when another edge has
@@ -450,8 +454,8 @@ class Edge(Generic[T]):
         """This edge with one more chain link — the one place a transform's or a
         key's result edge is built, so every link the author declared reaches
         the record whether or not an ``into(...)`` ever closes it."""
-        channel = self._channel()
-        return self._with(**pending, **self._record(channel, link))
+        chain = self._record(self._channel(), link)
+        return Edge(self._builder, self._from, {**self._pending, **pending, **chain})
 
     def _channel(self) -> ChannelSpec:
         """The channel this edge's values leave on, with the pending options applied.

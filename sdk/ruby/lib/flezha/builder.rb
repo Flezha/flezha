@@ -344,9 +344,7 @@ module Flezha
       self
     end
 
-    private
-
-    def transforms = @pending[:transforms] || []
+    protected
 
     # The channel this edge's values leave on, with the pending options
     # applied. An entry edge already has one; a procedure edge's is created on
@@ -369,15 +367,24 @@ module Flezha
       target
     end
 
+    private
+
+    def transforms = @pending[:transforms] || []
+
+    # Applied now, as the reference applies it: an option no terminator follows
+    # would otherwise be dropped. This call is why `channel` is protected.
     def with(**next_pending)
-      Edge.new(@builder, @from, @pending.merge(next_pending))
+      edge = Edge.new(@builder, @from, @pending.merge(next_pending))
+      edge.channel
+      edge
     end
 
     # This edge with one more chain link — the one place a transform's or a
     # key's result edge is built, so every link reaches the record and a chain
     # no `into(...)` closes is submitted rather than silently discarded.
     def relink(link, **next_pending)
-      with(**next_pending, chain: @builder.link_chain(@from, @pending[:chain], link))
+      chain = @builder.link_chain(@from, @pending[:chain], link)
+      Edge.new(@builder, @from, @pending.merge(next_pending, { chain: chain }))
     end
 
     def apply_pending(channel)

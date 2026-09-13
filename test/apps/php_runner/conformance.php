@@ -139,13 +139,6 @@ final class RowInterpreter
         'plain/2000000' => PalettePlainMailboxHuge::class,
     ];
 
-    /**
-     * The links that leave a channel option pending: each answers a new edge
-     * and nothing applies it until the next terminator, so the handle they were
-     * declared off has to become that edge.
-     */
-    private const KNOBS = ['keyed', 'retry_max', 'on_full', 'named'];
-
     public readonly bool $persistent;
 
     /** @var list<string> */
@@ -216,13 +209,9 @@ final class RowInterpreter
             return;
         }
 
-        $links = explode('.', $rest);
         $edge = $this->handle($head);
-        foreach ($links as $link) {
+        foreach (explode('.', $rest) as $link) {
             $edge = $this->applyLink($edge, $link);
-        }
-        if (in_array(self::splitCall($links[count($links) - 1])[0], self::KNOBS, true)) {
-            $this->handles[$head] = $edge;
         }
     }
 

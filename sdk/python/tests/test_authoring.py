@@ -372,6 +372,20 @@ def test_a_channel_named_twice_is_refused_naming_both() -> None:
         declare(named_twice)
 
 
+def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel() -> None:
+    @flezha.stream_operative("trailing_named")
+    def renamed(c: flezha.Channels) -> None:
+        c.input("in").into(echo).named("renamed")
+
+    @flezha.stream_operative("trailing_keyed")
+    def keyed(c: flezha.Channels) -> None:
+        c.input("in").into(echo).keyed()
+
+    assert [row[0] for row in _derived(renamed)] == ["in", "renamed"]
+    with pytest.raises(DeclarationError, match="KeyedChannelWithoutPluginWire"):
+        declare(keyed)
+
+
 def test_two_channels_naming_one_sink_is_refused() -> None:
     @flezha.stream_operative("one_sink_two_channels")
     def one_sink(c: flezha.Channels) -> None:

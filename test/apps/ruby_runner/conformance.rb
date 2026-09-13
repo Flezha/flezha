@@ -100,11 +100,6 @@ module Conformance
 
   # The record a row's steps describe, written the way an author writes it.
   class Interpreter
-    # The links that leave a channel option pending: each answers a new edge
-    # and nothing applies it until the next terminator, so the handle they were
-    # declared off has to become that edge.
-    KNOBS = %w[keyed retry_max on_full named].freeze
-
     def initialize(steps)
       @steps = steps.split(";").map(&:strip).reject(&:empty?)
       # A handle is a channel id from an `entry(...)` step, or a procedure role
@@ -137,9 +132,7 @@ module Conformance
       head, rest = step.split(".", 2)
       return class_flag(builder, rest) if head == "class"
 
-      links = rest.split(".")
-      edge = links.reduce(handle(head)) { |current, link| apply_link(current, link) }
-      @handles[head] = edge if KNOBS.include?(Conformance.split_call(links.last).first)
+      rest.split(".").reduce(handle(head)) { |current, link| apply_link(current, link) }
     end
 
     def apply_link(edge, link)

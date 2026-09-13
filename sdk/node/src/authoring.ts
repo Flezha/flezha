@@ -332,8 +332,14 @@ class EdgeStream<T> implements Stream<T> {
     private readonly pending: PendingEdge,
   ) {}
 
+  /**
+   * This handle with one more channel option, applied now as the reference
+   * applies it: an option no terminator follows would otherwise be dropped.
+   */
   private with(next: Partial<PendingEdge>): Stream<T> {
-    return new EdgeStream<T>(this.builder, this.from, { ...this.pending, ...next });
+    const stream = new EdgeStream<T>(this.builder, this.from, { ...this.pending, ...next });
+    stream.channel();
+    return stream;
   }
 
   /**

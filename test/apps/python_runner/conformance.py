@@ -49,12 +49,6 @@ CITED = {
     "commit_block_chain": tier_commit_block_workflow,
 }
 
-# The links that leave a channel option PENDING: each answers a new edge and
-# nothing applies it until the next terminator, so the handle they were declared
-# off has to become that edge.
-KNOBS = ("keyed", "retry_max", "on_full", "named")
-
-
 # -- the palette -------------------------------------------------------------
 #
 # One fixture procedure per role the fixture header names. The identity each
@@ -152,12 +146,9 @@ class Interpreter:
         if head == "class":
             self._class_flag(builder, rest)
             return
-        links = rest.split(".")
         edge = self._handle(head)
-        for link in links:
+        for link in rest.split("."):
             edge = self._apply_link(edge, link)
-        if split_call(links[-1])[0] in KNOBS:
-            self._handles[head] = edge
 
     def _apply_link(self, edge: Any, link: str) -> Any:
         verb, arg = split_call(link)

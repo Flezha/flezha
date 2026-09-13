@@ -295,6 +295,15 @@ class AuthoringTest < Minitest::Test
     assert_match(/both name it/, error.message)
   end
 
+  def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel
+    renamed = operative("trailing_named") { |c| c.input("in").into(pass_through("producer")).named("renamed") }
+    keyed = operative("trailing_keyed") { |c| c.input("in").into(pass_through("producer")).keyed }
+
+    assert_equal %w[in renamed], channels_of(renamed).map(&:first)
+    error = assert_raises(Flezha::DeclarationError) { validate(keyed.spec) }
+    assert_match(/KeyedChannelWithoutPluginWire/, error.message)
+  end
+
   def test_two_channels_naming_one_sink_is_refused
     klass = operative("one_sink_two_channels") do |c|
       c.input("in").into(pass_through("a")).sink("shared")

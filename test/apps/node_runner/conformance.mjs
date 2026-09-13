@@ -38,13 +38,6 @@ const FIXTURE = resolve(HERE, '../../fixtures/reference_topologies.txt');
 const SURFACES = ['branch', 'sync_durability', 'workflow'];
 
 /**
- * The links that leave a channel option PENDING: each answers a new handle and
- * nothing applies it until the next terminator, so the handle they were
- * declared off has to become that answer.
- */
-const KNOBS = ['keyed', 'retry_max', 'on_full', 'named'];
-
-/**
  * The two rows the fixture cites rather than re-spells. They are this app's own
  * reference twins: `commit_block_chain` is `tier_commit_block_workflow`'s
  * topology, which is why the fixture names no steps for either.
@@ -191,14 +184,10 @@ function specOf(row) {
     };
 
     // One fluent sequence, left to right. `into` answers the consuming
-    // procedure's output channel, which the role then addresses; a knob answers
-    // this same handle with one more option pending on it, which is why the
-    // handle has to become the answer.
+    // procedure's output channel, which the role then addresses.
     const chain = (id, rest) => {
-      const links = rest.split('.');
       let stream = handle(id);
-      let bind = KNOBS.includes(call(links[links.length - 1])[0]) ? id : null;
-      for (const link of links) {
+      for (const link of rest.split('.')) {
         const [verb, arg] = call(link);
         switch (verb) {
           case 'map':
@@ -224,13 +213,12 @@ function specOf(row) {
             break;
           case 'into':
             stream = stream.into(procedureFor(arg));
-            bind = arg;
+            handles.set(arg, stream);
             break;
           default:
             throw new Error(`the fixture spells a link this interpreter does not map: ${verb}`);
         }
       }
-      if (bind !== null) handles.set(bind, stream);
     };
 
     for (const step of steps) {
