@@ -36,6 +36,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner offering an operative class |
 | [`running_operatives.md`](guides/running_operatives.md) | Part 1. Starting an operative, watching it, stopping it, and what survives a restart |
 | [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
+| [`cli.md`](guides/cli.md) | Part 2. `flz` itself: reaching a controller, output formats, identity for a gated verb |
 | [`namespaces.md`](guides/namespaces.md) | Part 2. The boundary runners, operatives and credentials sit inside |
 | [`authorization.md`](guides/authorization.md) | Part 2. Turning enforcement on, claiming the admin, tokens and roles |
 | [`using_plugins.md`](guides/using_plugins.md) | Part 2. The plugin system and the plugins that ship |

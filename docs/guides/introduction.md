@@ -64,6 +64,7 @@ One subject each. Read what you need.
 
 | Guide | Covers |
 |---|---|
+| [`cli.md`](cli.md) | `flz` itself: how it reaches a controller, its output formats, and how a gated verb is identified |
 | [`namespaces.md`](namespaces.md) | The boundary every runner, operative and credential sits inside |
 | [`authorization.md`](authorization.md) | Turning enforcement on, claiming the admin, tokens, roles, and what a runner has to prove |
 | [`using_plugins.md`](using_plugins.md) | The plugin system, the ones that ship, and what each costs |

@@ -148,6 +148,72 @@ compared. So editing the command to add `--partitions 3` and re-running it
 looks like it worked and did nothing at all. Stop the instance first, then
 start it with the options you want.
 
+## Or from your own code
+
+Every verb above is also a method on the runner, so an application can start and
+stop its own operatives without anyone typing `flz`. `runner.admin()` reaches
+them, and the controller judges each call as the identity the connection already
+proved, so nothing holds a credential and nothing expires.
+
+<!-- tabs-open -->
+
+### Java
+
+```java
+// start(), not run(): run() blocks, and this keeps the handle.
+FlezhaRunner runner = Flezha.createRunner("default")
+        .defineStream(EchoOperative.class)
+        .start();
+
+Admin admin = runner.admin();
+
+admin.startOperative(OperativeSpec.of("my_echo", "echo"));
+admin.send("my_echo", "hello", "in");
+admin.stopOperative("my_echo");
+```
+
+### Rust
+
+TODO.
+
+### Node
+
+TODO.
+
+### Python
+
+TODO.
+
+### Ruby
+
+TODO.
+
+### PHP
+
+TODO.
+
+### Elixir
+
+TODO.
+
+<!-- tabs-close -->
+
+An operative started this way is the cluster's, not the connection's: it
+survives the runner disconnecting, and an operator sees it in
+`flz operative list` and can stop it there.
+
+**This works here because Part 1 turned authorization off**, which allows every
+call. With enforcement on, the connection is `runner@<namespace>` bound to the
+`runner` role, which grants the connect and nothing else, so every one of these
+is refused until an operator grants it once:
+
+```sh
+flz role bind runner@default app default
+```
+
+The whole surface, what it deliberately cannot do, and the spelling in each of
+the seven SDKs: [`../sdk/admin.md`](../sdk/admin.md).
+
 ## Next
 
 An operative with nothing feeding it does nothing.

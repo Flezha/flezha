@@ -74,6 +74,7 @@ defmodule Flezha.MixProject do
         "docs/guides/runner_deployment.md",
         "docs/guides/running_operatives.md",
         "docs/guides/sources_and_sinks.md",
+        "docs/guides/cli.md",
         "docs/guides/namespaces.md",
         "docs/guides/authorization.md",
         "docs/guides/using_plugins.md",
@@ -85,6 +86,7 @@ defmodule Flezha.MixProject do
         "docs/guides/effectively_once.md",
         "docs/guides/erlang_vm_tuning.md",
         "docs/quickstart.md",
+        "docs/sdk/admin.md",
         "docs/plugins/file.md",
         "docs/plugins/http_poll.md",
         "docs/plugins/websocket_subscription.md",
@@ -106,6 +108,7 @@ defmodule Flezha.MixProject do
           "docs/guides/sources_and_sinks.md"
         ],
         "The basics": [
+          "docs/guides/cli.md",
           "docs/guides/namespaces.md",
           "docs/guides/authorization.md",
           "docs/guides/using_plugins.md",
@@ -119,6 +122,7 @@ defmodule Flezha.MixProject do
           "docs/guides/effectively_once.md",
           "docs/guides/erlang_vm_tuning.md"
         ],
+        SDK: ~r"docs/sdk/",
         Plugins: ~r"docs/plugins/",
         Troubleshooting: ~r"docs/troubleshooting/",
         Reference: ~r"docs/(quickstart|configuration|operations)"

@@ -127,6 +127,28 @@ So a file source is the right tool for replaying a log, loading an export, or
 seeing an operative work with your own eyes. It is not how a cluster ingests
 production traffic.
 
+## Or from your own code
+
+Enabling and disabling are on the same admin handle
+[`running_operatives.md`](running_operatives.md#or-from-your-own-code) used, so
+an application can attach its own plugins:
+
+```java
+Admin admin = runner.admin();
+
+admin.enablePlugin("writer", fields);   // the fields `flz plugin enable` takes
+admin.disablePlugin("writer");
+```
+
+TODO: `fields` is a JSON object carrying what the command line carries, and this
+page does not yet spell it out field by field.
+[`../sdk/admin.md`](../sdk/admin.md) is the surface; the other six SDKs spell
+the same two methods their own way.
+
+What it cannot do is worth knowing: installing, upgrading and uninstalling a
+plugin package are node-wide acts, so they stay with the operator. An
+application may attach and detach the plugins its own namespace already has.
+
 ## Other sources and sinks
 
 The file plugin is one of a family, and they attach exactly the same way: an id,
