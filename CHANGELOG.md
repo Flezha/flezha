@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: Node and Ruby runners ship their final state at shutdown
+
+Node and Ruby runners stopped by SIGTERM or SIGINT now ship their final operative
+state instead of an empty or missing snapshot.
+
 ### Fixed: a trailing channel option takes effect in Node, Python, Ruby and PHP
 
 Node, Python, Ruby and PHP apply `named`, `keyed` and the overflow and retry
