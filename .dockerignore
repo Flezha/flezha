@@ -41,6 +41,11 @@ scripts
 !docker/prod/agent-entrypoint.sh
 !docker/prod/controller-entrypoint.sh
 
+# Re-include the echo example's runner source. `COPY` in
+# examples/python/echo/Dockerfile reads it from a context rooted here, because
+# that image also builds the Python wheel from this checkout's Rust sources.
+!examples/python/echo
+
 # Java SDK is a separate deliverable — not needed for the agent build.
 sdk/java
 

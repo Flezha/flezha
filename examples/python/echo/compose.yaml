@@ -1,0 +1,47 @@
+# A controller and one runner offering `echo`, which is the smallest complete
+# Flezha deployment.
+#
+#     docker compose up -d --wait
+#     docker compose exec controller flz operative start my_echo echo
+#     docker compose exec controller flz operative send my_echo --text hello --await 2000
+
+# Pinned, so `docker compose down` in this directory can only ever reach what
+# this file declares. The project name otherwise comes from the directory.
+name: flezha-echo-example
+
+services:
+  controller:
+    # `flz operative listen` and `send --await` are newer than the published
+    # 0.1.0 image, so the commands in README.md need an image built from a tree
+    # that carries them. Everything else here works against 0.1.0 as it stands.
+    image: alfetahe/flezha:0.1.0
+    environment:
+      # Enforcement off, so a first run needs no bootstrap token and no
+      # credential on the runner. See docs/guides/authorization.md.
+      FLEZHA_AUTHZ_ENABLED: "false"
+    volumes:
+      - data:/flezha/app_data
+      # Its own volume, because the runner mounts this one directory and
+      # nothing else of the controller's.
+      - sockets:/flezha/app_data/sockets
+
+  runner:
+    build:
+      # The repository root: the wheel is built from this checkout's sources.
+      context: ../../..
+      dockerfile: examples/python/echo/Dockerfile
+    depends_on:
+      controller:
+        # The image's own healthcheck is `flz boot await`, so this waits for a
+        # controller that is ready rather than one that has merely started.
+        condition: service_healthy
+    # The SDK treats end of file on standard input as a shutdown request, which
+    # is how a supervising harness stops a runner. A container with no stdin
+    # reaches EOF immediately, so without this the runner starts and exits.
+    stdin_open: true
+    volumes:
+      - sockets:/flezha/app_data/sockets
+
+volumes:
+  data:
+  sockets:
