@@ -54,6 +54,13 @@ The command SHALL be idempotent: a missing root directory is success, not error.
 - **WHEN** the operator runs `flz reset --yes`
 - **THEN** the command exits with code 1 and an explicit "refusing to delete configured `app_data` root itself" error before any unlink runs
 
+#### Scenario: Refuse to clear a root that overlaps a kept one
+
+- **GIVEN** the Controller is not running and `app_data/dlq` is a symlink to `app_data/audit` or to a directory inside it
+- **WHEN** the operator runs `flz reset --yes --include-dlq`
+- **THEN** the command exits with code 1 and a "refusing to clear a path that overlaps a kept root" error before any unlink runs, and `app_data/audit/` is unchanged
+- **AND** the same refusal holds when a kept root such as `app_data/audit` resolves into a root the run clears, such as `app_data/state`
+
 ### Requirement: `flz reset` refuses to run while the Controller is up
 
 `flz reset` SHALL detect a running Controller and refuse to act, exiting with a dedicated non-zero exit code and a message directing the operator to `flz controller stop`.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: `flz reset` no longer empties a folder it reports as kept
+
+`flz reset` refuses to clear a root that resolves onto, into or around a root it
+keeps, such as a `dlq` symlinked to `audit`.
+
 ### Fixed: Node and Ruby runners ship their final state at shutdown
 
 Node and Ruby runners stopped by SIGTERM or SIGINT now ship their final operative

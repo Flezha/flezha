@@ -92,7 +92,8 @@ pub(crate) fn handle_reset_command(read: &Reading) {
     let mut roots = build_plan(&flags);
 
     // Pre-flight: refuse if any planned clearance points at the configured
-    // root itself, or at the same path as another planned root.
+    // root itself, at the same path as another planned root, or onto, into or
+    // around a root the run keeps.
     if let Err(msg) = preflight_guard(&roots, &flags.app_data_root) {
         eprintln!("{}", msg);
         exit(1);

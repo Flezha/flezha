@@ -251,6 +251,11 @@ fn plan_socket_root() -> Root {
 
 pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(), String> {
     let root_c = canonicalize_or_self(app_data_root);
+    let kept: Vec<(&Root, PathBuf)> = plan
+        .iter()
+        .filter(|p| matches!(p.action, Action::Keep(_)))
+        .filter_map(|p| Some((p, canonicalize_or_self(p.path.as_deref()?))))
+        .collect();
     let mut cleared_paths: Vec<PathBuf> = Vec::new();
     for p in plan {
         if !matches!(p.action, Action::Clear) {
@@ -270,9 +275,25 @@ pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(),
                 path.display()
             ));
         }
+        if let Some((kept_root, _)) = kept.iter().find(|(k, kept_c)| {
+            holds(k.source, kept_c, &candidate_c) || holds(p.source, &candidate_c, kept_c)
+        }) {
+            return Err(format!(
+                "error: refusing to clear a path that overlaps a kept root ({} and {}); a symlink or --app-data-root may alias the two",
+                path.display(),
+                kept_root.name()
+            ));
+        }
         cleared_paths.push(candidate_c);
     }
     Ok(())
+}
+
+/// Whether clearing or keeping `outer` reaches `inner`: the same directory, or
+/// one inside it. The socket root holds only the socket files directly in it,
+/// so a root nested below it shares none of them.
+fn holds(outer_source: Source, outer: &Path, inner: &Path) -> bool {
+    inner.starts_with(outer) && (inner == outer || !matches!(outer_source, Source::SocketLadder))
 }
 
 pub(super) fn canonicalize_or_self(p: &Path) -> PathBuf {
@@ -329,6 +350,66 @@ mod tests {
             assert!(err.contains("refusing"));
             let _ = fs::remove_dir_all(&base);
         }
+    }
+
+    /// A root reset keeps is not emptied through one it clears that resolves
+    /// onto it, into it, or around it. `state` needs no flag, so a plain run
+    /// would reach the audit trail through it.
+    #[cfg(unix)]
+    #[test]
+    fn preflight_guard_refuses_a_clear_that_overlaps_a_kept_root() {
+        use std::os::unix::fs::symlink;
+        let cases: [(&str, &str, &[&'static str]); 3] = [
+            ("state", "audit", &[]),
+            ("dlq", "audit/records", &["--include-dlq"]),
+            ("audit", "state/records", &[]),
+        ];
+        for (i, (link, target, included)) in cases.into_iter().enumerate() {
+            let base = std::env::temp_dir().join(format!(
+                "flz-reset-overlap-{}-{}",
+                std::process::id(),
+                i
+            ));
+            let _ = fs::remove_dir_all(&base);
+            fs::create_dir_all(base.join(target)).unwrap();
+            symlink(base.join(target), base.join(link)).unwrap();
+            let flags = Flags {
+                included: included.to_vec(),
+                app_data_root: base.clone(),
+                ..plain_flags()
+            };
+
+            let verdict = preflight_guard(&build_plan(&flags), &base);
+            let _ = fs::remove_dir_all(&base);
+            let err = verdict.expect_err(&format!("{} -> {} emptied a kept root", link, target));
+            assert!(err.contains("overlaps a kept root"), "{}", err);
+        }
+    }
+
+    /// The socket root holds only the socket files directly in it, so a data
+    /// root above or below it shares none of them; its own directory is still
+    /// one root's entries cleared from another's.
+    #[test]
+    fn preflight_guard_meets_the_socket_root_only_at_its_own_directory() {
+        let data = PathBuf::from("/nonexistent/flz/app_data");
+        let socket = |path: &Path, action| {
+            Root::planned(Source::SocketLadder, Some(path.to_path_buf()), action)
+        };
+        let store = |name: &'static str, action| {
+            Root::planned(Source::AppData(name), Some(data.join(name)), action)
+        };
+        let kept = || Action::Keep("kept".into());
+        let above = data.parent().unwrap();
+
+        let socket_kept_above = [socket(above, kept()), store("state", Action::Clear)];
+        assert!(preflight_guard(&socket_kept_above, &data).is_ok());
+        let socket_cleared_above = [socket(above, Action::Clear), store("audit", kept())];
+        assert!(preflight_guard(&socket_cleared_above, &data).is_ok());
+        let socket_kept_at_state = [
+            socket(&data.join("state"), kept()),
+            store("state", Action::Clear),
+        ];
+        assert!(preflight_guard(&socket_kept_at_state, &data).is_err());
     }
 
     /// The shell and the controller declare one layout. This reads the shared
