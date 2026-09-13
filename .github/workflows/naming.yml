@@ -88,6 +88,14 @@ name: Naming
 # gate bites is a developer's tree, and the `--run @naming` made before an
 # archive.
 #
+# check-openspec-scenarios reads the same queue from the same disk, so it too
+# judges nothing in this job. It refuses an open change whose `## MODIFIED
+# Requirements` block leaves out a scenario the published requirement has,
+# because the archive replaces the whole requirement and would delete that
+# scenario silently, and `openspec validate --strict` never compares the two. A
+# deliberate removal is accepted when the change's proposal.md or design.md
+# carries the line `Removes scenario: <exact scenario title>`.
+#
 # check-build-artifacts is the repository-weight gate: `tracked` refuses a
 # committed build artefact (native libraries and fat jars are build output —
 # `scripts/build-native.sh` produces the one triple a test needs, and a release

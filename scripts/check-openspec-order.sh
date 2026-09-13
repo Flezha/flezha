@@ -66,7 +66,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
 import naming_gate
 
-CHANGES = "openspec/changes"
+CHANGES = naming_gate.OPENSPEC_CHANGES
 ARCHIVE = os.path.join(CHANGES, "archive")
 
 DECLARATION = re.compile(r"^Depends-On:\s*(\S.*?)\s*$")
@@ -77,14 +77,6 @@ CHECKED = re.compile(r"^\s*-\s*\[[xX]\]")
 HINT = ("A change names its predecessors as `Depends-On: <id>[, <id>...]`, or "
         "`Depends-On: none`, on the first line of its proposal.md, and is "
         "picked up only once each one is archived.")
-
-
-def open_changes():
-    """Every change directory in the queue, the archive aside."""
-    if not os.path.isdir(CHANGES):
-        return []
-    return sorted(name for name in os.listdir(CHANGES)
-                  if name != "archive" and os.path.isdir(os.path.join(CHANGES, name)))
 
 
 def is_archived(change_id):
@@ -157,7 +149,7 @@ def rings(edges):
 
 def judge_queue():
     """Whole-queue mode: is the record honest, and has anyone jumped it?"""
-    opened = open_changes()
+    opened = naming_gate.open_changes()
     if not opened:
         print(f"openspec order: no open change to judge ({CHANGES}/ is untracked, "
               "so a fresh checkout carries none)")
@@ -189,7 +181,7 @@ def judge_queue():
 
 def judge_pickup(change_id):
     """Pick-up mode: may this change be started now?"""
-    opened = open_changes()
+    opened = naming_gate.open_changes()
     if change_id not in opened:
         print(f"check-openspec-order.sh: {change_id} is not an open change under "
               f"{CHANGES}/", file=sys.stderr)

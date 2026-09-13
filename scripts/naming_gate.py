@@ -140,6 +140,21 @@ def disk_files(roots):
     return found
 
 
+OPENSPEC_CHANGES = "openspec/changes"
+
+
+def open_changes():
+    """Every change directory in the OpenSpec queue, the archive aside.
+
+    Read from disk: `/openspec/changes` is in .gitignore, so a CI checkout
+    carries none of it and every gate that reads the queue judges nothing there.
+    """
+    if not os.path.isdir(OPENSPEC_CHANGES):
+        return []
+    return sorted(name for name in os.listdir(OPENSPEC_CHANGES)
+                  if name != "archive" and os.path.isdir(os.path.join(OPENSPEC_CHANGES, name)))
+
+
 def stale_baseline(path, baseline, hits, what):
     """The other half of `load_baseline`: an entry the tree no longer holds.
 
@@ -303,17 +318,22 @@ GATES = (
      "argv": ["scripts/check-ci-toolchain.sh"]},
     {"id": "vm-args", "group": "naming",
      "argv": ["scripts/check-vm-args.sh"]},
-    # The queue's order. `/openspec/changes` is in .gitignore, so a CI checkout
-    # carries none of it and this row reads an empty queue and says so; where it
-    # bites is a developer's tree and the `--run @naming` made before an archive.
+    # The queue's order, and the scenarios a MODIFIED block would delete.
+    # `/openspec/changes` is in .gitignore, so a CI checkout carries none of it
+    # and both rows read an empty queue and say so; where they bite is a
+    # developer's tree and the `--run @naming` made before an archive.
     {"id": "openspec-order", "group": "naming",
      "argv": ["scripts/check-openspec-order.sh"]},
+    {"id": "openspec-scenarios", "group": "naming",
+     "argv": ["scripts/check-openspec-scenarios.sh"]},
     {"id": "build-artifacts-tracked", "group": "naming",
      "argv": ["scripts/check-build-artifacts.sh", "tracked"]},
     {"id": "naming-gate-self-test", "group": "naming",
      "argv": ["python3", "scripts/naming_gate.py", "--self-test"]},
     {"id": "layer-direction-self-test", "group": "naming",
      "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
+    {"id": "openspec-scenarios-self-test", "group": "naming",
+     "argv": ["scripts/check-openspec-scenarios.sh", "--self-test"]},
     # The publication-readiness record's SHAPE. Its content arm is the row
     # below, in its own group, because every blocking entry is open until the
     # day of the release and a gate that lands red stops being read.
