@@ -32,10 +32,10 @@ fn handle_check(_read: &Reading) {
         println!("note: FLEZHA_TRANSPORT=quic — this check covers the UDS socket directory only");
     }
 
-    // The runner's own words, not a second rendering of them.
+    // The runner's own words, not a second rendering of them, one per line.
     match diagnose(Role::Runner, None) {
         Ok(diagnosis) => {
-            println!("{}", diagnosis);
+            println!("{:#}", diagnosis);
 
             if !diagnosis.reach.reachable() {
                 exit(1);

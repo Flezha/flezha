@@ -110,9 +110,11 @@ And can a runner reach it, which needs no controller and no credential:
 
 ```sh
 $ flz runner check
-controller reachable at /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha); walked
-/run/user/1000/flezha, /run/flezha, /srv/flezha/app_data/sockets. Fix: nothing to
-fix - the controller answered
+controller reachable
+  directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
+  checked    /run/user/1000/flezha
+             /run/flezha
+             /srv/flezha/app_data/sockets
 ```
 
 Both exit zero only on success.

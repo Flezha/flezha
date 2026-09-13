@@ -1,18 +1,32 @@
 # A runner cannot connect
 
 `flz runner check` runs exactly the probe a runner runs. It needs no runner
-code, no running runner and no controller, and it prints the resolved
-directory, the candidates it walked, the verdict and the fix. It exits zero
-only when a controller answered.
+code, no running runner and no controller. It prints the verdict, the resolved
+directory and every candidate it checked, one per line, and exits zero only
+when a controller answered.
 
 ```sh
 $ flz runner check
-controller reachable at /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha); walked
-/run/user/1000/flezha, /run/flezha, ./app_data/sockets. Fix: nothing to fix - the
-controller answered
+controller reachable
+  directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
+  checked    /run/user/1000/flezha
+             /run/flezha
+             /srv/flezha/app_data/sockets
 ```
 
-A runner prints the same diagnosis once, before it starts retrying. The terse
+When none answered, a last `fix` line says what to do:
+
+```sh
+$ flz runner check
+control socket absent
+  directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
+  checked    /run/user/1000/flezha
+             /run/flezha
+             /srv/flezha/app_data/sockets
+  fix        start the controller, or wait for it to finish booting
+```
+
+A runner prints the same diagnosis once, on one line, before it starts retrying. The terse
 line that repeats after that is the retry notice, not the diagnosis, so read the
 first one.
 

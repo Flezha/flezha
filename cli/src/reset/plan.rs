@@ -235,7 +235,7 @@ fn plan_socket_root() -> Root {
         // Not this user's to unlink, or a socket answering something odd:
         // reported and skipped rather than forced.
         Reach::AccessDenied { .. } | Reach::Unreachable(_) => {
-            Action::Keep(format!("{}; {}", reach, reach.fix()))
+            Action::Keep(format!("{}; {}", reach, reach.fix().unwrap_or_default()))
         }
         // Absent, socketless, or a socket nobody is listening on — the last is
         // precisely what this command exists to clear, and the first two clear

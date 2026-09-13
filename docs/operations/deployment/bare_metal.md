@@ -93,9 +93,11 @@ needs no cookie and no controller:
 
 ```bash
 $ flz runner check
-controller reachable at /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha); walked
-/run/user/1000/flezha, /run/flezha, ./app_data/sockets. Fix: nothing to fix - the
-controller answered
+controller reachable
+  directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
+  checked    /run/user/1000/flezha
+             /run/flezha
+             /srv/flezha/app_data/sockets
 ```
 
 The second asks whether the controller is actually ready, which is a different

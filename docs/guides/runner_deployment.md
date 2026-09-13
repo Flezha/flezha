@@ -58,9 +58,11 @@ when a controller answered:
 
 ```sh
 $ flz runner check
-controller reachable at /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha); walked
-/run/user/1000/flezha, /run/flezha, ./app_data/sockets. Fix: nothing to fix - the
-controller answered
+controller reachable
+  directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
+  checked    /run/user/1000/flezha
+             /run/flezha
+             /srv/flezha/app_data/sockets
 ```
 
 How you get there depends on how you started the controller in the previous
@@ -107,8 +109,9 @@ docker run -d --name my-runner \
 
 ```sh
 $ docker exec my-runner flz runner check
-controller reachable at /flezha/app_data/sockets (from $FLEZHA_SOCKET_FILES_PATH);
-walked /flezha/app_data/sockets. Fix: nothing to fix - the controller answered
+controller reachable
+  directory  /flezha/app_data/sockets (from $FLEZHA_SOCKET_FILES_PATH)
+  checked    /flezha/app_data/sockets
 ```
 
 If the runner runs on the host instead, bind mount a host directory in place of

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed: `flz runner check` prints one fact per line
+
+The check printed its verdict, the socket directory, every path it checked and
+the fix on one long line, and said "nothing to fix" when the controller answered.
+It now prints the verdict first, then one labelled line each for the directory,
+the paths checked and the fix, and leaves the fix out when a controller answered.
+The one-line diagnosis a runner prints before it retries is unchanged.
+
 ### Fixed: a move to another controller no longer brings back an operative's older state
 
 When a runner stops gracefully it hands its operatives' final state to the

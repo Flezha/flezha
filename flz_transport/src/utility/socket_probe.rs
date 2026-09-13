@@ -1,9 +1,9 @@
 //! What a probe of a socket directory finds and how it is told to an
 //! operator: one `stat` and one connect per candidate, four failures with four
-//! different fixes never collapsed into one, and the one-line diagnosis every
-//! SDK and `flz runner check` render. `AccessDenied` is deliberately not
-//! "live": a directory this user cannot traverse must not manufacture a
-//! phantom ambiguity.
+//! different fixes never collapsed into one, and the diagnosis every SDK logs
+//! as one line and `flz runner check` prints one fact per line. `AccessDenied`
+//! is deliberately not "live": a directory this user cannot traverse must not
+//! manufacture a phantom ambiguity.
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -55,10 +55,11 @@ impl Reach {
         )
     }
 
-    /// The remedy an operator applies, in the words of the situation.
-    pub fn fix(&self) -> String {
-        match self {
-            Reach::Reachable => "nothing to fix — the controller answered".to_string(),
+    /// The remedy an operator applies, in the words of the situation. A
+    /// controller that answered has none.
+    pub fn fix(&self) -> Option<String> {
+        let fix = match self {
+            Reach::Reachable => return None,
             Reach::DirectoryMissing => format!(
                 "start the controller, or set {} to the directory it established",
                 SOCKET_DIR_VAR
@@ -86,7 +87,8 @@ impl Reach {
             Reach::Unreachable(reason) => {
                 format!("the control socket did not answer: {}", reason)
             }
-        }
+        };
+        Some(fix)
     }
 }
 
@@ -103,8 +105,9 @@ impl fmt::Display for Reach {
     }
 }
 
-/// A resolved directory and what probing it found — the text a runner prints
-/// once before its retry loop, and what `flz runner check` prints.
+/// A resolved directory and what probing it found. `{}` is the one line a
+/// runner prints once before its retry loop, a log line that must stay one
+/// line; `{:#}` is the same words one fact per line, for `flz runner check`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnosis {
     pub dir: SocketDir,
@@ -113,15 +116,32 @@ pub struct Diagnosis {
 
 impl fmt::Display for Diagnosis {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} at {} (from {}); walked {}. Fix: {}",
-            self.reach,
-            self.dir.path.display(),
-            self.dir.rung.label(),
-            join_paths(&self.dir.walked),
-            self.reach.fix()
-        )
+        let path = self.dir.path.display();
+        let rung = self.dir.rung.label();
+        let fix = self.reach.fix();
+
+        if !f.alternate() {
+            let walked = join_paths(&self.dir.walked);
+            write!(
+                f,
+                "{} at {} (from {}); walked {}.",
+                self.reach, path, rung, walked
+            )?;
+            return match fix {
+                Some(fix) => write!(f, " Fix: {}", fix),
+                None => Ok(()),
+            };
+        }
+
+        write!(f, "{}\n  directory  {} (from {})", self.reach, path, rung)?;
+        for (i, walked) in self.dir.walked.iter().enumerate() {
+            let label = if i == 0 { "checked" } else { "" };
+            write!(f, "\n  {:<9}  {}", label, walked.display())?;
+        }
+        match fix {
+            Some(fix) => write!(f, "\n  fix        {}", fix),
+            None => Ok(()),
+        }
     }
 }
 
@@ -288,10 +308,44 @@ mod tests {
                         caller_uid
                     }
                     .fix()
+                    .unwrap()
                     .contains("FLEZHA_SOCKET_DIR_GROUP"));
                 }
                 other => panic!("expected access denied, got {:?}", other),
             }
         }
+    }
+
+    #[test]
+    fn a_diagnosis_names_a_fix_only_when_there_is_one_in_either_layout() {
+        let dir = SocketDir {
+            path: PathBuf::from("/a"),
+            rung: crate::utility::socket_dir::Rung::Explicit,
+            walked: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        };
+
+        let answered = Diagnosis {
+            dir: dir.clone(),
+            reach: Reach::Reachable,
+        };
+        assert_eq!(
+            answered.to_string(),
+            "controller reachable at /a (from $FLEZHA_SOCKET_FILES_PATH); walked /a, /b."
+        );
+        assert_eq!(
+            format!("{:#}", answered),
+            "controller reachable\n  \
+             directory  /a (from $FLEZHA_SOCKET_FILES_PATH)\n  \
+             checked    /a\n             \
+             /b"
+        );
+
+        let absent = Diagnosis {
+            dir,
+            reach: Reach::SocketMissing,
+        };
+        let fix = Reach::SocketMissing.fix().unwrap();
+        assert!(absent.to_string().ends_with(&format!("/b. Fix: {}", fix)));
+        assert!(format!("{:#}", absent).ends_with(&format!("/b\n  fix        {}", fix)));
     }
 }
