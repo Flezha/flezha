@@ -73,6 +73,7 @@ __pycache__/
 test/apps/java_compute_engine/target/
 test/apps/java_runner/target/
 sdk/java/**/target/
+examples/**/target/
 sdk/java/flezha-sdk-native/src/main/resources/native/
 sdk/java/flezha-sdk/dist/
 test/apps/java_runner/dist/

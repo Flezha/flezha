@@ -20,11 +20,12 @@ the mechanism rather than leave it to be inferred.
 Six examples, in order. Each assumes the preceding one and introduces exactly one
 new idea, so reading them out of order will leave gaps.
 
-**1. [`echo/`](src/main/java/com/flezha/examples/echo)** is the minimal complete
-application, and establishes the three-part structure every Flezha application
-has: a procedure holding the code invoked per message, an operative declaring the
-graph, and a main starting a runner. It declares no state, which keeps the whole
-example short enough to hold in mind at once.
+**1. [`examples/echo`](../examples/echo)** is the minimal complete application,
+and it sits outside this module as a standalone project so it can be opened and
+built on its own. It establishes the three-part structure every Flezha
+application has: a procedure holding the code invoked per message, an operative
+declaring the graph, and a main starting a runner. It declares no state, which
+keeps the whole example short enough to hold in mind at once.
 
 **2. [`state/`](src/main/java/com/flezha/examples/state)** makes the procedure
 durable, and introduces the rule that catches almost everyone: a procedure never

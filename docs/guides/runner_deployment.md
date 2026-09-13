@@ -161,94 +161,66 @@ Every verdict, and the two failures that are not verdicts:
 ## The building blocks
 
 Every Flezha application is built from the same three pieces, whatever it grows
-into later. What each one is for is the same in all seven languages, so it is
-described once here and the code follows in [the next section](#the-code). Every
-SDK ships that same example, so you can read it in one language and recognise it
-in another.
+into later. They mean the same thing in all seven languages, so they are
+described once here and the code follows in [the next section](#the-code).
 
 ### The procedure
 
-**Your code.** The runtime hands it one message and it emits one message.
+**Your code.** One message in, one message out.
 
-It carries a stable name, and that name is durable: per-entity state is filed
-under it, so renaming a procedure in a later release does not rename its state,
-it declares a different procedure with none of it. Choose the name deliberately
-the first time.
+It emits its result without saying where the result goes. That is the point: the
+operative decides the destination, so the same procedure can be rewired to a
+different one without being touched.
 
-It declares its types up front, and the runtime reads them back to decode what
-arrives and encode what leaves. The hello world declares that it keeps no state
-and takes no configuration, which switches the persistence machinery off
-entirely: nothing is journaled, no snapshot is written, and a restart begins
-with no history.
+Its name is durable. State is stored under that name later, so renaming a
+procedure in a new release does not rename anything, it declares a different
+procedure. Choose it once.
 
-Two things it does not do are worth noticing, because they are what makes the
-rest possible:
-
-- **It never says where its output goes.** Emitting says what, never where. The
-  operative decides the destination, which is why the graph can be rewired
-  without this file changing.
-- **It never locks anything.** The runtime never runs two messages for the same
-  key at the same time, so there is nothing to protect. Messages for different
-  keys do run at the same time, possibly on different machines.
-
-There is also a hook that builds the state for one entity, called the first time
-a key is seen. It is handed that key, and a payload that is present only when
-the entity is arriving from another runner rather than starting cold. On a
-resume the runtime restores the newest snapshot and folds the recorded changes
-over whatever the hook returns, so it only has to be right for the cold case.
+The hello world keeps no state and takes no configuration, which is as simple as
+a procedure gets. State, keys and entities are
+[`stream_basics.md`](stream_basics.md).
 
 ### The operative
 
-**The graph, and it holds no logic at all.** It says which channel feeds which
-procedure and where the result is delivered.
+**The wiring, and it holds no logic.** It says which channel feeds which
+procedure, and where the output goes.
 
-A procedure on its own cannot be deployed, because nothing knows where its
-messages come from or where its output belongs. The operative supplies exactly
-that, which makes it the unit the whole system works in: what the controller
-places on a runner, restarts after a crash, moves when a runner disappears, and
-splits across several runners when one is not enough.
+That is what makes it the unit you deploy. A procedure on its own cannot be,
+because nothing knows where its messages come from, so the operative and not the
+procedure is what the controller starts, places on a runner, and moves when a
+runner disappears. It has a durable name of its own, and that is the name you
+type to start one.
 
-It carries its own durable identity, separate from the procedure's. That is the
-name you type to start one.
+**Channel names are addresses, not labels.** `in` is what
+`flz operative send --channel` writes to, and `out` is the name stamped on
+everything that channel delivers. Something outside this file uses both, so
+changing one is a breaking change rather than a rename.
 
-The declaration runs once, at registration, and never touches data. Channels are
-not constructed directly: each call returns the next handle in the chain, and
-the finished graph is validated as a whole before a single message is processed,
-so a graph that cannot work is refused at startup rather than halfway through a
-run.
-
-**The channel names are addresses, not labels.** The entry channel's name is
-what `flz operative send --channel` addresses from outside. The sink's name is
-the address stamped on every value the channel delivers, which is what a plugin
-filter matches on. Something outside this file is already using both, so
-changing either is a breaking change rather than a rename.
+The wiring is checked when the runner starts, so a graph that cannot work is
+refused there rather than failing halfway through a run.
 
 ### The runner
 
-**A process you run.** It connects to the controller, tells it which operatives
-it is able to serve, and then waits.
+**A process you run.** It connects to the controller, says which operatives it
+can serve, and waits.
 
-It decides nothing. It never picks what runs or where; it offers capacity and
-does what the controller asks. Declaring an operative on a runner does not start
-anything, it says this process is capable of serving that one. One runner can
-offer many operatives, and many runners can offer the same one, which is how a
+It decides nothing: it offers capacity and does what the controller asks.
+**Declaring an operative on a runner does not start one.** It says this process
+is able to serve it, and starting one is the next guide. One runner can offer
+many operatives, and many runners can offer the same one, which is how a
 deployment grows.
 
-It takes a namespace, which is the tenant it belongs to. These guides use
-`default` throughout and say no more about it;
-[`namespaces.md`](namespaces.md) is where it becomes a decision.
+It takes a namespace, the tenant it belongs to. These guides use `default`
+throughout; [`namespaces.md`](namespaces.md) is where it becomes a decision.
 
-Keeping the connection is the runner's own job. If it breaks, the runner
-re-dials by itself, retrying forever on a backoff that tops out at 30 seconds,
-and it keeps its operatives and their state across the gap rather than starting
-over.
+If the connection drops, the runner reconnects on its own.
 
 ### How the three meet
 
-None of them references the others at runtime. You start a runner, the
-controller learns the operative exists and can be served, you ask for one by
-name, and the controller binds it to a runner that offered it. Messages then
-arrive on the channel the operative declared, and your procedure is called.
+None of them names the others. You start a runner, the controller learns the
+operative can be served, you ask for one by name, and the controller binds it to
+a runner that offered it. Messages then arrive on the channel the operative
+declared, and your procedure runs.
 
 ## The code
 
@@ -280,7 +252,7 @@ particular to that language is explained here; what the parts are for is
 ### Java
 
 The whole example:
-[`flezha-sdk-examples/.../examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/echo).
+[`sdk/java/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo).
 
 ```java
 // The procedure. One message in, one message out.
