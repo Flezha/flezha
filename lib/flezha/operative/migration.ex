@@ -449,7 +449,8 @@ defmodule Flezha.Operative.Migration do
 
     Lifecycle.publish_binding(recovered)
 
-    %{recovered | migrate_task: nil}
+    # The bound runner's state supersedes a snapshot stored before the bind.
+    %{recovered | migrate_task: nil, snapshot: nil}
   end
 
   def apply_migrate_result(_state, {:park, parked, err}) do

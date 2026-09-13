@@ -26,9 +26,10 @@ defmodule Flezha.Operative.Handover do
 
   @doc """
   The handover payload this node ships: identity, plugins and the SDK's
-  serialized state — plus the node whose disk holds the durable files, because
-  `serialize_data` is nil whenever the source runner is already gone and then
-  the disk is the only surviving state.
+  serialized state — plus the node whose disk holds the durable files. When the
+  source runner is already gone, `serialize_data` is the final state it handed
+  over if no runner has taken the operative over since, and nil otherwise, and
+  then the disk is the only surviving state.
   """
   @spec prepare(Overwatch.t()) :: {map(), binary() | nil}
   def prepare(%Overwatch{} = state) do
@@ -164,7 +165,8 @@ defmodule Flezha.Operative.Handover do
   end
 
   @doc """
-  Pull the SDK's whole-operative state as the handover snapshot.
+  Read the SDK's whole-operative state off its live runner. The read is not
+  kept for a handover: the runner's next input would make it stale.
   """
   @spec create_snapshot(binary(), binary() | nil) :: binary() | nil
   def create_snapshot(operative_id, runner_id) do

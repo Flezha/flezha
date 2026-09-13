@@ -118,7 +118,7 @@ This works identically across: ProcessHub-driven cold-boot replay, fresh `flz op
 
 ### Requirement: A migration whose handover is empty SHALL pull the source controller's Entity files
 
-`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, falling back only to a snapshot its Overwatch was handed earlier, so a migration triggered by that runner's death ships an empty payload unless such a snapshot was taken, and the source controller's disk then holds the only surviving copy.
+`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, falling back only to the final state a runner handed its Overwatch on a graceful shutdown, which a later bind of the operative to any runner discards. A migration triggered by a runner's death therefore ships an empty payload unless that runner left such a state and no runner has been bound since, and the source controller's disk then holds the only surviving copy.
 
 `prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Entity of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then run the ordinary per-Entity replay, both through `Flezha.Operative.Replay.dispatch_restore/3`, the step every bind's restore runs.
 

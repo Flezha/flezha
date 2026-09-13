@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed: a move to another controller no longer brings back an operative's older state
+
+When a runner stops gracefully it hands its operatives' final state to the
+controller, which kept that copy for good. If the operative then ran on another
+runner, took more input, and lost that runner to a crash before moving to another
+controller, the move shipped the old copy and skipped reading the operative's
+saved state, so every change since the graceful stop was gone. A kept copy is now
+dropped as soon as another runner takes the operative over, and a move that
+follows a crash reads the saved state instead.
+
+An operative class that opted out of persistence has no saved state to read. It
+no longer gets that older graceful-stop state back after another runner took it
+over and crashed; it starts from its initial values, as a hard kill already does.
+
+`OperativeManager.create_snapshot/2` still answers the operative's current state,
+but no longer keeps it for a later move or rebind, for the same reason.
+
 ### Fixed: a healthy runner sent input just after its heartbeat is no longer restarted
 
 The controller judged a runner's work pool wedged when frames had been sent to it

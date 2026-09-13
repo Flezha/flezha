@@ -401,10 +401,14 @@ defmodule Flezha.Operative.Overwatch do
   # first leaves a failed migrate naming a runner this process cannot reach —
   # the operative then reads as bound to a LIVE runner, so `Convergence.Diff`
   # stops classifying it misbound and the divergence hides itself permanently.
+  # The runner now holds the stored snapshot it was seeded from, so it is not kept.
   def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state) do
     case Lifecycle.attempt_ping_and_start(Migration.migrate_operative(state), new_runner_id) do
-      {:ok, _} -> {:reply, :ok, Lifecycle.bind_to_runner(state, state.id, new_runner_id)}
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:ok, _} ->
+        {:reply, :ok, Lifecycle.bind_to_runner(%{state | snapshot: nil}, state.id, new_runner_id)}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -462,22 +466,8 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
-  def handle_call(:create_snapshot, _from, %__MODULE__{} = state) do
-    snapshot = Handover.create_snapshot(state.id, state.runner_id)
-    {:reply, {:ok, snapshot}, %__MODULE__{state | snapshot: snapshot}}
-  end
-
-  @impl true
-  def handle_call(:get_snapshot_data, _from, %__MODULE__{} = state) do
-    data = %{
-      namespace: state.namespace,
-      builder: state.builder,
-      plugins: Table.serializable_plugins(state.extensions),
-      snapshot_binary: state.snapshot
-    }
-
-    {:reply, data, state}
-  end
+  def handle_call(:create_snapshot, _from, %__MODULE__{} = state),
+    do: {:reply, {:ok, Handover.create_snapshot(state.id, state.runner_id)}, state}
 
   @impl true
   def handle_call({:replay_from, entity_id, baseline_seq}, _from, %__MODULE__{} = state) do
@@ -554,10 +544,10 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, Migration.suspend_at(state, iter, wake_deadline_ms), :hibernate}
   end
 
-  # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
-  # on graceful shutdown, consumed by HotSwap's `prepare_handover_state` so a
-  # subsequent migration ships the runner's final state. Cold-boot restart is
-  # covered by the per-Entity WAL files instead.
+  # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
+  # A handover ships it and the next running migrate seeds from it, until a
+  # runner is bound again: that runner's state supersedes it, so the bind drops
+  # it. Cold-boot restart is covered by the per-Entity WAL files instead.
   @impl true
   def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
       when is_binary(binary) do

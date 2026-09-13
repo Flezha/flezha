@@ -81,6 +81,29 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert_receive {:route_published, "ex_woken", ^test_pid}
   end
 
+  # fails when: an un-park that binds a runner keeps a snapshot stored before it,
+  # so a handover after that runner dies hard ships the older state and skips
+  # the pull of every change the runner made.
+  test "un-parking onto a runner drops the snapshot stored before it" do
+    inst = instance_id()
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :hook_insert_local_pid, fn _, _, _ -> :ok end)
+
+    parked =
+      state(inst,
+        snapshot: "stored_before_the_park",
+        migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark}
+      )
+
+    recovered = %{parked | runner_id: "ex_woken", suspended: false}
+
+    {:noreply, unparked} =
+      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+
+    assert unparked.runner_id == "ex_woken"
+    assert unparked.snapshot == nil
+  end
+
   test "park evicts the instance from its runner and keeps it registered" do
     inst = instance_id()
     test_pid = self()
@@ -621,9 +644,31 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     assert unchanged.channel == :chan_a
   end
 
-  # The success half — the binding IS committed once the runner answers — is
-  # covered end-to-end against a real runner by `flezha_test.exs` "runner
-  # disconnect migrate proc".
+  # fails when: a committed running-migrate keeps the snapshot it seeded the new
+  # runner from, so a handover after that runner dies hard ships the older state
+  # and skips the pull of every change the runner made.
+  test "a committed running-migrate seeds the runner from the stored snapshot and drops it" do
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
+    runner_id = "runner_b_#{System.unique_integer([:positive])}"
+    start_answering_control_unit(runner_id)
+    state = %{running_state() | snapshot: ~s({"store_input_procedure":{"text_inputs":["s"]}})}
+
+    assert {:reply, :ok, bound} =
+             Overwatch.handle_call({:runner_migrate, runner_id}, {self(), make_ref()}, state)
+
+    assert_received {:started_with, %{"store_input_procedure" => %{"text_inputs" => ["s"]}}}
+    assert bound.runner_id == runner_id
+    assert bound.snapshot == nil
+  end
+
+  # fails when: a handover away from a runner that is gone stops shipping the
+  # final state that runner handed over, before any other runner took over.
+  test "a handover away from a gone runner ships the snapshot no runner has taken over" do
+    state = %{running_state() | snapshot: "final_state_of_runner_a"}
+
+    assert {%{source_node: _}, "final_state_of_runner_a"} =
+             Overwatch.prepare_handover_state(state)
+  end
 
   # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
   # handover that carried nothing. The flag suppresses the per-Entity WAL
@@ -662,6 +707,26 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
       builder: %Builder{id: id, factory_id: @factory, opts: []},
       extensions: Table.new(Overwatch.__extensions_catalog__())
     }
+  end
+
+  # Stands in for `runner_id`'s control unit for one `:start_operative` call,
+  # reporting the init values the operative was started with.
+  defp start_answering_control_unit(runner_id) do
+    test_pid = self()
+    {:via, Registry, {registry, key}} = Flezha.Identificator.control_unit(runner_id)
+
+    spawn_link(fn ->
+      {:ok, _} = Registry.register(registry, key, nil)
+      send(test_pid, :control_unit_registered)
+
+      receive do
+        {:"$gen_call", from, {:start_operative, operative}} ->
+          send(test_pid, {:started_with, operative.init_values})
+          GenServer.reply(from, {:ok, %{}})
+      end
+    end)
+
+    assert_receive :control_unit_registered, 5_000
   end
 
   # A ping that blocks inside the migrate task until the test releases it (or
