@@ -4,7 +4,7 @@ For operators who want a file as an operative's input, to replay a log or load a
 export, or as its output, to watch what an operative emits land somewhere `tail` can
 read. `Flezha.Plugin.Provider.File` is one family with two provider ids:
 `operative_file_source` (`File.Source`) reads a file onto an entry channel, one line
-per frame, and `operative_file_sink` (`File.Sink`) appends one line per record. This
+per frame, and `operative_file_sink` (`File.Sink`) writes one line per record. This
 page covers the root folder both share, then each direction: its contract, parameters,
 delivery, failure semantics and health, then telemetry and limits.
 
@@ -194,9 +194,9 @@ idempotently. No line is skipped.
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Extension points | `:on_input`, `:on_output` |
-| Downstream | one local file inside the root folder, appended to |
+| Downstream | one local file inside the root folder, appended to; under `commit: rename`, a directory of parts |
 | Record | the message bytes followed by one newline, nothing else |
-| Delivery | a batch is written in one call and data-synced before any outbox hold in it is confirmed |
+| Delivery | a batch is written in one call and data-synced before any outbox hold in it is confirmed; under `rename`, once its part is committed |
 | Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |
 | Failure posture | a failed write is cut back and retried under the backoff ladder; nothing is dropped |
 
@@ -217,10 +217,12 @@ all. `channel` and `channel_in` are not parameters here: the sink feeds nothing.
 <!-- provider-options:begin file_sink -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to append to: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it |
+| `path` | string | &mdash; | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it |
 | `channel_out` | names | &mdash; | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
-| `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place; a batch synced just before a crash is appended again after it |
+| `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once |
+| `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
+| `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms` |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one write |
 | `queue_max` | int | `10000` | no | Records held before enqueue blocks |
@@ -237,20 +239,76 @@ reason `embedded_newline`, where `flz dlq list` shows it, and a delivery-guarant
 record's hold is answered once the park is durable. Escaping the newline would make
 the reader on the other side deliver a different record from the one written.
 
-### Durability, and the crash window `commit` names
+### Durability, and the two layouts `commit` names
 
 Records are batched by `linger_ms` or `max_batch`, written in one call, and made
-durable with a data sync. Only then is each delivery-guaranteed record's outbox hold
-confirmed, which is what lets the operative's cursor move past it.
+durable with a data sync. A write or sync that fails is cut back to the byte the batch
+began at and retried under the backoff ladder from `retry_backoff_ms` to
+`retry_max_backoff_ms`, so the retry appends the whole batch rather than after half a
+line, and nothing is dropped. What the sync is followed by is the layout's.
 
-A write or sync that fails is cut back to the byte the batch began at and retried
-under the backoff ladder from `retry_backoff_ms` to `retry_max_backoff_ms`, so the
-retry appends the whole batch rather than after half a line, and nothing is dropped.
-
-**`commit: append` has a crash window.** A batch written and synced just before the
-controller crashes, whose confirmation did not reach the outbox, is re-driven after
+**`commit: append`, the default, has a crash window.** `path` is one file, and each
+delivery-guaranteed record's outbox hold is confirmed once its batch is synced, which is
+what lets the operative's cursor move past it. A batch written and synced just before
+the controller crashes, whose confirmation did not reach the outbox, is re-driven after
 the restart and appended a second time. No record is lost; one batch can be written
-twice. `append` is the only layout today.
+twice. Choose `rename` where a duplicate line matters.
+
+### `commit: rename`: parts written once
+
+```bash
+flz plugin enable writer operative_file_sink \
+  --operative_id=op1 \
+  --extension=on_output \
+  --Xpath=out/alerts \
+  --Xcommit=rename \
+  --Xroll_after_ms=5000
+```
+
+Under `rename`, `path` names a directory, made with mode `0700` when it does not exist;
+a `path` that is a regular file is refused at enable, naming the layout. The sink owns
+everything in the directory:
+
+```text
+out/alerts/
+  part-00000041          committed, never changed again
+  part-00000042          committed, never changed again
+  .progress              {"part":42,"watermarks":{...}}
+  .part-00000043.tmp     the open roll, invisible to a listing of part-*
+```
+
+- **A roll, then a part.** Batches are synced into the open roll, a hidden temp file.
+  The roll is committed when `roll_after_ms` has passed since its first bytes or it
+  reaches `roll_bytes`, whichever comes first: the temp file is renamed to the next
+  `part-<N>`, then `.progress` is written temp-then-rename naming `N` and each Entity's
+  `(epoch, seq)` watermark, and only then are the roll's holds confirmed. Parts and the
+  sidecar are created `0600`.
+- **What a roll costs.** A guaranteed record waits up to `roll_after_ms` for its
+  confirmation, so an entry on the effectively-once tier completes that much later. At
+  the default of 10 000 ms a steadily busy sink commits a part every 10 seconds, 8 640
+  parts a day; raise `roll_after_ms` for fewer, larger parts, lower it for a shorter
+  wait. Nothing merges or removes old parts.
+- **The reconcile.** When the sink starts it deletes every temp file and a part numbered
+  one past `.progress`, because their records were never confirmed and the outbox brings
+  them back to be written once. A part further ahead is nothing a crash leaves, so it
+  refuses the start, deleting nothing, with
+  `{:unhealthy, {:open_failed, {{:part_ahead_of_progress, newest, last}, path}}}`.
+- **Which records are written once.** A record the outbox guarantees, one carrying a
+  confirmation token and a replay-stable identity (`flz.entity` and a numeric
+  `flz.seq`), is written once: a re-driven copy at or below its Entity's watermark is
+  confirmed without being written. Every other record is written at least once, because
+  a seq off the effectively-once tier can repeat and a watermark over it would drop a
+  record.
+- **The directory rename is not synced.** Erlang cannot open a directory to sync it, so a
+  rename is as durable as the filesystem makes it. A rename lost to a power failure
+  loses a part whose records were not confirmed yet, and the re-drive writes them again.
+- **Reading only what is committed.** A crash between a part's rename and its sidecar
+  leaves a part the next start deletes and writes again. A consumer that must not see
+  it reads, from inside the directory, only the parts at or below the sidecar's number:
+
+```bash
+last=$(printf 'part-%08d' "$(jq .part .progress)"); for f in part-*; do [[ -f $f && ! $f > $last ]] && cat "$f"; done
+```
 
 ### The file it opens
 
@@ -266,15 +324,15 @@ twice. `append` is the only layout today.
   still names the file it holds, and opens the path again when it does not, so a
   rotated or deleted file does not take later writes somewhere no reader looks.
 - **One sink per path.** Two sinks appending to one file, from one controller or two,
-  interleave their batches. Nothing prevents it: a plugin cannot see another
-  controller's writer.
+  interleave their batches, and under `rename` each sink's start deletes the other's
+  open roll. Nothing prevents it: a plugin cannot see another controller's writer.
 
 ### Health
 
 | Verdict | When |
 | --- | --- |
-| `{:unhealthy, {:open_failed, reason}}` | the file cannot be opened |
-| `{:unhealthy, {:write_stalled, error}}` | records are pending, writes are failing, and no batch has synced within `unhealthy_after_ms` |
+| `{:unhealthy, {:open_failed, reason}}` | the file cannot be opened, or under `rename` the directory refuses its reconcile |
+| `{:unhealthy, {:write_stalled, error}}` | records are pending, in the queue or in an open roll, writes or a roll's commit are failing, and no batch has synced within `unhealthy_after_ms` |
 | `{:unhealthy, :no_sink}` / `{:unhealthy, :worker_dead}` | no worker, or a dead one |
 | `:healthy` | otherwise, including an idle sink |
 
@@ -297,7 +355,8 @@ under source `:flezha_file_source`, and the sink's as `flushed` under
 
 - **One record per line.** No CSV, Parquet or other format, and no line format carrying
   metadata.
-- **One file per plugin.** No directory watching.
+- **One file per plugin**, or under `commit: rename` one directory of parts. No directory
+  watching, and nothing merges or removes old parts.
 - **Polling.** Growth is noticed within one `poll_interval_ms`; there is no filesystem
   watcher.
 - **Local paths only.** See [the root folder](#a-local-path-on-a-cluster).

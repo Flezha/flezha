@@ -67,6 +67,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     {:ok, _} = Postgres.on_output(ctx, opts)
   end
 
+  defp health(opts, pid), do: Postgres.health(Map.put(opts, :owned_pid, pid))
+
   defp stamps(entity, seq, epoch, key) do
     %{"flz.entity" => entity, "flz.seq" => seq, "flz.epoch" => epoch, "flz.key" => key}
   end
@@ -78,7 +80,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   end
 
   test "batch of 3 records commits rows and progress atomically", %{db: db} do
-    {opts, _pid} = start_provider()
+    {opts, pid} = start_provider()
     entity = "op/tier_op/"
 
     emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
@@ -94,7 +96,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
     # Progress committed in the same transaction as the rows.
     assert [[^entity, "2.1", 1]] = progress(db)
-    assert Postgres.health(opts) == :healthy
+    assert health(opts, pid) == :healthy
   end
 
   test "re-driven batch is a byte-identical no-op", %{db: db} do
@@ -266,7 +268,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
     assert wait_until(
              fn ->
-               match?({:unhealthy, {:missing_tables, _}}, Postgres.health(opts))
+               match?({:unhealthy, {:missing_tables, _}}, health(opts, pid))
              end,
              10_000
            ),
@@ -295,7 +297,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
            "buffered records must commit once the tables appear"
 
     assert [[^entity, "2.0", 1]] = progress(db)
-    assert wait_until(fn -> Postgres.health(opts) == :healthy end, 10_000)
+    assert wait_until(fn -> health(opts, pid) == :healthy end, 10_000)
   end
 
   test "unreachable database delays with backoff and never loses records" do
@@ -316,7 +318,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
            ),
            "the flush must keep retrying while the database is unreachable"
 
-    assert {:unhealthy, {:commit_stalled, reason}} = Postgres.health(opts)
+    assert {:unhealthy, {:commit_stalled, reason}} = health(opts, pid)
     assert is_binary(reason)
   end
 
@@ -341,7 +343,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
         # The redacted opts surface (health, CLI listing) must not carry it either.
         assert opts.password == "**redacted**"
-        {:unhealthy, {:commit_stalled, reason}} = Postgres.health(opts)
+        {:unhealthy, {:commit_stalled, reason}} = health(opts, pid)
         refute reason =~ "sup3r-s3cret-pw"
       end)
 

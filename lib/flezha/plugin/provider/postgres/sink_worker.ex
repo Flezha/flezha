@@ -17,6 +17,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   alias Flezha.Config.Backoff
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
+  alias Flezha.State.Wire
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry]
@@ -166,7 +167,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     state =
       cond do
         state.buffer_len >= state.max_batch and not timer_armed?(state, :retry) ->
-          flush(cancel_linger(state))
+          state |> cancel_timer(:linger) |> flush()
 
         not timer_armed?(state, :linger) and not timer_armed?(state, :retry) ->
           arm_timer(state, :linger, state.linger_ms, :linger)
@@ -191,13 +192,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   end
 
   @impl true
-  def handle_info(:linger, state) do
-    {:noreply, flush(%{state | linger_timer: nil})}
-  end
-
-  def handle_info(:retry_flush, state) do
-    {:noreply, flush(%{state | retry_timer: nil})}
-  end
+  def handle_info(:linger, state), do: {:noreply, state |> timer_fired(:linger) |> flush()}
+  def handle_info(:retry_flush, state), do: {:noreply, state |> timer_fired(:retry) |> flush()}
 
   def handle_info({:EXIT, pid, reason}, %{pool: pid} = state) do
     {:stop, {:pool_exit, reason}, state}
@@ -214,8 +210,6 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   end
 
   # ---------- flush ----------
-
-  defp cancel_linger(state), do: cancel_timer(state, :linger)
 
   defp flush(%{buffer_len: 0} = state), do: state
 
@@ -256,9 +250,9 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
           state
           | consecutive_failures: failures,
             last_error: sanitize_error(reason),
-            missing_tables: missing_tables_from(reason) || state.missing_tables,
-            retry_timer: Process.send_after(self(), :retry_flush, backoff)
+            missing_tables: missing_tables_from(reason) || state.missing_tables
         }
+        |> arm_timer(:retry, backoff, :retry_flush)
     end
   end
 
@@ -323,71 +317,33 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   # ---------- record decoding ----------
 
-  # A record earns the guarded upsert by carrying a replay-stable identity —
-  # an entity and a numeric seq — NOT by carrying an epoch. A `.keyed()` channel
-  # without the effectively-once tier is stamped by the SDK, which cannot mint an
-  # epoch (only the controller's outbox lineage owns one), so gating on the epoch
-  # would drop those records into the unidentified branch with a stable key but no
-  # seq, where the monotonicity guard can never admit a second write for that key.
-  #
-  # An absent epoch is epoch 0, not a sentinel: the outbox lineage starts at 0 and
-  # only a controller-side path (realign, correction, replay) bumps it — and every
-  # one of those stamps the epoch. So seq alone orders a tier-off record correctly.
-  #
+  # A record earns the guarded upsert by carrying the identity `Wire` reads.
   # Upsert key = `flz.key`, falling back to the identity itself for keyless tier
-  # outputs. Fully unstamped records get a unique synthetic key — plain inserts,
-  # the monotonicity guard never fires for them.
+  # outputs. A record with no identity gets a unique synthetic key: a plain
+  # insert, which the monotonicity guard never fires for.
   defp decode_record(msg, metadata) do
-    entity = Map.get(metadata, "flz.entity", "")
-    seq = Map.get(metadata, "flz.seq", "")
-    epoch = parse_epoch(Map.get(metadata, "flz.epoch")) || 0
+    case Wire.output_identity(metadata) do
+      {:ok, identity} ->
+        Map.merge(identity, %{
+          key: Map.get(metadata, "flz.key") || "#{identity.entity}/#{identity.seq}",
+          payload: msg,
+          metadata: metadata
+        })
 
-    if valid_seq?(seq) and entity != "" do
-      key = Map.get(metadata, "flz.key") || "#{entity}/#{seq}"
-
-      %{
-        key: key,
-        entity: entity,
-        seq: seq,
-        epoch: epoch,
-        sort: sort_key(epoch, seq),
-        payload: msg,
-        metadata: metadata
-      }
-    else
-      key = Map.get(metadata, "flz.key") || anon_key()
-
-      %{
-        key: key,
-        entity: "",
-        seq: "",
-        epoch: 0,
-        sort: sort_key(0, ""),
-        payload: msg,
-        metadata: metadata
-      }
+      :none ->
+        %{
+          key: Map.get(metadata, "flz.key") || anon_key(),
+          entity: "",
+          seq: "",
+          epoch: 0,
+          sort: {0, []},
+          payload: msg,
+          metadata: metadata
+        }
     end
   end
 
   defp anon_key, do: "_anon/#{System.unique_integer([:positive, :monotonic])}"
-
-  defp valid_seq?(seq), do: is_binary(seq) and seq =~ ~r/^\d+(\.\d+)*$/
-
-  defp sort_key(epoch, ""), do: {epoch, []}
-
-  defp sort_key(epoch, seq),
-    do: {epoch, seq |> String.split(".") |> Enum.map(&String.to_integer/1)}
-
-  defp parse_epoch(nil), do: nil
-
-  defp parse_epoch(v) when is_binary(v) do
-    case Integer.parse(v) do
-      {i, ""} -> i
-      _ -> nil
-    end
-  end
-
-  defp parse_epoch(v) when is_integer(v), do: v
 
   # ---------- schema ----------
 

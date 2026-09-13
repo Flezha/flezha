@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.Provider.File do
   @moduledoc """
   A local file as an operative's input and as its output: `File.Source`
   (provider id `operative_file_source`) reads one line per entry frame, and
-  `File.Sink` (`operative_file_sink`) appends one line per record.
+  `File.Sink` (`operative_file_sink`) writes one line per record.
 
   What both directions share lives here: the one folder every path must
   resolve inside, `FLEZHA_FILE_PLUGIN_ROOT`, and the preparation that resolves a
@@ -296,14 +296,16 @@ defmodule Flezha.Plugin.Provider.File do
 
   defmodule Sink do
     @moduledoc """
-    Records appended to a file (`:io_binding`), one line per record: the
+    Records written to a file (`:io_binding`), one line per record: the
     message bytes and a newline, nothing else.
 
     Records are batched, written in one call and made durable with a data sync
-    before any outbox hold in the batch is confirmed, so nothing is lost. A
-    batch synced just before a crash, whose confirmation did not reach the
-    outbox, is appended a second time after it: the crash window of the
-    `append` layout, which `commit` names.
+    before any outbox hold in the batch is confirmed, so nothing is lost. What
+    the file is, `commit` names. Under `append` it is the path, grown in place,
+    and a batch synced just before a crash, whose confirmation did not reach
+    the outbox, is appended a second time after it. Under `rename` the path is
+    a directory of immutable parts, and a record the outbox guarantees is
+    written once.
 
     Required: `path`; the rest: `docs/plugins/file.md`.
     """
@@ -321,7 +323,8 @@ defmodule Flezha.Plugin.Provider.File do
         path: [
           type: :string,
           required: true,
-          doc: "The file to append to: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it"
+          doc:
+            "The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it"
         ],
         channel_out: [
           type: :names,
@@ -334,10 +337,23 @@ defmodule Flezha.Plugin.Provider.File do
         ],
         commit: [
           type: :enum,
-          values: ["append"],
+          values: ["append", "rename"],
           default: "append",
           doc:
-            "The file layout. `append` grows one file in place; a batch synced just before a crash is appended again after it"
+            "The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once"
+        ],
+        roll_after_ms: [
+          type: :int,
+          default: 10_000,
+          min: 1,
+          doc:
+            "Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation"
+        ],
+        roll_bytes: [
+          type: :int,
+          default: 67_108_864,
+          min: 1,
+          doc: "Under `rename`, the size at which a part is committed before `roll_after_ms`"
         ],
         linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
         max_batch: [type: :int, default: 500, min: 1, doc: "Records in one write"],
@@ -363,9 +379,41 @@ defmodule Flezha.Plugin.Provider.File do
       ],
       worker: [module: WriteWorker, restart: :temporary]
 
-    @doc "Validate and resolve the path. Opens nothing: the worker does, at activation."
+    @doc """
+    Validate and resolve the path. Opens nothing: the worker does, at
+    activation. Under `rename` the path is the directory the parts go into,
+    made here with mode `0700` when it does not exist, so a path that names
+    anything else is refused to the operator who typed it.
+    """
     @impl true
-    def init_provider(opts), do: FilePlugin.prepare(opts)
+    def init_provider(opts) do
+      with {:ok, opts} <- FilePlugin.prepare(opts), do: prepare_layout(opts)
+    end
+
+    defp prepare_layout(%{commit: "rename", path: dir} = opts) do
+      case File.lstat(dir) do
+        {:ok, %File.Stat{type: :directory}} ->
+          {:ok, opts}
+
+        {:ok, %File.Stat{}} ->
+          {:error,
+           "file plugin path #{dir} is not a directory, and commit: rename writes parts into one"}
+
+        {:error, :enoent} ->
+          with :ok <- File.mkdir(dir), :ok <- File.chmod(dir, 0o700) do
+            {:ok, opts}
+          else
+            {:error, reason} ->
+              {:error,
+               "file plugin path #{dir}: the directory cannot be made: #{inspect(reason)}"}
+          end
+
+        {:error, reason} ->
+          {:error, "file plugin path #{dir} cannot be read: #{inspect(reason)}"}
+      end
+    end
+
+    defp prepare_layout(opts), do: {:ok, opts}
 
     @impl true
     def on_input(%Ctx.IO{} = ctx, opts), do: write(ctx, opts)
@@ -373,7 +421,8 @@ defmodule Flezha.Plugin.Provider.File do
     def on_output(%Ctx.IO{} = ctx, opts), do: write(ctx, opts)
 
     # A delivery-guaranteed record is held before it is handed over, and the
-    # worker answers the hold once the batch holding it is synced.
+    # worker answers the hold once the record is durable: synced under
+    # `append`, in a committed part under `rename`.
     defp write(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
       if ProviderBehaviour.in_channel?(md, opts[:filter_channel]) do
         Outbox.hold(md)
@@ -385,8 +434,9 @@ defmodule Flezha.Plugin.Provider.File do
 
     @doc """
     Health verdict (plugin health contract): unhealthy with no worker or a dead
-    one, when the file cannot be opened, and when records are pending behind a
-    failing write and no batch has been synced within `unhealthy_after_ms`.
+    one, when the file cannot be opened or, under `rename`, the directory cannot
+    be reconciled, and when records are pending behind a failing write and no
+    batch has been synced within `unhealthy_after_ms`.
     """
     @impl true
     @spec health(map()) :: ProviderBehaviour.health_verdict()
@@ -407,7 +457,7 @@ defmodule Flezha.Plugin.Provider.File do
         %{open_error: error} when error != nil ->
           {:unhealthy, {:open_failed, error}}
 
-        %{buffer_len: pending, consecutive_failures: failures, last_flush_age_ms: age} = stats
+        %{pending: pending, consecutive_failures: failures, last_flush_age_ms: age} = stats
         when pending > 0 and failures > 0 and age > threshold ->
           {:unhealthy, {:write_stalled, stats.last_error}}
 

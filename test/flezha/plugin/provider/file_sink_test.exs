@@ -1,8 +1,9 @@
 defmodule Flezha.Plugin.Provider.FileSinkTest do
   @moduledoc """
-  The file sink: one line per record, synced before the outbox hold is
-  answered, cut back and retried when a write fails, and a file it creates made
-  private.
+  The file sink: one line per record, into one growing file under `append` and
+  into parts committed by rename under `rename`, durable before the outbox hold
+  is answered, cut back and retried when a write fails, and a file it creates
+  made private.
 
   The test process stands in for the writer that owns a guaranteed record, so a
   confirmation is an `{:outbox_confirmed_many, keys}` cast it receives.
@@ -12,12 +13,14 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env, :isolated_dlq_dir], async: false
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.File.Sink
   alias Flezha.Plugin.Provider.File.WriteWorker
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.ProviderPrepare
 
@@ -93,6 +96,21 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       assert Enum.sort(keys) == [{:cursor, 1}, {:cursor, 2}, {:cursor, 3}]
       assert File.read(file) == {:ok, "r1\nr2\nr3\n"}
     end
+
+    test "append writes a batch again when its confirmation was lost in a crash", %{out: file} do
+      {entity_id, records} = unconfirmed_batch()
+      {opts, sink} = start_sink()
+      hand_over(opts, records)
+      assert wait_until(fn -> File.read(file) == {:ok, "a\nb\n"} end, 2_000)
+
+      crash(opts, sink)
+      activate(opts)
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      hand_over(opts, records)
+
+      assert_confirmed([{:cursor, 1}, {:cursor, 2}])
+      assert File.read(file) == {:ok, "a\nb\na\nb\n"}
+    end
   end
 
   describe "the commit option" do
@@ -102,8 +120,187 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
 
     test "a layout the option does not declare is refused naming the option" do
-      assert {:error, message} = prepare_sink(%{commit: "rename"})
+      assert {:error, message} = prepare_sink(%{commit: "truncate"})
       assert message =~ "commit"
+    end
+  end
+
+  describe "commit: rename" do
+    test "rename makes the directory private, and takes one that exists", %{root: root} do
+      assert {:ok, opts} = prepare_sink(rename(%{}))
+      assert File.dir?(opts.path)
+      assert Bitwise.band(File.stat!(opts.path).mode, 0o777) == 0o700
+
+      File.mkdir!(Path.join(root, "existing"))
+      assert {:ok, _opts} = prepare_sink(rename(%{path: "existing"}))
+    end
+
+    test "a path that is a regular file is refused naming the layout", %{out: file} do
+      File.write!(file, "")
+
+      assert {:error, message} = prepare_sink(rename(%{path: "out.ndjson"}))
+      assert message =~ "commit: rename"
+    end
+
+    test "a roll becomes one immutable part", %{root: root} do
+      dir = Path.join(root, "out")
+      {opts, _sink} = start_sink(rename(%{roll_after_ms: 100}))
+      for record <- ["a", "b", "c"], do: release(opts, record)
+
+      assert wait_until(fn -> committed(dir) == "a\nb\nc\n" end, 2_000)
+      assert Enum.sort(File.ls!(dir)) == [".progress", "part-00000001"]
+      assert progress(dir)["part"] == 1
+
+      for name <- ["part-00000001", ".progress"],
+          do: assert(Bitwise.band(File.stat!(Path.join(dir, name)).mode, 0o777) == 0o600, name)
+    end
+
+    test "a hold is confirmed when its part is committed, not when its batch syncs",
+         %{root: root} do
+      dir = Path.join(root, "out")
+      owner = owner()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
+      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+
+      assert wait_until(fn -> open_roll(dir) == "a\n" end, 2_000)
+      refute_received {:"$gen_cast", {:outbox_confirmed_many, _}}
+      refute File.exists?(Path.join(dir, ".progress"))
+
+      send(sink, :roll)
+      assert_confirmed([{:cursor, 1}])
+      assert progress(dir)["part"] == 1
+    end
+
+    test "a crash before the part rename writes the records once", %{root: root} do
+      dir = Path.join(root, "out")
+      {entity_id, records} = unconfirmed_batch()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
+      hand_over(opts, records)
+      assert wait_until(fn -> open_roll(dir) == "a\nb\n" end, 2_000)
+
+      crash(opts, sink)
+      activate(%{opts | roll_after_ms: 1})
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      hand_over(opts, records)
+
+      assert_confirmed([{:cursor, 1}, {:cursor, 2}])
+      assert committed(dir) == "a\nb\n"
+      assert Enum.sort(File.ls!(dir)) == [".progress", "part-00000001"]
+    end
+
+    test "a crash between the part rename and the sidecar writes the records once",
+         %{root: root} do
+      dir = Path.join(root, "out")
+      {entity_id, [first, second]} = unconfirmed_batch()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 1}))
+      hand_over(opts, [first])
+      assert wait_until(fn -> committed(dir) == "a\n" end, 2_000)
+      progress_one = File.read!(Path.join(dir, ".progress"))
+      hand_over(opts, [second])
+      assert wait_until(fn -> committed(dir) == "a\nb\n" end, 2_000)
+
+      # What a crash after `part-00000002` was renamed and before its sidecar leaves.
+      crash(opts, sink)
+      File.write!(Path.join(dir, ".progress"), progress_one)
+      activate(opts)
+      assert wait_until(fn -> not File.exists?(Path.join(dir, "part-00000002")) end, 2_000)
+
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      hand_over(opts, [first, second])
+
+      assert_confirmed([{:cursor, 1}, {:cursor, 2}])
+      assert committed(dir) == "a\nb\n"
+      assert File.read!(Path.join(dir, "part-00000002")) == "b\n"
+    end
+
+    test "a crash after the sidecar, before the confirmation, writes the records once",
+         %{root: root} do
+      dir = Path.join(root, "out")
+      {entity_id, records} = unconfirmed_batch()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 1}))
+      hand_over(opts, records)
+      assert wait_until(fn -> committed(dir) == "a\nb\n" end, 2_000)
+
+      crash(opts, sink)
+      activate(opts)
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      hand_over(opts, records)
+
+      assert_confirmed([{:cursor, 1}, {:cursor, 2}])
+      assert committed(dir) == "a\nb\n"
+      assert temp_files(dir) == []
+    end
+
+    test "a part more than one ahead of the sidecar refuses the start and deletes nothing",
+         %{root: root} do
+      dir = Path.join(root, "out")
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 1}))
+      release(opts, "a")
+      assert wait_until(fn -> committed(dir) == "a\n" end, 2_000)
+      progress_one = File.read!(Path.join(dir, ".progress"))
+
+      for {record, written} <- [{"b", "a\nb\n"}, {"c", "a\nb\nc\n"}] do
+        release(opts, record)
+        assert wait_until(fn -> committed(dir) == written end, 2_000)
+      end
+
+      crash(opts, sink)
+      File.write!(Path.join(dir, ".progress"), progress_one)
+      sink = activate(opts)
+
+      refused = {:unhealthy, {:open_failed, {{:part_ahead_of_progress, 3, 1}, opts.path}}}
+      assert wait_until(fn -> health(opts, sink) == refused end, 2_000)
+
+      assert Enum.sort(File.ls!(dir)) ==
+               [".progress", "part-00000001", "part-00000002", "part-00000003"]
+    end
+
+    test "a record the outbox does not guarantee is written, and no watermark names it",
+         %{root: root} do
+      dir = Path.join(root, "out")
+      {opts, _sink} = start_sink(rename(%{roll_after_ms: 1}))
+      # Keyed off the tier: an Entity and a seq but no confirmation token, so one
+      # seq may name two records.
+      keyed = %{"channel" => "out", "flz.entity" => "op/proc/k1", "flz.seq" => "7.0"}
+      release(opts, "plain")
+      release(opts, "first", keyed)
+      release(opts, "second", keyed)
+
+      assert wait_until(fn -> committed(dir) == "plain\nfirst\nsecond\n" end, 2_000)
+      assert progress(dir)["watermarks"] == %{}
+    end
+
+    test "a roll that reaches roll_bytes is committed before roll_after_ms", %{root: root} do
+      dir = Path.join(root, "out")
+      {opts, _sink} = start_sink(rename(%{roll_bytes: 64, roll_after_ms: 60_000}))
+      for _record <- 1..10, do: release(opts, String.duplicate("x", 9))
+
+      assert wait_until(fn -> File.exists?(Path.join(dir, "part-00000001")) end, 2_000)
+    end
+
+    test "a roll whose commit keeps failing is unhealthy with nothing queued behind it",
+         %{root: root} do
+      dir = Path.join(root, "out")
+      owner = owner()
+      extra = Map.merge(@held_retry, %{roll_after_ms: 60_000, unhealthy_after_ms: 1})
+      {opts, sink} = start_sink(rename(extra))
+      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+      assert wait_until(fn -> open_roll(dir) == "a\n" end, 2_000)
+
+      # A directory the worker cannot rename in: the part rename fails.
+      File.chmod!(dir, 0o500)
+      on_exit(fn -> File.chmod(dir, 0o700) end)
+      send(sink, :roll)
+
+      assert wait_until(
+               fn -> match?({:unhealthy, {:write_stalled, :eacces}}, health(opts, sink)) end,
+               2_000
+             )
+
+      File.chmod!(dir, 0o700)
+      send(sink, :retry)
+      assert_confirmed([{:cursor, 1}])
+      assert committed(dir) == "a\n"
     end
   end
 
@@ -142,8 +339,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       assert {:ok, prepared} = prepare_sink(%{})
       File.ln_s!(target, file)
 
-      {:ok, sink} = ProviderPrepare.activate(Sink, prepared)
-      ProviderPrepare.stop_on_exit(Sink, sink)
+      sink = activate(prepared)
 
       assert wait_until(
                fn -> health(prepared, sink) == {:unhealthy, {:open_failed, {:symlink, file}}} end,
@@ -180,9 +376,15 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
   defp start_sink(extra \\ %{}) do
     {:ok, prepared} = prepare_sink(extra)
+    {prepared, activate(prepared)}
+  end
+
+  # What activation starts, and the stop that ends it with the test; also the
+  # restart after a crash.
+  defp activate(prepared) do
     {:ok, sink} = ProviderPrepare.activate(Sink, prepared)
     ProviderPrepare.stop_on_exit(Sink, sink)
-    {prepared, sink}
+    sink
   end
 
   defp prepare_sink(extra) do
@@ -207,9 +409,96 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
   # The test process stands in for the writer owning the record's entry.
   defp owner do
-    entity_id = {"file_sink_#{System.unique_integer([:positive])}", "proc", "k1"}
+    entity_id = entity_id()
     :ok = TestHelpers.stub_outbox_owner(entity_id)
     entity_id
+  end
+
+  defp entity_id, do: {"file_sink_#{System.unique_integer([:positive])}", "proc", "k1"}
+
+  # Two guaranteed records whose owner is not registered yet, so the first
+  # confirmation reaches nobody: what the outbox sees of a controller that died
+  # between the sync and the report. Handing them over again is the re-drive.
+  defp unconfirmed_batch do
+    entity_id = entity_id()
+
+    {entity_id,
+     [
+       {"a", TestHelpers.guaranteed_metadata(entity_id, 1)},
+       {"b", TestHelpers.guaranteed_metadata(entity_id, 2)}
+     ]}
+  end
+
+  defp hand_over(opts, records),
+    do: for({msg, metadata} <- records, do: release(opts, msg, metadata))
+
+  defp rename(extra), do: Map.merge(%{path: "out", commit: "rename"}, extra)
+
+  # A kill, so the worker runs no `terminate/2`. Its supervisor reports the
+  # killed child, so the wait for the supervisor to drop it runs inside the
+  # capture.
+  defp crash(opts, sink) do
+    supervisor = WorkerSup.dyn_sup_name(WorkerSup.family(Sink))
+
+    capture_log(fn ->
+      Process.exit(sink, :kill)
+
+      assert wait_until(
+               fn ->
+                 WorkerSup.worker_pid(Sink, opts.plugin_id) == nil and
+                   not Enum.any?(
+                     DynamicSupervisor.which_children(supervisor),
+                     &match?({_, ^sink, _, _}, &1)
+                   )
+               end,
+               2_000
+             )
+    end)
+  end
+
+  # A batch may be split across flushes, so the confirmations are gathered
+  # until as many keys have arrived as are expected.
+  defp assert_confirmed(keys, seen \\ []) do
+    if length(seen) >= length(keys) do
+      assert Enum.sort(seen) == Enum.sort(keys)
+    else
+      assert_receive {:"$gen_cast", {:outbox_confirmed_many, more}}, 2_000
+      assert_confirmed(keys, seen ++ more)
+    end
+  end
+
+  # What a consumer that reads only parts at or below the sidecar's number sees.
+  defp committed(dir) do
+    case progress(dir) do
+      %{"part" => last} ->
+        dir
+        |> File.ls!()
+        |> Enum.filter(
+          &(&1 =~ ~r/^part-\d+$/ and String.to_integer(String.trim_leading(&1, "part-")) <= last)
+        )
+        |> Enum.sort()
+        |> Enum.map_join(&File.read!(Path.join(dir, &1)))
+
+      _no_part_yet ->
+        nil
+    end
+  end
+
+  defp progress(dir) do
+    case File.read(Path.join(dir, ".progress")) do
+      {:ok, body} -> Jason.decode!(body)
+      {:error, :enoent} -> %{}
+    end
+  end
+
+  defp temp_files(dir), do: dir |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".tmp"))
+
+  # The open roll's bytes: what a crash before the part rename leaves behind.
+  defp open_roll(dir) do
+    case temp_files(dir) do
+      [temp] -> File.read!(Path.join(dir, temp))
+      _none_or_several -> nil
+    end
   end
 
   # The worker opens the file before any record arrives.

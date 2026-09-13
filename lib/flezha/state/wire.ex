@@ -200,6 +200,51 @@ defmodule Flezha.State.Wire do
   defp put_stamp(stamps, _key, _value), do: stamps
 
   @doc """
+  The identity `output_stamps/1` put on an output, read back: the Entity, the
+  seq, the epoch, and a `sort` key ordering two identities of one Entity. The
+  one reading every sink that guards on `(epoch, seq)` shares.
+
+  An output has an identity when it names an Entity and a numeric dotted seq,
+  not when it carries an epoch: a `.keyed()` channel off the effectively-once
+  tier is stamped by the SDK, which cannot mint one. An absent epoch is epoch 0,
+  where the outbox lineage starts, and every controller-side path that bumps it
+  stamps it. `sort` compares the epoch, then the seq numerically, so `"10.0"`
+  follows `"9.1"`.
+  """
+  @spec output_identity(map()) ::
+          {:ok,
+           %{
+             entity: binary(),
+             seq: binary(),
+             epoch: integer(),
+             sort: {integer(), [non_neg_integer()]}
+           }}
+          | :none
+  def output_identity(metadata) when is_map(metadata) do
+    entity = Map.get(metadata, "flz.entity", "")
+    seq = Map.get(metadata, "flz.seq", "")
+
+    if entity != "" and is_binary(seq) and seq =~ ~r/^\d+(\.\d+)*$/ do
+      epoch = parse_epoch(Map.get(metadata, "flz.epoch"))
+      sort = {epoch, seq |> String.split(".") |> Enum.map(&String.to_integer/1)}
+      {:ok, %{entity: entity, seq: seq, epoch: epoch, sort: sort}}
+    else
+      :none
+    end
+  end
+
+  defp parse_epoch(epoch) when is_integer(epoch), do: epoch
+
+  defp parse_epoch(epoch) when is_binary(epoch) do
+    case Integer.parse(epoch) do
+      {parsed, ""} -> parsed
+      _unparsable -> 0
+    end
+  end
+
+  defp parse_epoch(_absent), do: 0
+
+  @doc """
   Assemble a durable frame: the Entity identity, its seq, the 16-byte record
   header and the body under its CRC. The inverse of `decode_frame/1` and the
   byte-for-byte twin of the runner core's `build_entity_frame`, so one

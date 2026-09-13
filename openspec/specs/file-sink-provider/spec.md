@@ -58,24 +58,6 @@ rewrite bytes.
 - **WHEN** a plugin is attached with `channel` or `channel_in`
 - **THEN** the attach SHALL fail, naming the option as one this provider does not offer
 
-### Requirement: The `commit` option SHALL name the file layout, and `append` SHALL be its only value
-
-`commit` SHALL be an enumerated option whose only value in this capability is `append`: one
-growing file, batches appended in place. Its documentation SHALL state the crash window: a
-batch written and synced before a crash, whose confirmation did not reach the outbox, is
-re-driven after the restart and appended a second time. No record is lost. A value the option
-does not declare SHALL be refused at attach naming the option.
-
-#### Scenario: The default is append
-
-- **WHEN** a plugin is attached without `commit`
-- **THEN** its resolved options SHALL carry `commit: "append"`
-
-#### Scenario: An unknown layout is refused
-
-- **WHEN** a plugin is attached with `commit: "rename"` while only `append` is declared
-- **THEN** the attach SHALL fail naming `commit`
-
 ### Requirement: A file sink SHALL self-report health
 
 The sink SHALL report `{:unhealthy, :no_sink}` with no worker, `{:unhealthy, :worker_dead}`
@@ -95,4 +77,108 @@ and no durable flush has completed within `unhealthy_after_ms`. Otherwise it SHA
 - **GIVEN** no pending records
 - **WHEN** health is queried
 - **THEN** it SHALL report `:healthy`
+
+### Requirement: The `commit` option SHALL name the file layout
+
+`commit` SHALL be an enumerated option with two values. `append`, the default, is one growing
+file with batches appended in place; its documentation SHALL state the crash window: a batch
+written and synced before a crash, whose confirmation did not reach the outbox, is re-driven
+after the restart and appended a second time. No record is lost. `rename` is a directory of
+immutable part files committed by rename with a progress sidecar, under which a record the
+outbox guarantees, carrying a confirmation token and a replay-stable identity, SHALL be written
+exactly once across a sink crash, a plugin restart and a controller restart, and any other
+record is written at least once. A value the option does not declare SHALL be refused at attach
+naming the option.
+
+#### Scenario: The default is append
+
+- **WHEN** a plugin is attached without `commit`
+- **THEN** its resolved options SHALL carry `commit: "append"`
+
+#### Scenario: An unknown layout is refused
+
+- **WHEN** a plugin is attached with `commit: "truncate"`
+- **THEN** the attach SHALL fail naming `commit`
+
+#### Scenario: Rename is accepted
+
+- **WHEN** a plugin is attached with `commit: "rename"` and a `path` that is a directory or does
+  not exist
+- **THEN** the attach SHALL succeed and the directory SHALL exist afterwards with mode `0700`
+
+#### Scenario: A regular file under rename is refused
+
+- **WHEN** a plugin is attached with `commit: "rename"` and a `path` that is a regular file
+- **THEN** the attach SHALL fail naming the layout
+
+### Requirement: Under `rename` the sink SHALL commit immutable parts and reconcile the directory by one rule
+
+Under `commit: "rename"` the sink SHALL write records into a hidden temp file in the directory
+`path` names, syncing each batch as it flushes. It SHALL close a roll when `roll_after_ms`
+(default 10 000) or `roll_bytes` (default 64 MiB) is reached, whichever first, by renaming the
+temp file to `part-<N>` with `N` zero-padded and strictly increasing, then writing a sidecar
+`.progress` temp-then-rename carrying `N` and the per-Entity `(epoch, seq)` watermark of every
+part up to `N`, and only then confirming every hold the part carries. A temp file SHALL NOT be
+visible under a final name.
+
+On start the sink SHALL delete every temp file and every part whose number is greater than the
+sidecar's, because their records were never confirmed and the outbox re-drive returns them. A
+part more than one ahead of the sidecar SHALL refuse the start naming both numbers, and SHALL
+delete nothing. A guaranteed record whose `(epoch, seq)` is at or below the sidecar's watermark
+for its Entity SHALL NOT be written and its hold SHALL be confirmed; one at or below the open
+roll's watermark SHALL NOT be written and its hold SHALL be confirmed with the roll. Only a
+record carrying an outbox confirmation token is judged, because any other record's seq may
+repeat. The identity a record carries SHALL be read by the same function the Postgres sink
+reads it with.
+
+#### Scenario: A roll becomes one immutable part
+
+- **GIVEN** `roll_after_ms: 100`
+- **WHEN** records `a`, `b`, `c` are flushed and the roll closes
+- **THEN** the directory SHALL hold `part-00000001` ending `a\nb\nc\n`, `.progress` naming `1`,
+  and no temp file
+
+#### Scenario: Holds are confirmed at the roll
+
+- **GIVEN** a guaranteed record flushed into the open temp file
+- **WHEN** health and the outbox are observed before the roll closes
+- **THEN** the hold SHALL still be open, and SHALL be confirmed after `.progress` is renamed
+
+#### Scenario: A crash before the part rename writes once
+
+- **GIVEN** a temp file holding synced records whose holds are open
+- **WHEN** the worker crashes and restarts, and the records are re-driven
+- **THEN** the temp file SHALL be gone and the records SHALL appear in exactly one part
+
+#### Scenario: A crash between the two renames writes once
+
+- **GIVEN** `part-00000005` present and `.progress` naming `4`
+- **WHEN** the sink starts and the part's records are re-driven
+- **THEN** `part-00000005` SHALL be deleted at start and its records SHALL appear in exactly
+  one part afterwards
+
+#### Scenario: A crash after the sidecar writes once
+
+- **GIVEN** `.progress` naming `5` with a watermark covering `part-00000005`
+- **WHEN** the sink starts and `part-00000005`'s records are re-driven
+- **THEN** nothing SHALL be written for them and each hold SHALL be confirmed
+
+#### Scenario: A part two ahead refuses the start
+
+- **GIVEN** `part-00000007` present and `.progress` naming `5`
+- **WHEN** the sink starts
+- **THEN** it SHALL refuse naming `7` and `5`, health SHALL report
+  `{:unhealthy, {:open_failed, reason}}`, and every part SHALL remain
+
+#### Scenario: A record the outbox does not guarantee is still written
+
+- **WHEN** a record carrying no `flz.entity`, and two keyed records sharing one `flz.seq` and
+  carrying no confirmation token, are flushed under `rename`
+- **THEN** all three SHALL be written, and the watermark SHALL NOT mention them
+
+#### Scenario: The roll closes by size
+
+- **GIVEN** `roll_bytes: 64` and `roll_after_ms: 60000`
+- **WHEN** 100 bytes of records are flushed
+- **THEN** a part SHALL be committed before `roll_after_ms` elapses
 

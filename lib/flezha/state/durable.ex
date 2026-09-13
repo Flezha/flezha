@@ -80,7 +80,9 @@ defmodule Flezha.State.Durable do
     {:tier_artifact, "lib/flezha/state/durability_tier/artifact.ex", :whole, :inline,
      ".transferring", false, true},
     {:wal_transfer, "lib/flezha/state/wal_transfer.ex", :whole, :inline, ".transferring", false,
-     true}
+     true},
+    {:file_sink_progress, "lib/flezha/plugin/provider/file/write_worker.ex", :whole, :inline,
+     ".tmp", false, false}
   ]
 
   @rows Map.new(@table, fn row ->

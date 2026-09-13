@@ -1,14 +1,21 @@
 defmodule Flezha.Plugin.Provider.File.WriteWorker do
   @moduledoc """
   The writing half of `Flezha.Plugin.Provider.File.Sink`: one process per
-  enabled plugin, holding the file open for append and a bounded queue of
+  enabled plugin, holding its file open for append and a bounded queue of
   records waiting for the next batch.
 
-  A batch is one write of every record's bytes and a newline, then a data sync,
-  and only then the outbox confirmation for the holds it carries. A failed write
-  is cut back to the byte the batch began at and retried under the backoff
-  ladder, so nothing is dropped and the retry never appends after half a line.
-  Callers park past `queue_max`.
+  A batch is one write of every record's bytes and a newline, then a data sync.
+  A failed write is cut back to the byte the batch began at and retried under
+  the backoff ladder, so nothing is dropped and the retry never appends after
+  half a line. Callers park past `queue_max`.
+
+  What a sync confirms is the layout's. Under `append` the file is the path, and
+  the sync confirms the holds its batch carries. Under `rename` the file is the
+  open roll, a hidden temp file in the path's directory, and its holds wait for
+  the roll to be committed: renamed to `part-<N>`, then the sidecar `.progress`
+  naming `N` and the per-Entity `(epoch, seq)` watermark installed, and only
+  then confirmed. A record the outbox guarantees at or below the watermark is
+  confirmed without being written again.
 
   A file this worker creates is made `0600`, one that already exists keeps its
   mode, and a path that is a symbolic link when it is opened is refused.
@@ -18,31 +25,41 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.State.Outbox
+  alias Flezha.State.{Durable, Outbox, Paths, Wire}
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:linger, :retry]
+  use Flezha.Process.Timer, keys: [:linger, :retry, :roll]
 
   require Logger
 
   # The prefix is derived from the provider's id; nothing here names a root.
   @provider "file_sink"
+  @progress ".progress"
 
   defstruct [
     :plugin_id,
     :path,
     :operative_id,
+    :commit,
     :linger_ms,
     :max_batch,
     :queue_max,
     :retry_backoff_ms,
     :retry_max_backoff_ms,
+    :roll_after_ms,
+    :roll_bytes,
+    # The file a batch is appended to: `path` under `append`, the open roll's
+    # temp file under `rename`.
+    :target,
     :fd,
     :inode,
     :undo,
     :open_error,
     :last_error,
     :last_flush_ms,
+    # Under `rename`, the committed watermark and the open roll; nil until the
+    # directory has been reconciled.
+    :roll,
     timers: %{},
     buffer: :queue.new(),
     buffer_len: 0,
@@ -79,24 +96,34 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       |> Map.take([
         :plugin_id,
         :path,
+        :commit,
         :linger_ms,
         :max_batch,
         :queue_max,
         :retry_backoff_ms,
-        :retry_max_backoff_ms
+        :retry_max_backoff_ms,
+        :roll_after_ms,
+        :roll_bytes
       ])
       # Seeded at start: a sink that has never synced is measured from its own
       # birth, so a failing first write is judged by the same window.
-      |> Map.merge(%{operative_id: opts[:source_operative_id], last_flush_ms: now()})
+      |> Map.merge(%{
+        operative_id: opts[:source_operative_id],
+        target: if(opts.commit == "append", do: opts.path),
+        last_flush_ms: now()
+      })
 
     {:ok, struct(__MODULE__, fields), {:continue, :open}}
   end
 
-  # Opened before any record arrives, so a file that cannot be opened is a
-  # verdict at once rather than at the first write.
+  # Opened before any record arrives, so a path that cannot be written is a
+  # verdict at once rather than at the first write. Under `rename` that is the
+  # reconcile; the roll's temp file is created by the first batch.
   @impl true
   def handle_continue(:open, state) do
-    case ensure_open(state) do
+    started = if state.commit == "rename", do: reconciled(state), else: ensure_open(state)
+
+    case started do
       {:ok, state} -> {:noreply, state}
       {:error, _reason, state} -> {:noreply, state}
     end
@@ -115,7 +142,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   def handle_call(:stats, _from, state) do
     {:reply,
      %{
-       buffer_len: state.buffer_len,
+       pending: state.buffer_len + held(state),
        consecutive_failures: state.consecutive_failures,
        last_error: state.last_error,
        last_flush_age_ms: now() - state.last_flush_ms,
@@ -123,17 +150,25 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
      }, state}
   end
 
+  # A record in the open roll is synced but not yet delivered: its hold waits
+  # for the roll's commit, and a commit that keeps failing leaves it pending.
+  defp held(%{roll: %{holds: holds}}), do: length(holds)
+  defp held(_no_roll), do: 0
+
   @impl true
   def handle_info(:linger, state), do: {:noreply, state |> timer_fired(:linger) |> flush()}
   def handle_info(:retry, state), do: {:noreply, state |> timer_fired(:retry) |> flush()}
+
+  def handle_info(:roll, state),
+    do: {:noreply, state |> timer_fired(:roll) |> roll_due() |> flush()}
+
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # A graceful stop writes what it holds, so a disable does not leave records
-  # the outbox handed over waiting for a re-drive.
+  # A graceful stop writes what it holds and commits the open roll, so a disable
+  # does not leave records the outbox handed over waiting for a re-drive.
   @impl true
   def terminate(_reason, state) do
-    state = if state.buffer_len > 0, do: flush(state), else: state
-    close(state)
+    state |> flush() |> roll_due() |> flush() |> close()
     :ok
   end
 
@@ -184,34 +219,98 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   # ---------- flush ----------
 
+  # A due roll is committed before another batch is written, so one roll is in
+  # flight at a time: what lets the reconcile trust a part one ahead.
+  defp flush(%{roll: %{due?: true}} = state) do
+    case commit_roll(state) do
+      {:ok, state} -> flush(state)
+      {:error, reason, state} -> retry(state, reason)
+    end
+  end
+
   defp flush(%{buffer_len: 0} = state), do: state
 
   defp flush(state) do
     {taken, rest} = :queue.split(min(state.buffer_len, state.max_batch), state.buffer)
     records = :queue.to_list(taken)
 
-    case write(state, Enum.map(records, fn {msg, _metadata} -> [msg, ?\n] end)) do
-      {:ok, state} ->
-        # The sync is the confirmation: every guaranteed record in the batch
-        # answers its hold in one report, and only now may its cursor advance.
-        Outbox.confirm_many(Enum.map(records, &elem(&1, 1)))
-        emit(:shipped, %{count: length(records)}, labels(state))
+    with {:ok, state} <- reconciled(state),
+         {lines, confirmed, rolled} = admit(state, records),
+         {:ok, state} <- write(state, lines) do
+      # The sync is what these holds waited on: the batch answers them in one
+      # report, and only now may their cursors advance.
+      Outbox.confirm_many(confirmed)
+      emit(:shipped, %{count: length(lines)}, labels(state))
 
-        %{
-          state
-          | buffer: rest,
-            buffer_len: state.buffer_len - length(records),
-            consecutive_failures: Backoff.reset(:file_flush, state.plugin_id),
-            last_error: nil,
-            last_flush_ms: now()
-        }
-        |> ProviderBehaviour.release_waiters()
-        |> flush()
-
-      {:error, reason, state} ->
-        retry(state, reason)
+      %{
+        state
+        | buffer: rest,
+          buffer_len: state.buffer_len - length(records),
+          consecutive_failures: Backoff.reset(:file_flush, state.plugin_id),
+          last_error: nil,
+          last_flush_ms: now()
+      }
+      |> into_roll(rolled)
+      |> ProviderBehaviour.release_waiters()
+      |> flush()
+    else
+      {:error, reason, state} -> retry(state, reason)
     end
   end
+
+  # What a batch writes, which holds its sync confirms, and what it adds to the
+  # open roll. Under `append` every record is written and confirmed.
+  defp admit(%{commit: "append"}, records),
+    do: {Enum.map(records, &line/1), Enum.map(records, &elem(&1, 1)), nil}
+
+  # Under `rename` a guaranteed record at or below a committed part's watermark
+  # is confirmed with this batch and not written; one at or below the open
+  # roll's leaves its hold to the roll. Every other record is written, and its
+  # hold waits for the roll.
+  defp admit(%{roll: roll}, records) do
+    {lines, confirmed, held, marks, bytes} =
+      Enum.reduce(records, {[], [], [], roll.marks, 0}, &judge(&1, &2, roll.committed))
+
+    {Enum.reverse(lines), confirmed, {held, marks, bytes}}
+  end
+
+  defp judge({msg, metadata} = record, {lines, confirmed, held, marks, bytes}, committed) do
+    case verdict(metadata, committed, marks) do
+      :committed ->
+        {lines, [metadata | confirmed], held, marks, bytes}
+
+      :in_roll ->
+        {lines, confirmed, [metadata | held], marks, bytes}
+
+      {:write, marks} ->
+        {[line(record) | lines], confirmed, [metadata | held], marks, bytes + byte_size(msg) + 1}
+    end
+  end
+
+  # Only a record the outbox guarantees is judged: its seq names one output of
+  # one entry. Any other seq may repeat across invocations, and a watermark over
+  # it would drop a record that was never written.
+  defp verdict(metadata, committed, marks) do
+    with true <- Outbox.guaranteed?(metadata),
+         {:ok, identity} <- Wire.output_identity(metadata) do
+      cond do
+        covers?(committed, identity) -> :committed
+        covers?(marks, identity) -> :in_roll
+        true -> {:write, Map.put(marks, identity.entity, identity)}
+      end
+    else
+      _unguarded -> {:write, marks}
+    end
+  end
+
+  defp covers?(marks, %{entity: entity, sort: sort}) do
+    case marks do
+      %{^entity => mark} -> sort <= mark.sort
+      _no_mark -> false
+    end
+  end
+
+  defp line({msg, _metadata}), do: [msg, ?\n]
 
   defp retry(state, reason) do
     failures = state.consecutive_failures + 1
@@ -236,6 +335,8 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       :retry
     )
   end
+
+  defp write(state, []), do: {:ok, state}
 
   defp write(state, iodata) do
     with {:ok, state} <- ensure_open(state), do: append(state, iodata)
@@ -274,20 +375,203 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
     end
   end
 
+  # ---------- the rename layout ----------
+
+  # The roll timer starts with a roll's first bytes, and `roll_bytes` commits
+  # the roll early. Holds are kept newest first.
+  defp into_roll(state, nil), do: state
+
+  defp into_roll(%{roll: roll} = state, {held, marks, bytes}) do
+    roll = %{roll | holds: held ++ roll.holds, marks: marks, bytes: roll.bytes + bytes}
+
+    cond do
+      roll.bytes >= state.roll_bytes ->
+        %{cancel_timer(state, :roll) | roll: %{roll | due?: true}}
+
+      roll.bytes > 0 and not timer_armed?(state, :roll) ->
+        arm_timer(%{state | roll: roll}, :roll, state.roll_after_ms, :roll)
+
+      true ->
+        %{state | roll: roll}
+    end
+  end
+
+  defp roll_due(%{roll: %{bytes: bytes} = roll} = state) when bytes > 0,
+    do: %{state | roll: %{roll | due?: true}}
+
+  defp roll_due(state), do: state
+
+  # The part is renamed into place, then the sidecar naming it is installed, and
+  # only then are its holds confirmed. The reopen before the rename makes a cut a
+  # failed batch still owes, so half a batch is never committed.
+  defp commit_roll(%{roll: %{renamed?: false}} = state) do
+    with {:ok, state} <- ensure_open(state),
+         state = close(state),
+         :ok <- File.rename(state.target, part_path(state.path, state.roll.part)) do
+      commit_roll(%{state | roll: %{state.roll | renamed?: true}})
+    else
+      {:error, reason, state} -> {:error, reason, state}
+      {:error, reason} -> {:error, reason, close(state)}
+    end
+  end
+
+  defp commit_roll(%{roll: roll} = state) do
+    case write_progress(state.path, roll.part, roll.marks) do
+      :ok ->
+        Outbox.confirm_many(Enum.reverse(roll.holds))
+
+        {:ok,
+         %{
+           state
+           | target: temp_path(state.path, roll.part + 1),
+             roll: new_roll(roll.part, roll.marks)
+         }}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  defp new_roll(last, marks),
+    do: %{
+      part: last + 1,
+      committed: marks,
+      marks: marks,
+      holds: [],
+      bytes: 0,
+      due?: false,
+      renamed?: false
+    }
+
+  # Under `rename` the directory is reconciled before the first batch. A refused
+  # reconcile is tried again by the next flush, so a directory an operator
+  # repairs is taken up without a restart.
+  defp reconciled(%{commit: "rename", roll: nil} = state) do
+    case reconcile(state.path) do
+      {:ok, roll} ->
+        {:ok, %{state | roll: roll, target: temp_path(state.path, roll.part), open_error: nil}}
+
+      {:error, reason} ->
+        refuse_open(state, reason)
+    end
+  end
+
+  defp reconciled(state), do: {:ok, state}
+
+  # Every temp file, and a part one ahead of the sidecar, holds records whose
+  # holds were never confirmed, so they are deleted and the re-drive writes those
+  # records again. A part further ahead is nothing a crash leaves, and is refused
+  # before anything is deleted.
+  defp reconcile(dir) do
+    with {:ok, names} <- File.ls(dir),
+         {:ok, last, marks} <- read_progress(dir),
+         :ok <- in_step(names, last),
+         :ok <- remove_uncommitted(dir, names, last) do
+      {:ok, new_roll(last, marks)}
+    end
+  end
+
+  defp in_step(names, last) do
+    case names |> Enum.flat_map(&part_number/1) |> Enum.max(fn -> 0 end) do
+      newest when newest > last + 1 -> {:error, {:part_ahead_of_progress, newest, last}}
+      _in_step -> :ok
+    end
+  end
+
+  defp remove_uncommitted(dir, names, last) do
+    names
+    |> Enum.filter(&(Durable.in_progress?(&1) or part_number(&1) == [last + 1]))
+    |> Enum.reduce_while(:ok, fn name, :ok ->
+      case File.rm(Path.join(dir, name)) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:remove, name, reason}}}
+      end
+    end)
+  end
+
+  defp part_number("part-" <> digits) do
+    if digits =~ ~r/^\d+$/, do: [String.to_integer(digits)], else: []
+  end
+
+  defp part_number(_name), do: []
+
+  defp part_path(dir, part), do: Path.join(dir, part_name(part))
+
+  # The open roll wears the sidecar's declared in-progress suffix under a hidden
+  # name: a consumer listing `part-*` never sees it, and the reconcile's one
+  # question, `Durable.in_progress?/1`, finds it beside the sidecar's own temp.
+  defp temp_path(dir, part),
+    do: Durable.in_progress_path(Path.join(dir, "." <> part_name(part)), :file_sink_progress)
+
+  defp part_name(part), do: "part-" <> String.pad_leading(Integer.to_string(part), 8, "0")
+
+  defp read_progress(dir) do
+    case File.read(Path.join(dir, @progress)) do
+      {:ok, body} -> decode_progress(body)
+      {:error, :enoent} -> {:ok, 0, %{}}
+      {:error, reason} -> {:error, {:progress_unreadable, reason}}
+    end
+  end
+
+  # A sidecar that cannot be read back is refused rather than taken for none,
+  # which would delete the part it names.
+  defp decode_progress(body) do
+    with {:ok, %{"part" => last, "watermarks" => marks}}
+         when is_integer(last) and last >= 0 and is_map(marks) <- Jason.decode(body),
+         {:ok, marks} <- decode_marks(marks) do
+      {:ok, last, marks}
+    else
+      _corrupt -> {:error, :progress_corrupt}
+    end
+  end
+
+  defp decode_marks(encoded) do
+    Enum.reduce_while(encoded, {:ok, %{}}, fn {key, value}, {:ok, marks} ->
+      with {:ok, entity} <- Base.url_decode64(key, padding: false),
+           [epoch, seq] when is_integer(epoch) <- value,
+           stamps = %{"flz.entity" => entity, "flz.seq" => seq, "flz.epoch" => epoch},
+           {:ok, identity} <- Wire.output_identity(stamps) do
+        {:cont, {:ok, Map.put(marks, entity, identity)}}
+      else
+        _corrupt -> {:halt, :error}
+      end
+    end)
+  end
+
+  # An Entity is keyed in base64url: its key is bytes, and JSON carries text.
+  # The install fills its sibling with the controller's umask, so the sibling is
+  # made private before it is renamed into place, as every file the sink makes.
+  defp write_progress(dir, last, marks) do
+    watermarks =
+      Map.new(marks, fn {entity, identity} ->
+        {Base.url_encode64(entity, padding: false), [identity.epoch, identity.seq]}
+      end)
+
+    body = Jason.encode!(%{part: last, watermarks: watermarks})
+    path = Path.join(dir, @progress)
+    in_progress = Durable.in_progress_path(path, :file_sink_progress)
+
+    Paths.atomic_install(
+      path,
+      fn fd -> with :ok <- :file.write(fd, body), do: :file.change_mode(in_progress, 0o600) end,
+      :file_sink_progress
+    )
+  end
+
   # ---------- the file ----------
 
-  # The path still names the file this worker holds, or the file is opened
-  # again: a file moved or deleted under an open descriptor would take every
-  # later write somewhere no reader of the path looks.
+  # The target still names the file this worker holds, or it is opened again: a
+  # file moved or deleted under an open descriptor would take every later write
+  # somewhere no reader of the path looks.
   defp ensure_open(%{fd: fd} = state) when fd != nil do
-    case File.lstat(state.path) do
+    case File.lstat(state.target) do
       {:ok, %File.Stat{type: :regular, inode: inode}} when inode == state.inode -> {:ok, state}
       _moved -> state |> close() |> ensure_open()
     end
   end
 
   defp ensure_open(state) do
-    with {:ok, fd} <- open_file(state.path),
+    with {:ok, fd} <- open_file(state.target),
          {:ok, state} <- opened(%{state | fd: fd}) do
       {:ok, %{state | open_error: nil}}
     else
@@ -324,10 +608,21 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   # A file replaced between the open and this look is caught by the next batch's
   # `ensure_open/1`, which compares the path's inode with this one.
   defp opened(state) do
-    with {:ok, %File.Stat{inode: inode}} <- File.lstat(state.path) do
+    with {:ok, %File.Stat{inode: inode}} <- File.lstat(state.target) do
+      same_roll!(state, inode)
       finish_undo(%{state | inode: inode})
     end
   end
+
+  # An open roll's bytes live only in its temp file, so a temp file that is not
+  # the one they went into has lost them, and their holds must not be confirmed
+  # for a part that will not hold them. The worker stops; its next start
+  # reconciles the directory and the re-drive brings the records back.
+  defp same_roll!(%{roll: %{bytes: bytes}, inode: previous} = state, inode)
+       when bytes > 0 and inode != previous,
+       do: exit({:open_part_replaced, state.target})
+
+  defp same_roll!(_state, _inode), do: :ok
 
   # A cut its own descriptor could not make is made here, on the same file. A
   # different file is not that batch's to cut.
