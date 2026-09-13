@@ -1,10 +1,10 @@
-"""The hello world: one message in, one message out.
+"""The hello world: a line of text in, the same line prefixed out.
 
-Three parts, and every Flezha application has these same three:
+Three parts:
 
-* the **procedure**, the code that runs;
-* the **operative**, the graph that says where its input comes from and where
-  its output goes;
+* the **operative**, the graph that says where input comes in, which steps it
+  passes through and where the output goes;
+* the **procedure**, the processing stage the graph routes each message into;
 * the **runner**, this process, which offers the operative to a controller and
   then does what it is told.
 
@@ -37,7 +37,7 @@ def echo(value: str) -> str:
 
 @flezha.stream_operative("echo")
 def echo_operative(c: flezha.Channels) -> None:
-    """The graph, and it holds no logic at all.
+    """The graph: where input comes in, the stage it passes through, where output goes.
 
     ``in`` is the address ``flz operative send --channel`` writes to, and
     ``out`` is the name stamped on every value the channel delivers. Both are

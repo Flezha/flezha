@@ -11,8 +11,8 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * The unit of user code, invoked once per message. This implementation prefixes the input and
- * emits the result.
+ * A processing stage of the operative's graph, invoked once per message. This implementation
+ * prefixes the input and emits the result.
  *
  * <p>The six type arguments are, in declaration order: the input value, the per-entity state, the
  * emitted output, the change type used to record state mutations, the clock, and the configuration

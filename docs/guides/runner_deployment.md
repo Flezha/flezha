@@ -164,44 +164,50 @@ Every verdict, and the two failures that are not verdicts:
 
 ## The building blocks
 
-Every Flezha application is built from the same three pieces, whatever it grows
-into later. They mean the same thing in all seven languages, so they are
-described once here and the code follows in [the next section](#the-code).
-
-### The procedure
-
-**Your code.** One message in, one message out.
-
-It emits its result without saying where the result goes. That is the point: the
-operative decides the destination, so the same procedure can be rewired to a
-different one without being touched.
-
-Its name is durable. State is stored under that name later, so renaming a
-procedure in a new release does not rename anything, it declares a different
-procedure. Choose it once.
-
-The hello world keeps no state and takes no configuration, which is as simple as
-a procedure gets. State, keys and entities are
-[`stream_basics.md`](stream_basics.md).
+The hello world has three pieces: an operative, a procedure and a runner. They
+mean the same thing in all seven languages, so they are described once here and
+the code follows in [the next section](#the-code).
 
 ### The operative
 
-**The wiring, and it holds no logic.** It says which channel feeds which
-procedure, and where the output goes.
+**What you build.** It declares the graph: the channels data enters on, the
+steps each message passes through, and the channels results leave on.
 
-That is what makes it the unit you deploy. A procedure on its own cannot be,
-because nothing knows where its messages come from, so the operative and not the
-procedure is what the controller starts, places on a runner, and moves when a
-runner disappears. It has a durable name of its own, and that is the name you
-type to start one.
+Some steps live in the graph itself. `map`, `filter`, `flatMap` and `keyBy`
+reshape, drop, split and key messages right where they are declared, with no
+class of their own ([`stream_transforms.md`](https://github.com/alfetahe/flezha/blob/main/docs/sdk/stream_transforms.md)).
+A step that needs your own processing, or state that has to survive, is a
+procedure the graph routes messages into.
+
+The operative is the unit everything else works in: what the controller starts,
+places on a runner, restarts after a crash, and moves when a runner disappears.
+It has a durable name of its own, and that is the name you type to start one.
 
 **Channel names are addresses, not labels.** `in` is what
 `flz operative send --channel` writes to, and `out` is the name stamped on
 everything that channel delivers. Something outside this file uses both, so
 changing one is a breaking change rather than a rename.
 
-The wiring is checked when the runner starts, so a graph that cannot work is
+The graph is checked when the runner starts, so a graph that cannot work is
 refused there rather than failing halfway through a run.
+
+### The procedure
+
+**A processing stage of your own.** Where a step needs more than a one-line
+transform, the graph hands the message to a procedure: typed input and output
+and, when you need them, per-key state that survives a restart, timers and
+retries.
+
+It emits its result without saying where the result goes. The operative decides
+that, so the same procedure can be rewired without being touched.
+
+Its name is durable. State is stored under that name, so renaming a procedure in
+a new release does not rename anything, it declares a different procedure.
+Choose it once.
+
+The echo's procedure keeps no state and takes no configuration, which is as
+simple as a procedure gets. State, keys and entities are
+[`stream_basics.md`](stream_basics.md).
 
 ### The runner
 
@@ -224,7 +230,7 @@ If the connection drops, the runner reconnects on its own.
 None of them names the others. You start a runner, the controller learns the
 operative can be served, you ask for one by name, and the controller binds it to
 a runner that offered it. Messages then arrive on the channel the operative
-declared, and your procedure runs.
+declared and travel its graph.
 
 ## The code
 
@@ -259,7 +265,28 @@ The whole example:
 [`sdk/java/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo).
 
 ```java
-// The procedure. One message in, one message out.
+// The operative. The graph, and the unit the controller schedules.
+public final class EchoOperative implements StreamOperative {
+
+    @Override
+    public String factoryId() {
+        return "echo";
+    }
+
+    @Override
+    public void channels(ChannelBuilder c) {
+        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
+    }
+}
+```
+
+One expression declares the whole data path: an entry channel `in` carrying
+strings, routed into the procedure, whose output channel is named `out` and
+terminated on the plugin layer. `sink(name)` does both jobs, so naming the
+channel again with `named(...)` is refused at registration rather than resolved.
+
+```java
+// The procedure. The processing stage the graph routes each message into.
 public final class EchoProcedure
         implements Procedure<String, EchoProcedure.None, String, NoChange, WallClock, Void> {
 
@@ -291,27 +318,6 @@ declares that it records no state changes, and `Void` that it takes no
 configuration.
 
 ```java
-// The operative. The graph, and the unit the controller schedules.
-public final class EchoOperative implements StreamOperative {
-
-    @Override
-    public String factoryId() {
-        return "echo";                       // durable: you start this by name
-    }
-
-    @Override
-    public void channels(ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
-    }
-}
-```
-
-One expression declares the whole data path: an entry channel `in` carrying
-strings, routed into the procedure, whose output channel is named `out` and
-terminated on the plugin layer. `sink(name)` does both jobs, so naming the
-channel again with `named(...)` is refused at registration rather than resolved.
-
-```java
 // The runner. Connects, offers the operative, and serves.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
@@ -323,10 +329,7 @@ public static void main(String[] args) throws Exception {
 ```
 
 `start()` connects and hands back the runner, and `awaitTermination()` blocks
-until shutdown, which is either a SIGTERM or a `close()` from another thread.
-`run()` does both in one call, but keeping the handle is what reaches
-`runner.admin()`, where everything `flz operative` and `flz plugin` do is a
-method ([`../sdk/admin.md`](../sdk/admin.md)). `defineWorkflow` is the same call
+until shutdown, which is either a SIGTERM or a `close()` from another thread, `run()` does both in one call. `defineWorkflow` is the same call
 for the workflow kind.
 
 > #### Concurrency in Java {: .info}
@@ -461,16 +464,29 @@ TODO: the code.
 
 ## Start it, check it
 
-**A runner is your program, and its life is yours to run.** There is no Flezha
-command that starts one and no shape it has to take. Pick the build tool, the
-framework, the process manager and the deployment you already use: to the
-controller a jar, a `cargo run`, a systemd unit and a pod are the same thing
-arriving on the socket.
+**You manage runners yourself.** Flezha never starts, stops or restarts a
+runner: `flz` has no command for it, and the controller only works with the
+runners that connect to it. A runner is an ordinary program, so run it the way
+you run your other services: from a terminal, under systemd, in Docker or
+Kubernetes, or under any supervisor you already use.
 
-So the commands below are examples of starting a program, not instructions. They
-assume the simplest case, a shell on the same machine as the controller, which
-is the Binaries tab in [Reach the controller](#reach-the-controller). Under a
-container or an orchestrator the command does not change; who runs it does.
+Once it is running, the runner connects to the controller and offers it the
+operatives it declares. From then on the controller decides what runs on it.
+
+Three things matter when a supervisor runs it:
+
+- **Stop it with SIGTERM.** The runner shuts down cleanly. Ctrl-C in a terminal
+  does the same.
+- **Restart it whenever it exits.** Losing the controller is not a reason to
+  exit: the runner reconnects on its own, waiting longer between attempts, up to
+  30 seconds. It exits when it crashes, and when the controller tells a stuck
+  runner to leave, with exit code 70, so that its supervisor starts a fresh one.
+- **Keep standard input open for Node, Python, Ruby and PHP.** These runners
+  stop when standard input closes, unless it is a terminal, so a supervisor that
+  starts them without one stops them at once. `docker run -i` keeps it open, and
+  so does `stdin_open: true` in a compose file.
+
+For Part 1, start it from a terminal on the controller's machine:
 
 <!-- tabs-open -->
 
@@ -521,29 +537,28 @@ php runner.php
 mix run --no-halt
 ```
 
-A standalone Elixir runner is its own application, so it starts the way your
-application starts. In-node there is nothing to start separately: the SDK runs
-under the controller's own supervision tree.
+A standalone Elixir runner is your own application, so it starts the way your
+application starts. An in-node runner has nothing to start: `Flezha.SDK` is a
+child in your application's supervision tree, in the same node as the
+controller.
 
 <!-- tabs-close -->
 
-Each of these keeps its terminal until you stop it. Leave the runner running
-there, beside the controller: the next guide starts work on it, and
-[`stop_everything.md`](stop_everything.md) stops it at the end of Part 1.
+The runner keeps that terminal. Leave it running: the next guide starts work on
+it, and [`stop_everything.md`](stop_everything.md) stops it at the end of Part 1.
 
-From another terminal, ask the controller whether it arrived:
+From another terminal, check that it connected:
 
 ```sh
 flz runner list
 ```
 
-A row for your runner means it connected, proved its namespace if enforcement is
-on, and declared the classes it can serve. No row means it never got that far,
-and [`../troubleshooting/runner_cannot_connect.md`](../troubleshooting/runner_cannot_connect.md)
+Your runner's id in that list means it connected to the controller. If it is
+missing, [`../troubleshooting/runner_cannot_connect.md`](../troubleshooting/runner_cannot_connect.md)
 names every reason with its fix.
 
-Nothing is running yet. A connected runner is capacity, and
-[`running_operatives.md`](running_operatives.md) is what puts work on it.
+Nothing runs on it yet. [`running_operatives.md`](running_operatives.md) starts
+the first operative.
 
 ## Without a controller
 

@@ -1,15 +1,15 @@
-# Echo: one message in, one message out
+# Echo: the Java hello world
 
 The Java hello world, as a standalone project. Nothing here depends on the
 Flezha source tree: the `pom.xml` names one released coordinate, the way your
 own project would. Open this folder in an IDE and it resolves.
 
-Three files, and every Flezha application has these same three parts:
+Three files, one for each part the guides describe:
 
 | File | Part | What it does |
 |---|---|---|
-| `EchoProcedure.java` | the procedure | your code: one message in, one message out |
-| `EchoOperative.java` | the operative | the wiring: `in` feeds the procedure, output lands on `out` |
+| `EchoOperative.java` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
+| `EchoProcedure.java` | the procedure | the processing stage: prefixes each message |
 | `Main.java` | the runner | this process: offers the operative and waits |
 
 ## Run it

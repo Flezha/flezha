@@ -70,10 +70,9 @@ That is also why the compose file sets `stdin_open: true`.
 
 | File | Part | What it does |
 |---|---|---|
-| `echo.py` → `echo` | the procedure | your code: one message in, one message out |
 | `echo.py` → `echo_operative` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
+| `echo.py` → `echo` | the procedure | the processing stage: prefixes each message |
 | `echo.py` → `main` | the runner | this process: offers the operative and waits |
 
-The procedure never says where its output goes and the operative holds no
-logic. That split is what lets the graph be rewired without touching the code
-that runs.
+The procedure never says where its output goes; the operative decides that.
+That split is what lets the graph be rewired without touching the procedure.

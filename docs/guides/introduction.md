@@ -1,9 +1,12 @@
 # Introduction
 
-Flezha runs stateful compute across a cluster and keeps it running. You write the
-code that handles one message, a **procedure**, and declare how data reaches it,
-an **operative**. Flezha decides where that runs, restarts it when it fails, moves
-it when a machine goes away, and remembers its state across all of it.
+Flezha runs stateful compute across a cluster and keeps it running. What you build
+is an **operative**: the graph that says where data comes in, what happens to it on
+the way, and where the results go. Simple steps such as `map` and `filter` are
+declared right in that graph. A **procedure** is a processing stage of your own,
+with per-key state, timers and recovery when you need them. Flezha decides where
+an operative runs, restarts it when it fails, moves it when a machine goes away,
+and keeps its state across all of it.
 
 Two kinds of process make that work:
 

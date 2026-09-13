@@ -13,8 +13,8 @@ If either is missing, start it again the way its guide showed.
 
 ## What an operative is
 
-What you wrote is a **declaration**: a procedure, and the graph that wires it to
-an input and an output. It runs nothing by itself. Your runner registers it
+What you wrote is a **declaration**: a graph from an input to an output, with the
+steps in between. It runs nothing by itself. Your runner registers it
 under a **factory id**, and an operative is one running instance created from
 that declaration when you ask the controller for one. If the analogy helps, the
 declaration is the definition and an operative is a thing made from it.
@@ -51,16 +51,25 @@ instance.
 flz operative start my_echo echo
 ```
 
-Two names, and they are not the same kind of thing:
+The command takes two ids, and they are not the same kind of thing.
 
-| | What it is |
-| --- | --- |
-| `my_echo` | the **operative id**: the instance, a name you invent right here |
-| `echo` | the **factory id**: the class, returned by `factoryId()` in your code |
+**`my_echo` is the operative id.** You choose it when you start the operative,
+and it identifies this one operative for as long as it exists. It is unique
+within its namespace, and every later command finds the operative by it:
+sending it a message, listening to it, stopping it, or attaching a plugin to it
+with `--operative_id`.
 
-The factory id is the blueprint and the operative id is the thing made from it,
-so you can start three instances of one class under three different ids.
-Everything after this addresses the instance.
+**`echo` is the factory id.** Every operative class declares exactly one, and
+`factoryId()` returns it in your code. A runner offers its classes to the
+controller by their factory ids, and `flz operative start` uses the one you give
+it to find a runner that can run the class. It is recorded in the controller's
+registry and in durable state, so changing it later declares a new class rather
+than renaming the old one.
+
+One factory id can back many operatives: `flz operative start eu_echo echo` and
+`flz operative start us_echo echo` would be two independent operatives of the
+same class, each with its own state. Everything after this uses the operative
+id.
 
 ## Confirm it is bound
 
@@ -116,23 +125,31 @@ description of both.
 flz operative listen my_echo
 ```
 
-It prints one line per frame for 30 seconds, which `--duration-ms` changes, and
-stops early on Ctrl-C. Send from a second terminal and the lines appear as they
-arrive.
+It shows every message the operative sends out, one per line, for 30 seconds.
+`--duration-ms` sets a different time, and Ctrl-C stops it sooner. Send from a
+second terminal and the lines appear as they arrive:
 
-Each line is the channel, a tab, and the payload. A frame with no channel
-prints `-` in its place, and a frame from a `keyed()` sink adds a third field
-carrying the identity stamps, `entity=... seq=... key=...`.
+```
+out	echo: hello world
+```
 
-Two options are worth knowing before you need them. `--input` listens to what
-the operative ingests rather than what it emits, which is how you tell "my
-message never arrived" apart from "it arrived and produced nothing". `--json`
-prints one object per line with the channel, the payload and the frame's whole
-metadata map, for when you want to pipe it somewhere instead of read it.
+Each line is the channel the message left on, a tab, and the message itself. A
+message from a keyed channel, one declared with `keyed()`, gets a third column
+saying which key it came from and its number in that key's sequence:
+`entity=... seq=... key=...`.
 
-The listener is a subscription the controller holds for you. It is dropped when
-the window closes, on Ctrl-C, and if your terminal goes away, so there is
-nothing left attached and nothing to clean up.
+Two options help when something looks wrong:
+
+- **`--input`** shows what goes into the operative instead of what comes out. If
+  your message appears there but nothing comes out, it arrived and the operative
+  produced nothing for it. If it does not appear, it never arrived. A message
+  sent without `--channel` shows `-` where the channel would be.
+- **`--json`** prints each message as one line of JSON, with the channel, the
+  message and everything else attached to it. Use it when a script reads the
+  output instead of you.
+
+Listening leaves nothing behind. It stops by itself when the time is up, when
+you press Ctrl-C, or when your terminal closes.
 
 ## Stopping it, later
 

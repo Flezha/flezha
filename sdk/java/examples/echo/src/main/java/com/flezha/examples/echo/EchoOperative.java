@@ -5,12 +5,12 @@ import com.flezha.sdk.operative.StreamOperative;
 import javax.annotation.Nonnull;
 
 /**
- * The deployable unit. An operative declares a graph and holds no logic of its own.
+ * The deployable unit. An operative declares the graph a message travels: the entry channel it
+ * arrives on, the steps it passes through, and the channel its result leaves on.
  *
- * <p>A procedure cannot be deployed alone, because nothing in the system knows where its messages
- * originate or where its output belongs. The operative supplies that binding, which makes it the
- * unit the controller schedules onto a host, restarts after a failure, relocates when a host is
- * withdrawn, and scales across several hosts.
+ * <p>The operative is what the controller schedules onto a host, restarts after a failure,
+ * relocates when a host is withdrawn, and scales across several hosts. A procedure is one stage
+ * inside that graph.
  */
 public final class EchoOperative implements StreamOperative {
 
