@@ -30,6 +30,9 @@ maintainer's.>
 commands this campaign holds to that bar and how each is checked, so the
 requirement is a gate rather than an intention.
 
+Per item: only the tests the change affects. The full suite: once every <5 to
+10> closed items, and at exit.
+
 ## Definition of done, campaign additions
 
 <Anything beyond the seven steps in INVARIANTS.md. Extra gates, extra proof.>
@@ -49,9 +52,13 @@ requirement is a gate rather than an intention.
 - Reproduction runs one row ahead of the coder, read only, its test a draft
   under `wip/repro/<row-id>/` (`wip/briefs/reproduce.md`), except while the row
   in flight measures performance.
-- Critic: a fresh agent per review round, never a fork. The cheaper model for a
-  diff that is documentation, tests or wording; the default model where
-  correctness turns on concurrency, authorization, durability or a hot path.
+- Every item ends with `/cx-refine` over its diff, run by the coder before it
+  reports.
+- Critic: only for a bigger change (more than a few dozen production lines, a new
+  module or public surface, or concurrency, authorization or durability logic
+  beyond a few lines). A fresh agent, never a fork, diff only, a word limit. The
+  cheaper model unless correctness turns on concurrency, authorization,
+  durability or a hot path.
 - Fix rounds go back to the same coder, which keeps its context.
 - Fan out to at most 5 for read only work: surveys, sweeps, reproductions.
 - Parallel writers only in separate git worktrees, one item each, never in the
@@ -60,6 +67,7 @@ requirement is a gate rather than an intention.
 ## Timeboxes
 
 - Reproduction attempt: <30 minutes>, then the row closes as not reproducible.
+- Fixable or a decision: settled within <10 minutes> of a worker starting.
 - One item: <4 hours> of worker time, then it goes to DECISIONS.md.
 - Critic rounds: one; a second only when the fixes changed production code the
   first critic did not see, or a fix-now finding was a correctness defect.

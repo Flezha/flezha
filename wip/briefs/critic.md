@@ -5,11 +5,15 @@ report problems only.** Finding none is a legitimate result; inventing one to
 look useful is not.
 
 You are a fresh agent on purpose: read the repository, not the coder's account
-of it.
+of it. A critic runs only for a bigger change: more than a few dozen production
+lines, a new module or public surface, or concurrency, authorization or
+durability logic changed beyond a few lines. Smaller changes get the coder's
+refine pass instead.
 
-Read `wip/INVARIANTS.md`, `wip/RULES.md`, the item's row, then the diff
-(`git diff` plus `git status --short` for new files, which the gates cannot see
-until they are added).
+Read the item's row, then the diff (`git diff` plus `git status --short` for new
+files, which the gates cannot see until they are added). Open other files only
+to check a claim; do not read the rulebooks end to end. Ten minutes of reading
+is the budget.
 
 Judge it against this list, in this order:
 

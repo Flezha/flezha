@@ -3,8 +3,8 @@
 You are reproducing one row before anyone writes code for it. **You change no
 code.** Read only, plus whatever you must run to see the defect.
 
-Read `wip/INVARIANTS.md`, `wip/RULES.md`, `CLAUDE.md`, and the row itself
-(`wip/WORK.md`, and its entry in `docs/known-bugs.md` if it has one).
+Read the row itself (`wip/WORK.md`, and its entry in `docs/known-bugs.md` if it
+has one) and the code it names. Do not read the rulebooks end to end.
 
 The row was written against an older tree. Rows go stale: on 2026-09-06, seven
 of twelve candidates had already been fixed by later work. So the first question
@@ -18,6 +18,9 @@ Do this:
    the row already carries a command, run that one first.
 3. Time box: <30 minutes>. If it will not reproduce in that time, that is a
    result, not a failure.
+4. Say whether the fix is local or needs a decision: a behaviour or public
+   surface change, a record that is wrong in some window, a rule every SDK must
+   share. A decision is found in the first ten minutes, not after the code.
 
 Report, in this shape and nothing longer:
 
@@ -25,6 +28,7 @@ Report, in this shape and nothing longer:
 - **Evidence**: the exact commands and the output they really gave.
 - **Mechanism**: the function and the line where the defect actually lives, if
   it reproduces. Not a fix, not a plan.
+- **Local or decision**: which, and why, in one line.
 - **Blast radius**: every other site with the same shape, found by grep, so the
   sweep is known before the fix starts.
 - **What a regression test would have to do** to be red today. One or two lines.

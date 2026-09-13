@@ -2,7 +2,7 @@
 
 **Campaign**: `<id>` · **Updated**: `<YYYY-MM-DD HH:MM>`
 
-> Rewritten, never appended. Keep it under 150 lines. History goes to `LOG.md`.
+> Rewritten when the phase changes, never appended. Keep it under 150 lines. History goes to `LOG.md`.
 
 ## Now
 
@@ -22,6 +22,8 @@
 Open a campaign: fill `RULES.md`, put rows in `WORK.md`, then `/cx-wip`.
 
 ## Worker heartbeat
+
+A line only when a heartbeat finds a stall.
 
 | Seen | Agent | Elapsed | Tokens | Files touched | Verdict |
 |---|---|---|---|---|---|

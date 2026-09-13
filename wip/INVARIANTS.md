@@ -88,15 +88,47 @@ The ceilings a change is held to (no file over 800 lines, no function over 50,
 no new dependency cycle) are in `docs/code_standards.md`, along with the rules
 for writing a check that enforces one.
 
+## What one item costs
+
+A row used to take an hour and a half, and most of that was not fixing anything:
+fresh agents reading the rulebooks end to end, a review round on a ten-line
+change, whole suites after small edits, and evidence pasted into boards nobody
+read again. These defaults hold for every campaign.
+
+- **A fresh worker per item, with a self-contained brief.** The brief carries the
+  row, the recorded reproduction, the files it names, any ruling already given
+  and the rules that bind the worker. The worker reads the code the item
+  touches, not the rulebooks.
+- **Fixable or a decision, settled in the first ten minutes.** An item whose fix
+  needs a design decision (a behaviour or public surface change, a record that
+  is wrong in some window, a rule every SDK must share) goes to `DECISIONS.md` at
+  once, and the next item starts.
+- **Every item ends with `/cx-refine`** over its own diff, run by the worker
+  before it reports.
+- **A critic only for a bigger change**: more than a few dozen production lines,
+  a new module or public surface, or concurrency, authorization or durability
+  logic changed beyond a few lines. A small or low-risk change gets the refine
+  pass and the supervisor's reading, nothing more.
+- **Only the tests the change affects.** A test is repeated under load only when
+  it depends on timing. The full suite runs once every five to ten items, and a
+  red there is diagnosed before the next item starts.
+- **Paperwork is what someone reads**: the commit, one `DONE.md` line carrying the
+  reproduction command and its key output, and the bug-list row moved. A dev
+  note only for a trap the next session would fall into. No evidence pasted into
+  `WORK.md`, no `LOG.md` entry per item, and `STATE.md` rewritten when the phase
+  changes, not at every event.
+
 ## Definition of done, for every item
 
-1. Reproduced, with the output recorded.
+1. Reproduced, with the command and its key output recorded in the item's
+   `DONE.md` line.
 2. Fixed at the mechanism, then swept: every other site with the same shape is
    fixed or named.
 3. A test that was red before the fix and is green after.
 4. Documentation and specs updated **in the same commit**. Never a follow up.
 5. Gates green: `openspec validate --strict`, the citation gate, the naming and
-   boundary gates, the suite that covers the change.
+   boundary gates, the tests the change affects. The full suite runs once every
+   five to ten items, not per item.
 6. One item, one commit. No AI attribution trailer, ever.
 7. The row moves to `DONE.md` with its commit, its net lines and its cost.
 
@@ -115,7 +147,9 @@ for writing a check that enforces one.
   `reset --hard`, no `checkout --`, no `clean -fd` on this tree. Stop containers
   by name, never with `docker compose down`: another project on the same machine
   may share the compose project name.
-- **Verification is never delegated.** The supervisor reads the repo itself.
+- **Verification is never delegated, and never duplicated.** The supervisor reads
+  the diff and runs the item's own tests and gates once; it does not re-run
+  everything the worker ran.
 - **A session never ends with a subagent alive**, and the check is `ListAgents`
   showing no subagent section, not memory.
 - **A ruling the maintainer has given is work, never a question.** It lives

@@ -36,8 +36,8 @@ file stays out of git unless someone decides otherwise.
 
 ## The cycle
 
-**reproduce → code → critic → verify → commit → report → next**, one item at a
-time.
+**reproduce → code → refine → verify → commit → report → next**, one item at a
+time, with a critic before verify only for a bigger change.
 
 **Reproduce first.** Nothing is coded until the defect has been seen, with a
 command and the output it really gave. Rows go stale: a list written three days
@@ -52,26 +52,34 @@ already being read and reproduced, without touching the tree. Its regression
 test waits as a draft until its row is current. Most of reproducing is reading,
 and reading does not have to wait its turn.
 
-**Code, then criticise.** One agent implements, and before it reports it closes
-a checklist of the findings reviews kept raising: stale documentation, a
-documented command nobody ran, an absence nothing tests, a test that could pass
-without testing anything, uncaptured log noise, a changed shared function, a hot
-path without numbers. A different agent then reviews, a fresh reader rather than
-a copy of the implementer, because a reader who already believes the change is
-correct finds nothing. The critic reports problems and never fixes them:
-correctness with a concrete failing scenario, hidden behaviour change, whether
-the test could ever have been red, reuse versus a new parallel layer, complexity
-and net lines, documentation and spec drift, performance, new dependencies, and
-whether the change quietly shapes the system to one deployment. Every finding is
-then ruled on: fix now, write it down, or dismiss with a reason. There is one
-review round unless its fixes changed production code the reviewer never saw.
+**Code, then refine.** One fresh agent implements, from a brief that carries
+everything the item needs, so it reads code rather than rulebooks. Within ten
+minutes it says whether the fix is local or needs a decision; a decision goes to
+the maintainer and the next item starts. Before it reports it closes a checklist
+of the findings reviews kept raising (stale documentation, a documented command
+nobody ran, an absence nothing tests, a test that could pass without testing
+anything, uncaptured log noise, a changed shared function, a hot path without
+numbers), and runs a refine pass over its own diff: reuse instead of a new
+layer, shared cores, less code, no behaviour change.
+
+**A critic only for a bigger change.** When a change is more than a few dozen
+production lines, adds a module or public surface, or changes concurrency,
+authorization or durability logic beyond a few lines, a different agent reviews
+the diff: a fresh reader rather than a copy of the implementer. It reports
+problems with a concrete failing scenario and never fixes them, and every
+finding is ruled on: fix now, write it down, or dismiss with a reason. One
+round. A small or low-risk change gets no critic: on a ten-line change the
+review cost more than anything it found.
 
 **Verify by reading the repository**, never by re-reading the report. A claim is
 a hypothesis until the command has been run and the code has been read.
 
 **One item, one commit**, with the documentation and the spec changes inside it.
 A documentation update deferred to "later" is how a repository ends up
-describing behaviour it does not have.
+describing behaviour it does not have. Only the tests the change affects run per
+item; the full suite runs every five to ten items. The record of an item is its
+commit and one line in `DONE.md`; a dev note only for a trap the next session
+would fall into.
 
 ## Running a campaign
 
