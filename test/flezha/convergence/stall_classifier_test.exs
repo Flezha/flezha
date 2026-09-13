@@ -220,24 +220,17 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "runner_pool_wedged: fed and heartbeating but dispatch counter frozen" do
-    # The production freeze signature: controller sends ~100 frames/s, the
-    # runner's heartbeat thread stays alive, but its dispatch pool is
-    # deadlocked so the self-reported counter never moves.
-    prev =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 100),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
-        ]
-      )
-
-    curr =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 200),
-          channel(name: :scs, hb_count: 6, hb_dispatches: 9_000)
-        ]
+  # The production freeze signature: the controller keeps sending, the runner's
+  # heartbeat thread stays alive, and its dispatch pool is deadlocked. The
+  # latest send is always newer than the latest heartbeat, so the frame that
+  # proves it is the previous sample's: sent after that sample's heartbeat, and
+  # answered by one since.
+  test "runner_pool_wedged: fed without pause and heartbeating, dispatch counter frozen" do
+    {prev, curr} =
+      fed_runner(
+        [hb_dispatches: 9_000, last_send_ms: @now - 4_000],
+        hb_dispatches: 9_000,
+        last_send_ms: @now - 100
       )
 
     assert {:runner_pool_wedged, ctx} = StallClassifier.classify(curr, prev)
@@ -245,105 +238,66 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert ctx.dispatches == 9_000
   end
 
+  test "runner_pool_wedged: a frame sent before the window's heartbeat, dispatch counter frozen" do
+    {prev, curr} = fed_runner([hb_dispatches: 9_000], hb_dispatches: 9_000)
+
+    assert {:runner_pool_wedged, _ctx} = StallClassifier.classify(curr, prev)
+  end
+
+  # A heartbeat reports the count as it stood when the runner sent it, so no
+  # heartbeat has counted a frame sent after the latest one.
+  test "runner_pool_wedged does NOT fire on a send newer than the latest heartbeat" do
+    {prev, curr} =
+      fed_runner([hb_dispatches: 9_000], hb_dispatches: 9_000, last_send_ms: @now - 500)
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
   test "runner_pool_wedged does NOT fire while the block counter climbs (backpressure)" do
     # A producer held on a full entity mailbox freezes `dispatches` exactly as
     # a wedge does — this was byte-for-byte the same picture. The block counter
     # advancing per wait iteration is what separates them: the system is
     # working, the consumer is behind, and a rebind would only move the jam.
-    prev =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 100),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_blocked_parks: 40)
-        ]
-      )
-
-    curr =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 200),
-          channel(name: :scs, hb_count: 6, hb_dispatches: 9_000, hb_blocked_parks: 91)
-        ]
+    {prev, curr} =
+      fed_runner(
+        [hb_dispatches: 9_000, hb_blocked_parks: 40],
+        hb_dispatches: 9_000,
+        hb_blocked_parks: 91
       )
 
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
   test "runner_pool_wedged DOES fire when dispatches and blocks are both frozen" do
-    prev =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 100),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_blocked_parks: 40)
-        ]
-      )
-
-    curr =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 200),
-          channel(name: :scs, hb_count: 6, hb_dispatches: 9_000, hb_blocked_parks: 40)
-        ]
+    {prev, curr} =
+      fed_runner(
+        [hb_dispatches: 9_000, hb_blocked_parks: 40],
+        hb_dispatches: 9_000,
+        hb_blocked_parks: 40
       )
 
     assert {:runner_pool_wedged, _ctx} = StallClassifier.classify(curr, prev)
   end
 
   test "runner_pool_wedged does NOT fire while dispatches advance" do
-    prev =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 100),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
-        ]
-      )
-
-    curr =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 200),
-          channel(name: :scs, hb_count: 6, hb_dispatches: 9_500)
-        ]
-      )
+    {prev, curr} = fed_runner([hb_dispatches: 9_000], hb_dispatches: 9_500)
 
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
   test "runner_pool_wedged does NOT fire for runners that don't self-report (old SDK)" do
-    prev =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 100),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 0)
-        ]
-      )
-
-    curr =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 200),
-          channel(name: :scs, hb_count: 6, hb_dispatches: 0)
-        ]
-      )
+    {prev, curr} = fed_runner([hb_dispatches: 0], hb_dispatches: 0)
 
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
   test "runner_pool_wedged does NOT fire when heartbeats stopped (channel-level stall instead)" do
-    prev =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 100),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
-        ]
-      )
-
-    curr =
-      snapshot(
-        channels: [
-          channel(name: :scp, send_frame_calls: 200),
-          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
-        ]
+    {prev, curr} =
+      fed_runner(
+        [hb_dispatches: 9_000],
+        hb_dispatches: 9_000,
+        hb_count: 5,
+        last_heartbeat_ms: @now - 8_000
       )
 
     assert StallClassifier.classify(curr, prev) == :ok
@@ -502,26 +456,12 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
     # A wedged runner explains a wedged Entity, not the other way round.
     test "a wedged runner outranks a stalled entity" do
-      prev =
-        snapshot(
-          channels: [
-            channel(name: :scp, send_frame_calls: 100),
-            channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_inflight: 1)
-          ]
-        )
-
-      curr =
-        snapshot(
-          channels: [
-            channel(name: :scp, send_frame_calls: 200),
-            channel(
-              name: :scs,
-              hb_count: 6,
-              hb_dispatches: 9_000,
-              hb_inflight: 1,
-              hb_inflight_oldest_ms: 600_000
-            )
-          ]
+      {prev, curr} =
+        fed_runner(
+          [hb_dispatches: 9_000, hb_inflight: 1],
+          hb_dispatches: 9_000,
+          hb_inflight: 1,
+          hb_inflight_oldest_ms: 600_000
         )
 
       assert {:runner_pool_wedged, _} = StallClassifier.classify(curr, prev, @stall_opts)
@@ -597,6 +537,30 @@ defmodule Flezha.Convergence.StallClassifierTest do
       runner_id: Keyword.get(opts, :runner_id, "exec-1"),
       name: Keyword.get(opts, :name, :chan_1)
     })
+  end
+
+  # One runner fed across its heartbeats, as two samples: a frame sent, then a
+  # heartbeat, in each. `prev` and `curr` override any slot, and win over the
+  # defaults. The sending channel takes `send_frame_calls` and `last_send_ms`;
+  # the heartbeat channel takes everything else.
+  defp fed_runner(prev, curr) do
+    {runner_sample(prev,
+       send_frame_calls: 100,
+       last_send_ms: @now - 9_000,
+       hb_count: 5,
+       last_heartbeat_ms: @now - 8_000
+     ),
+     runner_sample(curr,
+       send_frame_calls: 200,
+       last_send_ms: @now - 2_000,
+       hb_count: 6,
+       last_heartbeat_ms: @now - 1_000
+     )}
+  end
+
+  defp runner_sample(opts, defaults) do
+    {sent, beat} = Keyword.split(opts ++ defaults, [:send_frame_calls, :last_send_ms])
+    snapshot(channels: [channel([name: :scp] ++ sent), channel([name: :scs] ++ beat)])
   end
 
   defp operative(opts) do

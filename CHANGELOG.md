@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: a healthy runner sent input just after its heartbeat is no longer restarted
+
+The controller judged a runner's work pool wedged when frames had been sent to it
+and the dispatch count in its heartbeats had not moved. A heartbeat can only count
+work that reached the runner before it, so a quiet runner handed input just after a
+heartbeat looked frozen, and one such verdict ended the runner with a terminal
+restart. The controller now notes when each heartbeat lands and judges a frozen
+count only across a heartbeat that landed after a send. A runner that really stops
+dispatching while it is being fed is still found and restarted.
+
 ### Added: a file as an operative's input and output
 
 Two first-party plugins read and write local files. `operative_file_source` reads

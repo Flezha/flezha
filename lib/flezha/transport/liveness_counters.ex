@@ -112,6 +112,15 @@ defmodule Flezha.Transport.LivenessCounters do
         surface: [{:verdict, :session}]
       ],
       [
+        name: :last_heartbeat_ms,
+        kind: :instant,
+        # When the latest data heartbeat landed, which the stall classifier
+        # orders against `last_send_ms`. Declared before the slots a heartbeat
+        # mirrors and written after them: a snapshot reads slots in layout
+        # order, so a sample holding a new stamp holds that heartbeat's report.
+        surface: [{:verdict, :runner_pool_wedged}]
+      ],
+      [
         name: :hb_count,
         kind: :count,
         surface: [{:verdict, :session}, {:metric, :heartbeat_frames}]

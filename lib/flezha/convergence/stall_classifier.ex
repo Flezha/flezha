@@ -39,7 +39,9 @@ defmodule Flezha.Convergence.StallClassifier do
       self-reported dispatch counter is frozen AND its block counter is flat —
       the SDK pool stopped processing. A frozen dispatch count with the block
       counter climbing is healthy backpressure, not a wedge: producers are held
-      on full mailboxes and a rebind would only move the congestion
+      on full mailboxes and a rebind would only move the congestion. Judged
+      only across a heartbeat that landed after a frame was sent, because a
+      heartbeat counts only what reached the runner before it
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
     * `:entity_dispatch_stalled` — the runner is completing work, but one
@@ -289,12 +291,26 @@ defmodule Flezha.Convergence.StallClassifier do
   # behind, backpressure is propagating, and the remedy for a wedge (a rebind)
   # would only move the congestion. The runner counts a block per wait
   # iteration precisely so this reads as motion.
+  #
+  # And only across a heartbeat that landed after a send. A heartbeat reports
+  # the count as it stood when the runner sent it, so no heartbeat has counted
+  # a frame sent after the latest one, and a flat count says nothing about it.
   defp runner_pool_wedged(current, previous) do
     find_runner(current, previous, fn runner_id, cur, prev ->
       if cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches and
-           cur.hb_blocked_parks == prev.hb_blocked_parks do
+           cur.hb_blocked_parks == prev.hb_blocked_parks and answered_send?(cur, prev) do
         {:runner_pool_wedged, %{runner_id: runner_id, dispatches: cur.hb_dispatches}}
       end
+    end)
+  end
+
+  # A send the baseline heartbeat had not seen and a later one has: either
+  # sample's latest send falls between the two samples' latest heartbeats. Only
+  # the latest send is stamped, so a burst that straddles a heartbeat waits for
+  # one that lands after its last frame.
+  defp answered_send?(cur, prev) do
+    Enum.any?([prev.last_send_ms, cur.last_send_ms], fn sent ->
+      sent > prev.last_heartbeat_ms and sent < cur.last_heartbeat_ms
     end)
   end
 
@@ -494,10 +510,10 @@ defmodule Flezha.Convergence.StallClassifier do
 
   # Pair each runner's collapsed row with its previous one and judge only a
   # runner that is demonstrably still being fed AND still answering — the
-  # "is it actually being fed?" precondition in its runner-scoped form, so the
-  # self-report checks differ in nothing but the counter they read. A mirrored
-  # slot an SDK never sends reads 0 there — nothing outstanding, nothing
-  # blocked, a dispatch count the wedge check does not judge — so it never stalls.
+  # "is it actually being fed?" precondition in its runner-scoped form, shared
+  # by every self-report check. A mirrored slot an SDK never sends reads 0
+  # there — nothing outstanding, nothing blocked, a dispatch count the wedge
+  # check does not judge — so it never stalls.
   defp find_runner(current, previous, fun) do
     prev_index = LivenessCounters.by_runner(previous.channels)
 

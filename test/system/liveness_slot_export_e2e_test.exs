@@ -47,6 +47,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     send_frame_calls: :here,
     flz_data_received: :here,
     last_send_ms: :here,
+    last_heartbeat_ms: :here,
     hb_count: :here,
     hb_dispatches: :here,
     hb_inflight: :here,

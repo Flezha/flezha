@@ -341,11 +341,13 @@ defmodule Flezha.Runner.StreamChannel do
   # so an idle-but-healthy operative keeps the channel live without producing
   # output. Metadata carries the runner's dispatch-progress self-report; the
   # stall classifier compares it across ticks to catch an alive-but-wedged
-  # dispatch pool (a state every heartbeat-level signal is blind to).
+  # dispatch pool (a state every heartbeat-level signal is blind to). The
+  # landing stamp is written last, after the report it dates.
   def handle_info({:flz_data, _stream_id, "data_heartbeat", _message, metadata}, state) do
     ref = state[:liveness_ref]
     LivenessCounters.bump_channel(ref, :hb_count)
     for {key, slot} <- @heartbeat_slots, do: set_reported(ref, metadata, key, slot)
+    LivenessCounters.set_channel(ref, :last_heartbeat_ms, System.monotonic_time(:millisecond))
     {:noreply, mark_seen(state)}
   end
 

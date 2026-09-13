@@ -227,6 +227,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       assert row.hb_count == 2
       assert row.hb_dispatches == 57
+      assert row.last_heartbeat_ms != 0, "no heartbeat stamped when it landed"
     end
 
     test "heartbeat metadata records the runner's handout self-report", %{pid: pid, name: name} do
