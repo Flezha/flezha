@@ -86,6 +86,7 @@ defmodule Flezha.Config.Backoff do
     {:otlp_post, rungs: [250, 500, 1_000, 2_000, 4_000], reset: :per_call, give_up: 5},
     {:durability_ship, base: 500, cap: 30_000, reset: :on_success},
     {:postgres_flush, base: 250, cap: 5_000, reset: :on_success},
+    {:file_flush, base: 250, cap: 5_000, reset: :on_success},
     {:kafka_produce, base: 100, cap: 5_000, jitter: true, reset: :per_call},
     {:kafka_force_replace, base: 2_000, cap: 2_000, reset: :per_call},
     {:forward_deliver, base: 250, cap: 5_000, reset: :on_success},

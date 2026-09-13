@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   """
 
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.Host
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Process.Timer
@@ -503,15 +504,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   # restart all resume with what the socket actually holds. Written after the
   # commit, so a crash between send and acknowledgement degrades to a re-send
   # rather than to a subscription nobody remembers.
-  def persist_applied(%{source_plugin_id: plugin_id, overwatcher_pid: host} = state)
-      when is_binary(plugin_id) and is_pid(host) do
-    GenServer.cast(
-      host,
-      {:plugin_opt_persist, plugin_id, :applied_subscriptions, Enum.sort(state.applied)}
+  def persist_applied(state) do
+    Host.persist_opt(
+      Map.get(state, :overwatcher_pid),
+      Map.get(state, :source_plugin_id),
+      :applied_subscriptions,
+      Enum.sort(state.applied)
     )
   end
-
-  def persist_applied(_state), do: :ok
 
   ## ---------- sending ----------
 

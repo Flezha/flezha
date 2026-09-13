@@ -189,18 +189,13 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   # again. `:absorbed` (duplicate) and `:suspended` (journaled for wake) both
   # mean the operative owns the payload.
   defp confirm(state, body) do
-    case Host.inject(
-           state.overwatcher_pid,
-           body,
-           %{"channel" => state.entry_channel},
-           :verdict,
-           state.timeout_ms
-         ) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  catch
-    :exit, reason -> {:error, {:unreachable, reason}}
+    Host.inject(
+      state.overwatcher_pid,
+      body,
+      %{"channel" => state.entry_channel},
+      :verdict,
+      state.timeout_ms
+    )
   end
 
   defp unchanged(state, latency_ms) do

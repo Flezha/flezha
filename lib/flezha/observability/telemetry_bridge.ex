@@ -93,6 +93,14 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :http_poll, :shipped] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
     [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
+    # The file source and sink. A delivered line and a synced batch are counts;
+    # a truncation, a failure and a record refused as a line are read one at a time.
+    [:flezha, :plugin, :file_source, :shipped] => {:flezha_file_source, :injected, :metric},
+    [:flezha, :plugin, :file_source, :truncated] => {:flezha_file_source, :truncated, :event},
+    [:flezha, :plugin, :file_source, :failed] => {:flezha_file_source, :failed, :event},
+    [:flezha, :plugin, :file_sink, :shipped] => {:flezha_file_sink, :flushed, :metric},
+    [:flezha, :plugin, :file_sink, :refused] => {:flezha_file_sink, :refused, :event},
+    [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
     # The kafka producer's family, under the same derived prefix as every other
     # provider. Counts are metrics; a failure, a topic creation and a worker
     # swap are events an operator reads one at a time.

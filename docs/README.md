@@ -76,6 +76,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`lifecycle.md`](plugins/lifecycle.md) | `init_provider/1` vs `activate/1`, host identity, teardown |
 | [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink: idempotence, batching, the in-flight window |
 | [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as an operative input |
+| [`file.md`](plugins/file.md) | A local file as an operative input, and as its output |
 | [`websocket_subscription.md`](plugins/websocket_subscription.md) | Changing a live socket's subscription set without reconnecting |
 | [`operative_forward.md`](plugins/operative_forward.md) | One operative's output into another's input |
 | [`init_state_providers.md`](plugins/init_state_providers.md) | Cold-start state from a provider chain |

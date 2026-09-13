@@ -387,13 +387,17 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   end
 
   describe "a provider declares whether it feeds the operative" do
-    test "the two providers whose worker injects declare it, and no other does" do
+    test "the providers whose worker injects declare it, and no other does" do
       feeding =
         for {id, module} <- Flezha.Plugin.Providers.all(),
             module.__provider__().feeds,
             do: id
 
-      assert Enum.sort(feeding) == ["operative_http_poll", "operative_websocket"]
+      assert Enum.sort(feeding) == [
+               "operative_file_source",
+               "operative_http_poll",
+               "operative_websocket"
+             ]
     end
 
     test "it cannot be inferred from the callback list" do

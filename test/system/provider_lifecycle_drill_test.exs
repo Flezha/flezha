@@ -32,7 +32,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [claim_tmp_dir: 1, wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
@@ -68,6 +68,8 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
          }},
       Provider.HttpPoll =>
         {:tcp_origin, %{url: ctx.origin_url, channel: "drill", interval_ms: 60_000}},
+      Provider.File.Source => {:file, %{path: "drill_source.ndjson", channel: "drill"}},
+      Provider.File.Sink => {:file, %{path: "drill_sink.ndjson"}},
       Provider.Websocket => {:websocket, %{uri: ctx.ws_uri, idle_timeout_ms: 0}},
       Provider.OperativeForward => {:second_operative, %{target_operative_id: ctx.target_id}},
       Provider.Kafka.Producer =>
@@ -106,6 +108,22 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     target_id = start_operative(namespace, "drill_target")
 
     on_exit(fn -> stop_namespace(namespace) end)
+
+    # The two file plugins resolve their paths inside one root folder, and the
+    # source reads a file that is already there.
+    file_root = claim_tmp_dir("provider_drill_files")
+    File.write!(Path.join(file_root, "drill_source.ndjson"), "")
+    previous_root = Application.fetch_env(:flezha, :file_plugin_root)
+    Application.put_env(:flezha, :file_plugin_root, file_root)
+
+    on_exit(fn ->
+      case previous_root do
+        {:ok, root} -> Application.put_env(:flezha, :file_plugin_root, root)
+        :error -> Application.delete_env(:flezha, :file_plugin_root)
+      end
+
+      File.rm_rf!(file_root)
+    end)
 
     %{
       namespace: namespace,

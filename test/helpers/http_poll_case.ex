@@ -27,6 +27,9 @@ defmodule FlezhaTest.HttpPollCase do
     quote do
       import FlezhaTest.HttpPollCase
 
+      import FlezhaTest.Helper.ProviderPrepare,
+        only: [take_ingest: 0, take_ingest: 1, take_ingest: 2, refute_ingest: 0]
+
       @channel FlezhaTest.HttpPollCase.channel()
     end
   end
@@ -100,20 +103,6 @@ defmodule FlezhaTest.HttpPollCase do
 
   @doc "Settle the poller's own exit when the test ends; it stops with its host."
   def stop_on_exit(poller), do: ProviderPrepare.await_stop_on_exit(poller)
-
-  # The test process IS the host, so it answers the confirming ingest call the
-  # way an Overwatch would — including the refusals.
-  def take_ingest(verdict \\ :ok, timeout \\ 2_000) do
-    receive do
-      {:"$gen_call", from, {:ingest, body, metadata}} ->
-        GenServer.reply(from, verdict)
-        {body, metadata}
-    after
-      timeout -> flunk("no ingest call within #{timeout}ms")
-    end
-  end
-
-  def refute_ingest(), do: refute_received({:"$gen_call", _from, {:ingest, _, _}})
 
   # ---------- fake HTTP origin ----------
 

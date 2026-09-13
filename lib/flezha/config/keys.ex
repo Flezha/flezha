@@ -439,6 +439,12 @@ defmodule Flezha.Config.Keys do
      key: {:plugin_installer, :max_source_files}, env: "FLEZHA_PLUGIN_MAX_SOURCE_FILES"},
     {:plugin_installer_data_dir, :path, nil, key: true},
 
+    # ---- file plugins ---------------------------------------------------------
+    # The one folder a file plugin may read from or write to. No default: a
+    # folder no operator chose would be a folder nobody decided a plugin may
+    # reach, so while it is unset every file plugin enable is refused.
+    {:file_plugin_root, :path, nil, key: true, env: "FLEZHA_FILE_PLUGIN_ROOT"},
+
     # ---- boot and recovery --------------------------------------------------
     # Tests bring up their own runners and operatives, so at-boot replay is off
     # under `:test`; the persistent registry still records mutations.

@@ -23,6 +23,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
+  import FlezhaTest.Helper.HubRegistryTestHelper, only: [started_plugins: 2, await_bound_node: 3]
+
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
   alias Flezha.Operative.Builder
@@ -53,20 +55,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   @seeded_runner "seeded_live_runner"
 
   setup %{tmp: tmp_dir} do
-    fleet_state = :sys.get_state(FleetManager)
-    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> fleet_state end) end)
-
-    Application.put_env(:flezha, :auto_restore_enabled, true)
-    Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
-    # A hub with no peers opens its first round at the settle window or the
-    # grace, whichever comes first, so a 50 ms grace keeps every boot in this
-    # file off the 2 s settle window.
-    Application.put_env(:flezha, :process_hub_reconcile_grace_ms, @reconcile_grace_ms)
-    Application.put_env(:flezha, :process_hub_reconcile_interval_ms, 1_000)
-
-    on_exit(fn -> HubManager.stop_hub(@namespace) end)
-
-    :ok
+    HubRegistryTestHelper.recovering_hub(@namespace, tmp_dir, @reconcile_grace_ms)
   end
 
   # fails when: recovery needs operator action again. Under the marker
@@ -688,25 +677,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     arg
   end
 
-  # What a restored Overwatch would subscribe: `Lifecycle.complete_init/4` hands
-  # `operative.opts[:plugins]` from its own start argument to `Plugins.prepare/2`,
-  # and that list IS the extension table it builds. `StubChild` stands in for the
-  # Overwatch, so it is asked what it was handed rather than what it did with it.
-  defp started_plugins(hub_id, operative_id) do
-    operative =
-      ProcessRegistry.dump(hub_id)
-      |> Map.fetch!(operative_id)
-      |> elem(1)
-      |> HubManager.live_pid()
-      |> HubRegistryTestHelper.StubChild.started_with()
-      |> then(fn
-        {_ns, operative} -> operative
-        {_ns, _runner, operative} -> operative
-      end)
-
-    Keyword.get(operative.opts, :plugins, [])
-  end
-
   # The owning runner recorded on a registry row (`metadata.tag`).
   defp registry_tag(dump, operative_id) do
     {_cspec, _node_pids, metadata} = Map.fetch!(dump, operative_id)
@@ -736,18 +706,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   defmodule NoopProvider do
     @moduledoc false
-  end
-
-  defp await_bound_node(hub_id, operative_id, timeout_ms) do
-    NodeTestHelper.wait_until(
-      fn ->
-        case Map.get(ProcessRegistry.dump(hub_id), operative_id) do
-          {_cspec, node_pids, _meta} -> HubManager.live_node(node_pids)
-          _ -> nil
-        end
-      end,
-      timeout_ms
-    )
   end
 
   test "await_recovery_complete/2 times out when a hub is stuck in :recovering" do

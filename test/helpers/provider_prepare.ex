@@ -9,7 +9,7 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   system never produces, so both live here rather than in each test file.
   """
 
-  import ExUnit.Assertions, only: [assert_receive: 2]
+  import ExUnit.Assertions, only: [assert_receive: 2, flunk: 1, refute_received: 1]
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   alias Flezha.Plugin.Extension.Table.Entry
@@ -69,6 +69,25 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
          {:ok, pid} <- activate(provider, prepared),
          do: {:ok, prepared, pid}
   end
+
+  @doc """
+  Answer the next confirming ingest a source's worker made of the calling test,
+  which stands in for the host operative, with `verdict`: anything a real
+  Overwatch could answer, the refusals included. Answers what was injected.
+  """
+  @spec take_ingest(term(), timeout()) :: {binary(), map()}
+  def take_ingest(verdict \\ :ok, timeout \\ 2_000) do
+    receive do
+      {:"$gen_call", from, {:ingest, body, metadata}} ->
+        GenServer.reply(from, verdict)
+        {body, metadata}
+    after
+      timeout -> flunk("no ingest call within #{timeout}ms")
+    end
+  end
+
+  @doc "No confirming ingest is waiting in the calling test's mailbox."
+  def refute_ingest(), do: refute_received({:"$gen_call", _from, {:ingest, _, _}})
 
   @doc """
   Stand in for `provider`'s worker under `plugin_id`, registered where the real

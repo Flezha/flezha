@@ -255,6 +255,7 @@ the value and the type.
 | `FLEZHA_PLUGIN_TRUSTED_KEYS` | `""` | `:plugin_installer[:trusted_keys]`, comma-separated PEM file paths read at boot |
 | `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | `:plugin_installer[:max_package_bytes]` |
 | `FLEZHA_PLUGIN_MAX_SOURCE_FILES` | `200` | `:plugin_installer[:max_source_files]` |
+| `FLEZHA_FILE_PLUGIN_ROOT` | unset | `:file_plugin_root`, the one folder every file plugin path must resolve inside, symbolic links followed. While it is unset every file plugin enable is refused naming it |
 
 Each `FLEZHA_PLUGIN_*` name is a row of the table like every other knob, so an
 unset one leaves the row's own default standing rather than the family being
@@ -681,6 +682,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:plugin_installer[:trusted_keys]` / `[:require_signature]` / `[:allow_unsigned]` | `[]` / `false` / `true` | `lib/flezha/plugin/installer.ex`, `lib/flezha/plugin/installer/loader.ex` |
 | `:plugin_installer[:max_package_bytes]` / `[:max_source_files]` | `50_000_000` / `200` | `lib/flezha/plugin/installer.ex` |
 | `:plugin_installer_data_dir` | unset | `lib/flezha/plugin/installer/store.ex` — overrides `plugin_root` when set |
+| `:file_plugin_root` | unset | `lib/flezha/plugin/provider/file.ex`, which resolves every file plugin path inside it and refuses an enable while it is unset |
 | `:dlq[:dir]` | `"app_data/dlq"` | `lib/flezha/dlq/store.ex` |
 | `:dlq[:retention_seconds]` / `[:max_total_bytes]` / `[:retention_check_interval_ms]` | `30 * 86_400` / `4_294_967_296` / `3_600_000` | `lib/flezha/dlq/store.ex` |
 | `:dlq[:replay_grace_ms]` | `5_000` | `lib/flezha/cli/cli_manager.ex` — how long `flz dlq replay` waits for a re-park |
@@ -775,6 +777,7 @@ there is no second list to keep in step, and this page does not carry one.
 | `operative_kafka_producer` | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
 | `operative_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
 | `operative_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |
+| `operative_file_source`, `operative_file_sink` | [`plugins/file.md`](plugins/file.md) |
 | `operative_websocket` | [`plugins/websocket_subscription.md`](plugins/websocket_subscription.md) |
 | `operative_forward` | [`plugins/operative_forward.md`](plugins/operative_forward.md) |
 | `operative_stdout`, `operative_io_filter`, `operative_beam_msg`, `monitored_io_forward`, `operative_message_forward` | [`plugins/lifecycle.md`](plugins/lifecycle.md), which lists every provider and what it declares |

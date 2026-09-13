@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added: a file as an operative's input and output
+
+Two first-party plugins read and write local files. `operative_file_source` reads
+a file onto an entry channel, one line per frame, follows it as it grows, and
+resumes after the last committed line on a plugin restart, a move to another
+controller and a controller restart. Delivery is at-least-once.
+`operative_file_sink` appends one line per record and syncs each batch before it
+confirms a delivery-guaranteed record; a batch synced just before a crash can be
+appended a second time.
+
+Both refuse to enable until `FLEZHA_FILE_PLUGIN_ROOT` names the one folder a file
+plugin may touch, and every path must resolve inside it with symbolic links
+followed. A file the sink creates is private (`0600`). See `docs/plugins/file.md`.
+
+```
+flz plugin enable reader operative_file_source --operative_id=op1 \
+  --Xpath=events.ndjson --Xchannel_in=events
+flz plugin enable writer operative_file_sink --operative_id=op1 \
+  --extension=on_output --Xpath=out/alerts.ndjson --Xchannel_out=alerts
+```
+
 ### Changed: `flz operative listen` replaces `io_listen`, and it ends
 
 `flz operative io_listen input|output <operative_id>` is now

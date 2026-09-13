@@ -25,6 +25,8 @@ defmodule Flezha.Plugin.Providers do
     "operative_postgres" => Provider.Postgres,
     "operative_websocket" => Provider.Websocket,
     "operative_http_poll" => Provider.HttpPoll,
+    "operative_file_source" => Provider.File.Source,
+    "operative_file_sink" => Provider.File.Sink,
     "operative_beam_msg" => Provider.BeamMsgForward,
     "operative_stdout" => Provider.StdOut,
     "operative_io_filter" => Provider.Filter,

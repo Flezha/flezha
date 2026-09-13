@@ -24,12 +24,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
-  # The derived idle window, in polling intervals. Three, because a poll that
-  # outlives its own interval stretches the cadence rather than stacking, so a
-  # single slow cycle plus the poll after it must both land inside the window,
-  # otherwise a merely slow endpoint would read as a dead one.
-  @idle_intervals 3
-
   @max_body_ceiling_bytes 64 * 1_048_576
 
   use ProviderBehaviour,
@@ -94,7 +88,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   """
   @impl true
   def init_provider(opts) do
-    with :ok <- require_entry_channel(opts),
+    with :ok <- ProviderBehaviour.require_entry_channel(opts, __MODULE__),
          {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
          {:ok, url} <- HttpFetch.validate_url(raw_url, "http_poll"),
          {:ok, headers} <- HttpFetch.validate_headers(opts.headers, "http_poll"),
@@ -107,14 +101,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
          plugin_id: opts.plugin_id || redact(url)
        })}
     end
-  end
-
-  # A poll with nowhere to deliver is not a poll. Either spelling names the
-  # channel, so the requirement is on the resolved value rather than on one row.
-  defp require_entry_channel(opts) do
-    if opts[:entry_channel],
-      do: :ok,
-      else: {:error, "http_poll requires an entry channel: write channel or channel_in"}
   end
 
   # One worker, keyed by the plugin id `init_provider/1` settled. What it reads
@@ -158,23 +144,19 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
         dead: :poller_dead,
         budget_ms: 2 * ProviderBehaviour.probe_budget_ms()
       ],
-      &poller_health(&1, opts.failure_threshold, idle_window(opts))
+      &poller_health(&1, opts)
     )
   end
 
-  # The window an operator did not set is derived from the cadence they did.
-  defp idle_window(%{idle_after_ms: ms}) when ms > 0, do: ms
-  defp idle_window(opts), do: @idle_intervals * opts.interval_ms
-
   # The failure run outranks the idle age when both apply: it names the actual
   # error, and the age only says nothing has happened.
-  defp poller_health(pid, threshold, idle_window) do
+  defp poller_health(pid, opts) do
     case PollWorker.probe(pid) do
-      {:ok, {failures, last_error, _last_settled_at}} when failures >= threshold ->
+      {:ok, {failures, last_error, _last_settled_at}} when failures >= opts.failure_threshold ->
         {:unhealthy, {:poll_failing, last_error}}
 
       {:ok, {_failures, _last_error, last_settled_at}} ->
-        idle_verdict(last_settled_at, idle_window)
+        ProviderBehaviour.idle_verdict(last_settled_at, opts.idle_after_ms, opts.interval_ms)
 
       # The worker is alive but did not answer inside the probe budget: an
       # UNCERTAIN probe, not a verdict. Reported upward rather than swallowed —
@@ -182,12 +164,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
       :timeout ->
         {:fail_open, :probe_timeout}
     end
-  end
-
-  defp idle_verdict(last_settled_at, idle_window) do
-    age = :erlang.monotonic_time(:millisecond) - last_settled_at
-
-    if age > idle_window, do: {:unhealthy, {:poll_idle, age}}, else: :healthy
   end
 
   @doc "See `Flezha.Plugin.Provider.HttpFetch.redact/1`."

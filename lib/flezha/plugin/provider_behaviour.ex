@@ -338,6 +338,43 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   end
 
   @doc """
+  Refuse a plugin of `provider`, a source that cannot work without an entry
+  channel, whose options named none. Either spelling names it, so the requirement
+  is on the resolved `:entry_channel`, which a row's `required:` cannot say.
+  """
+  @spec require_entry_channel(map(), module()) :: :ok | {:error, binary()}
+  def require_entry_channel(opts, provider) do
+    if opts[:entry_channel],
+      do: :ok,
+      else:
+        {:error,
+         "#{provider.__provider__().name} requires an entry channel: write channel or channel_in"}
+  end
+
+  # A polling source's derived idle window, in polling intervals. Three, because
+  # a poll that outlives its own interval stretches the cadence rather than
+  # stacking, so a single slow cycle plus the poll after it must both land inside
+  # the window, otherwise a merely slow source would read as a dead one.
+  @idle_intervals 3
+
+  @doc """
+  A polling source's idle verdict: `{:unhealthy, {:poll_idle, age_ms}}` once its
+  last settled poll is older than `idle_after_ms`, or than three `interval_ms`
+  when that is 0.
+
+  A failure run alone cannot see a source that has stopped polling: its run is
+  zero and its last error clean, and a source delivering nothing reads exactly
+  like a quiet one downstream. The idle window closes that.
+  """
+  @spec idle_verdict(integer(), non_neg_integer(), pos_integer()) :: health_verdict()
+  def idle_verdict(last_settled_at, idle_after_ms, interval_ms) do
+    window = if idle_after_ms > 0, do: idle_after_ms, else: @idle_intervals * interval_ms
+    age = :erlang.monotonic_time(:millisecond) - last_settled_at
+
+    if age > window, do: {:unhealthy, {:poll_idle, age}}, else: :healthy
+  end
+
+  @doc """
   Does this record belong to the set of channels a sink is restricted to? `nil`
   is no restriction, and any one of the names is a match.
 

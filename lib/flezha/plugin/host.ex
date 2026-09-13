@@ -35,8 +35,9 @@ defmodule Flezha.Plugin.Host do
   spellings of "the payload is yours now" were five chances for a producer to
   pick the wrong one, and the mode is what actually differs between them.
 
-  A `:verdict` answers `:ok` or `{:error, reason}`; the other two answer `:ok`,
-  because there is nothing else to say.
+  A `:verdict` answers `:ok` or `{:error, reason}`, and a host it could not reach
+  is `{:error, {:unreachable, reason}}`; the other two answer `:ok`, because there
+  is nothing else to say.
   """
   @spec inject(GenServer.server(), binary(), map(), inject_mode(), timeout()) ::
           :ok | {:error, term()}
@@ -53,11 +54,29 @@ defmodule Flezha.Plugin.Host do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  catch
+    # The exit carries the call, and the call carries the payload, which a
+    # verdict is logged and reported with and must never repeat.
+    :exit, {reason, {GenServer, :call, _call}} -> {:error, {:unreachable, reason}}
+    :exit, reason -> {:error, {:unreachable, reason}}
   end
 
   def inject(overwatch, message, metadata, :fire_and_forget, _timeout) do
     GenServer.cast(overwatch, {:io_in, message, metadata})
   end
+
+  @doc """
+  Commit a value a provider's worker holds of its own onto the plugin's options,
+  through its host: the live table a plugin restart prepares the plugin from, and
+  the declared manifest a controller restart rebuilds the operative from. It does
+  not wait. A worker with no host identity has nowhere to write, and writes
+  nothing.
+  """
+  @spec persist_opt(pid() | nil, binary() | nil, atom(), term()) :: :ok
+  def persist_opt(host, plugin_id, key, value) when is_pid(host) and is_binary(plugin_id),
+    do: GenServer.cast(host, {:plugin_opt_persist, plugin_id, key, value})
+
+  def persist_opt(_host, _plugin_id, _key, _value), do: :ok
 
   defmacro __using__(opts) do
     extensions_ast = Keyword.fetch!(opts, :extensions)

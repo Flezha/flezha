@@ -44,6 +44,8 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     # One worker family per provider that declares a worker, from the provider
     # table, in its order.
     Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,
+    Flezha.Plugin.Provider.File.Sink.WorkerSup,
+    Flezha.Plugin.Provider.File.Source.WorkerSup,
     Flezha.Plugin.Provider.OperativeForward.WorkerSup,
     Flezha.Plugin.Provider.HttpPoll.WorkerSup,
     Flezha.Plugin.Provider.Kafka.Producer.WorkerSup,

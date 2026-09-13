@@ -12,7 +12,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   production.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
@@ -216,7 +216,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
         rendered = ProviderOptions.render_options_table(provider)
 
-        assert documented_table(page) == rendered,
+        assert documented_table(page, provider) == rendered,
                "#{page}'s option table has drifted from #{inspect(provider)}'s declaration.\n" <>
                  "Replace the block between the provider-options markers with:\n\n" <> rendered
       end
@@ -224,7 +224,9 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   end
 
   describe "clause 6: the same drill over every row" do
-    setup do
+    # A file plugin resolves its path inside the root folder when it is prepared.
+    setup %{tmp: tmp} do
+      Application.put_env(:flezha, :file_plugin_root, tmp)
       on_exit(&Providers.reset_installed/0)
       :ok
     end
@@ -375,14 +377,17 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   defp sample_by_type(_name, :map), do: %{}
   defp sample_by_type(name, _type), do: "drill-#{name}"
 
-  # The two providers whose `init_provider/1` refuses the minimal map: a forward
-  # must not target its own operative, and a poll's request must fit inside its
-  # own interval and name the entry channel it injects on.
+  # The providers whose `init_provider/1` refuses the minimal map: a forward must
+  # not target its own operative, a poll's request must fit inside its own
+  # interval, and a poll and a file source must name the entry channel they
+  # inject on.
   defp extra_opts(Flezha.Plugin.Provider.OperativeForward),
     do: %{target_operative_id: "drill-target"}
 
   defp extra_opts(Flezha.Plugin.Provider.HttpPoll),
     do: %{interval_ms: 60_000, timeout_ms: 1_000, channel: "drill-channel"}
+
+  defp extra_opts(Flezha.Plugin.Provider.File.Source), do: %{channel: "drill-channel"}
 
   defp extra_opts(_provider), do: %{}
 
@@ -393,6 +398,8 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       Flezha.Plugin.Provider.HttpPoll -> "docs/plugins/http_poll.md"
       Flezha.Plugin.Provider.Websocket -> "docs/plugins/websocket_subscription.md"
       Flezha.Plugin.Provider.OperativeForward -> "docs/plugins/operative_forward.md"
+      Flezha.Plugin.Provider.File.Source -> "docs/plugins/file.md"
+      Flezha.Plugin.Provider.File.Sink -> "docs/plugins/file.md"
       _ -> nil
     end
   end
@@ -400,10 +407,14 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   @options_begin "<!-- provider-options:begin -->"
   @options_end "<!-- provider-options:end -->"
 
-  defp documented_table(page) do
-    page
-    |> File.read!()
-    |> String.split(@options_begin)
+  # A page documenting two providers names each block after its provider; a page
+  # documenting one opens its block with the bare marker.
+  defp documented_table(page, provider) do
+    text = File.read!(page)
+    named = "<!-- provider-options:begin #{provider.__provider__().name} -->"
+
+    text
+    |> String.split(if String.contains?(text, named), do: named, else: @options_begin)
     |> Enum.at(1, "")
     |> String.split(@options_end)
     |> hd()

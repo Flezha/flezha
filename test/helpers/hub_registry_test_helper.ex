@@ -4,8 +4,11 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   tests can exercise registry reads and hub lifecycle without a live SDK or
   runner process.
   """
+  import ExUnit.Callbacks, only: [on_exit: 1]
+
   alias Flezha.Identificator
   alias Flezha.Layout.Table, as: Layout
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -176,6 +179,61 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   `:sys.replace_state` on exit).
   """
   def seed_runner(ns, runner_id, factory_id), do: seed_runners(ns, [runner_id], factory_id)
+
+  @doc """
+  Isolate a test that stops and restarts `namespace`'s hub: the fleet state is
+  put back and the hub stopped when the test ends, the registry lives under
+  `registry_root`, auto-restore is on, and the first reconcile round opens after
+  `grace_ms`. A hub with no peers opens that round at the settle window or the
+  grace, whichever comes first, so a short grace keeps every boot off the 2 s
+  window. The caller declares the `:env` fixture, which puts the keys back.
+  """
+  def recovering_hub(namespace, registry_root, grace_ms) do
+    fleet_state = :sys.get_state(FleetManager)
+    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> fleet_state end) end)
+
+    Application.put_env(:flezha, :auto_restore_enabled, true)
+    Application.put_env(:flezha, :process_hub_registry_root, registry_root)
+    Application.put_env(:flezha, :process_hub_reconcile_grace_ms, grace_ms)
+    Application.put_env(:flezha, :process_hub_reconcile_interval_ms, 1_000)
+
+    on_exit(fn -> HubManager.stop_hub(namespace) end)
+    :ok
+  end
+
+  @doc """
+  The plugin list a restored operative was started with. An Overwatch builds its
+  extension table from exactly this (`Flezha.Operative.Lifecycle.complete_init/4`
+  hands `operative.opts[:plugins]` to `Plugins.prepare/2`), and `StubChild`
+  stands in for it, so the stub is asked what it was handed.
+  """
+  def started_plugins(hub_id, operative_id) do
+    operative =
+      ProcessRegistry.dump(hub_id)
+      |> Map.fetch!(operative_id)
+      |> elem(1)
+      |> HubManager.live_pid()
+      |> StubChild.started_with()
+      |> then(fn
+        {_ns, operative} -> operative
+        {_ns, _runner, operative} -> operative
+      end)
+
+    Keyword.get(operative.opts, :plugins, [])
+  end
+
+  @doc "The node `operative_id`'s registry row names a live pid on, awaited up to `timeout_ms`."
+  def await_bound_node(hub_id, operative_id, timeout_ms) do
+    NodeTestHelper.wait_until(
+      fn ->
+        case Map.get(ProcessRegistry.dump(hub_id), operative_id) do
+          {_cspec, node_pids, _meta} -> HubManager.live_node(node_pids)
+          _ -> nil
+        end
+      end,
+      timeout_ms
+    )
+  end
 
   @doc """
   Seed a whole synthetic fleet at once — every runner in `runner_ids` advertises
