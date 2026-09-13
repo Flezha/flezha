@@ -83,7 +83,7 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 - **WHEN** the finalise phase completes
 - **THEN** the loop SHALL no longer hold `{:node_draining, _}`, and a tick afterwards SHALL plan as on any node
 
-### Requirement: SIGTERM and SIGINT SHALL trigger graceful shutdown in every BEAM run mode
+### Requirement: SIGTERM SHALL trigger graceful shutdown in every BEAM run mode
 
 `Flezha.Shutdown.SignalHandler` is a GenServer started **first** in `Flezha.Application.start/2`'s children list (before `Flezha.Service.EventManager`). Its `init/1` SHALL return `{:ok, state, {:continue, :install_signal_handler}}`.
 
@@ -93,7 +93,7 @@ The registered `gen_event` handler SHALL do nothing but forward the signal to th
 
 Because replacing kernel's `erl_signal_handler` also removes its handling of the other signals it owned, `SignalHandler` SHALL preserve those semantics: `sigquit` SHALL halt the BEAM and `sigusr1` SHALL halt it with `"Received SIGUSR1"`, matching `erl_signal_handler` exactly. Only SIGTERM's disposition is deliberately changed.
 
-**SIGINT.** `:os.set_signal/2` SHALL NOT be called for `sigint`. ERTS reserves SIGINT for the break handler and does not accept it — it is absent from the BIF's accepted signal list, and the call raises `badarg` in every run mode and under every break-handler flag. SIGINT-initiated termination is therefore delivered by ERTS's break handler, not through `erl_signal_server`, and SHALL NOT be treated as an install failure.
+**SIGINT.** `:os.set_signal/2` SHALL NOT be called for `sigint`. ERTS reserves SIGINT for the break handler and does not accept it — it is absent from the BIF's accepted signal list, and the call raises `badarg` in every run mode and under every break-handler flag. SIGINT therefore never reaches `erl_signal_server`, and SHALL NOT be treated as an install failure. A release node runs with the break handler disabled (`controller-packaging`), so SIGINT ends it at once with no drain; under `mix run --no-halt` and `iex -S mix` ERTS answers it with the break handler.
 
 The SignalHandler SHALL receive forwarded signals and dispatch as follows:
 
@@ -133,11 +133,11 @@ If the SIGTERM install or the `erl_signal_server` registration fails, the Signal
 - **WHEN** an operator sends a second SIGTERM (logged & ignored) followed by a third SIGTERM
 - **THEN** the SignalHandler logs `[shutdown] forced halt requested via third sigterm` at WARN and calls `:erlang.halt(143)`; the BEAM exits with status 143 immediately
 
-#### Scenario: SIGINT is left to the ERTS break handler
+#### Scenario: SIGINT is left to ERTS
 
 - **GIVEN** a controller booting with graceful shutdown enabled
 - **WHEN** `SignalHandler` installs its handlers
-- **THEN** `:os.set_signal/2` is never called with `sigint`, no `badarg` is raised, the degraded state is not latched, and SIGINT continues to be delivered by ERTS's break handler
+- **THEN** `:os.set_signal/2` is never called with `sigint`, no `badarg` is raised, the degraded state is not latched, and SIGINT stays with ERTS, which ends a release node on it
 
 #### Scenario: SIGTERM with kill-switch off behaves like today (immediate BEAM exit)
 

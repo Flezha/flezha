@@ -30,6 +30,12 @@
 ## well defined in this mode.
 +C multi_time_warp
 
+## The break handler off: SIGINT ends the node at once. With it on, Ctrl-C on
+## an attached controller opens the BREAK menu, which pauses the whole VM while
+## it keeps its node name and its socket. A hard stop, with no drain; SIGTERM
+## and `flz controller stop` are the graceful ones.
++Bd
+
 ## Reclaiming refc binaries more aggressively is a memory-drift remedy, chosen
 ## against a measured series rather than set here. See
 ## docs/operations/memory_drift.md.

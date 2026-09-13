@@ -30,8 +30,9 @@ defmodule Flezha.Shutdown.SignalHandler do
 
   SIGINT is **not** claimed. ERTS reserves it for the break handler and
   `:os.set_signal/2` does not accept it — `sigint` is absent from the
-  BIF's signal list and the call raises `badarg` in every run mode. It
-  is delivered by the break handler instead.
+  BIF's signal list and the call raises `badarg` in every run mode. A
+  release runs with the break handler off (`+Bd` in `rel/vm.args.eex`),
+  so SIGINT ends that node at once, with no drain.
 
   When `:flezha, :graceful_shutdown_enabled` is `false`, this server
   still starts but installs nothing and registers nothing, leaving

@@ -459,6 +459,12 @@ that SIGINT terminates it. A verb that streams until a window closes, such as
 handler would answer that with the `BREAK:` menu instead, leaving the node alive and
 the controller-side process it spawned orphaned.
 
+The controller node SHALL run with the break handler disabled too, so that Ctrl-C
+on a controller started in attached mode ends it. The default handler pauses the
+whole VM behind the `BREAK:` menu, so the prompt returns while the node keeps its
+name and control socket and answers no `flz` verb. SIGINT is a hard stop with no
+drain; SIGTERM is the graceful one.
+
 #### Scenario: A booted controller reports the shipped values
 
 - **WHEN** the release is started and asked for its own `system_info`
@@ -478,6 +484,11 @@ the controller-side process it spawned orphaned.
 
 - **WHEN** SIGINT reaches the node a `flz` verb started through the release's `flzvm rpc`
 - **THEN** the node SHALL terminate without printing the `BREAK:` menu, and the verb SHALL exit
+
+#### Scenario: An attached controller ends on SIGINT
+
+- **WHEN** SIGINT reaches a controller started with `flz controller start` in attached mode
+- **THEN** the node SHALL terminate without printing the `BREAK:` menu, and a following `flz controller start` SHALL boot
 
 ### Requirement: The Prod Image SHALL Honour `ERL_FLAGS` From the Container Environment
 

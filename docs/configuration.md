@@ -283,6 +283,7 @@ templates to each other, so a flag cannot ship undocumented.
 | `+sbwtdio short` | The same, for the dirty IO schedulers, which is where every transport NIF call that can block is scheduled. |
 | `+Q 65536` | The ceiling on ports: plugin sockets, runner connections, distribution. Pinned because the default moves with whichever ERTS is underneath, 65 536 on the image's OTP 27 and 1 048 576 on OTP 29, so the ceiling is a decision rather than a property of the runtime that happened to be built in. The table is allocated up front at about 16 bytes a slot, so pinning at the image's own value costs nothing there and returns **15 MB of RSS** on the larger default. Raise it if port exhaustion ever appears. |
 | `+C multi_time_warp` | Already the default on both OTP 27 and OTP 29, pinned so a future ERTS cannot move it. The keepalive roster compares a monotonic epoch, which is only well defined in this mode. Costs nothing: it is the mode the VM already chooses. |
+| `+Bd` | Ctrl-C ends an attached controller at once. With the default break handler SIGINT opens the `BREAK:` menu, which pauses the whole VM: the prompt comes back while the node stays alive holding its name and its socket, and every `flz` verb answers `:noconnection`. It is a hard stop with no drain, recovered on the next boot as a crash would be; SIGTERM and `flz controller stop` drain. |
 
 <!-- vm-args:rel/vm.args.eex:end -->
 

@@ -275,7 +275,7 @@ defmodule Flezha.MixProject do
           # To connect to it remotely
           #{path}/bin/flzvm remote
 
-          # To stop it gracefully (you may also send SIGINT/SIGTERM)
+          # To stop it gracefully (SIGTERM drains too; SIGINT stops it at once)
           #{path}/bin/flzvm stop
 
       To list all controller commands:

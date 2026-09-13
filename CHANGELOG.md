@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: Ctrl-C stops an attached controller instead of freezing it
+
+Pressing Ctrl-C on a controller started with `flz controller start` in attached
+mode gave the prompt back but left the Erlang VM paused behind its break menu. The
+node kept its name and its socket, so `flz runner check` still found it, every
+other `flz` command failed with `:noconnection`, and a new start could not boot
+until the process was killed. The controller now runs with the break handler off,
+so Ctrl-C ends it at once. It is a hard stop with no drain, recovered on the next
+boot; `flz controller stop` and SIGTERM still drain.
+
 ### Changed: `flz runner check` prints one fact per line
 
 The check printed its verdict, the socket directory, every path it checked and

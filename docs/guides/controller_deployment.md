@@ -131,6 +131,9 @@ It quiesces, drains and finalises, and says so:
 [shutdown] complete duration_ms=8 outcome=clean
 ```
 
+Ctrl-C in `attached` mode stops it too, but at once: nothing is drained, and the
+next start recovers from disk as it would after a crash.
+
 That verb is authorization gated, so with enforcement on it refuses until you
 have claimed an admin. `flzvm stop` needs only the cookie and works either way,
 which is what to reach for on a controller you cannot authorize against.
