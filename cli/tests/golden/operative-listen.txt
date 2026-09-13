@@ -1,0 +1,26 @@
+flz operative listen - Print the frames an operative emits or ingests
+
+USAGE:
+    flz operative listen <operative_id> [OPTIONS]
+
+OPTIONS:
+    --input                   Listen to what the operative ingests, not what it emits
+    --duration-ms <N>         Stop after N milliseconds (default 30000)
+    --output <text|json>      Output format (default: text)
+    --json                    The same as --output json
+    --namespace <ns>          Namespace the operative runs in (default: default)
+
+OUTPUT:
+    One line per frame: the channel, a tab and the payload. A frame from a
+    keyed sink adds a third field, entity=... seq=... key=..., and a frame
+    with no channel prints - in its place. With --json each frame is one
+    object carrying channel, payload (payload_base64 for bytes that are not
+    text) and the frame's whole metadata map.
+
+    The listener is detached when the window closes, on Ctrl-C, and when the
+    caller goes away. A partition group is listened to by its group id.
+
+EXAMPLES:
+    flz operative listen my_echo --duration-ms 10000
+    flz operative listen my_echo --input
+    flz operative listen ohlc --json

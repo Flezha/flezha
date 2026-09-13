@@ -16,6 +16,10 @@
 ## every verb.
 +Q 65536
 
+## The break handler off: SIGINT ends this node instead of opening the BREAK
+## menu, so Ctrl-C ends a verb that streams and the controller sees its caller go.
++Bd
+
 ## Reclaiming refc binaries more aggressively is a memory-drift remedy, chosen
 ## against a measured series rather than set here. See
 ## docs/operations/memory_drift.md.

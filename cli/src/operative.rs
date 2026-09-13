@@ -1,4 +1,6 @@
-use crate::args::{self, OptSpec, Positional, Reading, JSON_SWITCH, NAMESPACE, OUTPUT};
+use crate::args::{
+    self, OptSpec, Positional, Reading, DURATION_MS, JSON_SWITCH, NAMESPACE, OUTPUT,
+};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text, Opt};
@@ -16,6 +18,8 @@ const PAYLOAD: OptSpec = OptSpec::text("--text", "-t", "<payload>").required();
 const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
 const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "-i", "<N>").required();
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
+const INPUT: OptSpec = OptSpec::switch("--input", "--input");
+const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
 
 pub(crate) const TABLE: Command = Command {
     path: "flz operative",
@@ -55,15 +59,14 @@ pub(crate) const TABLE: Command = Command {
             rpc::scoped_read(read, "operative_info", Some("operative information"))
         })
         .reading(&[NAMESPACE, OUTPUT, JSON_SWITCH]),
-        Verb::new("io_listen", handle_io_listen)
-            .taking(&[
-                Positional::choice("input|output", "IO type", &["input", "output"]),
-                Positional::required("<operative_id>"),
-            ])
-            .reading(&[NAMESPACE]),
+        Verb::new("listen", handle_listen)
+            .taking(OPERATIVE_ID)
+            .reading(&[INPUT, DURATION_MS, OUTPUT, JSON_SWITCH, NAMESPACE])
+            .strict()
+            .screen(help::OPERATIVE_LISTEN),
         Verb::new("send", handle_send)
             .taking(OPERATIVE_ID)
-            .reading(&[PAYLOAD, CHANNEL, NAMESPACE]),
+            .reading(&[PAYLOAD, CHANNEL, AWAIT, NAMESPACE]),
         Verb::new("rewind", handle_rewind)
             .taking(OPERATIVE_ID)
             .reading(&[TO_ITERATION, NAMESPACE]),
@@ -167,11 +170,18 @@ fn handle_stop(read: &Reading) {
     println!("Operative stopped successfully.");
 }
 
-/// `flz operative send <operative_id> --text <payload> [--channel <ch>]` —
-/// inject a payload into an operative's input stream (the SDK-facing
-/// `send_io` route). Blocks for the confirming verdict so a parked or absent
-/// target is reported rather than silently dropped.
+/// `flz operative send <operative_id> --text <payload> [--channel <ch>]
+/// [--await <ms>]`: inject a payload into an operative's input stream (the
+/// SDK-facing `send_io` route). Blocks for the confirming verdict so a parked or
+/// absent target is reported rather than silently dropped. `--await` rides the
+/// options list only when written.
 fn handle_send(read: &Reading) {
+    let mut opts: Vec<Opt> = Vec::new();
+
+    if let Some(ms) = read.opt(AWAIT.long) {
+        opts.push(("await_ms", ms.to_string()));
+    }
+
     // operative_send halts non-zero on error verdicts (not_found / not_ready / refused).
     rpc::run(
         "operative_send",
@@ -181,7 +191,7 @@ fn handle_send(read: &Reading) {
             text(read.opt(PAYLOAD.long).unwrap_or_default()),
             text(read.opt(CHANNEL.long).unwrap_or_default()),
         ],
-        &[],
+        &opts,
         read.token(),
         rpc::QUIET.diagnosing("Failed to send input to operative"),
     );
@@ -239,20 +249,25 @@ fn handle_state(read: &Reading) {
     );
 }
 
-fn handle_io_listen(read: &Reading) {
-    let io_type = read.pos("input|output");
-    let operative_id = read.pos("<operative_id>");
-
-    println!(
-        "Starting IO listener for operative '{}' ({} mode)...",
-        operative_id, io_type
-    );
-    println!("Press Ctrl+C to stop listening");
+/// `flz operative listen <operative_id> [--input]`: print every frame the
+/// operative emits, or ingests, until the window closes. Prints nothing of its
+/// own, so what reaches stdout is the frames alone.
+fn handle_listen(read: &Reading) {
+    let direction = if read.switch(INPUT.long) {
+        "input"
+    } else {
+        "output"
+    };
 
     rpc::run(
         "operative_listen",
-        &[text(read.namespace()), text(operative_id), text(io_type)],
-        &[],
+        &[
+            text(read.namespace()),
+            text(read.pos(OPERATIVE_ID[0].name)),
+            text(direction),
+            text(read.output_format()),
+        ],
+        &[rpc::window(read)],
         read.token(),
         rpc::REFUSED,
     );

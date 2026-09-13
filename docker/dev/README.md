@@ -167,8 +167,8 @@ _build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka operative_kafka_pr
   
   
 # Listen to operative IO:  
-_build/dev/rel/flezha/bin/flz operative io_listen input my_operative
-_build/dev/rel/flezha/bin/flz operative io_listen output my_operative
+_build/dev/rel/flezha/bin/flz operative listen my_operative --input
+_build/dev/rel/flezha/bin/flz operative listen my_operative
 ```
 
 # Kafka UI:

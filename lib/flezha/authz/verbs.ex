@@ -173,7 +173,7 @@ defmodule Flezha.AuthZ.Verbs do
       target: [:_, :entity]
     ],
     operative_listen: [
-      action: :"plugin.enable",
+      action: :"operative.listen",
       scope: {:argument, 1},
       audit: {:after, :plugin_service},
       target: [:_, :operative]

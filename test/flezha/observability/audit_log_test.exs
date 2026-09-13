@@ -20,6 +20,8 @@ defmodule Flezha.Observability.AuditLogTest do
   }
 
   alias Flezha.Service.AuditLog, as: AuditSvc
+  alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :audit_log
 
@@ -317,6 +319,42 @@ defmodule Flezha.Observability.AuditLogTest do
 
       records = Reader.stream(file, []) |> Enum.to_list()
       assert length(records) == 1
+    end
+  end
+
+  # ---------- flz audit tail ----------
+
+  describe "flz audit tail" do
+    test "prints each record, and ends when the writer closes", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+
+      tail =
+        Task.async(fn ->
+          ExUnit.CaptureIO.capture_io(fn ->
+            CliManager.audit_log_render_tail("json", duration_ms: 60_000)
+          end)
+        end)
+
+      assert NodeTestHelper.wait_until(fn -> :sys.get_state(Writer).subscribers != %{} end, 5_000)
+
+      :ok =
+        Writer.write(Codec.encode(Signal.new(%{kind: :event, source: :audit_log, name: :tailed})))
+
+      :ok = Writer.close()
+
+      assert Task.await(tail, 5_000) =~ "tailed"
+    end
+
+    test "unsubscribes when its window closes", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+
+      ExUnit.CaptureIO.capture_io(fn ->
+        CliManager.audit_log_render_tail("text", duration_ms: 10)
+      end)
+
+      assert :sys.get_state(Writer).subscribers == %{}
     end
   end
 

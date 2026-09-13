@@ -478,12 +478,13 @@ provider pattern.
 
 Such a verb SHALL name an action in the authorizable-action enumeration and SHALL
 authorize it before doing anything — a verb that reads parked business data or
-records in flight, reads an entity's state live or at a point in time, injects input
-into or replays inputs through an operative, enables a plugin on an operative, rewrites
-a controller-wide setting, creates or destroys a schedule, starts an operative, or
-moves live work between runners. A verb whose action is absent from that enumeration
-is not merely ungated, it is unauthorizable — the policy point refuses only actions it
-knows — so the enumeration is the surface this requirement governs.
+records in flight, reads an entity's state live or at a point in time, listens to the
+frames an operative ingests or emits, injects input into or replays inputs through an
+operative, enables a plugin on an operative, rewrites a controller-wide setting,
+creates or destroys a schedule, starts an operative, or moves live work between
+runners. A verb whose action is absent from that enumeration is not merely ungated, it
+is unauthorizable — the policy point refuses only actions it knows — so the
+enumeration is the surface this requirement governs.
 
 A CLI verb that this requirement gates SHALL accept the caller's credential, so that
 naming its action does not make it refuse every caller. A verb whose signature cannot
@@ -496,8 +497,13 @@ business data SHALL be granted no more widely than the mutation on the same data
 A verb whose effect is one an existing action already names SHALL authorize that action
 rather than add a second name for the same right: firing a schedule by hand starts an
 operative, and is judged as `operative.start` in the namespace the schedule was added
-under; enabling a listener on an operative is `plugin.enable`; reading an entity's live
-state is `state.get`.
+under; reading an entity's live state is `state.get`. Listening to an operative is its
+own action, `operative.listen`, because the right to read the frames an operative
+carries is not the right to attach an arbitrary plugin to it: it is granted from `app`
+upward, the same floor as `plugin.enable`, so no caller that could listen before the
+action existed is refused after, and no caller gains it. `flz operative send --await`
+is judged as `operative.send`, the action of the verb the caller invoked; the listener
+it attaches to print what came back is that verb's own mechanism, not a second verb.
 
 #### Scenario: A parked payload is not readable by an unauthorized caller
 
@@ -536,8 +542,16 @@ state is `state.get`.
 - **WHEN** a caller with no role binding issues `flz operative start`, `operative send`,
   `operative replay` or `operative listen` while authorization is enforced
 - **THEN** each verb SHALL be refused as `operative.start`, `operative.send`,
-  `operative.replay` or `plugin.enable` respectively, and no operative SHALL start, no
-  input SHALL be delivered, no replay SHALL run and no plugin SHALL be enabled
+  `operative.replay` or `operative.listen` respectively, and no operative SHALL start,
+  no input SHALL be delivered, no replay SHALL run and no plugin SHALL be enabled
+
+#### Scenario: Listening needs the listen action and not the plugin one
+
+- **WHEN** authorization is enforced and a caller bound to `app` on the operative's
+  namespace issues `flz operative listen`
+- **THEN** the verb SHALL be authorized as `operative.listen`, and the same call by a
+  caller bound to `viewer`, `spawner` or `stopper` SHALL be refused, whether or not
+  that caller could enable a plugin
 
 #### Scenario: A controller-wide setting is not rewritten by an unauthorized caller
 
@@ -816,3 +830,4 @@ Every act record the verb seam writes, and every `:authorization_denied` record,
   `caller_roles` existed
 - **THEN** the record SHALL be decoded and rendered as it was before, with no
   error
+

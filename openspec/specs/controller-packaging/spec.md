@@ -453,6 +453,12 @@ are comment-only, so every `flz` verb boots a node sized for the whole host to
 make one call, and the controller runs on whatever the ERTS in the image happens
 to default to. Those are two different jobs and they get two different budgets.
 
+The node a `flz` verb starts SHALL run with the Erlang break handler disabled, so
+that SIGINT terminates it. A verb that streams until a window closes, such as
+`flz operative listen` or `flz observe tail`, is ended by Ctrl-C, and the default
+handler would answer that with the `BREAK:` menu instead, leaving the node alive and
+the controller-side process it spawned orphaned.
+
 #### Scenario: A booted controller reports the shipped values
 
 - **WHEN** the release is started and asked for its own `system_info`
@@ -467,6 +473,11 @@ to default to. Those are two different jobs and they get two different budgets.
 
 - **WHEN** a flag is shipped for throughput rather than for capacity, clustering or clock semantics
 - **THEN** the benchmarking documentation SHALL record the measured series that chose it, including the arm it was measured against
+
+#### Scenario: A CLI verb's node ends on SIGINT
+
+- **WHEN** SIGINT reaches the node a `flz` verb started through the release's `flzvm rpc`
+- **THEN** the node SHALL terminate without printing the `BREAK:` menu, and the verb SHALL exit
 
 ### Requirement: The Prod Image SHALL Honour `ERL_FLAGS` From the Container Environment
 

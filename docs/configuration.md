@@ -292,6 +292,7 @@ templates to each other, so a flag cannot ship undocumented.
 | `+S 1:1` | This node connects to the controller, evaluates there and exits. It was being given the host's full scheduler complement to do that. |
 | `+SDio 1` | It opens no transport, so the dirty IO pool has nothing to serve. |
 | `+Q 65536` | The same ceiling, pinned for the same reason. This node opens two ports and was allocating a table for a million of them: **15 MB of RSS**, and a tenth of the node's startup, on every `flz` verb. |
+| `+Bd` | Ctrl-C ends the verb. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a verb that streams, such as `flz operative listen`, could not be interrupted. |
 
 <!-- vm-args:rel/remote.vm.args.eex:end -->
 

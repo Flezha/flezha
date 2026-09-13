@@ -52,4 +52,18 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
 
     assert [{"mio-test", _worker_opts}] = MonitoredIOForward.worker_specs(prepared)
   end
+
+  test "each member of a partition group holds a heartbeat of its own" do
+    assert {:ok, prepared} = prepare(%{})
+
+    keys =
+      for index <- [0, 1] do
+        [{key, _opts}] =
+          MonitoredIOForward.worker_specs(Map.put(prepared, :partition_index, index))
+
+        key
+      end
+
+    assert keys == ["mio-test#p0", "mio-test#p1"]
+  end
 end

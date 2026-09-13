@@ -16,6 +16,7 @@ defmodule Flezha.AuthZ.Action do
     :"operative.rewind",
     :"operative.send",
     :"operative.replay",
+    :"operative.listen",
     # Plugin lifecycle and read.
     :"plugin.install",
     :"plugin.enable",

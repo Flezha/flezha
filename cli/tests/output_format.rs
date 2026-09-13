@@ -83,6 +83,32 @@ const CASES: &[(&[&str], Want)] = &[
         &["operative", "list", "--output", "json"],
         Rpc("Flezha.Service.CliManager.list_operatives(\"\", \"json\", [])"),
     ),
+    // `flz operative listen`: output by default, the window always carried.
+    (
+        &["operative", "listen", "op"],
+        Rpc(r#"Flezha.Service.CliManager.operative_listen("", "op", "output", "text", [duration_ms: 30000])"#),
+    ),
+    (
+        &["operative", "listen", "op", "--input", "--json", "--duration-ms", "500", "-n", "prod"],
+        Rpc(r#"Flezha.Service.CliManager.operative_listen("prod", "op", "input", "json", [duration_ms: 500])"#),
+    ),
+    (
+        &["operative", "listen", "op", "--duration", "5"],
+        Refused("unknown argument '--duration'"),
+    ),
+    (
+        &["operative", "listen", "op", "extra"],
+        Refused("unknown argument 'extra'"),
+    ),
+    // `--await` rides the options list only when written.
+    (
+        &["operative", "send", "op", "--text", "hi"],
+        Rpc(r#"Flezha.Service.CliManager.operative_send("", "op", "hi", "", [])"#),
+    ),
+    (
+        &["operative", "send", "op", "--text", "hi", "--await", "2000"],
+        Rpc(r#"Flezha.Service.CliManager.operative_send("", "op", "hi", "", [await_ms: 2000])"#),
+    ),
     // `flz audit` — the `--json` dialect.
     (
         &["audit", "list"],
@@ -609,7 +635,8 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["operative", "state", "op"],
     &["operative", "list"],
     &["operative", "info"],
-    &["operative", "io_listen", "input", "op"],
+    &["operative", "listen", "op"],
+    &["operative", "send", "op", "--text", "hi", "--await", "500"],
     &["operative", "send", "op", "--text", "hi"],
     &["operative", "rewind", "op", "--to-iteration", "1"],
     &["operative", "replay", "a/b/c", "--from", "1"],

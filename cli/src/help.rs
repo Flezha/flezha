@@ -328,6 +328,33 @@ EXAMPLES:
     flz operative start ohlc candles --partitions 3
     flz operative start orders order_aggregator --namespace prod"#;
 
+pub(crate) const OPERATIVE_LISTEN: Help = r#"flz operative listen - Print the frames an operative emits or ingests
+
+USAGE:
+    flz operative listen <operative_id> [OPTIONS]
+
+OPTIONS:
+    --input                   Listen to what the operative ingests, not what it emits
+    --duration-ms <N>         Stop after N milliseconds (default 30000)
+    --output <text|json>      Output format (default: text)
+    --json                    The same as --output json
+    --namespace <ns>          Namespace the operative runs in (default: default)
+
+OUTPUT:
+    One line per frame: the channel, a tab and the payload. A frame from a
+    keyed sink adds a third field, entity=... seq=... key=..., and a frame
+    with no channel prints - in its place. With --json each frame is one
+    object carrying channel, payload (payload_base64 for bytes that are not
+    text) and the frame's whole metadata map.
+
+    The listener is detached when the window closes, on Ctrl-C, and when the
+    caller goes away. A partition group is listened to by its group id.
+
+EXAMPLES:
+    flz operative listen my_echo --duration-ms 10000
+    flz operative listen my_echo --input
+    flz operative listen ohlc --json"#;
+
 pub(crate) const OPERATIVE: Help = r#"flz operative - Operative management commands
 
 USAGE:
@@ -340,7 +367,7 @@ COMMANDS:
     state       Get operative state
     list        List operatives
     info        Get operative info
-    io_listen   Listen to operative I/O
+    listen      Print the frames an operative emits or ingests
     send        Send a payload to an operative's input stream
     rewind      Rewind a workflow loop to a committed iteration
     replay      Re-run an Entity's retained inputs from a point in the past
@@ -350,6 +377,8 @@ EXAMPLES:
     flz operative start ohlc candles --partitions 3
     flz operative scale ohlc 5
     flz operative send orchestrator --text '{"task":"refactor"}'
+    flz operative send my_echo --text hello --await 2000
+    flz operative listen my_echo --duration-ms 10000
     flz operative rewind chat-1 --to-iteration 3
     flz operative replay candles/aggregate/BTC --from 1720000000000
 

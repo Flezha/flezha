@@ -1,7 +1,8 @@
 defmodule Flezha.Service.Cli.Context do
   @moduledoc """
   The identity a `flz` verb's trailing options carry, the rendering of a refusal
-  and an error, and the one device they are written to. Every other `Cli.*`
+  and an error, the one device they are written to, and the window a streaming
+  verb receives for. Every other `Cli.*`
   module calls this one; it calls none of them. The authorization itself is
   `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`.
   """
@@ -202,6 +203,43 @@ defmodule Flezha.Service.Cli.Context do
   defp cli_error!(message) do
     puts(operator_stderr(), message)
     exit(@cli_exit)
+  end
+
+  @doc """
+  How long a streaming verb runs: the `duration_ms` its options carry, or the
+  window `flz` uses when the operator names none.
+  """
+  @spec window(keyword()) :: integer()
+  def window(opts),
+    do: Keyword.get_lazy(opts, :duration_ms, fn -> Durations.get(:cli_stream_window_ms) end)
+
+  @doc """
+  Hand every message this process receives to `handler` until `window_ms`
+  elapses or `handler` answers `:done`. The one receive loop behind every
+  streaming verb: a family says what a message means, never when the stream
+  ends. Answers `:done`, or `:window_closed` when the window ran out.
+  """
+  @spec receive_for(integer(), (term() -> :continue | :done)) :: :done | :window_closed
+  def receive_for(window_ms, handler) do
+    receive_until(System.monotonic_time(:millisecond) + window_ms, handler)
+  end
+
+  defp receive_until(deadline, handler) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      :window_closed
+    else
+      receive do
+        message ->
+          case handler.(message) do
+            :continue -> receive_until(deadline, handler)
+            :done -> :done
+          end
+      after
+        remaining -> :window_closed
+      end
+    end
   end
 
   @doc """

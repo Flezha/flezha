@@ -81,8 +81,9 @@ impl Verb {
         self
     }
 
-    /// Refuse a word this row does not declare. Two verbs do: one blocks the
-    /// operator for as long as its option says, the other deletes state.
+    /// Refuse a word this row does not declare: an option it does not read, or
+    /// a plain word no positional takes. Three verbs do: two block the operator
+    /// for as long as their options say, and one deletes state.
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
         self

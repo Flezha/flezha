@@ -39,6 +39,7 @@ const SCREENS: &[(&str, &[&str])] = &[
     ("observe-disable", &["observe", "disable", "--help"]),
     ("operative", &["operative", "help"]),
     ("operative-start", &["operative", "start", "--help"]),
+    ("operative-listen", &["operative", "listen", "--help"]),
     ("plugin", &["plugin", "help"]),
     ("reset", &["reset", "help"]),
     ("role", &["role", "help"]),

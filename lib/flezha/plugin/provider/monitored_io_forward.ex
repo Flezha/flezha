@@ -8,6 +8,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   Optional: `:heartbeat_interval` (ms, default 5000).
   """
 
+  alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.PluginManager
@@ -18,7 +19,11 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   use ProviderBehaviour,
     options: [
       recv_pid: [type: :pid, required: true, doc: "The BEAM process the payload is sent to"],
-      plugin_id: [type: :string, required: true, doc: "The plugin id the heartbeat disables"],
+      plugin_id: [
+        type: :string,
+        required: true,
+        doc: "The plugin id the heartbeat disables, with every member a group fanned it out to"
+      ],
       operative_id: [type: :string, required: true, doc: "The operative this binding belongs to"],
       namespace: [type: :any, required: true, doc: "The namespace this binding belongs to"],
       heartbeat_interval: [
@@ -34,6 +39,15 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
   @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+
+  # A group fans one plugin out to every member under one `plugin_id`. Keyed by
+  # that alone the members would share one heartbeat, and the first member's
+  # disable would stop it under the others.
+  @impl true
+  def worker_specs(%{plugin_id: plugin_id, partition_index: index} = opts),
+    do: [{Partition.member_id(plugin_id, index), opts}]
+
+  def worker_specs(%{plugin_id: plugin_id} = opts), do: [{plugin_id, opts}]
 
   defp forward(%Ctx.IO{message: msg, metadata: md} = ctx, %{recv_pid: recv_pid}) do
     case Process.send(recv_pid, {:message_forward, {msg, md}}, []) do
@@ -76,7 +90,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         {:noreply, state}
     after
       state.heartbeat_interval ->
-        Task.start(fn -> PluginManager.disable_plugin(state.plugin_id) end)
+        Task.start(fn -> PluginManager.disable_plugin_group(state.plugin_id) end)
         {:stop, :normal, state}
     end
   end

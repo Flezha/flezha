@@ -226,19 +226,6 @@ impl Positional {
             ..Positional::required(name)
         }
     }
-
-    /// A positional the operator picks from a closed set — refused here, so
-    /// the verb's body never has to.
-    pub(crate) const fn choice(
-        name: &'static str,
-        noun: &'static str,
-        words: &'static [&'static str],
-    ) -> Self {
-        Positional {
-            kind: Kind::Choice { noun, words },
-            ..Positional::required(name)
-        }
-    }
 }
 
 /// Whether a verb carries words it does not declare.
@@ -534,7 +521,7 @@ fn scan(
             continue;
         }
 
-        if verb.strict {
+        if verb.strict && (argv[i].starts_with('-') || plain.len() == verb.positionals.len()) {
             return Err(format!("Error: unknown argument '{}'", argv[i]));
         }
 

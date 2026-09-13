@@ -53,6 +53,15 @@ const CASES: &[(&[&str], &str)] = &[
         &["token", "issue", "--ttl", "60", "p", "ns", "viewer"],
         r#"Flezha.Service.CliManager.authz_render_token_issue("p", "ns", "viewer", [ttl: 60])"#,
     ),
+    // A switch and the credential read the same on either side of the operative.
+    (
+        &["operative", "listen", "--input", "--token", "t", "op1"],
+        r#"Flezha.Service.CliManager.operative_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
+    ),
+    (
+        &["operative", "listen", "op1", "--token", "t", "--input"],
+        r#"Flezha.Service.CliManager.operative_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
+    ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
     (

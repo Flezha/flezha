@@ -50,11 +50,13 @@ defmodule Flezha.AuthZ.Policy do
   @stop_actions [:"operative.stop"]
 
   # App adds the namespace-scoped lifecycle an application performs on its own
-  # work, and nothing that destroys a record or moves work it did not create.
+  # work, reading the frames that work carries, and nothing that destroys a
+  # record or moves work it did not create.
   # `operative.scale` is deliberately absent: rescaling moves live work between
   # partitions, which is an operator's call over a whole namespace rather than
   # an application's over its own instance.
-  @app_extra @spawn_actions ++ @stop_actions ++ [:"plugin.enable", :"plugin.disable"]
+  @app_extra @spawn_actions ++
+               @stop_actions ++ [:"operative.listen", :"plugin.enable", :"plugin.disable"]
 
   # Operator adds the rest of the operative/plugin lifecycle, audit rotation,
   # observability mutate, schedule management, the dead-letter queue whole and

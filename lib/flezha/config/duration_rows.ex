@@ -66,6 +66,8 @@ defmodule Flezha.Config.DurationRows do
     # name its `:standard_error`, before it writes to the controller's own.
     # The caller has just called us, so this is a liveness bound, not a wait.
     {:cli_operator_device_ms, :ms, 5_000, []},
+    # How long a streaming verb runs when its request names no window.
+    {:cli_stream_window_ms, :ms, 30_000, []},
     {:runner_lookup_ms, :ms, 5_000, []},
     {:runner_cleanup_slack_ms, :ms, 10_000, []},
     {:runner_min_call_ms, :ms, 25, []},

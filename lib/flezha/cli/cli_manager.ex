@@ -120,7 +120,7 @@ defmodule Flezha.Service.CliManager do
 
   verb operative_info(namespace, format \\ "text", opts \\ []), to: Cli.Info
 
-  verb operative_listen(namespace, operative_id, io_type, opts \\ []),
+  verb operative_listen(namespace, operative_id, direction, format, opts \\ []),
     to: Cli.Operative
 
   verb operative_replay(namespace, path, from, opts \\ []),

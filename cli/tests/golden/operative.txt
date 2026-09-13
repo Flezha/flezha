@@ -10,7 +10,7 @@ COMMANDS:
     state       Get operative state
     list        List operatives
     info        Get operative info
-    io_listen   Listen to operative I/O
+    listen      Print the frames an operative emits or ingests
     send        Send a payload to an operative's input stream
     rewind      Rewind a workflow loop to a committed iteration
     replay      Re-run an Entity's retained inputs from a point in the past
@@ -20,6 +20,8 @@ EXAMPLES:
     flz operative start ohlc candles --partitions 3
     flz operative scale ohlc 5
     flz operative send orchestrator --text '{"task":"refactor"}'
+    flz operative send my_echo --text hello --await 2000
+    flz operative listen my_echo --duration-ms 10000
     flz operative rewind chat-1 --to-iteration 3
     flz operative replay candles/aggregate/BTC --from 1720000000000
 

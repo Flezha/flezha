@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed: `flz operative listen` replaces `io_listen`, and it ends
+
+`flz operative io_listen input|output <operative_id>` is now
+`flz operative listen <operative_id> [--input]`, with no alias. It listens to
+what the operative emits; `--input` listens to what it ingests instead.
+
+Every frame prints the metadata it carries: the channel, a tab and the payload,
+and on a keyed sink a third field with its entity, seq and key. `--json` prints
+one object per line carrying the whole metadata map. The listener runs for
+`--duration-ms` (30 seconds unless given) and Ctrl-C ends it; the plugin it
+attaches is detached however it ends, on every member of a partition group.
+Before, it ran until Ctrl-C, Ctrl-C opened the Erlang break menu instead, and
+every listener that ended left its plugin attached on the controller.
+
+Listening is authorized as its own action, `operative.listen`, granted from
+`app` upward, rather than as `plugin.enable`.
+
+`flz operative send --await <ms>` attaches the listener before it delivers and
+prints what came back, so one command checks a deployment:
+
+```
+$ flz operative send my_echo --text hello --await 2000
+Delivered to 'my_echo'.
+echo	hello
+```
+
 ### Added: a plugin's channel filter names a set of channels
 
 A plugin that acts on the records passing through an operative could restrict

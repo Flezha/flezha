@@ -335,7 +335,7 @@ a role the principal does not hold changes nothing.
 | Role | What it adds |
 | --- | --- |
 | `viewer` | the reads: operatives, plugins, entity state, audit, observability, the schedule registry |
-| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, including the start and the delivery a procedure's `ctx.spawn_workflow` asks for, enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
+| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, including the start and the delivery a procedure's `ctx.spawn_workflow` asks for, listen to what an operative ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
 | `operator` | app plus the rest of the operative and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
 | `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
@@ -475,7 +475,7 @@ told nothing about whether the name exists.
 | `operative_send` | `operative_send` | `operative.send` | spawner | argument 1 (the namespace named) | after on `operative_service` |
 | `spawn_deliver` | runner session only | `operative.send` | spawner | argument 1 (the namespace named) | - |
 | `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
-| `operative_listen` | `operative_listen` | `plugin.enable` | app | argument 1 (the namespace named) | after on `plugin_service` |
+| `operative_listen` | `operative_listen` | `operative.listen` | app | argument 1 (the namespace named) | after on `plugin_service` |
 | `entity_state` | `entity_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
 | `schedule_run` | `schedule_run` | `operative.start` | spawner | the stored row's `namespace` | after on `operative_service` |
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |

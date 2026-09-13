@@ -22,17 +22,8 @@ const COMMANDS: &[(&str, &[&str])] = &[
     (
         "operative",
         &[
-            "start",
-            "scale",
-            "stop",
-            "state",
-            "list",
-            "info",
-            "io_listen",
-            "send",
-            "rewind",
-            "replay",
-            "help",
+            "start", "scale", "stop", "state", "list", "info", "listen", "send", "rewind",
+            "replay", "help",
         ],
     ),
     (

@@ -33,11 +33,14 @@ defmodule Flezha.Service.Cli.Observe do
   def observability_render_tail(source_str, format, %{opts: opts})
       when format in ["text", "json"] do
     source = registered_source!(source_str)
-    duration_ms = Keyword.get(opts, :duration_ms, 30_000)
 
     case ObsSvc.tail_source(source) do
-      :ok -> tail_loop(source, format, duration_ms)
-      {:error, reason} -> render_error(reason)
+      :ok ->
+        Context.receive_for(Context.window(opts), &tail_message(&1, format))
+        :ok
+
+      {:error, reason} ->
+        render_error(reason)
     end
   end
 
@@ -140,29 +143,12 @@ defmodule Flezha.Service.Cli.Observe do
     }
   end
 
-  defp tail_loop(source, format, duration_ms) do
-    deadline = System.monotonic_time(:millisecond) + duration_ms
-    do_tail_loop(source, format, deadline)
+  defp tail_message({:flezha_signal, signal}, format) do
+    render_tail_signal(signal, format)
+    :continue
   end
 
-  defp do_tail_loop(source, format, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining <= 0 do
-      :ok
-    else
-      receive do
-        {:flezha_signal, signal} ->
-          render_tail_signal(signal, format)
-          do_tail_loop(source, format, deadline)
-      after
-        min(remaining, 1_000) ->
-          if System.monotonic_time(:millisecond) >= deadline,
-            do: :ok,
-            else: do_tail_loop(source, format, deadline)
-      end
-    end
-  end
+  defp tail_message(_message, _format), do: :continue
 
   defp render_tail_signal(signal, "json") do
     %{

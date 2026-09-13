@@ -43,10 +43,8 @@ defmodule Flezha.Service.Cli.Audit do
   to stdout until the duration elapses or the writer closes.
   """
   def audit_log_render_tail(format, %{opts: opts}) when format in ["text", "json"] do
-    duration_ms = Keyword.get(opts, :duration_ms, 30_000)
-
     case AuditSvc.subscribe_tail() do
-      {:ok, ref} -> audit_tail_loop(ref, format, duration_ms)
+      {:ok, ref} -> audit_tail(ref, format, Context.window(opts))
       {:error, reason} -> render_audit_error(reason)
     end
   end
@@ -148,40 +146,27 @@ defmodule Flezha.Service.Cli.Audit do
     IO.puts("rotated to: #{info.rotated_to}")
   end
 
-  defp audit_tail_loop(ref, format, duration_ms) do
-    deadline = System.monotonic_time(:millisecond) + duration_ms
-    do_audit_tail_loop(ref, format, deadline)
+  # A closed writer has already dropped the subscription, and asking it to drop
+  # one would call a process that is gone.
+  defp audit_tail(ref, format, window_ms) do
+    if Context.receive_for(window_ms, &audit_tail_message(&1, ref, format)) == :window_closed,
+      do: Writer.unsubscribe_tail(ref)
+
+    :ok
   end
 
-  defp do_audit_tail_loop(ref, format, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining <= 0 do
-      _ = Writer.unsubscribe_tail(ref)
-      :ok
-    else
-      receive do
-        {:audit_record, ^ref, record} ->
-          case format do
-            "json" -> IO.puts(Jason.encode!(record))
-            _ -> render_audit_records([record], "text")
-          end
-
-          do_audit_tail_loop(ref, format, deadline)
-
-        {:audit_writer_closed, ^ref} ->
-          :ok
-      after
-        min(remaining, 1_000) ->
-          if System.monotonic_time(:millisecond) >= deadline do
-            _ = Writer.unsubscribe_tail(ref)
-            :ok
-          else
-            do_audit_tail_loop(ref, format, deadline)
-          end
-      end
-    end
+  defp audit_tail_message({:audit_record, ref, record}, ref, "json") do
+    IO.puts(Jason.encode!(record))
+    :continue
   end
+
+  defp audit_tail_message({:audit_record, ref, record}, ref, _format) do
+    render_audit_records([record], "text")
+    :continue
+  end
+
+  defp audit_tail_message({:audit_writer_closed, ref}, ref, _format), do: :done
+  defp audit_tail_message(_message, _ref, _format), do: :continue
 
   defp render_audit_error(reason), do: Context.fail!(reason, &audit_message/1)
 

@@ -42,11 +42,19 @@ defmodule Flezha.AuthZ.PolicyTest do
             :"operative.start",
             :"operative.stop",
             :"operative.send",
+            :"operative.listen",
             :"plugin.enable",
             :"plugin.disable"
           ] do
         assert Policy.grants?(:app, a)
       end
+    end
+
+    test "listening is granted from app upward, and apart from the plugin rights" do
+      for role <- [:app, :operator, :admin], do: assert(Policy.grants?(role, :"operative.listen"))
+
+      for role <- [:viewer, :spawner, :stopper, :runner],
+          do: refute(Policy.grants?(role, :"operative.listen"))
     end
 
     test "app destroys no record and moves no work it did not create" do
