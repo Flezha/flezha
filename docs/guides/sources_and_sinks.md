@@ -42,18 +42,28 @@ File plugins read and write real paths, so a controller that let a plugin name
 any path would hand whoever enables plugins its certificates, its state and its
 tokens. They get one folder instead, and nothing outside it.
 
-**The controller already has one:** `app_data/files`, beside the controller's
-other data, created the first time a file plugin is enabled. The boot names it:
+**By default the folder is `app_data/files`, inside the directory the controller
+was started from.** Started the way
+[`controller_deployment.md`](controller_deployment.md) shows, that is
+`app_data/files` inside the release directory. Under Docker it is
+`/flezha/app_data/files`, inside the data volume. The controller creates the
+folder the first time a file plugin is enabled.
 
+**Ask the controller for the exact path:**
+
+```sh
+$ flz controller status | grep file_plugin_root
+file_plugin_root:              /opt/flezha/app_data/files
 ```
-[flezha] file plugins read and write under /.../app_data/files (set with FLEZHA_FILE_PLUGIN_ROOT)
-```
+
+The boot prints the same path, and once a file plugin is attached,
+`flz operative info` shows its full path too.
 
 A relative `path` in a plugin is taken under that folder, an absolute one must
 resolve inside it, and every symbolic link is followed before the check, so
 `../certs/key` and a link pointing out both fail the same way. The commands on
-this page run from the directory the controller started in. Under Docker the
-folder is `/flezha/app_data/files`, inside the data volume.
+this page use relative paths, run from the directory the controller was started
+in.
 
 To use another folder, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the
 controller starts. It is read at boot, so a running controller keeps its folder
@@ -70,7 +80,7 @@ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz cont
 flz plugin enable writer operative_file_sink \
   --operative_id=my_echo \
   --extension=on_output \
-  --Xpath=echo-out.ndjson
+  --Xpath=echo-out.txt
 ```
 
 Read that as four things: `writer` is the id you will use to disable it,
@@ -79,12 +89,18 @@ attaches to, and `--extension=on_output` is the subscription, meaning **send thi
 plugin everything the operative emits**. Options belonging to the plugin itself
 carry an `X` prefix, which is what separates them from the command's own flags.
 
+You do not create the file: the sink creates `echo-out.txt` when the plugin is
+enabled, readable only by the user the controller runs as. Its folder has to
+exist, though. The default `app_data/files` is made for you; a subfolder such as
+`out/` in `--Xpath=out/echo-out.txt` is not. The name is yours to pick; the sink
+never looks at the extension.
+
 Send something and the file grows. The sink writes in small batches, so the line
 lands a moment after the send rather than with it:
 
 ```sh
 flz operative send my_echo --text hello
-cat app_data/files/echo-out.ndjson
+cat app_data/files/echo-out.txt
 ```
 
 ```
@@ -113,7 +129,7 @@ output:
 
 ```sh
 echo "from a file" >> app_data/files/echo-in.txt
-cat app_data/files/echo-out.ndjson
+cat app_data/files/echo-out.txt
 ```
 
 ```
@@ -161,7 +177,7 @@ ObjectNode sink = JsonNodeFactory.instance.objectNode();
 sink.put("id", "writer");
 sink.put("provider", "operative_file_sink");
 sink.put("operative_id", "my_echo");
-sink.putObject("opts").put("path", "echo-out.ndjson");
+sink.putObject("opts").put("path", "echo-out.txt");
 sink.putArray("subscriptions").addArray().add("on_output").addObject();
 
 admin.enablePlugin("writer", sink);
