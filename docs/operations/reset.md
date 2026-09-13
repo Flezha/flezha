@@ -5,7 +5,7 @@ clears the durable on-disk state under `app_data/` — every Entity's
 WAL/snapshot/outbox files and the ProcessHub durable registry, optionally the
 TLS material, parked DLQ records, schedules, the auth store, the audit trail,
 installed plugins and UDS sockets — without deleting `app_data/` itself. It
-refuses to run while the Controller is up and never reaches into a remote
+clears nothing while the Controller is up and never reaches into a remote
 durability backend.
 
 ## Scope
@@ -150,7 +150,8 @@ non-empty output means "up" — the reset is refused with exit 4. Any other
 outcome (no node, timeout, distribution failure) means "not up" and the reset
 proceeds. There is no override flag: stop a wedged Controller with
 `flz controller stop --force` first. `flz auth rebootstrap` runs behind the
-same probe.
+same probe. A `--dry-run` skips the probe: it changes nothing, so a live
+Controller has nothing to be protected from.
 
 This guard is deliberately not widened to cover a Controller colocated on the
 same machine: a peer is a different node with its own durable state, and that

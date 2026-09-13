@@ -163,4 +163,4 @@ sets the flag to `false` so application teardown stays fast.
 ## See also
 
 - [Auto-restore on boot](auto_restore_on_boot.md) — what the solo-node path relies on
-- [Reset](reset.md) — `flz reset` refuses to run until the controller is stopped
+- [Reset](reset.md) — `flz reset` clears nothing until the controller is stopped

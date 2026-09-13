@@ -389,6 +389,21 @@ fn probe_up_refuses_with_exit_4() {
 }
 
 #[test]
+fn a_dry_run_previews_while_the_controller_is_up() {
+    let f = Fixture::populated();
+    let mut cmd = f.cmd();
+    cmd.arg("--dry-run")
+        .arg("--json")
+        .env("FLEZHA_RESET_PROBE_OVERRIDE", "up");
+    let out = cmd.output().unwrap();
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+    let text = stdout_of(&out);
+    assert!(text.contains("\"dry_run\":true"), "{}", text);
+    assert!(f.root.join("state/a.bin").exists());
+}
+
+#[test]
 fn dry_run_plan_matches_apply_counts() {
     let f = Fixture::populated();
     let dry = f

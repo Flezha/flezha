@@ -147,7 +147,7 @@ telemetry, exit-code semantics and the third-SIGTERM escape hatch:
 ## Wiping runtime data
 
 `flz reset` clears the Controller's durable on-disk state so the next boot
-starts from a clean slate, and refuses to run while the Controller is up. Which
+starts from a clean slate, and clears nothing while the Controller is up. Which
 directories are in scope (the socket directory is resolved, not fixed), the
 flags, the exit codes and the operator recipes for docker-compose, k8s and CI:
 [`docs/operations/reset.md`](docs/operations/reset.md).

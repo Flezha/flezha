@@ -442,7 +442,7 @@ USAGE:
 
 DESCRIPTION:
     Clears the contents of the Controller's durable on-disk state so the
-    next boot starts from a clean slate. Refuses to run while the
+    next boot starts from a clean slate. Clears nothing while the
     Controller is up; stop it first with `flz controller stop`.
 
     By default clears:

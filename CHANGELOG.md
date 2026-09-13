@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: `flz reset --dry-run` previews while the controller is up
+
+A dry run changes nothing, so it no longer refuses with exit 4 against a live
+controller.
+
 ### Fixed: a runner refused because its hub could not start names the start error
 
 A runner connect refused because its namespace hub could not start now names

@@ -86,7 +86,11 @@ fn flags(read: &Reading) -> Flags {
 pub(crate) fn handle_reset_command(read: &Reading) {
     let flags = flags(read);
 
-    refuse_if_controller_is_up(&flags);
+    // A preview changes nothing, so a live controller has nothing to be
+    // protected from; `--yes` with it is refused before this runs.
+    if !flags.dry_run {
+        refuse_if_controller_is_up(&flags);
+    }
 
     let started = Instant::now();
     let mut roots = build_plan(&flags);

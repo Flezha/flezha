@@ -73,6 +73,8 @@ This guard answers about **this** Controller's node, and SHALL NOT be widened to
 
 The command SHALL NOT provide a `--force-while-live` (or equivalent) escape hatch that bypasses this guard.
 
+A `--dry-run` changes nothing, so it SHALL NOT run the probe and previews whether or not the Controller is up; it is no escape hatch, because it never applies and `--yes --dry-run` is refused as a usage error.
+
 #### Scenario: Refuse when Controller is up
 
 - **GIVEN** the Controller is running and addressable via `flzvm rpc`
@@ -93,6 +95,13 @@ The command SHALL NOT provide a `--force-while-live` (or equivalent) escape hatc
 - **WHEN** the operator runs `flz reset --yes`
 - **THEN** the `flzvm rpc` probe exits non-zero (no live node)
 - **AND** the reset proceeds; the stale socket is cleared if `--include-sockets` or `--all` is also passed
+
+#### Scenario: A dry run previews while the Controller is up
+
+- **GIVEN** the Controller is running and addressable via `flzvm rpc`
+- **WHEN** the operator runs `flz reset --dry-run --json`
+- **THEN** the command prints the plan with `dry_run` set to `true` and exits 0
+- **AND** no file under `app_data/` is touched
 
 ### Requirement: `flz reset` requires explicit `--yes` for any destructive action
 
