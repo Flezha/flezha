@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   spec` names every option the provider takes — type, default, whether it is
   required, its bounds, its documentation — and, for a provider that runs a
   long-lived process, the worker module and its restart value. From the rows
-  the `use` derives `defstruct`, `@enforce_keys`, `build/1`, `help/0`,
+  the `use` derives `defstruct`, `@enforce_keys`, `build/1`, `help/1`,
   `provider_info/0`, `validate_opts/1` and the conversion table; from the worker
   spec, `Flezha.Plugin.Extension.Table` starts, tracks, probes and stops the
   process at activation.
@@ -96,7 +96,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @callback plugin_type() :: :io_binding
   @callback build(map()) :: {:ok, struct()} | {:error, String.t()}
-  @callback help() :: String.t()
+  @callback help(provider_id :: String.t()) :: String.t()
   @callback provider_info() :: map()
 
   @doc """

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed: plugin help names the real provider id, and `help/0` becomes `help/1`
+
+`flz plugin help <provider_id>` names the id the enable takes and lists only the
+options an operator can write. A plugin provider's `help/0` callback becomes
+`help/1`, taking that id.
+
 ### Fixed: Java `@Procedure` strings may hold quotes and backslashes
 
 The `id`, `sink`, `input` and `keys` of a Java `@Procedure` may hold quotes,

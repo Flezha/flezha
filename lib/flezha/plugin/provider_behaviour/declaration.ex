@@ -88,7 +88,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
         do: unquote(Options).build_struct(__MODULE__, string_map, &convert_value/2)
 
       @impl unquote(contract)
-      def help(), do: unquote(Options).render_help(__MODULE__)
+      def help(provider_id), do: unquote(Options).render_help(__MODULE__, provider_id)
 
       @impl unquote(contract)
       def provider_info(), do: unquote(Options).describe(__MODULE__)
@@ -137,7 +137,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       def terminate_provider(_opts), do: :ok
 
       defoverridable build: 1,
-                     help: 0,
+                     help: 1,
                      plugin_type: 0,
                      provider_info: 0,
                      init_provider: 1,

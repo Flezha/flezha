@@ -8,6 +8,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureIO
+
   # A refused declaration is driven on purpose and the table reports the halt
   # at error level; the refusal is asserted as a return value.
   @moduletag :capture_log
@@ -26,6 +28,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
+  alias Flezha.Service.Cli
 
   @names_rows [channel_out: [type: :names]]
 
@@ -450,7 +453,10 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # enable refuses to do without. Both render the row's own `doc:`, which is
     # where the rule is written.
     test "both operator surfaces say the entry channel is required" do
-      for text <- [HttpPoll.help(), ProviderOptions.render_options_table(HttpPoll)] do
+      for text <- [
+            HttpPoll.help("operative_http_poll"),
+            ProviderOptions.render_options_table(HttpPoll)
+          ] do
         assert text =~ "Required, unless `channel_in` names it"
         assert text =~ "Required, unless `channel` names it"
       end
@@ -611,6 +617,33 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
             do: "#{id}.#{name} is #{inspect(row[:type])}"
 
       assert drifted == []
+    end
+  end
+
+  describe "the help screen offers what the enable takes" do
+    # Driven through the verb, because the id an operator copies from the screen
+    # is the one the verb was asked for, and the module behind it cannot know it.
+    test "every provider's screen names its registered id and lists its public options only" do
+      checked =
+        for {id, module} <- Flezha.Plugin.Providers.all(), Code.ensure_loaded?(module) do
+          screen = capture_io(fn -> Cli.Plugin.plugin_help(id, %{opts: []}) end)
+
+          assert screen =~ "flz plugin enable <plugin_id> #{id} [OPTIONS]"
+
+          for {name, row} <- module.__provider__().options do
+            internal = Keyword.get(row, :internal, false)
+            offered = screen =~ "--X#{name} <value>"
+
+            assert offered != internal,
+                   "#{id}: --X#{name} is internal: #{internal}, and the screen says otherwise"
+          end
+
+          id
+        end
+
+      # An empty table, or one without the provider that declares internal rows,
+      # would pass every assertion above.
+      assert "operative_websocket" in checked
     end
   end
 

@@ -268,20 +268,27 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
     e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
   end
 
-  @doc "The screen `flz plugin help <provider>` renders for `module`."
-  @spec render_help(module()) :: binary()
-  def render_help(module) do
-    {required, all} = fields(module)
+  @doc """
+  The screen `flz plugin help <provider_id>` renders for `module`, registered as
+  `provider_id`.
+  """
+  @spec render_help(module(), binary()) :: binary()
+  def render_help(module, provider_id) do
+    {required, optional} =
+      Enum.split_with(Decl.public_options(module.__provider__()), fn {_name, row} ->
+        Keyword.get(row, :required, false)
+      end)
+
     name = module |> Module.split() |> List.last()
 
     """
     #{name} Plugin Help
 
     USAGE:
-        flz plugin enable <plugin_id> #{String.downcase(name)} [OPTIONS]
+        flz plugin enable <plugin_id> #{provider_id} [OPTIONS]
     """ <>
-      param_block("REQUIRED", required, rows(module)) <>
-      param_block("OPTIONAL", all -- required, rows(module)) <>
+      param_block("REQUIRED", required) <>
+      param_block("OPTIONAL", optional) <>
       """
 
       COMMON OPTIONS:
@@ -290,24 +297,24 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
           --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
           --position <num>          Plugin position
 
-      Override this help/0 function in your provider module for custom help text.
+      Override this help/1 function in your provider module for custom help text.
       """
   end
 
   # The REQUIRED and OPTIONAL sections are one rendering over two lists.
-  defp param_block(heading, fields, rows) do
-    "\n#{heading} PARAMETERS (X-prefixed):\n" <> param_lines(fields, rows)
+  defp param_block(heading, rows) do
+    "\n#{heading} PARAMETERS (X-prefixed):\n" <> param_lines(rows)
   end
 
-  defp param_lines([], _rows), do: "    None\n"
+  defp param_lines([]), do: "    None\n"
 
   # The row's own `doc:` is what describes an option, so the help screen and the
   # documented table render the same sentence. A row that declares none falls
   # back to its name, which is all this screen ever said.
-  defp param_lines(fields, rows) do
-    Enum.map_join(fields, "", fn field ->
+  defp param_lines(rows) do
+    Enum.map_join(rows, "", fn {field, row} ->
       name = Atom.to_string(field)
-      doc = rows |> Keyword.get(field, []) |> Keyword.get(:doc) || String.capitalize(name)
+      doc = Keyword.get(row, :doc) || String.capitalize(name)
       "    --X#{name} <value>    #{doc}\n"
     end)
   end

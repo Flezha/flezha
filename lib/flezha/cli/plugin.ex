@@ -278,14 +278,14 @@ defmodule Flezha.Service.Cli.Plugin do
     case get_plugin_provider_mod(provider_id) do
       {:ok, provider_mod} ->
         try do
-          help_text = apply(provider_mod, :help, [])
+          help_text = provider_mod.help(provider_id)
           IO.puts(help_text)
           IO.puts("")
           print_supported_extensions(provider_mod)
         rescue
           UndefinedFunctionError ->
             IO.puts(
-              "Help not available for plugin '#{provider_id}'. The plugin provider does not implement help/0."
+              "Help not available for plugin '#{provider_id}'. The plugin provider does not implement help/1."
             )
 
           e ->
