@@ -343,7 +343,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   def runner_connect(stream_ref, namespace, transport) do
     runner_id = Identificator.unique_id(namespace)
 
-    ensure_hub(namespace)
+    ensure_hub(namespace, runner_id)
     register_insertion_hook(namespace, runner_id)
     control_channel_pid = start_runner_tree(namespace, runner_id, stream_ref, transport)
     Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
@@ -455,11 +455,29 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   # On-demand hub creation takes the same cluster gate every hub-creating path
   # takes: a runner connecting during the boot window must not create a
-  # singleton hub before the node has joined the cluster.
-  defp ensure_hub(namespace) do
+  # singleton hub before the node has joined the cluster. A hub that did not
+  # start is refused with the start's own error, since the next step could
+  # only report it as missing; one a concurrent connect started is this
+  # runner's hub too.
+  defp ensure_hub(namespace, runner_id) do
     if !HubManager.hub_alive?(namespace) do
       _ = HubManager.await_cluster_gate()
-      HubManager.start_hub(namespace)
+
+      case HubManager.start_hub(namespace) do
+        {:error, {:already_started, _pid}} ->
+          :ok
+
+        {:error, reason} ->
+          refuse(
+            runner_id,
+            namespace,
+            "could not start its hub (#{inspect(reason)})",
+            {:hub_unavailable, namespace, reason}
+          )
+
+        _started ->
+          :ok
+      end
     end
   end
 

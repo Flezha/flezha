@@ -242,13 +242,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       on_exit(TestHelpers.override_env(:socket_files_path, too_long))
       MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
 
-      state = %{transport: :uds, pending_streams: %{7 => make_ref()}}
-      payload = Jason.encode!(%{"namespace" => ns, "factories" => []})
-
-      log =
-        capture_log(fn ->
-          Server.handle_info({:flz_data, 7, "connect_control_channel", payload, %{}}, state)
-        end)
+      log = socket_connect_log(ns)
 
       assert_received {:rejected, %{count: 1}, %{reason: {:runner_supervisor_down, start_error}}}
       refute match?({:noproc, _}, start_error)
@@ -269,6 +263,68 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
       assert Enum.filter(handlers, &insertion_hook?/1) == []
     end
+  end
+
+  describe "a runner whose namespace hub cannot start" do
+    setup do
+      namespace = "hub-start-#{System.unique_integer([:positive])}"
+      on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+      %{ns: namespace}
+    end
+
+    test "is refused naming the hub start's own error", %{ns: ns} do
+      start_error = {:shutdown, {:failed_to_start_child, :hub_under_test, :enospc}}
+      stub_hub_start(ns, fn -> {:error, start_error} end)
+      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+
+      log = socket_connect_log(ns)
+
+      assert_received {:rejected, %{count: 1}, %{reason: reason}}
+      assert inspect(reason) =~ inspect(start_error)
+
+      refusal =
+        log
+        |> String.split("\n")
+        |> Enum.find("", &(&1 =~ "on #{ns} " and &1 =~ "refusing the connect"))
+
+      assert refusal =~ inspect(start_error)
+      assert log =~ "Failed to connect runner"
+      assert log =~ "Rejected runner connect"
+    end
+
+    test "still connects when a concurrent start answers already started", %{ns: ns} do
+      stub_hub_start(ns, fn ->
+        {:ok, pid} = call_original(HubManager, :start_hub, [ns])
+        {:error, {:already_started, pid}}
+      end)
+
+      {_sdk, session} = stand_in_runner(ns, &accept/1)
+
+      assert NodeTestHelper.wait_until(
+               fn -> session in FleetManager.active_runners(ns) end,
+               5_000
+             )
+    end
+  end
+
+  # `start_hub/1` answers `start` for `namespace` only; every other hub the
+  # node starts meanwhile starts for real.
+  defp stub_hub_start(namespace, start) do
+    stub(HubManager, :start_hub, fn
+      ^namespace -> start.()
+      other -> call_original(HubManager, :start_hub, [other])
+    end)
+  end
+
+  # A socket connect for `namespace` driven through the acceptor on a stream
+  # that is never opened, answering everything it logged.
+  defp socket_connect_log(namespace) do
+    state = %{transport: :uds, pending_streams: %{7 => make_ref()}}
+    payload = Jason.encode!(%{"namespace" => namespace, "factories" => []})
+
+    capture_log(fn ->
+      Server.handle_info({:flz_data, 7, "connect_control_channel", payload, %{}}, state)
+    end)
   end
 
   # Every `child_registered` handler this namespace's hub holds, by id.

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed: a runner refused because its hub could not start names the start error
+
+A runner connect refused because its namespace hub could not start now names
+the start's own error in its log lines and in the
+`[:flezha, :transport, :connect_rejected]` event.
+
 ### Fixed: a Java constructor that throws is reported as its own error
 
 A Java operative, workflow or procedure whose constructor throws reports that
