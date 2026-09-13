@@ -18,8 +18,10 @@ order once Part 1 works.
 
 ## Part 1: getting started
 
-The shortest path from nothing to data flowing. Read these in order; each one
-assumes the one before it.
+The shortest path from nothing to data flowing. Read these in order: each one
+assumes the one before it, and **uses what that one started, still running**.
+Run in the foreground, the controller and your runner each keep a terminal, so
+keep a third for `flz`. The last page stops everything.
 
 ### First, watch one run
 
@@ -30,12 +32,12 @@ offering an operative, and send a message through it:
 cd examples/python/echo
 docker compose up -d --wait
 docker compose exec controller /flezha/bin/flz operative start my_echo echo
-docker compose exec controller /flezha/bin/flz operative send my_echo --text hello --await 2000
+docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
 ```
 
 ```
 Delivered to 'my_echo'.
-out	echo: hello
+out	echo: hello world
 ```
 
 [`examples/python/echo`](../../examples/python/echo) is that deployment, and it
@@ -45,7 +47,12 @@ than about getting anything to start at all.
 
 **It is a demo and not a deployment.** It makes every choice for you, and the
 first thing you change will be one of them, which is what the guides below are
-for.
+for. It keeps running until you take it down, and the guides start a controller
+of their own:
+
+```sh
+docker compose down
+```
 
 | Guide | What you end up with |
 |---|---|
@@ -53,6 +60,7 @@ for.
 | [`runner_deployment.md`](runner_deployment.md) | Your own runner connected to it, offering an operative class |
 | [`running_operatives.md`](running_operatives.md) | An operative started on that runner, taking messages and answering them |
 | [`sources_and_sinks.md`](sources_and_sinks.md) | Data arriving from somewhere real, and results going somewhere real |
+| [`stop_everything.md`](stop_everything.md) | Everything above stopped, and what comes back when you start again |
 
 **Part 1 turns authorization off**, to keep things simple while you get a first
 run working. That is a real feature switched off, not a default, and

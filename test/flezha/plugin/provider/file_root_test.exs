@@ -9,6 +9,7 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
 
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
+  alias Flezha.Config
   alias Flezha.Plugin.Provider.File, as: FilePlugin
   alias FlezhaTest.Helper.ProviderPrepare
 
@@ -21,16 +22,32 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     %{root: root, outside: tmp}
   end
 
-  test "the root is unset: an enable is refused naming the variable" do
+  test "an unset root is the default folder, created by the first enable" do
     Application.delete_env(:flezha, :file_plugin_root)
+    default = Path.expand(Config.default(:file_plugin_root))
+    existed? = File.dir?(default)
+    # rmdir, never rm_rf: a checkout's default folder may hold someone's files.
+    on_exit(fn -> if not existed?, do: File.rmdir(default) end)
+
+    assert {:ok, %{path: path}} =
+             ProviderPrepare.prepare(FilePlugin.Sink, %{path: "events.ndjson"})
+
+    assert path == Path.join(default, "events.ndjson")
+  end
+
+  test "a configured root that does not exist is refused, and not created", %{outside: outside} do
+    missing = Path.join(outside, "unmounted")
+    Application.put_env(:flezha, :file_plugin_root, missing)
 
     for {provider, opts} <- [
           {FilePlugin.Source, %{path: "events.ndjson", channel_in: "events"}},
           {FilePlugin.Sink, %{path: "events.ndjson"}}
         ] do
       assert {:error, message} = ProviderPrepare.prepare(provider, opts)
-      assert message =~ "FLEZHA_FILE_PLUGIN_ROOT"
+      assert message =~ missing
     end
+
+    refute File.exists?(missing)
   end
 
   test "a root that does not exist is refused naming it", %{outside: outside} do

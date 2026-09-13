@@ -25,8 +25,11 @@ its alone:
 ## Choose a way
 
 **Do one of these four, not all of them.** They give you the same controller.
-Each is self contained: get it, start it, check it, stop it. They are the four
-tabs in [Start a controller](#start-a-controller).
+Each is self contained: get it, start it, check it. They are the four tabs in
+[Start a controller](#start-a-controller).
+
+**Then leave it running.** Every guide after this one in Part 1 uses it, and the
+last, [`stop_everything.md`](stop_everything.md), stops it.
 
 | Way | Pick it when |
 |---|---|
@@ -108,6 +111,9 @@ and `-m` is the short form:
 | `attached_iex` | attached, with an IEx shell on the running node |
 | `daemon_iex` | detached, with an IEx shell under the daemon |
 
+In `attached` mode the controller keeps this terminal. Leave it open, and run
+everything after this from a second one, with the same `export PATH` line.
+
 #### Check it
 
 Two different questions, two commands. Is it ready:
@@ -136,25 +142,6 @@ controller reachable
 ```
 
 Both exit zero only on success.
-
-#### Stop it
-
-```sh
-flz controller stop
-```
-
-It quiesces, drains and finalises, and says so:
-
-```
-[shutdown] complete duration_ms=8 outcome=clean
-```
-
-Ctrl-C in `attached` mode stops it too, but at once: nothing is drained, and the
-next start recovers from disk as it would after a crash.
-
-That verb is authorization gated, so with enforcement on it refuses until you
-have claimed an admin. `flzvm stop` needs only the cookie and works either way,
-which is what to reach for on a controller you cannot authorize against.
 
 ### Docker
 
@@ -196,12 +183,6 @@ Ask it directly for the same answer:
 ```sh
 $ docker exec flezha-controller /flezha/bin/flz boot await
 boot await: ready
-```
-
-#### Stop it
-
-```sh
-docker stop flezha-controller
 ```
 
 ### Kubernetes
@@ -309,10 +290,6 @@ $ curl localhost:9569/healthz
 `flz` cannot reach this controller. The CLI runs the `flzvm` script beside it,
 which only exists in a release.
 
-#### Stop it
-
-The controller stops with your application.
-
 <!-- tabs-close -->
 
 ## Left for later
@@ -326,13 +303,14 @@ With it on, operator verbs refuse until you claim an admin, and a runner has to
 prove the namespace it connects to.
 [`authorization.md`](authorization.md) turns it on.
 
-**The boot prints three decisions you can ignore for now:** the node cookie it
-minted, the state root it resolved, and that no durability backend is set. They
-start to matter once there is a second machine or a second disk, which is
-[`clustering.md`](clustering.md) and [`durability.md`](durability.md).
+**The boot prints decisions you can ignore for now:** the node cookie it minted,
+the state root it resolved, and that no durability backend is set. They start to
+matter once there is a second machine or a second disk, which is
+[`clustering.md`](clustering.md) and [`durability.md`](durability.md). One more
+line names the folder file plugins may use, which
+[`sources_and_sinks.md`](sources_and_sinks.md) comes back to.
 
 ## Next
 
 A controller with no runner does nothing.
-[`runner_deployment.md`](runner_deployment.md) connects one and starts an operative
-on it.
+[`runner_deployment.md`](runner_deployment.md) connects one to it.

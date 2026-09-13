@@ -11,15 +11,18 @@ delivery, failure semantics and health, then telemetry and limits.
 ## The root folder
 
 A plugin that can read or write any path the controller can reach would hand whoever
-enables plugins the controller's certificates, its state and its tokens. So one
-controller-level variable names the only folder a file plugin may touch:
+enables plugins the controller's certificates, its state and its tokens. So a file
+plugin may touch one folder and nothing outside it: `app_data/files` by default,
+beside the controller's other data, created by the first file plugin enable. To use
+another, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the controller starts:
 
 ```bash
-export FLEZHA_FILE_PLUGIN_ROOT=/srv/flezha/files
+FLEZHA_FILE_PLUGIN_ROOT=/srv/flezha/files flz controller start
 ```
 
-- **Unset refuses.** While `FLEZHA_FILE_PLUGIN_ROOT` is unset, every file plugin
-  enable is refused with a message naming it. There is no default folder.
+- **A folder you name must exist.** It is read at boot and never created, because a
+  missing one may be a share that is not mounted. Until it exists, every file plugin
+  enable is refused naming it.
 - **Every path resolves inside it.** A relative `path` names a file under the root; an
   absolute one is taken as written. The path is then resolved one component at a time
   with every symbolic link followed, and the result must lie inside the resolved root,

@@ -440,10 +440,10 @@ defmodule Flezha.Config.Keys do
     {:plugin_installer_data_dir, :path, nil, key: true},
 
     # ---- file plugins ---------------------------------------------------------
-    # The one folder a file plugin may read from or write to. No default: a
-    # folder no operator chose would be a folder nobody decided a plugin may
-    # reach, so while it is unset every file plugin enable is refused.
-    {:file_plugin_root, :path, nil, key: true, env: "FLEZHA_FILE_PLUGIN_ROOT"},
+    # The one folder a file plugin may read from or write to. The default is a
+    # folder of its own beside the controller's data, never a parent of it, so
+    # no plugin path reaches the state, certificates or tokens.
+    {:file_plugin_root, :path, "app_data/files", key: true, env: "FLEZHA_FILE_PLUGIN_ROOT"},
 
     # ---- boot and recovery --------------------------------------------------
     # Tests bring up their own runners and operatives, so at-boot replay is off

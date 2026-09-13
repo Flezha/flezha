@@ -1,8 +1,9 @@
 # Deploy a runner
 
-**Before you start:** finish [`controller_deployment.md`](controller_deployment.md).
-A runner is useless on its own: it connects to a controller, so you need one
-running and reachable before anything here works.
+**Before you start:** finish [`controller_deployment.md`](controller_deployment.md)
+and leave that controller running. A runner is useless on its own: it connects
+to a controller, so `flz boot await` has to answer `ready` before anything here
+works.
 
 TODO: a draft. Java is the only language filled in, and the last section is
 not written yet.
@@ -526,7 +527,11 @@ under the controller's own supervision tree.
 
 <!-- tabs-close -->
 
-Then ask the controller whether it arrived:
+Each of these keeps its terminal until you stop it. Leave the runner running
+there, beside the controller: the next guide starts work on it, and
+[`stop_everything.md`](stop_everything.md) stops it at the end of Part 1.
+
+From another terminal, ask the controller whether it arrived:
 
 ```sh
 flz runner list

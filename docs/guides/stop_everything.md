@@ -1,0 +1,78 @@
+# Stop everything
+
+**Before you start:** this is the last page of Part 1, and it stops what the
+four before it started. You do not have to: skip it and go on to Part 2 with
+everything still running.
+
+Stop things in the reverse order you started them: the plugin, the operative,
+the runner, then the controller.
+
+## The plugin and the operative
+
+```sh
+flz plugin disable writer
+flz operative stop my_echo
+```
+
+`reader` is already off if you followed
+[Turn one off](sources_and_sinks.md#turn-one-off).
+
+**These are the only steps that forget anything.** The controller keeps enabled
+plugins and started operatives in a durable registry, so if you skip them, they
+come back on their own the next time the controller and your runner start. Run
+them when you want that next start to be empty.
+
+## The runner
+
+Press Ctrl-C in the terminal your runner is running in. An in-node Elixir
+runner has nothing to stop: it stops with the controller.
+
+## The controller
+
+<!-- tabs-open -->
+
+### Binaries
+
+```sh
+flz controller stop
+```
+
+It quiesces, drains and finalises, and says so:
+
+```
+[shutdown] complete duration_ms=8 outcome=clean
+```
+
+Ctrl-C in `attached` mode stops it too, but at once: nothing is drained, and the
+next start recovers from disk as it would after a crash.
+
+That verb is authorization gated, so with enforcement on it refuses until you
+have claimed an admin. `flzvm stop` needs only the cookie and works either way,
+which is what to reach for on a controller you cannot authorize against.
+
+### Docker
+
+```sh
+docker stop flezha-controller
+```
+
+### Inside an Elixir application
+
+The controller stops with your application.
+
+<!-- tabs-close -->
+
+## Starting again
+
+Start the controller and then your runner, the way
+[`controller_deployment.md`](controller_deployment.md) and
+[`runner_deployment.md`](runner_deployment.md) showed. Under Docker that is
+`docker start flezha-controller`, not a second `docker run`. Whatever you did
+not stop above comes back without being asked, and the files in
+`app_data/files` are still on disk.
+
+## Next
+
+That is Part 1. [`introduction.md`](introduction.md) lists what Part 2 takes
+apart, and [`authorization.md`](authorization.md) is the one to read first,
+because Part 1 left it switched off.

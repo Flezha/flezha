@@ -1,7 +1,13 @@
 # Sources and sinks
 
-**Before you start:** finish [`running_operatives.md`](running_operatives.md).
-You need `my_echo` running on a connected runner.
+**Before you start:** finish [`running_operatives.md`](running_operatives.md),
+with the controller, your runner and `my_echo` all still running. Check:
+
+```sh
+flz operative list    # my_echo, with your runner under RUNNER
+```
+
+If it is not there, go back to the guide that starts the missing piece.
 
 TODO: a draft. The commands are taken from
 [`../plugins/file.md`](../plugins/file.md) but have not been run end to end yet.
@@ -30,22 +36,33 @@ That is the shape to remember: **an operative declares where its edges are, and
 an operator decides what is on the other side.** The same `echo` runs against a
 file today and Kafka tomorrow with no rebuild.
 
-## Name the folder plugins may touch
+## The folder plugins may touch
 
 File plugins read and write real paths, so a controller that let a plugin name
 any path would hand whoever enables plugins its certificates, its state and its
-tokens. One variable names the only folder they may touch, and **while it is
-unset every file plugin enable is refused**:
+tokens. They get one folder instead, and nothing outside it.
 
-```sh
-export FLEZHA_FILE_PLUGIN_ROOT=/srv/flezha/files
-mkdir -p /srv/flezha/files
+**The controller already has one:** `app_data/files`, beside the controller's
+other data, created the first time a file plugin is enabled. The boot names it:
+
+```
+[flezha] file plugins read and write under /.../app_data/files (set with FLEZHA_FILE_PLUGIN_ROOT)
 ```
 
-It is read at boot, so set it and restart the controller. A relative `path` in a
-plugin is then taken under that folder, an absolute one must resolve inside it,
-and every symbolic link is followed before the check, so `../certs/key` and a
-link pointing out both fail the same way.
+A relative `path` in a plugin is taken under that folder, an absolute one must
+resolve inside it, and every symbolic link is followed before the check, so
+`../certs/key` and a link pointing out both fail the same way. The commands on
+this page run from the directory the controller started in. Under Docker the
+folder is `/flezha/app_data/files`, inside the data volume.
+
+To use another folder, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the
+controller starts. It is read at boot, so a running controller keeps its folder
+until it is restarted, and a folder you name has to exist already:
+
+```sh
+mkdir -p "$HOME/flezha-files"
+FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz controller start
+```
 
 ## Write the output to a file
 
@@ -62,11 +79,12 @@ attaches to, and `--extension=on_output` is the subscription, meaning **send thi
 plugin everything the operative emits**. Options belonging to the plugin itself
 carry an `X` prefix, which is what separates them from the command's own flags.
 
-Send something and the file grows:
+Send something and the file grows. The sink writes in small batches, so the line
+lands a moment after the send rather than with it:
 
 ```sh
 flz operative send my_echo --text hello
-cat /srv/flezha/files/echo-out.ndjson
+cat app_data/files/echo-out.ndjson
 ```
 
 ```
@@ -90,9 +108,12 @@ flz plugin enable reader operative_file_source \
 name the operative gave it. There is no `--extension` here: a source drives
 itself, reading the file and pushing lines in, rather than being sent anything.
 
+It looks for new lines once a second, so give it that second before reading the
+output:
+
 ```sh
-echo "from a file" >> /srv/flezha/files/echo-in.txt
-cat /srv/flezha/files/echo-out.ndjson
+echo "from a file" >> app_data/files/echo-in.txt
+cat app_data/files/echo-out.ndjson
 ```
 
 ```
@@ -174,7 +195,6 @@ a provider, an operative and its options.
 
 ## Next
 
-That is Part 1. You have a controller, a runner, an operative and real data
-moving through it. [`introduction.md`](introduction.md) lists what Part 2 takes
-apart, and [`authorization.md`](authorization.md) is the one to read first,
-because Part 1 left it switched off.
+You have a controller, a runner, an operative and real data moving through it.
+[`stop_everything.md`](stop_everything.md), the last page of Part 1, stops all of
+it and says what comes back when you start again.

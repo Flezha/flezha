@@ -67,7 +67,8 @@ defmodule Flezha.Boot.Loader do
 
   @doc """
   What this boot chose that nothing outside the node can see: the state root it
-  opened, whether that directory holds anything, and how a runner attaches.
+  opened, whether that directory holds anything, the folder file plugins may use,
+  and how a runner attaches.
 
   Every line on every boot, not only the boot that establishes it. The operator
   who ran the first boot already knows; the population these lines are for is
@@ -77,12 +78,20 @@ defmodule Flezha.Boot.Loader do
   """
   @spec boot_report() :: [String.t()]
   def boot_report() do
-    Enum.reject([state_root_line(), cold_start_line(), attach_line()], &is_nil/1)
+    Enum.reject(
+      [state_root_line(), cold_start_line(), file_root_line(), attach_line()],
+      &is_nil/1
+    )
   end
 
   defp state_root_line() do
     "[flezha] durable state under #{Paths.state_root()} " <>
       "(set with #{Config.env_name(:state_root)})"
+  end
+
+  defp file_root_line() do
+    "[flezha] file plugins read and write under #{Path.expand(Config.get(:file_plugin_root))} " <>
+      "(set with #{Config.env_name(:file_plugin_root)})"
   end
 
   # A relocated working directory under the default relative root opens an

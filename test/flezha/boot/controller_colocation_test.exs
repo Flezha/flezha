@@ -18,6 +18,7 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
 
   alias Flezha.Boot.Loader
   alias Flezha.Boot.StateRootLock
+  alias Flezha.Config
   alias Flezha.Runner.FleetManager
   alias Flezha.Socket.Support
   alias Flezha.State.Paths
@@ -195,6 +196,17 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
   # ---------- the boot report ----------
 
   describe "the boot report" do
+    test "names the folder file plugins may use and the variable that moves it" do
+      line =
+        Enum.find(
+          Loader.boot_report(),
+          &String.contains?(&1, "file plugins read and write under")
+        )
+
+      assert line =~ Path.expand(Config.get(:file_plugin_root))
+      assert line =~ "FLEZHA_FILE_PLUGIN_ROOT"
+    end
+
     test "names the resolved absolute state root and the variable that moves it" do
       root = Paths.state_root()
       assert Path.type(root) == :absolute

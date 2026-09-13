@@ -70,8 +70,9 @@ controller and a controller restart. Delivery is at-least-once.
 confirms a delivery-guaranteed record; a batch synced just before a crash can be
 appended a second time.
 
-Both refuse to enable until `FLEZHA_FILE_PLUGIN_ROOT` names the one folder a file
-plugin may touch, and every path must resolve inside it with symbolic links
+Both touch one folder and nothing outside it: `app_data/files` by default,
+created by the first enable, or the folder `FLEZHA_FILE_PLUGIN_ROOT` names, which
+must already exist. Every path must resolve inside it with symbolic links
 followed. A file the sink creates is private (`0600`). See `docs/plugins/file.md`.
 
 ```
@@ -102,9 +103,9 @@ Listening is authorized as its own action, `operative.listen`, granted from
 prints what came back, so one command checks a deployment:
 
 ```
-$ flz operative send my_echo --text hello --await 2000
+$ flz operative send my_echo --text 'hello world' --await 2000
 Delivered to 'my_echo'.
-echo	hello
+echo	hello world
 ```
 
 ### Added: a plugin's channel filter names a set of channels

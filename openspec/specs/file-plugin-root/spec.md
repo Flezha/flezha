@@ -6,8 +6,9 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 ### Requirement: Every file plugin path SHALL resolve inside one configured root folder
 
 The controller SHALL declare one configuration row, `FLEZHA_FILE_PLUGIN_ROOT`, naming the one
-folder a file plugin may read from or write to. It SHALL have no default. A file plugin
-enabled while it is unset SHALL be refused with a message naming the variable.
+folder a file plugin may read from or write to. Its default SHALL be `app_data/files`, which the
+first file plugin enable SHALL create when it is missing. A folder the operator sets SHALL NOT be
+created, and while it is missing every file plugin enable SHALL be refused naming it.
 
 A plugin's `path` SHALL be expanded against the root, so a relative path names a file under it
 and an absolute path is taken as written, and SHALL then be resolved with symlinks followed,
@@ -18,10 +19,18 @@ exist at enable time, but its parent directory SHALL exist and SHALL resolve ins
 The resolved absolute path SHALL replace `path` in the plugin's options, so every log line,
 telemetry event and health verdict names one spelling.
 
-#### Scenario: The root is unset
+#### Scenario: The root is not set
 
 - **WHEN** a file plugin is enabled and `FLEZHA_FILE_PLUGIN_ROOT` is not set
-- **THEN** the enable SHALL be refused with a message naming `FLEZHA_FILE_PLUGIN_ROOT`
+- **THEN** the root SHALL be `app_data/files`, created if it is missing, and the enable SHALL
+  succeed
+
+#### Scenario: A configured root that is missing is refused
+
+- **GIVEN** the root is set to `/srv/flezha/files`, which does not exist
+- **WHEN** a file plugin is enabled
+- **THEN** the enable SHALL be refused naming `/srv/flezha/files`, and the folder SHALL NOT be
+  created
 
 #### Scenario: A relative path lands under the root
 

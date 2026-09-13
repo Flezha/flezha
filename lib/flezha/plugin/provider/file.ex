@@ -5,7 +5,7 @@ defmodule Flezha.Plugin.Provider.File do
   `File.Sink` (`operative_file_sink`) writes one line per record.
 
   What both directions share lives here: the one folder every path must
-  resolve inside, `FLEZHA_FILE_PLUGIN_ROOT`, and the preparation that resolves a
+  resolve inside, `FLEZHA_FILE_PLUGIN_ROOT` or its default, and the preparation that resolves a
   plugin's `path` against it. The contract, the options and the limits are
   `docs/plugins/file.md`.
   """
@@ -21,16 +21,10 @@ defmodule Flezha.Plugin.Provider.File do
   component by component with every symbolic link followed.
 
   The file need not exist, but its parent directory must. The answer is the
-  resolved absolute path, or a refusal naming the unset variable, the root the
-  path leaves, or the directory that is missing.
+  resolved absolute path, or a refusal naming the root the path leaves, or the
+  directory that is missing.
   """
-  @spec resolve_within_root(binary(), binary() | nil) :: {:ok, binary()} | {:error, binary()}
-  def resolve_within_root(_path, nil),
-    do:
-      {:error,
-       "a file plugin needs FLEZHA_FILE_PLUGIN_ROOT, the one folder its paths may name, " <>
-         "and it is not set"}
-
+  @spec resolve_within_root(binary(), binary()) :: {:ok, binary()} | {:error, binary()}
   def resolve_within_root(path, root) do
     root = Path.expand(root)
     target = Path.expand(path, root)
@@ -48,7 +42,13 @@ defmodule Flezha.Plugin.Provider.File do
   """
   @spec prepare(map()) :: {:ok, map()} | {:error, binary()}
   def prepare(opts) do
-    with {:ok, path} <- resolve_within_root(opts.path, Config.get(:file_plugin_root)) do
+    root = Config.get(:file_plugin_root)
+
+    # Only the default folder is created. A configured one that is missing may be
+    # a share that is not mounted, and writing beside it would go unnoticed.
+    if root == Config.default(:file_plugin_root), do: File.mkdir_p(root)
+
+    with {:ok, path} <- resolve_within_root(opts.path, root) do
       {:ok,
        Map.merge(opts, %{path: path, plugin_id: opts.plugin_id || opts[:source_plugin_id] || path})}
     end

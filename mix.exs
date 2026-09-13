@@ -74,6 +74,7 @@ defmodule Flezha.MixProject do
         "docs/guides/runner_deployment.md",
         "docs/guides/running_operatives.md",
         "docs/guides/sources_and_sinks.md",
+        "docs/guides/stop_everything.md",
         "docs/guides/cli.md",
         "docs/guides/namespaces.md",
         "docs/guides/authorization.md",
@@ -106,7 +107,8 @@ defmodule Flezha.MixProject do
           "docs/guides/controller_deployment.md",
           "docs/guides/runner_deployment.md",
           "docs/guides/running_operatives.md",
-          "docs/guides/sources_and_sinks.md"
+          "docs/guides/sources_and_sinks.md",
+          "docs/guides/stop_everything.md"
         ],
         "The basics": [
           "docs/guides/cli.md",

@@ -1,8 +1,15 @@
 # Running operatives
 
-**Before you start:** finish [`runner_deployment.md`](runner_deployment.md). You
-need a controller running and a runner connected to it, offering the `echo`
-class.
+**Before you start:** finish [`runner_deployment.md`](runner_deployment.md). The
+controller and your runner should both still be running, each in its own
+terminal. From a third, check both:
+
+```sh
+flz boot await     # boot await: ready
+flz runner list    # lists your runner
+```
+
+If either is missing, start it again the way its guide showed.
 
 ## What an operative is
 
@@ -78,12 +85,12 @@ in your code and another way on the command line.
 ## Send one message and see what comes back
 
 ```bash
-flz operative send my_echo --text hello --await 2000
+flz operative send my_echo --text 'hello world' --await 2000
 ```
 
 ```
 Delivered to 'my_echo'.
-out	echo: hello
+out	echo: hello world
 ```
 
 The first line is the delivery verdict, and it only says the payload was
@@ -127,9 +134,12 @@ The listener is a subscription the controller holds for you. It is dropped when
 the window closes, on Ctrl-C, and if your terminal goes away, so there is
 nothing left attached and nothing to clean up.
 
-## Stop it
+## Stopping it, later
 
-`echo` is a stream operative, so nothing ends it but you:
+`echo` is a stream operative, so nothing ends it but you. **Leave it running for
+now:** the next guide attaches plugins to it, and
+[`stop_everything.md`](stop_everything.md) stops it at the end of Part 1. The
+command is:
 
 ```bash
 flz operative stop my_echo
