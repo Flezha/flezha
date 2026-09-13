@@ -17,10 +17,12 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PortPilot
+  alias Flezha.State.Paths
   alias Mix.Tasks.Bench.ElixirFactories
   alias Mix.Tasks.Bench.Report
 
@@ -306,6 +308,21 @@ defmodule Mix.Tasks.Bench.Fleet do
     Process.delete(:bench_native_sdk)
 
     IO.puts("Test environment cleanup completed")
+  end
+
+  @doc """
+  Remove `namespace`'s durable state and hub registry before the controller
+  boots, so nothing a previous run left behind is restored into this one.
+
+  Runs `app.config` first: until the runtime config is loaded the state root
+  is the default, not the `FLEZHA_STATE_DIR` the run will boot with.
+  """
+  def reset_namespace(namespace) do
+    Mix.Task.run("app.config")
+
+    for dir <- [Paths.namespace_dir(namespace), Layout.file(:process_hub, "#{namespace}_hub")] do
+      File.rm_rf!(dir)
+    end
   end
 
   @doc "Spawn `count` runner processes and return their connected runner ids."

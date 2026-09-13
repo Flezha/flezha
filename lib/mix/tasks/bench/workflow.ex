@@ -1,8 +1,6 @@
 defmodule Mix.Tasks.Bench.Workflow do
   use Mix.Task
 
-  alias Flezha.Layout.Table, as: Layout
-  alias Flezha.State.Paths
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Workflow.Run
@@ -83,7 +81,7 @@ defmodule Mix.Tasks.Bench.Workflow do
 
     Report.apply_log_level()
 
-    if cfg.scenario != :sleep_boot, do: reset_namespace()
+    if cfg.scenario != :sleep_boot, do: Fleet.reset_namespace(Run.namespace())
 
     # The handler is attached before the controller boots so a sleeper restored
     # during boot (`sleep-boot`) is counted like one that parked at run time.
@@ -174,13 +172,4 @@ defmodule Mix.Tasks.Bench.Workflow do
     do: raise("chain fixtures: --procs 1|4|16 --tier durable, or --procs 4 --tier optout")
 
   defp fixture(_scenario, _tier, _procs), do: "bench_loop_workflow"
-
-  defp reset_namespace do
-    for dir <- [
-          Paths.namespace_dir(Run.namespace()),
-          Layout.file(:process_hub, "#{Run.namespace()}_hub")
-        ] do
-      File.rm_rf!(dir)
-    end
-  end
 end

@@ -1,10 +1,8 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Config
-  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
-  alias Flezha.State.Paths
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
 
@@ -108,7 +106,7 @@ defmodule Mix.Tasks.Bench do
     # skews the numbers. `@bench_namespace` is this task's own scratch namespace,
     # so reset it before the controller boots and can restore anything. The
     # `default` namespace is left alone — it may hold runners this task reuses.
-    reset_bench_namespace()
+    Fleet.reset_namespace(@bench_namespace)
 
     Mix.Task.run("app.start")
     Report.apply_log_level()
@@ -149,15 +147,6 @@ defmodule Mix.Tasks.Bench do
   # `:regression` is byte-identical to the historical default behaviour.
   # `:dynamic` reuses the same harness with the `dynamic_entity`
   # factory and keyed inputs (see `input_for_shape/3`).
-
-  defp reset_bench_namespace do
-    for dir <- [
-          Paths.namespace_dir(@bench_namespace),
-          Layout.file(:process_hub, "#{@bench_namespace}_hub")
-        ] do
-      File.rm_rf!(dir)
-    end
-  end
 
   defp run_default_shape(runtime, num_operatives, messages_per_operative, shape, warmup) do
     namespace =
