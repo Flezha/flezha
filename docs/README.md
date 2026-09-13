@@ -33,9 +33,12 @@ answer "what are the options"; a guide answers "what do I type".
 | --- | --- |
 | [`introduction.md`](guides/introduction.md) | **Start here.** What Flezha is, and how these guides are laid out in three parts |
 | [`controller_deployment.md`](guides/controller_deployment.md) | Part 1. Running one controller: the Docker image, the release binaries, or your own Elixir application |
-| [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner serving an operative |
-| [`using_plugins.md`](guides/using_plugins.md) | Part 1. Data in and results out |
+| [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner offering an operative class |
+| [`running_operatives.md`](guides/running_operatives.md) | Part 1. Starting an operative, watching it, stopping it, and what survives a restart |
+| [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
+| [`namespaces.md`](guides/namespaces.md) | Part 2. The boundary runners, operatives and credentials sit inside |
 | [`authorization.md`](guides/authorization.md) | Part 2. Turning enforcement on, claiming the admin, tokens and roles |
+| [`using_plugins.md`](guides/using_plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`clustering.md`](guides/clustering.md) | Part 2. More than one machine |
 | [`durability.md`](guides/durability.md) | Part 2. What survives a crash |
 | [`stream_basics.md`](guides/stream_basics.md) | Part 2. Channels, keys, entities and state |

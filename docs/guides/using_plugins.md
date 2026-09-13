@@ -1,7 +1,8 @@
 # Using plugins
 
-Part 1, after [`runner_deployment.md`](runner_deployment.md).
+Part 2.
 
-Getting data into an operative and results out of it, with the first-party plugins.
+The plugin system itself: what a plugin is, which ones ship with Flezha, how one
+is configured and enabled, and what each costs.
 
 TODO: not written yet.

@@ -72,8 +72,11 @@ defmodule Flezha.MixProject do
         "docs/guides/introduction.md",
         "docs/guides/controller_deployment.md",
         "docs/guides/runner_deployment.md",
-        "docs/guides/using_plugins.md",
+        "docs/guides/running_operatives.md",
+        "docs/guides/sources_and_sinks.md",
+        "docs/guides/namespaces.md",
         "docs/guides/authorization.md",
+        "docs/guides/using_plugins.md",
         "docs/guides/clustering.md",
         "docs/guides/durability.md",
         "docs/guides/stream_basics.md",
@@ -82,6 +85,13 @@ defmodule Flezha.MixProject do
         "docs/guides/effectively_once.md",
         "docs/guides/erlang_vm_tuning.md",
         "docs/quickstart.md",
+        "docs/plugins/file.md",
+        "docs/plugins/http_poll.md",
+        "docs/plugins/websocket_subscription.md",
+        "docs/plugins/kafka_producer.md",
+        "docs/plugins/postgres_sink.md",
+        "docs/plugins/operative_forward.md",
+        "docs/plugins/installation.md",
         "docs/troubleshooting/runner_cannot_connect.md",
         "docs/configuration.md",
         "docs/operations/authn_authz.md"
@@ -92,10 +102,13 @@ defmodule Flezha.MixProject do
           "docs/guides/introduction.md",
           "docs/guides/controller_deployment.md",
           "docs/guides/runner_deployment.md",
-          "docs/guides/using_plugins.md"
+          "docs/guides/running_operatives.md",
+          "docs/guides/sources_and_sinks.md"
         ],
         "The basics": [
+          "docs/guides/namespaces.md",
           "docs/guides/authorization.md",
+          "docs/guides/using_plugins.md",
           "docs/guides/clustering.md",
           "docs/guides/durability.md",
           "docs/guides/stream_basics.md",
@@ -106,6 +119,7 @@ defmodule Flezha.MixProject do
           "docs/guides/effectively_once.md",
           "docs/guides/erlang_vm_tuning.md"
         ],
+        Plugins: ~r"docs/plugins/",
         Troubleshooting: ~r"docs/troubleshooting/",
         Reference: ~r"docs/(quickstart|configuration|operations)"
       ]

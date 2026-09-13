@@ -13,7 +13,7 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         // run() connects and then blocks until shutdown, which is either a SIGTERM or a close()
         // from another thread. Use start() instead when you want to keep the calling thread.
-        Flezha.createRunner(args.length > 0 ? args[0] : "my_app")
+        Flezha.createRunner(args.length > 0 ? args[0] : "default")
                 .defineStream(EchoOperative.class)
                 .run();
     }

@@ -4,8 +4,8 @@
 A runner is useless on its own: it connects to a controller, so you need one
 running and reachable before anything here works.
 
-TODO: a draft. Java is the only language filled in, and the last two sections
-are not written yet.
+TODO: a draft. Java is the only language filled in, and the last section is
+not written yet.
 
 ## Reach the controller
 
@@ -141,7 +141,7 @@ TODO.
 all.** The Elixir SDK's in-node mode is a function call:
 
 ```elixir
-children = [{Flezha.SDK, namespace: "my_app", streams: [MyOperative], transport: :native}]
+children = [{Flezha.SDK, namespace: "default", streams: [MyOperative], transport: :native}]
 ```
 
 `:native` is the default, and it is deliberately not taken from the environment:
@@ -158,13 +158,13 @@ the **Binaries** tab applies unchanged.
 Every verdict, and the two failures that are not verdicts:
 [`../troubleshooting/runner_cannot_connect.md`](../troubleshooting/runner_cannot_connect.md).
 
-## The hello world
+## The building blocks
 
-Every SDK ships the same example, so you can read it in one language and
-recognise it in another. It is three parts, and every Flezha application has
-these same three, whatever it grows into later. What each part is for is the
-same in all seven languages, so it is described once here and the code for your
-language follows in [the next section](#the-code).
+Every Flezha application is built from the same three pieces, whatever it grows
+into later. What each one is for is the same in all seven languages, so it is
+described once here and the code follows in [the next section](#the-code). Every
+SDK ships that same example, so you can read it in one language and recognise it
+in another.
 
 ### The procedure
 
@@ -234,9 +234,9 @@ anything, it says this process is capable of serving that one. One runner can
 offer many operatives, and many runners can offer the same one, which is how a
 deployment grows.
 
-It takes a namespace, which is the tenant it belongs to. The controller admits
-it only if that namespace exists, and, with authorization enforced, only if the
-runner can prove it is entitled to it.
+It takes a namespace, which is the tenant it belongs to. These guides use
+`default` throughout and say no more about it;
+[`namespaces.md`](namespaces.md) is where it becomes a decision.
 
 Keeping the connection is the runner's own job. If it breaks, the runner
 re-dials by itself, retrying forever on a backoff that tops out at 30 seconds,
@@ -254,17 +254,15 @@ arrive on the channel the operative declared, and your procedure is called.
 
 The same three parts, in the same order, in your language. Only what is
 particular to that language is explained here; what the parts are for is
-[above](#the-hello-world).
+[above](#the-building-blocks).
 
 > #### Seven SDKs, one engine {: .info}
 >
-> The SDKs share one engine rather than reimplementing it seven times. Six of
-> them sit on one kernel written in Rust, `flz_core`: the Rust SDK uses it
-> directly, Java reaches it through JNI,
-> and Node, Python, Ruby and PHP through a C ABI. Elixir is the exception: its
-> core is Elixir, sharing no code with `flz_core` and re-expressing the same
-> rules, though a standalone Elixir runner still reaches the wire through the
-> same Rust NIF the controller uses.
+> The SDKs share one engine rather than reimplementing it seven times. Six sit
+> on one kernel written in Rust, `flz_core`: Rust uses it directly, Java through
+> JNI, and Node, Python, Ruby and PHP through a C ABI. Elixir writes its own
+> kernel and binds only the transport, through a Rust NIF, which is also what
+> lets it run inside the controller's own node.
 >
 > The kernel owns **what runs and when**. It picks the next activation, holds
 > per-entity ordering and exclusivity, runs the retry ladder and durability, and
@@ -340,7 +338,7 @@ channel again with `named(...)` is refused at registration rather than resolved.
 ```java
 // The runner. Connects, offers the operative, and serves.
 public static void main(String[] args) throws Exception {
-    Flezha.createRunner(args.length > 0 ? args[0] : "my_app")
+    Flezha.createRunner(args.length > 0 ? args[0] : "default")
             .defineStream(EchoOperative.class)
             .run();
 }
@@ -482,7 +480,80 @@ TODO: the code.
 
 ## Start it, check it
 
-TODO.
+**A runner is your program, and its life is yours to run.** There is no Flezha
+command that starts one and no shape it has to take. Pick the build tool, the
+framework, the process manager and the deployment you already use: to the
+controller a jar, a `cargo run`, a systemd unit and a pod are the same thing
+arriving on the socket.
+
+So the commands below are examples of starting a program, not instructions. They
+assume the simplest case, a shell on the same machine as the controller, which
+is the Binaries tab in [Reach the controller](#reach-the-controller). Under a
+container or an orchestrator the command does not change; who runs it does.
+
+<!-- tabs-open -->
+
+### Java
+
+```sh
+java -cp target/my-runner.jar com.example.Main
+```
+
+### Rust
+
+```sh
+cargo run --release
+```
+
+### Node
+
+```sh
+node runner.mjs
+```
+
+### Python
+
+```sh
+python runner.py
+```
+
+### Ruby
+
+```sh
+ruby runner.rb
+```
+
+### PHP
+
+```sh
+php runner.php
+```
+
+### Elixir
+
+```sh
+mix run --no-halt
+```
+
+A standalone Elixir runner is its own application, so it starts the way your
+application starts. In-node there is nothing to start separately: the SDK runs
+under the controller's own supervision tree.
+
+<!-- tabs-close -->
+
+Then ask the controller whether it arrived:
+
+```sh
+flz runner list
+```
+
+A row for your runner means it connected, proved its namespace if enforcement is
+on, and declared the classes it can serve. No row means it never got that far,
+and [`../troubleshooting/runner_cannot_connect.md`](../troubleshooting/runner_cannot_connect.md)
+names every reason with its fix.
+
+Nothing is running yet. A connected runner is capacity, and
+[`running_operatives.md`](running_operatives.md) is what puts work on it.
 
 ## Without a controller
 
