@@ -14,6 +14,7 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | [`resilience/`](#resilience) | everyone | What survives what — the guarantee-level docs |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
 | [`runbooks/`](#runbooks) | operators, contributors | Step-by-step procedures for one-off operations |
+| [`troubleshooting/`](#troubleshooting) | operators | A symptom, what it means, and the fix |
 | [`publishing/`](#publishing) | the maintainer, before the first public release | The decisions publishing makes irreversible, and which of them block a release |
 
 Three references sit at the top level: [`glossary.md`](glossary.md) (vocabulary),
@@ -30,8 +31,18 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`controller_deployment.md`](guides/controller_deployment.md) | Running one controller: the Docker image, the release binaries, or your own Elixir application. Starting it, checking it is up, stopping it, and claiming the admin or turning authorization off |
-| [`runner_deployment.md`](guides/runner_deployment.md) | Connecting a runner to that controller and starting an operative on it |
+| [`introduction.md`](guides/introduction.md) | **Start here.** What Flezha is, and how these guides are laid out in three parts |
+| [`controller_deployment.md`](guides/controller_deployment.md) | Part 1. Running one controller: the Docker image, the release binaries, or your own Elixir application |
+| [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner serving an operative |
+| [`using_plugins.md`](guides/using_plugins.md) | Part 1. Data in and results out |
+| [`authorization.md`](guides/authorization.md) | Part 2. Turning enforcement on, claiming the admin, tokens and roles |
+| [`clustering.md`](guides/clustering.md) | Part 2. More than one machine |
+| [`durability.md`](guides/durability.md) | Part 2. What survives a crash |
+| [`stream_basics.md`](guides/stream_basics.md) | Part 2. Channels, keys, entities and state |
+| [`workflow_basics.md`](guides/workflow_basics.md) | Part 2. Steps, retries and compensation |
+| [`custom_plugins.md`](guides/custom_plugins.md) | Part 3. Writing and installing your own plugin |
+| [`effectively_once.md`](guides/effectively_once.md) | Part 3. The delivery guarantee and its cost |
+| [`erlang_vm_tuning.md`](guides/erlang_vm_tuning.md) | Part 3. Settings for a controller under load |
 
 ## sdk
 
@@ -111,6 +122,12 @@ answer "what are the options"; a guide answers "what do I type".
 | Doc | Covers |
 | --- | --- |
 | [`purge-build-artifacts.md`](runbooks/purge-build-artifacts.md) | One-time removal of build output from git history: what it removes, the rewrite, verifying by measurement, publishing |
+
+## troubleshooting
+
+| Doc | Covers |
+| --- | --- |
+| [`runner_cannot_connect.md`](troubleshooting/runner_cannot_connect.md) | Every `flz runner check` verdict and its fix, the 60-byte socket path cap, and why reaching the socket is not the same as being admitted |
 
 ## publishing
 

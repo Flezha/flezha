@@ -179,20 +179,9 @@ same-user only.
 
 ## When a runner cannot connect
 
-`flz runner check` runs exactly the probe a runner runs — no runner code, no
-running runner, no controller needed — and prints the resolved directory, the
-candidates walked, the verdict and the fix. It exits zero only when a
-controller answered. A runner prints the same diagnosis once, before it starts
-retrying; the terse line that repeats every backoff is the retry notice, not
-the diagnosis.
-
-| Verdict | What it means | Fix |
-|---|---|---|
-| `socket directory absent` | no controller has ever used this path | start the controller, or set `FLEZHA_SOCKET_FILES_PATH` to the directory it established |
-| `control socket absent` | the directory is there, the controller is not | start it, or wait for it to finish booting |
-| `access denied` | the socket directory is the access boundary and this user is outside it — the diagnosis names the directory's owning uid and mode and the caller's uid | run the runner as the owning user, or use the group mode above |
-| `stale control socket` | a socket file nobody is listening on: a controller that died hard | clears on the next controller start |
-| `more than one controller is listening` | two ladder candidates hold a live socket and none was named | set `FLEZHA_SOCKET_FILES_PATH` to the one this runner should attach to |
+`flz runner check` runs exactly the probe a runner runs, and names the verdict
+and the fix. Every verdict, and the two failures that are not verdicts:
+[`../../troubleshooting/runner_cannot_connect.md`](../../troubleshooting/runner_cannot_connect.md).
 
 ## A remote runner over QUIC
 

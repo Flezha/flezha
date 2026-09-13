@@ -28,18 +28,86 @@ defmodule Flezha.MixProject do
   # `mix docs` renders the guides as a browsable site under `doc/`. The guides
   # carry ExDoc tabsets (`<!-- tabs-open -->`), which are inert HTML comments
   # anywhere else, so one file serves both GitHub and this.
+  # `mermaid` code fences render as diagrams. GitHub draws them itself; ExDoc
+  # needs the library, injected here so one fence serves both.
+  defp mermaid(:html) do
+    """
+    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10.2.3/dist/mermaid.min.js"></script>
+    <script>
+      let flezhaMermaidReady = false;
+
+      window.addEventListener("exdoc:loaded", () => {
+        if (!flezhaMermaidReady) {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: document.body.className.includes("dark") ? "dark" : "default"
+          });
+          flezhaMermaidReady = true;
+        }
+
+        let id = 0;
+
+        for (const codeEl of document.querySelectorAll("pre code.mermaid")) {
+          const preEl = codeEl.parentElement;
+          const graphEl = document.createElement("div");
+
+          mermaid.render("mermaid-graph-" + id++, codeEl.textContent).then(({svg, bindFunctions}) => {
+            graphEl.innerHTML = svg;
+            bindFunctions?.(graphEl);
+            preEl.insertAdjacentElement("afterend", graphEl);
+            preEl.remove();
+          });
+        }
+      });
+    </script>
+    """
+  end
+
+  defp mermaid(:epub), do: ""
+
   defp docs do
     [
-      main: "controller_deployment",
+      main: "introduction",
       extras: [
+        "docs/guides/introduction.md",
         "docs/guides/controller_deployment.md",
         "docs/guides/runner_deployment.md",
+        "docs/guides/using_plugins.md",
+        "docs/guides/authorization.md",
+        "docs/guides/clustering.md",
+        "docs/guides/durability.md",
+        "docs/guides/stream_basics.md",
+        "docs/guides/workflow_basics.md",
+        "docs/guides/custom_plugins.md",
+        "docs/guides/effectively_once.md",
+        "docs/guides/erlang_vm_tuning.md",
+        "docs/quickstart.md",
+        "docs/troubleshooting/runner_cannot_connect.md",
         "docs/configuration.md",
         "docs/operations/authn_authz.md"
       ],
+      before_closing_body_tag: &mermaid/1,
       groups_for_extras: [
-        Guides: ~r"docs/guides/",
-        Reference: ~r"docs/(configuration|operations)"
+        "Getting started": [
+          "docs/guides/introduction.md",
+          "docs/guides/controller_deployment.md",
+          "docs/guides/runner_deployment.md",
+          "docs/guides/using_plugins.md"
+        ],
+        "The basics": [
+          "docs/guides/authorization.md",
+          "docs/guides/clustering.md",
+          "docs/guides/durability.md",
+          "docs/guides/stream_basics.md",
+          "docs/guides/workflow_basics.md"
+        ],
+        "Advanced topics": [
+          "docs/guides/custom_plugins.md",
+          "docs/guides/effectively_once.md",
+          "docs/guides/erlang_vm_tuning.md"
+        ],
+        Troubleshooting: ~r"docs/troubleshooting/",
+        Reference: ~r"docs/(quickstart|configuration|operations)"
       ]
     ]
   end
