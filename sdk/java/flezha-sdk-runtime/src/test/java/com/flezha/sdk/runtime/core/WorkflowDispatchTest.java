@@ -1,7 +1,11 @@
 package com.flezha.sdk.runtime.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.flezha.sdk.operative.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperativeCtx;
+import com.flezha.sdk.operative.WorkflowOperativeException;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
 import java.nio.charset.StandardCharsets;
@@ -49,6 +53,18 @@ class WorkflowDispatchTest extends DispatchTestBase {
         WorkError error = ((ActivationOutcome.Failed) out).error();
         assertThat(error.message()).contains("nope");
         assertThat(error.nonRetryable()).isTrue();
+    }
+
+    @Test
+    @DisplayName("a run-sugar body whose constructor throws surfaces the author's error")
+    void throwingRunSugarConstructorIsTheAuthorsError() {
+        WorkflowOperativeClassRegistry.registerClass(RefusingWorkflow.class);
+        OperativeInstance instance = OperativeInstance.materialize(OP, "refusing_workflow");
+        REFUSE.set(true);
+
+        assertThatThrownBy(() -> instance.workflow.run(new byte[0], id -> session))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(REFUSAL);
     }
 
     @Test
@@ -151,5 +167,24 @@ class WorkflowDispatchTest extends DispatchTestBase {
                 .as("the undo emit rides the effect")
                 .hasSize(1);
         assertThat(RECORDED).containsExactly("compensated:fwd:job");
+    }
+
+    /** Constructs at definition, then refuses once armed, as a resource gone by run time would. */
+    public static final class RefusingWorkflow implements WorkflowOperative {
+        public RefusingWorkflow() {
+            if (REFUSE.get()) {
+                throw new IllegalStateException(REFUSAL);
+            }
+        }
+
+        @Override
+        public String factoryId() {
+            return "refusing_workflow";
+        }
+
+        @Override
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
+            ctx.complete(args);
+        }
     }
 }

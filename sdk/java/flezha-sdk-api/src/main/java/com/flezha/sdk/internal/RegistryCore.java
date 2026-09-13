@@ -1,6 +1,7 @@
 package com.flezha.sdk.internal;
 
 import com.flezha.sdk.operative.Operative;
+import java.lang.reflect.InvocationTargetException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -80,8 +81,7 @@ public final class RegistryCore<C extends Operative> {
                 }
             }
         }
-        throw new IllegalArgumentException(
-                kindLabel + " factory '" + factoryIdOf(cls) + "' is not defined on this runner");
+        throw notDefined(cls);
     }
 
     /**
@@ -140,15 +140,21 @@ public final class RegistryCore<C extends Operative> {
     }
 
     /**
-     * The class's self-declared factory id, resolved by instantiating it via
-     * its public no-arg constructor — the same resolution registration uses,
-     * for error messages about undefined classes.
+     * The refusal for a class not defined here, naming its self-declared
+     * factory id, or its class name when its no-arg constructor cannot be
+     * called. What that constructor throws is the refusal's cause.
      */
-    private String factoryIdOf(Class<? extends C> cls) {
+    private IllegalArgumentException notDefined(Class<? extends C> cls) {
+        String factoryId = cls.getName();
+        Throwable cause = null;
         try {
-            return cls.getDeclaredConstructor().newInstance().factoryId();
+            factoryId = cls.getDeclaredConstructor().newInstance().factoryId();
+        } catch (InvocationTargetException e) {
+            cause = e.getCause();
         } catch (ReflectiveOperationException e) {
-            return cls.getName();
+            // No callable constructor: the class name stands in for the id.
         }
+        return new IllegalArgumentException(
+                kindLabel + " factory '" + factoryId + "' is not defined on this runner", cause);
     }
 }

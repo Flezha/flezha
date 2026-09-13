@@ -1,5 +1,6 @@
 package com.flezha.sdk.procedure;
 
+import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.NoChange;
@@ -363,8 +364,7 @@ public interface Procedure<
     default Procedure<Input, State, Output, ChangeT, ClockT, ConfigT> fromConfig(ConfigT cfg) {
         if (cfg == null && configType() == Void.class) {
             try {
-                return (Procedure<Input, State, Output, ChangeT, ClockT, ConfigT>)
-                        getClass().getDeclaredConstructor().newInstance();
+                return (Procedure<Input, State, Output, ChangeT, ClockT, ConfigT>) RuntimeBridge.construct(getClass());
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException("Procedure '" + name() + "' has no public no-arg constructor", e);
             }

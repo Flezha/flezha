@@ -1,6 +1,7 @@
 package com.flezha.sdk.runtime.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
 import java.util.List;
@@ -51,5 +52,32 @@ class ActivationDispatcherTest extends DispatchTestBase {
         StreamOperativeClassRegistry.registerClass(ReplayProbeOperative.class);
         soleEffect(work("replay_probe", 0, Optional.empty(), 0, input(0, "x", 1, OptionalLong.empty(), true)));
         assertThat(RECORDED).containsExactly("replaying=true");
+    }
+
+    @Test
+    @DisplayName("a procedure constructor that throws at materialization surfaces the author's error")
+    void throwingProcedureConstructorAtMaterializationIsTheAuthorsError() {
+        StreamOperativeClassRegistry.registerClass(RefusingOperative.class);
+        REFUSE.set(true);
+
+        assertThatThrownBy(() -> OperativeInstance.materialize(OP, "refusing_op"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(REFUSAL);
+    }
+
+    public static final class RefusingOperative extends Op {
+        public RefusingOperative() {
+            super("refusing_op", c -> c.input(String.class, "in").into(RefusingProc.class));
+        }
+    }
+
+    /** Constructs at definition, then refuses once armed, as a resource gone by start time would. */
+    public static final class RefusingProc extends Proc<Void> {
+        public RefusingProc() {
+            super("refusing_proc", (input, ctx) -> {});
+            if (REFUSE.get()) {
+                throw new IllegalStateException(REFUSAL);
+            }
+        }
     }
 }

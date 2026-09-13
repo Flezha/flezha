@@ -13,6 +13,7 @@ import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -89,6 +90,17 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Test
+        @DisplayName("a throwing procedure constructor is collected with the other refusals, naming the author's error")
+        void throwingProcedureConstructorIsCollectedWithTheOtherRefusals() {
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new ThrowingProcedureStreamOperative()))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageStartingWith("topology rejected [Declaration, Declaration")
+                    .hasMessageContaining("`no_extractor` declares the EventTimeFrom clock")
+                    .hasMessageContaining(ThrowingConstructorProcedure.REFUSAL)
+                    .hasMessageNotContaining("no-arg constructor");
+        }
+
+        @Test
         @DisplayName("a keyed edge builds a dynamic-mode consumer (Entities are created per key at dispatch)")
         void dynamicModeOnlyBuilds() {
             // The keying is on the WIRING: the procedure declares nothing, and
@@ -134,6 +146,41 @@ class StreamOperativeTopologyBuilderTest {
             // will have nothing concrete to read either.
             c.input(String.class, "in").into((Class<? extends Procedure<String, ?, String, ?, ?, ?>>)
                     (Class<?>) UnresolvedInputProcedure.class);
+        }
+    }
+
+    public static final class ThrowingConstructorProcedure extends StatelessTestProcedure<String, Object, String> {
+        static final String REFUSAL = "the author's own refusal";
+
+        public ThrowingConstructorProcedure() throws IOException {
+            throw new IOException(REFUSAL);
+        }
+
+        @Override
+        public String name() {
+            return "throwing_constructor";
+        }
+
+        @Override
+        protected Object initState(Optional<String> entityKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
+    }
+
+    public static final class ThrowingProcedureStreamOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "throwing_procedure";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(String.class, "in")
+                    .into(ClockAndKeyedValidationTest.NoExtractorProc.class)
+                    .into(ThrowingConstructorProcedure.class);
         }
     }
 

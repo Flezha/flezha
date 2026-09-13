@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.core;
 
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.Logger;
+import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.operative.WorkflowOperative;
 import com.flezha.sdk.operative.WorkflowOperativeException;
 import com.flezha.sdk.runtime.workflow.WorkflowSpec;
@@ -46,7 +47,7 @@ final class WorkflowDispatch {
         }
         WorkflowOperative body;
         try {
-            body = spec.operativeClass().getDeclaredConstructor().newInstance();
+            body = RuntimeBridge.construct(spec.operativeClass());
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(
                     "workflow class `" + factoryId + "` has no public no-arg constructor: " + e, e);

@@ -1,5 +1,6 @@
 package com.flezha.sdk.internal;
 
+import java.lang.reflect.InvocationTargetException;
 import javax.annotation.Nullable;
 
 /**
@@ -7,7 +8,8 @@ import javax.annotation.Nullable;
  * {@code flezha-sdk-runtime}. The api module resolves runtime classes by name
  * so it compiles standalone; every caller (the registry cores,
  * {@code FlezhaRunner.start()}) routes through here so the classpath
- * diagnosis and the cause-unwrapping live in one place.
+ * diagnosis and the cause-unwrapping live in one place. Both modules construct
+ * an author's classes through {@link #construct} for the same unwrapping.
  *
  * <p><b>Internal.</b> Not part of the SDK's public API; user code never calls
  * this.
@@ -34,12 +36,31 @@ public final class RuntimeBridge {
             throw new IllegalStateException(
                     fqn + " not on the classpath. Make sure flezha-sdk-runtime is on the runtime classpath.", e);
         } catch (ReflectiveOperationException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            if (cause instanceof RuntimeException re) {
-                throw re;
-            }
-            throw new IllegalStateException(failureContext + ": " + cause.getMessage(), cause);
+            throw unwrap(e, failureContext);
         }
+    }
+
+    /**
+     * Construct {@code cls} through its no-arg constructor. What the
+     * constructor itself throws propagates under {@link #invoke}'s rule, so an
+     * author's own error is never reported as a missing constructor; only a
+     * constructor that cannot be called reaches the caller as a
+     * {@link ReflectiveOperationException}.
+     */
+    public static <T> T construct(Class<T> cls) throws ReflectiveOperationException {
+        try {
+            return cls.getDeclaredConstructor().newInstance();
+        } catch (InvocationTargetException e) {
+            throw unwrap(e, "constructor of `" + cls.getName() + "` failed");
+        }
+    }
+
+    private static RuntimeException unwrap(ReflectiveOperationException e, String failureContext) {
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        if (cause instanceof RuntimeException re) {
+            return re;
+        }
+        return new IllegalStateException(failureContext + ": " + cause.getMessage(), cause);
     }
 
     /**

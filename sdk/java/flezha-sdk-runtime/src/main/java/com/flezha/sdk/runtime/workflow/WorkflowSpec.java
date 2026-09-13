@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.workflow;
 
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.RetryPolicy;
+import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.operative.LoopMode;
 import com.flezha.sdk.operative.RollbackMode;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
@@ -182,7 +183,7 @@ public final class WorkflowSpec {
     private static WorkflowOperative resolveProbe(Class<? extends WorkflowOperative> operativeClass) {
         WorkflowOperative probe;
         try {
-            probe = operativeClass.getDeclaredConstructor().newInstance();
+            probe = RuntimeBridge.construct(operativeClass);
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException(
                     "WorkflowOperative class `" + operativeClass.getName() + "` must have a public no-arg constructor: "

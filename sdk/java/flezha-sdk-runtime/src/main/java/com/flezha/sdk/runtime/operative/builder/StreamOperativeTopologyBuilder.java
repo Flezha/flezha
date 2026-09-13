@@ -10,6 +10,7 @@ import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.channel.RoutedDocument;
 import com.flezha.sdk.channel.Stream;
+import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
@@ -467,15 +468,17 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     private Procedure<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass) {
+        String refusal;
         try {
-            return procedureClass.getDeclaredConstructor().newInstance();
+            return RuntimeBridge.construct(procedureClass);
         } catch (ReflectiveOperationException e) {
-            errors.add("procedure class `" + procedureClass.getName() + "` must have a public no-arg constructor: "
-                    + e.toString());
-            // Return a placeholder so the rest of the build can collect more
-            // errors before failing; the exception throws at build() time.
-            return UNINSTANTIABLE;
+            refusal = "must have a public no-arg constructor: " + e;
+        } catch (RuntimeException e) {
+            refusal = "constructor threw " + e;
         }
+        errors.add("procedure class `" + procedureClass.getName() + "` " + refusal);
+        // A placeholder lets the build collect more errors; build() throws them all.
+        return UNINSTANTIABLE;
     }
 
     private static final Procedure<Object, Object, Object, NoChange, WallClock, Void> UNINSTANTIABLE =

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: a Java constructor that throws is reported as its own error
+
+A Java operative, workflow or procedure whose constructor throws reports that
+exception instead of claiming it has no public no-arg constructor.
+
 ### Fixed: two controllers started at once on a fresh state directory agree on their cookie
 
 Two node starts racing a first boot no longer leave the cookie file holding a

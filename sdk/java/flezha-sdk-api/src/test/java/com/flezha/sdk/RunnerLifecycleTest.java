@@ -3,10 +3,12 @@ package com.flezha.sdk;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.WorkflowOperative;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -27,6 +29,8 @@ import org.junit.jupiter.api.Test;
  * the real runtime wiring is covered by the cross-language e2e suite.
  */
 class RunnerLifecycleTest {
+
+    private static final String AUTHORS_REFUSAL = "the author's own refusal";
 
     public static final class OperativeA implements StreamOperative {
         @Override
@@ -63,6 +67,20 @@ class RunnerLifecycleTest {
         public String factoryId() {
             return "lifecycle_d";
         }
+    }
+
+    public static final class ThrowingConstructorOperative implements StreamOperative {
+        public ThrowingConstructorOperative() {
+            throw new IllegalStateException(AUTHORS_REFUSAL);
+        }
+
+        @Override
+        public String factoryId() {
+            return "lifecycle_throwing_constructor";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {}
     }
 
     @BeforeEach
@@ -372,6 +390,20 @@ class RunnerLifecycleTest {
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    @Test
+    @DisplayName("removing an undefined type whose constructor throws carries the author's error")
+    void removeUndefinedTypeWithThrowingConstructorCarriesTheAuthorsError() {
+        FlezhaRunner runner = Flezha.createRunner("ns_throwing_ctor");
+
+        Throwable thrown = catchThrowable(() -> runner.removeStream(ThrowingConstructorOperative.class));
+
+        assertThat(thrown).isNotNull();
+        assertThat(Arrays.asList(thrown, thrown.getCause()))
+                .as("the author's exception is the one thrown or its direct cause")
+                .anySatisfy(t ->
+                        assertThat(t).isInstanceOf(IllegalStateException.class).hasMessage(AUTHORS_REFUSAL));
     }
 
     private static Object race(CyclicBarrier barrier, FlezhaRunner runner) throws Exception {

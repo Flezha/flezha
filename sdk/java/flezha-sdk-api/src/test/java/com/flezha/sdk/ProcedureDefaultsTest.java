@@ -11,6 +11,7 @@ import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class ProcedureDefaultsTest {
@@ -41,6 +42,19 @@ class ProcedureDefaultsTest {
         assertThat(fresh).isNotNull();
         assertThat(fresh).isNotSameAs(procedure);
         assertThat(fresh.name()).isEqualTo("stateless");
+    }
+
+    @Test
+    void fromConfigVoidSurfacesAThrowingConstructorAsTheAuthorsError() {
+        RefusingProcedure procedure = new RefusingProcedure();
+        RefusingProcedure.REFUSE.set(true);
+        try {
+            assertThatThrownBy(() -> procedure.fromConfig(null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage(RefusingProcedure.REFUSAL);
+        } finally {
+            RefusingProcedure.REFUSE.set(false);
+        }
     }
 
     @Test
@@ -183,6 +197,32 @@ class ProcedureDefaultsTest {
         @Override
         public String name() {
             return "stateless";
+        }
+
+        @Override
+        public String initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
+            return "init";
+        }
+
+        @Override
+        public void run(String input, StateHandle<String, NoChange> state, ProcedureCtx ctx) {}
+    }
+
+    /** Constructs once, then refuses once armed. */
+    public static final class RefusingProcedure
+            implements Procedure<String, String, String, NoChange, WallClock, Void> {
+        static final String REFUSAL = "the author's own refusal";
+        static final AtomicBoolean REFUSE = new AtomicBoolean();
+
+        public RefusingProcedure() {
+            if (REFUSE.get()) {
+                throw new IllegalStateException(REFUSAL);
+            }
+        }
+
+        @Override
+        public String name() {
+            return "refusing";
         }
 
         @Override

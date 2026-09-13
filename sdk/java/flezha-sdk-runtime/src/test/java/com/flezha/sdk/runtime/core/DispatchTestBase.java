@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,11 @@ abstract class DispatchTestBase {
     static final AtomicInteger TRAVERSALS = new AtomicInteger();
     static final List<String> TIMER_EVENTS = new CopyOnWriteArrayList<>();
 
+    /** Arms the refusing fixtures' constructors after their definition-time construction succeeded. */
+    static final AtomicBoolean REFUSE = new AtomicBoolean();
+
+    static final String REFUSAL = "the author's own refusal";
+
     FakeSession session;
     ActivationDispatcher dispatcher;
 
@@ -58,6 +64,7 @@ abstract class DispatchTestBase {
         RECORDED.clear();
         TRAVERSALS.set(0);
         TIMER_EVENTS.clear();
+        REFUSE.set(false);
         StreamOperativeClassRegistry.reset();
         WorkflowOperativeClassRegistry.reset();
         session = new FakeSession();

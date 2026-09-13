@@ -1,5 +1,6 @@
 package com.flezha.sdk.runtime.core;
 
+import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
@@ -113,7 +114,7 @@ public final class OperativeInstance {
 
     private static Procedure<?, ?, ?, ?, ?, ?> instantiate(ProcedureDescriptor desc) {
         try {
-            return desc.procedureClass().getDeclaredConstructor().newInstance();
+            return RuntimeBridge.construct(desc.procedureClass());
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(
                     "procedure `" + desc.name() + "` has no public no-arg constructor: " + e, e);

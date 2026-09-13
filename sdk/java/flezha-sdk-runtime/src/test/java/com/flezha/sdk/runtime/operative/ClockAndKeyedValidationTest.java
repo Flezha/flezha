@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.operative;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.StreamOperative;
@@ -16,6 +17,7 @@ import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
+import java.util.Arrays;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +33,8 @@ import org.junit.jupiter.api.Test;
  * before anything durable exists.
  */
 class ClockAndKeyedValidationTest {
+
+    private static final String AUTHORS_REFUSAL = "the author's own refusal";
 
     @BeforeEach
     void reset() {
@@ -81,7 +85,34 @@ class ClockAndKeyedValidationTest {
         assertThat(out.keyed()).isTrue();
     }
 
+    @Test
+    @DisplayName("a constructor that throws is reported as the author's error, not as a missing constructor")
+    void throwingConstructorIsReportedAsTheAuthorsError() {
+        Throwable thrown =
+                catchThrowable(() -> StreamOperativeClassRegistry.registerClass(ThrowingConstructorOperative.class));
+
+        assertThat(thrown).hasMessageNotContaining("no-arg constructor");
+        assertThat(Arrays.asList(thrown, thrown.getCause()))
+                .as("the author's exception is the one thrown or its direct cause")
+                .anySatisfy(t ->
+                        assertThat(t).isInstanceOf(IllegalStateException.class).hasMessage(AUTHORS_REFUSAL));
+    }
+
     // --- fixtures -----------------------------------------------------------
+
+    public static final class ThrowingConstructorOperative implements StreamOperative {
+        public ThrowingConstructorOperative() {
+            throw new IllegalStateException(AUTHORS_REFUSAL);
+        }
+
+        @Override
+        public String factoryId() {
+            return "clock-throwing-constructor";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {}
+    }
 
     public static final class NoExtractorOperative implements StreamOperative {
         @Override

@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.workflow;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.LoopMode;
@@ -14,6 +15,7 @@ import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,8 @@ import org.junit.jupiter.api.Test;
  * refusal of a shape that could not run.
  */
 class WorkflowSpecValidationTest {
+
+    private static final String AUTHORS_REFUSAL = "the author's own refusal";
 
     @Test
     @DisplayName("a structured chain resolves its topological order")
@@ -73,6 +77,18 @@ class WorkflowSpecValidationTest {
         assertThatThrownBy(() -> WorkflowSpec.build(NeverEndingWorkflow.class))
                 .isInstanceOf(WorkflowOperativeConfigurationException.class)
                 .hasMessageContaining("terminable");
+    }
+
+    @Test
+    @DisplayName("a constructor that throws is reported as the author's error, not as a missing constructor")
+    void throwingConstructorIsReportedAsTheAuthorsError() {
+        Throwable thrown = catchThrowable(() -> WorkflowSpec.build(ThrowingConstructorWorkflow.class));
+
+        assertThat(thrown).hasMessageNotContaining("no-arg constructor");
+        assertThat(Arrays.asList(thrown, thrown.getCause()))
+                .as("the author's exception is the one thrown or its direct cause")
+                .anySatisfy(t ->
+                        assertThat(t).isInstanceOf(IllegalStateException.class).hasMessage(AUTHORS_REFUSAL));
     }
 
     // ------------------------------------------------------------------
@@ -213,6 +229,22 @@ class WorkflowSpecValidationTest {
         @Override
         public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
             ctx.complete(new byte[0]);
+        }
+    }
+
+    public static final class ThrowingConstructorWorkflow implements WorkflowOperative {
+        public ThrowingConstructorWorkflow() {
+            throw new IllegalStateException(AUTHORS_REFUSAL);
+        }
+
+        @Override
+        public String factoryId() {
+            return "vb_throwing_constructor";
+        }
+
+        @Override
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
+            ctx.complete(args);
         }
     }
 }

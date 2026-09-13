@@ -1,5 +1,6 @@
 package com.flezha.sdk.runtime.operative;
 
+import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
@@ -41,7 +42,7 @@ public final class StreamOperativeClassRegistry {
     public static String registerClass(@Nonnull Class<? extends StreamOperative> operativeClass) {
         StreamOperative operative;
         try {
-            operative = operativeClass.getDeclaredConstructor().newInstance();
+            operative = RuntimeBridge.construct(operativeClass);
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException(
                     "StreamOperative class `" + operativeClass.getName() + "` must have a public no-arg constructor: "
