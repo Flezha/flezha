@@ -131,6 +131,10 @@ as the same uid.
 Keep the path short either way: the directory is capped at 60 bytes, because a
 runner's data socket address has to fit beside it.
 
+### Kubernetes
+
+TODO.
+
 ### Elixir application
 
 **If the runner runs in the same node as the controller, there is no socket at
@@ -147,10 +151,6 @@ node is refused.
 
 If the runner is its own node instead, it is an ordinary standalone runner and
 the **Binaries** tab applies unchanged.
-
-### Kubernetes
-
-TODO.
 
 <!-- tabs-close -->
 
@@ -256,6 +256,27 @@ The same three parts, in the same order, in your language. Only what is
 particular to that language is explained here; what the parts are for is
 [above](#the-hello-world).
 
+> #### Seven SDKs, one engine {: .info}
+>
+> The SDKs share one engine rather than reimplementing it seven times. Six of
+> them sit on one kernel written in Rust, `flz_core`: the Rust SDK uses it
+> directly, Java reaches it through JNI,
+> and Node, Python, Ruby and PHP through a C ABI. Elixir is the exception: its
+> core is Elixir, sharing no code with `flz_core` and re-expressing the same
+> rules, though a standalone Elixir runner still reaches the wire through the
+> same Rust NIF the controller uses.
+>
+> The kernel owns **what runs and when**. It picks the next activation, holds
+> per-entity ordering and exclusivity, runs the retry ladder and durability, and
+> caps how much work is underway at once. Each SDK owns **the threads to run it
+> on**, and brings whatever its own runtime provides.
+>
+> So the rules the kernel enforces are the same wherever you write: ordering,
+> exclusivity, the retry ladder, durability. What differs is the runtime and
+> concurrency semantics of the host language, and with them how work spreads
+> across cores and how much throughput one process reaches. Those differences
+> are real and sometimes large, and each tab below says what they are.
+
 <!-- tabs-open -->
 
 ### Java
@@ -329,29 +350,133 @@ public static void main(String[] args) throws Exception {
 `close()` from another thread. Use `start()` when the calling thread has
 something else to do. `defineWorkflow` is the same call for the workflow kind.
 
+> #### Concurrency in Java {: .info}
+>
+> **One virtual thread per activation.** Platform *fetcher* threads loop
+> `poll -> decode -> hand off -> poll`, and each activation is dispatched on its
+> own virtual thread, which encodes the result and completes it. Fetchers stay
+> platform threads on purpose: `FlzCore.poll` blocks in native code, and a
+> native frame pins its carrier.
+>
+> A supervisor thread parks in the core's starvation wait and starts another
+> fetcher whenever one is observed, up to a ceiling. It is not optional: a
+> virtual thread parked inside `complete` holds its fetcher's handout, and with
+> every fetcher held the runner processes nothing at all.
+>
+> What no ceiling can fix is user code that never returns.
+
 ### Rust
 
-TODO.
+> #### Concurrency in Rust {: .info}
+>
+> **A worker pool sized to the machine.** The base is the available
+> parallelism, falling back to 2, and a starvation supervisor grows it up to
+> `FLEZHA_WORKER_POOL_MAX`, ten times the base by default. A worker started by
+> growth retires after 30 seconds idle.
+>
+> A `DropNothing` producer parks the worker it ran on, so a pipeline of depth D
+> under that policy wants at least `2 x D + 1` threads. A parked producer is not
+> inside `poll`, so the work queued behind it is exactly the starvation the pool
+> grows on: raising the base only removes the growth latency.
+
+TODO: the code.
 
 ### Node
 
-TODO.
+> #### Concurrency in Node {: .info}
+>
+> **Compute parallelism is the dispatch loop count, and it defaults to one.**
+> `0` workers means the main event loop, so one handler body runs at a time.
+> `.workers(n)` or `FLEZHA_NODE_WORKERS` gives `n` worker threads and compute
+> parallelism `n`. Two fetch threads sit in `poll`; raising that number does not
+> raise concurrency, because a fetcher never runs user code.
+>
+> Handlers are registered by **module specifier**, never as imported values, in
+> every configuration. A dispatch loop imports the module itself, which is what
+> makes turning worker threads on a flag rather than a rewrite.
+>
+> I/O-bound handlers reach the core's in-flight cap on one loop. Compute-bound
+> ones do not, because they hold the loop while they compute, and that is what
+> the loop count is for.
+
+TODO: the code.
 
 ### Python
 
-TODO.
+> #### Concurrency in Python {: .info}
+>
+> **A pool of Python threads**, each looping `poll -> dispatch -> complete` on
+> itself, plus one supervisor parked in the core's starvation wait.
+>
+> Whether handler bodies run in parallel is the interpreter's decision, not the
+> SDK's. The compatibility wheel is `abi3` targeting 3.11 and runs everywhere,
+> with the GIL bounding handler bodies to one at a time. Free-threaded wheels
+> from **3.14t** lift that and let bodies execute in parallel. The runner prints
+> which tier it is running in its startup line, so a benchmark is never
+> ambiguous about it.
+
+TODO: the code.
 
 ### Ruby
 
-TODO.
+> #### Concurrency in Ruby {: .info}
+>
+> **Handler bodies are bounded to one core per process.** That is the GVL, and
+> this SDK does not work around it.
+>
+> Everything below the poll seam is genuinely parallel: transport, framing,
+> durability, retries, credit, routing and the activation codec all run in Rust
+> with the GVL released. The lock bounds your handler body and nothing else.
+>
+> So the lever for CPU-bound handlers is **process count, not thread count**:
+> `flz operative start -p N`. Handlers that are 90% I/O saturate a core at
+> roughly 2,000 activations per second and the pool grows to cover the wait;
+> handlers that are pure Ruby at 5 ms each serve about 200 per second however
+> large the pool is.
+
+TODO: the code.
 
 ### PHP
 
-TODO.
+> #### Concurrency in PHP {: .info}
+>
+> **PHP has no threads, so in-flight concurrency is the number of loops you
+> run.** Under the default `SyncExecutor` a loop is a process: 20 simultaneous
+> slow calls need 20 processes, which is 20 replicas or 20 systemd instances.
+>
+> `SwooleExecutor` changes the arithmetic to threads times processes, and it is
+> the reason both executors exist. A process carries a PHP interpreter plus
+> `flz_core`'s roughly 20 OS threads, so a few dozen to low hundreds per host is
+> comfortable and thousands is not. A Swoole thread carries an interpreter and
+> no second core runtime, so one process reaches its core count without
+> multiplying either. It declares higher requirements, checked when you select
+> it rather than at install.
+>
+> The runner measures this rather than leaving it to be assumed: at shutdown it
+> logs the activations it served, the mean body time, and the per-loop
+> throughput they imply.
+
+TODO: the code.
 
 ### Elixir
 
-TODO.
+> #### Concurrency in Elixir {: .info}
+>
+> **The one SDK with a core of its own.** Dispatch, entities and state are
+> Elixir, sharing no code with `flz_core` and re-expressing the same rules.
+> Concurrency is therefore the BEAM's: lightweight processes on the VM's
+> schedulers, preempted across every core, with an Entity's work ordered through
+> its own mailbox (`mailbox_capacity`, 1024 by default).
+>
+> It is also the only SDK that runs two ways. **In-node** (`transport: :native`,
+> the default) it runs inside the controller's own BEAM and the transport is a
+> function call rather than a socket, so a connect from another BEAM node is
+> refused. **Standalone** (`:uds` or `:quic`) it is its own node speaking the
+> binary protocol, and there it reaches the wire through `flz_nif`, the same
+> Rust NIF the controller uses. The core above that seam is the same Elixir code
+> either way.
+
+TODO: the code.
 
 <!-- tabs-close -->
 

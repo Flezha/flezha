@@ -22,76 +22,22 @@ its alone:
   plugins, schedules, the audit log and observability export: everything `flz`
   and any consumer program talk to.
 
-## Contents
+## Choose a way
 
 **Do one of these four, not all of them.** They give you the same controller.
-Each is self contained: get it, start it, check it, stop it.
+Each is self contained: get it, start it, check it, stop it. They are the four
+tabs in [Start a controller](#start-a-controller).
 
 | Way | Pick it when |
 |---|---|
-| [Docker](#docker) | you want one command and no toolchain on the host |
-| [Binaries](#binaries) | you deploy to a machine and want no container runtime |
-| [Inside an Elixir application](#inside-an-elixir-application) | your own Elixir app should be the controller |
-| [Kubernetes](#kubernetes) | you run a cluster. Not written yet |
-
-**Everything after them is optional.**
-
-| Section | Read it when |
-|---|---|
-| [Three lines in the boot worth reading](#three-lines-in-the-boot-worth-reading) | before you run a controller you care about |
-| [Authorization](#authorization) | you are ready to claim an admin, or you want authorization out of the way |
+| Binaries | you deploy to a machine and want no container runtime |
+| Docker | you want one command and no toolchain on the host |
+| Kubernetes | you run a cluster. Not written yet |
+| Inside an Elixir application | your own Elixir app should be the controller |
 
 ## Start a controller
 
 <!-- tabs-open -->
-
-### Docker
-
-#### Get the image
-
-```sh
-docker pull alfetahe/flezha:0.1.0
-```
-
-TODO: amd64 only for now, other architectures to follow.
-
-#### Start it
-
-```sh
-docker run -d --name flezha-controller \
-  -e FLEZHA_AUTHZ_ENABLED=false \
-  -v flezha_data:/flezha/app_data \
-  alfetahe/flezha:0.1.0
-```
-
-One volume is enough: every durable tree the controller owns (state, auth,
-plugins, schedules, the hub registry, the dead letter queue, logs and the
-socket directory) lives under `/flezha/app_data`. Mount it, or the controller
-starts cold after every `docker rm`.
-
-#### Check it
-
-```sh
-$ docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
-flezha-controller	alfetahe/flezha:0.1.0	Up 20 seconds (healthy)
-```
-
-`healthy` is the controller's own verdict: the image's healthcheck runs
-`flz boot await --timeout 0`, which exits zero only on `ready`. Expect
-`health: starting` for the first few seconds while the hubs replay.
-
-Ask it directly for the same answer:
-
-```sh
-$ docker exec flezha-controller /flezha/bin/flz boot await
-boot await: ready
-```
-
-#### Stop it
-
-```sh
-docker stop flezha-controller
-```
 
 ### Binaries
 
@@ -186,6 +132,60 @@ It quiesces, drains and finalises, and says so:
 That verb is authorization gated, so with enforcement on it refuses until you
 have claimed an admin. `flzvm stop` needs only the cookie and works either way,
 which is what to reach for on a controller you cannot authorize against.
+
+### Docker
+
+#### Get the image
+
+```sh
+docker pull alfetahe/flezha:0.1.0
+```
+
+TODO: amd64 only for now, other architectures to follow.
+
+#### Start it
+
+```sh
+docker run -d --name flezha-controller \
+  -e FLEZHA_AUTHZ_ENABLED=false \
+  -v flezha_data:/flezha/app_data \
+  alfetahe/flezha:0.1.0
+```
+
+One volume is enough: every durable tree the controller owns (state, auth,
+plugins, schedules, the hub registry, the dead letter queue, logs and the
+socket directory) lives under `/flezha/app_data`. Mount it, or the controller
+starts cold after every `docker rm`.
+
+#### Check it
+
+```sh
+$ docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
+flezha-controller	alfetahe/flezha:0.1.0	Up 20 seconds (healthy)
+```
+
+`healthy` is the controller's own verdict: the image's healthcheck runs
+`flz boot await --timeout 0`, which exits zero only on `ready`. Expect
+`health: starting` for the first few seconds while the hubs replay.
+
+Ask it directly for the same answer:
+
+```sh
+$ docker exec flezha-controller /flezha/bin/flz boot await
+boot await: ready
+```
+
+#### Stop it
+
+```sh
+docker stop flezha-controller
+```
+
+### Kubernetes
+
+TODO. The reference manifests are in
+[`kubernetes/`](https://github.com/alfetahe/flezha/tree/main/kubernetes) and `make k8s-apply` applies them in
+dependency order, but this section has not been walked through end to end yet.
 
 ### Inside an Elixir application
 
@@ -290,30 +290,23 @@ which only exists in a release.
 
 The controller stops with your application.
 
-### Kubernetes
-
-TODO. The reference manifests are in
-[`kubernetes/`](https://github.com/alfetahe/flezha/tree/main/kubernetes) and `make k8s-apply` applies them in
-dependency order, but this section has not been walked through end to end yet.
-
 <!-- tabs-close -->
 
-## Three lines in the boot worth reading
+## Left for later
 
-Every start prints what it decided. These are the three that bite later.
+To keep things simple, this guide turned off a feature that is normally on and
+passed over some of what the boot told you. Neither matters for a first run,
+and both are picked up later.
 
-| Line | What it means |
-|---|---|
-| `no RELEASE_COOKIE provisioned; using the node-local cookie in <path>` | This node minted its own cookie. Enough for one node. A cluster needs one `RELEASE_COOKIE` you set on every node, because only a shared value forms one. |
-| `durable state under <path>` | The state root. It defaults to a **relative** `app_data/state`, so starting from a different directory opens a different tree and the controller comes up cold. Set `FLEZHA_STATE_DIR` to an absolute path, or always start from the same place. |
-| `FLEZHA_DURABILITY_BACKEND is not set` | This machine's disk holds the only copy of durable state. Set the variable to `none` to accept that and silence the warning, or to `postgres`, `s3` or `local_path` to keep a copy off this machine. |
+**Authorization is off.** Every command above sets `FLEZHA_AUTHZ_ENABLED=false`.
+With it on, operator verbs refuse until you claim an admin, and a runner has to
+prove the namespace it connects to.
+[`authorization.md`](authorization.md) turns it on.
 
-## Authorization is off in this guide
-
-Every command above sets `FLEZHA_AUTHZ_ENABLED=false`. That switches off a real
-feature: with it on, operator verbs refuse until you claim an admin, and a
-runner has to prove the namespace it connects to. Part 1 leaves it off to keep
-things simple, and [`authorization.md`](authorization.md) turns it on.
+**The boot prints three decisions you can ignore for now:** the node cookie it
+minted, the state root it resolved, and that no durability backend is set. They
+start to matter once there is a second machine or a second disk, which is
+[`clustering.md`](clustering.md) and [`durability.md`](durability.md).
 
 ## Next
 
