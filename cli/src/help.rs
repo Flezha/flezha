@@ -377,7 +377,7 @@ EXAMPLES:
     flz operative start ohlc candles --partitions 3
     flz operative scale ohlc 5
     flz operative send orchestrator --text '{"task":"refactor"}'
-    flz operative send my_echo --text hello --await 2000
+    flz operative send my_echo --text 'hello world' --await 2000
     flz operative listen my_echo --duration-ms 10000
     flz operative rewind chat-1 --to-iteration 3
     flz operative replay candles/aggregate/BTC --from 1720000000000

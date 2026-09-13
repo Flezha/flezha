@@ -2,6 +2,8 @@ package com.flezha.examples.echo;
 
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.FlezhaRunner;
+import com.flezha.sdk.admin.Admin;
+import com.flezha.sdk.admin.OperativeSpec;
 
 /**
  * Starts a runner: a process that connects to the controller and serves your operatives.
@@ -22,7 +24,7 @@ public final class Main {
         // drive this namespace from the application instead of from a terminal:
         //
         // runner.admin().startOperative(OperativeSpec.of("my_echo", "echo"));
-        // runner.admin().send("my_echo", "hello", "in");
+        // runner.admin().send("my_echo", "hello world", "in");
         //
         // Attaching a plugin is the same handle; docs/sdk/admin.md has the whole surface. An
         // enforced controller refuses all of it until `flz role bind runner@default app default`.

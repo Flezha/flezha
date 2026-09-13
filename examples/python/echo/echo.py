@@ -15,7 +15,7 @@ Run it against a controller:
 Then, from another terminal:
 
     flz operative start my_echo echo
-    flz operative send my_echo --text hello --await 2000
+    flz operative send my_echo --text 'hello world' --await 2000
 """
 
 from __future__ import annotations

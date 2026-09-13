@@ -21,12 +21,12 @@ something:
 
 ```sh
 docker compose exec controller /flezha/bin/flz operative start my_echo echo
-docker compose exec controller /flezha/bin/flz operative send my_echo --text hello --await 2000
+docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
 ```
 
 ```
 Delivered to 'my_echo'.
-out	echo: hello
+out	echo: hello world
 ```
 
 The first line is the delivery verdict, which only says the payload was

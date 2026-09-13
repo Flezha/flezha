@@ -3,7 +3,7 @@
 #
 #     docker compose up -d --wait
 #     docker compose exec controller flz operative start my_echo echo
-#     docker compose exec controller flz operative send my_echo --text hello --await 2000
+#     docker compose exec controller flz operative send my_echo --text 'hello world' --await 2000
 
 # Pinned, so `docker compose down` in this directory can only ever reach what
 # this file declares. The project name otherwise comes from the directory.

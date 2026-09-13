@@ -25,12 +25,12 @@ Then, from another terminal:
 
 ```sh
 flz operative start my_echo echo
-flz operative send my_echo --text hello --await 2000
+flz operative send my_echo --text 'hello world' --await 2000
 ```
 
 ```
 Delivered to 'my_echo'.
-out	echo: hello
+out	echo: hello world
 ```
 
 The jar carries the SDK, so it runs with nothing else on the classpath. It blocks
