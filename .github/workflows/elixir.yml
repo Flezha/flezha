@@ -103,12 +103,12 @@ jobs:
         run: mix run --no-start -e 'Flezha.Transport.CertGenerator.ensure_certs()'
 
       - name: Run Rust tests
-        # The only place the flz_core, flz_transport, flz_nif and flezha_runner
-        # crates' own unit and integration tests run in CI. `entity_timers`,
-        # `sugar_emit` and `simple_procedure` require the `testing` feature, and
-        # without it cargo skips them silently.
+        # The only place the flz_core, flz_transport, flz_nif, flz (the CLI) and
+        # flezha_runner crates' own unit and integration tests run in CI.
+        # `entity_timers`, `sugar_emit` and `simple_procedure` require the
+        # `testing` feature, and without it cargo skips them silently.
         run: |
-          cargo test --quiet -p flz_core -p flz_transport -p flz_nif
+          cargo test --quiet -p flz_core -p flz_transport -p flz_nif -p flz
           cargo test --quiet \
             -p flezha_runner --features bench-internals,testing \
             --lib --tests
