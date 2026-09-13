@@ -173,6 +173,8 @@ When `:flezha, :graceful_shutdown_enabled` is `false`, `prep_stop/1` SHALL fall 
 
 `cli/src/controller.rs` `handle_stop/1` SHALL replace the `bin/flezha stop` shell-out with an RPC over the existing `runner_control_channel.sock` to a new `Flezha.Service.CliManager.controller_stop/1` handler that calls `Flezha.Shutdown.Coordinator.shutdown(:cli, opts)`. The CLI SHALL stream coordinator progress (the `[:flezha, :shutdown, :*]` telemetry events, formatted) to the operator's terminal until the coordinator returns.
 
+Once the coordinator returns and its outcome line is printed, the handler SHALL stop the node with `:init.stop()`, whatever the outcome, so the command ends the controller rather than leaving a drained node running. `--no-wait` stops the node the same way once the drain it dispatched returns.
+
 The CLI SHALL accept the following flags:
 
 - `--timeout-ms <N>`: overrides `:flezha, :graceful_shutdown_timeout_ms` for this invocation only.
@@ -192,7 +194,7 @@ The RPC SHALL work whether the controller is running as a release, under `mix ru
 
 - **GIVEN** a release-mode controller hosting one Operative with an available peer
 - **WHEN** an operator runs `flz controller stop`
-- **THEN** the CLI streams drain progress (`[:flezha, :shutdown, :drain_progress]` events formatted as `drain: migrated=1 remaining=0 elapsed_ms=…`), prints `[shutdown] complete duration_ms=… outcome=clean`, and exits with status `0`
+- **THEN** the CLI streams drain progress (`[:flezha, :shutdown, :drain_progress]` events formatted as `drain: migrated=1 remaining=0 elapsed_ms=…`), prints `[shutdown] complete duration_ms=… outcome=clean`, exits with status `0`, and the controller's BEAM exits
 
 #### Scenario: `flz controller stop` works in `iex -S mix`
 

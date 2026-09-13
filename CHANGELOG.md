@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: `flz controller stop` ends the controller
+
+`flz controller stop` drained the controller and printed `outcome=clean`, but left
+its Erlang VM running: the node kept its name, and a new start failed until the
+process was killed. It now ends the VM once the drain has finished and the outcome
+is printed, as SIGTERM already did. `--no-wait` ends it too.
+
 ### Fixed: Ctrl-C stops an attached controller instead of freezing it
 
 Pressing Ctrl-C on a controller started with `flz controller start` in attached

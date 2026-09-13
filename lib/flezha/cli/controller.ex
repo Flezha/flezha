@@ -13,8 +13,9 @@ defmodule Flezha.Service.Cli.Controller do
   alias Flezha.State.Paths
 
   @doc """
-  `flz controller stop` RPC. Drives `Flezha.Shutdown.Coordinator.shutdown/2`
-  and prints structured progress lines. The final line is a
+  `flz controller stop` RPC. Drains through
+  `Flezha.Shutdown.Coordinator.shutdown_and_stop/3`, prints structured progress
+  lines and the outcome, then stops the node. The final line is a
   machine-readable marker the Rust CLI scans to derive its exit code:
 
       flz-controller-stop-result: clean | partial | forced | already_in_progress
@@ -37,7 +38,7 @@ defmodule Flezha.Service.Cli.Controller do
       |> maybe_put(:force, force || nil)
 
     if Map.get(opts_map, :no_wait, false) do
-      _ = Task.start(fn -> Coordinator.shutdown(:cli, shutdown_opts) end)
+      _ = Task.start(fn -> Coordinator.shutdown_and_stop(:cli, shutdown_opts) end)
       IO.puts("[shutdown] dispatched (no-wait)")
       IO.puts("flz-controller-stop-result: clean")
       :ok
@@ -45,11 +46,9 @@ defmodule Flezha.Service.Cli.Controller do
       with_progress_handler(fn ->
         start_ms = System.monotonic_time(:millisecond)
 
-        try do
-          render_stop_outcome(Coordinator.shutdown(:cli, shutdown_opts), force, start_ms)
-        catch
-          :exit, reason -> render_stop_exit(reason)
-        end
+        Coordinator.shutdown_and_stop(:cli, shutdown_opts, fn outcome ->
+          render_stop_outcome(outcome, force, start_ms)
+        end)
       end)
     end
   end
@@ -102,6 +101,8 @@ defmodule Flezha.Service.Cli.Controller do
     IO.puts("flz-controller-stop-result: partial")
     :ok
   end
+
+  defp render_stop_outcome({:exit, reason}, _force, _start_ms), do: render_stop_exit(reason)
 
   defp render_stop_outcome(other, _force, _start_ms) do
     IO.puts("[shutdown] unexpected coordinator return: #{inspect(other)}")

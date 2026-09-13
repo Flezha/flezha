@@ -196,14 +196,13 @@ defmodule Flezha.Shutdown.SignalHandler do
     Logger.info("[shutdown] received #{signal}")
 
     Task.start(fn ->
-      try do
-        Coordinator.shutdown(signal)
-      catch
-        :exit, reason ->
+      Coordinator.shutdown_and_stop(signal, [], fn
+        {:exit, reason} ->
           Logger.warning("[shutdown] coordinator exit during signal handling: #{inspect(reason)}")
-      end
 
-      :init.stop()
+        _outcome ->
+          :ok
+      end)
     end)
 
     {:noreply, %{state | count: 1}}
