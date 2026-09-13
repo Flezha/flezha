@@ -190,10 +190,10 @@ c.input::<Trade>("trades")
     .sink_named("partials");
 
 // Stage 2 — a single-partition merger, fed by forward: one Entity per symbol.
-c.input::<PartialCandle>("partial_candles")
+c.input::<PartialCandle>("partials")
     .key_by(|p: &PartialCandle| p.symbol.clone())
     .into::<CandleProcedure>()
-    .sink("candles");
+    .sink_named("candles");
 ```
 
 Stage 1 runs as `partials --partitions 8`; stage 2 runs unpartitioned (or with its own smaller
