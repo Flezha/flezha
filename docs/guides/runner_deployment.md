@@ -313,15 +313,20 @@ channel again with `named(...)` is refused at registration rather than resolved.
 ```java
 // The runner. Connects, offers the operative, and serves.
 public static void main(String[] args) throws Exception {
-    Flezha.createRunner(args.length > 0 ? args[0] : "default")
+    FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
             .defineStream(EchoOperative.class)
-            .run();
+            .start();
+
+    runner.awaitTermination();
 }
 ```
 
-`run()` connects and then blocks until shutdown, which is either a SIGTERM or a
-`close()` from another thread. Use `start()` when the calling thread has
-something else to do. `defineWorkflow` is the same call for the workflow kind.
+`start()` connects and hands back the runner, and `awaitTermination()` blocks
+until shutdown, which is either a SIGTERM or a `close()` from another thread.
+`run()` does both in one call, but keeping the handle is what reaches
+`runner.admin()`, where everything `flz operative` and `flz plugin` do is a
+method ([`../sdk/admin.md`](../sdk/admin.md)). `defineWorkflow` is the same call
+for the workflow kind.
 
 > #### Concurrency in Java {: .info}
 >
@@ -470,9 +475,14 @@ container or an orchestrator the command does not change; who runs it does.
 
 ### Java
 
+From the echo example's folder, build and start in one line:
+
 ```sh
-java -cp target/my-runner.jar com.example.Main
+mvn -q package && java -jar target/echo.jar
 ```
+
+The jar carries the SDK, so nothing else goes on the classpath. The first
+argument is the namespace, `default` when omitted.
 
 ### Rust
 

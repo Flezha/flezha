@@ -18,7 +18,7 @@ You need a controller running and reachable first
 ([`docs/guides/controller_deployment.md`](../../../../docs/guides/controller_deployment.md)).
 
 ```sh
-mvn exec:java
+mvn -q package && java -jar target/echo.jar
 ```
 
 Then, from another terminal:
@@ -33,9 +33,10 @@ Delivered to 'my_echo'.
 out	echo: hello
 ```
 
-`mvn exec:java` blocks until shutdown, which is a SIGTERM or a `close()` from
-another thread. The namespace is the first argument and defaults to `default`:
-`mvn exec:java -Dexec.args=my_app`.
+The jar carries the SDK, so it runs with nothing else on the classpath. It blocks
+until shutdown, which is a SIGTERM or a `close()` from another thread. The
+namespace is the first argument and defaults to `default`:
+`java -jar target/echo.jar my_app`.
 
 ## Building from a checkout
 
@@ -47,8 +48,8 @@ scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/n
 mvn -f sdk/java/pom.xml -DskipTests install
 ```
 
-That is a one-time step. Once the SDK is published, it goes away and `mvn
-exec:java` is all you need.
+That is a one-time step. Once the SDK is published, it goes away and the command
+above is all you need.
 
 ## Where to go next
 
