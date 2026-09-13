@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: the Node SDK's CommonJS build loads a handler module by path
+
+`defineStream('./handlers.cjs')`, `declare` and worker loops no longer fail with
+`could not import handler module` when the runner is required from CommonJS.
+
 ### Fixed: `flz reset` no longer empties a folder it reports as kept
 
 `flz reset` refuses to clear a root that resolves onto, into or around a root it

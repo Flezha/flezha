@@ -6,3 +6,7 @@ exports.runtimeDir = __dirname;
 exports.requireNative = function requireNative(specifier) {
   return require(specifier);
 };
+
+exports.importSpecifier = function importSpecifier(specifier) {
+  return import(specifier);
+};

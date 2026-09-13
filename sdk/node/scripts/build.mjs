@@ -56,7 +56,8 @@ for (const [format, type] of [
   mkdirSync(out, { recursive: true });
   writeFileSync(resolve(out, 'package.json'), `${JSON.stringify({ type }, null, 2)}\n`);
   // The one file that cannot be written once: `__dirname` and `import.meta`
-  // have no common spelling.
+  // have no common spelling, and a CommonJS compile turns `import()` into
+  // `require()`.
   cpSync(resolve(root, 'runtime', `runtime-shim.${format}.js`), resolve(out, 'runtime-shim.js'));
 }
 

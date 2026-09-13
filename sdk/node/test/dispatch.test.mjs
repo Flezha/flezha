@@ -1,8 +1,9 @@
 // One activation, one answer — and the guard that makes it exactly one.
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import test, { after } from 'node:test';
 
 import {
@@ -345,6 +346,37 @@ test('a module specifier is imported and its operatives registered', async () =>
     ['from_specifier'],
   );
 });
+
+// Each build is its own compile of `importModule`, so each loads a handler by a
+// relative path, the spelling an author passes to `defineStream`.
+for (const [build, load, file, bind, exporting] of [
+  [
+    'esm',
+    loadRegistry,
+    'handlers.mjs',
+    (sdk) => `import { defineOperative, defineProcedure } from '${sdk}';`,
+    'export default',
+  ],
+  [
+    'cjs',
+    createRequire(import.meta.url)('../dist/cjs/runner.js').loadRegistry,
+    'handlers.cjs',
+    (sdk) => `const { defineOperative, defineProcedure } = require('${sdk}');`,
+    'module.exports =',
+  ],
+]) {
+  test(`the ${build} build imports a handler module by relative path`, async () => {
+    const module = join(mkdtempSync(join(tmpdir(), 'flezha-specifier-')), file);
+    writeFileSync(
+      module,
+      `${bind(new URL(`../dist/${build}/index.js`, import.meta.url).pathname)}\n` +
+        `const Echo = defineProcedure({ name: 'echo', handle: (i) => i });\n` +
+        `${exporting} defineOperative({ factoryId: 'by_relative_path', channels: (c) => c.input('in').into(Echo).sink() });\n`,
+    );
+    const registry = await load([`./${relative(process.cwd(), module)}`]);
+    assert.ok(registry.get('by_relative_path'), "the module's operative was registered");
+  });
+}
 
 test('an unimportable specifier is named, with the original error chained', async () => {
   await assert.rejects(

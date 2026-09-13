@@ -8,6 +8,7 @@
  * later. Taking a specifier makes it a flag.
  */
 
+import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { ClassSpec } from './authoring.js';
@@ -19,6 +20,7 @@ import { Registry, dispatch, dispatchDeps, type WorkflowSession } from './dispat
 import { consoleLogger, levelFromNative, log, setLogger, type Logger } from './logger.js';
 import { loadNative, type Native } from './native.js';
 import { LoopWatch } from './loop-watch.js';
+import { importSpecifier } from './runtime-shim.js';
 import { WorkerPool } from './workers.js';
 import { encodeValue, decodeValue } from './codec.js';
 
@@ -49,11 +51,9 @@ const STDIN_EOF_GRACE_MS = 5_000;
  */
 export async function importModule(specifier: string): Promise<unknown> {
   const resolved =
-    specifier.startsWith('.') || specifier.startsWith('/')
-      ? pathToFileURL(specifier.startsWith('/') ? specifier : `${process.cwd()}/${specifier}`).href
-      : specifier;
+    specifier.startsWith('.') || isAbsolute(specifier) ? pathToFileURL(specifier).href : specifier;
   try {
-    return await import(resolved);
+    return await importSpecifier(resolved);
   } catch (cause) {
     if (Array.isArray((cause as { refusals?: unknown } | null)?.refusals)) throw cause;
     throw new Error(

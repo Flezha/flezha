@@ -10,3 +10,7 @@ const localRequire = createRequire(import.meta.url);
 export function requireNative(specifier) {
   return localRequire(specifier);
 }
+
+export function importSpecifier(specifier) {
+  return import(specifier);
+}
