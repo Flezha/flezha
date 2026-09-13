@@ -51,17 +51,18 @@ Until then, build a release from a checkout:
 make build-release
 ```
 
-Output is `_build/prod/rel/flezha/`, holding `bin/flz` (the operator
-CLI) and `bin/flzvm` (the release script the CLI calls). The release carries
-its own Erlang runtime, so the target machine needs no Elixir and no Erlang.
+That writes `_build/prod/rel/flezha/`, holding `bin/flz` (the operator CLI) and
+`bin/flzvm` (the release script the CLI calls). The release carries its own
+Erlang runtime, so the machine it runs on needs no Elixir and no Erlang.
 
-A prebuilt archive for x86-64 Linux, built that way and kept out of git, is at
-`local_dev/dist/flezha-0.1.0-linux-x86_64.tar.gz`. Pack your own with
-`tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/app_data' -C _build/prod/rel flezha`:
-a plain `tar` of that directory carries the logs and the node cookie of every
-local run.
+**Put that `bin` on your path**, or every command below is `command not found`:
 
-Unpack it where the controller will live, and work from inside it:
+```sh
+cd _build/prod/rel/flezha
+export PATH="$PWD/bin:$PATH"
+```
+
+A downloaded archive is the same two steps with an unpack in front:
 
 ```sh
 tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
@@ -69,10 +70,27 @@ cd flezha
 export PATH="$PWD/bin:$PATH"
 ```
 
-Start it from this directory every time. The state root is relative to the
-working directory and the minted cookie is relative to the release root, so
-starting from somewhere else puts them in two different trees. An absolute
-`FLEZHA_STATE_DIR` settles it for good.
+An `export` lasts as long as the shell. A second terminal needs it again, or put
+the line in your shell profile, or symlink `bin/flz` somewhere already on your
+path.
+
+Either way, **start the controller from that directory every time**. The state
+root is relative to the working directory and the minted cookie is relative to
+the release root, so starting from somewhere else puts them in two different
+trees.
+
+> #### State inside a build directory {: .warning}
+>
+> Running from `_build/prod/rel/flezha` puts `app_data/` inside build output.
+> `make clean` deletes it, and with it the controller's durable state and its
+> cookie. That is fine while you are trying things out. For anything you want to
+> keep, point `FLEZHA_STATE_DIR` at an absolute path outside the build.
+
+A prebuilt archive for x86-64 Linux, built that way and kept out of git, is at
+`local_dev/dist/flezha-0.1.0-linux-x86_64.tar.gz`. Pack your own with
+`tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/app_data' -C _build/prod/rel flezha`:
+a plain `tar` of that directory carries the logs and the node cookie of every
+local run.
 
 #### Start it
 

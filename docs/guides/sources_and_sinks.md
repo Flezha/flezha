@@ -136,14 +136,24 @@ an application can attach its own plugins:
 ```java
 Admin admin = runner.admin();
 
-admin.enablePlugin("writer", fields);   // the fields `flz plugin enable` takes
+ObjectNode sink = JsonNodeFactory.instance.objectNode();
+sink.put("id", "writer");
+sink.put("provider", "operative_file_sink");
+sink.put("operative_id", "my_echo");
+sink.putObject("opts").put("path", "echo-out.ndjson");
+sink.putArray("subscriptions").addArray().add("on_output").addObject();
+
+admin.enablePlugin("writer", sink);
 admin.disablePlugin("writer");
 ```
 
-TODO: `fields` is a JSON object carrying what the command line carries, and this
-page does not yet spell it out field by field.
-[`../sdk/admin.md`](../sdk/admin.md) is the surface; the other six SDKs spell
-the same two methods their own way.
+The object carries what the command line carries: the plugin's id, its provider,
+the operative it attaches to, the provider's own options under `opts`, and the
+subscription that `--extension=on_output` spells on the command line. The same
+block sits commented out in
+[the echo example](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo),
+ready to uncomment. [`../sdk/admin.md`](../sdk/admin.md) is the whole surface,
+and the other six SDKs spell the same two methods their own way.
 
 What it cannot do is worth knowing: installing, upgrading and uninstalling a
 plugin package are node-wide acts, so they stay with the operator. An

@@ -1,8 +1,8 @@
 # Introduction
 
-Flezha runs stateful compute across a cluster and keeps it running. You write a
-small amount of code, a **procedure**, and declare how data reaches it, an
-**operative**. Flezha decides where that runs, restarts it when it fails, moves
+Flezha runs stateful compute across a cluster and keeps it running. You write the
+code that handles one message, a **procedure**, and declare how data reaches it,
+an **operative**. Flezha decides where that runs, restarts it when it fails, moves
 it when a machine goes away, and remembers its state across all of it.
 
 Two kinds of process make that work:

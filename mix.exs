@@ -94,6 +94,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/postgres_sink.md",
         "docs/plugins/operative_forward.md",
         "docs/plugins/installation.md",
+        "docs/troubleshooting/controller_will_not_start.md",
         "docs/troubleshooting/runner_cannot_connect.md",
         "docs/configuration.md",
         "docs/operations/authn_authz.md"

@@ -269,10 +269,6 @@ single controller with the tier on.
 
 ## When a controller refuses to start
 
-| Refusal | What it means | Fix |
-|---|---|---|
-| `… is another controller's socket directory` | a live controller answered on the control socket in the directory this one was told to prepare | give this controller its own `FLEZHA_SOCKET_FILES_PATH`, or stop the controller listening there. Nothing was removed |
-| `state root … is already claimed (held by pid N)` | another controller holds the advisory lock on that state root | give this controller its own `FLEZHA_STATE_DIR`, or stop pid N. If the holder is gone, the lock is gone with it — the message names a live process |
-| `no socket directory could be created` | no ladder candidate was writable | set `FLEZHA_SOCKET_FILES_PATH` to a directory this user can write |
-| `the socket directory … is N bytes, which leaves no room for the data socket of a runner …` | the directory is over 60 bytes, so a runner's data socket would not fit a Unix domain socket address beside it | set `FLEZHA_SOCKET_FILES_PATH` to a directory of at most 60 bytes. Nothing was removed |
-| `FLEZHA_SOCKET_DIR_GROUP=<group>: no such group` | the group does not exist, or this controller's user is not in it | use a group both users belong to, or drop the variable for owner-only |
+Every boot refusal, what it means and its fix, plus a controller that will not
+stop:
+[`../../troubleshooting/controller_will_not_start.md`](../../troubleshooting/controller_will_not_start.md).

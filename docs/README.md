@@ -132,6 +132,7 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
+| [`controller_will_not_start.md`](troubleshooting/controller_will_not_start.md) | A name already in use, a wedged node whose socket still answers, and every boot refusal |
 | [`runner_cannot_connect.md`](troubleshooting/runner_cannot_connect.md) | Every `flz runner check` verdict and its fix, the 60-byte socket path cap, and why reaching the socket is not the same as being admitted |
 
 ## publishing

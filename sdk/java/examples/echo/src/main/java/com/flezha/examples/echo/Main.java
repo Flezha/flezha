@@ -1,6 +1,7 @@
 package com.flezha.examples.echo;
 
 import com.flezha.sdk.Flezha;
+import com.flezha.sdk.FlezhaRunner;
 
 /**
  * Starts a runner: a process that connects to the controller and serves your operatives.
@@ -11,11 +12,22 @@ import com.flezha.sdk.Flezha;
 public final class Main {
 
     public static void main(String[] args) throws Exception {
-        // run() connects and then blocks until shutdown, which is either a SIGTERM or a close()
-        // from another thread. Use start() instead when you want to keep the calling thread.
-        Flezha.createRunner(args.length > 0 ? args[0] : "default")
+        // run() is start() followed by awaitTermination(). Splitting them keeps the handle,
+        // which is the only way to reach admin(), and still blocks until shutdown.
+        FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
                 .defineStream(EchoOperative.class)
-                .run();
+                .start();
+
+        // Everything `flz operative` and `flz plugin` do is also a method here. Uncomment to
+        // drive this namespace from the application instead of from a terminal:
+        //
+        // runner.admin().startOperative(OperativeSpec.of("my_echo", "echo"));
+        // runner.admin().send("my_echo", "hello", "in");
+        //
+        // Attaching a plugin is the same handle; docs/sdk/admin.md has the whole surface. An
+        // enforced controller refuses all of it until `flz role bind runner@default app default`.
+
+        runner.awaitTermination();
     }
 
     private Main() {}

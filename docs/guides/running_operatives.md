@@ -160,17 +160,25 @@ proved, so nothing holds a credential and nothing expires.
 ### Java
 
 ```java
-// start(), not run(): run() blocks, and this keeps the handle.
 FlezhaRunner runner = Flezha.createRunner("default")
         .defineStream(EchoOperative.class)
         .start();
 
 Admin admin = runner.admin();
-
 admin.startOperative(OperativeSpec.of("my_echo", "echo"));
 admin.send("my_echo", "hello", "in");
 admin.stopOperative("my_echo");
+
+runner.awaitTermination();
 ```
+
+`start()` rather than `run()`, because `run()` is `start()` followed by
+`awaitTermination()` and never hands the handle back. Split the two and the
+admin calls go between them: nothing extra keeps the process alive, the wait
+does, exactly as before.
+
+The echo example carries these lines commented out in its `Main`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo).
 
 ### Rust
 
