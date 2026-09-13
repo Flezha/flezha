@@ -2,10 +2,14 @@ package com.flezha.sdk.processor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.sun.source.tree.LiteralTree;
+import com.sun.source.util.JavacTask;
+import com.sun.source.util.TreeScanner;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
@@ -347,6 +351,82 @@ class FlezhaProcessorTest {
                 }
                 """;
         assertThat(diagnose("t.NoSink", code)).anyMatch(m -> m.contains("prices") && m.contains("sink"));
+    }
+
+    @Test
+    void keepsAQuoteInTheAutoWireStringsExactly() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "p\\"id", sink = "s\\"sink", input = "i\\"in")
+                public class Quoted {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(stringLiterals(generated("t.Quoted", "t.QuotedStreamOperative", code)))
+                .contains("p\"id", "s\"sink", "i\"in");
+    }
+
+    @Test
+    void keepsABackslashInTheAutoWireStringsExactly() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "p\\\\nid", sink = "s\\\\nsink", input = "i\\\\nin")
+                public class Backslashed {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(stringLiterals(generated("t.Backslashed", "t.BackslashedStreamOperative", code)))
+                .contains("p\\nid", "s\\nsink", "i\\nin");
+    }
+
+    @Test
+    void keepsAQuoteAndABackslashInStaticEntityKeysExactly() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.EntitiesFor;
+                import com.flezha.sdk.authoring.Procedure;
+                import java.util.List;
+                @Procedure(id = "odd_keys", keys = {"k\\"1", "k\\\\n2"})
+                public class OddKeys {
+                    @EntitiesFor public List<String> route(String in) { return List.of(); }
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(stringLiterals(generated("t.OddKeys", "t.OddKeysProcedure", code)))
+                .contains("k\"1", "k\\n2");
+    }
+
+    /** The value of every string literal in a generated source, which must parse. */
+    private static List<String> stringLiterals(String source) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        DiagnosticCollector<JavaFileObject> diags = new DiagnosticCollector<>();
+        JavacTask task = (JavacTask) compiler.getTask(
+                null, null, diags, List.of("-proc:none"), null, List.of(new StringSource("g.Generated", source)));
+        List<String> literals = new ArrayList<>();
+        try {
+            for (var unit : task.parse()) {
+                new TreeScanner<Void, Void>() {
+                    @Override
+                    public Void visitLiteral(LiteralTree literal, Void unused) {
+                        if (literal.getValue() instanceof String s) {
+                            literals.add(s);
+                        }
+                        return null;
+                    }
+                }.scan(unit, null);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        assertThat(diags.getDiagnostics())
+                .as("generated source must parse:%n%s", source)
+                .isEmpty();
+        return literals;
     }
 
     /** Runs the processor over a well-formed source and returns the generated procedure's text. */

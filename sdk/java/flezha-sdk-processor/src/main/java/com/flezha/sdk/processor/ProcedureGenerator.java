@@ -282,7 +282,7 @@ final class ProcedureGenerator {
     }
 
     /** The {@code <Name>Procedure} source: the interface clause, the overrides, and the {@code run} wrapper. */
-    private static String renderProcedure(ProcedureModel m) {
+    private String renderProcedure(ProcedureModel m) {
         StringBuilder b = FlezhaProcessor.source(m.pkg());
         b.append("import com.flezha.sdk.procedure.Procedure;\n");
         b.append("import com.flezha.sdk.procedure.ProcedureCtx;\n");
@@ -347,10 +347,10 @@ final class ProcedureGenerator {
     }
 
     /** The static-entity key set and the mailbox capacity, each only when declared. */
-    private static void renderEntityOverrides(StringBuilder b, ProcedureModel m) {
+    private void renderEntityOverrides(StringBuilder b, ProcedureModel m) {
         if (m.entitiesForName() != null) {
             b.append("    @Override public List<String> entityKeys() { return List.of(")
-                    .append(quotedJoin(m.entityKeys()))
+                    .append(m.entityKeys().stream().map(mirrors::literal).collect(Collectors.joining(", ")))
                     .append("); }\n");
             b.append("    @Override public boolean entitiesForOverridden() { return true; }\n");
             b.append("    @Override public List<String> entitiesFor(")
@@ -421,21 +421,21 @@ final class ProcedureGenerator {
                 .append(m.procedureSimple())
                 .append(". */\n");
         b.append("public final class ").append(operativeSimple).append(" implements StreamOperative {\n");
-        b.append("    @Override public String factoryId() { return \"")
-                .append(m.id())
-                .append("\"; }\n");
+        b.append("    @Override public String factoryId() { return ")
+                .append(mirrors.literal(m.id()))
+                .append("; }\n");
         b.append("    @Override public void channels(ChannelBuilder c) {\n");
         b.append("        c.input(")
                 .append(TypeMirrors.classLit(m.inputType()))
-                .append(", \"")
-                .append(m.input())
-                .append("\")")
+                .append(", ")
+                .append(mirrors.literal(m.input()))
+                .append(")")
                 .append(onFullCall)
                 .append(".into(")
                 .append(m.procedureSimple())
-                .append(".class).sink(\"")
-                .append(m.sink())
-                .append("\");\n");
+                .append(".class).sink(")
+                .append(mirrors.literal(m.sink()))
+                .append(");\n");
         b.append("    }\n}\n");
 
         out.write(operativeFqn, b.toString(), origin);
@@ -499,10 +499,6 @@ final class ProcedureGenerator {
             }
         }
         return null;
-    }
-
-    private static String quotedJoin(List<String> items) {
-        return items.stream().map(s -> '"' + s + '"').collect(Collectors.joining(", "));
     }
 
     private static String snake(String s) {

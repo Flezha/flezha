@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed: Java `@Procedure` strings may hold quotes and backslashes
+
+The `id`, `sink`, `input` and `keys` of a Java `@Procedure` may hold quotes,
+backslashes and control characters; the generated source now carries them
+exactly instead of failing to compile.
+
 ### Fixed: `flz reset --dry-run` previews while the controller is up
 
 A dry run changes nothing, so it no longer refuses with exit 4 against a live
