@@ -221,10 +221,11 @@ defmodule Flezha.Transport.TransportAuthTest do
       end
     end
 
-    # The window a verb racing a first start falls into: it has found no cookie
-    # file and is still inside the script when the start writes one. `od` runs
-    # in exactly that window, so a stand-in for it runs the whole start there.
-    test "a verb racing a first start leaves one cookie in the file, the start's" do
+    # The window a command racing a first start falls into: it has found no
+    # cookie file and is still inside the script when the start writes one. `od`
+    # runs in exactly that window, so a stand-in for it runs the whole start
+    # there. Returns the cookie `command` exported and the one the start did.
+    defp race_a_first_start(command) do
       shims = Path.join(tmp_base(), "shims")
       started = Path.join(tmp_base(), "started")
       File.mkdir_p!(shims)
@@ -240,13 +241,27 @@ defmodule Flezha.Transport.TransportAuthTest do
 
       File.chmod!(Path.join(shims, "od"), 0o755)
 
-      {_out, "name", _} =
-        source_env_sh("rpc", [{"PATH", shims <> ":" <> System.get_env("PATH")}])
+      {_out, "name", cookie} =
+        source_env_sh(command, [{"PATH", shims <> ":" <> System.get_env("PATH")}])
 
-      # The start really ran inside the verb's window, and minted.
+      # The start really ran inside the window, and minted.
       assert <<_::binary-size(64)>> = start_cookie = File.read!(started)
+      {cookie, start_cookie}
+    end
+
+    test "a verb racing a first start leaves one cookie in the file, the start's" do
+      {_verb_cookie, start_cookie} = race_a_first_start("rpc")
       assert File.read!(cookie_file()) == start_cookie <> "\n"
       assert {_, "name", ^start_cookie} = source_env_sh("rpc")
+    end
+
+    # The inner start writes first and the outer one last. Either node may win
+    # the name contest, so both must have exported the value the file keeps.
+    test "two starts racing a first boot each export the cookie the file holds" do
+      {outer_cookie, inner_cookie} = race_a_first_start("start")
+      kept = File.read!(cookie_file())
+      assert {inner_cookie <> "\n", outer_cookie <> "\n"} == {kept, kept}
+      assert mode_bits(cookie_file()) == 0o600
     end
   end
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: two controllers started at once on a fresh state directory agree on their cookie
+
+Two node starts racing a first boot no longer leave the cookie file holding a
+value the running node did not use.
+
 ### Fixed: the Node SDK's CommonJS build loads a handler module by path
 
 `defineStream('./handlers.cjs')`, `declare` and worker loops no longer fail with
