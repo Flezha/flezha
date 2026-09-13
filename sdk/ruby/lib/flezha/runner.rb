@@ -107,6 +107,14 @@ module Flezha
       # After the last declaration and before the first poll.
       Process.warmup
 
+      # The core's termination handler also runs the handler installed before
+      # it. Ruby's default raises in the main thread and ends the process before
+      # any state is shipped, so it gives way to the system default, which is
+      # never run; a trap the application set is kept.
+      %w[TERM INT].each do |signal|
+        previous = Signal.trap(signal, "SYSTEM_DEFAULT")
+        Signal.trap(signal, previous) unless previous == "DEFAULT"
+      end
       @core.start(@namespace)
       observe_shutdown
 

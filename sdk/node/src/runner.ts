@@ -232,6 +232,13 @@ export class Runner {
     const registry = await this.declareAll(native);
     await this.serve(native, registry);
 
+    // The core's termination handler also runs the handler installed before
+    // it. Node's default re-raises the signal from inside that handler, so it
+    // is redelivered for ever and the thread it lands on never runs again. A
+    // listener removes the default; one the application added already has.
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      if (process.listenerCount(signal) === 0) process.on(signal, () => {});
+    }
     await native.start(this.namespace);
 
     // A controller-requested stop reaches the host as every fetcher ending.

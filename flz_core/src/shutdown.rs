@@ -384,7 +384,9 @@ fn wait_for_stdin_eof() {
 /// Install the termination-signal handler once: SIGTERM and SIGINT both run the
 /// active bridge's shutdown and then exit, on a thread the core owns rather
 /// than on the host's own — which is what lets every host stop installing a
-/// trap of its own beside this one.
+/// trap of its own beside this one. The handler installed before it still runs
+/// after it, so a host runtime whose own handler ends the process must hand the
+/// signal over before the core starts.
 #[cfg(not(windows))]
 fn install_sigterm_handler() {
     static INSTALLED: Once = Once::new();
