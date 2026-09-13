@@ -364,13 +364,15 @@ defmodule Flezha.State.RetentionTest do
 
   alias FlezhaTest.Helper.NodeTestHelper
 
-  setup %{base: base} do
+  setup do
     TestHelpers.start_state_tree([Retention])
 
     on_exit(fn ->
       Application.delete_env(:flezha, :time_travel_retention_hours)
       Application.delete_env(:flezha, :workflow_completed_retention_hours)
-      File.rm_rf!(base)
+      # A writer a test started runs under the application's supervisor and
+      # still syncs after the body, so it is stopped before its root goes.
+      TestHelpers.reset_all_entities()
     end)
 
     %{entity_id: TestHelpers.sample_entity_id("ret_" <> uniq())}
