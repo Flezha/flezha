@@ -169,13 +169,15 @@ defmodule Flezha.Service.Cli.Controller do
 
   The resolved state root is one of them: it is where this controller's durable
   state actually is, and reading it here is what stops the answer depending on
-  someone having watched the boot that announced it.
+  someone having watched the boot that announced it. The folder file plugins
+  may read and write is reported for the same reason.
   """
   def controller_status(output_format, _call) do
     status =
       safe_shutdown_status()
       |> Map.merge(durability_status())
       |> Map.put(:state_root, Paths.state_root())
+      |> Map.put(:file_plugin_root, Path.expand(Config.get(:file_plugin_root)))
 
     case output_format do
       "json" ->
@@ -199,6 +201,7 @@ defmodule Flezha.Service.Cli.Controller do
         IO.puts("durability_rpo_breaches:       #{status.durability_rpo_breaches}")
         IO.puts("durability_superseded:         #{status.durability_superseded}")
         IO.puts("state_root:                    #{status.state_root}")
+        IO.puts("file_plugin_root:              #{status.file_plugin_root}")
     end
 
     :ok

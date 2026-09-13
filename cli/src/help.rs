@@ -157,7 +157,8 @@ OUTPUT FIELDS:
     durability_posture         local_only | remote_tier
     durability_rpo_breaches    References past the remote RPO target
     durability_superseded      References another controller now ships
-    state_root                 Absolute directory holding this node's durable state"#;
+    state_root                 Absolute directory holding this node's durable state
+    file_plugin_root           Absolute folder file plugins may read and write"#;
 
 pub(crate) const CONTROLLER_STOP: Help = r#"flz controller stop - Stop the flezha controller gracefully
 

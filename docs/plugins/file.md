@@ -20,6 +20,9 @@ another, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the controller starts:
 FLEZHA_FILE_PLUGIN_ROOT=/srv/flezha/files flz controller start
 ```
 
+`flz controller status` prints the folder in use, as an absolute path, on its
+`file_plugin_root` line.
+
 - **A folder you name must exist.** It is read at boot and never created, because a
   missing one may be a share that is not mounted. Until it exists, every file plugin
   enable is refused naming it.

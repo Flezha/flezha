@@ -443,7 +443,8 @@ defmodule Flezha.Config.Keys do
     # The one folder a file plugin may read from or write to. The default is a
     # folder of its own beside the controller's data, never a parent of it, so
     # no plugin path reaches the state, certificates or tokens.
-    {:file_plugin_root, :path, "app_data/files", key: true, env: "FLEZHA_FILE_PLUGIN_ROOT"},
+    {:file_plugin_root, :path, "app_data/files",
+     key: true, env: "FLEZHA_FILE_PLUGIN_ROOT", surface: {:status, :file_plugin_root}},
 
     # ---- boot and recovery --------------------------------------------------
     # Tests bring up their own runners and operatives, so at-boot replay is off

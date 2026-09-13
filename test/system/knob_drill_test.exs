@@ -32,6 +32,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   alias Flezha.Healthz.Server, as: Healthz
   alias Flezha.Observability.AuditLog.Writer, as: AuditWriter
   alias Flezha.Observability.Export.PrometheusHttp
+  alias Flezha.Plugin.Provider.File, as: FilePlugin
   alias Flezha.Service.Cli.Controller, as: ControllerCli
   alias Flezha.Socket.Support
   alias Flezha.State.Paths
@@ -81,6 +82,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   defp readings() do
     %{
       {:status, :state_root} => &status_reports_state_root/1,
+      {:status, :file_plugin_root} => &status_reports_file_plugin_root/1,
       {:disk, :socket_dir} => &socket_dir_is/1,
       {:disk, :dlq_dir} => &dlq_writes_under/1,
       {:disk, :audit_dir} => &audit_writes_under/1,
@@ -104,6 +106,23 @@ defmodule FlezhaTest.System.KnobDrillTest do
     Paths.state_root() == resolved and
       printed =~ "state_root:" and printed =~ resolved and
       String.starts_with?(Paths.wal_path({"knob_drill", "proc", "k1"}), resolved)
+  end
+
+  # The same two halves: status names the folder, and a file plugin's path lands
+  # in that directory. Compared by inode, because the plugin follows links and a
+  # temporary directory may sit behind one.
+  defp status_reports_file_plugin_root(root) do
+    resolved = Path.expand(root)
+
+    printed =
+      ExUnit.CaptureIO.capture_io(fn ->
+        :ok = ControllerCli.controller_status("text", %{})
+      end)
+
+    {:ok, %{path: path}} = FilePlugin.prepare(%{path: "x.ndjson", plugin_id: "knob_drill"})
+
+    printed =~ "file_plugin_root:" and printed =~ resolved and
+      File.stat!(Path.dirname(path)).inode == File.stat!(resolved).inode
   end
 
   defp socket_dir_is(dir), do: Support.socket_dir() == Path.expand(dir)
