@@ -1,11 +1,12 @@
 # Deploy a runner
 
 **Before you start:** finish [`controller_deployment.md`](controller_deployment.md)
-and leave that controller running. A runner is useless on its own: it connects
-to a controller, so `flz boot await` has to answer `ready` before anything here
-works.
+and leave that controller running. A runner alone is not of much use: it does its
+work only once it has connected to a controller. Check that yours is ready:
 
-TODO: a draft. The last section is not written yet.
+```sh
+flz boot await    # boot await: ready
+```
 
 ## Reach the controller
 
@@ -921,7 +922,3 @@ names every reason with its fix.
 
 Nothing runs on it yet. [`running_operatives.md`](running_operatives.md) starts
 the first operative.
-
-## Without a controller
-
-TODO.
