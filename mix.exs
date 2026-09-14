@@ -133,9 +133,37 @@ defmodule Flezha.MixProject do
     ]
   end
 
+  # Fence names whose blocks need a lexer other than the one registered for
+  # them. ExDoc's shell lexer only keeps a `$ ` prompt from being selected,
+  # makeup_syntect's `php` grammar reads only what follows a `<?php` tag, which
+  # no snippet here has, `proto` is registered by file extension alone, and a
+  # Ruby class name takes three colours by where it stands. ExDoc and
+  # makeup_syntect register theirs when ExDoc starts, so it is started here
+  # first: the docs task's own start is then a no-op and these stand.
+  defp register_highlighters(_args) do
+    Mix.Task.run("loadpaths")
+    Code.require_file("scripts/docs_lexer.exs")
+    {:ok, _} = Application.ensure_all_started(:ex_doc)
+
+    for {names, language} <- [
+          {["shell", "console", "sh", "bash", "zsh"], "Bourne Again Shell (bash)"},
+          {["php"], "PHP Source"},
+          {["proto"], "Protocol Buffer"},
+          {["ruby"], "Ruby"}
+        ] do
+      Makeup.Registry.register_lexer(Flezha.Docs.Lexer,
+        options: [language: language],
+        names: names,
+        extensions: []
+      )
+    end
+  end
+
   # Aliases are invoked via `mix <alias>`.
   defp aliases do
     [
+      # The docs, with the code block lexers `register_highlighters/1` names.
+      docs: [&register_highlighters/1, "docs"],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
       # start", "beam msg forward plugin connection start", "operative flow

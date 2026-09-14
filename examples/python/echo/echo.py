@@ -56,9 +56,34 @@ def main() -> None:
     runner.define_stream(echo_operative)
     print(f"[echo] offering 'echo' in namespace {namespace}", file=sys.stderr, flush=True)
 
-    # Connects, offers the operative, and blocks until shutdown. Declaring an
-    # operative starts nothing: the controller decides when one runs.
-    runner.run()
+    # Connects and offers the operative. Declaring an operative starts nothing:
+    # the controller decides when one runs. `run()` is `start()` followed by
+    # `await_termination()`, and splitting them leaves room for the admin calls.
+    runner.start()
+
+    # Everything `flz operative` and `flz plugin` do is also a method here.
+    # Uncomment to drive this namespace from the application instead of from a
+    # terminal:
+    #
+    # admin = runner.admin()
+    # admin.start_operative("my_echo", "echo")
+    # admin.enable_plugin(
+    #     "writer",
+    #     {
+    #         "id": "writer",
+    #         "provider": "operative_file_sink",
+    #         "operative_id": "my_echo",
+    #         "opts": {"path": "echo-out.txt"},
+    #         "hooks": [["on_output", {}]],
+    #     },
+    # )
+    # admin.send("my_echo", "hello world", "in")
+    #
+    # docs/sdk/admin.md has the whole surface. An enforced controller refuses all
+    # of it until `flz role bind runner@default app default`.
+
+    # Blocks until shutdown: a SIGTERM, or standard input closing.
+    runner.await_termination()
 
 
 if __name__ == "__main__":

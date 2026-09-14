@@ -5,8 +5,7 @@ and leave that controller running. A runner is useless on its own: it connects
 to a controller, so `flz boot await` has to answer `ready` before anything here
 works.
 
-TODO: a draft. Python's code is not filled in yet, and the last section is not
-written yet.
+TODO: a draft. The last section is not written yet.
 
 ## Reach the controller
 
@@ -448,7 +447,7 @@ kind.
 The whole example:
 [`sdk/node/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/node/examples/echo).
 
-```js
+```javascript
 // echo_operative.mjs: the operative. The graph, and the unit the controller schedules.
 import { defineOperative } from '@flezha/sdk';
 
@@ -469,7 +468,7 @@ The channel carries plain text both ways: the decoder turns the bytes
 procedure's string back into bytes. The module exports what `defineOperative`
 returned, and that export is what the runner finds.
 
-```js
+```javascript
 // echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
 import { defineProcedure } from '@flezha/sdk';
 
@@ -482,7 +481,7 @@ export const EchoProcedure = defineProcedure({
 With no `initialState` and no `applyChange`, it keeps nothing between messages
 and journals nothing.
 
-```js
+```javascript
 // runner.mjs: the runner. Connects, offers the operative, and serves.
 import { createRunner } from '@flezha/sdk';
 
@@ -516,6 +515,46 @@ workflow kind.
 
 ### Python
 
+The whole example:
+[`examples/python/echo`](https://github.com/alfetahe/flezha/tree/main/examples/python/echo).
+
+```python
+# The procedure. The processing stage the graph routes each message into.
+@flezha.procedure(name="echo")  # durable: state is filed under it
+def echo(value: str) -> str:
+    return f"echo: {value}"  # what it returns is emitted
+```
+
+A function becomes a procedure through the decorator. It declares no state, so it
+keeps nothing between messages, and where its result goes is not its business.
+
+```python
+# The operative. The graph, and the unit the controller schedules.
+@flezha.stream_operative("echo")
+def echo_operative(c: flezha.Channels) -> None:
+    c.input("in", decode=lambda body: bytes(body).decode()).into(echo).sink(
+        "out", encode=lambda value: str(value).encode()
+    )
+```
+
+`decode=` and `encode=` make the channel carry plain text both ways: the bytes
+`flz operative send --text` delivers become a string, and the procedure's string
+goes back out as bytes.
+
+```python
+# The runner. Connects, offers the operative, and serves.
+def main() -> None:
+    runner = flezha.create_runner(sys.argv[1] if len(sys.argv) > 1 else "default")
+    runner.define_stream(echo_operative)
+
+    runner.start()
+    runner.await_termination()
+```
+
+`start()` connects and starts serving, and `await_termination()` blocks until
+shutdown and then drains; `run()` is the two in one call. Declaring an operative
+starts nothing: the controller decides when one runs.
+
 > #### Concurrency in Python {: .info}
 >
 > **A pool of Python threads**, each looping `poll -> dispatch -> complete` on
@@ -527,8 +566,6 @@ workflow kind.
 > from **3.14t** lift that and let bodies execute in parallel. The runner prints
 > which tier it is running in its startup line, so a benchmark is never
 > ambiguous about it.
-
-TODO: the code.
 
 ### Ruby
 
@@ -823,9 +860,14 @@ when omitted.
 
 ### Python
 
+From the repository root, with the SDK built by `scripts/build-python-sdk.sh`:
+
 ```sh
-python runner.py
+sdk/python/.venv/bin/python examples/python/echo/echo.py
 ```
+
+The first argument is the namespace, `default` when omitted. The example's README
+also starts a controller and this runner together with Docker.
 
 ### Ruby
 

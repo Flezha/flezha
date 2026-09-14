@@ -209,7 +209,7 @@ admin.disable_plugin("writer")?;
 
 ### Node
 
-```js
+```javascript
 const admin = runner.admin();
 
 await admin.enablePlugin('writer', {
@@ -224,7 +224,21 @@ await admin.disablePlugin('writer');
 
 ### Python
 
-TODO.
+```python
+admin = runner.admin()
+
+admin.enable_plugin(
+    "writer",
+    {
+        "id": "writer",
+        "provider": "operative_file_sink",
+        "operative_id": "my_echo",
+        "opts": {"path": "echo-out.txt"},
+        "hooks": [["on_output", {}]],
+    },
+)
+admin.disable_plugin("writer")
+```
 
 ### Ruby
 
