@@ -41,6 +41,15 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   def commit(runner_id, reference_id, frame),
     do: GenServer.cast(Identificator.commits(runner_id), {:commit, reference_id, frame})
 
+  @doc """
+  Hand over a barrier from a runner that does not own its instance: it is
+  answered with an error and journals nothing.
+  """
+  @spec refuse(binary(), binary(), RunnerCommands.ProcCommit.t() | RunnerCommands.IterCommit.t()) ::
+          :ok
+  def refuse(runner_id, reference_id, frame),
+    do: GenServer.cast(Identificator.commits(runner_id), {:refuse, reference_id, frame})
+
   @impl true
   def init({namespace, runner_id}) do
     {:ok, %{namespace: namespace, runner_id: runner_id, reqids: :gen_server.reqids_new()}}
@@ -61,6 +70,12 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       {:ok, reqids} -> {:noreply, %{state | reqids: reqids}}
       {:error, _} = error -> {:noreply, settle(state, reference_id, commit, error)}
     end
+  end
+
+  def handle_cast({:refuse, reference_id, frame}, state) do
+    commit = decode(frame, state)
+    error = {:error, "not the owner of #{commit.operative_id}"}
+    {:noreply, ack(state, reference_id, commit, error)}
   end
 
   # A synchronous-durability barrier finished its remote ship: ack with its
@@ -133,6 +148,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     error =
       case result do
         :ok -> ""
+        {:error, reason} when is_binary(reason) -> reason
         {:error, reason} -> inspect(reason)
       end
 

@@ -33,10 +33,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate get_hub_nodes(arg1, arg2 \\ false), to: Rows
   defdelegate get_pid(arg1, arg2), to: Rows
   defdelegate get_registry(arg1), to: Rows
-  defdelegate hook_insert_local_pid(arg1, arg2, arg3), to: Placement
-  defdelegate hook_insert_pid(arg1, arg2), to: Placement
   defdelegate hook_registry_written(arg1, arg2), to: Placement
-  defdelegate hook_remove_pid(arg1, arg2), to: Placement
   defdelegate hub_alive?(arg1), to: Rows
   defdelegate live_node(arg1), to: Rows
   defdelegate live_pid(arg1), to: Rows
@@ -48,13 +45,11 @@ defmodule Flezha.Service.HubManager do
   defdelegate operative_set_runner(arg1, arg2, arg3), to: Placement
   defdelegate partition_members(arg1, arg2), to: Placement
   defdelegate recovery_state(arg1), to: Lifecycle
-  defdelegate register_handler(arg1, arg2), to: Placement
   defdelegate registered_operatives?(arg1), to: Rows
   defdelegate registry_dump(arg1), to: Rows
   defdelegate registry_backend_config(arg1), to: Lifecycle
   defdelegate rewrite_cspec_plugins(arg1, arg2), to: Rows
   defdelegate runner_operatives(arg1, arg2), to: Placement
-  defdelegate unregister_handler(arg1, arg2), to: Placement
   defdelegate with_live_hub_id(arg1, arg2, arg3), to: Rows
 
   # Bounds one whole start request: WorkerQueue kills it at this deadline and

@@ -163,7 +163,7 @@ defmodule FlezhaTest.OutboxCase do
   with no resolvable Overwatch schedules a retry instead of a delivery.
   """
   def armed_writer(rc, entity_id) do
-    ClassRegistry.put_overwatch(rc, self())
+    ClassRegistry.put_overwatch(rc, self(), nil)
     start_writer(entity_id)
   end
 

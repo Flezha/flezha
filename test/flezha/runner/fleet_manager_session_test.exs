@@ -3,10 +3,10 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   Reconnect binding continuity (runner-controller-connection-healing, Phase 2).
 
   A runner that restarts on the same persistence path re-presents the same
-  durable STABLE IDENTITY. The controller keys operatives on the per-connection
-  session token, so on reconnect it SWAPS the prior session's bindings onto the
-  new session token (no mint-and-evict, no lost operative) — exactly the
-  recurring-outage fix. This drives a real Rust runner through the proven
+  durable STABLE IDENTITY. An operative is owned by that identity and routed by
+  the per-connection session token, so on reconnect each Overwatch is told the
+  new session token and re-publishes its own binding (no mint-and-evict, no
+  lost operative). This drives a real Rust runner through the proven
   stop → restart pattern (matrix 18.7) with a fixed `FLEZHA_RUNNER_ID_PATH`,
   and asserts the operative follows the runner onto its new session.
   """
@@ -21,10 +21,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
   import ExUnit.CaptureLog
 
+  alias Flezha.AuthZ.RunnerProof
   alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.TestHelpers
@@ -32,8 +34,6 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
-  alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.HookManager
 
   @namespace "reconnect-binding-test"
   @factory "do_nothing"
@@ -71,6 +71,11 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     # The operative now belongs to the new session, and the old session is gone.
     assert NodeTestHelper.wait_until(fn -> bound_to?(session2, operative.id) end, 1_000, 25),
            "operative must follow the runner onto its new session token"
+
+    # The Overwatch writes the tag itself, after it re-binds, so a tag naming the
+    # new session is an Overwatch naming it too.
+    {:ok, overwatch} = OperativeManager.get_operative_pid(@namespace, operative.id)
+    assert :sys.get_state(overwatch).runner_id == session2
 
     refute session1 in FleetManager.active_runners(@namespace)
   end
@@ -168,12 +173,20 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     end
 
     test "an accepted socket connect completes the handshake", %{ns: ns} do
-      {_sdk, session} = stand_in_runner(ns, &accept/1)
+      identity = "stand-in-#{System.unique_integer([:positive])}"
+      {sdk, session} = stand_in_runner(ns, &accept/1, %{"stable_id" => identity})
 
       assert NodeTestHelper.wait_until(
                fn -> session in FleetManager.active_runners(ns) end,
                5_000
              )
+
+      # The session's channels read its identity as they start, and it is
+      # forgotten with the session.
+      assert Marks.identity_of(session) == identity
+
+      Flezha.Transport.Stream.close(sdk)
+      assert NodeTestHelper.wait_until(fn -> Marks.identity_of(session) == session end, 5_000)
     end
 
     test "a handshake with no answer by its bound ends the session", %{ns: ns} do
@@ -252,16 +265,6 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       # refusal's own line is what is read.
       refusal = log |> String.split("\n") |> Enum.find("", &(&1 =~ "on #{ns} has no control"))
       assert refusal =~ "#{too_long}/primary_stream_"
-
-      # The hook is taken before the tree, and a refused connect leaves it on
-      # the hub for its lifetime otherwise: a runner retrying a refusal adds
-      # one handler per attempt, none of which any runner will ever answer.
-      handlers = child_registered_handlers(ns)
-
-      assert :flezha_registry_written in handlers,
-             "read no handler table for #{ns}'s hub, so an empty insertion list proves nothing"
-
-      assert Enum.filter(handlers, &insertion_hook?/1) == []
     end
   end
 
@@ -307,6 +310,82 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     end
   end
 
+  describe "a stable identity presented under another credential" do
+    setup do
+      namespace = "pin-#{System.unique_integer([:positive])}"
+      on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+
+      # The proof answers the credential the payload names, as a credentialed
+      # posture does.
+      stub(RunnerProof, :prove, fn _stream, claimed, payload, _transport ->
+        {:ok, %{namespace: claimed, credential: payload["credential"]}}
+      end)
+
+      MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+
+      %{ns: namespace, identity: "pinned-#{System.unique_integer([:positive])}"}
+    end
+
+    test "is taken over when the credential is the same", %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "credential" => "c1"})
+      second = active_stand_in(ns, %{"stable_id" => id, "credential" => "c1"})
+
+      assert NodeTestHelper.wait_until(
+               fn -> first not in FleetManager.active_runners(ns) end,
+               5_000
+             )
+
+      assert second in FleetManager.active_runners(ns)
+    end
+
+    test "is refused while the identity's session is held", %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "credential" => "c1"})
+
+      assert {_sdk, {:error, {:identity_taken, ^id}}} =
+               connect(ns, %{"stable_id" => id, "credential" => "c2"})
+
+      assert_received {:rejected, %{count: 1}, %{reason: {:identity_taken, ^id}}}
+      assert FleetManager.active_runners(ns) == [first]
+    end
+
+    test "is admitted and pinned anew once the identity's session has left the roster",
+         %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "credential" => "c1"})
+      :ok = FleetManager.evict_runner(first, proved_wedged: true)
+
+      second = active_stand_in(ns, %{"stable_id" => id, "credential" => "c2"})
+
+      assert FleetManager.active_runners(ns) == [second]
+      assert :sys.get_state(FleetManager).stable_sessions[id] == {second, "c2"}
+    end
+
+    test "is neither pinned nor refused when the connect carries no credential",
+         %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "credential" => "c1"})
+      second = active_stand_in(ns, %{"stable_id" => id})
+
+      assert NodeTestHelper.wait_until(
+               fn -> first not in FleetManager.active_runners(ns) end,
+               5_000
+             )
+
+      assert second in FleetManager.active_runners(ns)
+      assert :sys.get_state(FleetManager).stable_sessions[id] == {second, nil}
+    end
+  end
+
+  # A stand-in that answers its handshake, once the fleet lists it.
+  defp active_stand_in(namespace, extra) do
+    {_sdk, session} = stand_in_runner(namespace, &accept/1, extra)
+
+    assert NodeTestHelper.wait_until(
+             fn -> session in FleetManager.active_runners(namespace) end,
+             5_000
+           )
+
+    session
+  end
+
   # `start_hub/1` answers `start` for `namespace` only; every other hub the
   # node starts meanwhile starts for real.
   defp stub_hub_start(namespace, start) do
@@ -327,34 +406,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     end)
   end
 
-  # Every `child_registered` handler this namespace's hub holds, by id.
-  defp child_registered_handlers(namespace) do
-    hub = ProcessHub.Coordinator.get_hub(Identificator.hub(namespace))
-
-    hub.storage.hook
-    |> HookManager.registered_handlers(Hook.child_registered())
-    |> Enum.map(& &1.id)
-  end
-
-  defp insertion_hook?(id), do: is_binary(id) and String.ends_with?(id, "_hub_pid_insertion")
-
   # A runner played by this process on a real in-node stream: it connects the
-  # way the in-node SDK does, then answers each handshake frame as `answer`
-  # says. `:silent` answers nothing.
-  defp stand_in_runner(namespace, answer) do
-    Flezha.Transport.Server.ensure_started(:native)
-    {sdk, controller_side} = Flezha.Transport.Local.Stream.open()
-    :ok = Flezha.Transport.Stream.controlling_process(sdk, self())
-    :ok = Flezha.Transport.Stream.set_active(sdk)
-
-    payload = %{
-      "namespace" => namespace,
-      "factory_ids" => [],
-      "factories" => [],
-      "stable_id" => "stand-in-#{System.unique_integer([:positive])}"
-    }
-
-    {:ok, session} = Flezha.Transport.Server.connect(payload, controller_side)
+  # way the in-node SDK does, with `extra` merged into its handshake payload,
+  # then answers each handshake frame as `answer` says. `:silent` answers
+  # nothing.
+  defp stand_in_runner(namespace, answer, extra \\ %{}) do
+    {sdk, {:ok, session}} = connect(namespace, extra)
 
     for _frame <- 1..2 do
       assert_receive {:flz_data, _, "control_command", bin, _}, 5_000
@@ -367,6 +424,27 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     end
 
     {sdk, session}
+  end
+
+  # Open an in-node stream and connect over it, answering the connect's result.
+  defp connect(namespace, extra) do
+    Flezha.Transport.Server.ensure_started(:native)
+    {sdk, controller_side} = Flezha.Transport.Local.Stream.open()
+    :ok = Flezha.Transport.Stream.controlling_process(sdk, self())
+    :ok = Flezha.Transport.Stream.set_active(sdk)
+
+    payload =
+      Map.merge(
+        %{
+          "namespace" => namespace,
+          "factory_ids" => [],
+          "factories" => [],
+          "stable_id" => "stand-in-#{System.unique_integer([:positive])}"
+        },
+        extra
+      )
+
+    {sdk, Flezha.Transport.Server.connect(payload, controller_side)}
   end
 
   defp accept(_kind), do: {"success", []}

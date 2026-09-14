@@ -16,8 +16,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   See [`architecture/runner.md`](architecture/runner.md).
 - **Stable identity vs session token** — the SDK persists a **stable identity**
   (`FLEZHA_RUNNER_ID_PATH`, default `/var/lib/flezha-runner/id`) that survives restarts; the
-  controller mints a **session token** per connection (`AssignRunnerId`) and keys routing and the
-  WAL owner on it, so a reconnect is a binding swap. See [`internals/runner_identity.md`](internals/runner_identity.md).
+  controller mints a **session token** per connection (`AssignRunnerId`) and routes on it, while an
+  operative's owner is the stable identity, so a reconnect re-points each operative's session
+  without moving its ownership. See [`internals/runner_identity.md`](internals/runner_identity.md).
 - **Namespace** — the hard tenancy boundary: every operative, procedure, state path, audit record
   and signal carries one (`Flezha.AuthZ.Namespace`); `_system` is the singleton compatibility
   namespace. A runner connects into one namespace; the CLI selects one with `--namespace`.
@@ -134,9 +135,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
   (late-input correction, `flz operative replay`, a rewind) **bumps** it so the new output passes
   dedup and overwrites by natural key.
-- **Owner / fence / realign** — exactly one runner session writes an entity's WAL. A takeover is
-  newest-wins and unbinds the old session first: its stream channels flip `fenced?`, and the WAL
-  writer refuses an append from a superseded session token before any realign decision.
+- **Owner / fence / realign** — an operative's **owner** is the stable identity its ownership
+  record names (the `ClassRegistry` row its Overwatch writes before `AddOperative`); a frame about
+  the operative from a runner of any other identity is refused, counted as `foreign_frame_refused`
+  and answered with `RemOperative`. Within that identity exactly one session writes an entity's WAL:
+  a takeover is newest-wins and unbinds the old session first, so its stream channels flip
+  `fenced?` and the WAL writer refuses an append from a superseded session token before any realign
+  decision.
   **Realign** is the writer adopting a current runner's non-contiguous sequence and bumping the epoch.
 - **Minimum watermark** — `min(consumed offset)` across an operative's entities, advanced only
   from the post-fsync path. It is the input-log retention floor and what mints source credit, so

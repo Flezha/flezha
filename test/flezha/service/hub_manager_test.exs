@@ -357,32 +357,6 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "hook_insert_pid/2 routing" do
-    test "an unknown runner's missing stream supervisors do not crash the caller" do
-      # This runs inside the `child_registered` hook, where an exit aborts the
-      # registry write that dispatched it.
-      hook_data = %{child_id: "r1", node_pids: [{node(), self()}]}
-
-      assert HubManager.hook_insert_pid("no_such_runner", hook_data) == :ok
-    end
-
-    test "no local pid means nothing to route" do
-      assert HubManager.hook_insert_pid("e1", %{child_id: "r1", node_pids: []}) == nil
-
-      remote = %{child_id: "r1", node_pids: [{:other@node, self()}]}
-      assert HubManager.hook_insert_pid("e1", remote) == nil
-    end
-
-    test "a tag left on the hook data does not gate the route" do
-      # ProcessHub never passes `:metadata` to `child_registered`, so a tag gate
-      # here would be dead code pretending to protect the data plane. The route
-      # is operative -> local pid, which any runner's channel resolves alike.
-      hook_data = %{child_id: "r1", node_pids: [{node(), self()}], metadata: %{tag: "e2"}}
-
-      assert HubManager.hook_insert_pid("no_such_runner", hook_data) == :ok
-    end
-  end
-
   describe "recovery state (Snapshot + RecoveryGate)" do
     alias Flezha.Convergence.{RecoveryGate, Snapshot}
 

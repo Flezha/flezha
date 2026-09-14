@@ -430,6 +430,11 @@ defmodule Flezha.Convergence.RemedySeamTest do
       def handle_call({:runner_migrate, _target}, _from, {_ow, :confirm} = state),
         do: {:reply, :ok, state}
 
+      def handle_call({:runner_migrate, target}, _from, {_ow, {:confirm, test_pid}} = state) do
+        send(test_pid, {:runner_migrate, target})
+        {:reply, :ok, state}
+      end
+
       def handle_call({:runner_migrate, _target}, _from, {_ow, :refuse} = state),
         do: {:reply, {:error, :busy}, state}
 
@@ -449,12 +454,14 @@ defmodule Flezha.Convergence.RemedySeamTest do
       :ok
     end
 
-    test "a confirmed migrate flips the binding to the factory-filtered pick" do
+    # The Overwatch publishes its own binding once the start answers, so what
+    # the executor decides is the runner it asks the Overwatch to move to.
+    test "a confirmed migrate asks the Overwatch to move to the factory-filtered pick" do
       id = "confirming_op"
-      inject(id, factory: "market", migrate: :confirm)
+      inject(id, factory: "market", migrate: {:confirm, self()})
 
       assert Heal.execute(rebind(id)) == :ok
-      assert registry_tag(id) == @live_runner
+      assert_received {:runner_migrate, @live_runner}
     end
 
     test "a timed-out, refused or unplaceable migrate leaves the registry binding unchanged" do

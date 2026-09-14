@@ -372,45 +372,9 @@ defmodule Flezha.Operative.Overwatch do
     read_entity_state(state, from, selector)
   end
 
-  # Async `:runner_migrate` for the PARKED un-park path only — the whole
-  # bind (prepare, restore, replay) runs there. The running-migrate path is a
-  # single ping + start round-trip; keeping it synchronous preserves the
-  # existing HotSwap handover invariants that depend on state being applied
-  # before the call returns.
   @impl true
-  def handle_call({:runner_migrate, _}, _from, %__MODULE__{migrate_task: t} = state)
-      when t != nil do
-    {:reply, {:error, :busy}, state}
-  end
-
-  # Parked (a failed init) and suspended (a durable loop park) both come back
-  # through the same un-park task: it re-binds, restores journal + entities, and
-  # delivers the undelivered inbox tail. A running operative migrates in place,
-  # below.
-  def handle_call(
-        {:runner_migrate, new_runner_id},
-        _from,
-        %__MODULE__{init_error: reason, suspended: suspended} = state
-      )
-      when reason != nil or suspended do
-    {ref, pid} = Migration.spawn_migrate_task({:unpark, state, new_runner_id})
-    {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
-  end
-
-  # The binding is committed only once the runner has answered. Committing it
-  # first leaves a failed migrate naming a runner this process cannot reach —
-  # the operative then reads as bound to a LIVE runner, so `Convergence.Diff`
-  # stops classifying it misbound and the divergence hides itself permanently.
-  # The runner now holds the stored snapshot it was seeded from, so it is not kept.
-  def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state) do
-    case Lifecycle.attempt_ping_and_start(Migration.migrate_operative(state), new_runner_id) do
-      {:ok, _} ->
-        {:reply, :ok, Lifecycle.bind_to_runner(%{state | snapshot: nil}, state.id, new_runner_id)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
+  def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state),
+    do: Migration.runner_migrate(state, new_runner_id)
 
   # The convergence loop's `publish_binding`: re-write the durable row and the
   # runner's route from the binding this process holds. Must run here — the
@@ -418,7 +382,7 @@ defmodule Flezha.Operative.Overwatch do
   @impl true
   def handle_call(:publish_binding, _from, %__MODULE__{runner_id: runner_id} = state)
       when is_binary(runner_id) do
-    {:reply, :ok, Lifecycle.publish_binding(state)}
+    {:reply, :ok, Lifecycle.publish_binding(state, nil)}
   end
 
   def handle_call(:publish_binding, _from, state), do: {:reply, {:error, :unbound}, state}
@@ -569,6 +533,11 @@ defmodule Flezha.Operative.Overwatch do
     Replay.dispatch_restore(state, state.builder.opts, runner_id)
     {:noreply, state}
   end
+
+  # The bound runner reconnected under a new session with the same stable
+  # identity (`Flezha.Runner.FleetManager.Session.swap_bindings/3`).
+  def handle_cast({:session_replaced, old_session, new_session}, %__MODULE__{} = state),
+    do: {:noreply, Migration.session_replaced(state, old_session, new_session)}
 
   # ---------------------------------------------------------------
   # handle_info

@@ -208,9 +208,9 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   end
 
   defp request_spawn(%{channel: channel, instance_id: instance_id}) do
-    request = %RunnerCommands.CommandRequest{
-      reference_id: "ref-spawn",
-      command:
+    payload =
+      ControlFrame.encode_request(
+        "ref-spawn",
         {:spawn_workflow_request,
          %RunnerCommands.SpawnWorkflowRequest{
            instance_id: instance_id,
@@ -218,10 +218,9 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
            payload: "p1",
            if_running: "deliver"
          }}
-    }
+      )
 
-    {:ok, iodata, _size} = Protox.encode(request)
-    send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
+    send(channel, {:flz_data, :stream_id, "control_command", payload, %{}})
   end
 
   defp await_response do

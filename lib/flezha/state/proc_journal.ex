@@ -127,12 +127,19 @@ defmodule Flezha.State.ProcJournal do
   iteration `iter`, to be rehydrated by a new inbox append or, when
   `wake_deadline_ms` is non-nil, by its durable timer. Durable before the
   instance is evicted, so suspension survives a controller redeploy.
+
+  The park is named from `namespace` by an instance id alone, so one for an
+  instance whose durable state another namespace owns is refused.
   """
-  @spec append_parked(binary(), non_neg_integer(), non_neg_integer() | nil) ::
+  @spec append_parked(binary(), binary(), non_neg_integer(), non_neg_integer() | nil) ::
           :ok | {:error, term()}
-  def append_parked(instance_id, iter, wake_deadline_ms \\ nil)
-      when is_binary(instance_id) and is_integer(iter) and iter >= 0 do
-    append(instance_id, @type_parked, 0, iter, <<wake_deadline_ms || 0::64-big>>)
+  def append_parked(namespace, instance_id, iter, wake_deadline_ms \\ nil)
+      when is_binary(namespace) and is_binary(instance_id) and is_integer(iter) and iter >= 0 do
+    owner = Paths.namespace_of_class(instance_id)
+
+    if owner in [namespace, "_system"],
+      do: append(instance_id, @type_parked, 0, iter, <<wake_deadline_ms || 0::64-big>>),
+      else: {:error, {:namespace_conflict, instance_id, owner}}
   end
 
   @doc """

@@ -408,26 +408,57 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
-  Record the live Overwatch pid for `operative_class` (called at bind, from
-  the Overwatch process). The State subsystem's fsync-gated outbox flush
-  resolves the `:on_output` dispatch target through this — no registry scan.
+  Record the live Overwatch pid for `operative_class` and the stable identity
+  of the runner it is bound to, clearing any pending identity. Written at bind,
+  before the runner is told to start the operative.
+
+  The State subsystem's fsync-gated outbox flush resolves the `:on_output`
+  dispatch target through the pid, with no registry scan, and every door a
+  runner's frame comes through reads the owner (`owner/1`).
   """
-  @spec put_overwatch(binary(), pid()) :: :ok
-  def put_overwatch(operative_class, pid) when is_binary(operative_class) and is_pid(pid) do
+  @spec put_overwatch(binary(), pid(), binary() | nil) :: :ok
+  def put_overwatch(operative_class, pid, owner)
+      when is_binary(operative_class) and is_pid(pid) do
     ensure_table()
-    :ets.insert(@table, {{operative_class, :overwatch}, pid})
+    :ets.insert(@table, {{operative_class, :overwatch}, pid, owner, nil})
     :ok
+  end
+
+  @doc """
+  Record on `operative_class`'s row the identity a running migrate is trying,
+  or clear it with `nil`. Frames from the owner and from the pending identity
+  are both accepted until the migrate is decided. A class with no row is left
+  without one.
+  """
+  @spec set_pending(binary(), binary() | nil) :: :ok
+  def set_pending(operative_class, identity) when is_binary(operative_class) do
+    if :ets.whereis(@table) != :undefined,
+      do: :ets.update_element(@table, {operative_class, :overwatch}, {4, identity})
+
+    :ok
+  end
+
+  @doc """
+  The Overwatch pid, the owning identity and the pending identity recorded for
+  `operative_class`, or `:error` when nothing is recorded on this node. The pid
+  is answered whether or not it is still alive.
+  """
+  @spec owner(binary()) :: {:ok, pid(), binary() | nil, binary() | nil} | :error
+  def owner(operative_class) when is_binary(operative_class) do
+    with true <- :ets.whereis(@table) != :undefined,
+         [{_key, pid, owner, pending}] <- :ets.lookup(@table, {operative_class, :overwatch}) do
+      {:ok, pid, owner, pending}
+    else
+      _ -> :error
+    end
   end
 
   @doc "Resolve the live Overwatch pid for `operative_class`."
   @spec overwatch_pid(binary()) :: {:ok, pid()} | :error
   def overwatch_pid(operative_class) when is_binary(operative_class) do
-    case ets_lookup({operative_class, :overwatch}) do
-      {:ok, pid} when is_pid(pid) ->
-        if Process.alive?(pid), do: {:ok, pid}, else: :error
-
-      _ ->
-        :error
+    case owner(operative_class) do
+      {:ok, pid, _owner, _pending} -> if Process.alive?(pid), do: {:ok, pid}, else: :error
+      :error -> :error
     end
   end
 

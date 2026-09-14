@@ -1,14 +1,18 @@
 defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.Paths
   alias Flezha.State.Wire
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: writes Application env; a shared on-disk root; registered runner channels.
 
   use FlezhaTest.Case, async: false
+  use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   setup context do
     name =
@@ -392,7 +396,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       :ok = GenServer.call(pid, {:operative_pid_update, class, [dead]})
       ClassRegistry.put(class, :workflow)
-      ClassRegistry.put_overwatch(class, live)
+      ClassRegistry.put_overwatch(class, live, "ce_test")
 
       Process.exit(dead, :kill)
 
@@ -420,6 +424,80 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       refute {:process, holder} in monitors_of(pid)
 
       Process.exit(holder, :kill)
+    end
+  end
+
+  describe "an output is routed only for the runner that owns its operative" do
+    setup :set_mimic_global_until_exit
+
+    setup do
+      class = "owned_#{System.unique_integer([:positive])}"
+      test_pid = self()
+      on_exit(fn -> ClassRegistry.delete(class) end)
+
+      stub(ControlUnit, :stop_operative_async, fn runner_id, id ->
+        send(test_pid, {:rem_operative, runner_id, id})
+        :ok
+      end)
+
+      %{class: class}
+    end
+
+    test "the owner's first output is routed through the ownership record and cached",
+         %{pid: pid, class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "ce_test")
+
+      send(pid, {:flz_data, :ref, class, "first", %{}})
+
+      assert_receive {:"$gen_cast", {:io_out, "first", _}}, 1_000
+      assert :sys.get_state(pid).operative_mapping[class] == [self()]
+    end
+
+    test "a running migrate's target is routed while it is pending", %{pid: pid, class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
+      :ok = ClassRegistry.set_pending(class, "ce_test")
+
+      send(pid, {:flz_data, :ref, class, "from-the-target", %{}})
+
+      assert_receive {:"$gen_cast", {:io_out, "from-the-target", _}}, 1_000
+    end
+
+    test "another runner's output is refused, counted every time and reported once",
+         %{pid: pid, class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
+      MessageTestHelper.forward_telemetry([:flezha, :runner, :foreign_frame_refused], :refused)
+
+      send(pid, {:flz_data, :ref, class, "forged-1", %{}})
+      send(pid, {:flz_data, :ref, class, "forged-2", %{}})
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      refute_received {:"$gen_cast", {:io_out, _, _}}
+
+      assert_received {:refused, %{count: 1},
+                       %{
+                         runner_id: "ce_test",
+                         identity: "ce_test",
+                         owner: "runner_a",
+                         operative_id: ^class,
+                         kind: :output
+                       }}
+
+      refute_received {:refused, _, _}
+      assert_received {:rem_operative, "ce_test", ^class}
+      refute_received {:rem_operative, _, _}
+      rows = LivenessCounters.by_runner(LivenessCounters.snapshot_all().channels)
+      assert get_in(rows, ["ce_test", :foreign_frame_refused]) == 2
+    end
+
+    test "an output for an operative nobody records is the counted unrouted drop",
+         %{pid: pid, class: class} do
+      MessageTestHelper.forward_telemetry([:flezha, :stream, :drop], :drop)
+
+      send(pid, {:flz_data, :ref, class, "unrouted", %{}})
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      assert_received {:drop, %{count: 1}, %{operative_id: ^class, reason: :unrouted}}
+      refute_received {:rem_operative, _, _}
     end
   end
 

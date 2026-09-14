@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: a runner acts only on the operatives bound to it
+
+The controller now records, for every operative, the stable identity of the
+runner it is bound to, and refuses a frame about that operative from any other
+runner: an output, a state record, a completion, a park, a shutdown snapshot or
+a commit barrier. A runner judged dead while its process was still alive kept
+its copy of an operative the controller had moved elsewhere, and after it
+reconnected that copy could stop the operative, suspend it, overwrite its
+snapshot or rewind its WAL. The copy is now refused, counted on
+`[:flezha, :runner, :foreign_frame_refused]`, and told to stop. A stable
+identity presented under another runner credential while its session is held
+is refused as a connect rejection.
+
 ### Added: a file plugin root can be an S3 bucket
 
 `FLEZHA_FILE_PLUGIN_ROOT` also takes `s3://<bucket>/<prefix>`, so a file source

@@ -65,7 +65,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       :ok
     end)
 
-    stub(Flezha.Service.HubManager, :hook_insert_local_pid, fn runner, ^inst, pid ->
+    stub(Flezha.Runner.StreamPool, :put_route, fn runner, ^inst, pid ->
       send(test_pid, {:route_published, runner, pid})
       :ok
     end)
@@ -87,7 +87,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   test "un-parking onto a runner drops the snapshot stored before it" do
     inst = instance_id()
     stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
-    stub(Flezha.Service.HubManager, :hook_insert_local_pid, fn _, _, _ -> :ok end)
+    stub(Flezha.Runner.StreamPool, :put_route, fn _, _, _ -> :ok end)
 
     parked =
       state(inst,
@@ -128,6 +128,22 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert suspended.runner_id == nil
     assert suspended.channel == nil
     refute Timer.armed?(suspended.timers, :wake), "no wake_after declared ⇒ wait for input alone"
+  end
+
+  # fails when: a park clears the ownership record, so an entity frame the
+  # parking runner sent before it parked, still in flight on the data stream, is
+  # refused and never reaches the WAL a rehydrate restores from.
+  test "a park keeps the ownership record naming the runner that parked" do
+    inst = instance_id()
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+    :ok = ClassRegistry.put_overwatch(inst, self(), "ex_1")
+    on_exit(fn -> ClassRegistry.delete(inst) end)
+
+    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+
+    assert suspended.runner_id == nil
+    assert ClassRegistry.owner(inst) == {:ok, self(), "ex_1", nil}
   end
 
   test "a turn that landed while the loop was parking is never stranded" do
@@ -259,7 +275,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     # Durable state of a suspended instance: iteration 0 committed, then parked.
     :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [])
     :ok = ProcJournal.append_iter_committed(inst, 0, 0, [])
-    :ok = ProcJournal.append_parked(inst, 0, System.system_time(:millisecond) + 60_000)
+    :ok = ProcJournal.append_parked("default", inst, 0, System.system_time(:millisecond) + 60_000)
 
     fresh = %Overwatch{
       id: inst,
@@ -500,6 +516,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
@@ -636,12 +653,17 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
 
     state = running_state()
+    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
+    on_exit(fn -> ClassRegistry.delete(state.id) end)
 
     assert {:reply, {:error, {:ping_failed, :no_control_unit}}, unchanged} =
              Overwatch.handle_call({:runner_migrate, "runner_b"}, {self(), make_ref()}, state)
 
     assert unchanged.runner_id == "runner_a"
     assert unchanged.channel == :chan_a
+
+    assert ClassRegistry.owner(state.id) == {:ok, self(), "runner_a", nil},
+           "a failed migrate must keep the owner and forget the identity it tried"
   end
 
   # fails when: a committed running-migrate keeps the snapshot it seeded the new
@@ -652,13 +674,22 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     runner_id = "runner_b_#{System.unique_integer([:positive])}"
     start_answering_control_unit(runner_id)
     state = %{running_state() | snapshot: ~s({"store_input_procedure":{"text_inputs":["s"]}})}
+    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
+    on_exit(fn -> ClassRegistry.delete(state.id) end)
 
     assert {:reply, :ok, bound} =
              Overwatch.handle_call({:runner_migrate, runner_id}, {self(), make_ref()}, state)
 
-    assert_received {:started_with, %{"store_input_procedure" => %{"text_inputs" => ["s"]}}}
+    assert_received {:started_with, %{"store_input_procedure" => %{"text_inputs" => ["s"]}},
+                     owner_at_start}
+
     assert bound.runner_id == runner_id
     assert bound.snapshot == nil
+
+    # Both runners are accepted while the start is in flight, and only the one
+    # it ended on afterwards.
+    assert owner_at_start == {:ok, self(), "runner_a", runner_id}
+    assert ClassRegistry.owner(state.id) == {:ok, self(), runner_id, nil}
   end
 
   # fails when: a handover away from a runner that is gone stops shipping the
@@ -721,7 +752,8 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
       receive do
         {:"$gen_call", from, {:start_operative, operative}} ->
-          send(test_pid, {:started_with, operative.init_values})
+          owner = ClassRegistry.owner(operative.id)
+          send(test_pid, {:started_with, operative.init_values, owner})
           GenServer.reply(from, {:ok, %{}})
       end
     end)

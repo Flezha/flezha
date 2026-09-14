@@ -15,7 +15,6 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   alias FlezhaTest.Helper.NodeTestHelper
   import FlezhaTest.Helper.HubRegistryTestHelper
 
-  alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
 
   @namespace "mn_registry_test"
@@ -161,17 +160,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       Enum.each(retired, &HubManager.stop_hub/1)
 
-      # Restoring the hub is not enough: each runner's `child_registered` hook
-      # was registered against the hub we just stopped, and without it a fresh
-      # hub never seeds the StreamChannels' operative routes — so every later
-      # data-plane test (state reads, migration, drain handover) silently gets
-      # no frames back.
-      on_exit(fn ->
-        Enum.each(retired, fn ns ->
-          ensure_hub(ns)
-          Enum.each(FleetManager.active_runners(ns), &HubManager.register_handler(ns, &1))
-        end)
-      end)
+      on_exit(fn -> Enum.each(retired, &ensure_hub/1) end)
 
       {:ok, _} = ensure_hub(@pending_ns)
 

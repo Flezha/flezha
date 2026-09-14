@@ -386,9 +386,11 @@ operative id picks which **runner** it binds to.
 ## Connect, bind, declare
 
 A runner dials in, presents a **stable identity** that survives its own restarts, and the
-controller mints a per-connection **session token**. Everything the controller keys on — stream
-routing, registry names, the WAL owner — is the session token; the stable identity is what makes
-a reconnect a *binding swap* rather than a new runner.
+controller mints a per-connection **session token**. Stream routing and registry names key on the
+session token; which runner owns an operative keys on the stable identity. A reconnect under the
+same identity therefore moves no ownership, only the session each operative's Overwatch publishes
+its route on, and a runner's frame about an operative it does not own is refused and the runner
+told to remove its copy ([`runner_identity.md`](../internals/runner_identity.md)).
 
 ```mermaid
 sequenceDiagram
@@ -397,13 +399,14 @@ sequenceDiagram
     participant OW as 🧠 Overwatch (per operative)
 
     EX->>CTRL: dial + connect_control_channel<br/>{namespace, stable_id, factories}
-    Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id — unbind it FIRST, then bind the new one
+    Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id, fence it FIRST, then tell each of its operatives the new one
     CTRL->>EX: AssignRunnerId
     CTRL->>EX: ConnectSocket {sockets_count}
     EX->>CTRL: open data streams — primary 0x01 in, secondary 0x02 out
 
     Note over OW: convergence sees an unbound operative and binds it
     OW->>EX: Ping (proves the reply path is intact)
+    Note over OW: record this runner's stable identity as the operative's owner, before the start
     OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_entity_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
     EX-->>OW: AddOperativeResponse {metadata}
     Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_procs · leaf_procs · compact_after_bytes<br/>keyed (only when false) · durability (sync_remote)

@@ -368,7 +368,7 @@ defmodule Flezha.Convergence.LoopTest do
     test "a tier-on Entity's markers carry its OWN consumed offset and the log tail" do
       rc = "tiered-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "k1"}
-      ClassRegistry.put_overwatch(rc, self())
+      ClassRegistry.put_overwatch(rc, self(), nil)
 
       {:ok, 0} = InputLog.append(rc, "i0", %{})
       {:ok, 1} = InputLog.append(rc, "i1", %{})
@@ -415,7 +415,7 @@ defmodule Flezha.Convergence.LoopTest do
     test "an Entity that stops consuming while the log grows classifies STUCK, naming it" do
       rc = "stalling-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "poisoned"}
-      ClassRegistry.put_overwatch(rc, self())
+      ClassRegistry.put_overwatch(rc, self(), nil)
 
       {:ok, 0} = InputLog.append(rc, "i0", %{})
       {:ok, pid} = Supervisor.find_or_start(seg)

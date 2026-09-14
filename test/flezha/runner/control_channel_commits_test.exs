@@ -177,7 +177,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("outbox")
 
     # Stand in as the bound operative: the flush casts `:io_out_batch` at us.
-    ClassRegistry.put_overwatch(inst, self())
+    own(inst, control_channel)
 
     seg = Wire.encode_entity_id(inst, "ProcA", "s0")
 
@@ -291,7 +291,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   test "a compensating commit journals a `compensated` entry with comp-marked keys" do
     inst = "opc_comp_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("comp")
-    ClassRegistry.put_overwatch(inst, self())
+    own(inst, control_channel)
 
     seg = Wire.encode_entity_id(inst, "ProcA", "s0")
 
@@ -326,7 +326,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     inst = "opc_norefuse_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("norefuse")
-    ClassRegistry.put_overwatch(inst, self())
+    own(inst, control_channel)
 
     seg = Wire.encode_entity_id(inst, "ProcA", "s0")
     fat = :binary.copy(<<0>>, ProcJournal.max_entry_bytes() + 1)
@@ -353,7 +353,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
     inst = "iter_inst_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("iter")
-    ClassRegistry.put_overwatch(inst, self())
+    own(inst, control_channel)
 
     # Two turns are waiting in the durable inbox; iteration 0 consumed the first.
     {:ok, 1} = ProcInbox.append(inst, "turn-1", %{})
@@ -440,6 +440,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {channel, stream_ref}
   end
 
+  # Stand in as the bound operative, owned by the channel's own session.
+  defp own(inst, control_channel),
+    do: ClassRegistry.put_overwatch(inst, self(), :sys.get_state(control_channel).identity)
+
   # The channel and its commit worker, as the runner supervisor pairs them.
   defp start_runner(suffix) do
     stream_ref = make_ref()
@@ -478,33 +482,29 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
          reference_id,
          opts \\ []
        ) do
-    request = %RunnerCommands.CommandRequest{
-      reference_id: reference_id,
-      command:
-        {:proc_commit,
-         %RunnerCommands.ProcCommit{
-           operative_id: operative_id,
-           proc_idx: proc_idx,
-           iter: 0,
-           entities_ran: entities_ran,
-           handoff:
-             Enum.map(handoff, fn {cid, bytes} ->
-               %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes}
-             end),
-           outbox:
-             Enum.map(Keyword.get(opts, :outbox, []), fn item ->
-               struct!(RunnerCommands.ProcOutboxItem, item)
-             end),
-           compensating: Keyword.get(opts, :compensating, false)
-         }}
-    }
-
-    {:ok, iodata, _size} = Protox.encode(request)
-    IO.iodata_to_binary(iodata)
+    ControlFrameTestHelper.encode_request(
+      reference_id,
+      {:proc_commit,
+       %RunnerCommands.ProcCommit{
+         operative_id: operative_id,
+         proc_idx: proc_idx,
+         iter: 0,
+         entities_ran: entities_ran,
+         handoff:
+           Enum.map(handoff, fn {cid, bytes} ->
+             %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes}
+           end),
+         outbox:
+           Enum.map(Keyword.get(opts, :outbox, []), fn item ->
+             struct!(RunnerCommands.ProcOutboxItem, item)
+           end),
+         compensating: Keyword.get(opts, :compensating, false)
+       }}
+    )
   end
 
   defp build_iter_commit_payload(operative_id, iter, consumed_offset, handoff, reference_id) do
-    encode_request(reference_id, {
+    ControlFrameTestHelper.encode_request(reference_id, {
       :iter_commit,
       %RunnerCommands.IterCommit{
         operative_id: operative_id,
@@ -519,7 +519,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   defp build_iter_park_payload(operative_id, iter, wake_deadline_ms, reference_id) do
-    encode_request(reference_id, {
+    ControlFrameTestHelper.encode_request(reference_id, {
       :iter_park,
       %RunnerCommands.IterPark{
         operative_id: operative_id,
@@ -527,16 +527,6 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
         wake_deadline_ms: wake_deadline_ms
       }
     })
-  end
-
-  defp encode_request(reference_id, command) do
-    {:ok, iodata, _size} =
-      Protox.encode(%RunnerCommands.CommandRequest{
-        reference_id: reference_id,
-        command: command
-      })
-
-    IO.iodata_to_binary(iodata)
   end
 
   defp decode_reply(framed_payload) do

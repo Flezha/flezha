@@ -8,7 +8,8 @@ defmodule Flezha.Runner.FleetManager do
   takeover fence and the retiring mark), `Roster` (the runner index),
   `Factories` (the factory table and each factory's SDK language) and
   `Session` (the handshake, connect, disconnect, evict, reroute) — while the
-  public API stays here.
+  public API stays here. `Marks` also holds each live session's stable
+  identity, which an operative's ownership record names.
 
   Invariant: a disconnect drops the runner from the active set
   unconditionally; what varies is only what becomes of its operatives.
@@ -108,10 +109,10 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  Atomically evict a dead/orphaned runner binding: clear every operative's
-  stale stream mapping (`HubManager.hook_remove_pid/2`), stop its runner
-  supervisor, drop its factory refs + operative-insertion hook, and remove it
-  from `runner_namespaces`. Its operatives become misbound and rebind onto
+  Atomically evict a dead/orphaned runner binding: stop its runner supervisor
+  (its stream channels, and every route they held, go with it), drop its
+  factory refs, and remove it from `runner_namespaces`. Its operatives become
+  misbound and rebind onto
   a live runner on the next convergence tick. Idempotent — an unknown
   id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by the
   reconnect binding-swap in `runner_connect` (to close the prior session).
@@ -295,12 +296,14 @@ defmodule Flezha.Runner.FleetManager do
         )
     end
 
-    Marks.ensure_fence_table()
+    Marks.ensure_tables()
 
     {:ok,
      arm_runner_cleanup(%{
        runner_namespaces: %{},
        namespace_factories: %{},
+       # Each stable identity's latest session and the credential that admitted
+       # it (`Session.check_identity_pin/2`).
        stable_sessions: %{},
        session_credentials: %{},
        pending_handshakes: %{},
@@ -453,13 +456,12 @@ defmodule Flezha.Runner.FleetManager do
     # manager serves every other runner on the node, so the connect is refused
     # rather than allowed to take the manager (and the transport server linked
     # to it) down.
-    case Session.catch_runner_connect(stream_ref, connect.namespace, connect.transport) do
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-
-      {:ok, namespace, session_token} ->
-        state = Session.await_handshake(state, session_token, stream_ref, connect)
-        {:reply, {:ok, {namespace, session_token}}, state}
+    with :ok <- Session.check_identity_pin(state, connect),
+         {:ok, namespace, session_token} <- Session.catch_runner_connect(stream_ref, connect) do
+      state = Session.await_handshake(state, session_token, stream_ref, connect)
+      {:reply, {:ok, {namespace, session_token}}, state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 

@@ -292,7 +292,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
     entry: entry
   } do
     {:ok, ref} = Store.append(entry)
-    ClassRegistry.put_overwatch(rc, self())
+    ClassRegistry.put_overwatch(rc, self(), nil)
 
     output = capture_io(fn -> CliManager.dlq_replay(ref) end)
 
@@ -306,7 +306,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
 
     overwatch = DlqFixtures.spawn_reparking_overwatch(entry, self())
 
-    ClassRegistry.put_overwatch(rc, overwatch)
+    ClassRegistry.put_overwatch(rc, overwatch, nil)
 
     output = capture_io(fn -> CliManager.dlq_replay(ref) end)
 

@@ -258,7 +258,13 @@ defmodule Flezha.Service.HubManagerStarterTest do
       # Unlinked on purpose: past the gate the connect raises on the stream ref
       # this test does not have, and the hub creation it does FIRST is the step
       # under test.
-      spawn(fn -> Session.catch_runner_connect(make_ref(), namespace, :uds) end)
+      spawn(fn ->
+        Session.catch_runner_connect(make_ref(), %{
+          namespace: namespace,
+          transport: :uds,
+          stable_id: nil
+        })
+      end)
 
       assert_receive {:at_gate, waiter}, 2_000
       refute namespace in HubManager.get_running_namespaces()

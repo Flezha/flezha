@@ -13,12 +13,14 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   """
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Lifecycle
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.TestHelpers
@@ -69,8 +71,8 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
   test "5.4 ping success proceeds to start_operative_sdk and activates plugins",
        %{test_pid: test_pid} do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
-      send(test_pid, :ping_called)
+    Application.put_env(:flezha, :overwatch_ping_fn, fn runner_id ->
+      send(test_pid, {:ping_called, runner_id, ClassRegistry.owner("ping_success_operative")})
       {:ok, :pong}
     end)
 
@@ -88,7 +90,11 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     }
 
     assert {:ok, _} = OperativeManager.start_operative(@namespace, operative)
-    assert_receive :ping_called, 2_000
+
+    # The start's ping is issued after the bind and right before the start, so
+    # the ownership record already names the runner the operative starts on.
+    assert_receive {:ping_called, runner_id, {:ok, _overwatch, owner, nil}}, 2_000
+    assert owner == Marks.identity_of(runner_id)
     assert_receive :activated, 2_000
   end
 

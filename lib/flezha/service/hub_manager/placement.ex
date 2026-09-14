@@ -8,55 +8,13 @@ defmodule Flezha.Service.HubManager.Placement do
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Process.Cspec
-  alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate
   alias Flezha.State.DurabilityTier
-  alias ProcessHub.Constant.Hook
-  alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
 
   require Logger
-
-  # 20% of the request bound, leaving the rest for the operative starts the
-  # bound was sized for. Overrunning it is not fatal — see `unplaceable_runner/5`.
-
-  @doc """
-  Register `runner_id`'s operative-insertion hook on the namespace's hub.
-
-  Answers `{:error, :hub_unavailable}` when the hub is not there to take it —
-  the connect is refused on that, because a runner whose hook never registered
-  gets no operative pid seeded into its stream channels.
-  """
-  @spec register_handler(binary(), binary()) :: :ok | {:error, term()}
-  def register_handler(namespace, runner_id) do
-    Rows.with_live_hub(namespace, {:error, :hub_unavailable}, fn hub_id ->
-      ProcessHub.register_hook_handlers(
-        hub_id,
-        Hook.child_registered(),
-        [
-          %HookManager{
-            id: runner_id <> "_hub_pid_insertion",
-            m: Flezha.Service.HubManager,
-            f: :hook_insert_pid,
-            a: [runner_id, :_]
-          }
-        ]
-      )
-    end)
-  end
-
-  @spec unregister_handler(binary(), binary()) :: :ok | {:error, term()}
-  def unregister_handler(namespace, runner_id) do
-    Rows.with_live_hub(namespace, {:error, :hub_unavailable}, fn hub_id ->
-      ProcessHub.cancel_hook_handlers(
-        hub_id,
-        Hook.child_registered(),
-        [runner_id <> "_hub_pid_insertion"]
-      )
-    end)
-  end
 
   def runner_operatives(namespace, runner_id) do
     Rows.with_live_hub(namespace, [], fn hub_id -> ProcessHub.tag_query(hub_id, runner_id) end)
@@ -105,30 +63,6 @@ defmodule Flezha.Service.HubManager.Placement do
     end)
   end
 
-  # The route is operative_id -> local Overwatch pid, so seeding it into a
-  # non-owning runner's channels is inert: any runner's channel resolves the
-  # same process, and only the owner ever emits frames for this operative.
-  #
-  # This and `hook_remove_pid/2` run inside the `child_registered` hook, where
-  # an exit aborts the registry write that dispatched it — which is why the
-  # fan-out is bounded and never raises.
-  def hook_insert_pid(runner_id, %{child_id: operative_id} = hook_data) do
-    curr_node = node()
-
-    updated_pids =
-      Map.get(hook_data, :node_pids, [])
-      |> Enum.filter(fn {node, _pid} -> node === curr_node end)
-      |> Enum.map(fn {_, pid} -> pid end)
-
-    case updated_pids do
-      [] ->
-        nil
-
-      _ ->
-        StreamPool.call_channels(runner_id, {:operative_pid_update, operative_id, updated_pids})
-    end
-  end
-
   @doc """
   Hub-wide `child_registered` handler: ships the cspec to the durability tier
   and declares each local operative's rewritten row to the convergence loop.
@@ -160,34 +94,6 @@ defmodule Flezha.Service.HubManager.Placement do
         _ -> nil
       end
     end)
-  end
-
-  @doc """
-  Convenience over `hook_insert_pid/2` for the common case: seed one operative's
-  local `pid` into `runner_id`'s pre-spawned StreamChannels so data-plane frames
-  route to it. Used by the convergence rebind, the reconnect binding swap, and
-  the Overwatch's own bind.
-  """
-  def hook_insert_local_pid(runner_id, operative_id, pid) when is_pid(pid) do
-    hook_insert_pid(runner_id, %{child_id: operative_id, node_pids: [{node(), pid}]})
-  end
-
-  @doc """
-  Clear a operative's pid mapping from every stream channel of `runner_id`.
-  Invoked directly by `Flezha.Runner.FleetManager.evict_runner/1` so a
-  dead runner's stale mappings never linger; idempotent on an
-  already-gone runner.
-  """
-  def hook_remove_pid(runner_id, %{child_id: operative_id}) do
-    StreamPool.call_channels(runner_id, {:operative_pid_remove, operative_id})
-
-    :telemetry.execute(
-      [:flezha, :hub, :pid_removed],
-      %{count: 1},
-      %{runner_id: runner_id, operative_id: operative_id}
-    )
-
-    :ok
   end
 
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do

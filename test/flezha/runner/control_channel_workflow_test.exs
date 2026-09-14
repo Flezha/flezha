@@ -21,6 +21,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
+  alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-task-completed-test"
@@ -205,20 +206,16 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
   end
 
   defp build_workflow_completed_payload(operative_id, status, error, result, reference_id) do
-    request = %RunnerCommands.CommandRequest{
-      reference_id: reference_id,
-      command:
-        {:workflow_completed,
-         %RunnerCommands.WorkflowCompleted{
-           operative_id: operative_id,
-           status: status,
-           error: error,
-           result: result
-         }}
-    }
-
-    {:ok, iodata, _size} = Protox.encode(request)
-    IO.iodata_to_binary(iodata)
+    ControlFrameTestHelper.encode_request(
+      reference_id,
+      {:workflow_completed,
+       %RunnerCommands.WorkflowCompleted{
+         operative_id: operative_id,
+         status: status,
+         error: error,
+         result: result
+       }}
+    )
   end
 end
 
@@ -271,13 +268,9 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   end
 
   defp send_request(channel, fields) do
-    request = %RunnerCommands.CommandRequest{
-      reference_id: "ref-spawn",
-      command: {:spawn_workflow_request, struct(RunnerCommands.SpawnWorkflowRequest, fields)}
-    }
-
-    {:ok, iodata, _size} = Protox.encode(request)
-    send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
+    command = {:spawn_workflow_request, struct(RunnerCommands.SpawnWorkflowRequest, fields)}
+    payload = ControlFrame.encode_request("ref-spawn", command)
+    send(channel, {:flz_data, :stream_id, "control_command", payload, %{}})
   end
 
   defp await_response do
@@ -458,9 +451,10 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
 
     payload = build_notification_payload("p_missing", "stale_state", "ref-missing")
 
-    # `config/test.exs` pins the global Logger level to `:error`, so a
-    # `Logger.warning/1` call is filtered out by default. Override here
-    # so the capture sees the "Overwatch missing" warning we assert on.
+    # `config/test.exs` pins the primary Logger level to `:error`, which drops
+    # the warning before any capture handler sees it, so it is lowered here.
+    on_exit(NodeTestHelper.override_log_level(:warning))
+
     log =
       ExUnit.CaptureLog.capture_log([level: :warning], fn ->
         send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
@@ -495,18 +489,14 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   end
 
   defp build_notification_payload(operative_id, serialized_state, reference_id) do
-    request = %RunnerCommands.CommandRequest{
-      reference_id: reference_id,
-      command:
-        {:runner_shutdown_notification,
-         %RunnerCommands.RunnerShutdownNotification{
-           operative_id: operative_id,
-           serialized_state: serialized_state
-         }}
-    }
-
-    {:ok, iodata, _size} = Protox.encode(request)
-    IO.iodata_to_binary(iodata)
+    ControlFrameTestHelper.encode_request(
+      reference_id,
+      {:runner_shutdown_notification,
+       %RunnerCommands.RunnerShutdownNotification{
+         operative_id: operative_id,
+         serialized_state: serialized_state
+       }}
+    )
   end
 
   defp assert_ack_for(framed_payload, expected_operative_id, expected_reference_id) do

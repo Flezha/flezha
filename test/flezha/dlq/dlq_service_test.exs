@@ -123,7 +123,7 @@ defmodule Flezha.Service.DlqTest do
       operative_class: operative_class
     } do
       {:ok, ref} = Store.append(entry)
-      Flezha.Operative.ClassRegistry.put_overwatch(operative_class, self())
+      Flezha.Operative.ClassRegistry.put_overwatch(operative_class, self(), nil)
 
       assert {:ok, :removed} = DlqSvc.replay(ref, context())
       assert_received {:"$gen_cast", {:io_in, "poison-bytes", %{"channel" => "input"}}}
@@ -136,7 +136,7 @@ defmodule Flezha.Service.DlqTest do
     } do
       {:ok, ref} = Store.append(entry)
       overwatch = DlqFixtures.spawn_reparking_overwatch(entry, self())
-      Flezha.Operative.ClassRegistry.put_overwatch(operative_class, overwatch)
+      Flezha.Operative.ClassRegistry.put_overwatch(operative_class, overwatch, nil)
 
       assert {:ok, {:re_parked, 2}} = DlqSvc.replay(ref, context())
       assert_received :re_parked

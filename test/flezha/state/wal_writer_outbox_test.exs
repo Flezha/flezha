@@ -171,7 +171,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     refute_dispatched()
 
     # Bind after the fact: the 1s retry timer picks it up.
-    ClassRegistry.put_overwatch(rc, self())
+    ClassRegistry.put_overwatch(rc, self(), nil)
     assert {"late", _, _} = next_output(3_000)
   end
 
@@ -380,7 +380,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     base: base
   } do
     redirect_dlq_dir(base)
-    ClassRegistry.put_overwatch(rc, self())
+    ClassRegistry.put_overwatch(rc, self(), nil)
 
     body = effect_body([], 9, %{channel: "in", error: "e", attempts: 1, payload: "p"})
     effect = RecordFrame.encode_record(0, effect_header(), body)
@@ -414,7 +414,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     rc: rc,
     entity_id: entity_id
   } do
-    ClassRegistry.put_overwatch(rc, self())
+    ClassRegistry.put_overwatch(rc, self(), nil)
 
     # Build the on-disk bytes of record 0 (plain) + record 1 (effect).
     plain = RecordFrame.encode_record(0, plain_header(), "base")

@@ -666,10 +666,13 @@ it stopped.
 
 ## Ownership and fencing
 
-Exactly one runner session may write an entity's WAL. Ownership changes at the door — a new
-connection presenting a known stable identity takes over — and the takeover is ordered:
-**unbind the old session before binding the new one**, so an in-flight frame from the old session
-dies at the binding rather than in the writer.
+An operative is owned by the stable identity of the runner it is bound to, and exactly one session
+of that identity may write its entities' WALs. The owner is recorded in the operative's
+`ClassRegistry` row, which its Overwatch writes before `AddOperative`, and every door a frame
+naming the operative comes through reads it. A reconnect under the same identity moves no
+ownership, only the session, and that takeover is ordered: **unbind the old session before binding
+the new one**, so an in-flight frame from the old session dies at the binding rather than in the
+writer.
 
 ```mermaid
 sequenceDiagram
@@ -691,7 +694,17 @@ sequenceDiagram
     NEW->>CTRL: append with the S2 token — accepted, and may realign
 ```
 
-There are **two** fence layers, and the second is a per-write check:
+Above the fences sits the **identity check**. `StreamChannel.Records.admit/3` refuses an output,
+an entity write, a `correction_request` or a control frame (`WorkflowCompleted`, `IterPark`,
+`RunnerShutdownNotification`, `ProcCommit`, `IterCommit`) when the operative's row names the
+sending session's identity neither as owner nor as the pending target of a running migrate. A
+refusal acts on nothing: it is counted on the channel's `foreign_frame_refused` liveness slot,
+reported once per session and operative on `[:flezha, :runner, :foreign_frame_refused]`, and
+answered with `RemOperative`, so a copy kept by a runner that was evicted while still alive is told
+to stop the first time it speaks. An operative with no row is judged by the fences alone.
+
+The identity check cannot tell a superseded session of the **same** identity from its successor.
+That is what the **two** fence layers below it are for, and the second is a per-write check:
 
 1. **The channel fence.** A superseded session's stream channels are flipped to `fenced?` and
    refuse the seven entity-write payload ids outright.
@@ -704,8 +717,8 @@ There are **two** fence layers, and the second is a per-write check:
 > short-circuits before the superseded-session lookup ever runs. It is a per-write *token*, not
 > a per-write *penalty*.
 
-Realign itself is the legitimate version of the same event: a *different, current* runner
-emitting a non-contiguous sequence is the signature of a runner pod restart, and the writer
+Realign itself is the legitimate version of the same event: a *different, current* session the
+ownership record admits, emitting a non-contiguous sequence is the signature of a runner pod restart, and the writer
 adopts its lineage and bumps the epoch. Full detail:
 [`runner_identity.md`](../internals/runner_identity.md).
 

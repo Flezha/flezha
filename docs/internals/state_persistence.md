@@ -564,6 +564,14 @@ pays nothing. Refusals emit `[:flezha, :state, :stale_writer_refused]` once per 
 episode, count into `stale_writer_refused_total`, release any credit debit immediately and never
 spawn a resync.
 
+Before any of that, a Change from a runner whose stable identity the operative's ownership record
+does not name, as owner or as the target of a running migrate, is refused at the `StreamChannel`
+(`Flezha.Runner.StreamChannel.Records.admit/3`) and never reaches the writer, so it cannot realign
+it. The refusal counts into the channel's `foreign_frame_refused` slot, emits
+`[:flezha, :runner, :foreign_frame_refused]` once per session and operative, and tells that runner
+to remove its copy. A Change for an operative with no ownership record on this node reaches the
+writer under the session fence alone.
+
 ## Persisted `runner_id` is advisory
 
 The `runner_id` in an operative-binding record (replayed into `Flezha.Operative.Overwatch.init/1`

@@ -6,7 +6,7 @@ defmodule Flezha.Runner.StreamChannel do
   The two mechanisms it drives live beside it —
   `Flezha.Runner.StreamChannel.Gate` (the send gate and the bind-waiter set)
   and `Flezha.Runner.StreamChannel.Records` (the operative route cache, the
-  durable-record fan-out and the credit handshake).
+  ownership check, the durable-record fan-out and the credit handshake).
 
   Invariant: the published stream ref lives in a `:persistent_term` under this
   module's name, written at init, bind, close and release only — `io_in/3` reads it
@@ -104,6 +104,9 @@ defmodule Flezha.Runner.StreamChannel do
       :ok,
       %{
         runner_id: runner_id,
+        # The stable identity this session presented, which an operative's
+        # ownership record is judged against.
+        identity: Marks.identity_of(runner_id),
         type: type,
         stream_ref: nil,
         operative_mapping: %{},
@@ -124,7 +127,6 @@ defmodule Flezha.Runner.StreamChannel do
         # session), durable-write forwards are refused at this binding.
         # Terminal — the session is evicted right after, never re-bound.
         fenced?: false,
-        refused_entities: MapSet.new(),
         # Processes owed word of an event they are held on: `:bind` (this
         # channel has no stream yet) and `:send_gate` (its send buffer is over
         # the mark). Each set is cleared by the event that serves it, so
@@ -280,7 +282,8 @@ defmodule Flezha.Runner.StreamChannel do
         %{fenced?: true} = state
       )
       when payload_id in @entity_write_payloads do
-    {:noreply, Records.refuse_stale_forward(state, payload_id, message)}
+    Records.refuse_stale_forward(state, payload_id, message)
+    {:noreply, state}
   end
 
   # Effect records (effectively-once tier) share the state-change frame
@@ -294,7 +297,7 @@ defmodule Flezha.Runner.StreamChannel do
 
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "entity_state_snapshot" do
-    Records.handle_entity_state_snapshot(state.runner_id, message)
+    Records.handle_entity_state_snapshot(state, message)
     {:noreply, mark_seen(state)}
   end
 
@@ -303,7 +306,7 @@ defmodule Flezha.Runner.StreamChannel do
   # cold-starts. Fire-and-forget — no response frame is written back.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id == "delete_entity_state" do
-    Records.handle_delete_entity_state(message)
+    Records.handle_delete_entity_state(state, message)
     {:noreply, mark_seen(state)}
   end
 
@@ -314,7 +317,7 @@ defmodule Flezha.Runner.StreamChannel do
   # the remaining hooks and skips already-undone ones. Fire-and-forget.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id in ["compensation_intent", "compensation_done"] do
-    Records.handle_compensation_record(payload_id, message)
+    Records.handle_compensation_record(state, payload_id, message)
     {:noreply, mark_seen(state)}
   end
 
@@ -333,7 +336,7 @@ defmodule Flezha.Runner.StreamChannel do
   # that — the event time comes from user code — so detection is its half and
   # orchestration is the Overwatch's.
   def handle_info({:flz_data, _stream_id, "correction_request", message, _metadata}, state) do
-    Records.handle_correction_request(message)
+    Records.handle_correction_request(state, message)
     {:noreply, mark_seen(state)}
   end
 
@@ -352,7 +355,9 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   def handle_info({:flz_data, _stream_id, operative_id, message, metadata}, state) do
-    case Records.route(state, operative_id) do
+    {route, state} = Records.route(state, operative_id)
+
+    case route do
       {:ok, pid} -> GenServer.cast(pid, {:io_out, message, metadata})
       :drop -> :ok
     end

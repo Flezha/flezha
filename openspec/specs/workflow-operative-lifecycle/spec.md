@@ -71,7 +71,7 @@ The SDK SHALL provide a loop construct usable inside a Procedure/`run` that repe
 
 ### Requirement: All exit triggers converge on one terminal teardown
 
-Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; before deregistering it the teardown SHALL flush the runner's stream channels synchronously, so every output frame the transport has already delivered is routed and run first, and it SHALL NOT hold the teardown against a count of outputs the runner reports having written.
+Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. A `WorkflowCompleted` from a runner whose stable identity the instance's ownership record does not name is not an exit trigger: it SHALL write no completion record and drive no teardown, and SHALL be refused as `runner-identity-and-session` prescribes. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; before deregistering it the teardown SHALL flush the runner's stream channels synchronously, so every output frame the transport has already delivered is routed and run first, and it SHALL NOT hold the teardown against a count of outputs the runner reports having written.
 
 #### Scenario: Teardown is identical across triggers
 
@@ -95,8 +95,8 @@ Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown,
 
 #### Scenario: An output that beats the stream's routing is still delivered
 
-- **WHEN** a chain emits within its first milliseconds, before the registry hook has seeded the data stream's routing for it
-- **THEN** the stream SHALL route the frame through the Overwatch the class registered before its SDK start; a frame for an operative neither knows SHALL be counted as a drop, never discarded silently
+- **WHEN** a chain emits within its first milliseconds, before the owning session's stream channel holds a route for it
+- **THEN** the stream SHALL route the frame through the Overwatch the ownership record names, which the class registered before its SDK start, and cache the route; a frame for an operative neither the channel nor the record knows SHALL be counted as a drop, never discarded silently
 
 #### Scenario: An output for a replaced Overwatch is still delivered
 
@@ -107,4 +107,10 @@ Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown,
 
 - **WHEN** a workflow operative terminates
 - **THEN** its `WorkflowCompleted` SHALL include the terminal result (or error) payload and the Controller SHALL make it available to bound consumers and to `flz operative info`
+
+#### Scenario: A completion from a runner that does not own the instance tears nothing down
+
+- **GIVEN** a workflow instance bound to runner A's stable identity and a second session B in the namespace
+- **WHEN** B emits `WorkflowCompleted` naming the instance
+- **THEN** the instance SHALL keep running on A, no completion record SHALL be written, `flz operative info` SHALL not report it finished, and B SHALL be sent `RemOperative` for it once
 

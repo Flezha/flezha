@@ -150,4 +150,34 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
       end
     end
   end
+
+  describe "a session's identity" do
+    setup do
+      %{session: "exec_id_#{System.unique_integer([:positive])}"}
+    end
+
+    test "answers the identity the session presented until the session is forgotten",
+         %{session: session} do
+      :ok = Marks.bind_identity(session, "stable-a")
+      assert Marks.identity_of(session) == "stable-a"
+
+      :ok = Marks.forget_identity(session)
+      assert Marks.identity_of(session) == session
+    end
+
+    test "a session that presented none is its own token", %{session: session} do
+      :ok = Marks.bind_identity(session, nil)
+      assert Marks.identity_of(session) == session
+    end
+
+    test "a refusal is first once per session and operative, until the session is forgotten",
+         %{session: session} do
+      assert Marks.first_refusal?(session, "op-1")
+      refute Marks.first_refusal?(session, "op-1")
+      assert Marks.first_refusal?(session, "op-2")
+
+      :ok = Marks.forget_identity(session)
+      assert Marks.first_refusal?(session, "op-1")
+    end
+  end
 end

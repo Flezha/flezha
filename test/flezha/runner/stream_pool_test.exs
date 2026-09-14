@@ -62,4 +62,24 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
       assert GenServer.call(ctx.nil_pid, :stream_ref_status) == :new_ref
     end
   end
+
+  describe "routes" do
+    test "reach a session's channels and leave them" do
+      runner_id = "route_runner_#{System.unique_integer([:positive])}"
+      [name | _] = StreamPool.stream_ids(runner_id, :primary)
+      {:ok, channel} = StreamChannel.start_link({runner_id, name, :primary})
+      on_exit(fn -> if Process.alive?(channel), do: GenServer.stop(channel) end)
+
+      assert StreamPool.put_route(runner_id, "routed_op", self()) == :ok
+      assert :sys.get_state(channel).operative_mapping["routed_op"] == [self()]
+
+      assert StreamPool.drop_route(runner_id, "routed_op") == :ok
+      refute Map.has_key?(:sys.get_state(channel).operative_mapping, "routed_op")
+    end
+
+    test "for a session with no channels, change nothing and raise nothing" do
+      assert StreamPool.put_route("no_such_runner", "r1", self()) == :ok
+      assert StreamPool.drop_route("no_such_runner", "r1") == :ok
+    end
+  end
 end

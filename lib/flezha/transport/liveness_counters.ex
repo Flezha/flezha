@@ -253,6 +253,14 @@ defmodule Flezha.Transport.LivenessCounters do
         # duplicate. The bridged event is the surface this slot reaches.
         surface: [{:telemetry, [:flezha, :state, :stale_writer_refused]}]
       ],
+      [
+        name: :foreign_frame_refused,
+        kind: :count,
+        # Every frame refused because its runner does not own the operative it
+        # names. The bridged event goes out once per session and operative, so
+        # a copy that keeps speaking is counted here.
+        surface: [{:telemetry, [:flezha, :runner, :foreign_frame_refused]}]
+      ],
       [name: :send_gate_held, kind: :count, surface: [{:metric, :send_gate_held}]]
     ]
 

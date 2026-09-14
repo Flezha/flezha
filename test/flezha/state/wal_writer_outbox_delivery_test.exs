@@ -39,7 +39,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     rc: rc,
     entity_id: entity_id
   } do
-    ClassRegistry.put_overwatch(rc, self())
+    ClassRegistry.put_overwatch(rc, self(), nil)
 
     # Two output-bearing records land durably, but the flush cursor never advances
     # (crash before flush): the re-drive owes both.

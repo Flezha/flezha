@@ -254,6 +254,35 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     end
   end
 
+  describe "the ownership record" do
+    test "round-trips the Overwatch, its owner and a pending identity", %{class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "identity-a")
+      assert ClassRegistry.owner(class) == {:ok, self(), "identity-a", nil}
+      assert ClassRegistry.overwatch_pid(class) == {:ok, self()}
+
+      :ok = ClassRegistry.set_pending(class, "identity-b")
+      assert ClassRegistry.owner(class) == {:ok, self(), "identity-a", "identity-b"}
+
+      # A bind names its runner and settles the migrate.
+      :ok = ClassRegistry.put_overwatch(class, self(), "identity-b")
+      assert ClassRegistry.owner(class) == {:ok, self(), "identity-b", nil}
+    end
+
+    test "is removed with the class", %{class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "identity-a")
+      :ok = ClassRegistry.delete(class)
+
+      assert ClassRegistry.owner(class) == :error
+    end
+
+    test "answers :error for a class never bound here, and a pending write creates no row",
+         %{class: class} do
+      :ok = ClassRegistry.set_pending(class, "identity-b")
+
+      assert ClassRegistry.owner(class) == :error
+    end
+  end
+
   defp sidecar(class), do: Path.join(Paths.class_dir(class), "kind")
   defp tier_sidecar(class), do: Path.join(Paths.class_dir(class), "effectively_once")
 

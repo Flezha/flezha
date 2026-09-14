@@ -142,7 +142,7 @@ The Controller SHALL retain a disconnected Runner's peer entry (including its as
 
 ### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
 
-When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`; or, for the Elixir SDK, the RunnerServer's `terminate/2` reached by the BEAM's `init:stop`, `Flezha.SDK.close/1` or `RunnerDisconnect`), it SHALL serialize each local operative's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{operative_id, serialized_state}` on the control channel for each operative, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(operative_id)`), which SHALL replace `state.snapshot` with the supplied binary atomically. The agent SHALL respond with `RunnerShutdownAck{operative_id}` once the snapshot is enqueued.
+When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`; or, for the Elixir SDK, the RunnerServer's `terminate/2` reached by the BEAM's `init:stop`, `Flezha.SDK.close/1` or `RunnerDisconnect`), it SHALL serialize each local operative's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{operative_id, serialized_state}` on the control channel for each operative, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(operative_id)`) only when the operative's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming an operative bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{operative_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
 
 The SDK SHALL wait at most 2 s per operative for the ack (with parallelism across operatives) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
 
@@ -205,6 +205,11 @@ The SDK SHALL wait at most 2 s per operative for the ack (with parallelism acros
 - **AND** `Identificator.overwatch("p1")` resolves to `:undefined`
 - **THEN** the agent SHALL log a warning naming `p1` and SHALL still emit `RunnerShutdownAck{operative_id: "p1"}` so the SDK can proceed to exit
 - **AND** the destination agent's Overwatch already received the latest state via HotSwap handover, so no functional loss
+
+#### Scenario: A notification for another runner's operative is acked and applied to nothing
+- **GIVEN** operative `p1` bound to runner A's stable identity and a second session B in the namespace
+- **WHEN** B emits `RunnerShutdownNotification{operative_id: "p1", serialized_state: S_b}`
+- **THEN** `p1`'s `Overwatch` SHALL keep the snapshot it held, the refusal SHALL be counted and reported naming B, A and `p1`, and B SHALL still receive `RunnerShutdownAck{operative_id: "p1"}`
 
 ### Requirement: A dev-compose integration test SHALL exercise both restart paths end to end
 

@@ -842,10 +842,15 @@ SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
 
 A realign SHALL be honoured only when the divergent Changes arrive via the Entity's
 current owner binding — the session the takeover logic most recently bound to the
-Entity's write path. Changes forwarded by a superseded session SHALL be refused at
-the binding (the superseded session's channels are unbound during takeover, before the
-new session is bound) and SHALL NOT trigger a realign; the refusal SHALL NOT add any
-per-record check to the owning session's append path.
+Entity's write path — and only from a session whose stable identity the operative's
+ownership record names as its owner or as pending, or when the record is absent on
+this node. Changes forwarded by a superseded session SHALL be refused at the binding
+(the superseded session's channels are unbound during takeover, before the new session
+is bound) and SHALL NOT trigger a realign; a Change from a session whose identity the
+record does not name SHALL be refused at the stream channel before it reaches the
+writer, counted and reported as `runner-identity-and-session` prescribes, and SHALL
+NOT trigger a realign; neither refusal SHALL add any per-record check to the owning
+session's append path.
 
 #### Scenario: A restarted runner's diverged seq base realigns the WAL
 - **GIVEN** an Entity whose WAL has advanced to seq N under runner A
@@ -867,6 +872,11 @@ per-record check to the owning session's append path.
 - **GIVEN** an Entity whose stable identity was taken over by a new session while the old session's frames are still in flight
 - **WHEN** the superseded session's channel forwards a Change with a divergent seq base
 - **THEN** the frame SHALL be refused at the binding, the WAL SHALL NOT realign, and a `[:flezha, :state, :stale_writer_refused]` event SHALL be emitted once for the episode
+
+#### Scenario: A runner that does not own the operative never realigns its WAL
+- **GIVEN** an Entity of operative `X` whose ownership record names runner B's stable identity, with the WAL at seq N under B
+- **WHEN** a session of another identity forwards a Change for that Entity with a divergent seq base
+- **THEN** the frame SHALL be refused at the stream channel, the WAL SHALL stay at seq N with its snapshots, no `[:flezha, :state, :wal_realign]` SHALL be emitted, and `[:flezha, :runner, :foreign_frame_refused]` SHALL name the session, B and `X`
 
 ### Requirement: Output is persisted before it is emitted (flush-before-emit)
 

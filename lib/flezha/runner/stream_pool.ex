@@ -6,8 +6,9 @@ defmodule Flezha.Runner.StreamPool do
   session token, so every party — the supervisor that starts them, the
   acceptor that binds an incoming socket, the fence that has to reach them —
   derives the same names without asking anyone. Reaching them is here too:
-  `call_channels/3` is the one bounded fan-out over the set, and the route
-  hooks, the takeover fence and the teardown barrier all go through it.
+  `call_channels/3` is the one bounded fan-out over the set, and the routes
+  (`put_route/3`, `drop_route/2`), the takeover fence and the teardown barrier
+  all go through it.
 
   Invariant: a bind never overwrites a live stream. `bind_stream_to_first_nil/2`
   takes the first candidate that reports a nil stream_ref through the atomic
@@ -67,6 +68,33 @@ defmodule Flezha.Runner.StreamPool do
     Enum.each(channel_pids(runner_id), fn pid ->
       _ = SafeCall.bounded(pid, request, max(deadline - System.monotonic_time(:millisecond), 0))
     end)
+  end
+
+  @doc """
+  Route `operative_id`'s output frames on `runner_id`'s channels to `pid`. The
+  Overwatch's publish is the one caller, so a route exists only in the
+  channels of the session that owns the operative.
+  """
+  @spec put_route(binary(), binary(), pid()) :: :ok
+  def put_route(runner_id, operative_id, pid) when is_pid(pid),
+    do: call_channels(runner_id, {:operative_pid_update, operative_id, [pid]})
+
+  @doc """
+  Drop `operative_id`'s route from `runner_id`'s channels: the session its
+  binding moved away from, or the target of a migrate that failed. Idempotent
+  on a session that is gone.
+  """
+  @spec drop_route(binary(), binary()) :: :ok
+  def drop_route(runner_id, operative_id) do
+    call_channels(runner_id, {:operative_pid_remove, operative_id})
+
+    :telemetry.execute(
+      [:flezha, :hub, :pid_removed],
+      %{count: 1},
+      %{runner_id: runner_id, operative_id: operative_id}
+    )
+
+    :ok
   end
 
   @doc """

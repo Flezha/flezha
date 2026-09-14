@@ -4,9 +4,10 @@ defmodule Flezha.Runner.ControlChannel do
   the socket, decodes every inbound `CommandRequest` and writes every outbound
   one.
 
-  Requests the SDK initiates are answered here; requests the controller
-  initiates are issued by `ControlUnit` and their responses are matched back to
-  it by reference id. Durable barriers are forwarded to
+  Requests the SDK initiates are recognised here and carried out by
+  `Flezha.Runner.ControlChannel.Requests`; requests the controller initiates
+  are issued by `ControlUnit` and their responses are matched back to it by
+  reference id. Durable barriers are forwarded to
   `Flezha.Runner.ControlChannel.Commits` rather than journaled inline.
 
   It also repairs the session's data plane: a data channel that loses its stream
@@ -20,18 +21,10 @@ defmodule Flezha.Runner.ControlChannel do
 
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Operative.Migration
-  alias Flezha.Runner.ControlChannel.Commits
+  alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.Runner.FleetManager.Session
-  alias Flezha.Runner.StreamPool
   alias Flezha.SafeCall
-  alias Flezha.Service.Admin
-  alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
-  alias Flezha.State.Completion
-  alias Flezha.State.ProcJournal
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
 
@@ -139,6 +132,7 @@ defmodule Flezha.Runner.ControlChannel do
      %{
        namespace: namespace,
        runner_id: runner_id,
+       identity: Marks.identity_of(runner_id),
        stream_ref: stream_ref,
        write_fun: write_fun || (&TStream.send_frame/4),
        control_unit: Identificator.control_unit(runner_id),
@@ -263,37 +257,32 @@ defmodule Flezha.Runner.ControlChannel do
 
     case decode_sdk_initiated(message) do
       {:runner_shutdown_notification, %{} = notif, reference_id} ->
-        handle_runner_shutdown(state, notif, reference_id)
-        {:noreply, state}
+        {ack, log_label} = Requests.runner_shutdown(state, notif)
+        emit_control_request(state, reference_id, ack, log_label)
 
       {:workflow_completed, %{} = completed, _reference_id} ->
-        handle_workflow_completed(state, completed)
-        {:noreply, state}
+        Requests.workflow_completed(state, completed)
 
       {barrier, %{} = commit, reference_id} when barrier in [:proc_commit, :iter_commit] ->
-        Commits.commit(state.runner_id, reference_id, commit)
-        {:noreply, state}
+        Requests.barrier(state, barrier, commit, reference_id)
 
       {:iter_park, %{} = park, _reference_id} ->
-        handle_iter_park(state, park)
-        {:noreply, state}
+        Requests.iter_park(state, park)
 
       {:update_factories, %{} = update, _reference_id} ->
-        handle_update_factories(state, update)
-        {:noreply, state}
+        Requests.update_factories(state, update)
 
       {:spawn_workflow_request, %{} = request, reference_id} ->
-        handle_spawn_workflow(state, request, reference_id)
-        {:noreply, state}
+        Requests.spawn_workflow(state, request, reference_id)
 
       {:admin_request, %{} = request, reference_id} ->
-        handle_admin(state, request, reference_id)
-        {:noreply, state}
+        Requests.admin(state, request, reference_id)
 
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message, metadata})
-        {:noreply, state}
     end
+
+    {:noreply, state}
   end
 
   # NIF transport: connection closed
@@ -310,7 +299,7 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_info({:rebind_answered, _refused}, state),
     do: handle_cast(:rebind_data_streams, %{state | rebinding?: false})
 
-  # A request `answer_off_process/2` resolved elsewhere; writing it is this
+  # A request `Requests` resolved off this process; writing it is this
   # process's job, because it is the only writer of control frames.
   @impl true
   def handle_info({:sdk_reply, reference_id, command, log_label}, state) do
@@ -448,336 +437,6 @@ defmodule Flezha.Runner.ControlChannel do
       _ ->
         :not_sdk_initiated
     end
-  end
-
-  # Apply the SDK's final state to the per-operative `Overwatch` and emit
-  # an `RunnerShutdownAck` so the SDK's bounded ack-wait can release.
-  # The cast-not-call ordering is deliberate: the snapshot is enqueued on
-  # Overwatch's mailbox before the ack flows back, so even if the controller
-  # crashes between the cast and the write, the snapshot is durable in
-  # the GenServer's state.
-  #
-  # The ack is emitted unconditionally — including the
-  # `:overwatch_missing` branch (Overwatch already migrated to a peer
-  # controller) — so the SDK never blocks its container's shutdown grace
-  # period waiting for an ack that will never arrive.
-  defp handle_runner_shutdown(state, notif, reference_id) do
-    %RunnerCommands.RunnerShutdownNotification{
-      operative_id: operative_id,
-      serialized_state: serialized_state
-    } = notif
-
-    case HubManager.get_pid(state.namespace, operative_id) do
-      {:ok, pid} when is_pid(pid) ->
-        GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
-
-      _ ->
-        Logger.warning(
-          "[control_channel] Overwatch missing for shutdown notification — assumed migrated. " <>
-            "namespace=#{inspect(state.namespace)} operative_id=#{inspect(operative_id)}"
-        )
-    end
-
-    emit_runner_shutdown_ack(state, operative_id, reference_id)
-  end
-
-  # Converged teardown for every workflow exit trigger (quiescence, ctx.complete,
-  # loop terminal, max_duration, cooperative stop): surface the outcome + result
-  # payload, then deregister-on-completion so the operative never replays on boot.
-  # A `status = "error"` tears down identically — no retry.
-  defp handle_workflow_completed(state, completed) do
-    %RunnerCommands.WorkflowCompleted{
-      operative_id: operative_id,
-      status: status,
-      error: error,
-      result: result
-    } = completed
-
-    :telemetry.execute(
-      [:flezha, :workflow, :completed],
-      %{count: 1},
-      %{
-        namespace: state.namespace,
-        operative_id: operative_id,
-        status: status,
-        result: result
-      }
-    )
-
-    if status == "error", do: report_workflow_failure(state, operative_id, error)
-
-    namespace = state.namespace
-
-    # Finished-job retention: record the terminal outcome (durably, before the
-    # teardown) so `flz operative info` can surface it and `stop_operative`
-    # retains the state instead of deleting it. `finished_at` is stamped
-    # controller-side (the wire carries no timestamp).
-    _ =
-      Completion.write(operative_id, %{
-        namespace: namespace,
-        status: status,
-        error: error,
-        result: result,
-        finished_at: System.system_time(:second)
-      })
-
-    deregister_on_completion(state, operative_id)
-  end
-
-  defp report_workflow_failure(state, operative_id, error) do
-    Logger.warning(
-      "[control_channel] workflow operative #{inspect(operative_id)} failed in namespace " <>
-        "#{inspect(state.namespace)}: #{inspect(error)}"
-    )
-
-    :telemetry.execute(
-      [:flezha, :workflow, :failed],
-      %{count: 1},
-      %{namespace: state.namespace, operative_id: operative_id, error: error}
-    )
-  end
-
-  # Tear down off the control-channel process: `stop_operative` drives a
-  # RemOperative round-trip whose CommandResponse returns on THIS control
-  # stream, so calling it inline would deadlock the reader.
-  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, operative_id) do
-    Task.start(fn ->
-      drain_owed_outputs(runner_id, operative_id)
-
-      case OperativeManager.stop_operative(namespace, operative_id) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "[control_channel] workflow operative #{inspect(operative_id)} teardown failed: #{inspect(reason)}"
-          )
-      end
-    end)
-  end
-
-  # No Overwatch to suspend (already migrated / torn down) is not a failure: the
-  # park record is durable, so the instance is rediscovered as suspended
-  # whenever it is next started.
-  defp suspend_parked(namespace, operative_id, iter, deadline) do
-    case HubManager.get_pid(namespace, operative_id) do
-      {:ok, pid} when is_pid(pid) -> Migration.suspend(pid, iter, deadline)
-      _ -> :ok
-    end
-  end
-
-  # A completion must not tear the Overwatch down under output still on its
-  # way: a durable class's last outbox is flushed after its commit ack on this
-  # channel, and an opted-out class's direct outputs travel the data stream
-  # while the completion travels this one. Two debts, settled differently:
-  #
-  #   * the data stream is FLUSHED, once, by a barrier across the runner's
-  #     stream channels. Nothing is counted — counting what the runner wrote
-  #     against what the controller ran is decidable only while nothing is
-  #     ever lost, and a frame routed to an Overwatch that has since been
-  #     replaced is exactly that loss.
-  #   * the journal is WAITED for, unchanged: `pending_entries/1` is an exact,
-  #     durable, re-drivable debt, and `Durations.get(:drain_owed_ms)` keeps a sink that never
-  #     confirms from holding the teardown — the retained journal keeps the
-  #     debt. Under a start storm the flush itself queues behind the channel
-  #     for tens of seconds, and the instance is retained either way.
-
-  defp drain_owed_outputs(runner_id, operative_id) do
-    StreamPool.flush_channels(runner_id)
-
-    await_owed_journal(
-      operative_id,
-      System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
-    )
-  end
-
-  defp await_owed_journal(operative_id, deadline) do
-    pending = ProcJournal.pending_entries(operative_id)
-
-    cond do
-      pending == [] ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        Logger.warning(
-          "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
-            "#{length(pending)} outbox entries still owed"
-        )
-
-      true ->
-        ProcJournal.flush_pending(operative_id)
-        Process.sleep(50)
-        await_owed_journal(operative_id, deadline)
-    end
-  end
-
-  defp emit_runner_shutdown_ack(state, operative_id, reference_id) do
-    emit_control_request(
-      state,
-      reference_id,
-      {:runner_shutdown_ack, %RunnerCommands.RunnerShutdownAck{operative_id: operative_id}},
-      "RunnerShutdownAck operative=#{inspect(operative_id)}"
-    )
-  end
-
-  # The SDK's loop found its inbox empty at a committed iteration boundary and
-  # tore its run down WITHOUT a completion (`workflow-durable-suspension`). Journal
-  # the park record — durable BEFORE the eviction, so a controller crash in
-  # between still rediscovers the suspension — then hand the instance to its
-  # Overwatch, which evicts it from this runner and keeps it resumable.
-  #
-  # Off this process: the eviction drives a `RemOperative` whose response returns
-  # on THIS control stream, so doing it inline would deadlock the reader (same
-  # reason as the workflow-completed teardown).
-  defp handle_iter_park(state, park) do
-    %RunnerCommands.IterPark{
-      operative_id: operative_id,
-      iter: iter,
-      wake_deadline_ms: wake_deadline_ms
-    } = park
-
-    deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
-
-    :telemetry.execute(
-      [:flezha, :workflow, :parked],
-      %{count: 1},
-      %{namespace: state.namespace, operative_id: operative_id, iter: iter}
-    )
-
-    namespace = state.namespace
-
-    Task.start(fn ->
-      case ProcJournal.append_parked(operative_id, iter, deadline) do
-        :ok ->
-          suspend_parked(namespace, operative_id, iter, deadline)
-
-        {:error, reason} ->
-          # The park is not durable, so the instance must NOT be evicted: leave
-          # it bound. Its driver has already exited, so it stays idle until the
-          # runner reconnects or convergence rebinds it — at which point it
-          # resumes from the last committed iteration and parks again.
-          Logger.warning(
-            "[control_channel] park record failed for #{inspect(operative_id)} " <>
-              "iter=#{iter}: #{inspect(reason)} — instance left bound"
-          )
-      end
-    end)
-  end
-
-  # An SDK-initiated request whose answer cannot be worked out on this process:
-  # resolving it drives an `AddOperative` or a `RemOperative` whose response
-  # returns on THIS control stream, so doing it inline would deadlock the
-  # reader. `answer` runs off-process and hands back the reply command and its
-  # log label; `handle_info/2` writes it, because control writes stay here.
-  defp answer_off_process(reference_id, answer) when is_function(answer, 0) do
-    channel = self()
-
-    Task.start(fn ->
-      {command, log_label} = answer.()
-      send(channel, {:sdk_reply, reference_id, command, log_label})
-    end)
-  end
-
-  # A procedure asked for a workflow instance (`ctx.spawn_workflow`), judged as
-  # the identity this connection proved. The namespace is this channel's, never
-  # the requester's claim, so a request cannot reach another namespace.
-  defp handle_spawn_workflow(state, request, reference_id) do
-    %RunnerCommands.SpawnWorkflowRequest{
-      instance_id: instance_id,
-      factory_id: factory_id,
-      payload: payload,
-      if_running: if_running
-    } = request
-
-    namespace = state.namespace
-
-    answer_off_process(reference_id, fn ->
-      outcome =
-        OperativeManager.spawn_or_deliver(
-          namespace,
-          instance_id,
-          factory_id,
-          payload,
-          if_running(if_running),
-          Session.runner_caller_context(namespace)
-        )
-
-      {name, error} = spawn_reply(outcome)
-
-      :telemetry.execute(
-        [:flezha, :operative, :requested_spawn],
-        %{count: 1},
-        %{
-          namespace: namespace,
-          instance_id: instance_id,
-          factory_id: factory_id,
-          outcome: name
-        }
-      )
-
-      {{:spawn_workflow_response,
-        %RunnerCommands.SpawnWorkflowResponse{outcome: Atom.to_string(name), error: error}},
-       "spawn-workflow response #{name}"}
-    end)
-  end
-
-  # Application code administering the namespace this channel proved. The door
-  # judges it as the connection's identity against the published surface, so
-  # nothing about the request names a namespace, a principal or a role.
-  defp handle_admin(state, request, reference_id) do
-    %RunnerCommands.AdminRequest{verb: verb, args: args} = request
-    namespace = state.namespace
-
-    answer_off_process(reference_id, fn ->
-      {result, error} =
-        case Admin.call(namespace, verb, args) do
-          {:ok, json} -> {json, ""}
-          {:error, reason} -> {"", reason}
-        end
-
-      :telemetry.execute(
-        [:flezha, :runner, :admin_request],
-        %{count: 1},
-        %{namespace: namespace, verb: verb, refused: error != ""}
-      )
-
-      {{:admin_response, %RunnerCommands.AdminResponse{result: result, error: error}},
-       "admin response"}
-    end)
-  end
-
-  # An unrecognised policy reads as the default: a requester on a newer SDK
-  # must never have its payload silently refused by an older controller.
-  defp if_running("error"), do: :error
-  defp if_running(_), do: :deliver
-
-  # `{:refused, reason}` is the only outcome carrying detail; the rest are their
-  # own name with nothing attached.
-  defp spawn_reply({:refused, reason}), do: {:refused, reason}
-  defp spawn_reply(outcome), do: {outcome, ""}
-
-  # Full-set replacement of this runner's declared factory list after a
-  # post-start define/remove (sdk-runner-entrypoint-redesign). Fire-and-forget
-  # by design — no ack — and dispatched as a cast so it never blocks the
-  # control channel; the reconnect init frame remains the resync of record.
-  defp handle_update_factories(state, %RunnerCommands.UpdateFactories{factories: factories}) do
-    factories =
-      Enum.map(factories, fn %RunnerCommands.FactoryDecl{
-                               id: id,
-                               description: description,
-                               sdk_lang: sdk_lang
-                             } ->
-        %{
-          "id" => id,
-          "description" => if(description == "", do: nil, else: description),
-          "sdk_lang" => sdk_lang
-        }
-      end)
-
-    GenServer.cast(
-      FleetManager,
-      {:sync_factories, state.namespace, state.runner_id, factories}
-    )
   end
 
   # Reply to an SDK-initiated CommandRequest with a controller-emitted

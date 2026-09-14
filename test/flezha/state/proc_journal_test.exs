@@ -201,7 +201,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     refute ProcJournal.restore_state(inst).parked
 
-    :ok = ProcJournal.append_parked(inst, 0, 1_800_000_000_000)
+    :ok = ProcJournal.append_parked("default", inst, 0, 1_800_000_000_000)
 
     resume = ProcJournal.restore_state(inst)
     assert resume.parked, "the journal's last entry is the park"
@@ -210,7 +210,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # A park with no deadline waits for input alone.
     :ok = ProcJournal.append_iter_committed(inst, 1, 5, [])
-    :ok = ProcJournal.append_parked(inst, 1, nil)
+    :ok = ProcJournal.append_parked("default", inst, 1, nil)
     resume = ProcJournal.restore_state(inst)
     assert resume.parked
     assert resume.wake_deadline_ms == nil

@@ -267,10 +267,9 @@ defmodule Flezha.Convergence.Heal do
   defp apply_primitive(prim, _op) when prim in @primitives, do: :error
 
   # Migrate a operative bound to a dead/wrong runner onto an available one.
-  # On success: flip the registry tag and seed the target runner's
-  # `StreamChannel.operative_mapping` (the same hook `child_registered`
-  # uses) so frames land. Any failed step leaves the registry untouched
-  # and the operative degraded for the next tick under Backoff.
+  # On success the Overwatch has published its own binding, the registry tag
+  # and the target runner's route. Any failed step leaves the registry
+  # untouched and the operative degraded for the next tick under Backoff.
   defp rebind_operative(%{namespace: namespace, target: operative_id} = op, pid) do
     with %{factory_id: factory, runner_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
@@ -278,9 +277,6 @@ defmodule Flezha.Convergence.Heal do
          {:ok, target} <- placed(OperativeManager.assign_runner(namespace, factory, operative_id)),
          {:ok, :ok} <-
            SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
-      _ = HubManager.operative_set_runner(namespace, operative_id, target)
-      _ = HubManager.hook_insert_local_pid(target, operative_id, pid)
-
       # Replay the per-Entity WAL into the new binding. The `runner_migrate`
       # above is a HotSwap handover, which only carries state when the previous
       # runner is alive to serialise it; when the previous runner died (the

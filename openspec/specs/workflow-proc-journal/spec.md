@@ -50,7 +50,12 @@ SHALL be reported in the response and SHALL terminate the run abnormally
 response does not arrive within the driver's wait SHALL be re-sent under the
 same `reference_id` up to a bounded number of attempts before the run fails;
 the controller SHALL treat a re-sent barrier whose entry is already journaled
-as acked. Opted-out classes SHALL skip the handshake entirely.
+as acked. A barrier (`ProcCommit` or `IterCommit`) from a runner whose stable
+identity the instance's ownership record does not name SHALL NOT be appended:
+the commit worker SHALL answer it with a non-empty error, so the sending
+driver ends its run through the same terminal-error path, and the refusal
+SHALL be counted and reported as `runner-identity-and-session` prescribes.
+Opted-out classes SHALL skip the handshake entirely.
 
 #### Scenario: Next procedure waits for the durable ack
 
@@ -76,6 +81,12 @@ as acked. Opted-out classes SHALL skip the handshake entirely.
 
 - **WHEN** the controller cannot append the `proc_committed` entry (e.g. disk error)
 - **THEN** the `ProcCommitResponse` SHALL carry the error and the operative SHALL terminate abnormally, compensating completed procedures per the existing saga contract
+
+#### Scenario: A barrier from a runner that does not own the instance is refused
+
+- **GIVEN** a durable instance bound to runner A's stable identity and a second session B in the namespace
+- **WHEN** B sends `ProcCommit` or `IterCommit` naming the instance
+- **THEN** the response SHALL carry a non-empty error, the journal SHALL hold no entry for it, no inbox prefix SHALL be released and no journal prefix cut, and B SHALL be sent `RemOperative` for the instance once
 
 ### Requirement: Inter-proc channels of a durable structured class carry a byte codec
 

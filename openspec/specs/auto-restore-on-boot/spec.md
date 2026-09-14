@@ -55,7 +55,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 - **GIVEN** the controller is started from a freshly-built `alfetahe/flezha:latest-dev` image with an empty `app_data/process_hub/` directory
 - **WHEN** an SDK opens its first UDS `connect_control_channel` frame
 - **THEN** `ProcessHub.Initializer.setup_storage/2` returns successfully for `:default_hub`
-- **AND** `Flezha.Service.HubManager.register_handler/2` completes with `:ok`
+- **AND** the connect starts the namespace's hub and the runner's session completes its handshake
 - **AND** the controller does not crash, the BEAM does not exit, and the agent stays Ready
 - **AND** a subsequent `bin/flz operative list` returns exit 0 (empty list on first boot)
 

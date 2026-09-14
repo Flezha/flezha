@@ -3,8 +3,10 @@ defmodule Flezha.Runner.FleetManager.Session do
   One runner session, from the handshake to the disconnect that ends it.
 
   A session token is minted per connection; a `stable_id` that already has a
-  live session is resolved newest-wins — the old token is fenced, its operative
-  bindings swap onto the new one, and the old session is evicted.
+  live session is resolved newest-wins — the old token is fenced, each of its
+  operatives' Overwatches is told the new one, and the old session is evicted.
+  A `stable_id` held by a session admitted under another credential is refused
+  instead (`check_identity_pin/2`).
 
   A session is recorded only once its runner has answered both handshake
   frames. Until then it is pending, and every way it can end (a refusal, the
@@ -138,18 +140,20 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   # Reconnect/takeover binding swap. The SDK presents the same persisted stable
-  # id on every connect; the controller keys operatives on the per-connection
-  # session token, so a reconnect re-points the prior session's bindings onto
-  # the new token (flip the Registry tag + seed the new StreamChannels — the
-  # same primitives the convergence Heal uses) and then closes the old session
-  # (newest-wins). A first connect just
-  # records the mapping; a degraded runner with no stable id connects fresh.
-  def resolve_stable_identity(state, _namespace, nil, _session_token), do: state
+  # id on every connect, and an operative is owned by that identity while its
+  # routing keys on the per-connection session token, so a reconnect tells each
+  # of the prior session's operatives its new token and then closes the old
+  # session (newest-wins). A first connect just records the mapping, with the
+  # credential that admitted it; a degraded runner with no stable id connects
+  # fresh.
+  defp resolve_stable_identity(state, _session_token, %{stable_id: nil}), do: state
 
-  def resolve_stable_identity(state, namespace, stable_id, session_token) do
+  defp resolve_stable_identity(state, session_token, connect) do
+    %{namespace: namespace, stable_id: stable_id, credential: credential} = connect
+
     state =
       case Map.get(state.stable_sessions, stable_id) do
-        old_session when is_binary(old_session) and old_session != session_token ->
+        {old_session, _credential} when old_session != session_token ->
           # Unbind-old BEFORE bind-new: once the fence returns, nothing the
           # superseded session forwards can land in any Entity WAL, so no
           # window exists in which both sessions hold a writable binding.
@@ -161,7 +165,52 @@ defmodule Flezha.Runner.FleetManager.Session do
           state
       end
 
-    put_in(state, [:stable_sessions, stable_id], session_token)
+    put_in(state, [:stable_sessions, stable_id], {session_token, credential})
+  end
+
+  @doc """
+  Refuse a connect whose stable identity is held under another credential.
+
+  An operative is owned by its runner's stable identity, so presenting an
+  identity is the one door to another runner's operatives. While the identity
+  has a session in the roster (live, or kept inactive for its keepalive) or a
+  handshake in flight, admitted under one credential, a connect presenting it
+  under a different credential is refused rather than taken over. The pin
+  lapses when the identity's last session leaves the roster. A connect that
+  carries no per-runner credential (certificate-proven, or posture off) is
+  neither pinned nor refused.
+  """
+  @spec check_identity_pin(map(), map()) :: :ok | {:error, {:identity_taken, binary()}}
+  def check_identity_pin(state, %{stable_id: stable_id, credential: credential})
+      when is_binary(stable_id) and is_binary(credential) do
+    if held_elsewhere?(state, stable_id, credential) do
+      Logger.warning(
+        "[FleetManager] runner connect refused: stable identity #{stable_id} is held " <>
+          "under another credential"
+      )
+
+      {:error, {:identity_taken, stable_id}}
+    else
+      :ok
+    end
+  end
+
+  def check_identity_pin(_state, _connect), do: :ok
+
+  defp held_elsewhere?(state, stable_id, credential) do
+    pinned_live? =
+      case Map.get(state.stable_sessions, stable_id) do
+        {session, held} when is_binary(held) and held != credential ->
+          Roster.find_runner_namespace(state, session) != nil
+
+        _unpinned_or_same ->
+          false
+      end
+
+    pinned_live? or
+      Enum.any?(state.pending_handshakes, fn {_session, %{connect: connect}} ->
+        connect.stable_id == stable_id and connect.credential not in [nil, credential]
+      end)
   end
 
   # The write-path fence, in refusal order: mark the session superseded (the
@@ -173,22 +222,20 @@ defmodule Flezha.Runner.FleetManager.Session do
     StreamPool.call_channels(old_session, :fence_write_path)
   end
 
-  # Re-tag every operative still bound to `old_session` onto `new_session` and
-  # seed the new session's pre-spawned StreamChannels so in-flight frames land
-  # without waiting for a convergence tick. `do_evict_runner/2` then tears down
-  # the old (now operative-less) session.
+  # Tell every operative the registry tags with `old_session` that its runner is
+  # `new_session` now. Each Overwatch re-binds and publishes its own tag and
+  # route, so the Overwatch, the tag and the route have one writer; the
+  # convergence loop's stale-tag and misbound heals cover an operative with no
+  # live Overwatch to tell. `do_evict_runner/2` then tears down the old session.
   def swap_bindings(namespace, old_session, new_session) do
-    HubManager.runner_operatives(namespace, old_session)
-    |> Enum.each(&swap_one_binding(namespace, new_session, &1))
-  end
-
-  defp swap_one_binding(namespace, new_session, {operative_id, node_pids}) do
-    HubManager.operative_set_runner(namespace, operative_id, new_session)
-
-    case HubManager.live_pid(node_pids) do
-      nil -> :ok
-      pid -> HubManager.hook_insert_local_pid(new_session, operative_id, pid)
-    end
+    namespace
+    |> HubManager.runner_operatives(old_session)
+    |> Enum.each(fn {_operative_id, node_pids} ->
+      case HubManager.live_pid(node_pids) do
+        nil -> :ok
+        pid -> GenServer.cast(pid, {:session_replaced, old_session, new_session})
+      end
+    end)
   end
 
   def do_evict_runner(state, runner_id) do
@@ -197,8 +244,6 @@ defmodule Flezha.Runner.FleetManager.Session do
         forget_credential(state, runner_id)
 
       namespace ->
-        detach_runner_operatives(namespace, runner_id)
-
         stop_runner_sup(runner_id)
 
         :telemetry.execute(
@@ -246,24 +291,17 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   defp tree_standing?(runner_id), do: GenServer.whereis(Identificator.unit_sup(runner_id)) != nil
 
-  defp detach_runner_operatives(namespace, runner_id) do
-    HubManager.runner_operatives(namespace, runner_id)
-    |> Enum.each(fn {operative_id, _node_pids} ->
-      HubManager.hook_remove_pid(runner_id, %{child_id: operative_id})
-    end)
-
-    _ = HubManager.unregister_handler(namespace, runner_id)
-    :ok
-  end
-
   defp set_runner_counter({namespace, runners}) do
     active = Enum.count(runners, fn {_id, {status, _ts}} -> status == :active end)
     QuotaCounters.set(namespace, :runners, active)
   end
 
+  # Every way a session ends stops its tree here, which is where its identity
+  # is forgotten.
   def stop_runner_sup(runner_id) do
     Supervisor.terminate_child(FleetSupervisor, runner_id)
     Supervisor.delete_child(FleetSupervisor, runner_id)
+    Marks.forget_identity(runner_id)
   end
 
   defp do_handle_runner_disconnect(state, namespace, runner_id) do
@@ -275,8 +313,6 @@ defmodule Flezha.Runner.FleetManager.Session do
       |> forget_credential(runner_id)
       |> Factories.remove_ce_factories(namespace, runner_id)
       |> Factories.prune_empty_factories(namespace)
-
-    _ = HubManager.unregister_handler(namespace, runner_id)
 
     other_runners? =
       state
@@ -334,17 +370,17 @@ defmodule Flezha.Runner.FleetManager.Session do
   Start a connecting runner's session, or `throw` `{:runner_connect_failed, reason}`.
 
   Four pieces of state, in the order they must be taken: the namespace's hub,
-  that hub's operative-insertion hook, this runner's supervision tree, and the
-  stream itself. Each step refuses by throwing rather than by crashing —
-  `FleetManager` serves every runner on the node, and its acceptor goes with
-  it. The session is recorded only once the runner has answered its
-  handshake (`await_handshake/4`).
+  the session's stable identity (its channels read it as they start), this
+  runner's supervision tree, and the stream itself. Each step refuses by
+  throwing rather than by crashing — `FleetManager` serves every runner on the
+  node, and its acceptor goes with it. The session is recorded only once the
+  runner has answered its handshake (`await_handshake/4`).
   """
-  def runner_connect(stream_ref, namespace, transport) do
+  def runner_connect(stream_ref, %{namespace: namespace, transport: transport} = connect) do
     runner_id = Identificator.unique_id(namespace)
 
     ensure_hub(namespace, runner_id)
-    register_insertion_hook(namespace, runner_id)
+    Marks.bind_identity(runner_id, connect.stable_id)
     control_channel_pid = start_runner_tree(namespace, runner_id, stream_ref, transport)
     Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
     Flezha.Transport.Stream.set_active(stream_ref)
@@ -426,7 +462,6 @@ defmodule Flezha.Runner.FleetManager.Session do
         )
 
         stop_runner_sup(session_token)
-        _ = HubManager.unregister_handler(namespace, session_token)
         Flezha.Transport.Stream.close(pending.stream_ref)
         cancel_timer(state, {:handshake, session_token})
     end
@@ -481,24 +516,6 @@ defmodule Flezha.Runner.FleetManager.Session do
     end
   end
 
-  # A hub that is gone, or terminating under a drain, cannot take this runner's
-  # operative-insertion hook. Refusing here is what keeps one namespace's
-  # teardown from travelling out of this call as an exit.
-  defp register_insertion_hook(namespace, runner_id) do
-    case HubManager.register_handler(namespace, runner_id) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        refuse(
-          runner_id,
-          namespace,
-          "could not register its operative-insertion hook (#{inspect(reason)})",
-          {:hub_unavailable, namespace}
-        )
-    end
-  end
-
   # A runner whose tree did not come up is refused rather than allowed to crash
   # this manager, and with the start's own error: a tree that never started
   # leaves no supervisor to ask, so asking it could only answer `:noproc`.
@@ -521,13 +538,11 @@ defmodule Flezha.Runner.FleetManager.Session do
     end
   end
 
-  # The hook is taken before the tree, so every refusal after it has to give it
-  # back: a runner retrying a refusal would otherwise add one handler per
-  # attempt, and no runner ever answers them. Cancelling is by name, so the
-  # refusal that never got as far as registering one is a no-op.
+  # The identity is recorded before the tree, so a refusal after it forgets it.
+  # Forgetting is by name, so a refusal that never recorded one is a no-op.
   defp refuse(runner_id, namespace, what, reason) do
     Logger.error("runner #{runner_id} on #{namespace} #{what}; refusing the connect")
-    _ = HubManager.unregister_handler(namespace, runner_id)
+    Marks.forget_identity(runner_id)
     throw({:runner_connect_failed, reason})
   end
 
@@ -605,15 +620,14 @@ defmodule Flezha.Runner.FleetManager.Session do
     MapSet.new(runner_groups ++ factory_groups)
   end
 
-  def catch_runner_connect(stream_ref, namespace, transport) do
-    runner_connect(stream_ref, namespace, transport)
+  def catch_runner_connect(stream_ref, connect) do
+    runner_connect(stream_ref, connect)
   catch
     {:runner_connect_failed, reason} -> {:error, reason}
   end
 
   defp finish_runner_connect(state, session_token, connect) do
-    %{namespace: namespace, factories: factories, stable_id: stable_id, credential: credential} =
-      connect
+    %{namespace: namespace, factories: factories, credential: credential} = connect
 
     timestamp = System.monotonic_time(:millisecond)
 
@@ -631,7 +645,7 @@ defmodule Flezha.Runner.FleetManager.Session do
     # newest-wins takeover) re-point the prior session's operative bindings onto
     # this fresh session token and close the old session. A first connect just
     # records the mapping; a degraded runner (no stable id) connects fresh.
-    state = resolve_stable_identity(state, namespace, stable_id, session_token)
+    state = resolve_stable_identity(state, session_token, connect)
 
     # The convergence Loop subscribes to this and runs an immediate tick as a
     # safety net; the binding swap above is the synchronous primary path.

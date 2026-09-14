@@ -1,6 +1,8 @@
 defmodule Flezha.Runner.FleetManager.Marks do
   @moduledoc """
-  Two TTL-expiring ETS marks on a runner identity string.
+  The runner facts a channel reads with a bare ETS read: two TTL-expiring marks
+  on a runner identity string, and the stable identity each live session
+  presented.
 
   The fence mark decides correctness: `Flezha.State.WalWriter` refuses an
   append from a superseded session. The retiring mark decides only what a
@@ -9,9 +11,16 @@ defmodule Flezha.Runner.FleetManager.Marks do
   call, because a channel asking `FleetManager` whether its own close was
   expected would be asking the process that is tearing it down.
 
+  A session's identity is what an operative's ownership record names, so a
+  channel and an Overwatch read it here without calling the process that
+  admitted the session. The same table remembers what a session has already
+  been refused for, so a refusal is reported, and a copy told to stop, once.
+
   Invariant: every mark expires. A runner id is a durable identity reused
   across reconnects, so a mark that outlived its disconnect would answer for a
-  later, unrelated close of the same runner.
+  later, unrelated close of the same runner. A session's identity rows do not
+  expire: they are forgotten when the session ends, and a session token is
+  never reused.
   """
 
   alias Flezha.Config.Durations
@@ -26,15 +35,67 @@ defmodule Flezha.Runner.FleetManager.Marks do
   # cleanup tick — and deliberately a separate table: the fence decides
   # correctness, this decides only what gets reported.
   @retiring_table :flezha_retiring_runners
+  # Each live session's stable identity, keyed by the session token, and one
+  # `{session, subject}` row per operative or Entity the session was refused for.
+  @identity_table :flezha_session_identities
 
   @doc """
-  Create the fence table, so it is owned by the caller.
+  Create the fence and identity tables, so they are owned by the caller.
 
-  `FleetManager` calls this from `init/1`: the marks have to outlive the
-  transient readers (WalWriters) that consult them.
+  `FleetManager` calls this from `init/1`: the tables have to outlive the
+  transient readers (WalWriters, channels) that consult them.
   """
-  @spec ensure_fence_table() :: :ok
-  def ensure_fence_table, do: ensure_marks_table(@superseded_table)
+  @spec ensure_tables() :: :ok
+  def ensure_tables do
+    ensure_marks_table(@superseded_table)
+    ensure_marks_table(@identity_table)
+  end
+
+  @doc """
+  Record the stable identity `session` presented on connect. A degraded runner
+  presents none and is its own session token (`identity_of/1`).
+  """
+  @spec bind_identity(binary(), binary() | nil) :: :ok
+  def bind_identity(_session, nil), do: :ok
+
+  def bind_identity(session, identity) when is_binary(session) and is_binary(identity) do
+    ensure_marks_table(@identity_table)
+    :ets.insert(@identity_table, {session, identity})
+    :ok
+  end
+
+  @doc "The stable identity `session` presented, or the session token itself when none."
+  @spec identity_of(binary()) :: binary()
+  def identity_of(session) when is_binary(session) do
+    with true <- :ets.whereis(@identity_table) != :undefined,
+         [{_session, identity}] <- :ets.lookup(@identity_table, session) do
+      identity
+    else
+      _ -> session
+    end
+  end
+
+  @doc """
+  Whether this is `session`'s first refusal for `subject`, an operative or an
+  Entity: true once per session and subject, across every channel of the
+  session, so a refusal is reported once however many frames repeat it.
+  """
+  @spec first_refusal?(binary(), term()) :: boolean()
+  def first_refusal?(session, subject) do
+    ensure_marks_table(@identity_table)
+    :ets.insert_new(@identity_table, {{session, subject}, true})
+  end
+
+  @doc "Forget `session`'s identity and its refusals: the session has ended."
+  @spec forget_identity(binary()) :: :ok
+  def forget_identity(session) when is_binary(session) do
+    if :ets.whereis(@identity_table) != :undefined do
+      :ets.delete(@identity_table, session)
+      :ets.match_delete(@identity_table, {{session, :_}, :_})
+    end
+
+    :ok
+  end
 
   @doc """
   Mark a session token superseded by a newest-wins takeover. The mark is the

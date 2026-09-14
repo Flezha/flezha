@@ -567,7 +567,7 @@ defmodule Flezha.State.RetentionTest do
     @tag :capture_log
     test "outlives a Retention crash" do
       class = "reg_" <> uniq()
-      :ok = ClassRegistry.put_overwatch(class, self())
+      :ok = ClassRegistry.put_overwatch(class, self(), nil)
 
       old = Process.whereis(Retention)
       Process.exit(old, :kill)

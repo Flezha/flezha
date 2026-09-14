@@ -1,12 +1,14 @@
 defmodule Flezha.Runner.StreamChannel.Records do
   @moduledoc """
-  The operative route cache, the durable-record fan-out and the credit
-  handshake.
+  The operative route cache, the ownership check, the durable-record fan-out
+  and the credit handshake.
 
   Every frame a runner sends on an Entity's write path arrives here: state
   changes, snapshots, deletions, compensation records, corrections and parks.
-  Each is routed to the Entity's own writer, and a frame from a session the
-  takeover fence marked superseded is refused rather than written.
+  Each is routed to the Entity's own writer. A frame from a session the
+  takeover fence marked superseded is refused rather than written, and so is
+  one from a runner the operative's ownership record does not name
+  (`admit/3`), the check the control channel's requests are judged by too.
 
   Invariant: credit is granted per window and debited per record, so a runner
   that outruns its grant is reported once and throttled, never silently
@@ -27,6 +29,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.Process.Watch
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.CreditLedger
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
@@ -82,37 +85,29 @@ defmodule Flezha.Runner.StreamChannel.Records do
     Enum.reduce(operative_ids, %{state | route_monitors: monitors}, &drop_route(&2, &1))
   end
 
-  # Emit `output_stall` for each mapped operative whose kind runs the output-stall
-  # watchdog. A kind without it (a durable workflow operative) legitimately goes
-  # silent, so flagging it would spuriously rebind.
-  # The Overwatch a frame is for: the stream's mapping first; on a miss, the
-  # class registry — the mapping is seeded by the registry hook after the
-  # bind publishes, and a chain that emits within its first milliseconds
-  # beats it, while the Overwatch registered itself for its class before the
-  # SDK started. A frame neither knows is the only true drop, and it is counted.
+  @doc """
+  The Overwatch an output frame is for, and the channel state after the
+  lookup: `{{:ok, pid} | :drop, state}`.
+
+  A route exists only in the owner session's channels, so a hit in the stream's
+  mapping is the ownership check and costs nothing more. A miss is judged by
+  the operative's ownership record: the owner's or the pending runner's first
+  output, which can beat the publish that seeds the route, is routed through
+  the record's Overwatch and the route cached; a frame from any other runner
+  is refused (`admit/3`). A frame for an operative nobody records, or whose
+  recorded Overwatch is gone, is the only true drop, and it is counted.
+  """
   def route(state, operative_id) do
     case Map.get(state.operative_mapping, operative_id, []) do
       [] ->
-        case Lookup.overwatch(operative_id) do
-          {:ok, pid} ->
-            {:ok, pid}
-
-          {:error, _reason} ->
-            :telemetry.execute(
-              [:flezha, :stream, :drop],
-              %{count: 1},
-              %{operative_id: operative_id, runner_id: state.runner_id, reason: :unrouted}
-            )
-
-            :drop
-        end
+        warm_route(state, operative_id)
 
       [pid] ->
-        {:ok, pid}
+        {{:ok, pid}, state}
 
       [first | _] = pids ->
-        # Defensive: `hook_insert_pid/2` seeds one registry row's local-node
-        # pids, so the list is single by construction — but if a regression
+        # Defensive: the publish seeds one local pid, so the list is single by
+        # construction. If a regression
         # slips a longer one through we must NOT fan out frames to
         # every pid — that is the EVIDENCE1 §2 data-plane drain that
         # produced 22 frames/s on unchosen runners. Route to the
@@ -128,10 +123,97 @@ defmodule Flezha.Runner.StreamChannel.Records do
           %{operative_id: operative_id, runner_id: state.runner_id}
         )
 
-        {:ok, first}
+        {{:ok, first}, state}
     end
   end
 
+  # The liveness check runs on a miss only: per frame it costs a measurable
+  # share of the output path.
+  defp warm_route(state, operative_id) do
+    case ownership(state, operative_id, :output) do
+      {:owner, pid} ->
+        if Process.alive?(pid),
+          do: {{:ok, pid}, put_route(state, operative_id, [pid])},
+          else: {unrouted(state, operative_id), state}
+
+      :unrecorded ->
+        {unrouted(state, operative_id), state}
+
+      :refused ->
+        {:drop, state}
+    end
+  end
+
+  defp unrouted(state, operative_id) do
+    :telemetry.execute(
+      [:flezha, :stream, :drop],
+      %{count: 1},
+      %{operative_id: operative_id, runner_id: state.runner_id, reason: :unrouted}
+    )
+
+    :drop
+  end
+
+  @doc """
+  Whether the session behind `state` may act on the operative whose class is
+  `operative_class` (its id, unless it declared a class): the session's stable
+  identity is the owner or the pending identity the ownership record names, or
+  no record exists on this node. `kind` names the frame in the report.
+
+  A refusal is counted on the channel every time. The event, the warning and
+  the `RemOperative` that stops the sender's copy go out once per session and
+  operative, however many of the session's channels the copy speaks on.
+  """
+  @spec admit(map(), binary(), atom()) :: boolean()
+  def admit(state, operative_class, kind),
+    do: ownership(state, operative_class, kind) != :refused
+
+  # The one read of the ownership record: the session owns the operative (as
+  # owner or pending) and the record names its Overwatch, no record exists on
+  # this node, or the frame is refused.
+  defp ownership(state, operative_class, kind) do
+    case ClassRegistry.owner(operative_class) do
+      {:ok, pid, owner, pending} ->
+        if state.identity in [owner, pending],
+          do: {:owner, pid},
+          else: refuse(state, operative_class, owner, kind)
+
+      :error ->
+        :unrecorded
+    end
+  end
+
+  defp refuse(state, operative_class, owner, kind) do
+    LivenessCounters.bump_channel(state.liveness_ref, :foreign_frame_refused)
+
+    if Marks.first_refusal?(state.runner_id, operative_class) do
+      Logger.warning(
+        "[runner] #{state.runner_id} (identity #{state.identity}) sent #{kind} for " <>
+          "#{inspect(operative_class)}, which is bound to #{inspect(owner)}; refused, and the " <>
+          "runner is told to remove its copy"
+      )
+
+      :telemetry.execute(
+        [:flezha, :runner, :foreign_frame_refused],
+        %{count: 1},
+        %{
+          runner_id: state.runner_id,
+          identity: state.identity,
+          owner: owner,
+          operative_id: operative_class,
+          kind: kind
+        }
+      )
+
+      ControlUnit.stop_operative_async(state.runner_id, operative_class)
+    end
+
+    :refused
+  end
+
+  # Emit `output_stall` for each mapped operative whose kind runs the output-stall
+  # watchdog. A kind without it (a durable workflow operative) legitimately goes
+  # silent, so flagging it would spuriously rebind.
   def emit_output_stall(operative_mapping) do
     for {operative_id, _} <- operative_mapping,
         ClassRegistry.capable?(operative_id, :output_stall_watch?) do
@@ -153,7 +235,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def handle_entity_state_change(state, frame) do
     case StateWire.decode_frame(frame) do
       {:ok, %{entity_id: {rc, _sh, _pk} = entity_id} = record} ->
-        append_to_entity(state, entity_id, rc, record, byte_size(frame))
+        if admit(state, rc, :entity_state_change),
+          do: append_to_entity(state, entity_id, rc, record, byte_size(frame)),
+          else: state
 
       {:error, reason} ->
         Logger.warning("[stream] entity_state_change decode failed: #{inspect(reason)}")
@@ -199,13 +283,17 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # channel also carries the operative's output frames. The ack closure
   # runs in the store process after the fsync; `send_control_async` is a
   # cast, so it cannot block the store either.
-  def handle_correction_request(frame) do
+  def handle_correction_request(state, frame) do
     with {:ok, %{entity_id: {operative_class, _, _} = entity_id, body: body}} <-
            StateWire.decode_frame(frame),
          {:ok, target} <- StateWire.decode_correction_request(body),
+         true <- admit(state, operative_class, :correction_request),
          {:ok, overwatch} <- Lookup.overwatch(operative_class) do
       Replay.request_correction(overwatch, entity_id, target)
     else
+      false ->
+        :ok
+
       other ->
         Logger.warning("[stream] undecodable correction_request: #{inspect(other)}")
     end
@@ -213,7 +301,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   def handle_park_payload(state, frame) do
     with {:ok, %{entity_id: {rc, sh, pk}, body: body}} <- StateWire.decode_frame(frame),
-         {:ok, park} <- StateWire.decode_park_body(body) do
+         {:ok, park} <- StateWire.decode_park_body(body),
+         true <- admit(state, rc, :park_payload) do
       runner_id = state.runner_id
 
       DlqStore.park_async(
@@ -227,6 +316,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
         end
       )
     else
+      false -> :ok
       err -> Logger.warning("[stream] park_payload decode failed: #{inspect(err)}")
     end
   end
@@ -237,23 +327,16 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def refuse_stale_forward(state, payload_id, frame) do
     LivenessCounters.bump_channel(state.liveness_ref, :stale_writer_refused)
 
-    case frame_entity_id(payload_id, frame) do
-      {:ok, {rc, sh, pk} = entity_id} ->
-        if MapSet.member?(state.refused_entities, entity_id) do
-          state
-        else
-          :telemetry.execute(
-            [:flezha, :state, :stale_writer_refused],
-            %{count: 1},
-            %{operative: rc, procedure: sh, key: pk, session: state.runner_id}
-          )
-
-          %{state | refused_entities: MapSet.put(state.refused_entities, entity_id)}
-        end
-
-      {:error, _} ->
-        state
+    with {:ok, {rc, sh, pk} = entity_id} <- frame_entity_id(payload_id, frame),
+         true <- Marks.first_refusal?(state.runner_id, entity_id) do
+      :telemetry.execute(
+        [:flezha, :state, :stale_writer_refused],
+        %{count: 1},
+        %{operative: rc, procedure: sh, key: pk, session: state.runner_id}
+      )
     end
+
+    :ok
   end
 
   def frame_entity_id("delete_entity_state", frame), do: StateWire.decode_entity_id(frame)
@@ -386,11 +469,11 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # Writing a snapshot fsyncs and truncates the per-entity WAL (a call back
   # into its writer), so run it in a separate process — off this channel's loop
   # and outside the writer (which would self-call).
-  def handle_entity_state_snapshot(_runner_id, frame) do
+  def handle_entity_state_snapshot(state, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{entity_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        entity_id = {rc, sh, pk}
-        spawn(fn -> write_snapshot(entity_id, seq, header, body) end)
+      {:ok, %{entity_id: {rc, _sh, _pk} = entity_id, seq: seq, header: header, body: body}} ->
+        if admit(state, rc, :entity_state_snapshot),
+          do: spawn(fn -> write_snapshot(entity_id, seq, header, body) end)
 
       {:error, reason} ->
         Logger.warning("[stream] entity_state_snapshot decode failed: #{inspect(reason)}")
@@ -401,12 +484,13 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # signal; `Flezha.State.Paths.compensation_markers/1` reads it back onto
   # `RestoreInitState`). Write off this channel's loop so a slow disk never stalls
   # the output-carrying channel.
-  def handle_compensation_record(payload_id, frame) do
+  def handle_compensation_record(state, payload_id, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{entity_id: entity_id}} ->
+      {:ok, %{entity_id: {rc, _sh, _pk} = entity_id}} ->
         kind = if payload_id == "compensation_intent", do: :intent, else: :done
 
-        spawn(fn -> write_compensation_marker(entity_id, kind) end)
+        if admit(state, rc, :compensation_record),
+          do: spawn(fn -> write_compensation_marker(entity_id, kind) end)
 
       {:error, reason} ->
         Logger.warning("[stream] #{payload_id} decode failed: #{inspect(reason)}")
@@ -435,10 +519,10 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
-  def handle_delete_entity_state(frame) do
+  def handle_delete_entity_state(state, frame) do
     case StateWire.decode_entity_id(frame) do
-      {:ok, {rc, sh, pk}} ->
-        delete_if_dynamic({rc, sh, pk})
+      {:ok, {rc, _sh, _pk} = entity_id} ->
+        if admit(state, rc, :delete_entity_state), do: delete_if_dynamic(entity_id)
 
       {:error, reason} ->
         Logger.warning("[stream] delete_entity_state decode failed: #{inspect(reason)}")

@@ -140,6 +140,8 @@ defmodule Flezha.Observability.TelemetryBridge do
       {:flezha_runner, :factory_language_conflict, :event},
     [:flezha, :runner, :quota_refused] => {:flezha_runner, :quota_refused, :event},
     [:flezha, :runner, :admin_request] => {:flezha_runner, :admin_request, :event},
+    [:flezha, :runner, :foreign_frame_refused] =>
+      {:flezha_runner, :foreign_frame_refused, :event},
     [:flezha, :schedule, :spawn_failed] => {:flezha_schedule, :spawn_failed, :event},
     [:flezha, :stream, :fanout_warning] => {:flezha_stream, :fanout_warning, :event},
     [:flezha, :state, :claim_superseded] => {:flezha_durability, :claim_superseded, :event},

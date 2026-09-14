@@ -26,6 +26,7 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.Operative.Replay
   alias Flezha.Process.Timer
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
@@ -96,17 +97,18 @@ defmodule Flezha.Operative.Lifecycle do
         "#{inspect(stale_runner_id)} to live #{inspect(state.runner_id)}"
     )
 
-    publish_binding(state)
+    publish_binding(state, stale_runner_id)
   end
 
-  # Publish the binding: registry tag + the live runner's `operative_mapping`
-  # route. Same pair `Convergence.Heal.rebind_operative/3` publishes.
+  # Publish the binding: the registry tag, the bound session's route, and the
+  # route dropped from `previous`, the session bound before, so a route exists
+  # only in the channels of the session that owns the operative. The Overwatch
+  # is the one publisher of both.
   #
-  # Must run in the Overwatch process, because the route points at `self()`. Both
-  # halves read the bound state, so neither can name a runner this process is not
-  # on.
-  @spec publish_binding(Overwatch.t()) :: Overwatch.t()
-  def publish_binding(%Overwatch{id: operative_id, runner_id: runner_id} = state) do
+  # Must run in the Overwatch process, because the route points at `self()`. Every
+  # half reads the bound state, so none can name a runner this process is not on.
+  @spec publish_binding(Overwatch.t(), binary() | nil) :: Overwatch.t()
+  def publish_binding(%Overwatch{id: operative_id, runner_id: runner_id} = state, previous) do
     case HubManager.operative_set_runner(state.namespace, operative_id, runner_id) do
       :ok ->
         :ok
@@ -118,9 +120,22 @@ defmodule Flezha.Operative.Lifecycle do
         )
     end
 
-    _ = HubManager.hook_insert_local_pid(runner_id, operative_id, self())
+    if previous not in [nil, runner_id], do: StreamPool.drop_route(previous, operative_id)
+    _ = StreamPool.put_route(runner_id, operative_id, self())
 
     state
+  end
+
+  @doc """
+  Move the binding to `runner_id` and publish it: the ownership record, the
+  registry tag and the route follow together, and the route leaves the session
+  the operative was bound to before.
+  """
+  @spec commit_binding(Overwatch.t(), binary()) :: Overwatch.t()
+  def commit_binding(%Overwatch{} = state, runner_id) do
+    state
+    |> bind_to_runner(state.id, runner_id)
+    |> publish_binding(state.runner_id)
   end
 
   # Bring the operative up on `runner_id`: prepare plugins, resolve init state,
@@ -134,22 +149,17 @@ defmodule Flezha.Operative.Lifecycle do
   # Overwatch), and `self()` there is the TASK — registering it as the
   # operative's Overwatch would point the journal's outbox flush at a process that
   # exits moments later, silently dropping the output.
-  @spec complete_init(Overwatch.t(), binary(), map(), pid() | nil) ::
+  @spec complete_init(Overwatch.t(), binary(), map(), pid()) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
-  def complete_init(%Overwatch{} = state, runner_id, operative, owner \\ nil) do
-    owner = owner || self()
-    state = bind_to_runner(state, operative.id, runner_id)
-    # Before the SDK starts: a fast chain's first output can reach the stream
-    # channel ahead of the registry hook that seeds its routing, and the
-    # channel resolves that miss through this row.
-    _ = ClassRegistry.put_overwatch(Overwatch.operative_class(state), owner)
+  def complete_init(%Overwatch{} = state, runner_id, operative, owner \\ self()) do
+    state = bind_to_runner(state, operative.id, runner_id, owner)
     plugins = Keyword.get(operative.opts, :plugins, [])
 
     with {:ok, state} <- Plugins.prepare(state, plugins),
          {:ok, state, operative} <- Plugins.resolve_init_state(state, operative),
          operative =
            with_resume_state(operative, state.builder.kind, Overwatch.operative_class(state)),
-         {:ok, final_runner_id, add_operative_raw, state} <- start_once(state, operative),
+         {:ok, add_operative_raw, state} <- start_once(state, operative, owner),
          # The class's SDK-side declarations ride the AddOperative response;
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
@@ -161,7 +171,6 @@ defmodule Flezha.Operative.Lifecycle do
              | effectively_once: effectively_once,
                correction_window_ms: correction_window_ms
            }
-           |> bind_to_runner(operative.id, final_runner_id)
            |> Map.put(:init_error, nil),
          :ok <- await_stream_bound(state),
          # BEFORE the restore: a refused restore parks the operative, so a
@@ -265,10 +274,23 @@ defmodule Flezha.Operative.Lifecycle do
     do: Durations.get(:stream_bind_wait_ms)
 
   @doc """
-  Point the state at `runner_id` and the stream channel that serves it.
+  Point the state at `runner_id` and the stream channel that serves it, and
+  record `runner_id`'s stable identity as the operative's owner.
+
+  Every bind runs this before the runner is told to start the operative: a
+  fast chain's first output can reach the stream channel before the publish
+  seeds its route, and the channel judges that miss by the record. `owner` is
+  the Overwatch process, named because an un-park binds inside a task.
   """
-  @spec bind_to_runner(Overwatch.t(), binary(), binary()) :: Overwatch.t()
-  def bind_to_runner(%Overwatch{} = state, operative_id, runner_id) do
+  @spec bind_to_runner(Overwatch.t(), binary(), binary(), pid()) :: Overwatch.t()
+  def bind_to_runner(%Overwatch{} = state, operative_id, runner_id, owner \\ self()) do
+    _ =
+      ClassRegistry.put_overwatch(
+        Overwatch.operative_class(state),
+        owner,
+        Marks.identity_of(runner_id)
+      )
+
     %Overwatch{
       state
       | runner_id: runner_id,
@@ -298,16 +320,17 @@ defmodule Flezha.Operative.Lifecycle do
   end
 
   # The one attempt. The runner is re-resolved first so a runner that came
-  # online since the bind was awaited is the one used; the state carries the
-  # runner the attempt was made on either way, so a park names it.
-  defp start_once(%Overwatch{} = state, operative) do
+  # online since the bind was awaited is the one used, and bound before the
+  # attempt so the ownership record names the runner told to start; the state
+  # carries the runner the attempt was made on either way, so a park names it.
+  defp start_once(%Overwatch{} = state, operative, owner) do
     runner_id =
       resolve_runner(state.namespace, operative.factory_id, operative.id, state.runner_id)
 
-    state = %Overwatch{state | runner_id: runner_id}
+    state = bind_to_runner(state, operative.id, runner_id, owner)
 
     case attempt_ping_and_start(operative, runner_id) do
-      {:ok, raw_data} -> {:ok, runner_id, raw_data, state}
+      {:ok, raw_data} -> {:ok, raw_data, state}
       {:error, reason} -> {:error, reason, state}
     end
   end

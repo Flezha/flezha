@@ -124,8 +124,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   # Supervisor.start_child returns once the hub's top supervisor is up,
   # but ProcessHub registers its named coordinator GenServer asynchronously
-  # afterwards. Anything calling into the named hub_id (register_handler,
-  # register_hook_handlers, alter_child_data callbacks) before that
+  # afterwards. Anything calling into the named hub_id (register_hook_handlers,
+  # alter_child_data callbacks) before that
   # registration completes raises :noproc and cascades the FleetManager
   # crash. Spin briefly until ProcessHub.is_alive? confirms the name is
   # claimed.

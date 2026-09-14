@@ -134,6 +134,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.{ControlChannel, FleetManager}
+  alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-update-factories-test"
@@ -165,9 +166,9 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
       end
     end)
 
-    request = %RunnerCommands.CommandRequest{
-      reference_id: "ref-update-factories",
-      command:
+    payload =
+      ControlFrameTestHelper.encode_request(
+        "ref-update-factories",
         {:update_factories,
          %RunnerCommands.UpdateFactories{
            factories: [
@@ -175,10 +176,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
              %RunnerCommands.FactoryDecl{id: "beta", description: ""}
            ]
          }}
-    }
-
-    {:ok, iodata, _size} = Protox.encode(request)
-    payload = IO.iodata_to_binary(iodata)
+      )
 
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 

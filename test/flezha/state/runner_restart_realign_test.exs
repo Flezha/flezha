@@ -30,6 +30,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.{Metrics, Snapshot, Supervisor, TestHelpers, WalWriter, Wire}
@@ -229,6 +230,31 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   # Mark + register cleanup — the table is owned by the app's FleetManager and
   # outlives this test otherwise.
+  test "a session whose identity does not own the operative never realigns its WAL", ctx do
+    {operative, _procedure, _key} = ctx.entity_id
+    feed(start_channel("exec_owner"), ctx, 0..4)
+    assert WalWriter.last_persisted_seq(ctx.writer) == 4
+    {:ok, _} = Snapshot.write_snapshot(ctx.entity_id, 3, ctx.header, "owner-snap")
+
+    :ok = ClassRegistry.put_overwatch(operative, self(), "exec_owner")
+    on_exit(fn -> ClassRegistry.delete(operative) end)
+    foreign = attach([:flezha, :runner, :foreign_frame_refused], ctx.parent, :foreign)
+    on_exit(fn -> :telemetry.detach(foreign) end)
+
+    # A runner the record does not name, resuming from a lower seq base.
+    other = "exec_other_" <> uniq()
+    feed(start_channel(other), ctx, 0..2)
+
+    assert WalWriter.last_persisted_seq(ctx.writer) == 4
+    assert Snapshot.latest_snapshot(ctx.entity_id) != nil
+    refute_received {:wal_realign, _, _}
+
+    assert_received {:foreign, %{count: 1},
+                     %{runner_id: ^other, owner: "exec_owner", operative_id: ^operative}}
+
+    refute_received {:foreign, _, _}
+  end
+
   defp supersede(session_id) do
     Marks.mark_session_superseded(session_id)
 
