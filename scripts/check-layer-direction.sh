@@ -146,7 +146,7 @@ LAYERS = {
 # One directory can hold two layers, and `http/` does. `Flezha.Http.Client` is
 # an outbound request over `:mint` that names nothing and any layer may call;
 # `Flezha.Http.Listener` is the inbound surface at the top. Ranking the
-# directory alone would make the S3 backend's and the OTLP exporter's calls
+# directory alone would make the S3 client's and the OTLP exporter's calls
 # permanent debt nobody could ever close, which is how a gate teaches people to
 # stop reading it. One entry per module, and only where the directory's rank is
 # wrong for that module.
@@ -159,6 +159,8 @@ LAYERS = {
 # manager or to the state layer as debt nobody could close.
 MODULE_LAYERS = {
     "Flezha.Http.Client": 0,
+    # signed S3 requests over the client, naming only it and the knob table
+    "Flezha.Http.S3": 0,
     "Flezha.Service.Dlq": 5,
     "Flezha.Service.Namespace": 5,
     "Flezha.Service.Workflow": 5,

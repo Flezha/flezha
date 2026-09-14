@@ -11,17 +11,19 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
   # async: false: writes Application env; repoints the dead-letter store.
 
-  use FlezhaTest.Case, fixtures: [:tmp_dir, :env, :isolated_dlq_dir], async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env, :system_env, :isolated_dlq_dir], async: false
 
   import ExUnit.CaptureLog
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
   alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Http.S3
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.File.Sink
   alias Flezha.Plugin.Provider.File.WriteWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.Minio
   alias FlezhaTest.Helper.ProviderPrepare
 
   # A retry parked at a minute keeps a failed batch failed until the test says so.
@@ -89,7 +91,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       # What a write that failed part-way leaves behind, with a descriptor too
       # broken to cut it: the cut is owed to the next open of the same file.
       File.write!(file, "r1\nr", [:append])
-      :sys.replace_state(sink, &%{&1 | undo: {&1.inode, 0}})
+      :sys.replace_state(sink, &%{&1 | io: %{&1.io | undo: {&1.io.inode, 0}}})
 
       send(sink, :retry)
       assert_receive {:"$gen_cast", {:outbox_confirmed_many, keys}}, 2_000
@@ -304,6 +306,110 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
   end
 
+  describe "under an S3 root" do
+    setup do
+      Minio.file_plugin_root("s3://events/flezha")
+    end
+
+    test "append, given or taken as the default, is refused naming commit" do
+      for extra <- [%{path: "out"}, %{path: "out", commit: "append"}] do
+        assert {:error, message} = prepare_sink(extra)
+        assert message =~ "commit: append"
+      end
+    end
+
+    test "a roll above 5 GiB is refused naming roll_bytes" do
+      assert {:error, message} = prepare_sink(rename(%{roll_bytes: 6 * 1024 ** 3}))
+      assert message =~ "roll_bytes"
+
+      assert {:ok, %{path: "s3://events/flezha/out"}} =
+               prepare_sink(rename(%{roll_bytes: 5 * 1024 ** 3}))
+    end
+  end
+
+  # Against `FlezhaTest.Helper.FakeS3`, or MinIO under `S3_INTEGRATION=1`.
+  describe "commit: rename under an S3 root" do
+    if Minio.integration?(), do: @describetag(:s3_integration)
+
+    setup do
+      Minio.plugin_bucket!("flezha-file-sink-test")
+    end
+
+    test "a roll becomes one object, and its holds wait for the sidecar", %{s3: s3} do
+      owner = owner()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
+      for seq <- 1..2, do: release(opts, "r#{seq}", TestHelpers.guaranteed_metadata(owner, seq))
+
+      assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 6 end, 2_000)
+      assert keys(s3, "out") == []
+      refute_received {:"$gen_cast", {:outbox_confirmed_many, _}}
+
+      send(sink, :roll)
+
+      assert_confirmed([{:cursor, 1}, {:cursor, 2}])
+      assert keys(s3, "out") == [".progress", "part-00000001"]
+      assert S3.get("out/part-00000001", s3) == {:ok, "r1\nr2\n"}
+      assert progress(bucket(s3, "out"))["part"] == 1
+    end
+
+    test "a crash between the part and the sidecar writes the records once", %{s3: s3} do
+      {entity_id, records} = unconfirmed_batch()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
+      hand_over(opts, records)
+      assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 4 end, 2_000)
+
+      Minio.hold_guarded_writes!(sink)
+      send(sink, :roll)
+      assert_receive {:held, ^sink}, 5_000
+      assert keys(s3, "out") == ["part-00000001"]
+
+      crash(opts, sink)
+      activate(%{opts | roll_after_ms: 1})
+      assert wait_until(fn -> keys(s3, "out") == [] end, 5_000)
+
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      hand_over(opts, records)
+
+      assert_confirmed([{:cursor, 1}, {:cursor, 2}])
+      assert committed(bucket(s3, "out")) == "a\nb\n"
+      assert keys(s3, "out") == [".progress", "part-00000001"]
+    end
+
+    test "a part more than one ahead of the sidecar refuses the start and deletes nothing",
+         %{s3: s3} do
+      :ok = S3.put_if("out/.progress", ~s({"part":3,"watermarks":{}}), 3, &(&1 <= 3), s3)
+      :ok = S3.put("out/part-00000005", "e\n", [], s3)
+      {opts, sink} = start_sink(rename(%{}))
+
+      refused = {:unhealthy, {:open_failed, {{:part_ahead_of_progress, 5, 3}, opts.path}}}
+      assert wait_until(fn -> health(opts, sink) == refused end, 5_000)
+      assert keys(s3, "out") == [".progress", "part-00000005"]
+    end
+
+    test "a worker behind a sidecar another worker advanced stops without confirming",
+         %{s3: s3} do
+      owner = owner()
+      {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
+      release(opts, "a", TestHelpers.guaranteed_metadata(owner, 1))
+      assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 2 end, 2_000)
+      :ok = S3.put_if("out/.progress", ~s({"part":7,"watermarks":{}}), 7, &(&1 <= 7), s3)
+
+      ref = Process.monitor(sink)
+      on_exit(override_log_level(:warning))
+
+      log =
+        capture_log([level: :warning], fn ->
+          send(sink, :roll)
+          assert_receive {:DOWN, ^ref, :process, ^sink, {:progress_ahead, 7}}, 5_000
+          assert wait_until(fn -> WorkerSup.worker_pid(Sink, opts.plugin_id) == nil end, 2_000)
+        end)
+
+      assert log =~ "progress names part 7"
+      refute_received {:"$gen_cast", {:outbox_confirmed_many, _}}
+      assert progress(bucket(s3, "out"))["part"] == 7
+    end
+  end
+
   describe "attach-time refusals" do
     test "the entry-side keys are refused as options this provider does not offer" do
       for key <- [:channel, :channel_in] do
@@ -467,29 +573,45 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
   end
 
-  # What a consumer that reads only parts at or below the sidecar's number sees.
-  defp committed(dir) do
-    case progress(dir) do
+  # What a consumer that reads only parts at or below the sidecar's number sees,
+  # of a folder or of the objects under a key prefix.
+  defp committed(dir) when is_binary(dir), do: committed(folder(dir))
+
+  defp committed({names, read} = listing) do
+    case progress(listing) do
       %{"part" => last} ->
-        dir
-        |> File.ls!()
+        names
         |> Enum.filter(
           &(&1 =~ ~r/^part-\d+$/ and String.to_integer(String.trim_leading(&1, "part-")) <= last)
         )
         |> Enum.sort()
-        |> Enum.map_join(&File.read!(Path.join(dir, &1)))
+        |> Enum.map_join(read)
 
       _no_part_yet ->
         nil
     end
   end
 
-  defp progress(dir) do
-    case File.read(Path.join(dir, ".progress")) do
-      {:ok, body} -> Jason.decode!(body)
-      {:error, :enoent} -> %{}
-    end
+  defp progress(dir) when is_binary(dir), do: progress(folder(dir))
+
+  defp progress({names, read}),
+    do: if(".progress" in names, do: Jason.decode!(read.(".progress")), else: %{})
+
+  # A directory as its names and a reader of one name.
+  defp folder(dir), do: {File.ls!(dir), &File.read!(Path.join(dir, &1))}
+
+  defp bucket(s3, dir) do
+    {:ok, entries} = S3.list(dir <> "/", s3)
+    names = Enum.map(entries, fn {key, _age} -> String.replace_prefix(key, dir <> "/", "") end)
+
+    {names,
+     fn name ->
+       {:ok, body} = S3.get(dir <> "/" <> name, s3)
+       body
+     end}
   end
+
+  defp keys(s3, dir), do: s3 |> bucket(dir) |> elem(0) |> Enum.sort()
 
   defp temp_files(dir), do: dir |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".tmp"))
 
@@ -510,7 +632,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
   defp fail_next_write(sink, file) do
     opened(file)
     {:ok, read_only} = File.open(file, [:read])
-    :sys.replace_state(sink, &%{&1 | fd: read_only})
+    :sys.replace_state(sink, &%{&1 | io: %{&1.io | fd: read_only}})
   end
 
   defp health(opts, sink), do: Sink.health(Map.put(opts, :owned_pid, sink))

@@ -90,8 +90,12 @@ exactly once across a sink crash, a plugin restart and a controller restart, and
 record is written at least once. A value the option does not declare SHALL be refused at attach
 naming the option.
 
+Under an S3 root, `append`, whether given or taken as the default, SHALL be refused at attach
+naming `commit`, and `rename` SHALL commit parts as `file-plugin-s3` requires.
+
 #### Scenario: The default is append
 
+- **GIVEN** a folder root
 - **WHEN** a plugin is attached without `commit`
 - **THEN** its resolved options SHALL carry `commit: "append"`
 
@@ -102,14 +106,22 @@ naming the option.
 
 #### Scenario: Rename is accepted
 
+- **GIVEN** a folder root
 - **WHEN** a plugin is attached with `commit: "rename"` and a `path` that is a directory or does
   not exist
 - **THEN** the attach SHALL succeed and the directory SHALL exist afterwards with mode `0700`
 
 #### Scenario: A regular file under rename is refused
 
+- **GIVEN** a folder root
 - **WHEN** a plugin is attached with `commit: "rename"` and a `path` that is a regular file
 - **THEN** the attach SHALL fail naming the layout
+
+#### Scenario: Append under an S3 root is refused
+
+- **GIVEN** the root is `s3://events/flezha`
+- **WHEN** a sink is attached without `commit`, or with `commit: "append"`
+- **THEN** the attach SHALL fail naming `commit`
 
 ### Requirement: Under `rename` the sink SHALL commit immutable parts and reconcile the directory by one rule
 

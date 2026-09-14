@@ -11,6 +11,8 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
 
   alias Flezha.Config
   alias Flezha.Plugin.Provider.File, as: FilePlugin
+  alias Flezha.Plugin.Provider.File.Storage.Local
+  alias FlezhaTest.Helper.Minio
   alias FlezhaTest.Helper.ProviderPrepare
 
   # The root is a folder inside the temporary directory, so there is always an
@@ -53,24 +55,24 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
   test "a root that does not exist is refused naming it", %{outside: outside} do
     missing = Path.join(outside, "absent")
 
-    assert {:error, message} = FilePlugin.resolve_within_root("events.ndjson", missing)
+    assert {:error, message} = Local.resolve("events.ndjson", missing)
     assert message =~ missing
   end
 
   test "a relative path lands under the root", %{root: root} do
-    assert FilePlugin.resolve_within_root("events.ndjson", root) ==
+    assert Local.resolve("events.ndjson", root) ==
              {:ok, Path.join(root, "events.ndjson")}
   end
 
   test "a path that climbs out is refused naming the root", %{root: root, outside: outside} do
     File.write!(Path.join(outside, "controller.key"), "")
 
-    assert {:error, message} = FilePlugin.resolve_within_root("../controller.key", root)
+    assert {:error, message} = Local.resolve("../controller.key", root)
     assert message =~ "outside the root folder #{root}"
   end
 
   test "an absolute path outside the root is refused naming the root", %{root: root} do
-    assert {:error, message} = FilePlugin.resolve_within_root("/etc/passwd", root)
+    assert {:error, message} = Local.resolve("/etc/passwd", root)
     assert message =~ "outside the root folder #{root}"
   end
 
@@ -84,7 +86,7 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     # Through a linked directory, through a linked file, and through a link to a
     # file that does not exist yet.
     for path <- ["out/hosts", "hosts", "out/not-yet"] do
-      assert {:error, message} = FilePlugin.resolve_within_root(path, root)
+      assert {:error, message} = Local.resolve(path, root)
       assert message =~ "outside the root folder #{root}"
     end
   end
@@ -93,17 +95,17 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     File.mkdir_p!(Path.join(root, "2026-09"))
     File.ln_s!("2026-09", Path.join(root, "current"))
 
-    assert FilePlugin.resolve_within_root("current/events.ndjson", root) ==
+    assert Local.resolve("current/events.ndjson", root) ==
              {:ok, Path.join(root, "2026-09/events.ndjson")}
   end
 
   test "a missing parent is refused naming the missing directory", %{root: root} do
-    assert {:error, message} = FilePlugin.resolve_within_root("nope/events.ndjson", root)
+    assert {:error, message} = Local.resolve("nope/events.ndjson", root)
     assert message =~ "the directory #{Path.join(root, "nope")} does not exist"
   end
 
   test "a missing directory outside the root is not named", %{root: root} do
-    assert {:error, message} = FilePlugin.resolve_within_root("../nope/events.ndjson", root)
+    assert {:error, message} = Local.resolve("../nope/events.ndjson", root)
     assert message =~ "outside the root folder #{root}"
     refute message =~ "does not exist"
   end
@@ -112,9 +114,88 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     File.ln_s!("b", Path.join(root, "a"))
     File.ln_s!("a", Path.join(root, "b"))
 
-    assert {:error, message} = FilePlugin.resolve_within_root("a/events.ndjson", root)
+    assert {:error, message} = Local.resolve("a/events.ndjson", root)
     assert message =~ "more than 40 symbolic links"
   end
+
+  # Nothing here reaches a network: a root is resolved without a request.
+  describe "an S3 root" do
+    setup do
+      Minio.file_plugin_root("s3://events/flezha")
+    end
+
+    test "a relative path becomes a key under the prefix, and resolves to itself again" do
+      assert {:ok, %{path: "s3://events/flezha/out"}} = prepare_in_bucket(%{path: "out"})
+
+      assert {:ok, %{path: "s3://events/flezha/out/echo"} = opts} =
+               prepare_in_bucket(%{path: "./out//echo"})
+
+      assert {:ok, %{path: "s3://events/flezha/out/echo"}} = prepare_in_bucket(opts)
+    end
+
+    test "a path that climbs out, another bucket and a filesystem path are refused naming the root" do
+      for path <- [
+            "../other/echo",
+            "out/../../other",
+            "",
+            "s3://audit/flezha/echo",
+            "s3://events/flezhax/echo",
+            "/etc/passwd"
+          ] do
+        assert {:error, message} = prepare_in_bucket(%{path: path})
+        assert message =~ "outside the root s3://events/flezha", inspect(path)
+      end
+    end
+
+    # The folder walk refuses `s3://events/flezha` as a folder that does not
+    # exist, so a prepare that succeeds is one that never looked for it.
+    test "no folder is looked for or created" do
+      assert {:ok, _opts} = prepare_in_bucket(%{path: "echo"})
+
+      assert {:ok, _opts} =
+               ProviderPrepare.prepare(FilePlugin.Source, %{path: "echo", channel_in: "events"})
+
+      refute File.exists?("s3:")
+    end
+
+    test "an unset connection setting is refused naming its variable" do
+      settings = Application.get_env(:flezha, :file_plugin_s3)
+
+      for {key, variable} <- [
+            endpoint: "FLEZHA_FILE_PLUGIN_S3_ENDPOINT",
+            access_key_id: "FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID",
+            secret_access_key_env: "FLEZHA_FILE_PLUGIN_S3_SECRET_ENV"
+          ],
+          {provider, opts} <- [
+            {FilePlugin.Source, %{path: "echo", channel_in: "events"}},
+            {FilePlugin.Sink, %{path: "echo", commit: "rename"}}
+          ] do
+        Application.put_env(:flezha, :file_plugin_s3, Keyword.delete(settings, key))
+
+        assert {:error, message} = ProviderPrepare.prepare(provider, opts)
+        assert message =~ variable
+      end
+    end
+
+    test "a root overlapping the durability tier's objects is refused naming both prefixes" do
+      Minio.file_plugin_root("s3://events/flezha/files")
+      endpoint = Application.get_env(:flezha, :file_plugin_s3)[:endpoint]
+      tier = [endpoint: endpoint, bucket: "events", prefix: "flezha"]
+      Application.put_env(:flezha, :durability_tier, backend: :s3, backend_opts: tier)
+
+      assert {:error, message} = prepare_in_bucket(%{path: "echo"})
+      assert message =~ "the prefixes flezha and flezha/files"
+
+      for apart <- [[prefix: "archive"], [bucket: "audit"], [endpoint: "http://elsewhere:9000"]] do
+        backend_opts = Keyword.merge(tier, apart)
+        Application.put_env(:flezha, :durability_tier, backend: :s3, backend_opts: backend_opts)
+        assert {:ok, _opts} = prepare_in_bucket(%{path: "echo"}), inspect(apart)
+      end
+    end
+  end
+
+  defp prepare_in_bucket(opts),
+    do: ProviderPrepare.prepare(FilePlugin.Sink, Map.merge(%{commit: "rename"}, opts))
 
   # A plugin is prepared again from the options it already holds on a plugin
   # restart, so the resolved path must resolve to itself.

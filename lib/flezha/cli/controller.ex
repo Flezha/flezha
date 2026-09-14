@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Controller do
   alias Flezha.Service.Cli.Context
 
   alias Flezha.Config.Durations
+  alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
   alias Flezha.State.Paths
@@ -177,7 +178,7 @@ defmodule Flezha.Service.Cli.Controller do
       safe_shutdown_status()
       |> Map.merge(durability_status())
       |> Map.put(:state_root, Paths.state_root())
-      |> Map.put(:file_plugin_root, Path.expand(Config.get(:file_plugin_root)))
+      |> Map.put(:file_plugin_root, Storage.Config.shown_root())
 
     case output_format do
       "json" ->

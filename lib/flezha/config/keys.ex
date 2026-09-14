@@ -440,11 +440,22 @@ defmodule Flezha.Config.Keys do
     {:plugin_installer_data_dir, :path, nil, key: true},
 
     # ---- file plugins ---------------------------------------------------------
-    # The one folder a file plugin may read from or write to. The default is a
-    # folder of its own beside the controller's data, never a parent of it, so
-    # no plugin path reaches the state, certificates or tokens.
+    # The one folder or bucket prefix a file plugin may read from or write to.
+    # The default is a folder of its own beside the controller's data, never a
+    # parent of it, so no plugin path reaches the state, certificates or tokens.
     {:file_plugin_root, :path, "app_data/files",
      key: true, env: "FLEZHA_FILE_PLUGIN_ROOT", surface: {:status, :file_plugin_root}},
+    # An `s3://<bucket>/<prefix>` root is reached with these and never with the
+    # durability tier's S3 settings, so credentials a plugin holds cannot reach
+    # durable state. The secret is never a row: the value names ANOTHER variable.
+    {:file_plugin_s3_endpoint, :string, nil,
+     key: {:file_plugin_s3, :endpoint}, env: "FLEZHA_FILE_PLUGIN_S3_ENDPOINT"},
+    {:file_plugin_s3_region, :string, "us-east-1",
+     key: {:file_plugin_s3, :region}, env: "FLEZHA_FILE_PLUGIN_S3_REGION"},
+    {:file_plugin_s3_access_key_id, :string, nil,
+     key: {:file_plugin_s3, :access_key_id}, env: "FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID"},
+    {:file_plugin_s3_secret_access_key_env, :string, nil,
+     key: {:file_plugin_s3, :secret_access_key_env}, env: "FLEZHA_FILE_PLUGIN_S3_SECRET_ENV"},
 
     # ---- boot and recovery --------------------------------------------------
     # Tests bring up their own runners and operatives, so at-boot replay is off

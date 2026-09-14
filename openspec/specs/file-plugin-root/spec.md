@@ -6,15 +6,18 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 ### Requirement: Every file plugin path SHALL resolve inside one configured root folder
 
 The controller SHALL declare one configuration row, `FLEZHA_FILE_PLUGIN_ROOT`, naming the one
-folder a file plugin may read from or write to. Its default SHALL be `app_data/files`, which the
-first file plugin enable SHALL create when it is missing. A folder the operator sets SHALL NOT be
-created, and while it is missing every file plugin enable SHALL be refused naming it.
+folder, or the one `s3://` bucket prefix, a file plugin may read from or write to. An `s3://`
+root SHALL follow `file-plugin-s3`, and the folder rules of this requirement SHALL NOT apply to
+it. Its default SHALL be the folder `app_data/files`, which the first file plugin enable SHALL
+create when it is missing. A folder the operator sets SHALL NOT be created, and while it is
+missing every file plugin enable SHALL be refused naming it.
 
-A plugin's `path` SHALL be expanded against the root, so a relative path names a file under it
-and an absolute path is taken as written, and SHALL then be resolved with symlinks followed,
-component by component under a bounded number of hops. The resolved path SHALL start with the
-resolved root, or the enable SHALL be refused naming the root folder. The file itself need not
-exist at enable time, but its parent directory SHALL exist and SHALL resolve inside the root.
+Under a folder root, a plugin's `path` SHALL be expanded against the root, so a relative path
+names a file under it and an absolute path is taken as written, and SHALL then be resolved with
+symlinks followed, component by component under a bounded number of hops. The resolved path
+SHALL start with the resolved root, or the enable SHALL be refused naming the root folder. The
+file itself need not exist at enable time, but its parent directory SHALL exist and SHALL
+resolve inside the root.
 
 The resolved absolute path SHALL replace `path` in the plugin's options, so every log line,
 telemetry event and health verdict names one spelling.
@@ -31,6 +34,13 @@ telemetry event and health verdict names one spelling.
 - **WHEN** a file plugin is enabled
 - **THEN** the enable SHALL be refused naming `/srv/flezha/files`, and the folder SHALL NOT be
   created
+
+#### Scenario: An S3 root is not treated as a folder
+
+- **GIVEN** the root is set to `s3://events/flezha`
+- **WHEN** a file plugin is enabled with `path: "echo"`
+- **THEN** no folder SHALL be looked for or created, and the path SHALL be resolved by
+  `file-plugin-s3`
 
 #### Scenario: A relative path lands under the root
 

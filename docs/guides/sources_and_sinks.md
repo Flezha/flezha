@@ -158,7 +158,8 @@ The root folder is a folder **on the controller the operative is running on**.
 One controller, or the same shared mount at the same path on every controller,
 and that is fine. Otherwise an operative that moves to a controller without the
 file reports `{:unhealthy, {:file_missing, path}}` within one health probe rather
-than quietly reading nothing. There is no object storage in this plugin.
+than quietly reading nothing. Or set the root to an S3 bucket instead, so an operative
+can move freely: see [An S3 bucket instead of a folder](../plugins/file.md#an-s3-bucket-instead-of-a-folder).
 
 So a file source is the right tool for replaying a log, loading an export, or
 seeing an operative work with your own eyes. It is not how a cluster ingests

@@ -1,39 +1,16 @@
 defmodule Flezha.Plugin.Provider.File do
   @moduledoc """
-  A local file as an operative's input and as its output: `File.Source`
-  (provider id `operative_file_source`) reads one line per entry frame, and
-  `File.Sink` (`operative_file_sink`) writes one line per record.
+  A file as an operative's input and as its output: `File.Source` (provider id
+  `operative_file_source`) reads one line per entry frame, and `File.Sink`
+  (`operative_file_sink`) writes one line per record.
 
-  What both directions share lives here: the one folder every path must
-  resolve inside, `FLEZHA_FILE_PLUGIN_ROOT` or its default, and the preparation that resolves a
-  plugin's `path` against it. The contract, the options and the limits are
-  `docs/plugins/file.md`.
+  What both directions share lives here: the preparation that resolves a
+  plugin's `path` inside `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://`
+  bucket prefix, whose rules are its storage's (`File.Storage`). The contract,
+  the options and the limits are `docs/plugins/file.md`.
   """
 
-  alias Flezha.Config
-
-  # Symbolic links followed while resolving one path, the bound Linux applies.
-  @max_link_hops 40
-
-  @doc """
-  Resolve `path` inside `root`: expanded against the root, so a relative path
-  names a file under it and an absolute path is taken as written, then walked
-  component by component with every symbolic link followed.
-
-  The file need not exist, but its parent directory must. The answer is the
-  resolved absolute path, or a refusal naming the root the path leaves, or the
-  directory that is missing.
-  """
-  @spec resolve_within_root(binary(), binary()) :: {:ok, binary()} | {:error, binary()}
-  def resolve_within_root(path, root) do
-    root = Path.expand(root)
-    target = Path.expand(path, root)
-
-    with {:ok, real_root} <- real_root(root),
-         {:ok, resolved} <- resolve(target, path, root, real_root) do
-      if inside?(resolved, real_root), do: {:ok, resolved}, else: refuse_outside(path, root)
-    end
-  end
+  alias Flezha.Plugin.Provider.File.Storage
 
   @doc """
   The preparation both providers share: the path resolved inside the root and
@@ -42,98 +19,16 @@ defmodule Flezha.Plugin.Provider.File do
   """
   @spec prepare(map()) :: {:ok, map()} | {:error, binary()}
   def prepare(opts) do
-    root = Config.get(:file_plugin_root)
-
-    # Only the default folder is created. A configured one that is missing may be
-    # a share that is not mounted, and writing beside it would go unnoticed.
-    if root == Config.default(:file_plugin_root), do: File.mkdir_p(root)
-
-    with {:ok, path} <- resolve_within_root(opts.path, root) do
+    with {:ok, path} <- Storage.Config.resolve_path(opts.path) do
       {:ok,
        Map.merge(opts, %{path: path, plugin_id: opts.plugin_id || opts[:source_plugin_id] || path})}
     end
   end
 
-  defp real_root(root) do
-    case walk(root) do
-      {:ok, real} -> if File.dir?(real), do: {:ok, real}, else: refuse_root(root)
-      _missing_or_unreadable -> refuse_root(root)
-    end
-  end
-
-  defp resolve(target, path, root, real_root) do
-    case walk(target) do
-      {:ok, resolved} ->
-        {:ok, resolved}
-
-      {:missing, parent, [name]} ->
-        {:ok, Path.join(parent, name)}
-
-      {:missing, _deepest, _rest} ->
-        refuse_missing_parent(target, path, root, real_root)
-
-      {:error, :too_many_links} ->
-        {:error, "file plugin path #{path} crosses more than #{@max_link_hops} symbolic links"}
-
-      {:error, reason} ->
-        {:error, "file plugin path #{path} cannot be resolved: #{inspect(reason)}"}
-    end
-  end
-
-  # From `/`, one component at a time: a link is replaced by its target and the
-  # walk starts again from the top, so a link anywhere in the path is judged by
-  # where it lands. The kernel follows an intermediate link silently, which is
-  # why no single `read_link_all/1` of the whole path can see one.
-  defp walk(absolute), do: walk("/", tl(Path.split(absolute)), @max_link_hops)
-
-  defp walk(resolved, [], _hops), do: {:ok, resolved}
-
-  defp walk(resolved, [name | rest] = remaining, hops) do
-    candidate = Path.join(resolved, name)
-
-    case :file.read_link_all(candidate) do
-      {:error, :einval} ->
-        walk(candidate, rest, hops)
-
-      {:ok, _link} when hops == 0 ->
-        {:error, :too_many_links}
-
-      {:ok, link} ->
-        [_root | components] =
-          link |> IO.chardata_to_string() |> Path.expand(resolved) |> Path.split()
-
-        walk("/", components ++ rest, hops - 1)
-
-      {:error, :enoent} ->
-        {:missing, resolved, remaining}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp inside?(_path, "/"), do: true
-  defp inside?(path, root), do: String.starts_with?(path, root <> "/")
-
-  defp refuse_root(root),
-    do: {:error, "the file plugin root folder #{root} does not exist or is not a directory"}
-
-  defp refuse_outside(path, root),
-    do: {:error, "file plugin path #{path} resolves outside the root folder #{root}"}
-
-  # A directory outside the root is not named: whether it exists is nothing an
-  # enable is entitled to learn.
-  defp refuse_missing_parent(target, path, root, real_root) do
-    if inside?(target, root) or inside?(target, real_root),
-      do:
-        {:error, "file plugin path #{path}: the directory #{Path.dirname(target)} does not exist"},
-      else: refuse_outside(path, root)
-  end
-
   defmodule Source do
     @moduledoc """
-    A file read onto an entry channel (`:io_binding`), one line per frame,
-    followed as it grows.
+    A file, or an S3 object, read onto an entry channel (`:io_binding`), one
+    line per frame, followed as it grows.
 
     Each line is injected through the operative's confirming ingest, and the
     byte offset where the last delivered line ended is committed through the
@@ -158,7 +53,8 @@ defmodule Flezha.Plugin.Provider.File do
         path: [
           type: :string,
           required: true,
-          doc: "The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it"
+          doc:
+            "The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix"
         ],
         channel: [
           type: :names,
@@ -233,8 +129,9 @@ defmodule Flezha.Plugin.Provider.File do
 
     @doc """
     Validate and resolve. Reads nothing: the worker opens the file at
-    activation. The root walk is a bounded run of `lstat`s on the local disk,
-    done here so a refusal reaches the operator who typed the path.
+    activation. The root check is a bounded run of `lstat`s under a folder root
+    and makes no request under an S3 one, done here so a refusal reaches the
+    operator who typed the path.
     """
     @impl true
     def init_provider(opts) do
@@ -305,13 +202,15 @@ defmodule Flezha.Plugin.Provider.File do
     and a batch synced just before a crash, whose confirmation did not reach
     the outbox, is appended a second time after it. Under `rename` the path is
     a directory of immutable parts, and a record the outbox guarantees is
-    written once.
+    written once. Under an S3 root `path` is a key prefix, `rename` is the only
+    layout, and the open roll is held in memory.
 
     Required: `path`; the rest: `docs/plugins/file.md`.
     """
 
     alias Flezha.Plugin.Extension.Ctx
     alias Flezha.Plugin.Provider.File, as: FilePlugin
+    alias Flezha.Plugin.Provider.File.Storage
     alias Flezha.Plugin.Provider.File.WriteWorker
     alias Flezha.Plugin.Provider.WorkerSup
     alias Flezha.Plugin.ProviderBehaviour
@@ -324,7 +223,7 @@ defmodule Flezha.Plugin.Provider.File do
           type: :string,
           required: true,
           doc:
-            "The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it"
+            "The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under"
         ],
         channel_out: [
           type: :names,
@@ -340,7 +239,7 @@ defmodule Flezha.Plugin.Provider.File do
           values: ["append", "rename"],
           default: "append",
           doc:
-            "The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once"
+            "The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename`"
         ],
         roll_after_ms: [
           type: :int,
@@ -353,7 +252,8 @@ defmodule Flezha.Plugin.Provider.File do
           type: :int,
           default: 67_108_864,
           min: 1,
-          doc: "Under `rename`, the size at which a part is committed before `roll_after_ms`"
+          doc:
+            "Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120"
         ],
         linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
         max_batch: [type: :int, default: 500, min: 1, doc: "Records in one write"],
@@ -381,39 +281,16 @@ defmodule Flezha.Plugin.Provider.File do
 
     @doc """
     Validate and resolve the path. Opens nothing: the worker does, at
-    activation. Under `rename` the path is the directory the parts go into,
-    made here with mode `0700` when it does not exist, so a path that names
-    anything else is refused to the operator who typed it.
+    activation. What the layout needs first, a directory made or a layout the
+    storage cannot carry refused, is the storage's
+    (`File.Storage.prepare_sink/1`), done here so a refusal reaches the operator
+    who typed it.
     """
     @impl true
     def init_provider(opts) do
-      with {:ok, opts} <- FilePlugin.prepare(opts), do: prepare_layout(opts)
+      with {:ok, opts} <- FilePlugin.prepare(opts),
+           do: Storage.Config.of(opts.path).prepare_sink(opts)
     end
-
-    defp prepare_layout(%{commit: "rename", path: dir} = opts) do
-      case File.lstat(dir) do
-        {:ok, %File.Stat{type: :directory}} ->
-          {:ok, opts}
-
-        {:ok, %File.Stat{}} ->
-          {:error,
-           "file plugin path #{dir} is not a directory, and commit: rename writes parts into one"}
-
-        {:error, :enoent} ->
-          with :ok <- File.mkdir(dir), :ok <- File.chmod(dir, 0o700) do
-            {:ok, opts}
-          else
-            {:error, reason} ->
-              {:error,
-               "file plugin path #{dir}: the directory cannot be made: #{inspect(reason)}"}
-          end
-
-        {:error, reason} ->
-          {:error, "file plugin path #{dir} cannot be read: #{inspect(reason)}"}
-      end
-    end
-
-    defp prepare_layout(opts), do: {:ok, opts}
 
     @impl true
     def on_input(%Ctx.IO{} = ctx, opts), do: write(ctx, opts)

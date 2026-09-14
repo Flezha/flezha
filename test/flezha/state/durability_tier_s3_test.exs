@@ -1,13 +1,7 @@
 defmodule Flezha.State.DurabilityTier.Backend.S3Test do
   @moduledoc """
-  The S3 durability backend against MinIO in `docker/dev/docker-compose.yml`.
-  Tagged `:s3_integration` so the default `mix test` skips it — run with:
-
-      S3_INTEGRATION=1 mix test --include s3_integration \\
-        test/flezha/state/durability_tier_s3_test.exs
-
-  Pre-req: `docker compose -f docker/dev/docker-compose.yml up -d minio`
-  (reachable at localhost:9100, user/password `flezha`/`flezha_test_secret`).
+  The S3 durability backend against MinIO, tagged `:s3_integration`;
+  `FlezhaTest.Helper.Minio` says how to run it.
 
   The signature is the part worth exercising against a real server: a
   canonical-request bug produces a `403 SignatureDoesNotMatch` that no unit
@@ -17,40 +11,23 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Backend.S3
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
   alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.Minio
 
   @moduletag :s3_integration
 
   setup_all do
-    if System.get_env("S3_INTEGRATION") != "1" do
-      raise "Refusing to run s3_integration tests without S3_INTEGRATION=1"
-    end
-
-    System.put_env("FLEZHA_TEST_S3_SECRET", System.get_env("MINIO_SECRET", "flezha_test_secret"))
-
-    opts = [
-      endpoint: System.get_env("MINIO_ENDPOINT", "http://localhost:9100"),
-      bucket: System.get_env("MINIO_BUCKET", "flezha-durability-test"),
-      region: "us-east-1",
-      access_key_id: System.get_env("MINIO_USER", "flezha"),
-      secret_access_key_env: "FLEZHA_TEST_S3_SECRET",
-      prefix: "flezha"
-    ]
-
-    :ok = S3.create_bucket(opts)
-    %{opts: opts}
+    %{opts: Minio.opts!("flezha-durability-test", "flezha")}
   end
 
   setup %{opts: opts} do
-    {:ok, entries} = S3.list("", opts)
-    Enum.each(entries, fn {key, _age} -> S3.delete(key, opts) end)
-    %{opts: opts}
+    Minio.empty!(opts)
   end
 
   test "put, get and delete round-trip opaque bytes under the configured prefix", %{opts: opts} do
@@ -89,8 +66,6 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
   end
 
   test "the whole tier ships and hydrates through this backend", %{opts: opts} do
-    base = TestHelpers.tmp_app_data_dir()
-
     Application.put_env(:flezha, :durability_tier,
       backend: {S3, opts},
       ship_interval_ms: 60_000,
@@ -106,11 +81,6 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
       Enum.map_join(0..3, &TestHelpers.build_wal_record(&1, "change-#{&1}"))
 
     File.write!(path, records)
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :durability_tier)
-      _ = File.rm_rf(base)
-    end)
 
     {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
     assert :ok = Shipper.ship_now({:entity, entity_id})

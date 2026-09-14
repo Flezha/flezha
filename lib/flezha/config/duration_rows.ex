@@ -149,6 +149,8 @@ defmodule Flezha.Config.DurationRows do
     {:ws_subscription_interval_ms, :ms, 30_000, []},
     {:ws_subscription_min_interval_ms, :ms, 1_000, []},
     {:ws_subscription_timeout_ms, :ms, 10_000, []},
+    # One S3 request, for the durability tier and the file plugins alike.
+    {:s3_recv_ms, :ms, 30_000, []},
 
     # ---- schedules ---------------------------------------------------------
     {:schedule_misfire_grace_ms, :ms, 120_000,
@@ -195,7 +197,6 @@ defmodule Flezha.Config.DurationRows do
     {:durability_pg_query_ms, :ms, 30_000, []},
     {:durability_rpo_target_ms, :ms, 120_000,
      key: {:durability_tier, :rpo_target_ms}, env: "FLEZHA_DURABILITY_RPO_TARGET_MS"},
-    {:durability_s3_recv_ms, :ms, 30_000, []},
     {:durability_ship_call_ms, :ms, nil, derived: {:headroom, :sdk_commit_ack_ms, -5_000}},
     {:durability_ship_interval_ms, :ms, 30_000,
      key: {:durability_tier, :ship_interval_ms}, env: "FLEZHA_DURABILITY_SHIP_INTERVAL_MS"},

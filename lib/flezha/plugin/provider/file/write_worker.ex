@@ -1,31 +1,30 @@
 defmodule Flezha.Plugin.Provider.File.WriteWorker do
   @moduledoc """
   The writing half of `Flezha.Plugin.Provider.File.Sink`: one process per
-  enabled plugin, holding its file open for append and a bounded queue of
-  records waiting for the next batch.
+  enabled plugin, holding its handle on the target and a bounded queue of
+  records waiting for the next batch. The target is a folder file or S3
+  objects alike, written through `Flezha.Plugin.Provider.File.Storage`.
 
-  A batch is one write of every record's bytes and a newline, then a data sync.
-  A failed write is cut back to the byte the batch began at and retried under
-  the backoff ladder, so nothing is dropped and the retry never appends after
-  half a line. Callers park past `queue_max`.
+  A batch is one append of every record's bytes and a newline. A failed batch
+  is undone and retried under the backoff ladder, so nothing is dropped and the
+  retry never appends after half a line. Callers park past `queue_max`.
 
-  What a sync confirms is the layout's. Under `append` the file is the path, and
-  the sync confirms the holds its batch carries. Under `rename` the file is the
-  open roll, a hidden temp file in the path's directory, and its holds wait for
-  the roll to be committed: renamed to `part-<N>`, then the sidecar `.progress`
-  naming `N` and the per-Entity `(epoch, seq)` watermark installed, and only
-  then confirmed. A record the outbox guarantees at or below the watermark is
-  confirmed without being written again.
-
-  A file this worker creates is made `0600`, one that already exists keeps its
-  mode, and a path that is a symbolic link when it is opened is refused.
+  What a batch confirms is the layout's. Under `append` the target is the path,
+  and the data sync confirms the holds its batch carries. Under `rename` the
+  target is the open roll, a hidden temp file in the path's directory or, under
+  an S3 root, memory, and its holds wait for the roll to be committed: its part
+  written as `part-<N>`, then the sidecar `.progress` naming `N` and the
+  per-Entity `(epoch, seq)` watermark, and only then confirmed. A record the
+  outbox guarantees at or below the watermark is confirmed without being
+  written again.
   """
 
   alias Flezha.Config.Backoff
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.State.{Durable, Outbox, Paths, Wire}
+  alias Flezha.State.{Durable, Outbox, Wire}
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry, :roll]
@@ -48,12 +47,12 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
     :retry_max_backoff_ms,
     :roll_after_ms,
     :roll_bytes,
-    # The file a batch is appended to: `path` under `append`, the open roll's
-    # temp file under `rename`.
+    # Where the bytes go, and its handle on the target.
+    :storage,
+    :io,
+    # What a batch is appended to: `path` under `append`, the open roll's temp
+    # file under `rename`.
     :target,
-    :fd,
-    :inode,
-    :undo,
     :open_error,
     :last_error,
     :last_flush_ms,
@@ -109,6 +108,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       # birth, so a failing first write is judged by the same window.
       |> Map.merge(%{
         operative_id: opts[:source_operative_id],
+        storage: Storage.Config.of(opts.path),
         target: if(opts.commit == "append", do: opts.path),
         last_flush_ms: now()
       })
@@ -165,8 +165,14 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # A graceful stop writes what it holds and commits the open roll, so a disable
-  # does not leave records the outbox handed over waiting for a re-drive.
+  # does not leave records the outbox handed over waiting for a re-drive. A
+  # worker another has overtaken writes nothing more.
   @impl true
+  def terminate({:progress_ahead, _stored}, state) do
+    close(state)
+    :ok
+  end
+
   def terminate(_reason, state) do
     state |> flush() |> roll_due() |> flush() |> close()
     :ok
@@ -339,40 +345,8 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   defp write(state, []), do: {:ok, state}
 
   defp write(state, iodata) do
-    with {:ok, state} <- ensure_open(state), do: append(state, iodata)
-  end
-
-  defp append(state, iodata) do
-    case :file.position(state.fd, :eof) do
-      {:ok, mark} ->
-        with :ok <- :file.write(state.fd, iodata),
-             :ok <- :file.datasync(state.fd) do
-          {:ok, state}
-        else
-          {:error, reason} -> {:error, reason, undo(state, mark)}
-        end
-
-      {:error, reason} ->
-        {:error, reason, close(state)}
-    end
-  end
-
-  # Cut the file back to where the batch began: on its own descriptor when that
-  # still works, else on the next open of the same file.
-  defp undo(state, mark) do
-    case cut(state.fd, mark) do
-      :ok -> close(state)
-      _failed -> %{close(state) | undo: {state.inode, mark}}
-    end
-  end
-
-  # Only ever shorter: truncating to an offset past the end would pad the file.
-  defp cut(fd, mark) do
-    case :file.position(fd, :eof) do
-      {:ok, eof} when eof <= mark -> :ok
-      {:ok, _eof} -> with {:ok, _mark} <- :file.position(fd, mark), do: :file.truncate(fd)
-      {:error, reason} -> {:error, reason}
-    end
+    with {:ok, state} <- ensure_open(state),
+         do: through(state, state.storage.append(state.io, iodata))
   end
 
   # ---------- the rename layout ----------
@@ -401,22 +375,19 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   defp roll_due(state), do: state
 
-  # The part is renamed into place, then the sidecar naming it is installed, and
-  # only then are its holds confirmed. The reopen before the rename makes a cut a
+  # The part is put in place, then the sidecar naming it is written, and only
+  # then are its holds confirmed. The open before the commit makes a cut a
   # failed batch still owes, so half a batch is never committed.
-  defp commit_roll(%{roll: %{renamed?: false}} = state) do
+  defp commit_roll(%{roll: %{placed?: false} = roll} = state) do
+    part = part_path(state.path, roll.part)
+
     with {:ok, state} <- ensure_open(state),
-         state = close(state),
-         :ok <- File.rename(state.target, part_path(state.path, state.roll.part)) do
-      commit_roll(%{state | roll: %{state.roll | renamed?: true}})
-    else
-      {:error, reason, state} -> {:error, reason, state}
-      {:error, reason} -> {:error, reason, close(state)}
-    end
+         {:ok, state} <- through(state, state.storage.commit_part(state.io, state.target, part)),
+         do: commit_roll(%{state | roll: %{roll | placed?: true}})
   end
 
   defp commit_roll(%{roll: roll} = state) do
-    case write_progress(state.path, roll.part, roll.marks) do
+    case write_progress(state, roll.part, roll.marks) do
       :ok ->
         Outbox.confirm_many(Enum.reverse(roll.holds))
 
@@ -427,9 +398,25 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
              roll: new_roll(roll.part, roll.marks)
          }}
 
+      {:error, {:progress_ahead, stored}} ->
+        overtaken!(state, stored)
+
       {:error, reason} ->
         {:error, reason, state}
     end
+  end
+
+  # Another worker has committed a later part here, one a move started while
+  # this one lingered. Confirming would answer holds for a part that worker has
+  # overwritten, so this one stops, and the outbox re-drives its records to the
+  # live one.
+  defp overtaken!(state, stored) do
+    Logger.warning(
+      "[Plugin.Provider.File.Sink] progress names part #{stored} path=#{state.path}, " <>
+        "ahead of part #{state.roll.part}; stopping without confirming"
+    )
+
+    exit({:progress_ahead, stored})
   end
 
   defp new_roll(last, marks),
@@ -440,14 +427,14 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       holds: [],
       bytes: 0,
       due?: false,
-      renamed?: false
+      placed?: false
     }
 
   # Under `rename` the directory is reconciled before the first batch. A refused
   # reconcile is tried again by the next flush, so a directory an operator
   # repairs is taken up without a restart.
   defp reconciled(%{commit: "rename", roll: nil} = state) do
-    case reconcile(state.path) do
+    case reconcile(state.storage, state.path) do
       {:ok, roll} ->
         {:ok, %{state | roll: roll, target: temp_path(state.path, roll.part), open_error: nil}}
 
@@ -462,11 +449,11 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   # holds were never confirmed, so they are deleted and the re-drive writes those
   # records again. A part further ahead is nothing a crash leaves, and is refused
   # before anything is deleted.
-  defp reconcile(dir) do
-    with {:ok, names} <- File.ls(dir),
-         {:ok, last, marks} <- read_progress(dir),
+  defp reconcile(storage, dir) do
+    with {:ok, names} <- storage.list(dir),
+         {:ok, last, marks} <- read_progress(storage, dir),
          :ok <- in_step(names, last),
-         :ok <- remove_uncommitted(dir, names, last) do
+         :ok <- remove_uncommitted(storage, dir, names, last) do
       {:ok, new_roll(last, marks)}
     end
   end
@@ -478,11 +465,11 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
     end
   end
 
-  defp remove_uncommitted(dir, names, last) do
+  defp remove_uncommitted(storage, dir, names, last) do
     names
     |> Enum.filter(&(Durable.in_progress?(&1) or part_number(&1) == [last + 1]))
     |> Enum.reduce_while(:ok, fn name, :ok ->
-      case File.rm(Path.join(dir, name)) do
+      case storage.delete(Path.join(dir, name)) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:remove, name, reason}}}
       end
@@ -505,8 +492,8 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   defp part_name(part), do: "part-" <> String.pad_leading(Integer.to_string(part), 8, "0")
 
-  defp read_progress(dir) do
-    case File.read(Path.join(dir, @progress)) do
+  defp read_progress(storage, dir) do
+    case storage.read(Path.join(dir, @progress)) do
       {:ok, body} -> decode_progress(body)
       {:error, :enoent} -> {:ok, 0, %{}}
       {:error, reason} -> {:error, {:progress_unreadable, reason}}
@@ -539,98 +526,31 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   end
 
   # An Entity is keyed in base64url: its key is bytes, and JSON carries text.
-  # The install fills its sibling with the controller's umask, so the sibling is
-  # made private before it is renamed into place, as every file the sink makes.
-  defp write_progress(dir, last, marks) do
+  defp write_progress(state, last, marks) do
     watermarks =
       Map.new(marks, fn {entity, identity} ->
         {Base.url_encode64(entity, padding: false), [identity.epoch, identity.seq]}
       end)
 
     body = Jason.encode!(%{part: last, watermarks: watermarks})
-    path = Path.join(dir, @progress)
-    in_progress = Durable.in_progress_path(path, :file_sink_progress)
-
-    Paths.atomic_install(
-      path,
-      fn fd -> with :ok <- :file.write(fd, body), do: :file.change_mode(in_progress, 0o600) end,
-      :file_sink_progress
-    )
+    state.storage.write_progress(Path.join(state.path, @progress), last, body)
   end
 
-  # ---------- the file ----------
-
-  # The target still names the file this worker holds, or it is opened again: a
-  # file moved or deleted under an open descriptor would take every later write
-  # somewhere no reader of the path looks.
-  defp ensure_open(%{fd: fd} = state) when fd != nil do
-    case File.lstat(state.target) do
-      {:ok, %File.Stat{type: :regular, inode: inode}} when inode == state.inode -> {:ok, state}
-      _moved -> state |> close() |> ensure_open()
-    end
-  end
+  # ---------- the target ----------
 
   defp ensure_open(state) do
-    with {:ok, fd} <- open_file(state.target),
-         {:ok, state} <- opened(%{state | fd: fd}) do
-      {:ok, %{state | open_error: nil}}
-    else
-      {:error, reason} -> refuse_open(close(state), reason)
+    case state.storage.open_write(state.io, state.target, holds_bytes?(state)) do
+      {:ok, io} -> {:ok, %{state | io: io, open_error: nil}}
+      {:error, reason, io} -> refuse_open(%{state | io: io}, reason)
     end
   end
 
-  defp open_file(path) do
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :regular}} -> :file.open(path, [:append, :raw, :binary])
-      {:ok, %File.Stat{type: :symlink}} -> {:error, :symlink}
-      {:ok, %File.Stat{type: type}} -> {:error, {:not_a_regular_file, type}}
-      {:error, :enoent} -> create(path)
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  # An open roll that already holds bytes must find them where they went.
+  defp holds_bytes?(%{roll: %{bytes: bytes}}), do: bytes > 0
+  defp holds_bytes?(_no_roll), do: false
 
-  # Erlang's open takes no creation mode, so a created file is made private
-  # straight after. `:exclusive` is what keeps that from ever narrowing a file
-  # somebody else created in between.
-  defp create(path) do
-    with {:ok, fd} <- :file.open(path, [:append, :exclusive, :raw, :binary]) do
-      case :file.change_mode(path, 0o600) do
-        :ok ->
-          {:ok, fd}
-
-        {:error, reason} ->
-          _ = :file.close(fd)
-          {:error, {:chmod, reason}}
-      end
-    end
-  end
-
-  # A file replaced between the open and this look is caught by the next batch's
-  # `ensure_open/1`, which compares the path's inode with this one.
-  defp opened(state) do
-    with {:ok, %File.Stat{inode: inode}} <- File.lstat(state.target) do
-      same_roll!(state, inode)
-      finish_undo(%{state | inode: inode})
-    end
-  end
-
-  # An open roll's bytes live only in its temp file, so a temp file that is not
-  # the one they went into has lost them, and their holds must not be confirmed
-  # for a part that will not hold them. The worker stops; its next start
-  # reconciles the directory and the re-drive brings the records back.
-  defp same_roll!(%{roll: %{bytes: bytes}, inode: previous} = state, inode)
-       when bytes > 0 and inode != previous,
-       do: exit({:open_part_replaced, state.target})
-
-  defp same_roll!(_state, _inode), do: :ok
-
-  # A cut its own descriptor could not make is made here, on the same file. A
-  # different file is not that batch's to cut.
-  defp finish_undo(%{undo: {inode, mark}, inode: inode} = state) do
-    with :ok <- cut(state.fd, mark), do: {:ok, %{state | undo: nil}}
-  end
-
-  defp finish_undo(state), do: {:ok, %{state | undo: nil}}
+  defp through(state, {:ok, io}), do: {:ok, %{state | io: io}}
+  defp through(state, {:error, reason, io}), do: {:error, reason, %{state | io: io}}
 
   defp refuse_open(state, reason) do
     error = {reason, state.path}
@@ -644,12 +564,8 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
     {:error, {:open, reason}, %{state | open_error: error}}
   end
 
-  defp close(%{fd: nil} = state), do: state
-
-  defp close(state) do
-    _ = :file.close(state.fd)
-    %{state | fd: nil}
-  end
+  defp close(%{io: nil} = state), do: state
+  defp close(state), do: %{state | io: state.storage.close(state.io)}
 
   defp labels(state), do: %{plugin_id: state.plugin_id, path: state.path}
 

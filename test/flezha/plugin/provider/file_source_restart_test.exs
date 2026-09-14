@@ -86,7 +86,7 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
     ProviderPrepare.await_stop_on_exit(reader)
 
     # The first poll has opened the file: nothing before the offset is offered.
-    assert wait_until(fn -> :sys.get_state(reader).inode != nil end, 2_000)
+    assert wait_until(fn -> :sys.get_state(reader).identity != nil end, 2_000)
     refute_ingest()
 
     File.write!(Path.join(files, "events.ndjson"), "d\n", [:append])

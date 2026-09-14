@@ -81,7 +81,7 @@ defmodule Flezha.State.Durable do
      ".transferring", false, true},
     {:wal_transfer, "lib/flezha/state/wal_transfer.ex", :whole, :inline, ".transferring", false,
      true},
-    {:file_sink_progress, "lib/flezha/plugin/provider/file/write_worker.ex", :whole, :inline,
+    {:file_sink_progress, "lib/flezha/plugin/provider/file/storage/local.ex", :whole, :inline,
      ".tmp", false, false}
   ]
 

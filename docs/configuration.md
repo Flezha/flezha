@@ -255,7 +255,11 @@ the value and the type.
 | `FLEZHA_PLUGIN_TRUSTED_KEYS` | `""` | `:plugin_installer[:trusted_keys]`, comma-separated PEM file paths read at boot |
 | `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | `:plugin_installer[:max_package_bytes]` |
 | `FLEZHA_PLUGIN_MAX_SOURCE_FILES` | `200` | `:plugin_installer[:max_source_files]` |
-| `FLEZHA_FILE_PLUGIN_ROOT` | `app_data/files` | `:file_plugin_root`, the one folder every file plugin path must resolve inside, symbolic links followed. The first file plugin enable creates the default folder; a folder set here must already exist, or every enable is refused naming it |
+| `FLEZHA_FILE_PLUGIN_ROOT` | `app_data/files` | `:file_plugin_root`, the one folder, or the one `s3://<bucket>/<prefix>`, every file plugin path must resolve inside. A folder is resolved with symbolic links followed; the first file plugin enable creates the default folder, and a folder set here must already exist, or every enable is refused naming it. An `s3://` root is never created and takes the four settings below |
+| `FLEZHA_FILE_PLUGIN_S3_ENDPOINT` | unset | `:file_plugin_s3[:endpoint]`, the S3-compatible endpoint an `s3://` root is on; required under one |
+| `FLEZHA_FILE_PLUGIN_S3_REGION` | `us-east-1` | `:file_plugin_s3[:region]` |
+| `FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID` | unset | `:file_plugin_s3[:access_key_id]`; required under an `s3://` root |
+| `FLEZHA_FILE_PLUGIN_S3_SECRET_ENV` | unset | names the variable holding the secret key; required under an `s3://` root. None of the four falls back to `FLEZHA_DURABILITY_S3_*`, and a root overlapping the durability tier's bucket prefix is refused |
 
 Each `FLEZHA_PLUGIN_*` name is a row of the table like every other knob, so an
 unset one leaves the row's own default standing rather than the family being

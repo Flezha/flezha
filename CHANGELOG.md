@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added: a file plugin root can be an S3 bucket
+
+`FLEZHA_FILE_PLUGIN_ROOT` also takes `s3://<bucket>/<prefix>`, so a file source
+and a file sink keep working when their operative moves to another controller,
+with no shared mount. Four settings give the connection,
+`FLEZHA_FILE_PLUGIN_S3_ENDPOINT`, `FLEZHA_FILE_PLUGIN_S3_REGION`,
+`FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID` and `FLEZHA_FILE_PLUGIN_S3_SECRET_ENV`,
+and none falls back to the durability tier's; a root overlapping the tier's
+bucket prefix is refused. Under an S3 root the sink takes only
+`commit: rename` and holds the open part in memory, at most 5 GiB. See
+`docs/plugins/file.md`.
+
+### Fixed: an HTTP request no longer takes its caller's other messages
+
+While the OTLP exporter or the S3 durability backend waited for a response, it
+read every message its process received and dropped those that were not the
+connection's. A second export sent during a slow one waited out its 60-second
+call instead of being served.
+
 ### Changed: a plugin's hooks have one name, and an enable refuses an option it does not read
 
 The point at which an operative calls a plugin is a hook everywhere an operator

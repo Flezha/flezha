@@ -17,6 +17,7 @@ defmodule Flezha.Boot.Loader do
   use GenServer
 
   alias Flezha.Config
+  alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Socket.Support
   alias Flezha.State.Paths
   alias Flezha.Transport.CertGenerator
@@ -90,7 +91,7 @@ defmodule Flezha.Boot.Loader do
   end
 
   defp file_root_line() do
-    "[flezha] file plugins read and write under #{Path.expand(Config.get(:file_plugin_root))} " <>
+    "[flezha] file plugins read and write under #{Storage.Config.shown_root()} " <>
       "(set with #{Config.env_name(:file_plugin_root)})"
   end
 

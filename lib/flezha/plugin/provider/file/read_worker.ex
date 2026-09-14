@@ -1,20 +1,22 @@
 defmodule Flezha.Plugin.Provider.File.ReadWorker do
   @moduledoc """
   The reading half of `Flezha.Plugin.Provider.File.Source`: one process per
-  enabled plugin, holding the descriptor, the byte offset where the last
-  delivered line ended, and the bytes read past it.
+  enabled plugin, holding its handle on the target, the byte offset where the
+  last delivered line ended, and the bytes read past it. The target is a file
+  or an S3 object alike, read through `Flezha.Plugin.Provider.File.Storage`.
 
   A line is injected through the confirming ingest and the offset moves only
   once the operative has taken it, so a refused line is offered again. A chunk
   is read only when no whole line is buffered, so the reader is never more than
   one chunk ahead of what the operative confirmed, and one chunk is handled per
-  message, so the mailbox stays answerable behind a large file.
+  message, so the mailbox stays answerable behind a large target.
 
   Log lines, telemetry and verdicts name the path, an offset or a count, never
   the bytes of a line.
   """
 
   alias Flezha.Plugin.Host
+  alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Process.Watch
 
@@ -49,9 +51,10 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
 
   @doc """
   The facts the provider's `health/1` judges: the path, where the reader
-  stopped if it did, whether the file is missing, the failure run and the time
-  of the last settled poll. `:timeout` when the worker does not answer, which is
-  also what a reader waiting out a parked operative's ingest looks like.
+  stopped if it did, whether the target is missing, the failure run and the
+  time of the last settled poll. `:timeout` when the worker does not answer,
+  which is also what a reader waiting out a parked operative's ingest looks
+  like.
   """
   @spec probe(pid()) :: {:ok, map()} | :timeout
   def probe(pid), do: ProviderBehaviour.ask(pid, :health_probe)
@@ -65,8 +68,12 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
       |> Map.take(@fields)
       |> Map.merge(%{
         watch: Watch.watch(Watch.new(), Map.fetch!(opts, :overwatcher_pid), :host),
-        fd: nil,
-        inode: nil,
+        storage: Storage.Config.of(opts.path),
+        handle: nil,
+        # The inode or the ETag: what tells a replaced target from the one read.
+        identity: nil,
+        # The target's size at the last look; nothing past it is read.
+        size: 0,
         # The committed offset the plugin was prepared with, or nil until the
         # first open places the reader by `start_at`.
         offset: opts[:offset],
@@ -134,16 +141,16 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     do: arm_timer(state, :poll, state.poll_interval_ms, :poll)
 
   defp step(state) do
-    case File.stat(state.path) do
-      {:ok, %File.Stat{type: :regular} = stat} -> open_and_drain(%{state | missing: false}, stat)
-      {:ok, %File.Stat{type: type}} -> {:waiting, failed(state, {:not_a_regular_file, type})}
+    case state.storage.stat(state.path) do
+      {:ok, %{type: :regular} = stat} -> open_and_drain(%{state | missing: false}, stat)
+      {:ok, %{type: type}} -> {:waiting, failed(state, {:not_a_regular_file, type})}
       {:error, :enoent} -> {:waiting, missing(state)}
       {:error, reason} -> {:waiting, failed(state, {:stat, reason})}
     end
   end
 
   defp open_and_drain(state, stat) do
-    state = rewind_if_moved(state, stat)
+    state = rewind_if_moved(%{state | size: stat.size}, stat)
 
     case ensure_open(state, stat) do
       {:ok, state} -> drain(state)
@@ -151,51 +158,52 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     end
   end
 
-  # ---------- the file ----------
+  # ---------- the target ----------
 
-  # Replaced by another file, or shorter than what was already delivered. An
-  # inode is known only once this worker has opened the file, so a reader
+  # Replaced by another target, or shorter than what was already delivered. An
+  # identity is known only once this worker has opened the target, so a reader
   # starting from a committed offset judges by size alone, and a reader with no
   # offset yet has nothing to judge.
   defp rewind_if_moved(%{offset: nil} = state, _stat), do: state
 
   defp rewind_if_moved(state, stat) do
-    if (state.inode != nil and stat.inode != state.inode) or stat.size < state.offset,
-      do: state |> close() |> rewind(stat),
+    if (state.identity != nil and stat.identity != state.identity) or stat.size < state.offset,
+      do: state |> close() |> rewind(stat.identity),
       else: state
   end
 
-  defp ensure_open(%{fd: nil} = state, stat) do
-    with {:ok, fd} <- :file.open(state.path, [:read, :raw, :binary]),
-         do: {:ok, place(%{state | fd: fd}, stat)}
+  defp ensure_open(%{handle: nil} = state, stat) do
+    with {:ok, handle} <- state.storage.open_read(state.path, stat.identity),
+         do: {:ok, place(%{state | handle: handle}, stat)}
   end
 
   defp ensure_open(state, _stat), do: {:ok, state}
 
   # Where a freshly opened reader starts: its committed offset, else `start_at`.
   defp place(%{offset: nil} = state, stat),
-    do: %{state | inode: stat.inode, offset: start_offset(state.start_at, stat)}
+    do: %{state | identity: stat.identity, offset: start_offset(state.start_at, stat)}
 
-  defp place(state, stat), do: %{state | inode: stat.inode}
+  defp place(state, stat), do: %{state | identity: stat.identity}
 
   defp start_offset("end", stat), do: stat.size
   defp start_offset("beginning", _stat), do: 0
 
-  defp rewind(state, stat) do
+  # A rewind whose new identity is not known yet takes it from the next look.
+  defp rewind(state, identity) do
     Logger.warning(
       "[Plugin.Provider.File.Source] truncated or replaced path=#{state.path} " <>
         "offset=#{state.offset}; reading it again from byte 0"
     )
 
     emit(:truncated, %{offset: state.offset}, labels(state))
-    commit(%{state | offset: 0, buffer: "", inode: stat.inode})
+    commit(%{state | offset: 0, buffer: "", identity: identity})
   end
 
   defp missing(%{missing: true} = state), do: state
 
-  # Not a truncation: the descriptor is closed, the offset and the inode kept,
-  # and polling goes on until the file is back. A file that returns as another
-  # inode is read from byte 0, which is how a rotation reaches the new file.
+  # Not a truncation: the handle is closed, the offset and the identity kept,
+  # and polling goes on until the target is back. One that returns as another
+  # is read from byte 0, which is how a rotation reaches the new file.
   defp missing(state) do
     Logger.warning(
       "[Plugin.Provider.File.Source] missing path=#{state.path} offset=#{state.offset}; " <>
@@ -205,11 +213,11 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     %{close(state) | missing: true}
   end
 
-  defp close(%{fd: nil} = state), do: state
+  defp close(%{handle: nil} = state), do: state
 
   defp close(state) do
-    _ = :file.close(state.fd)
-    %{state | fd: nil}
+    _ = state.storage.close(state.handle)
+    %{state | handle: nil}
   end
 
   # ---------- lines ----------
@@ -257,9 +265,22 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     do: {:stopped, stop(state, :line_too_long)}
 
   defp read_chunk(state, fragment) do
-    case :file.pread(state.fd, state.offset + byte_size(fragment), state.read_chunk_bytes) do
-      {:ok, bytes} -> {:more, %{state | buffer: fragment <> bytes}}
+    from = state.offset + byte_size(fragment)
+
+    case min(state.read_chunk_bytes, state.size - from) do
+      bytes when bytes > 0 -> read_range(state, fragment, from, bytes)
+      _nothing_new -> {:caught_up, state}
+    end
+  end
+
+  # A target replaced under the read is read again from byte 0 at once, and one
+  # gone since the look is missing.
+  defp read_range(state, fragment, from, bytes) do
+    case state.storage.pread(state.handle, from, bytes) do
+      {:ok, data} -> {:more, %{state | buffer: fragment <> data}}
       :eof -> {:caught_up, state}
+      {:error, :replaced} -> {:more, state |> close() |> rewind(nil)}
+      {:error, :enoent} -> {:waiting, missing(state)}
       {:error, reason} -> {:waiting, failed(state, {:read, reason})}
     end
   end

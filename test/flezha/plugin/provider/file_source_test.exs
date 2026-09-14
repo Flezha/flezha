@@ -13,20 +13,24 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
 
   # async: false: writes Application env.
 
-  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env, :system_env], async: false
 
+  import ExUnit.CaptureIO
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
   import FlezhaTest.Helper.ProviderPrepare,
     only: [take_ingest: 0, take_ingest: 1, refute_ingest: 0]
 
+  alias Flezha.Http.S3
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.File.Source
   alias Flezha.Plugin.Providers
+  alias Flezha.Service.Cli.Controller
+  alias FlezhaTest.Helper.Minio
   alias FlezhaTest.Helper.ProviderPrepare
 
   @channel "events"
@@ -289,6 +293,106 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
                end,
                2_000
              )
+    end
+  end
+
+  # Against `FlezhaTest.Helper.FakeS3`, or MinIO under `S3_INTEGRATION=1`.
+  describe "an object under an S3 root" do
+    if Minio.integration?(), do: @describetag(:s3_integration)
+
+    setup do
+      Minio.plugin_bucket!("flezha-file-source-test")
+    end
+
+    test "an object's lines become frames in order", %{s3: s3} do
+      :ok = S3.put("events.ndjson", "a\nb\n", [], s3)
+      start_reader()
+
+      for line <- ["a", "b"], do: assert({^line, %{"channel" => @channel}} = take_ingest())
+      assert_committed(4)
+    end
+
+    test "a replaced object is read from the start", %{s3: s3} do
+      :ok = S3.put("events.ndjson", "a\nb\n", [], s3)
+      {_opts, reader} = start_reader()
+      for line <- ["a", "b"], do: assert({^line, _} = take_ingest())
+      assert_committed(4)
+
+      # Longer than the offset, so only the ETag tells it from the one read.
+      :ok = S3.put("events.ndjson", "cc\ndd\n", [], s3)
+      send(reader, :poll)
+
+      for line <- ["cc", "dd"], do: assert({^line, _} = take_ingest())
+      assert_committed(6)
+    end
+
+    test "an object replaced during a read is read from the start", %{s3: s3} do
+      :ok = S3.put("events.ndjson", "aa\nbb\n", [], s3)
+      start_reader(%{read_chunk_bytes: 3})
+
+      # Held unanswered: the reader still has the rest of the object to read
+      # against the ETag it looked at before this line.
+      assert_receive {:"$gen_call", from, {:ingest, "aa", _metadata}}, 2_000
+      :ok = S3.put("events.ndjson", "cccc\ndd\n", [], s3)
+      GenServer.reply(from, :ok)
+
+      for line <- ["cccc", "dd"], do: assert({^line, _} = take_ingest())
+    end
+
+    test "a committed offset past the end of the object is read from the start", %{s3: s3} do
+      :ok = S3.put("events.ndjson", "a\n", [], s3)
+      start_reader(%{offset: 10})
+
+      assert {"a", _} = take_ingest()
+      assert_committed(2)
+    end
+
+    test "a plugin restart resumes after the last committed line", %{s3: s3} do
+      :ok = S3.put("events.ndjson", "1\n2\n3\n", [], s3)
+      start_reader(%{offset: 4})
+
+      assert {"3", _} = take_ingest()
+      assert_committed(6)
+      refute_ingest()
+    end
+
+    test "a missing object is unhealthy, and recovers when it appears", %{s3: s3} do
+      {opts, reader} = start_reader()
+      missing = {:unhealthy, {:file_missing, opts.path}}
+      assert wait_until(fn -> health(opts, reader) == missing end, 2_000)
+
+      :ok = S3.put("events.ndjson", "a\n", [], s3)
+      send(reader, :poll)
+
+      assert {"a", _} = take_ingest()
+      assert wait_until(fn -> health(opts, reader) == :healthy end, 2_000)
+    end
+
+    test "a forbidden request is a failure naming the status, and prints no secret",
+         %{s3: s3, root: root} do
+      :ok = S3.put("events.ndjson", "a\n", [], s3)
+      System.put_env("FLEZHA_TEST_S3_SECRET", "s3cr3t-value")
+      {opts, reader} = start_reader(%{offset: 0, failure_threshold: 1})
+      forbidden = {:unhealthy, {:read_failing, {:stat, {:http, 403}}}}
+      assert wait_until(fn -> health(opts, reader) == forbidden end, 5_000)
+
+      on_exit(override_log_level(:warning))
+
+      log =
+        capture_log([level: :warning], fn ->
+          send(reader, :poll)
+          settle(reader)
+        end)
+
+      status = capture_io(fn -> Controller.controller_status("text", nil) end)
+
+      assert log =~ "reason={:stat, {:http, 403}}"
+      assert status =~ ~r/file_plugin_root: +#{Regex.escape(root)}\n/
+      assert :sys.get_state(reader).offset == 0
+      refute_received {:"$gen_cast", {:plugin_opt_persist, _, :offset, _}}
+
+      for printed <- [log, status, inspect(health(opts, reader))],
+          do: refute(printed =~ "s3cr3t-value")
     end
   end
 

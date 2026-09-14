@@ -119,7 +119,7 @@ defmodule Flezha.Observability.Export.OtlpClient do
   end
 
   # The connection is kept across posts and reopened on disconnect; only the
-  # exchange itself is shared with the durability tier's S3 backend.
+  # exchange itself is shared with the S3 client.
   defp ensure_conn(state, scheme, host, port) do
     if HttpClient.open?(state.conn) do
       {:ok, state}

@@ -49,7 +49,8 @@ The root is a folder on the controller the operative runs on. On one controller,
 where the root is a shared mount at the same path on every controller, that is enough.
 Where it is not, an operative moved onto a controller that does not have the file
 reports `{:unhealthy, {:file_missing, path}}` within one health probe rather than
-reading nothing silently. Object storage is not part of this plugin.
+reading nothing silently, or the root can be [an S3 bucket](#an-s3-bucket-instead-of-a-folder)
+every controller reaches.
 
 Both providers print their path and their current verdict beneath the plugin in
 `flz operative info`, so the screen that shows an operative `degraded` also says why:
@@ -61,6 +62,47 @@ Both providers print their path and their current verdict beneath the plugin in
         path: /srv/flezha/files/events.ndjson
 ```
 
+### An S3 bucket instead of a folder
+
+Where an operative moves between controllers and no folder is shared, the root can be a
+bucket prefix on an S3-compatible endpoint such as AWS S3 or MinIO:
+
+```bash
+FLEZHA_FILE_PLUGIN_ROOT=s3://events/flezha \
+FLEZHA_FILE_PLUGIN_S3_ENDPOINT=https://s3.eu-north-1.amazonaws.com \
+FLEZHA_FILE_PLUGIN_S3_REGION=eu-north-1 \
+FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID=AKIAEXAMPLE \
+FLEZHA_FILE_PLUGIN_S3_SECRET_ENV=EVENTS_S3_SECRET \
+flz controller start
+```
+
+Every file plugin on the controller then reads and writes objects under `flezha/` in the
+bucket `events`, and nothing in a plugin's options says so.
+
+- **A path is a key under the prefix.** A relative `path` is joined to the prefix, an
+  `s3://` path is taken as written, and either has its `.` and `..` segments removed
+  without a request being made. The key must lie under the prefix in the root's bucket, so
+  `../other`, `s3://audit/flezha/echo` and `/etc/passwd` are refused naming the root. The
+  resolved `s3://` URL replaces `path`. The bucket is never created.
+- **Four settings of its own.** `FLEZHA_FILE_PLUGIN_S3_ENDPOINT`,
+  `FLEZHA_FILE_PLUGIN_S3_REGION` (default `us-east-1`), `FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID`
+  and `FLEZHA_FILE_PLUGIN_S3_SECRET_ENV`, which names the variable holding the secret key.
+  An enable while the endpoint, the key id or the secret variable's name is unset is refused
+  naming the variable. None of them falls back to the durability tier's
+  `FLEZHA_DURABILITY_S3_*` settings: give the plugins credentials whose bucket policy cannot
+  reach durable state. The secret is never logged, stored in a plugin's options or printed.
+- **Not the durability tier's objects.** When the durability backend is `s3` on the same
+  endpoint and bucket, and either prefix contains the other, every file plugin enable is
+  refused naming both prefixes, because a plugin writing there could overwrite a manifest.
+- **The endpoint must be strongly consistent.** A part is listed and read straight after it
+  is written. AWS S3 and MinIO are; an endpoint that is only eventually consistent can miss
+  a part or read an object that is no longer there.
+- `flz controller status` and the startup line print the root as the URL it was given.
+
+What each direction does differently is under
+[reading an object](#reading-an-object-under-an-s3-root) and
+[writing parts to a bucket](#writing-parts-to-a-bucket).
+
 ## Reading a file: `operative_file_source`
 
 ### Contract
@@ -69,7 +111,7 @@ Both providers print their path and their current verdict beneath the plugin in
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Hooks | `:on_terminate`: the reader drives itself; the hook is there because a plugin spec must name at least one |
-| Upstream | one local file inside the root folder, polled every `poll_interval_ms` |
+| Upstream | one file inside the root folder, or one object under an S3 root, polled every `poll_interval_ms` |
 | Injection | each line, without its newline, on the entry channel `channel` or `channel_in` names |
 | Delivery | the confirming ingest: the offset moves only once the operative has taken the line |
 | Resume | the byte offset of the last committed line, on a plugin restart, a move and a controller restart |
@@ -106,7 +148,7 @@ reader never acts on the records passing through the operative.
 <!-- provider-options:begin file_source -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it |
+| `path` | string | &mdash; | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
 | `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
 | `channel_in` | names | &mdash; | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
@@ -180,6 +222,28 @@ idempotently. No line is skipped.
   meanwhile. The same file moved back resumes where it stopped; a new file at the path
   is read from byte 0.
 
+### Reading an object under an S3 root
+
+`path` names one object. While caught up the reader asks for its size and ETag every
+`poll_interval_ms`, and it reads new bytes in ranged requests of at most
+`read_chunk_bytes`, each conditioned on the ETag it read. Delivery, the committed offset and
+health are the file's.
+
+- **A replaced object is read from the start.** A new ETag, or a ranged read whose ETag no
+  longer matches, means the object was replaced: it is read again from byte 0 and reported
+  as `truncated`, as a replaced file is. So is an object shorter than the offset. A producer
+  that rewrites one growing object makes every rewrite re-deliver it from the start, so
+  write new objects instead.
+- **A missing object**, a `404`, reports `{:unhealthy, {:file_missing, path}}` and keeps the
+  offset; the same object coming back resumes where the reader stopped.
+- **Any other failed request** keeps the offset and counts as a failed read whose reason
+  names the status, such as `{:unhealthy, {:read_failing, {:stat, {:http, 403}}}}`. A `403`
+  is a credentials fault and is never reported as a missing object.
+- **Requests.** Each look is a `HEAD`, and a reader that is behind looks again before each
+  chunk, so a larger `read_chunk_bytes` reads a large object in fewer requests.
+- After a plugin restart the reader cannot tell a replaced object from the original and
+  resumes at the committed offset, as a folder reader does.
+
 ### Health
 
 | Verdict | When |
@@ -200,7 +264,7 @@ idempotently. No line is skipped.
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Hooks | `:on_input`, `:on_output` |
-| Downstream | one local file inside the root folder, appended to; under `commit: rename`, a directory of parts |
+| Downstream | one file inside the root folder, appended to; under `commit: rename`, a directory of parts, or under an S3 root a key prefix of parts |
 | Record | the message bytes followed by one newline, nothing else |
 | Delivery | a batch is written in one call and data-synced before any outbox hold in it is confirmed; under `rename`, once its part is committed |
 | Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |
@@ -223,12 +287,12 @@ all. `channel` and `channel_in` are not parameters here: the sink feeds nothing.
 <!-- provider-options:begin file_sink -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it |
+| `path` | string | &mdash; | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
 | `channel_out` | names | &mdash; | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
-| `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once |
+| `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename` |
 | `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
-| `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms` |
+| `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120 |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one write |
 | `queue_max` | int | `10000` | no | Records held before enqueue blocks |
@@ -316,6 +380,35 @@ out/alerts/
 last=$(printf 'part-%08d' "$(jq .part .progress)"); for f in part-*; do [[ -f $f && ! $f > $last ]] && cat "$f"; done
 ```
 
+### Writing parts to a bucket
+
+Under an S3 root `path` names the key prefix that stands for the directory, and `rename` is
+the only layout. `commit: append`, given or taken as the default, is refused at enable
+naming `commit`, because an object cannot be appended to:
+
+```bash
+flz plugin enable writer operative_file_sink \
+  --operative_id=op1 \
+  --hook=on_output \
+  --Xpath=echo-out \
+  --Xcommit=rename
+```
+
+- **The open roll is held in memory.** Batches join the roll in the controller's memory
+  with their holds open, rather than a temp file, so `roll_bytes` is memory the sink holds:
+  64 MiB by default, and at most 5 GiB, the most one upload carries. A larger `roll_bytes`
+  is refused at enable naming it.
+- **A roll, then a part.** The roll is committed by one `PUT` of `<path>/part-<N>`, then the
+  sidecar `<path>/.progress` is written by a conditional put carrying `N`, and only then are
+  the roll's holds confirmed. No temp object is ever written.
+- **The reconcile** is the folder's: on start the sink lists the keys under `<path>/`,
+  deletes a part one past the sidecar, and refuses a start with a part further ahead.
+- **A worker left behind stops.** The sidecar write is refused while the stored part number
+  is higher, which is what another worker leaves when a move started it while this one
+  lingered. This worker then confirms nothing and stops, logging the stored number, and the
+  outbox re-drives its records to the live worker. Both may have written the same
+  `part-<N>` meanwhile, and the live worker's rewrite is the one that stays.
+
 ### The file it opens
 
 - **A file the sink creates is private.** Erlang opens a file with no creation mode, so
@@ -365,7 +458,8 @@ under source `:flezha_file_source`, and the sink's as `flushed` under
   watching, and nothing merges or removes old parts.
 - **Polling.** Growth is noticed within one `poll_interval_ms`; there is no filesystem
   watcher.
-- **Local paths only.** See [the root folder](#a-local-path-on-a-cluster).
+- **A folder, or one S3 bucket prefix per controller.** No bucket or credentials per
+  plugin, no multipart upload, and no reading every object under a prefix.
 - **`channel` is not validated at attach.** As for every source, channel names are an
   SDK-side fact the controller never sees; an undeclared name surfaces on the runner as
   a dead-letter park under that name.
