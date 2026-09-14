@@ -24,6 +24,7 @@ path = [
   # they carry the SDK's licence rather than the controller's.
   "examples/node/**",
   "examples/python/**",
+  "examples/elixir/echo/**",
 ]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "Apache-2.0"

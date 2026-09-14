@@ -5,8 +5,8 @@ and leave that controller running. A runner is useless on its own: it connects
 to a controller, so `flz boot await` has to answer `ready` before anything here
 works.
 
-TODO: a draft. Java is the only language filled in, and the last section is
-not written yet.
+TODO: a draft. Python's code is not filled in yet, and the last section is not
+written yet.
 
 ## Reach the controller
 
@@ -349,6 +349,88 @@ for the workflow kind.
 
 ### Rust
 
+The whole example:
+[`sdk/rust/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/rust/examples/echo).
+
+```rust
+// The operative. The graph, and the unit the controller schedules.
+pub struct EchoOperative;
+
+impl StreamOperative for EchoOperative {
+    fn factory_id() -> &'static str {
+        "echo"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.input::<String>("in")
+            .into::<EchoProcedure>()
+            .sink_named("out");
+    }
+}
+```
+
+`input::<String>("in")` is the entry channel and the type it carries: a `String`
+or a `Vec<u8>` passes through as its bytes, and any other type is parsed from
+JSON. `sink_named("out")` names the channel it terminates on the plugin layer,
+and `sink()` would leave it the procedure's name. A graph whose types do not
+line up is refused when the runner declares it.
+
+```rust
+// The procedure. The processing stage the graph routes each message into.
+#[derive(Default)]
+pub struct EchoProcedure;
+
+impl Procedure for EchoProcedure {
+    type Input = String;
+    type Output = String;
+    type State = ();         // nothing kept between messages
+    type Change = NoChange;  // nothing journaled
+    type Clock = WallClock;
+    type Config = ();
+
+    fn name() -> &'static str {
+        "echo"               // durable: state is filed under it
+    }
+
+    fn init_state(_entity_key: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
+
+    fn run(
+        &mut self,
+        input: String,
+        _state: StateHandle<'_, Self>,
+        ctx: &mut ProcedureCtx<'_>,
+    ) -> Result<(), ProcedureError> {
+        ctx.emit(format!("echo: {input}"))  // what, never where
+    }
+}
+```
+
+**The six associated types** are the ones Java writes as type arguments: the
+input, the output, the per-entity state, the change type, the clock and the
+configuration. `()` state and `NoChange` are how this one keeps nothing and
+journals nothing. The runtime constructs the procedure itself, which is why it
+is `Default`.
+
+```rust
+// The runner. Connects, offers the operative, and serves.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let namespace = std::env::args().nth(1).unwrap_or_else(|| "default".to_string());
+
+    let runner = Flezha::create_runner(namespace)?;
+    runner.define_stream::<EchoOperative>()?.start()?;
+
+    runner.await_termination()?;
+    Ok(())
+}
+```
+
+`start()` connects and hands back the runner, and `await_termination()` blocks
+until shutdown, a SIGTERM or Ctrl-C; `run()` does both in one call. The runner is
+bound to a name first because a chained temporary would be dropped, and shut
+down, at the end of its statement. Every call answers a `Result`, so a refusal
+leaves `main` through `?`. `define_workflow` is the same call for the workflow
+kind.
+
 > #### Concurrency in Rust {: .info}
 >
 > **A worker pool sized to the machine.** The base is the available
@@ -361,9 +443,60 @@ for the workflow kind.
 > inside `poll`, so the work queued behind it is exactly the starvation the pool
 > grows on: raising the base only removes the growth latency.
 
-TODO: the code.
-
 ### Node
+
+The whole example:
+[`sdk/node/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/node/examples/echo).
+
+```js
+// echo_operative.mjs: the operative. The graph, and the unit the controller schedules.
+import { defineOperative } from '@flezha/sdk';
+
+import { EchoProcedure } from './echo_procedure.mjs';
+
+export default defineOperative({
+  factoryId: 'echo',
+  channels: (c) => {
+    c.input('in', (bytes) => Buffer.from(bytes).toString('utf8'))
+      .into(EchoProcedure)
+      .sink('out', (value) => Buffer.from(value, 'utf8'));
+  },
+});
+```
+
+The channel carries plain text both ways: the decoder turns the bytes
+`flz operative send --text` delivers into a string, and the encoder turns the
+procedure's string back into bytes. The module exports what `defineOperative`
+returned, and that export is what the runner finds.
+
+```js
+// echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
+import { defineProcedure } from '@flezha/sdk';
+
+export const EchoProcedure = defineProcedure({
+  name: 'echo',                         // durable: state is filed under it
+  handle: (input) => `echo: ${input}`,  // what it returns is emitted
+});
+```
+
+With no `initialState` and no `applyChange`, it keeps nothing between messages
+and journals nothing.
+
+```js
+// runner.mjs: the runner. Connects, offers the operative, and serves.
+import { createRunner } from '@flezha/sdk';
+
+const runner = createRunner(process.argv[2] ?? 'default').defineStream('./echo_operative.mjs');
+
+await runner.run();
+```
+
+The operative is registered by **module specifier**, a path rather than an
+imported value, because every dispatch loop imports the module itself. A relative
+specifier resolves against the working directory. `run()` resolves once the
+runner is connected and serving, and the process keeps running until a SIGTERM
+or until its standard input closes. `defineWorkflow` is the same call for the
+workflow kind.
 
 > #### Concurrency in Node {: .info}
 >
@@ -380,8 +513,6 @@ TODO: the code.
 > I/O-bound handlers reach the core's in-flight cap on one loop. Compute-bound
 > ones do not, because they hold the loop while they compute, and that is what
 > the loop count is for.
-
-TODO: the code.
 
 ### Python
 
@@ -401,6 +532,52 @@ TODO: the code.
 
 ### Ruby
 
+The whole example:
+[`sdk/ruby/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/ruby/examples/echo).
+
+```ruby
+# echo_operative.rb: the operative. The graph, and the unit the controller schedules.
+class EchoOperative < Flezha::StreamOperative
+  factory_id "echo"
+
+  channels do |c|
+    c.input("in", decode: ->(bytes) { bytes.dup.force_encoding("UTF-8") })
+     .into(EchoProcedure)
+     .sink("out", encode: ->(value) { value.to_s.b })
+  end
+end
+```
+
+`decode:` and `encode:` make the channel carry plain text both ways: the bytes
+`flz operative send --text` delivers become a string, and the procedure's string
+goes back out as bytes.
+
+```ruby
+# echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
+class EchoProcedure < Flezha::Procedure
+  procedure_name "echo"                          # durable: state is filed under it
+
+  def process(input, _ctx) = "echo: #{input}"    # what it returns is emitted
+end
+```
+
+Without `procedure_name` the name is the class name in snake case. Which optional
+hooks a procedure has is read from the methods it defines, so with no
+`initial_state` and no `apply_change` it keeps nothing and journals nothing.
+
+```ruby
+# runner.rb: the runner. Connects, offers the operative, and serves.
+runner = Flezha.create_runner(ARGV[0] || "default").define_stream(EchoOperative)
+
+runner.boot
+runner.await_termination
+```
+
+`boot` connects and starts serving, and `await_termination` blocks until
+shutdown and then drains; `run` is the two in one call. Classes are registered
+explicitly: nothing is autoloaded, and what runs is what you named.
+`define_workflow` is the same call for the workflow kind.
+
 > #### Concurrency in Ruby {: .info}
 >
 > **Handler bodies are bounded to one core per process.** That is the GVL, and
@@ -416,9 +593,60 @@ TODO: the code.
 > handlers that are pure Ruby at 5 ms each serve about 200 per second however
 > large the pool is.
 
-TODO: the code.
-
 ### PHP
+
+The whole example:
+[`sdk/php/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/php/examples/echo).
+
+```php
+// src/EchoOperative.php: the operative. The graph, and the unit the controller schedules.
+#[Operative(factoryId: 'echo')]
+final class EchoOperative extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in', static fn (string $bytes): string => $bytes)
+            ->into(EchoProcedure::class)
+            ->sink('out', static fn (mixed $value): string => (string) $value);
+    }
+}
+```
+
+A channel's values are JSON unless it passes its own decoder and encoder, and
+these two keep the text as it is, which is what `flz operative send --text`
+sends. The attribute carries the declaration and the method carries the graph.
+
+```php
+// src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.
+#[Proc(name: 'echo')]                   // durable: state is filed under it
+final class EchoProcedure extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return 'echo: ' . $input;       // what it returns is emitted
+    }
+}
+```
+
+Only `run()` is required. Which optional hooks a procedure has is read from the
+methods it overrides, so with no `state` and no `applyChange` it keeps nothing and
+journals nothing.
+
+```php
+// runner.php: the runner. Connects, offers the operative, and serves.
+require __DIR__ . '/vendor/autoload.php';
+
+$runner = Flezha::createRunner($argv[1] ?? 'default')
+    ->defineStream(EchoOperative::class)
+    ->start();
+
+$runner->awaitTermination();
+```
+
+`start()` connects, and `awaitTermination()` is where this process serves: PHP has
+no threads, so under the default executor nothing is processed until the wait
+begins. `run()` does both in one call, and `defineWorkflow` is the same call for
+the workflow kind.
 
 > #### Concurrency in PHP {: .info}
 >
@@ -438,9 +666,79 @@ TODO: the code.
 > logs the activations it served, the mean body time, and the per-loop
 > throughput they imply.
 
-TODO: the code.
-
 ### Elixir
+
+The whole example:
+[`examples/elixir/echo`](https://github.com/alfetahe/flezha/tree/main/examples/elixir/echo).
+
+```elixir
+# lib/echo/operative.ex: the operative. The graph, and the unit the controller schedules.
+defmodule Echo.Operative do
+  @behaviour Flezha.SDK.StreamOperative
+
+  @impl true
+  def factory_id, do: "echo"
+
+  @impl true
+  def channels(c) do
+    import Flezha.SDK.Channels
+
+    c |> input("in") |> into(Echo.Procedure) |> sink("out")
+  end
+end
+```
+
+The graph is a pipe. A binary crosses a channel as it is, so plain text needs no
+decoder or encoder here.
+
+```elixir
+# lib/echo/procedure.ex: the procedure. The processing stage the graph routes each message into.
+defmodule Echo.Procedure do
+  @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
+  @impl true
+  def name, do: "echo"                   # durable: state is filed under it
+
+  @impl true
+  def init_state(_entity_key), do: nil   # nothing kept between messages
+
+  @impl true
+  def run(input, state, ctx) do
+    Ctx.emit(ctx, "echo: " <> input)     # what, never where
+    {:ok, state}
+  end
+end
+```
+
+`run/3` answers `{:ok, state}`, and what it emitted is released only then. With no
+`apply_change/2` it journals nothing.
+
+```elixir
+# lib/echo/application.ex: the runner. Connects, offers the operative, and serves.
+defmodule Echo.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    namespace = List.first(System.argv(), "default")
+
+    children = [
+      {Flezha.SDK, namespace: namespace, streams: [Echo.Operative], transport: :uds}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+end
+```
+
+The runner is a child of your own supervision tree, so a crash restarts it and it
+reconnects under the same identity. `transport: :uds` because this node is not the
+controller's: the default, `:native`, is for code inside the controller's own node,
+and it is not taken from the environment. The `flezha` package is the controller
+and the SDK in one, so the example's `config/config.exs` sets
+`controller_enabled: false`. `workflows:` is the same list for the workflow kind.
 
 > #### Concurrency in Elixir {: .info}
 >
@@ -457,8 +755,6 @@ TODO: the code.
 > binary protocol, and there it reaches the wire through `flz_nif`, the same
 > Rust NIF the controller uses. The core above that seam is the same Elixir code
 > either way.
-
-TODO: the code.
 
 <!-- tabs-close -->
 
@@ -486,7 +782,9 @@ Three things matter when a supervisor runs it:
   starts them without one stops them at once. `docker run -i` keeps it open, and
   so does `stdin_open: true` in a compose file.
 
-For Part 1, start it from a terminal on the controller's machine:
+For Part 1, start it from a terminal on the controller's machine. None of the
+SDKs is published yet, so each example's README has the one-time step that
+builds its SDK from a checkout.
 
 <!-- tabs-open -->
 
@@ -503,15 +801,25 @@ argument is the namespace, `default` when omitted.
 
 ### Rust
 
+From the echo example's folder:
+
 ```sh
 cargo run --release
 ```
 
+The namespace follows `--`, `default` when omitted: `cargo run --release -- my_app`.
+
 ### Node
 
+From the echo example's folder:
+
 ```sh
-node runner.mjs
+npm install && node runner.mjs
 ```
+
+Start it from that folder, because the operative's module specifier resolves
+against the working directory. The first argument is the namespace, `default`
+when omitted.
 
 ### Python
 
@@ -521,21 +829,33 @@ python runner.py
 
 ### Ruby
 
+From the echo example's folder, with Ruby 3.3 or later:
+
 ```sh
-ruby runner.rb
+bundle install && bundle exec ruby runner.rb
 ```
+
+The first argument is the namespace, `default` when omitted.
 
 ### PHP
 
+From the echo example's folder, with PHP 8.4 or later and `ext-ffi`:
+
 ```sh
-php runner.php
+composer install && php runner.php
 ```
+
+The first argument is the namespace, `default` when omitted.
 
 ### Elixir
 
+From the echo example's folder:
+
 ```sh
-mix run --no-halt
+mix deps.get && mix run --no-halt
 ```
+
+The namespace follows `--`, `default` when omitted: `mix run --no-halt -- my_app`.
 
 A standalone Elixir runner is your own application, so it starts the way your
 application starts. An in-node runner has nothing to start: `Flezha.SDK` is a

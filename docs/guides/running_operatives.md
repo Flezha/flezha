@@ -209,11 +209,43 @@ The echo example carries these lines commented out in its `Main`,
 
 ### Rust
 
-TODO.
+```rust
+let runner = Flezha::create_runner("default")?;
+runner.define_stream::<EchoOperative>()?.start()?;
+
+let admin = runner.admin();
+admin.start_operative(&OperativeSpec::new("my_echo", "echo"))?;
+admin.send("my_echo", "hello", "in")?;
+admin.stop_operative("my_echo")?;
+
+runner.await_termination()?;
+```
+
+`start()` rather than `run()`, for the same reason as in Java. Each call answers
+the controller's own result as a `serde_json::Value`, and a refusal as an
+`AdminError`.
+
+The echo example carries the calls commented out in its `main.rs`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/rust/examples/echo).
 
 ### Node
 
-TODO.
+```js
+const runner = createRunner('default').defineStream('./echo_operative.mjs');
+await runner.run();
+
+const admin = runner.admin();
+await admin.startOperative({ id: 'my_echo', factory_id: 'echo' });
+await admin.send('my_echo', 'hello', 'in');
+await admin.stopOperative('my_echo');
+```
+
+`run()` resolves once the runner is connected and serving, so the calls go after
+it and the process keeps serving without a wait of its own. Each call is a promise
+of the controller's result.
+
+The echo example carries the calls commented out in its `runner.mjs`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/node/examples/echo).
 
 ### Python
 
@@ -221,15 +253,67 @@ TODO.
 
 ### Ruby
 
-TODO.
+```ruby
+runner = Flezha.create_runner("default").define_stream(EchoOperative)
+runner.boot
+
+admin = runner.admin
+admin.start_operative("my_echo", "echo")
+admin.send_to("my_echo", "hello", channel: "in")
+admin.stop_operative("my_echo")
+
+runner.await_termination
+```
+
+`boot` rather than `run`, because `run` is `boot` followed by
+`await_termination`. It is `send_to` rather than `send`, which every Ruby object
+already has.
+
+The echo example carries the calls commented out in its `runner.rb`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/ruby/examples/echo).
 
 ### PHP
 
-TODO.
+```php
+$runner = Flezha::createRunner('default')
+    ->defineStream(EchoOperative::class)
+    ->start();
+
+$admin = $runner->admin();
+$admin->startOperative('my_echo', 'echo');
+$admin->send('my_echo', 'hello', 'in');
+$admin->stopOperative('my_echo');
+
+$runner->awaitTermination();
+```
+
+`start()` rather than `run()`, for the same reason as in Java. The calls are
+answered at once, but PHP has no threads: a message they send is processed once
+`awaitTermination()` starts serving.
+
+The echo example carries the calls commented out in its `runner.php`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/php/examples/echo).
 
 ### Elixir
 
-TODO.
+```elixir
+children = [{Flezha.SDK, namespace: "default", streams: [Echo.Operative], transport: :uds}]
+{:ok, _supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
+
+alias Flezha.SDK.Admin
+runner = Flezha.SDK.RunnerServer
+
+{:ok, _} = Admin.start_operative(runner, "my_echo", "echo")
+{:ok, _} = Admin.send_to(runner, "my_echo", "hello", "in")
+{:ok, _} = Admin.stop_operative(runner, "my_echo")
+```
+
+Functions rather than methods: each takes the runner, here its registered process,
+and answers `{:ok, result}` or `{:error, reason}`. The runner is connected once its
+child has started, so the calls can follow `Supervisor.start_link/2`.
+
+The echo example carries the calls commented out in its `application.ex`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/examples/elixir/echo).
 
 <!-- tabs-close -->
 

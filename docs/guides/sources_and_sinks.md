@@ -171,6 +171,10 @@ Enabling and disabling are on the same admin handle
 [`running_operatives.md`](running_operatives.md#or-from-your-own-code) used, so
 an application can attach its own plugins:
 
+<!-- tabs-open -->
+
+### Java
+
 ```java
 Admin admin = runner.admin();
 
@@ -185,13 +189,99 @@ admin.enablePlugin("writer", sink);
 admin.disablePlugin("writer");
 ```
 
+### Rust
+
+```rust
+let admin = runner.admin();
+
+admin.enable_plugin(
+    "writer",
+    serde_json::json!({
+        "id": "writer",
+        "provider": "operative_file_sink",
+        "operative_id": "my_echo",
+        "opts": { "path": "echo-out.txt" },
+        "hooks": [["on_output", {}]],
+    }),
+)?;
+admin.disable_plugin("writer")?;
+```
+
+### Node
+
+```js
+const admin = runner.admin();
+
+await admin.enablePlugin('writer', {
+  id: 'writer',
+  provider: 'operative_file_sink',
+  operative_id: 'my_echo',
+  opts: { path: 'echo-out.txt' },
+  hooks: [['on_output', {}]],
+});
+await admin.disablePlugin('writer');
+```
+
+### Python
+
+TODO.
+
+### Ruby
+
+```ruby
+admin = runner.admin
+
+admin.enable_plugin("writer", {
+  "id" => "writer",
+  "provider" => "operative_file_sink",
+  "operative_id" => "my_echo",
+  "opts" => { "path" => "echo-out.txt" },
+  "hooks" => [["on_output", {}]]
+})
+admin.disable_plugin("writer")
+```
+
+### PHP
+
+```php
+$admin = $runner->admin();
+
+$admin->enablePlugin('writer', [
+    'id' => 'writer',
+    'provider' => 'operative_file_sink',
+    'operative_id' => 'my_echo',
+    'opts' => ['path' => 'echo-out.txt'],
+    'hooks' => [['on_output', new stdClass()]],
+]);
+$admin->disablePlugin('writer');
+```
+
+### Elixir
+
+```elixir
+alias Flezha.SDK.Admin
+runner = Flezha.SDK.RunnerServer
+
+{:ok, _} =
+  Admin.enable_plugin(runner, "writer", %{
+    "id" => "writer",
+    "provider" => "operative_file_sink",
+    "operative_id" => "my_echo",
+    "opts" => %{"path" => "echo-out.txt"},
+    "hooks" => [["on_output", %{}]]
+  })
+
+{:ok, _} = Admin.disable_plugin(runner, "writer")
+```
+
+<!-- tabs-close -->
+
 The object carries what the command line carries: the plugin's id, its provider,
 the operative it attaches to, the provider's own options under `opts`, and the
-hook that `--hook=on_output` spells on the command line. The same
-block sits commented out in
-[the echo example](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo),
-ready to uncomment. [`../sdk/admin.md`](../sdk/admin.md) is the whole surface,
-and the other six SDKs spell the same two methods their own way.
+hook that `--hook=on_output` spells on the command line. Every echo example
+carries its enable commented out right after the operative's start, ready to
+uncomment, and a message sent after it lands in the file.
+[`../sdk/admin.md`](../sdk/admin.md) is the whole surface.
 
 What it cannot do is worth knowing: installing, upgrading and uninstalling a
 plugin package are node-wide acts, so they stay with the operator. An
