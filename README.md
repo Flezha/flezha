@@ -4,6 +4,11 @@ Distributed stateful operatives: a compute graph of procedures, each with its
 own durable per-Entity state, placed and migrated across a cluster by a
 controller, with static and dynamic creation of operatives.
 
+It is built for ETL pipelines: extract from files, HTTP endpoints, sockets or
+another operative, transform with per-key state that survives a crash, and load
+into Postgres, Kafka or files, as a continuous stream or as a scheduled batch
+job. [ETL pipelines](#etl-pipelines) maps each stage to what carries it.
+
 ## Try it without any of that
 
 You do not need a controller, a container or a socket to see one run. **Local
@@ -32,6 +37,46 @@ in every SDK.
 **[`docs/quickstart.md`](docs/quickstart.md)** walks through it in five
 minutes.
 
+## ETL pipelines
+
+Extract, transform, load is the job Flezha is shaped for. An operative declares
+where records come in, what happens to them and where they go, and plugins attach
+the real endpoints, so the same code can read a file today and an HTTP feed
+tomorrow with no rebuild.
+
+| Stage | What carries it |
+| --- | --- |
+| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operative's output ([`operative_forward.md`](docs/plugins/operative_forward.md)); or a plugin of your own ([`installation.md`](docs/plugins/installation.md)) |
+| Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`stream_transforms.md`](docs/sdk/stream_transforms.md)); procedures with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`multi_input_procedures.md`](docs/sdk/multi_input_procedures.md)); windows and timeouts from per-key timers ([`entity_timers.md`](docs/sdk/entity_timers.md)) |
+| Load | Postgres, each batch writing its rows and its progress watermark in one transaction ([`postgres_sink.md`](docs/plugins/postgres_sink.md)); Kafka, with retries, batching and an idempotent producer ([`kafka_producer.md`](docs/plugins/kafka_producer.md)); a file; or the next operative |
+
+What a pipeline usually has to build around itself is already there:
+
+- **A crash resumes instead of starting over.** Per-key state is journaled and
+  snapshotted on the controller, and an operative picks up where it stopped
+  after a runner crash or a controller restart
+  ([`auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md)).
+- **A bad record neither stops the stream nor vanishes.** It is retried, then
+  parked in a dead-letter queue; `flz dlq list` shows it and `flz dlq replay`
+  sends it back through the normal input path
+  ([`data_durability.md`](docs/resilience/data_durability.md#dead-letter-queue-poison-payloads-park-never-drop)).
+- **Effectively-once when you need it.** Delivery is at-least-once by default.
+  Opt a channel into effectively-once and a Postgres load commits each record
+  once, retries included
+  ([`data_durability.md`](docs/resilience/data_durability.md#delivery-semantics-at-least-once-default-effectively-once-tier)).
+- **Late data corrects the past.** With late-input correction declared on top of
+  effectively-once, a record that arrives late rewinds its key and replays the
+  input in event-time order, and a keyed sink overwrites the stale rows
+  ([`data_durability.md`](docs/resilience/data_durability.md#late-input-correction-fix-the-past-and-the-sinks-fix-themselves)).
+- **Batch jobs as well as streams.** A workflow operative is a run with a start
+  and an end: it commits progress at every step, retries a failing step before
+  it aborts, and can undo finished steps with saga compensation
+  ([`workflow_profile.md`](docs/architecture/workflow_profile.md)).
+  `flz schedule` starts one on a cron schedule, with no external scheduler.
+- **Scale by key.** `--partitions N` splits one stream operative into N
+  instances across its key space
+  ([`partitioned_operatives.md`](docs/sdk/partitioned_operatives.md)).
+
 ## Reading further
 
 [`docs/architecture/`](docs/architecture/README.md) — the durable-compute
@@ -40,6 +85,7 @@ kernel, the two operative profiles, and the diagrams. Vocabulary:
 [`docs/configuration.md`](docs/configuration.md).
 
 ## Features
+- ETL pipelines, run continuously or as scheduled batch jobs ([ETL pipelines](#etl-pipelines))
 - Run a whole graph in process, with no controller ([`docs/quickstart.md`](docs/quickstart.md))
 - Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport

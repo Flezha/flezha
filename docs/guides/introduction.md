@@ -8,6 +8,16 @@ with per-key state, timers and recovery when you need them. Flezha decides where
 an operative runs, restarts it when it fails, moves it when a machine goes away,
 and keeps its state across all of it.
 
+A typical operative is an ETL pipeline. A plugin extracts records from a
+[file](../plugins/file.md), an [HTTP endpoint](../plugins/http_poll.md) or a
+[WebSocket feed](../plugins/websocket_subscription.md); your procedures clean,
+join and aggregate them by key; another plugin loads the result into
+[Postgres](../plugins/postgres_sink.md), [Kafka](../plugins/kafka_producer.md) or a
+file. It runs continuously as a stream, or as a job with a start and an end that
+`flz schedule` can start on a cron schedule. A crash resumes from the last
+committed state rather than starting over, and a record a stream keeps failing
+on is parked in a dead-letter queue instead of being dropped.
+
 Two kinds of process make that work:
 
 - A **controller** is the brain. It owns the durable state, decides placement,
