@@ -820,9 +820,9 @@ Three things matter when a supervisor runs it:
   starts them without one stops them at once. `docker run -i` keeps it open, and
   so does `stdin_open: true` in a compose file.
 
-For Part 1, start it from a terminal on the controller's machine. None of the
-SDKs is published yet, so each example's README has the one-time step that
-builds its SDK from a checkout.
+The commands below show one way to start each language's echo runner, from a
+terminal on the controller's machine. They are examples, and you are not limited
+to them.
 
 <!-- tabs-open -->
 
@@ -861,10 +861,11 @@ when omitted.
 
 ### Python
 
-From the repository root, with the SDK built by `scripts/build-python-sdk.sh`:
+From the echo example's folder, with Python 3.11 or later and the `flezha`
+package installed:
 
 ```sh
-sdk/python/.venv/bin/python examples/python/echo/echo.py
+python3 echo.py
 ```
 
 The first argument is the namespace, `default` when omitted. The example's README
