@@ -79,15 +79,15 @@ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz cont
 ```sh
 flz plugin enable writer operative_file_sink \
   --operative_id=my_echo \
-  --extension=on_output \
+  --hook=on_output \
   --Xpath=echo-out.txt
 ```
 
 Read that as four things: `writer` is the id you will use to disable it,
 `operative_file_sink` is which plugin, `--operative_id` is which operative it
-attaches to, and `--extension=on_output` is the subscription, meaning **send this
-plugin everything the operative emits**. Options belonging to the plugin itself
-carry an `X` prefix, which is what separates them from the command's own flags.
+attaches to, and `--hook=on_output` is the hook, meaning **send this plugin
+everything the operative emits**. Options belonging to the plugin itself carry an
+`X` prefix, which is what separates them from the command's own flags.
 
 You do not create the file: the sink creates `echo-out.txt` when the plugin is
 enabled, readable only by the user the controller runs as. Its folder has to
@@ -109,7 +109,7 @@ echo: hello
 
 One record, one line, the message bytes and a newline. Add
 `--Xchannel_out=out` to write only the records from one channel; without it the
-sink writes everything it is subscribed to.
+sink writes every record its hook hands it.
 
 ## Read the input from a file
 
@@ -121,7 +121,7 @@ flz plugin enable reader operative_file_source \
 ```
 
 `--Xchannel_in=in` is the entry channel each line is injected on, and `in` is the
-name the operative gave it. There is no `--extension` here: a source drives
+name the operative gave it. There is no `--hook` here: a source drives
 itself, reading the file and pushing lines in, rather than being sent anything.
 
 It looks for new lines once a second, so give it that second before reading the
@@ -178,7 +178,7 @@ sink.put("id", "writer");
 sink.put("provider", "operative_file_sink");
 sink.put("operative_id", "my_echo");
 sink.putObject("opts").put("path", "echo-out.txt");
-sink.putArray("subscriptions").addArray().add("on_output").addObject();
+sink.putArray("hooks").addArray().add("on_output").addObject();
 
 admin.enablePlugin("writer", sink);
 admin.disablePlugin("writer");
@@ -186,7 +186,7 @@ admin.disablePlugin("writer");
 
 The object carries what the command line carries: the plugin's id, its provider,
 the operative it attaches to, the provider's own options under `opts`, and the
-subscription that `--extension=on_output` spells on the command line. The same
+hook that `--hook=on_output` spells on the command line. The same
 block sits commented out in
 [the echo example](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo),
 ready to uncomment. [`../sdk/admin.md`](../sdk/admin.md) is the whole surface,

@@ -13,7 +13,7 @@ operatives, plain inserts for everything else. See
 | | |
 | --- | --- |
 | Plugin type | `:io_binding` |
-| Extension points | `:on_input`, `:on_output` |
+| Hooks | `:on_input`, `:on_output` |
 | Downstream | one PostgreSQL database, over a pool the plugin owns |
 | Delivery | the committed transaction IS the confirmation; it answers the outbox hold each guaranteed record carries |
 | Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |

@@ -394,7 +394,7 @@ defmodule Mix.Tasks.Bench do
               operative_id: operative_id,
               provider: Flezha.Plugin.Provider.BeamMsgForward,
               opts: %{recv_pid: recv_pid},
-              subscriptions: [{:on_output, []}]
+              hooks: [{:on_output, []}]
             }
           )
 
@@ -406,7 +406,7 @@ defmodule Mix.Tasks.Bench do
               operative_id: operative_id,
               provider: Flezha.Plugin.Provider.StdOut,
               opts: %{},
-              subscriptions: []
+              hooks: []
             }
           )
         end)

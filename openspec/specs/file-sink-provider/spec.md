@@ -8,7 +8,7 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 A built-in provider `operative_file_sink` SHALL be attachable as a plugin with options `{path,
 channel_out?, commit? (append), linger_ms? (default 25), max_batch? (default 500), queue_max?
 (default 10000), retry_backoff_ms?, retry_max_backoff_ms?, unhealthy_after_ms? (default
-30000), plugin_id?}` and subscriptions `on_input` and `on_output`. It SHALL NOT declare that it
+30000), plugin_id?}` and the hooks `on_input` and `on_output`. It SHALL NOT declare that it
 feeds the operative: `channel_out` is the record filter by the rule in `operative-extensions`,
 absent means every record, and `channel` or `channel_in` SHALL be refused as options this
 provider does not offer.

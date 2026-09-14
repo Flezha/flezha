@@ -9,7 +9,7 @@ defmodule Flezha.Plugin.SpecDecoder do
   decodes it again at every firing.
 
   Refusals: `{:invalid_plugins_json, reason}`, `{:unknown_provider, id}`,
-  `{:invalid_subscription, details}`, `{:invalid_opts, details}`.
+  `{:invalid_hook, details}`, `{:invalid_opts, details}`.
   """
 
   alias Flezha.Plugin
@@ -89,12 +89,12 @@ defmodule Flezha.Plugin.SpecDecoder do
          {:ok, provider_id} <- fetch_string(spec, "provider"),
          {:ok, provider_mod} <- resolve_provider(providers, provider_id),
          {:ok, raw_opts} <- fetch_map(spec, "opts"),
-         {:ok, subscriptions} <- Plugin.subscriptions(Map.get(spec, "subscriptions", [])) do
+         {:ok, hooks} <- Plugin.hooks(Map.get(spec, "hooks", [])) do
       plugin = %Plugin{
         id: plugin_id,
         provider: provider_mod,
         opts: atomize_keys(raw_opts),
-        subscriptions: subscriptions,
+        hooks: hooks,
         namespace: namespace,
         operative_id: operative_id
       }

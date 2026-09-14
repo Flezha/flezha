@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Extension.Table do
   @moduledoc """
-  Per-host registry of extension subscriptions, compiled dispatch chains, and
+  Per-host registry of plugin hooks, compiled dispatch chains, and
   subscriber lifecycle state.
 
   The struct is owned here and the three companions mutate disjoint parts of
@@ -126,7 +126,7 @@ defmodule Flezha.Plugin.Extension.Table do
     with :ok <- Subscription.validate_plugin_unique(table, plugin_id),
          {:ok, plugin} <- Subscription.canonicalise(table.catalog, plugin),
          :ok <- Subscription.validate_subscriptions(table, plugin) do
-      do_subscribe(table, plugin_id, plugin, plugin.subscriptions)
+      do_subscribe(table, plugin_id, plugin, plugin.hooks)
     end
   end
 
@@ -492,7 +492,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc """
   Re-run a plugin's provider: release the workers it still holds, run
-  `init_provider/1` afresh, and re-register its subscriptions against the fresh
+  `init_provider/1` afresh, and re-register its hooks against the fresh
   instance. The plugin re-enters `:prepared`, which the caller activates. On a
   failed `init_provider/1` the plugin is recorded `{:down, reason}`, so it keeps
   diffing as one the loop must restart.
@@ -551,7 +551,7 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
-  Re-establish subscriptions from a serialisable shape (the list of
+  Re-establish hooks from a serialisable shape (the list of
   `%Flezha.Plugin{}` entries carried through handover). Live refs are
   rebuilt on this node.
   """
@@ -586,7 +586,7 @@ defmodule Flezha.Plugin.Extension.Table do
   defdelegate subscribers(table, name), to: Subscription
 
   @doc """
-  Canonicalise a plugin's subscriptions against `catalog` and the declared
+  Canonicalise a plugin's hooks against `catalog` and the declared
   sub-option types. See `Flezha.Plugin.Extension.Table.Subscription`.
   """
   @spec canonicalise(map(), Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
@@ -704,13 +704,13 @@ defmodule Flezha.Plugin.Extension.Table do
       source_operative_id: plugin.operative_id,
       source_plugin_id: plugin.id,
       overwatcher_pid: table.host_pid,
-      subscribed_extensions: Enum.map(plugin.subscriptions, &elem(&1, 0))
+      subscribed_extensions: Enum.map(plugin.hooks, &elem(&1, 0))
     })
   end
 
   ## Private - unsubscribe
 
-  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{subscriptions: subs} = plugin) do
+  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{hooks: subs} = plugin) do
     table = release_workers(table, plugin_id, plugin)
 
     table =
@@ -757,11 +757,11 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private — restart
 
-  # Re-register the plugin's subscriptions against its fresh instance: every
+  # Re-register the plugin's hooks against its fresh instance: every
   # entry carries a copy of the provider opts, so a restart that kept the old
   # entries would dispatch to state the provider does not hold.
   defp resubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
-    subs = plugin.subscriptions
+    subs = plugin.hooks
 
     table =
       Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->

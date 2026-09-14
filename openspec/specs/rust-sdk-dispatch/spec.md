@@ -301,7 +301,7 @@ The Rust SDK's payload-id constants (those that map to the binary framing's `pay
 
 ### Requirement: Test fixtures' Procedures exercise the output channel path
 
-The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `ProcedureCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's `:on_output`-subscribed plugin tests. Specifically:
+The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `ProcedureCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
 
 - `StoreInputOperative::StoreInputProcedure::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
 - `CompareFilterOperative::CompareFilterProcedure::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
@@ -310,7 +310,7 @@ This requirement covers fixture behavior only; it does not change the SDK's `Pro
 
 #### Scenario: StoreInputOperative round-trips input via :on_output
 
-- **WHEN** the controller's `BeamMsgForward` plugin is enabled with `subscriptions: [{:on_output, []}]` against a `StoreInputOperative` instance and the test sends `"state_1"` to the operative
+- **WHEN** the controller's `BeamMsgForward` plugin is enabled with `hooks: [{:on_output, []}]` against a `StoreInputOperative` instance and the test sends `"state_1"` to the operative
 - **THEN** the test SHALL receive `{:message_forward, "state_1"}` within 2 seconds (UDS) or 5 seconds (QUIC)
 
 #### Scenario: CompareFilterOperative round-trips matching input via :on_output

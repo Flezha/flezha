@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
   @moduledoc """
   `Flezha.Plugin.Extension.Table.attempt_restart/3`, the one restart path,
   reached by the convergence loop's `restart_plugin`: it re-runs
-  `init_provider/1` and re-registers the subscriptions, so the caller's
+  `init_provider/1` and re-registers the hooks, so the caller's
   activation starts a fresh worker where the dead one was. Reshuffling the
   subscription tables alone leaves the socket dead until the container is
   restarted by hand.
@@ -80,7 +80,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
       id: plugin_id,
       provider: provider,
       opts: %{plugin_id: plugin_id},
-      subscriptions: [{:on_input, []}]
+      hooks: [{:on_input, []}]
     }
   end
 

@@ -698,7 +698,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       id: plugin_id,
       provider: __MODULE__.NoopProvider,
       opts: %{},
-      subscriptions: [{:on_output, []}],
+      hooks: [{:on_output, []}],
       namespace: @namespace,
       operative_id: operative_id
     )

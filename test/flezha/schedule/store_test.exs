@@ -38,7 +38,7 @@ defmodule Flezha.Schedule.StoreTest do
 
   test "the plugin spec round-trips verbatim and defaults to none" do
     spec =
-      ~s([{"id":"reports","provider":"operative_kafka_producer","subscriptions":["on_output"]}])
+      ~s([{"id":"reports","provider":"operative_kafka_producer","hooks":["on_output"]}])
 
     assert {:ok, entry} = Store.add(fields(%{plugins: spec}))
     assert entry.plugins == spec

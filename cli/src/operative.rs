@@ -280,8 +280,8 @@ fn handle_listen(read: &Reading) {
 /// Accepts:
 /// * `"{}"` / empty string — treated as "no plugins attached"; returns `"[]"`.
 /// * A JSON array of plugin objects. Each object MUST have `id`, `provider`
-///   (non-empty strings) and a non-empty `subscriptions` array. Deeper
-///   validation (provider registration lookup, subscription-opts shape)
+///   (non-empty strings) and a non-empty `hooks` array. Deeper
+///   validation (provider registration lookup, hook-opts shape)
 ///   happens on the Elixir side where the registry is authoritative.
 pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
@@ -312,11 +312,11 @@ pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| format!("plugin[{}] ({}) missing `provider`", idx, id))?;
 
-        match obj.get("subscriptions") {
+        match obj.get("hooks") {
             Some(serde_json::Value::Array(subs)) if !subs.is_empty() => (),
             _ => {
                 return Err(format!(
-                    "plugin[{}] ({}) must declare a non-empty `subscriptions` array",
+                    "plugin[{}] ({}) must declare a non-empty `hooks` array",
                     idx, id
                 ));
             }
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn valid_sibling_spec_round_trips() {
-        let input = r#"[{"id":"init_state_from_java","provider":"init_state_sibling","opts":{"source_operative_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"subscriptions":[["on_operative_init",{"on_error":"empty"}]]}]"#;
+        let input = r#"[{"id":"init_state_from_java","provider":"init_state_sibling","opts":{"source_operative_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"hooks":[["on_operative_init",{"on_error":"empty"}]]}]"#;
         let canonical = parse_plugins_json(input).unwrap();
         assert!(canonical.contains("\"init_state_from_java\""));
         assert!(canonical.contains("\"init_state_sibling\""));
@@ -368,18 +368,26 @@ mod tests {
 
     #[test]
     fn missing_id_returns_err() {
-        let err =
-            parse_plugins_json(r#"[{"provider":"init_state_sibling","subscriptions":[["x",{}]]}]"#)
-                .unwrap_err();
+        let err = parse_plugins_json(r#"[{"provider":"init_state_sibling","hooks":[["x",{}]]}]"#)
+            .unwrap_err();
         assert!(err.contains("missing non-empty string field `id`"));
     }
 
     #[test]
-    fn empty_subscriptions_returns_err() {
+    fn empty_hooks_returns_err() {
+        let err = parse_plugins_json(r#"[{"id":"p","provider":"init_state_sibling","hooks":[]}]"#)
+            .unwrap_err();
+        assert!(err.contains("non-empty `hooks`"));
+    }
+
+    /// fails when: a spec that still names its hooks `subscriptions` passes the
+    /// check and reaches the controller as a plugin with no hooks.
+    #[test]
+    fn hooks_under_another_key_return_err() {
         let err = parse_plugins_json(
-            r#"[{"id":"p","provider":"init_state_sibling","subscriptions":[]}]"#,
+            r#"[{"id":"p","provider":"operative_stdout","subscriptions":["on_output"]}]"#,
         )
         .unwrap_err();
-        assert!(err.contains("non-empty `subscriptions`"));
+        assert!(err.contains("non-empty `hooks`"));
     }
 }

@@ -6,39 +6,15 @@ The operative-extensions capability is the typed extension-point system exposed 
 ## Requirements
 ### Requirement: Extension-point catalog
 
-The system SHALL declare every extension point exposed by a host module (e.g. `Flezha.Operative.Overwatch`) in a single module-level catalog. Each catalog entry MUST specify the extension name (atom), its dispatch kind (one of `:fold`, `:transform`, `:fanout`, `:request`, `:timer`), and its context-struct module. The catalog SHALL be the sole source of truth for which extension points exist on that host; no runtime registration of new extension names is permitted.
+The system SHALL declare every extension point exposed by a host module (e.g. `Flezha.Operative.Overwatch`) in a single module-level catalog. Each catalog entry MUST specify the extension name (atom), its dispatch kind (one of `:fold`, `:transform`, `:fanout`, `:request`, `:timer`), and its context-struct module. The catalog SHALL be the sole source of truth for which extension points exist on that host; no runtime registration of new extension names is permitted. An operator and a plugin author call these points hooks, and every surface they type or read uses that word.
 
 #### Scenario: Overwatch declares its catalog
 - **WHEN** `Flezha.Operative.Overwatch` is compiled
 - **THEN** the module SHALL declare an `@extensions` attribute containing at least these entries: `{:on_operative_init, :fold, Flezha.Plugin.Extension.Ctx.Init}`, `{:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO}`, `{:on_output, :transform, Flezha.Plugin.Extension.Ctx.IO}`, `{:on_interval, :timer, Flezha.Plugin.Extension.Ctx.Tick}`, `{:on_message, :request, Flezha.Plugin.Extension.Ctx.Msg}`, `{:on_snapshot, :fanout, Flezha.Plugin.Extension.Ctx.Snapshot}`, `{:on_terminate, :fanout, Flezha.Plugin.Extension.Ctx.Terminate}`
 
-#### Scenario: Subscribing to an undeclared extension fails
-- **WHEN** a subscription attempts to attach to an extension name not present in the host's catalog
-- **THEN** `Flezha.Plugin.Extension.Table.bulk_subscribe/2` MUST return `{:error, {plugin_id, {:unknown_extension, name}}}` and state MUST NOT be mutated
-
-### Requirement: Unified plugin struct with subscriptions
-
-The system SHALL represent a plugin as a single `%Flezha.Plugin{}` struct with fields `id` (string), `provider` (a module implementing the relevant extension callbacks), `opts` (a map of provider configuration), and `subscriptions` (a list of `{extension_name, subscription_opts}` tuples). A single `%Flezha.Plugin{}` MAY subscribe to multiple extension points.
-
-At the boundary, an extension name MAY be supplied as text or as an atom and
-subscription opts MAY be supplied as a map or a keyword list — the shapes the
-CLI, the operative-start spec, an installed package manifest and direct
-construction produce. `Extension.Table.subscribe/3` SHALL canonicalise all of
-them to `{atom, keyword}` with typed values; the canonical form is what the
-table stores and what every later reader observes.
-
-#### Scenario: Plugin subscribes to multiple extensions
-- **WHEN** a plugin is constructed with `subscriptions: [{:on_input, [position: 0]}, {:on_interval, [interval_ms: 5_000]}, {:on_terminate, []}]` and enabled via `Extension.Table.subscribe/3`
-- **THEN** the provider module's `on_input/2`, `on_interval/2`, and `on_terminate/2` callbacks MUST each be invoked on the corresponding dispatch event
-- **AND** a single `unsubscribe/2` MUST remove all three subscriptions atomically
-
-#### Scenario: Provider missing a subscribed callback
-- **WHEN** a plugin subscribes to `{:on_input, _}` but its `provider` module does not export `on_input/2`
-- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:missing_callback, :on_input}}` and state MUST NOT be mutated
-
-#### Scenario: A boundary shape is canonicalised
-- **WHEN** a plugin is constructed with `subscriptions: [{"on_interval", %{"interval_ms" => "5000"}}]`
-- **THEN** the table MUST store `{:on_interval, [interval_ms: 5000]}`
+#### Scenario: A hook on an undeclared point fails
+- **WHEN** a plugin names a hook absent from the host's catalog
+- **THEN** `Flezha.Plugin.Extension.Table.bulk_subscribe/2` MUST return `{:error, {plugin_id, {:unknown_hook, name}}}` and state MUST NOT be mutated
 
 ### Requirement: Fold-kind dispatch
 
@@ -94,18 +70,18 @@ The system SHALL dispatch `:fanout`-kind extensions by invoking every subscriber
 
 ### Requirement: Request-kind dispatch with keyed uniqueness
 
-The system SHALL dispatch `:request`-kind extensions by looking up exactly one subscriber by a request key supplied in the ctx. The request key SHALL be a string, both in the subscription's `key` sub-option and in the dispatch ctx, so an operator-supplied key is never interned as an atom. Multiple plugins MUST NOT be permitted to subscribe to the same `:request`-kind extension with the same key on the same host. The subscriber's callback MUST be invoked in a short-lived Task supervised by a host-owned supervisor so the host's mailbox is not blocked by the callback.
+The system SHALL dispatch `:request`-kind extensions by looking up exactly one subscriber by a request key supplied in the ctx. The request key SHALL be a string, both in the hook's `key` sub-option and in the dispatch ctx, so an operator-supplied key is never interned as an atom. Multiple plugins MUST NOT be permitted to hook the same `:request`-kind point with the same key on the same host. The subscriber's callback MUST be invoked in a short-lived Task supervised by a host-owned supervisor so the host's mailbox is not blocked by the callback.
 
 #### Scenario: Request routes to the keyed subscriber
 - **WHEN** `Extension.run/3` is called for a `:request` extension with a ctx whose key matches a registered subscriber
 - **THEN** that subscriber's callback MUST be invoked with the ctx inside a Task, and the reply MUST be sent via the ctx's reply mechanism
 
 #### Scenario: A key declared on the CLI is reachable at dispatch
-- **WHEN** a plugin is enabled with `--extension=on_message --on_message.key=orders` and a request is dispatched with key `"orders"`
+- **WHEN** a plugin is enabled with `--hook=on_message --on_message.key=orders` and a request is dispatched with key `"orders"`
 - **THEN** that subscriber's callback MUST be invoked
 
 #### Scenario: Duplicate key subscription rejected
-- **WHEN** a plugin attempts to subscribe to a `:request` extension with a key already in use by another plugin on the same host
+- **WHEN** a plugin attempts to hook a `:request` point with a key already in use by another plugin on the same host
 - **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:key_conflict, extension_name, key}}` and the existing subscriber MUST remain registered unchanged
 
 #### Scenario: Unknown request key
@@ -114,14 +90,14 @@ The system SHALL dispatch `:request`-kind extensions by looking up exactly one s
 
 ### Requirement: Timer-kind dispatch
 
-The system SHALL dispatch `:timer`-kind extensions via scheduled invocations. When a plugin subscribes with `{:on_interval, [interval_ms: N]}`, the extension table SHALL schedule a timer that sends `{:extension_timer, extension_name, plugin_id}` to the host process every `N` milliseconds. The host SHALL forward these timer messages into `Extension.Table.fire_timer/3`, which invokes the subscriber and reschedules the next tick.
+The system SHALL dispatch `:timer`-kind extensions via scheduled invocations. When a plugin has the hook `{:on_interval, [interval_ms: N]}`, the extension table SHALL schedule a timer that sends `{:extension_timer, extension_name, plugin_id}` to the host process every `N` milliseconds. The host SHALL forward these timer messages into `Extension.Table.fire_timer/3`, which invokes the subscriber and reschedules the next tick.
 
-#### Scenario: Timer subscription schedules periodic invocation
-- **WHEN** a plugin subscribes to `{:on_interval, [interval_ms: 1_000]}`
+#### Scenario: A timer hook schedules periodic invocation
+- **WHEN** a plugin has the hook `{:on_interval, [interval_ms: 1_000]}`
 - **THEN** the subscriber's `on_interval/2` callback MUST be invoked approximately every 1_000 ms until the plugin is unsubscribed
 
 #### Scenario: Unsubscribe cancels timer
-- **WHEN** a plugin with an active `:on_interval` subscription is unsubscribed
+- **WHEN** a plugin with an active `:on_interval` hook is unsubscribed
 - **THEN** all pending timer messages for that plugin MUST be cancelled and no further invocations MUST occur
 
 ### Requirement: Active-extensions fast path
@@ -171,34 +147,6 @@ The system SHALL place all subscriber-owned runtime state — monitor refs for s
 - **GIVEN** an operative with two declared plugins, one crashing on every start
 - **WHEN** the loop plans across ticks
 - **THEN** the crashing plugin's `{restart_plugin, {id, plugin_id}}` key walks the table while the sibling's key is untouched, and the sibling's start is never delayed by the crash
-
-### Requirement: Subscription ordering for ordered kinds
-
-The system SHALL honor a `position` option in subscription opts for `:fold` and `:transform` extensions. `position` SHALL be an integer once canonicalised; a value that cannot be coerced to one MUST be refused with an error naming `position`, and MUST NOT reach chain insertion. Subscribers MUST be invoked in ascending position order. When a new subscriber's position collides with an existing one, subsequent subscribers MUST be shifted upward and renumbered contiguously. `:fanout`, `:request`, and `:timer` kinds MUST reject `position` in subscription opts with `{:error, :position_not_applicable}`.
-
-#### Scenario: Position-based insertion shifts followers
-- **WHEN** three subscribers exist at positions 0, 1, 2 and a fourth is added with `position: 1`
-- **THEN** the new subscriber occupies position 1, the previous position-1 subscriber is renumbered to 2, and the previous position-2 subscriber is renumbered to 3
-
-#### Scenario: A position declared on the CLI orders the chain
-- **WHEN** a plugin is enabled with `--extension=on_output --on_output.position=0`
-- **THEN** the subscription is inserted at position 0 of that extension's chain
-
-#### Scenario: Position on fanout-kind rejected
-- **WHEN** a plugin subscribes to a `:fanout` extension with `position: 0` in subscription opts
-- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, :position_not_applicable}`
-
-### Requirement: Subscription preserved across operative handover
-
-The system SHALL serialize the extension-table subscription list during `Flezha.Operative.Overwatch.prepare_handover_state/1` and SHALL rehydrate it on the destination node via `Extension.Table.rehydrate/2` during `alter_handover_state/2`. Runtime state that is not transportable (monitor refs, timer refs, subscriber-owned pids) MUST be re-established on the destination node during rehydration. After rehydration the dispatch behaviour MUST match the pre-migration state.
-
-#### Scenario: Subscribed plugins survive migration
-- **WHEN** an operative with subscribers on `:on_input` and `:on_message` is migrated to a new compute engine
-- **THEN** after migration `Extension.run(:on_input, ctx)` MUST invoke the same set of subscribers as before migration, and `Extension.run(:on_message, ctx_with_key)` MUST route to the same handler
-
-#### Scenario: Subscriber-owned pids are restarted on destination
-- **WHEN** a subscriber with a monitored pid is migrated
-- **THEN** the destination node MUST spawn a new process for that subscriber and establish a fresh monitor; the source node's pid and monitor ref MUST NOT be transported
 
 ### Requirement: Built-in Kafka producer extension conforms to the kafka-producer-plugin contract
 
@@ -579,83 +527,6 @@ system.
 - **WHEN** a provider's `health/1` times out and the fail-open event is emitted
 - **THEN** a signal carrying the plugin id, the provider and the reason SHALL appear on the bus with no hand-written bridge line for the event
 
-### Requirement: Subscription sub-options SHALL have a declared type per extension kind
-
-The system SHALL declare, in a single per-kind table owned by
-`Flezha.Plugin.Extension.Table`, the name and type of every subscription
-sub-option each dispatch kind accepts: `:timer` accepts `interval_ms` (integer);
-`:fold` accepts `position` (integer), `timeout_ms` (integer) and `on_error` (one
-of `"fail"`, `"empty"`); `:transform` accepts `position` (integer); `:request`
-accepts `key` (string); `:fanout` accepts none. That declaration SHALL be the
-sole authority on which sub-options exist and what type each carries.
-
-`Extension.Table.subscribe/3` SHALL canonicalise a `%Flezha.Plugin{}` against
-that declaration before validating it, coercing each value to its declared type
-and rejecting a value that cannot be coerced with an error naming the
-sub-option. The canonical struct SHALL be what the table stores, so a provider
-restart, an unsubscribe and a handover all observe typed values. Canonicalising
-an already-typed subscription SHALL leave it unchanged.
-
-A sub-option not present in the declaration for that kind SHALL be refused with
-`{:error, {:unknown_subscription_opt, kind, name}}`. A kind that carries a
-sub-option other kinds accept SHALL declare it refused, naming its own error, so
-the declaration answers every name for every kind — `position` on `:fanout`,
-`:request` and `:timer` answers `{:error, :position_not_applicable}`.
-
-#### Scenario: A sub-option declared as text reaches the table as its declared type
-- **WHEN** a plugin is enabled with `--extension=on_interval --on_interval.interval_ms=5000`
-- **THEN** the plugin is subscribed with `{:on_interval, [interval_ms: 5000]}` and the enable succeeds
-
-#### Scenario: The same declaration works from the operative-start spec
-- **WHEN** an operative is started with a `--plugins` spec whose subscription opts are `{"interval_ms": "5000"}`
-- **THEN** the plugin is subscribed with `{:on_interval, [interval_ms: 5000]}`
-
-#### Scenario: An ill-typed sub-option is refused, never raised
-- **WHEN** a plugin subscribes to a `:fold` or `:transform` extension with `position: "first"`
-- **THEN** `Extension.Table.subscribe/3` MUST return an error naming `position`, MUST NOT raise, and state MUST NOT be mutated
-
-#### Scenario: An undeclared sub-option is refused
-- **WHEN** a plugin subscribes to a `:timer` extension with a sub-option the declaration does not list
-- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:unknown_subscription_opt, :timer, name}}` and state MUST NOT be mutated
-
-#### Scenario: Canonicalisation is idempotent
-- **WHEN** a subscription whose values are already of their declared types is canonicalised
-- **THEN** the resulting subscription MUST be identical to the input
-
-### Requirement: Operator-supplied subscription text SHALL NOT create atoms
-
-The system SHALL resolve an extension name supplied by an operator against the
-host catalog as text, and a sub-option name against the declaration for that
-kind, without interning either. No sub-option value supplied by an operator
-SHALL be converted to an atom. A name that resolves to nothing SHALL be refused
-rather than created.
-
-#### Scenario: An unknown extension name is refused without being interned
-- **WHEN** a plugin is enabled naming an extension absent from the host catalog
-- **THEN** the enable MUST be refused with `{:error, {:unknown_extension, name}}` and no atom MUST be created for that name
-
-#### Scenario: A closed-set sub-option is matched as text
-- **WHEN** a plugin subscribes to a `:fold` extension with `on_error` set to `"empty"`
-- **THEN** the subscription MUST be accepted and the fold chain MUST apply the empty-on-error behaviour
-
-### Requirement: An invalid subscription SHALL be refused before any durable write
-
-The system SHALL canonicalise and type-check a plugin's subscriptions against
-the host catalog before writing declared intent for that plugin. An enable
-refused for an ill-typed, undeclared or unknown subscription SHALL leave no
-durable record, so the convergence loop is never handed intent that can never be
-satisfied. The declared intent that is written SHALL hold canonical, typed
-values.
-
-#### Scenario: A refused enable persists nothing
-- **WHEN** `flz plugin enable` is issued with a sub-option that cannot be coerced to its declared type
-- **THEN** the command MUST fail with an error naming the sub-option
-- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
-
-#### Scenario: A stored declaration holds typed values
-- **WHEN** an enable succeeds with a sub-option supplied as text
-- **THEN** the durable declared intent for that plugin MUST hold the coerced value, not the text
-
 ### Requirement: A provider's conversion table SHALL refuse a value it cannot interpret
 
 A plugin provider's option conversion SHALL be total for every option it declares: a value the option's declared type or bounds do not accept SHALL be answered `{:error, binary()}` naming the option and the offered value, never passed through unchanged.
@@ -911,46 +782,11 @@ and the divergence is invisible until someone greps for it.
 - **WHEN** a provider reports a fact no other provider has
 - **THEN** it SHALL emit that verb under the same derived prefix, and the vocabulary test SHALL accept it
 
-### Requirement: An operator SHALL be able to enable a plugin that subscribes to nothing
-
-`flz plugin enable` SHALL support declaring a plugin with an empty subscription list, SHALL treat an enable that names neither a trigger nor an extension as that declaration, and SHALL refuse a trigger value it does not recognise rather than substituting one.
-
-An empty subscription list is already a supported state everywhere below the
-CLI: canonicalisation folds it to an empty canonical list, the io-bound
-predicate answers false for it, and no sink is built. Only the operator-facing
-spelling was missing, and its absence made the safest configuration
-unreachable while making a surprising one the default.
-
-The inbound half of an `:io_binding` provider does not depend on any
-subscription. A provider's declared worker holds the connection and injects
-what arrives through the host's one inject, so a plugin subscribed to nothing
-still feeds its operative. The subscription list governs only what the plugin
-sends.
-
-#### Scenario: An enable naming no trigger subscribes to nothing
-- **WHEN** `flz plugin enable p operative_websocket --operative_id op --Xuri=ws://host/in` is issued with no `--trigger` and no `--extension`
-- **THEN** the plugin's stored subscription list MUST be empty
-- **AND** no outbound queue MUST be allocated for it
-- **AND** frames arriving on its connection MUST still reach the operative's input
-
-#### Scenario: The empty subscription is nameable
-- **WHEN** the same enable is issued with `--trigger none`
-- **THEN** the stored subscription list MUST be empty, exactly as when the trigger is absent
-
-#### Scenario: An unrecognised trigger is refused
-- **WHEN** an enable is issued with a `--trigger` value that is not one of the declared values
-- **THEN** the command MUST fail naming the value and the accepted set
-- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
-
-#### Scenario: An echo is still available by name
-- **WHEN** an enable is issued with `--trigger on_input` or `--extension=on_input`
-- **THEN** the plugin MUST subscribe to `on_input` and every payload the operative ingests MUST be dispatched to the provider's `on_input/2`
-
 ### Requirement: A provider SHALL declare whether it feeds the operative
 
 A provider declaration SHALL carry whether the provider injects payloads into the operative, defaulting to false. Only a provider whose own worker calls `Host.inject/4` declares it true.
 
-This cannot be inferred from the callback list. A subscription to `on_input` means "act on a payload entering the operative", not "inject one": the Kafka producer subscribed to `on_input` publishes what the operative ingested and feeds nothing. Feeding and acting on the chain are two unrelated jobs, and only the declaration tells them apart.
+This cannot be inferred from the callback list. A hook on `on_input` means "act on a payload entering the operative", not "inject one": the Kafka producer hooked on `on_input` publishes what the operative ingested and feeds nothing. Feeding and acting on the chain are two unrelated jobs, and only the declaration tells them apart.
 
 #### Scenario: An injecting provider declares it
 
@@ -960,45 +796,45 @@ This cannot be inferred from the callback list. A subscription to `on_input` mea
 #### Scenario: A chain-only provider does not
 
 - **WHEN** the Kafka producer declaration is read
-- **THEN** it SHALL report that the provider does not feed the operative, whatever extensions a plugin using it subscribes to
+- **THEN** it SHALL report that the provider does not feed the operative, whatever hooks a plugin using it has
 
 ### Requirement: A channel option SHALL name the channel the plugin is attached to
 
-A plugin's `channel` option SHALL name the channel the plugin is attached to in both directions at once: the entry channel it injects on when its provider feeds the operative, and the filter over records passing through the operative when the plugin is subscribed to a chain extension. A plugin that does both jobs SHALL read both from that one name. The resolution SHALL be performed once, where the plugin's options are normalised, and SHALL produce the two concrete values the injection sites and `ProviderBehaviour.in_channel?/2` read, so no provider re-derives the meaning and dispatch is unchanged. It SHALL read only the options an operator wrote, so re-preparing a plugin from the options it already holds — which every plugin restart and every handover does — resolves the same answer again rather than refusing it.
+A plugin's `channel` option SHALL name the channel the plugin is attached to in both directions at once: the entry channel it injects on when its provider feeds the operative, and the filter over records passing through the operative when the plugin has a chain hook. A plugin that does both jobs SHALL read both from that one name. The resolution SHALL be performed once, where the plugin's options are normalised, and SHALL produce the two concrete values the injection sites and `ProviderBehaviour.in_channel?/2` read, so no provider re-derives the meaning and dispatch is unchanged. It SHALL read only the options an operator wrote, so re-preparing a plugin from the options it already holds — which every plugin restart and every handover does — resolves the same answer again rather than refusing it.
 
-Whether a plugin feeds the operative comes from its provider declaration. Whether it acts on the chain comes from its subscribed extensions, which the host already merges into the options map.
+Whether a plugin feeds the operative comes from its provider declaration. Whether it acts on the chain comes from its hooks, which the host already merges into the options map.
 
-`channel_in` SHALL name the entry channel alone and `channel_out` the record filter alone, for a plugin whose two names differ. Within one operative an entry channel and an output channel never share a name, so a plugin that injects and is subscribed to `on_output` is such a plugin; the documentation SHALL say so beside the example.
+`channel_in` SHALL name the entry channel alone and `channel_out` the record filter alone, for a plugin whose two names differ. Within one operative an entry channel and an output channel never share a name, so a plugin that injects and has an `on_output` hook is such a plugin; the documentation SHALL say so beside the example.
 
 #### Scenario: A feeding plugin reads `channel` as its entry channel
 
-- **GIVEN** a plugin whose provider feeds the operative and which is subscribed to no chain extension
+- **GIVEN** a plugin whose provider feeds the operative and which has no chain hook
 - **WHEN** it is enabled with `channel: "trades"`
 - **THEN** every payload it injects SHALL carry `"trades"` as its channel
 
 #### Scenario: A chain plugin reads `channel` as its record filter
 
-- **GIVEN** a plugin subscribed to `on_output` whose provider does not feed the operative
+- **GIVEN** a plugin with an `on_output` hook whose provider does not feed the operative
 - **WHEN** it is enabled with `channel: "prices"`
 - **THEN** it SHALL act only on records whose metadata names `prices`, and other records SHALL pass through the chain unchanged
 
 #### Scenario: A plugin doing both jobs reads both from one name
 
-- **GIVEN** a plugin whose provider feeds the operative and which is subscribed to `on_input`
+- **GIVEN** a plugin whose provider feeds the operative and which has an `on_input` hook
 - **WHEN** it is enabled with `channel: "requests"`
 - **THEN** it SHALL inject on `requests` and SHALL act only on records whose metadata names `requests`
 
 #### Scenario: A plugin doing both jobs names each explicitly
 
-- **GIVEN** a plugin whose provider feeds the operative and which is subscribed to `on_output`
+- **GIVEN** a plugin whose provider feeds the operative and which has an `on_output` hook
 - **WHEN** it is enabled with `channel_in: "requests"` and `channel_out: "responses"`
 - **THEN** it SHALL inject on `requests` and act only on records naming `responses`
 
 ### Requirement: An unresolvable channel option SHALL be refused when the plugin is enabled
 
-Enabling a plugin SHALL be refused when its channel options cannot take effect or contradict each other, and the refusal SHALL name both halves of the conflict. The refusal happens when the plugin is enabled, not when a frame moves, because the provider declaration and the subscription list answer every case before any payload exists.
+Enabling a plugin SHALL be refused when its channel options cannot take effect or contradict each other, and the refusal SHALL name both halves of the conflict. The refusal happens when the plugin is enabled, not when a frame moves, because the provider declaration and the hook list answer every case before any payload exists.
 
-Three shapes are refused: `channel` supplied together with `channel_in` or `channel_out`, because resolving it by precedence would hide the mistake; an explicit key naming a job the plugin does not do, `channel_in` on a provider that does not feed the operative or `channel_out` on a plugin subscribed to no chain extension, because the option could never take effect; and `channel` on a plugin that neither feeds the operative nor is subscribed to a chain extension, because nothing could read it.
+Three shapes are refused: `channel` supplied together with `channel_in` or `channel_out`, because resolving it by precedence would hide the mistake; an explicit key naming a job the plugin does not do, `channel_in` on a provider that does not feed the operative or `channel_out` on a plugin with no chain hook, because the option could never take effect; and `channel` on a plugin that neither feeds the operative nor has a chain hook, because nothing could read it.
 
 A provider SHALL declare only the spellings it can honour. A spelling for a direction the provider never works in — `channel_out` on a source that only feeds, `channel_in` on a provider that only acts on the chain — is therefore not one of its options and is refused as an option that provider does not offer, by the same rule that refuses every unrecognised key.
 
@@ -1011,7 +847,7 @@ A `"channel"` key inside a provider's general metadata bag SHALL continue to sel
 
 #### Scenario: A key for a job the plugin does not do is refused
 
-- **GIVEN** a plugin whose provider declares `channel_out` and which is subscribed to no chain extension
+- **GIVEN** a plugin whose provider declares `channel_out` and which has no chain hook
 - **WHEN** it is enabled with `channel_out`
 - **THEN** the enable SHALL be refused, stating the job the plugin does not do
 
@@ -1022,7 +858,7 @@ A `"channel"` key inside a provider's general metadata bag SHALL continue to sel
 
 #### Scenario: `channel` on a plugin doing neither job is refused
 
-- **GIVEN** a plugin whose provider does not feed the operative and which is subscribed to no chain extension
+- **GIVEN** a plugin whose provider does not feed the operative and which has no chain hook
 - **WHEN** it is enabled with `channel: "x"`
 - **THEN** the enable SHALL be refused, stating that nothing reads the option
 
@@ -1084,4 +920,212 @@ The entry channel a plugin injects on SHALL remain a single name. A payload is i
 
 - **WHEN** a plugin that feeds the operative is enabled with more than one name in `channel_in`, or in `channel`
 - **THEN** the enable SHALL be refused, stating that a payload is injected on exactly one channel
+
+### Requirement: Unified plugin struct with hooks
+
+The system SHALL represent a plugin as a single `%Flezha.Plugin{}` struct with fields `id` (string), `provider` (a module implementing the relevant hook callbacks), `opts` (a map of provider configuration), and `hooks` (a list of `{hook_name, hook_opts}` tuples). A single `%Flezha.Plugin{}` MAY have hooks on several points.
+
+At the boundary, a hook name MAY be supplied as text or as an atom and hook
+opts MAY be supplied as a map or a keyword list: the shapes the CLI, the `hooks`
+key of a `--plugins` spec or of an admin `enable_plugin` call, an installed
+package manifest and direct construction produce. `Extension.Table.subscribe/3`
+SHALL canonicalise all of them to `{atom, keyword}` with typed values; the
+canonical form is what the table stores and what every later reader observes.
+
+#### Scenario: Plugin hooks several points
+- **WHEN** a plugin is constructed with `hooks: [{:on_input, [position: 0]}, {:on_interval, [interval_ms: 5_000]}, {:on_terminate, []}]` and enabled via `Extension.Table.subscribe/3`
+- **THEN** the provider module's `on_input/2`, `on_interval/2`, and `on_terminate/2` callbacks MUST each be invoked on the corresponding dispatch event
+- **AND** a single `unsubscribe/2` MUST remove all three hooks atomically
+
+#### Scenario: Provider missing a hooked callback
+- **WHEN** a plugin has the hook `{:on_input, _}` but its `provider` module does not export `on_input/2`
+- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:missing_callback, :on_input}}` and state MUST NOT be mutated
+
+#### Scenario: A boundary shape is canonicalised
+- **WHEN** a plugin is constructed with `hooks: [{"on_interval", %{"interval_ms" => "5000"}}]`
+- **THEN** the table MUST store `{:on_interval, [interval_ms: 5000]}`
+
+#### Scenario: Hooks written under another key are refused
+- **WHEN** a `--plugins` spec, an admin `enable_plugin` call or a direct construction carries its hooks under a `subscriptions` key and has no `hooks` key
+- **THEN** the plugin MUST be refused with an error the caller receives
+- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
+
+### Requirement: Hook ordering for ordered kinds
+
+The system SHALL honor a `position` option in hook opts for `:fold` and `:transform` extensions. `position` SHALL be an integer once canonicalised; a value that cannot be coerced to one MUST be refused with an error naming `position`, and MUST NOT reach chain insertion. Subscribers MUST be invoked in ascending position order. When a new subscriber's position collides with an existing one, subsequent subscribers MUST be shifted upward and renumbered contiguously. `:fanout`, `:request`, and `:timer` kinds MUST reject `position` in hook opts with `{:error, :position_not_applicable}`.
+
+#### Scenario: Position-based insertion shifts followers
+- **WHEN** three subscribers exist at positions 0, 1, 2 and a fourth is added with `position: 1`
+- **THEN** the new subscriber occupies position 1, the previous position-1 subscriber is renumbered to 2, and the previous position-2 subscriber is renumbered to 3
+
+#### Scenario: A position declared on the CLI orders the chain
+- **WHEN** a plugin is enabled with `--hook=on_output --on_output.position=0`
+- **THEN** the hook is inserted at position 0 of that point's chain
+
+#### Scenario: Position on fanout-kind rejected
+- **WHEN** a plugin hooks a `:fanout` point with `position: 0` in its hook opts
+- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, :position_not_applicable}`
+
+### Requirement: Hook sub-options SHALL have a declared type per dispatch kind
+
+The system SHALL declare, in a single per-kind table owned by
+`Flezha.Plugin.Extension.Table`, the name and type of every hook sub-option each
+dispatch kind accepts: `:timer` accepts `interval_ms` (integer), which has no
+default and is required; `:fold` accepts `position` (integer), `timeout_ms`
+(integer) and `on_error` (one of `"fail"`, `"empty"`); `:transform` accepts
+`position` (integer); `:request` accepts `key` (string); `:fanout` accepts none.
+That declaration SHALL be the sole authority on which sub-options exist and what
+type each carries.
+
+`Extension.Table.subscribe/3` SHALL canonicalise a `%Flezha.Plugin{}` against
+that declaration before validating it, coercing each value to its declared type
+and rejecting a value that cannot be coerced with an error naming the
+sub-option. The canonical struct SHALL be what the table stores, so a provider
+restart, an unsubscribe and a handover all observe typed values. Canonicalising
+an already-typed hook SHALL leave it unchanged.
+
+A sub-option not present in the declaration for that kind SHALL be refused with
+`{:error, {:unknown_hook_opt, kind, name}}`. A kind that carries a
+sub-option other kinds accept SHALL declare it refused, naming its own error, so
+the declaration answers every name for every kind: `position` on `:fanout`,
+`:request` and `:timer` answers `{:error, :position_not_applicable}`.
+
+#### Scenario: A sub-option declared as text reaches the table as its declared type
+- **WHEN** a plugin is enabled with `--hook=on_interval --on_interval.interval_ms=5000`
+- **THEN** the plugin has the hook `{:on_interval, [interval_ms: 5000]}` and the enable succeeds
+
+#### Scenario: The same declaration works from the operative-start spec
+- **WHEN** an operative is started with a `--plugins` spec whose hook opts are `{"interval_ms": "5000"}`
+- **THEN** the plugin has the hook `{:on_interval, [interval_ms: 5000]}`
+
+#### Scenario: A timer hook without an interval is refused
+- **WHEN** a plugin is enabled with `--hook=on_interval` and no `--on_interval.interval_ms`
+- **THEN** the enable MUST be refused with an error naming `interval_ms`
+- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
+
+#### Scenario: An ill-typed sub-option is refused, never raised
+- **WHEN** a plugin hooks a `:fold` or `:transform` point with `position: "first"`
+- **THEN** `Extension.Table.subscribe/3` MUST return an error naming `position`, MUST NOT raise, and state MUST NOT be mutated
+
+#### Scenario: An undeclared sub-option is refused
+- **WHEN** a plugin hooks a `:timer` point with a sub-option the declaration does not list
+- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:unknown_hook_opt, :timer, name}}` and state MUST NOT be mutated
+
+#### Scenario: Canonicalisation is idempotent
+- **WHEN** a hook whose values are already of their declared types is canonicalised
+- **THEN** the resulting hook MUST be identical to the input
+
+### Requirement: Operator-supplied hook text SHALL NOT create atoms
+
+The system SHALL resolve a hook name supplied by an operator against the
+host catalog as text, and a sub-option name against the declaration for that
+kind, without interning either. No sub-option value supplied by an operator
+SHALL be converted to an atom. A name that resolves to nothing SHALL be refused
+rather than created.
+
+#### Scenario: An unknown hook name is refused without being interned
+- **WHEN** a plugin is enabled naming a hook absent from the host catalog
+- **THEN** the enable MUST be refused with `{:error, {:unknown_hook, name}}` and no atom MUST be created for that name
+
+#### Scenario: A closed-set sub-option is matched as text
+- **WHEN** a plugin hooks a `:fold` point with `on_error` set to `"empty"`
+- **THEN** the hook MUST be accepted and the fold chain MUST apply the empty-on-error behaviour
+
+### Requirement: An operator SHALL be able to enable a plugin with no hooks
+
+`flz plugin enable` SHALL treat an enable that names no `--hook` as a plugin with an empty hook list, and SHALL offer no second spelling of that declaration.
+
+An empty hook list is a supported state everywhere below the CLI:
+canonicalisation folds it to an empty canonical list, the io-bound predicate
+answers false for it, and no sink is built.
+
+The inbound half of an `:io_binding` provider does not depend on any hook. A
+provider's declared worker holds the connection and injects what arrives
+through the host's one inject, so a plugin with no hooks still feeds its
+operative. The hook list governs only what the plugin sends.
+
+#### Scenario: An enable naming no hook has no hooks
+- **WHEN** `flz plugin enable p operative_websocket --operative_id op --Xuri=ws://host/in` is issued with no `--hook`
+- **THEN** the plugin's stored hook list MUST be empty
+- **AND** no outbound queue MUST be allocated for it
+- **AND** frames arriving on its connection MUST still reach the operative's input
+
+#### Scenario: An echo is still available by name
+- **WHEN** an enable is issued with `--hook=on_input`
+- **THEN** the plugin MUST have the hook `on_input` and every payload the operative ingests MUST be dispatched to the provider's `on_input/2`
+
+### Requirement: Hooks preserved across operative handover
+
+The system SHALL serialize the extension table's hook list during `Flezha.Operative.Overwatch.prepare_handover_state/1` and SHALL rehydrate it on the destination node via `Extension.Table.rehydrate/2` during `alter_handover_state/2`. Runtime state that is not transportable (monitor refs, timer refs, subscriber-owned pids) MUST be re-established on the destination node during rehydration. After rehydration the dispatch behaviour MUST match the pre-migration state.
+
+#### Scenario: Hooked plugins survive migration
+- **WHEN** an operative with subscribers on `:on_input` and `:on_message` is migrated to a new compute engine
+- **THEN** after migration `Extension.run(:on_input, ctx)` MUST invoke the same set of subscribers as before migration, and `Extension.run(:on_message, ctx_with_key)` MUST route to the same handler
+
+#### Scenario: Subscriber-owned pids are restarted on destination
+- **WHEN** a subscriber with a monitored pid is migrated
+- **THEN** the destination node MUST spawn a new process for that subscriber and establish a fresh monitor; the source node's pid and monitor ref MUST NOT be transported
+
+### Requirement: An invalid hook SHALL be refused before any durable write
+
+The system SHALL canonicalise and type-check a plugin's hooks against
+the host catalog before writing declared intent for that plugin. An enable
+refused for an ill-typed, undeclared or unknown hook SHALL leave no
+durable record, so the convergence loop is never handed intent that can never be
+satisfied. The declared intent that is written SHALL hold canonical, typed
+values.
+
+#### Scenario: A refused enable persists nothing
+- **WHEN** `flz plugin enable` is issued with a sub-option that cannot be coerced to its declared type
+- **THEN** the command MUST fail with an error naming the sub-option
+- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
+
+#### Scenario: A stored declaration holds typed values
+- **WHEN** an enable succeeds with a sub-option supplied as text
+- **THEN** the durable declared intent for that plugin MUST hold the coerced value, not the text
+
+### Requirement: A plugin enable SHALL refuse a plain option it does not read
+
+`flz plugin enable` SHALL refuse, naming it, any plain option it does not read, and SHALL write nothing for that enable.
+
+The enable verb is open: the CLI hands a plain `--key value` it does not declare
+to the controller instead of refusing it, because the words a provider owns must
+reach the settings document. The controller reads `namespace` and
+`operative_id` from the plain options and dropped every other key, so a
+mistyped option, or one a help screen advertised, enabled a plugin configured
+with less than the operator wrote and reported success. The
+`cli-command-surface` capability already requires an option an operator typed
+to be read or refused with the flag named; this is that rule at the one place
+the enable's plain options are read. Provider settings are written `--X<key>`
+and hooks `--hook`, so neither is affected.
+
+#### Scenario: A removed flag is refused
+- **WHEN** `flz plugin enable p operative_file_sink --operative_id op --trigger on_output --Xpath=out.ndjson` is issued
+- **THEN** the command MUST fail naming `trigger`
+- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
+
+#### Scenario: An option nothing reads is refused
+- **WHEN** an enable is issued with `--position 0`
+- **THEN** the command MUST fail naming `position` and saying that provider settings are written `--X<key>`
+
+#### Scenario: The options the enable reads are accepted
+- **WHEN** an enable is issued with `--namespace`, `--operative_id`, a `--hook` with its sub-options and `--X` settings
+- **THEN** the enable MUST NOT be refused for any of them
+
+### Requirement: Surfaces that report a plugin's hooks SHALL call them hooks
+
+`flz plugin help <provider_id>` and `flz operative info` SHALL name a plugin's hooks as hooks, in text and in JSON.
+
+#### Scenario: Plugin help lists hooks as the flag an operator types
+- **WHEN** `flz plugin help operative_file_sink` is run
+- **THEN** it SHALL list `SUPPORTED HOOKS:` with one `--hook=<name>` line per hook callback the provider declares
+- **AND** its common options SHALL name neither `--trigger` nor `--position`
+
+#### Scenario: Operative info prints hooks
+- **WHEN** `flz operative info` reports an operative with a plugin hooked on `on_output` at position 0
+- **THEN** the plugin's text output SHALL carry a `hook: on_output` line with its opts
+
+#### Scenario: Operative info JSON uses the spec shape
+- **WHEN** `flz operative info` answers in JSON for the same operative
+- **THEN** the plugin SHALL carry `hooks` as a list of `{"name": ..., "opts": {...}}` objects, the shape a `--plugins` spec accepts
 

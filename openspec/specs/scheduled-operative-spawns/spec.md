@@ -19,7 +19,7 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 
 #### Scenario: Unusable plugin spec rejected at add time
 
-- **WHEN** `schedule add --plugins` is issued with JSON that is not an array, names an unknown provider, or carries a malformed subscription
+- **WHEN** `schedule add --plugins` is issued with JSON that is not an array, names an unknown provider, or carries a malformed hook
 - **THEN** the command SHALL fail naming the fault and no entry SHALL be stored
 
 #### Scenario: A failing schedule is visible in the list

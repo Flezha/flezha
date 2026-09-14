@@ -48,7 +48,7 @@ defmodule Flezha.Service.HubManagerTest do
       id: id,
       provider: __MODULE__.NoopProvider,
       opts: opts,
-      subscriptions: [{:on_output, []}],
+      hooks: [{:on_output, []}],
       namespace: @namespace,
       operative_id: "ignored"
     )

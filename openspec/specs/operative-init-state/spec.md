@@ -6,18 +6,18 @@ The operative-init-state capability lets runners hydrate an operative's initial 
 ## Requirements
 ### Requirement: Per-operative init-state plugin configuration
 
-The system SHALL allow configuring init-state plugins per operative via `Flezha.Operative.Builder.opts[:plugins]`. Each entry MUST be a `%Flezha.Plugin{}` struct whose `subscriptions` list contains one `{:on_operative_init, sub_opts}` entry. `sub_opts` is a keyword list supporting `position` (non-negative integer, default assigned by insertion order), `on_error` (`:fail` or `:empty`, default `:fail`), and `timeout_ms` (positive integer, default `5000`). The plugin's `provider` module MUST implement an `on_operative_init/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Init.t(), opts :: map())`.
+The system SHALL allow configuring init-state plugins per operative via `Flezha.Operative.Builder.opts[:plugins]`. Each entry MUST be a `%Flezha.Plugin{}` struct whose `hooks` list contains one `{:on_operative_init, hook_opts}` entry. `hook_opts` is a keyword list supporting `position` (non-negative integer, default assigned by insertion order), `on_error` (`:fail` or `:empty`, default `:fail`), and `timeout_ms` (positive integer, default `5000`). The plugin's `provider` module MUST implement an `on_operative_init/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Init.t(), opts :: map())`.
 
 #### Scenario: No init-state subscribers configured
-- **WHEN** an operative is started whose Builder `opts` contains no `%Flezha.Plugin{}` subscribing to `:on_operative_init` (either because `opts[:plugins]` is empty, absent, or none of the listed plugins subscribe to that extension)
+- **WHEN** an operative is started whose Builder `opts` contains no `%Flezha.Plugin{}` with an `:on_operative_init` hook (either because `opts[:plugins]` is empty, absent, or none of the listed plugins hooks that point)
 - **THEN** the operative's `init_values` MUST be exactly what the Builder provided, no provider callback is invoked, and the active-mask bit for `:on_operative_init` MUST remain clear
 
 #### Scenario: Single subscriber configured
-- **WHEN** an operative is started with one `%Flezha.Plugin{subscriptions: [{:on_operative_init, _}]}` entry and the Builder's `init_values` is `%{}`
+- **WHEN** an operative is started with one `%Flezha.Plugin{hooks: [{:on_operative_init, _}]}` entry and the Builder's `init_values` is `%{}`
 - **THEN** the provider module's `on_operative_init/2` callback MUST be invoked exactly once, and the resulting `accumulated` map MUST be sent to the SDK as `init_values` in the `AddOperative` command
 
 #### Scenario: Multiple subscribers configured
-- **WHEN** an operative is started with three plugins `[p1, p2, p3]` each subscribing to `:on_operative_init` with positions 0, 1, 2, and the Builder `init_values` is `%{}`
+- **WHEN** an operative is started with three plugins `[p1, p2, p3]` each with an `:on_operative_init` hook at positions 0, 1, 2, and the Builder `init_values` is `%{}`
 - **THEN** the subscribers MUST be invoked in order of their `position` (0 → 1 → 2), each receiving the `Flezha.Plugin.Extension.Ctx.Init` context whose `accumulated` field holds the shallow-merged output of all predecessors
 
 ### Requirement: Init-state provider context
@@ -120,15 +120,15 @@ The system SHALL, on any `:on_operative_init` subscriber error (explicit `{:erro
 
 ### Requirement: Plugin configuration validation
 
-The system SHALL validate each `%Flezha.Plugin{}` subscribed to `:on_operative_init` at subscribe time via `Flezha.Plugin.Extension.Table.bulk_subscribe/2`. An entry whose `provider` module is not loaded, whose declaration does not name `on_operative_init/2`, or whose subscription opts contain invalid values (e.g. non-integer `timeout_ms`, unknown `on_error`) MUST cause `bulk_subscribe/2` to return `{:error, {plugin_id, reason}}` without mutating table state. When validation fails for a plugin provided via `Builder.opts[:plugins]`, the failure MUST be handled by the plugin's `on_error` policy (or `:fail` if `on_error` cannot be read).
+The system SHALL validate each `%Flezha.Plugin{}` with an `:on_operative_init` hook at subscribe time via `Flezha.Plugin.Extension.Table.bulk_subscribe/2`. An entry whose `provider` module is not loaded, whose declaration does not name `on_operative_init/2`, or whose hook opts contain invalid values (e.g. non-integer `timeout_ms`, unknown `on_error`) MUST cause `bulk_subscribe/2` to return `{:error, {plugin_id, reason}}` without mutating table state. When validation fails for a plugin provided via `Builder.opts[:plugins]`, the failure MUST be handled by the plugin's `on_error` policy (or `:fail` if `on_error` cannot be read).
 
 #### Scenario: Provider module does not implement on_operative_init/2
-- **WHEN** a `%Flezha.Plugin{}` subscribes to `:on_operative_init` but its provider's declaration does not name `on_operative_init/2`
+- **WHEN** a `%Flezha.Plugin{}` hooks `:on_operative_init` but its provider's declaration does not name `on_operative_init/2`
 - **THEN** `bulk_subscribe/2` MUST return `{:error, {plugin_id, {:missing_callback, :on_operative_init}}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
 
-#### Scenario: Subscription opts are invalid
-- **WHEN** a plugin subscribes to `:on_operative_init` with a non-positive `timeout_ms` or an `on_error` value other than `:fail` or `:empty`
-- **THEN** `bulk_subscribe/2` MUST return `{:error, {plugin_id, {:invalid_subscription_opts, reason}}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
+#### Scenario: Hook opts are invalid
+- **WHEN** a plugin hooks `:on_operative_init` with a non-positive `timeout_ms` or an `on_error` value other than `:fail` or `:empty`
+- **THEN** `bulk_subscribe/2` MUST return `{:error, {plugin_id, {:invalid_hook_opts, reason}}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
 
 ### Requirement: No SDK or protocol change
 

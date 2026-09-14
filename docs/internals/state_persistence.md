@@ -7,9 +7,9 @@ contributors working in `lib/flezha/state/`. The guarantee-level picture (write 
 record, push-vs-pull baseline) is [`../architecture/kernel.md`](../architecture/kernel.md) and is
 linked, not repeated; the runner-side flush path is
 [`../sdk/state_persistence.md`](../sdk/state_persistence.md). Per-Entity WAL persistence is
-independent of plugin-subscription persistence (the ProcessHub cspec,
+independent of plugin persistence (the ProcessHub cspec,
 [`process_hub.md`](process_hub.md)): the WAL persists data-plane progress, the cspec which
-plugins are subscribed.
+plugins are attached and on which hooks.
 
 ## On-disk layout
 

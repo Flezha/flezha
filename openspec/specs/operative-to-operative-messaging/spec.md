@@ -9,15 +9,15 @@ The system SHALL provide a first-party `:io_binding` plugin provider,
 `Flezha.Plugin.Provider.OperativeForward`, whose delivery destination is another operative in
 the same namespace rather than an external endpoint. The provider SHALL be enabled and disabled
 per operative through `Flezha.Service.PluginManager` using the same `%Flezha.Plugin{}`
-subscription mechanism as every other `:io_binding` provider, and SHALL support subscribing to
-`:on_output` and to `:on_input`. The provider SHALL declare no new extension points.
+hook mechanism as every other `:io_binding` provider, and SHALL support the hooks
+`:on_output` and `:on_input`. The provider SHALL declare no new hooks.
 
 Required opts: `:target_operative_id`. Optional opts: `:queue_max`, `:retry_backoff_ms`,
 `:retry_max_backoff_ms`, `:plugin_id`.
 
 #### Scenario: Enabling the provider on an operative
 - **WHEN** a `%Flezha.Plugin{}` whose provider is `Flezha.Plugin.Provider.OperativeForward` and
-  whose opts contain a `:target_operative_id` naming a different operative subscribes to
+  whose opts contain a `:target_operative_id` naming a different operative has the hook
   `{:on_output, _}` on an operative
 - **THEN** the enable call SHALL succeed and subsequent output from that operative SHALL be
   delivered to the target operative's input stream
@@ -283,3 +283,4 @@ With N workers per plugin, disabling or terminating the plugin SHALL stop all N 
 #### Scenario: Health reflects the sickest worker
 - **WHEN** one of the 3 workers is commit-stalled
 - **THEN** `health/1` reports the stalled verdict, not the healthy majority
+

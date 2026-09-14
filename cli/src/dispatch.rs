@@ -439,7 +439,7 @@ mod tests {
     }
 
     /// The option spellings a block of help text teaches. The settings
-    /// families are not among them: `--X<key>`, `--extension` and its
+    /// families are not among them: `--X<key>`, `--hook` and its
     /// `--NAME.key` sub-options carry keys a provider owns, and a row declares
     /// that its verb takes settings rather than which keys exist.
     fn advertised_options(text: &str) -> Vec<&str> {

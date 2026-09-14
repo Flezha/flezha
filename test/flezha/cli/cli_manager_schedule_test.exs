@@ -159,7 +159,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
 
     spec =
-      ~s([{"id":"out","provider":"operative_stdout","opts":{},"subscriptions":["on_output"]}])
+      ~s([{"id":"out","provider":"operative_stdout","opts":{},"hooks":["on_output"]}])
 
     output = add_digest(plugins: spec)
 

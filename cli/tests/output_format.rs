@@ -592,8 +592,8 @@ const CASES: &[(&[&str], Want)] = &[
         Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f"])"#),
     ),
     (
-        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "-iv", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","subscriptions":["on_output"]}]"#, "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", kind: "workflow", plugins: "[{\"id\":\"p\",\"provider\":\"x\",\"subscriptions\":[\"on_output\"]}]", token: "t"])"#),
+        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "-iv", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
+        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", kind: "workflow", plugins: "[{\"hooks\":[\"on_output\"],\"id\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
     ),
 ];
 

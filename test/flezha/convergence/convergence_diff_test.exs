@@ -22,7 +22,7 @@ defmodule Flezha.Convergence.DiffTest do
       id: id,
       provider: __MODULE__.NoopProvider,
       opts: %{},
-      subscriptions: [{:on_output, []}],
+      hooks: [{:on_output, []}],
       namespace: "default",
       operative_id: "r"
     )

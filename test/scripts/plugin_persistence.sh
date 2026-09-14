@@ -120,15 +120,13 @@ flz operative start "${PROCESSOR_ID}" store_input \
 
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
 flz plugin enable "${PLUGIN_WS_ID}" operative_websocket \
-  --Xoperative_id="${PROCESSOR_ID}" \
-  --Xtrigger="proactive" \
-  --Xuri="ws://localhost:4500" \
-  --Xposition=0
+  --operative_id="${PROCESSOR_ID}" \
+  --Xuri="ws://localhost:4500"
 
 note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
 flz plugin enable "${PLUGIN_KAFKA_ID}" operative_kafka_producer \
-  --Xoperative_id="${PROCESSOR_ID}" \
-  --Xtrigger=on_output \
+  --operative_id="${PROCESSOR_ID}" \
+  --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic="${PROCESSOR_ID}.test.v1"
 

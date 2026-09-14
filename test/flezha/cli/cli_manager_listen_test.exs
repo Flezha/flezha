@@ -94,7 +94,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
                provider: MonitoredIOForward,
                namespace: "default",
                operative_id: "op",
-               subscriptions: [{:on_input, []}],
+               hooks: [{:on_input, []}],
                opts: %{recv_pid: ^listener, plugin_id: ^id}
              } = plugin
     end

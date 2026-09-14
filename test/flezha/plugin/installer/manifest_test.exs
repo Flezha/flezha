@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
         %{
           id: "ki",
           provider: MyOrg.KafkaIngest,
-          subscriptions: [{:on_input, [position: 0]}],
+          hooks: [{:on_input, [position: 0]}],
           default_opts: %{},
           scope: :operative
         }
@@ -102,7 +102,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
         %{
           id: "p",
           provider: Other.NotInList,
-          subscriptions: [{:on_input, []}],
+          hooks: [{:on_input, []}],
           default_opts: %{},
           scope: :operative
         }
@@ -121,6 +121,19 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
 
     assert {:error, {:manifest_invalid, {:unsupported_scope, :host_global}}} =
              Manifest.validate(term)
+  end
+
+  # Fails when: a provision still naming its hooks `subscriptions` installs and
+  # enables a plugin with no hooks.
+  test "a provision without a hooks key is missing a required field" do
+    provision =
+      base_term().provides
+      |> hd()
+      |> Map.delete(:hooks)
+      |> Map.put(:subscriptions, [{:on_input, []}])
+
+    assert {:error, {:manifest_invalid, {:missing_field, :hooks}}} =
+             base_term() |> Map.put(:provides, [provision]) |> Manifest.validate()
   end
 
   test "duplicate provision ids rejected" do
@@ -153,7 +166,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
     %{
       id: "p",
       provider: mod,
-      subscriptions: [{:on_input, []}],
+      hooks: [{:on_input, []}],
       default_opts: %{},
       scope: :operative
     }

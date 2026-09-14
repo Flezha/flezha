@@ -78,7 +78,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
       id: "ping_success_plugin",
       provider: QuietProvider,
       opts: %{report_to: test_pid},
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     operative = %Builder{
@@ -135,7 +135,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
       id: "unpark_plugin",
       provider: QuietProvider,
       opts: %{report_to: test_pid},
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     operative = %Builder{id: "unpark_operative", factory_id: @factory, opts: [plugins: [plugin]]}
@@ -213,7 +213,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
       id: "cascade_plugin",
       provider: QuietProvider,
       opts: %{report_to: test_pid},
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     operative = %Builder{

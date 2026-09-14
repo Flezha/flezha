@@ -171,7 +171,7 @@ defmodule Flezha.Schedule.JobTest do
 
       spec =
         ~s([{"id":"reports","provider":"operative_kafka_producer",) <>
-          ~s("subscriptions":["on_output"],"opts":{"topic":"ai.reports.v1"}}])
+          ~s("hooks":["on_output"],"opts":{"topic":"ai.reports.v1"}}])
 
       pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
@@ -185,7 +185,7 @@ defmodule Flezha.Schedule.JobTest do
       assert plugin.provider == Flezha.Plugin.Provider.Kafka.Producer
       # The decoded form is the boundary shape; `Extension.Table.canonicalise/2`
       # resolves the name against the host catalog at subscribe time.
-      assert plugin.subscriptions == [{"on_output", []}]
+      assert plugin.hooks == [{"on_output", []}]
       assert plugin.opts == %{topic: "ai.reports.v1"}
     end
 
@@ -206,7 +206,7 @@ defmodule Flezha.Schedule.JobTest do
         flunk("an undecodable plugin spec must not reach the start path")
       end)
 
-      spec = ~s([{"id":"reports","provider":"retired_provider","subscriptions":["on_output"]}])
+      spec = ~s([{"id":"reports","provider":"retired_provider","hooks":["on_output"]}])
       pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
 
       log =

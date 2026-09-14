@@ -150,7 +150,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
       operative_id: operative_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
 
     %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: [plugins: [sink]]}

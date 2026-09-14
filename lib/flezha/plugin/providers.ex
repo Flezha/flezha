@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Providers do
   configuration entry, no supervisor veneer, no second list to keep in step. An
   installed package's provisions are added at run time through `add/2` and are
   resolved by `flz plugin enable`, `--plugins` decoding and `flz plugin list`
-  exactly as a first-party row is; disabling a package drops its subscriptions
+  exactly as a first-party row is; disabling a package drops its hooks
   and leaves its rows, because its modules stay loaded.
 
   Run-time rows live in a `:persistent_term` rather than the application
@@ -34,7 +34,7 @@ defmodule Flezha.Plugin.Providers do
     "operative_forward" => Provider.OperativeForward,
     # An `:on_message` provider that forwards a `{:flezha_request, key, payload,
     # reply_to, ref}` envelope to the SDK-side operative. Attach at operative
-    # start with a subscription keyed on the handler key, e.g.
+    # start with a hook keyed on the handler key, e.g.
     # `["on_message", {"key": "fetch_init_state"}]`.
     "operative_message_forward" => Provider.MessageForward
   }

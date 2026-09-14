@@ -449,7 +449,7 @@ defmodule Flezha.Service.Cli.Operative do
         operative_id: operative_id,
         namespace: namespace
       },
-      subscriptions: [{chain, []}]
+      hooks: [{chain, []}]
     }
 
     case PluginManager.enable_plugin(plugin_id, plugin) do

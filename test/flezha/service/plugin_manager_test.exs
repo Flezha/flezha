@@ -1,7 +1,7 @@
 defmodule Flezha.Service.PluginManagerTest do
   @moduledoc """
-  Asserts that `Flezha.Service.PluginManager` writes plugin
-  subscriptions through to the ProcessHub child-spec on every enable
+  Asserts that `Flezha.Service.PluginManager` writes plugins
+  and their hooks through to the ProcessHub child-spec on every enable
   and removes them on every disable.
 
   The post-`auto-restore-on-boot` ordering is **cspec-first**: the
@@ -167,10 +167,10 @@ defmodule Flezha.Service.PluginManagerTest do
     test "an enable refused for an ill-typed sub-option leaves no cspec entry", %{store: store} do
       plugin = %{
         build_plugin("typo_interval", topic: "a")
-        | subscriptions: [{"on_interval", %{"interval_ms" => "soon"}}]
+        | hooks: [{"on_interval", %{"interval_ms" => "soon"}}]
       }
 
-      assert {:error, {:invalid_subscription_opts, {:interval_ms, "soon"}}} =
+      assert {:error, {:invalid_hook_opts, {:interval_ms, "soon"}}} =
                PluginManager.enable_plugin("typo_interval", plugin)
 
       assert [] = read_plugins(store)
@@ -182,10 +182,10 @@ defmodule Flezha.Service.PluginManagerTest do
 
       plugin = %{
         build_plugin("typo_name", topic: "a")
-        | subscriptions: [{name, %{}}]
+        | hooks: [{name, %{}}]
       }
 
-      assert {:error, {:unknown_extension, ^name}} =
+      assert {:error, {:unknown_hook, ^name}} =
                PluginManager.enable_plugin("typo_name", plugin)
 
       assert [] = read_plugins(store)
@@ -195,14 +195,50 @@ defmodule Flezha.Service.PluginManagerTest do
     test "what is persisted holds the coerced value, not the text", %{store: store} do
       plugin = %{
         build_plugin("typed_interval", topic: "a")
-        | subscriptions: [{"on_interval", %{"interval_ms" => "5000"}}]
+        | hooks: [{"on_interval", %{"interval_ms" => "5000"}}]
       }
 
       assert {:ok, "plugin enabled"} = PluginManager.enable_plugin("typed_interval", plugin)
 
-      assert [{"typed_interval", %Plugin{subscriptions: subs}}] = read_plugins(store)
+      assert [{"typed_interval", %Plugin{hooks: subs}}] = read_plugins(store)
       assert subs == [{:on_interval, [interval_ms: 5_000]}]
     end
+  end
+
+  describe "a CLI enable refuses a plain option it does not read" do
+    # Fails when: a word the enable never reads, a removed flag or one a help
+    # screen advertised, is dropped, so the plugin is enabled with less than the
+    # operator wrote and the command reports success.
+    test "the option is named and nothing is written", %{store: store} do
+      for key <- ["trigger", "position"] do
+        err =
+          ExUnit.CaptureIO.capture_io(:stderr, fn ->
+            assert {:shutdown, 1} = catch_exit(cli_enable("unread_#{key}", %{key => "on_output"}))
+          end)
+
+        assert err =~ "--#{key}"
+        assert err =~ "--X<key>"
+        assert [] = read_plugins(store)
+      end
+
+      # The same enable without the unread word is written, so the empty store
+      # above is the refusal's doing.
+      assert ExUnit.CaptureIO.capture_io(fn -> cli_enable("read_all", %{}) end) =~
+               "enabled successfully"
+
+      assert [{"read_all", %Plugin{}}] = read_plugins(store)
+    end
+  end
+
+  defp cli_enable(plugin_id, extra_opts) do
+    scope = %{"namespace" => @namespace, "operative_id" => @operative_id}
+
+    Flezha.Service.CliManager.enable_plugin(
+      plugin_id,
+      "operative_stdout",
+      "{}",
+      Jason.encode!(Map.merge(scope, extra_opts))
+    )
   end
 
   describe "disable_plugin/1 cspec persistence" do
@@ -436,7 +472,7 @@ defmodule Flezha.Service.PluginManagerTest do
       id: id,
       provider: __MODULE__.NoopProvider,
       opts: Map.new(opts),
-      subscriptions: [{:on_output, []}],
+      hooks: [{:on_output, []}],
       namespace: @namespace,
       operative_id: @operative_id
     )

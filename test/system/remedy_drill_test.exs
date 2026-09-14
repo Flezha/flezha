@@ -361,7 +361,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
         id: undeclared,
         provider: OwnedPidProvider,
         opts: %{},
-        subscriptions: [{:on_input, [position: 1]}],
+        hooks: [{:on_input, [position: 1]}],
         namespace: namespace,
         operative_id: id
       })
@@ -473,7 +473,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
         operative_id: operative_id,
         provider: OwnedPidProvider,
         opts: %{},
-        subscriptions: [{:on_input, [position: 0]}]
+        hooks: [{:on_input, [position: 0]}]
       })
 
     :ok
@@ -486,7 +486,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       operative_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
   end
 

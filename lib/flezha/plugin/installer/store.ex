@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.Installer.Store do
   @moduledoc """
   DETS-backed catalog of installed plugins, keyed by `plugin_id` (binary).
   Tracks which packages have been installed on this node and which are
-  enabled — orthogonal to which `%Flezha.Plugin{}` subscriptions are
+  enabled — orthogonal to which `%Flezha.Plugin{}` hooks are
   live right now (that lives in `Flezha.Service.PluginManager`'s state).
 
   Rows live at `<plugin_root>/installed_plugins.dets`, alongside the

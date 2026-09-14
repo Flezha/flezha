@@ -411,21 +411,19 @@ controller_sh '
 
 # `--X…` flags are PROVIDER options and reach `init_provider/1`; a provider
 # with a strict allow-list refuses every key it does not own. Attachment
-# (`--operative_id`) and subscription (`--trigger`) are plain CLI options,
-# consumed by `CliManager.enable_plugin/4` before the provider ever sees the
-# map. `position` is a subscription sub-option and applies only to the ordered
-# kinds (`:fold`, `:transform`) — `on_interval` is a `:timer`, so it has none.
+# (`--operative_id`) is a plain CLI option and `--hook` names what the plugin
+# sends; the enable refuses any other plain option. The websocket plugin is a
+# source here, so it has no hook.
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
 flz plugin enable "${PLUGIN_WS_ID}" operative_websocket \
   --operative_id="${OPERATIVE_ID}" \
-  --trigger="proactive" \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}'
 
 note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
 flz plugin enable "${PLUGIN_KAFKA_ID}" operative_kafka_producer \
   --operative_id="${OPERATIVE_ID}" \
-  --trigger=on_output \
+  --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic="${OPERATIVE_ID}.test.v1"
 

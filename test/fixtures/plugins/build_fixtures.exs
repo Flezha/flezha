@@ -221,7 +221,7 @@ defmodule BuildFixtures do
         %{
           id: "main",
           provider: #{hd(mods)},
-          subscriptions: [{:on_input, []}],
+          hooks: [{:on_input, []}],
           default_opts: %{},
           scope: :operative
         }

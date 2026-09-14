@@ -341,7 +341,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       namespace: :default,
       operative_id: "drill-op",
       opts: minimal_opts(provider),
-      subscriptions: [subscription(hd(wrapper.__provider__().extensions))]
+      hooks: [subscription(hd(wrapper.__provider__().extensions))]
     }
   end
 

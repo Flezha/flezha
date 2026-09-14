@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Host do
   @moduledoc """
-  Macro used by a module that exposes extension points (e.g.
+  Macro used by a module that exposes hooks (e.g.
   `Flezha.Operative.Overwatch`).
 
       use Flezha.Plugin.Host, extensions: [

@@ -313,7 +313,7 @@ defmodule Flezha.Plugin.Installer do
   defp ensure_ids_match(new_id, existing_id),
     do: {:error, {:id_mismatch, new_id, existing_id}}
 
-  # Hot-swap sequence: disable live subscriptions, quiesce in-flight tasks,
+  # Hot-swap sequence: disable the live plugins, quiesce in-flight tasks,
   # purge old modules, load new modules, re-subscribe with new manifest.
   defp hot_swap_modules(plugin_id, old_status, _old_modules, new_beams, new_dir, _opts) do
     if old_status == :enabled do
@@ -542,7 +542,7 @@ defmodule Flezha.Plugin.Installer do
       namespace: Keyword.get(opts, :namespace) || Map.get(merged_opts, :namespace),
       operative_id: Keyword.get(opts, :operative_id) || Map.get(merged_opts, :operative_id),
       opts: merged_opts,
-      subscriptions: provision[:subscriptions] || []
+      hooks: provision[:hooks]
     }
   end
 

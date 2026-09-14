@@ -80,7 +80,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
           linger_ms: 10,
           plugin_id: "tier_pg_sink_#{operative_id}"
         }),
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
 
     builder = %Builder{

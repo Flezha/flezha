@@ -108,7 +108,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
         operative_id: operative_id,
         provider: FlezhaTest.SickProvider,
         opts: %{},
-        subscriptions: [{:on_output, []}]
+        hooks: [{:on_output, []}]
       })
 
     {:ok, ow} = HubManager.get_pid(namespace, operative_id)

@@ -166,11 +166,11 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   describe "subscription canonicalisation" do
     test "every sub-option coerces from the text an operator types" do
-      assert {:ok, %Plugin{subscriptions: subs}} =
+      assert {:ok, %Plugin{hooks: subs}} =
                Table.canonicalise(@catalog, %Plugin{
                  id: "c",
                  provider: MsgEcho,
-                 subscriptions: [
+                 hooks: [
                    {"on_interval", %{"interval_ms" => "5000"}},
                    {"on_operative_init",
                     %{"position" => "1", "timeout_ms" => "1000", "on_error" => "empty"}},
@@ -195,7 +195,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         {:on_snapshot, []}
       ]
 
-      plugin = %Plugin{id: "c", provider: MsgEcho, subscriptions: canonical}
+      plugin = %Plugin{id: "c", provider: MsgEcho, hooks: canonical}
 
       assert {:ok, ^plugin} = Table.canonicalise(@catalog, plugin)
     end
@@ -207,32 +207,32 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
             {"on_operative_init", %{"on_error" => "shrug"}, {:on_error, "shrug"}},
             {"on_message", %{"key" => 7}, {:key, 7}}
           ] do
-        assert {:error, {:invalid_subscription_opts, ^expected}} =
+        assert {:error, {:invalid_hook_opts, ^expected}} =
                  Table.canonicalise(@catalog, %Plugin{
                    id: "c",
                    provider: MsgEcho,
-                   subscriptions: [{name, opts}]
+                   hooks: [{name, opts}]
                  })
       end
     end
 
     test "a sub-option the kind does not declare is refused" do
-      assert {:error, {:unknown_subscription_opt, :timer, "interval"}} =
+      assert {:error, {:unknown_hook_opt, :timer, "interval"}} =
                Table.canonicalise(@catalog, %Plugin{
                  id: "c",
                  provider: MsgEcho,
-                 subscriptions: [{"on_interval", %{"interval" => "5000"}}]
+                 hooks: [{"on_interval", %{"interval" => "5000"}}]
                })
     end
 
     test "an unknown extension name is refused without being interned" do
       name = "on_never_declared_#{System.unique_integer([:positive])}"
 
-      assert {:error, {:unknown_extension, ^name}} =
+      assert {:error, {:unknown_hook, ^name}} =
                Table.canonicalise(@catalog, %Plugin{
                  id: "c",
                  provider: MsgEcho,
-                 subscriptions: [{name, %{}}]
+                 hooks: [{name, %{}}]
                })
 
       assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
@@ -245,32 +245,32 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "f", %Plugin{
           id: "f",
           provider: FoldA,
-          subscriptions: [{"on_operative_init", %{"position" => "0"}}]
+          hooks: [{"on_operative_init", %{"position" => "0"}}]
         })
 
       {:ok, table} =
         subscribe(table, "t", %Plugin{
           id: "t",
           provider: TransformUpcase,
-          subscriptions: [{"on_input", %{"position" => "0"}}]
+          hooks: [{"on_input", %{"position" => "0"}}]
         })
 
       assert [%{position: 0}] = Map.fetch!(table.subs, :on_operative_init)
       assert [%{position: 0}] = Map.fetch!(table.subs, :on_input)
 
       for {provider, name} <- [{FoldA, "on_operative_init"}, {TransformUpcase, "on_input"}] do
-        assert {:error, {_id, {:invalid_subscription_opts, {:position, "first"}}}} =
+        assert {:error, {_id, {:invalid_hook_opts, {:position, "first"}}}} =
                  subscribe(table, "bad", %Plugin{
                    id: "bad",
                    provider: provider,
-                   subscriptions: [{name, %{"position" => "first"}}]
+                   hooks: [{name, %{"position" => "first"}}]
                  })
 
-        assert {:error, {_id, {:invalid_subscription_opts, {:position, -1}}}} =
+        assert {:error, {_id, {:invalid_hook_opts, {:position, -1}}}} =
                  subscribe(table, "bad", %Plugin{
                    id: "bad",
                    provider: provider,
-                   subscriptions: [{name, %{"position" => "-1"}}]
+                   hooks: [{name, %{"position" => "-1"}}]
                  })
       end
     end
@@ -282,7 +282,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "e", %Plugin{
           id: "e",
           provider: FoldErr,
-          subscriptions: [{"on_operative_init", %{"on_error" => "empty"}}]
+          hooks: [{"on_operative_init", %{"on_error" => "empty"}}]
         })
 
       ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
@@ -295,11 +295,11 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "unknown extension rejected at subscribe" do
       table = Table.new(@catalog)
 
-      assert {:error, {_id, {:unknown_extension, :nope}}} =
+      assert {:error, {_id, {:unknown_hook, :nope}}} =
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 subscriptions: [{:nope, []}]
+                 hooks: [{:nope, []}]
                })
     end
 
@@ -310,7 +310,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 subscriptions: [{:on_input, []}]
+                 hooks: [{:on_input, []}]
                })
     end
 
@@ -327,7 +327,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                    id: "x",
                    provider: provider,
                    opts: %{pid: self()},
-                   subscriptions: [{name, opts}]
+                   hooks: [{name, opts}]
                  })
       end
     end
@@ -339,36 +339,36 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "a", %Plugin{
           id: "a",
           provider: MsgEcho,
-          subscriptions: [{:on_message, [key: "k"]}]
+          hooks: [{:on_message, [key: "k"]}]
         })
 
       assert {:error, {_id, {:key_conflict, :on_message, "k"}}} =
                subscribe(table, "b", %Plugin{
                  id: "b",
                  provider: MsgEcho,
-                 subscriptions: [{:on_message, [key: "k"]}]
+                 hooks: [{:on_message, [key: "k"]}]
                })
     end
 
     test "invalid timeout rejected on :fold" do
       table = Table.new(@catalog)
 
-      assert {:error, {_id, {:invalid_subscription_opts, {:timeout_ms, :bad}}}} =
+      assert {:error, {_id, {:invalid_hook_opts, {:timeout_ms, :bad}}}} =
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 subscriptions: [{:on_operative_init, [timeout_ms: :bad]}]
+                 hooks: [{:on_operative_init, [timeout_ms: :bad]}]
                })
     end
 
     test "invalid on_error rejected on :fold" do
       table = Table.new(@catalog)
 
-      assert {:error, {_id, {:invalid_subscription_opts, {:on_error, :weird}}}} =
+      assert {:error, {_id, {:invalid_hook_opts, {:on_error, :weird}}}} =
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 subscriptions: [{:on_operative_init, [on_error: :weird]}]
+                 hooks: [{:on_operative_init, [on_error: :weird]}]
                })
     end
   end
@@ -460,7 +460,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "crashing",
           provider: unquote(provider),
           opts: %{},
-          subscriptions: [{:on_input, []}]
+          hooks: [{:on_input, []}]
         }
 
         {result, log} =
@@ -481,7 +481,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "heal",
           provider: CrashingOnReprepare,
           opts: %{mode: unquote(mode)},
-          subscriptions: [{:on_input, []}]
+          hooks: [{:on_input, []}]
         }
 
         {:ok, table} = subscribe(Table.new(@catalog), "heal", plugin)
@@ -501,7 +501,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         id: "declined",
         provider: FoldErrInit,
         opts: %{},
-        subscriptions: [{:on_input, []}]
+        hooks: [{:on_input, []}]
       }
 
       assert {:error, {_id, :declined}} =
@@ -549,7 +549,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, plugin_id, %Plugin{
           id: plugin_id,
           provider: FoldA,
-          subscriptions: [{:on_operative_init, []}]
+          hooks: [{:on_operative_init, []}]
         })
 
       table
@@ -585,7 +585,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "a", %Plugin{
           id: "a",
           provider: FoldA,
-          subscriptions: [{:on_operative_init, []}]
+          hooks: [{:on_operative_init, []}]
         })
 
       assert table.active_mask != 0
@@ -606,7 +606,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         ] do
       test "#{name} sets its bit on the first subscriber and clears it on the last" do
         plugin = fn id, o ->
-          %Plugin{id: id, provider: MaskProvider, subscriptions: [{unquote(name), o}]}
+          %Plugin{id: id, provider: MaskProvider, hooks: [{unquote(name), o}]}
         end
 
         empty = Table.new(@catalog)

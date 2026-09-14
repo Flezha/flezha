@@ -111,9 +111,9 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   @doc """
   Teardown is the host's: it kills the pid `activate/1` returned, on both
-  unsubscribe and full teardown. This callback exists so the provider is
-  subscribable at all — every subscription requires the matching export, and a
-  spec with no subscriptions is refused — and so a `:on_terminate` spec reads
+  unsubscribe and full teardown. This callback exists so the provider can be
+  hooked at all — every hook requires the matching export, and a spec with no
+  hooks is refused — and so a `:on_terminate` spec reads
   as the intent it is.
   """
   @impl true

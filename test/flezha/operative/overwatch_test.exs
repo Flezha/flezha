@@ -63,7 +63,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
           }
         }
       },
-      subscriptions: [{:on_operative_init, []}]
+      hooks: [{:on_operative_init, []}]
     }
 
     operative = %Builder{
@@ -96,7 +96,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
         report_to: self(),
         return: %{"binary_inputs" => [], "text_inputs" => ["FROM_PLUGIN"]}
       },
-      subscriptions: [{:on_operative_init, []}]
+      hooks: [{:on_operative_init, []}]
     }
 
     operative = %Builder{
@@ -138,7 +138,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
           "store_input_procedure" => %{"binary_inputs" => [], "text_inputs" => ["x"]}
         }
       },
-      subscriptions: [{:on_operative_init, []}]
+      hooks: [{:on_operative_init, []}]
     }
 
     operative = %Builder{
@@ -168,7 +168,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       id: "fail",
       provider: FailProvider,
       opts: %{},
-      subscriptions: [{:on_operative_init, []}]
+      hooks: [{:on_operative_init, []}]
     }
 
     operative = %Builder{
@@ -336,7 +336,7 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
       id: "stamp_probe_plugin",
       provider: ProbeProvider,
       opts: %{report_to: self()},
-      subscriptions: [on_output: []],
+      hooks: [on_output: []],
       namespace: "default",
       operative_id: "operative-1"
     }
@@ -511,7 +511,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
       id: plugin_id,
       provider: ProbeProvider,
       opts: %{report_to: self(), tag: :runtime_subscribe},
-      subscriptions: [on_input: []],
+      hooks: [on_input: []],
       namespace: "default",
       operative_id: "test_operative"
     }
@@ -546,7 +546,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
       id: plugin_id,
       provider: ProbeProvider,
       opts: %{report_to: self(), tag: :handover_rehydrate},
-      subscriptions: [on_input: []],
+      hooks: [on_input: []],
       namespace: "default",
       operative_id: "test_operative_handover"
     }
@@ -588,7 +588,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
         id: "src",
         provider: FlappyProvider,
         opts: %{},
-        subscriptions: [on_input: []],
+        hooks: [on_input: []],
         namespace: "default",
         operative_id: "heal_operative"
       }
@@ -637,7 +637,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
         id: "steady",
         provider: ProbeProvider,
         opts: %{report_to: self(), tag: :first_activation},
-        subscriptions: [on_input: []],
+        hooks: [on_input: []],
         namespace: "default",
         operative_id: "heal_operative"
       }

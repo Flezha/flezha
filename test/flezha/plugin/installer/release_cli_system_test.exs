@@ -183,7 +183,7 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
         %{
           id: "main",
           provider: #{first_mod},
-          subscriptions: [{:on_input, []}],
+          hooks: [{:on_input, []}],
           default_opts: %{},
           scope: :operative
         }

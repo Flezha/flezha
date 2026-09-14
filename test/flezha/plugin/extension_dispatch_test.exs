@@ -186,7 +186,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "a",
           provider: FoldA,
           opts: %{},
-          subscriptions: [{:on_operative_init, []}]
+          hooks: [{:on_operative_init, []}]
         })
 
       ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
@@ -203,7 +203,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "a",
           provider: FoldA,
           opts: %{},
-          subscriptions: [{:on_operative_init, [position: 0]}]
+          hooks: [{:on_operative_init, [position: 0]}]
         })
 
       {:ok, table} =
@@ -211,7 +211,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "b",
           provider: FoldB,
           opts: %{},
-          subscriptions: [{:on_operative_init, [position: 1]}]
+          hooks: [{:on_operative_init, [position: 1]}]
         })
 
       ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
@@ -228,7 +228,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "e",
           provider: FoldErr,
           opts: %{},
-          subscriptions: [{:on_operative_init, [on_error: :fail]}]
+          hooks: [{:on_operative_init, [on_error: :fail]}]
         })
 
       ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
@@ -243,7 +243,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "e",
           provider: FoldErr,
           opts: %{},
-          subscriptions: [{:on_operative_init, [on_error: :empty]}]
+          hooks: [{:on_operative_init, [on_error: :empty]}]
         })
 
       {:ok, table} =
@@ -251,7 +251,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "b",
           provider: FoldB,
           opts: %{},
-          subscriptions: [{:on_operative_init, [position: 1]}]
+          hooks: [{:on_operative_init, [position: 1]}]
         })
 
       ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
@@ -277,7 +277,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "u",
           provider: TransformUpcase,
           opts: %{},
-          subscriptions: [{:on_input, []}]
+          hooks: [{:on_input, []}]
         })
 
       ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "hi", metadata: %{}}
@@ -292,7 +292,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "s",
           provider: TransformSkip,
           opts: %{},
-          subscriptions: [{:on_input, [position: 0]}]
+          hooks: [{:on_input, [position: 0]}]
         })
 
       ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "x", metadata: %{}}
@@ -307,7 +307,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "u",
           provider: TransformUpcase,
           opts: %{},
-          subscriptions: [{:on_input, [position: 0]}]
+          hooks: [{:on_input, [position: 0]}]
         })
 
       {:ok, table} =
@@ -315,7 +315,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "err",
           provider: TransformError,
           opts: %{},
-          subscriptions: [{:on_input, [position: 1]}]
+          hooks: [{:on_input, [position: 1]}]
         })
 
       ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "hi", metadata: %{}}
@@ -348,7 +348,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "r",
           provider: FanoutRaise,
           opts: %{pid: self()},
-          subscriptions: [{:on_snapshot, []}]
+          hooks: [{:on_snapshot, []}]
         })
 
       {:ok, table} =
@@ -356,7 +356,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "n",
           provider: FanoutNotify,
           opts: %{pid: self()},
-          subscriptions: [{:on_snapshot, []}]
+          hooks: [{:on_snapshot, []}]
         })
 
       ctx = %Ctx.Snapshot{operative_id: "p", namespace: :n, snapshot: nil}
@@ -401,7 +401,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "e",
           provider: MsgEcho,
           opts: %{},
-          subscriptions: [{:on_message, [key: "echo"]}]
+          hooks: [{:on_message, [key: "echo"]}]
         })
 
       ref = make_ref()

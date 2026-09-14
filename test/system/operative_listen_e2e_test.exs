@@ -273,7 +273,7 @@ defmodule FlezhaTest.System.OperativeListenE2ETest do
       operative_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: pid},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
   end
 end

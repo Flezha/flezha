@@ -234,10 +234,10 @@ pub(crate) enum Open {
     /// Every word is a declared option or a declared positional.
     Closed,
     /// A settings document rides with the declared words: `X<key>=<value>`
-    /// provider settings, the `--extension NAME` families, and the plain
-    /// `--key value` pairs a provider's own options map carries. Those keys
-    /// belong to the provider and not to this surface, so the walk steps over
-    /// them and `Reading::rest` hands them on unread.
+    /// provider settings, the `--hook NAME` families, and the plain
+    /// `--key value` options the controller reads beside them. Those keys
+    /// belong to the provider or the controller and not to this surface, so the
+    /// walk steps over them and `Reading::rest` hands them on unread.
     Settings,
 }
 

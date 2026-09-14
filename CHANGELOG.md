@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed: a plugin's hooks have one name, and an enable refuses an option it does not read
+
+The point at which an operative calls a plugin is a hook everywhere an operator
+types or reads it. This breaks every command, spec and manifest that used the
+old words:
+
+- `flz plugin enable --extension=<name>` is `--hook=<name>`. Sub-options stay
+  `--<name>.<key>=<value>`.
+- `--trigger` is removed. Delete `--trigger none`; `--trigger on_input` and
+  `on_output` become `--hook=on_input` and `--hook=on_output`; `--trigger
+  interval` and `proactive` become `--hook=on_interval
+  --on_interval.interval_ms=5000`. There is no default interval.
+- `flz plugin enable` refuses a plain option it does not read, naming it,
+  instead of dropping it. It reads `--namespace`, `--operative_id` and `--hook`;
+  provider settings stay `--X<key>=<value>`.
+- `"subscriptions"` is `"hooks"` in the `--plugins` spec of `flz operative
+  start` and `flz schedule add` and in the fields of an admin `enable_plugin`
+  call in every SDK. `subscriptions:` is `hooks:` in a package `manifest.exs`,
+  in `Flezha.Plugin.new/1` and in `%Flezha.Plugin{}`.
+- Refusals name hooks: `:unknown_hook`, `:invalid_hook`, `:invalid_hook_opts`,
+  `:unknown_hook_opt` and `:invalid_hooks`. `flz operative info` prints `hook:`
+  lines and its JSON carries `hooks` as `{"name", "opts"}` objects, and `flz
+  plugin help <provider_id>` lists `SUPPORTED HOOKS:`.
+- Controller state written by an earlier build holds plugin records this build
+  does not read. Run `flz reset` before starting this build over it. A package
+  installed by an earlier build is refused when enabled; install it again, or
+  clear the catalog with `flz reset --include-plugins`.
+
 ### Changed: plugin help names the real provider id, and `help/0` becomes `help/1`
 
 `flz plugin help <provider_id>` names the id the enable takes and lists only the

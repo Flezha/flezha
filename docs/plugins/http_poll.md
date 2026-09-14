@@ -13,7 +13,7 @@ telemetry and limits.
 | | |
 | --- | --- |
 | Plugin type | `:io_binding` |
-| Extension points | `:on_terminate` — the poller drives itself; the subscription exists because every plugin needs at least one |
+| Hooks | `:on_terminate`: the poller drives itself; the hook is there because a plugin spec must name at least one |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |
 | Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only when its SHA-256 differs from the last delivered one |
 | Delivery | the confirming ingest — the hash advances only once the operative has taken the payload |
@@ -32,7 +32,7 @@ Flezha.Service.PluginManager.enable_plugin(
     opts: %{url: "https://api.internal/internal/signal-config", channel: "config_in", interval_ms: 30_000},
     namespace: "default",
     operative_id: "detector",
-    subscriptions: [{:on_terminate, []}]
+    hooks: [{:on_terminate, []}]
   )
 )
 ```
@@ -50,7 +50,7 @@ As a plugin spec at operative start (`flz operative start --plugins`):
       "interval_ms": "30000",
       "headers": "{\"authorization\":\"Bearer ${TOKEN}\"}"
     },
-    "subscriptions": ["on_terminate"]
+    "hooks": ["on_terminate"]
   }
 ]
 ```
@@ -175,7 +175,7 @@ costs one frame whether or not the content moved.
   block it.
 - A tick that lands while a request is outstanding is dropped: a slow endpoint stretches
   the cadence instead of stacking requests.
-- The host tracks the poller, kills it on unsubscribe and re-runs both phases when it
+- The host tracks the poller, kills it when the plugin is removed and re-runs both phases when it
   dies; the poller monitors the host in turn and cannot outlive the operative it feeds.
 
 ## Telemetry

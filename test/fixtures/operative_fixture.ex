@@ -71,7 +71,7 @@ defmodule FlezhaTest.Fixtures.OperativeFixture do
           operative_id: cid,
           provider: Flezha.Plugin.Provider.BeamMsgForward,
           opts: %{recv_pid: self()},
-          subscriptions: [{:on_output, []}]
+          hooks: [{:on_output, []}]
         }
       )
 

@@ -49,7 +49,7 @@ The archive MUST NOT contain any other top-level files or directories. The archi
 - `id`: binary matching `~r/^[a-z0-9][a-z0-9_]*$/` and no longer than 64 characters
 - `version`: binary parseable by `Version.parse/1` (SemVer)
 - `modules`: non-empty list of atoms — every module the package defines
-- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `subscriptions` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:operative` only in this release)
+- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `hooks` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:operative` only in this release)
 - `dependencies`: list of `{plugin_id, constraint}` where `constraint` is a Version-compatible requirement string (e.g. `">= 1.0.0"`, `"~> 2.3"`); MAY be `[]`
 
 The manifest MUST be evaluated inside a restricted binding that disables `import`, `require`, and `use`, and its abstract syntax tree MUST contain only literal nodes (maps, lists, tuples, atoms, binaries, integers, module aliases). The installer MUST reject any manifest whose AST contains function calls or variable references.
@@ -277,7 +277,7 @@ row's `status` updated to `:load_failed` but MUST NOT prevent other plugins from
 
 ### Requirement: Enable lifecycle
 
-`Flezha.Plugin.Installer.enable(plugin_id, opts)` SHALL, for each entry in the plugin's manifest `provides` list, construct a `%Flezha.Plugin{}` with that entry's `provider`, `subscriptions`, and `default_opts` merged with caller-supplied overrides, and invoke `Flezha.Service.PluginManager.enable_plugin/2`. Enable MUST fail if ANY of the `provides` entries fails to subscribe, MUST roll back any subscriptions that succeeded earlier in the call, and MUST NOT mutate the catalog row's status on failure.
+`Flezha.Plugin.Installer.enable(plugin_id, opts)` SHALL, for each entry in the plugin's manifest `provides` list, construct a `%Flezha.Plugin{}` with that entry's `provider`, `hooks`, and `default_opts` merged with caller-supplied overrides, and invoke `Flezha.Service.PluginManager.enable_plugin/2`. Enable MUST fail if ANY of the `provides` entries fails to subscribe, MUST roll back any subscriptions that succeeded earlier in the call, and MUST NOT mutate the catalog row's status on failure.
 
 #### Scenario: Enable subscribes every provision
 - **WHEN** a plugin's manifest declares two entries in `provides` and `enable/2` is called
@@ -451,18 +451,6 @@ nor the provider module reaches a log line or a telemetry event.
 - **WHEN** an operative's persisted child spec carries a subscription for plugin id `k` whose provider is loaded (the package is `:enabled` in the installer catalog)
 - **THEN** `Flezha.Operative.Plugins.prepare/2` MUST subscribe that entry at bind exactly as it does a compiled-in plugin's, and `Plugins.activate/1` MUST then transition it to `:running`
 
-### Requirement: Hook subscription names use canonical Operative vocabulary
-
-Plugin installation SHALL accept subscription specs that reference extension hooks by their canonical names. The init-state hook is `:on_operative_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "operative". Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
-
-#### Scenario: Plugin subscribes to on_operative_init
-- **WHEN** a plugin subscription is installed with `subscriptions: [{:on_operative_init, [position: 0]}]`
-- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_operative_init`
-
-#### Scenario: Settings file with legacy hook name fails loud
-- **WHEN** the settings file contains a subscription to `:on_processor_init`
-- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_operative_init` silently
-
 ### Requirement: Settings payload schema uses canonical names
 
 The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operative_id`, `runner_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
@@ -542,4 +530,20 @@ or hold a second list of its own.
 - **WHEN** an installed package is disabled
 - **THEN** its provider rows SHALL remain in the table and its modules loaded,
   and only its subscriptions SHALL be dropped
+
+### Requirement: Hook names use canonical Operative vocabulary
+
+Plugin installation SHALL accept hook specs that reference hooks by their canonical names. The init-state hook is `:on_operative_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "operative". A manifest provision SHALL declare its hooks under the `hooks` key. Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
+
+#### Scenario: Plugin hooks on_operative_init
+- **WHEN** a plugin provision is installed with `hooks: [{:on_operative_init, [position: 0]}]`
+- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_operative_init`
+
+#### Scenario: A provision without a hooks key is refused
+- **WHEN** a manifest provision declares its hooks under any key other than `hooks`, or declares none
+- **THEN** installation MUST be refused as a manifest missing a required key, and nothing SHALL be enabled
+
+#### Scenario: Settings file with legacy hook name fails loud
+- **WHEN** the settings file contains a hook on `:on_processor_init`
+- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_operative_init` silently
 

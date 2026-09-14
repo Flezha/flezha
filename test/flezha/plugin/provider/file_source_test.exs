@@ -55,7 +55,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
         namespace: :default,
         operative_id: "file-source-op",
         opts: %{path: "events.ndjson", channel_in: @channel},
-        subscriptions: [{:on_terminate, []}]
+        hooks: [{:on_terminate, []}]
       }
 
       assert {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{plugin.id, plugin}])

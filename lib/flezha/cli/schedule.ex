@@ -217,8 +217,8 @@ defmodule Flezha.Service.Cli.Schedule do
   defp schedule_error_message({:unknown_provider, id}),
     do: "invalid --plugins: unknown provider #{id}"
 
-  defp schedule_error_message({:invalid_subscription, detail}),
-    do: "invalid --plugins subscription: #{inspect(detail)}"
+  defp schedule_error_message({:invalid_hook, detail}),
+    do: "invalid --plugins hook: #{inspect(detail)}"
 
   defp schedule_error_message({:invalid_opts, detail}),
     do: "invalid --plugins opts: #{inspect(detail)}"

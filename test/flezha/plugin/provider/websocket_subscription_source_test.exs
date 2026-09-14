@@ -398,7 +398,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
         id: "ws_plugin",
         provider: Websocket,
         opts: %{uri: "wss://test.local"},
-        subscriptions: []
+        hooks: []
       }
 
       table = %Table{plugins: %{"ws_plugin" => plugin}, subs: %{}}
@@ -416,7 +416,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
         id: "ws_plugin",
         provider: Websocket,
         opts: %{uri: "wss://test.local"},
-        subscriptions: []
+        hooks: []
       }
 
       table = %Table{
@@ -450,7 +450,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
         id: "ws_plugin",
         provider: Websocket,
         opts: %{uri: "wss://test.local"},
-        subscriptions: []
+        hooks: []
       }
 
       cspec = %{

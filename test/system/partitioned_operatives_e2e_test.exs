@@ -240,7 +240,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
           "id" => "fwd_#{suffix}",
           "provider" => "operative_forward",
           "opts" => %{"target_operative_id" => downstream},
-          "subscriptions" => [%{"name" => "on_output"}]
+          "hooks" => [%{"name" => "on_output"}]
         }
       ])
 

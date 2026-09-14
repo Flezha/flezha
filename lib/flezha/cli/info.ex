@@ -252,9 +252,9 @@ defmodule Flezha.Service.Cli.Info do
       %{
         id: plugin_id,
         provider: inspect(plugin.provider),
-        subscriptions:
-          Enum.map(plugin.subscriptions, fn {name, opts} ->
-            %{extension: Atom.to_string(name), opts: Map.new(opts)}
+        hooks:
+          Enum.map(plugin.hooks, fn {name, opts} ->
+            %{name: Atom.to_string(name), opts: Map.new(opts)}
           end),
         state: plugin_state(extensions, plugin_id, plugin)
       }
@@ -310,8 +310,8 @@ defmodule Flezha.Service.Cli.Info do
         Enum.each(plugins, fn {plugin_id, plugin} ->
           IO.puts("    - #{plugin_id}: #{inspect(plugin.provider)}")
 
-          Enum.each(plugin.subscriptions, fn {name, opts} ->
-            IO.puts("        subscription: #{name} #{inspect(opts)}")
+          Enum.each(plugin.hooks, fn {name, opts} ->
+            IO.puts("        hook: #{name} #{inspect(opts)}")
           end)
 
           display_plugin_state(plugin_state(extensions, plugin_id, plugin))

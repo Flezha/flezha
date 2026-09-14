@@ -466,7 +466,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       operative_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
   end
 

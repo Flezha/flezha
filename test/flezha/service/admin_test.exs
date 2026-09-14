@@ -224,6 +224,21 @@ defmodule Flezha.Service.AdminTest do
       assert record.metadata.namespace == @ns
     end
 
+    # Fails when: fields that still name their hooks `subscriptions` leave the
+    # requester waiting on a body that raised, or enable a plugin with no hooks.
+    test "an enable whose fields carry subscriptions is answered with an error" do
+      assert {:error, reason} =
+               Admin.call(
+                 @ns,
+                 "PluginManager.enable",
+                 ~s(["p_old", {"id": "p_old", "provider": "operative_stdout",
+                               "operative_id": "o1", "subscriptions": ["on_output"]}])
+               )
+
+      assert reason =~ "subscriptions"
+      refute Map.has_key?(Flezha.Service.PluginManager.get_plugins(), "p_old")
+    end
+
     test "the frame has no namespace field and no principal field" do
       names =
         %RunnerCommands.AdminRequest{}

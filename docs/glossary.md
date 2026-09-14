@@ -78,15 +78,22 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
   state, so a crash-resume owes exactly the timers it owed. See [`sdk/entity_timers.md`](sdk/entity_timers.md).
-- **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **extension
-  points** on a host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed
-  from a `.fpz` (`flz plugin install`), attached per operative (`flz plugin enable|disable`).
+- **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
+  host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed from a
+  `.fpz` (`flz plugin install`), attached per operative (`flz plugin enable|disable`).
   See [`plugins/lifecycle.md`](plugins/lifecycle.md).
+- **Hook**: a named point at which the platform calls a plugin, named by the provider callback it
+  runs: `on_input`, `on_output`, `on_interval`, `on_message`, `on_snapshot`, `on_terminate`, and
+  `on_operative_init` at operative start only. Chosen with `--hook=<name>` on `flz plugin enable`,
+  with its options written `--<name>.<key>=<value>`, or under `"hooks"` in a plugin spec and
+  `hooks:` in a package manifest. `on_interval` needs `interval_ms`; there is no default. A
+  plugin with no hooks still feeds its operative through its provider's own worker: hooks decide
+  only when the platform calls the plugin.
 - **Operative-to-operative messaging** — one operative's output delivered into another's input
   stream by the `OperativeForward` plugin on the source (same namespace, no self-targeting),
   retried until the target confirms. The guarantee is derived: a transactional-outbox source gets
   effectively-once across the hop, any other at-least-once. See [`plugins/operative_forward.md`](plugins/operative_forward.md).
-- **`:on_message`** — the synchronous request/reply extension point (`OperativeMessage` /
+- **`:on_message`** — the synchronous request/reply hook (`OperativeMessage` /
   `OperativeMessageResponse` on the control channel, `flz operative send`), as opposed to data
   flow into the input stream. See [`plugins/message_handlers.md`](plugins/message_handlers.md).
 - **First-party source plugins** — `HttpPoll` feeds an entry channel from a URL, injecting the

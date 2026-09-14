@@ -243,8 +243,8 @@ defmodule Flezha.Plugin.Provider.File do
     end
 
     @doc """
-    Teardown is the host's. This callback exists so the provider is
-    subscribable at all: every subscription requires the matching export.
+    Teardown is the host's. This callback exists so the provider can be
+    hooked at all: every hook requires the matching export.
     """
     @impl true
     def on_terminate(%Ctx.Terminate{}, _opts), do: :ok

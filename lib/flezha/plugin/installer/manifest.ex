@@ -166,10 +166,10 @@ defmodule Flezha.Plugin.Installer.Manifest do
     do: {:error, {:manifest_invalid, {:invalid_provides, provides}}}
 
   defp validate_provision(p, mod_set) when is_map(p) do
-    with :ok <- require_keys(p, [:id, :provider, :subscriptions, :scope]),
+    with :ok <- require_keys(p, [:id, :provider, :hooks, :scope]),
          id = Map.fetch!(p, :id),
          provider = Map.fetch!(p, :provider),
-         subs = Map.fetch!(p, :subscriptions),
+         subs = Map.fetch!(p, :hooks),
          scope = Map.fetch!(p, :scope),
          :ok <- require_binary(id, :invalid_provision_id),
          :ok <- require_module(provider, mod_set),
@@ -213,15 +213,15 @@ defmodule Flezha.Plugin.Installer.Manifest do
       {name, opts}, _ when is_atom(name) and is_list(opts) ->
         if Keyword.keyword?(opts),
           do: {:cont, :ok},
-          else: {:halt, {:error, {:manifest_invalid, {:invalid_subscription_opts, opts}}}}
+          else: {:halt, {:error, {:manifest_invalid, {:invalid_hook_opts, opts}}}}
 
       other, _ ->
-        {:halt, {:error, {:manifest_invalid, {:invalid_subscription, other}}}}
+        {:halt, {:error, {:manifest_invalid, {:invalid_hook, other}}}}
     end)
   end
 
   defp require_subscriptions(subs),
-    do: {:error, {:manifest_invalid, {:invalid_subscriptions, subs}}}
+    do: {:error, {:manifest_invalid, {:invalid_hooks, subs}}}
 
   defp require_scope(:operative), do: :ok
   defp require_scope(scope), do: {:error, {:manifest_invalid, {:unsupported_scope, scope}}}

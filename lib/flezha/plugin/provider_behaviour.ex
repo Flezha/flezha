@@ -175,7 +175,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   """
   @callback terminate_provider(opts :: map()) :: :ok
 
-  @doc "Dispatch callbacks. A provider implements the ones it subscribes to."
+  @doc "Dispatch callbacks. A provider implements the ones it can be hooked on."
   @callback on_operative_init(ctx :: struct(), opts :: map()) :: term()
   @callback on_input(ctx :: struct(), opts :: map()) :: term()
   @callback on_output(ctx :: struct(), opts :: map()) :: term()
@@ -223,7 +223,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @spec lifecycle_callbacks() :: keyword(arity())
   def lifecycle_callbacks(), do: @lifecycle_callbacks
 
-  @doc "The dispatch callbacks a subscription can name."
+  @doc "The dispatch callbacks a hook can name."
   @spec extension_callbacks() :: [atom()]
   def extension_callbacks(), do: @extension_callbacks
 
@@ -308,7 +308,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def refuse_value(field, value), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
 
   @doc """
-  Is this plugin subscribed to a direction that carries a payload — `on_input`
+  Does this plugin have a hook on a direction that carries a payload — `on_input`
   or `on_output`?
 
   Read from the host-injected `:subscribed_extensions`, so a provider that
@@ -325,9 +325,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   operative, `:out` when the plugin acts on the records passing through it.
   Both, one, or neither.
 
-  The two are independent and neither implies the other. A subscription to
+  The two are independent and neither implies the other. A hook on
   `on_input` means "act on a payload entering the operative", never "inject
-  one": the Kafka producer subscribed to `on_input` publishes what the operative
+  one": the Kafka producer hooked on `on_input` publishes what the operative
   ingested and feeds nothing. So feeding is a provider DECLARATION and acting on
   the chain is read from the host-injected `:subscribed_extensions`, which is
   what `io_bound?/1` answers — the `:out` half, and the one read of that list.
@@ -610,7 +610,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :source_plugin_id,
     :effectively_once,
     :owned_pid,
-    # Which of its provider's callbacks this plugin is actually subscribed to.
+    # Which of its provider's callbacks this plugin actually has hooks on.
     # A provider that costs nothing until it is bound needs it: the declaration
     # says what it CAN do and this says what it was asked to do.
     :subscribed_extensions,

@@ -17,7 +17,7 @@ cross-hop delivery guarantee itself is specified in
 | | |
 |---|---|
 | Plugin type | `:io_binding` |
-| Extension points | `:on_output` (feed a downstream operative), `:on_input` (pass-through tap) |
+| Hooks | `:on_output` (feed a downstream operative), `:on_input` (pass-through tap) |
 | Destination | an operative in the **same namespace** |
 | Delivery | asynchronous; the callback enqueues and returns |
 | Retry | until the target confirms, capped exponential backoff |
@@ -33,7 +33,7 @@ Flezha.Service.PluginManager.enable_plugin(
     opts: %{target_operative_id: "critic"},
     namespace: "default",
     operative_id: "coder",
-    subscriptions: [{:on_output, []}]
+    hooks: [{:on_output, []}]
   )
 )
 ```
@@ -141,7 +141,7 @@ Overwatch.
 
 The worker delivers through
 `Flezha.Service.OperativeManager.send_io_confirming/5`, which runs the target's
-single pre-delivery ingest path — the `:on_input` extension chain, then the
+single pre-delivery ingest path — the `:on_input` hook chain, then the
 input journal — and answers what happened.
 
 | Verdict | Meaning | Worker action |

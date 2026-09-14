@@ -209,7 +209,7 @@ The provider SHALL accept `subscription_items` — a literal item list feeding t
 
 ### Requirement: A websocket plugin SHALL name its entry channel with an option
 
-`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `operative-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin is also subscribed to a chain extension, and `channel_in` names it alone in every case.
+`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `operative-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin also has a chain hook, and `channel_in` names it alone in every case.
 
 Before this, the provider had no option naming its entry channel and an operator had to write the `"channel"` key into `payload_metadata`, the general label bag, which is neither discoverable in the provider's help screen nor distinguishable from the provider's own `channel` option pointing the other way.
 
@@ -217,7 +217,7 @@ Before this, the provider had no option naming its entry channel and an operator
 
 #### Scenario: A receive-only plugin names its entry channel
 
-- **GIVEN** a websocket plugin subscribed to no chain extension
+- **GIVEN** a websocket plugin with no chain hook
 - **WHEN** it is enabled with `channel: "us"` and a frame arrives on its socket
 - **THEN** the frame SHALL be injected on the entry channel named `us`
 
@@ -233,7 +233,7 @@ Before this, the provider had no option naming its entry channel and an operator
 
 #### Scenario: A plugin doing both jobs names each end
 
-- **GIVEN** a websocket plugin subscribed to `on_output`
+- **GIVEN** a websocket plugin with an `on_output` hook
 - **WHEN** it is enabled with `channel_in: "requests"` and `channel_out: "responses"`
 - **THEN** an arriving frame SHALL be injected on `requests`
 - **AND** only outputs whose metadata names `responses` SHALL be sent on the socket

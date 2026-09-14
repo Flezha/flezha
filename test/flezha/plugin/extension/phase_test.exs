@@ -193,7 +193,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   end
 
   defp subscribed(provider, id \\ "p1") do
-    plugin = %Plugin{id: id, provider: provider, subscriptions: [{:on_input, [position: 0]}]}
+    plugin = %Plugin{id: id, provider: provider, hooks: [{:on_input, [position: 0]}]}
     {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{id, plugin}])
     table
   end
@@ -209,7 +209,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     plugin = %Plugin{
       id: "p1",
       provider: QuiescentProvider,
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     table = Table.new(@catalog)
@@ -223,7 +223,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       id: "p1",
       provider: TrackingProvider,
       opts: %{report_to: self(), marker: :first},
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     table = Table.new(@catalog)
@@ -244,7 +244,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     plugin = %Plugin{
       id: "p1",
       provider: QuiescentProvider,
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     table = Table.new(@catalog)
@@ -257,14 +257,14 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     quiescent = %Plugin{
       id: "qpro",
       provider: QuiescentProvider,
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     tracking = %Plugin{
       id: "tpro",
       provider: TrackingProvider,
       opts: %{report_to: self(), marker: :td},
-      subscriptions: [{:on_input, [position: 1]}]
+      hooks: [{:on_input, [position: 1]}]
     }
 
     table = Table.new(@catalog)
@@ -286,7 +286,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     plugin = %Plugin{
       id: "p1",
       provider: RaisingProvider,
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
 
     table = Table.new(@catalog)
@@ -428,14 +428,14 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       orphan = %Plugin{
         id: "orphan",
         provider: MyOrg.UninstalledProvider,
-        subscriptions: [{:on_input, [position: 0]}]
+        hooks: [{:on_input, [position: 0]}]
       }
 
       healthy = %Plugin{
         id: "healthy",
         provider: ReportingInitProvider,
         opts: %{report_to: self(), marker: :healthy},
-        subscriptions: [{:on_input, [position: 1]}]
+        hooks: [{:on_input, [position: 1]}]
       }
 
       %{entries: [{"orphan", orphan}, {"healthy", healthy}]}
@@ -464,6 +464,26 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       assert {:error, {:plugin_prepare_failed, plugin_id, reason}} = result
       assert plugin_id == "orphan"
       assert reason == {:module_not_loaded, MyOrg.UninstalledProvider}
+    end
+
+    # Fails when: a record an earlier build wrote, whose hooks sit under
+    # `subscriptions`, starts its plugin with no hooks instead of parking the
+    # operative on it. No reader of the old field exists, by design.
+    test "a record in the earlier shape parks the operative on that plugin" do
+      earlier =
+        %Plugin{id: "earlier", provider: ReportingInitProvider, opts: %{report_to: self()}}
+        |> Map.delete(:hooks)
+        |> Map.put(:subscriptions, [{:on_input, [position: 0]}])
+
+      state = %Overwatch{id: "op1", namespace: "default", extensions: Table.new(@catalog)}
+
+      {result, log} =
+        ExUnit.CaptureLog.with_log(fn -> Plugins.prepare(state, [{"earlier", earlier}]) end)
+
+      assert {:error, {:plugin_prepare_failed, "earlier", {:invalid_hook, :not_a_list}}} = result
+      assert log =~ "plugin_id=earlier"
+
+      refute_received {:init_provider, _}
     end
 
     test "the fold still halts: the row after the failure is never attempted",

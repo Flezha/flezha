@@ -62,7 +62,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       target: "ghost_op",
       args: %{
         plugin_id: "p",
-        plugin: %Plugin{id: "p", provider: __MODULE__.NoopProvider, opts: %{}, subscriptions: []}
+        plugin: %Plugin{id: "p", provider: __MODULE__.NoopProvider, opts: %{}, hooks: []}
       }
     },
     stop_plugin: %{namespace: "ghost_ns", target: "ghost_op", args: %{plugin_id: "p"}},
@@ -71,7 +71,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       target: "ghost_op",
       args: %{
         plugin_id: "p",
-        plugin: %Plugin{id: "p", provider: __MODULE__.NoopProvider, opts: %{}, subscriptions: []}
+        plugin: %Plugin{id: "p", provider: __MODULE__.NoopProvider, opts: %{}, hooks: []}
       }
     },
     evict_runner: %{namespace: nil, target: "ghost_runner", args: %{}},
@@ -194,7 +194,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     id: "p1",
     provider: __MODULE__.NoopProvider,
     opts: %{},
-    subscriptions: [],
+    hooks: [],
     namespace: "ns",
     operative_id: "r"
   }

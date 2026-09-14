@@ -171,7 +171,7 @@ defmodule Mix.Tasks.Bench.Extension do
       id: "kafka-bench",
       provider: KafkaBenchProvider,
       opts: %{producer_pid: worker},
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
   end
 
@@ -270,7 +270,7 @@ defmodule Mix.Tasks.Bench.Extension do
         id: "p#{i}",
         provider: BenchProvider,
         opts: %{},
-        subscriptions: [{:on_input, [position: i]}]
+        hooks: [{:on_input, [position: i]}]
       }
 
       {:ok, t} = Table.bulk_subscribe(acc, [{"p#{i}", plugin}])

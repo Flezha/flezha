@@ -68,7 +68,7 @@ Both providers print their path and their current verdict beneath the plugin in
 | | |
 | --- | --- |
 | Plugin type | `:io_binding` |
-| Extension points | `:on_terminate`: the reader drives itself; the subscription exists so the provider is subscribable |
+| Hooks | `:on_terminate`: the reader drives itself; the hook is there because a plugin spec must name at least one |
 | Upstream | one local file inside the root folder, polled every `poll_interval_ms` |
 | Injection | each line, without its newline, on the entry channel `channel` or `channel_in` names |
 | Delivery | the confirming ingest: the offset moves only once the operative has taken the line |
@@ -91,7 +91,7 @@ As a plugin spec at operative start (`flz operative start --plugins`):
     "id": "reader",
     "provider": "operative_file_source",
     "opts": {"path": "events.ndjson", "channel_in": "events"},
-    "subscriptions": ["on_terminate"]
+    "hooks": ["on_terminate"]
   }
 ]
 ```
@@ -199,7 +199,7 @@ idempotently. No line is skipped.
 | | |
 | --- | --- |
 | Plugin type | `:io_binding` |
-| Extension points | `:on_input`, `:on_output` |
+| Hooks | `:on_input`, `:on_output` |
 | Downstream | one local file inside the root folder, appended to; under `commit: rename`, a directory of parts |
 | Record | the message bytes followed by one newline, nothing else |
 | Delivery | a batch is written in one call and data-synced before any outbox hold in it is confirmed; under `rename`, once its part is committed |
@@ -209,13 +209,13 @@ idempotently. No line is skipped.
 ```bash
 flz plugin enable writer operative_file_sink \
   --operative_id=op1 \
-  --extension=on_output \
+  --hook=on_output \
   --Xpath=out/alerts.ndjson \
   --Xchannel_out=alerts
 ```
 
 `channel_out` restricts the sink to records whose metadata channel matches; absent, it
-writes every record it is subscribed to. Several names, comma-separated, write them
+writes every record its hook hands it. Several names, comma-separated, write them
 all. `channel` and `channel_in` are not parameters here: the sink feeds nothing.
 
 ### Parameters
@@ -265,7 +265,7 @@ twice. Choose `rename` where a duplicate line matters.
 ```bash
 flz plugin enable writer operative_file_sink \
   --operative_id=op1 \
-  --extension=on_output \
+  --hook=on_output \
   --Xpath=out/alerts \
   --Xcommit=rename \
   --Xroll_after_ms=5000

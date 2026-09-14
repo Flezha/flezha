@@ -2,11 +2,11 @@ defmodule Flezha.Service.PluginManager do
   @moduledoc """
   Per-node registry of enabled `%Flezha.Plugin{}` entries. Routes
   `enable_plugin/2` into the owning operative's Overwatch and persists the
-  subscription into that operative's ProcessHub child-spec, so it survives an
+  plugin into that operative's ProcessHub child-spec, so it survives an
   Overwatch restart, a controller restart and a cluster cold boot.
 
   Ordering is canonicalise, then durable write, then runtime mutation: an
-  ill-typed or unknown subscription is refused before any durable record
+  ill-typed or unknown hook is refused before any durable record
   exists, so the convergence loop is never handed intent that cannot be
   satisfied. The durable write is two records at one seam, the hub's registry
   row and its declared set, because only the declared set is read back after a
@@ -51,10 +51,10 @@ defmodule Flezha.Service.PluginManager do
 
   ## Public API
 
-  # Canonicalised here, before anything reads the subscriptions and before any
-  # durable write: the declaration-only half of validation needs no live table,
-  # only the host catalog. A refusal therefore costs nothing and leaves nothing,
-  # and `has_init_subscription?/1` below matches a name the operator typed as
+  # Canonicalised here, before anything reads the hooks and before any durable
+  # write: the declaration-only half of validation needs no live table, only the
+  # host catalog. A refusal therefore costs nothing and leaves nothing, and
+  # `refuse_init_subscription/1` below matches a name the operator typed as
   # text. What is persisted is the canonical struct.
   def enable_plugin(plugin_id, %Plugin{} = plugin) do
     with {:ok, plugin} <- Table.canonicalise(Overwatch.__extensions_catalog__(), plugin),
@@ -173,7 +173,7 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp refuse_init_subscription(%Plugin{subscriptions: subs}) do
+  defp refuse_init_subscription(%Plugin{hooks: subs}) do
     if Enum.any?(subs, &match?({:on_operative_init, _}, &1)),
       do: {:error, "init-state plugins must be attached at operative start"},
       else: :ok
@@ -462,7 +462,7 @@ defmodule Flezha.Service.PluginManager do
   end
 
   # The runtime half of a disable. The cspec write has already recorded the
-  # intent, so an operative that cannot be reached loses the subscription at
+  # intent, so an operative that cannot be reached loses the plugin at
   # its next `Overwatch.init/1`; what this answers is whether the live process
   # dropped it now. An operative that is gone has nothing to drop.
   defp unsubscribe(namespace, operative_id, plugin_id) do

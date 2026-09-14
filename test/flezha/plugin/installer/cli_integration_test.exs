@@ -132,7 +132,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
   end
 
   test "uninstall reports the refusal reason when plugin is enabled", %{tmp: tmp} do
-    # Even without a live operative to attach subscriptions to, we can
+    # Even without a live operative to attach hooks to, we can
     # force the catalog row to :enabled and verify uninstall refuses.
     unique = System.unique_integer([:positive])
     mod = "CliIntegration.Refuse#{unique}"

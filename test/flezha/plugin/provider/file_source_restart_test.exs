@@ -58,7 +58,7 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
         id: plugin_id,
         provider: Source,
         opts: %{path: "events.ndjson", channel_in: "events"},
-        subscriptions: [{:on_terminate, []}],
+        hooks: [{:on_terminate, []}],
         namespace: @namespace,
         operative_id: operative_id
       )

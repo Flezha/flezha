@@ -148,7 +148,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         id: "app_sink",
         provider: "operative_stdout",
         operative_id: "app_plugin_target",
-        subscriptions: [["on_output", %{}]]
+        hooks: [["on_output", %{}]]
       }
 
       {port, _runner_id} =

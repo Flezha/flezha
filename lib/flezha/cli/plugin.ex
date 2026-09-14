@@ -11,29 +11,20 @@ defmodule Flezha.Service.Cli.Plugin do
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.PluginManager
 
-  # Subscription directives, not provider options: they are consumed by
-  # `extract_subscriptions/2` and must not reach `init_provider/1`, which for a
-  # provider with a strict allow-list refuses every key it does not own.
-  @subscription_keys ["extensions", "trigger"]
-
-  # The `--trigger` vocabulary: the one declaration both the lookup and the
-  # refusal's accepted set are read from.
-  @triggers [
-    {"none", []},
-    {"on_input", [{:on_input, []}]},
-    {"on_output", [{:on_output, []}]},
-    {"interval", [{:on_interval, [interval_ms: 5_000]}]},
-    {"proactive", [{:on_interval, [interval_ms: 5_000]}]}
-  ]
+  # The plain options an enable reads. The verb is open, so every other plain
+  # word an operator types arrives in the same document.
+  @read_options ["namespace", "operative_id"]
 
   @doc """
   The row a `plugin enable` is judged by: the namespace in the operator's
-  options, with the decoded provider, flags and options the body needs.
+  options, with the decoded provider, flags and options the body needs. A plain
+  option the enable does not read is refused before anything is written.
   """
   def enable_row([_plugin_id, provider_id, plugin_flags_json, opts_json | _]) do
-    with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id) do
+    with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
+         opts = Context.json!(opts_json, "plugin options"),
+         :ok <- refuse_unread_options(opts) do
       plugin_flags = Context.json!(plugin_flags_json, "plugin settings")
-      opts = Context.json!(opts_json, "plugin options")
 
       {:ok,
        %{
@@ -53,25 +44,27 @@ defmodule Flezha.Service.Cli.Plugin do
 
   @doc "Enables plugin."
   def enable_plugin(plugin_id, _provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
-    with {:ok, subscriptions} <- extract_subscriptions(row.plugin_flags, row.opts),
-         {:ok, outcome} <-
-           PluginManager.enable_plugin(plugin_id, plugin(plugin_id, row, subscriptions)) do
+    with {:ok, plugin} <- plugin(plugin_id, row),
+         {:ok, outcome} <- PluginManager.enable_plugin(plugin_id, plugin) do
       IO.puts(enabled_message(plugin_id, outcome))
     else
       {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
-  defp plugin(plugin_id, row, subscriptions) do
-    %Plugin{
-      id: plugin_id,
-      provider: row.provider_mod,
-      namespace: row.namespace,
-      operative_id:
-        Map.get(row.plugin_flags, "operative_id") || Map.get(row.opts, "operative_id"),
-      opts: provider_opts(row.plugin_flags),
-      subscriptions: subscriptions
-    }
+  defp plugin(plugin_id, row) do
+    with {:ok, hooks, provider_opts} <- read_settings(row.plugin_flags) do
+      {:ok,
+       %Plugin{
+         id: plugin_id,
+         provider: row.provider_mod,
+         namespace: row.namespace,
+         operative_id:
+           Map.get(row.plugin_flags, "operative_id") || Map.get(row.opts, "operative_id"),
+         opts: provider_opts,
+         hooks: hooks
+       }}
+    end
   end
 
   defp enabled_message(plugin_id, :already_enabled) do
@@ -82,57 +75,40 @@ defmodule Flezha.Service.Cli.Plugin do
   defp enabled_message(plugin_id, _msg), do: "Plugin #{plugin_id} enabled successfully."
 
   @doc """
-  Build subscriptions from the legacy `--trigger=on_input` shape (single
-  trigger) OR the `--extension=on_input` repeatable shape, or refuse a trigger
-  value that names no row. Neither written subscribes to nothing.
+  The settings document read as the plugin's hooks and its provider options.
+
+  The hooks are the boundary shapes `Flezha.Plugin.hooks/1` reads, and a
+  document naming none has no hooks. A hook says what a plugin SENDS; what it
+  receives is its provider's own declared worker, which the extension table
+  starts either way. The hooks leave the options, because a provider with a
+  strict allow-list would refuse them as a key it does not own.
   """
-  @spec extract_subscriptions(map(), map()) :: {:ok, [{term(), term()}]} | {:error, binary()}
-  def extract_subscriptions(plugin_flags, opts) do
-    case declared_extensions(plugin_flags, opts) do
+  @spec read_settings(map()) :: {:ok, [Plugin.hook()], map()} | {:error, term()}
+  def read_settings(plugin_flags) do
+    {written, provider_flags} = Map.pop(plugin_flags, "hooks")
+
+    with {:ok, hooks} <- read_hooks(List.wrap(written)) do
+      {:ok, hooks, SpecDecoder.atomize_keys(provider_flags)}
+    end
+  end
+
+  defp read_hooks([]), do: {:ok, []}
+  defp read_hooks(written), do: Plugin.hooks(written)
+
+  # Dropping a word the operator typed would enable a plugin with less than was
+  # written and still report success.
+  defp refuse_unread_options(opts) do
+    case opts |> Map.drop(@read_options) |> Map.keys() |> Enum.sort() do
       [] ->
-        trigger_to_subscription(Map.get(opts, "trigger") || Map.get(plugin_flags, "trigger"))
+        :ok
 
-      extensions ->
-        # Raw text, both halves: `Extension.Table.canonicalise/2` resolves the
-        # name and types every value against the declaration for its kind.
-        {:ok, Enum.map(extensions, &{Map.get(&1, "name"), Map.get(&1, "opts", %{})})}
+      unread ->
+        {:error,
+         "flz plugin enable does not read " <>
+           Enum.map_join(unread, ", ", &"--#{&1}") <>
+           ". Provider settings are written --X<key>=<value>, hooks --hook=<name>."}
     end
   end
-
-  # `--extension` is written either as a plain option or behind `--X`, and the
-  # plain spelling wins when both carry one.
-  defp declared_extensions(plugin_flags, opts) do
-    case plugin_flags |> Map.get("extensions") |> List.wrap() do
-      [] -> opts |> Map.get("extensions") |> List.wrap()
-      declared -> declared
-    end
-  end
-
-  @doc """
-  The plugin flags a provider actually receives: everything the operator wrote
-  as `--X…` minus the subscription directives, which `extract_subscriptions/2`
-  has already consumed.
-  """
-  def provider_opts(plugin_flags) do
-    plugin_flags
-    |> Map.drop(@subscription_keys)
-    |> SpecDecoder.atomize_keys()
-  end
-
-  @doc """
-  The subscriptions a `--trigger` names, or a refusal naming the value and the
-  accepted set. No trigger at all reads as `none`.
-
-  A subscription says what a plugin SENDS. What it receives is its provider's
-  own declared worker, which the extension table starts either way, so a plugin
-  that only ingests subscribes to nothing. The legacy `interval` and
-  `proactive` both name `:on_interval`.
-  """
-  @spec trigger_to_subscription(binary() | nil) ::
-          {:ok, [{atom(), keyword()}]} | {:error, binary()}
-  def trigger_to_subscription(nil), do: {:ok, []}
-
-  def trigger_to_subscription(trigger), do: Context.one_of(trigger, @triggers, "--trigger")
 
   defp get_plugin_provider_mod(provider_id) do
     with :error <- Providers.fetch(provider_id) do
@@ -281,7 +257,7 @@ defmodule Flezha.Service.Cli.Plugin do
           help_text = provider_mod.help(provider_id)
           IO.puts(help_text)
           IO.puts("")
-          print_supported_extensions(provider_mod)
+          print_supported_hooks(provider_mod)
         rescue
           UndefinedFunctionError ->
             IO.puts(
@@ -297,9 +273,9 @@ defmodule Flezha.Service.Cli.Plugin do
     end
   end
 
-  defp print_supported_extensions(provider_mod) do
-    IO.puts("SUPPORTED EXTENSIONS:")
-    Enum.each(provider_mod.__provider__().extensions, &IO.puts("    --extension=#{&1}"))
+  defp print_supported_hooks(provider_mod) do
+    IO.puts("SUPPORTED HOOKS:")
+    Enum.each(provider_mod.__provider__().extensions, &IO.puts("    --hook=#{&1}"))
   end
 
   @doc "List all available plugin providers."

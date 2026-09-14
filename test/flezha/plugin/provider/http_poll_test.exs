@@ -330,7 +330,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
         id: "cfg",
         provider: HttpPoll,
         opts: base_opts(origin),
-        subscriptions: [{:on_terminate, []}],
+        hooks: [{:on_terminate, []}],
         namespace: "default",
         operative_id: "detector"
       }

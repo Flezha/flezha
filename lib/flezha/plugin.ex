@@ -1,12 +1,13 @@
 defmodule Flezha.Plugin do
   @moduledoc """
-  Unified plugin struct used by every extension-point subscription on a host
-  (e.g. `Flezha.Operative.Overwatch`).
+  Unified plugin struct used by every hook on a host (e.g.
+  `Flezha.Operative.Overwatch`).
 
-  A single `%Flezha.Plugin{}` may subscribe to multiple extension points.
-  Each entry in `subscriptions` is a `{extension_name, sub_opts}` tuple; the
-  provider module MUST export a callback for each subscribed extension kind
-  (e.g. `on_input/2`, `on_message/2`, `on_operative_init/2`, ...).
+  A hook is a point at which the host calls a plugin, named by the provider
+  callback it runs. A single `%Flezha.Plugin{}` may have hooks on several
+  points. Each entry in `hooks` is a `{hook_name, hook_opts}` tuple; the
+  provider module MUST export a callback for each hook (e.g. `on_input/2`,
+  `on_message/2`, `on_operative_init/2`, ...).
 
   At the boundary the name may be text or an atom and the opts a map or a
   keyword list — the shapes the CLI, the operative-start spec, an installed
@@ -15,15 +16,15 @@ defmodule Flezha.Plugin do
   `{atom, keyword}` with typed values, which is what every later reader sees.
   """
 
-  @type extension_name :: atom() | binary()
-  @type sub_opts :: keyword() | map()
-  @type subscription :: {extension_name(), sub_opts()}
+  @type hook_name :: atom() | binary()
+  @type hook_opts :: keyword() | map()
+  @type hook :: {hook_name(), hook_opts()}
 
   @type t() :: %__MODULE__{
           id: binary(),
           provider: module(),
           opts: map(),
-          subscriptions: [subscription()],
+          hooks: [hook()],
           namespace: atom() | binary() | nil,
           operative_id: binary() | nil
         }
@@ -33,7 +34,7 @@ defmodule Flezha.Plugin do
     :id,
     :provider,
     opts: %{},
-    subscriptions: [],
+    hooks: [],
     namespace: nil,
     operative_id: nil
   ]
@@ -50,11 +51,11 @@ defmodule Flezha.Plugin do
             "Flezha.Plugin.new/1 requires :id and :provider — got #{inspect(fields)}"
     end
 
-    struct!(__MODULE__, fields |> named_provider() |> read_subscriptions())
+    struct!(__MODULE__, fields |> named_provider() |> read_hooks())
   end
 
   # A caller that reached the controller over a wire names its provider as text
-  # and its subscriptions as arrays, because JSON has neither a module nor a
+  # and its hooks as arrays, because JSON has neither a module nor a
   # tuple. Both are read here, at the one constructor, so the terminal, the
   # console and an application all build the same struct from the same shapes.
   defp named_provider(fields) do
@@ -73,21 +74,21 @@ defmodule Flezha.Plugin do
     end
   end
 
-  defp read_subscriptions(fields) do
-    case Keyword.fetch(fields, :subscriptions) do
+  defp read_hooks(fields) do
+    case Keyword.fetch(fields, :hooks) do
       :error ->
         fields
 
-      {:ok, subs} ->
-        case subscriptions(subs) do
-          {:ok, read} -> Keyword.put(fields, :subscriptions, read)
+      {:ok, written} ->
+        case hooks(written) do
+          {:ok, read} -> Keyword.put(fields, :hooks, read)
           {:error, reason} -> raise ArgumentError, "Flezha.Plugin.new/1: #{inspect(reason)}"
         end
     end
   end
 
   @doc """
-  Read a subscription list as a boundary carried it: an array of names, of
+  Read a hook list as a boundary carried it: an array of names, of
   `[name, opts]` pairs or of `%{"name" => _, "opts" => _}` objects, as well as
   the `{name, opts}` tuples direct construction uses.
 
@@ -97,10 +98,10 @@ defmodule Flezha.Plugin do
   wire format loses those types, and guessing them here is what made two entry
   points disagree.
   """
-  @spec subscriptions(term()) :: {:ok, [subscription()]} | {:error, term()}
-  def subscriptions(subs) when is_list(subs) and subs != [] do
-    Enum.reduce_while(subs, {:ok, []}, fn sub, {:ok, acc} ->
-      case subscription(sub) do
+  @spec hooks(term()) :: {:ok, [hook()]} | {:error, term()}
+  def hooks(written) when is_list(written) and written != [] do
+    Enum.reduce_while(written, {:ok, []}, fn entry, {:ok, acc} ->
+      case hook(entry) do
         {:ok, tuple} -> {:cont, {:ok, [tuple | acc]}}
         error -> {:halt, error}
       end
@@ -111,29 +112,29 @@ defmodule Flezha.Plugin do
     end
   end
 
-  def subscriptions([]), do: {:error, {:invalid_subscription, :empty}}
-  def subscriptions(_other), do: {:error, {:invalid_subscription, :not_a_list}}
+  def hooks([]), do: {:error, {:invalid_hook, :empty}}
+  def hooks(_other), do: {:error, {:invalid_hook, :not_a_list}}
 
-  defp subscription({name, opts}) when is_binary(name) or is_atom(name), do: {:ok, {name, opts}}
+  defp hook({name, opts}) when is_binary(name) or is_atom(name), do: {:ok, {name, opts}}
 
-  defp subscription([name, opts]) when is_binary(name) and is_map(opts), do: {:ok, {name, opts}}
+  defp hook([name, opts]) when is_binary(name) and is_map(opts), do: {:ok, {name, opts}}
 
-  defp subscription([name]) when is_binary(name), do: {:ok, {name, []}}
+  defp hook([name]) when is_binary(name), do: {:ok, {name, []}}
 
-  defp subscription(name) when is_binary(name), do: {:ok, {name, []}}
+  defp hook(name) when is_binary(name), do: {:ok, {name, []}}
 
-  defp subscription(%{"name" => name} = sub) when is_binary(name) do
-    opts = Map.get(sub, "opts", %{})
+  defp hook(%{"name" => name} = entry) when is_binary(name) do
+    opts = Map.get(entry, "opts", %{})
 
     if is_map(opts) do
       {:ok, {name, opts}}
     else
-      {:error, {:invalid_subscription, {:opts_not_a_map, name}}}
+      {:error, {:invalid_hook, {:opts_not_a_map, name}}}
     end
   end
 
-  defp subscription(other),
-    do: {:error, {:invalid_subscription, {:unrecognised_shape, other}}}
+  defp hook(other),
+    do: {:error, {:invalid_hook, {:unrecognised_shape, other}}}
 
   @doc """
   Point this plugin at one member of a partition group.

@@ -144,7 +144,7 @@ defmodule Flezha.Load.CreditSoakTest do
           # `post_connect["payload"]["type"|"message"]`.
           post_connect: %{"payload" => %{"type" => "text", "message" => @subscribe}}
         },
-        subscriptions: [{:on_terminate, []}]
+        hooks: [{:on_terminate, []}]
       })
 
     on_exit(fn ->

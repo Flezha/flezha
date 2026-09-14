@@ -167,7 +167,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
                  namespace: ctx.namespace,
                  operative_id: ctx.operative_id,
                  opts: %{regex_pattern: ".*"},
-                 subscriptions: [{:on_input, []}]
+                 hooks: [{:on_input, []}]
                ],
                %{source: :internal}
              )
@@ -216,7 +216,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
         flags
         |> Map.merge(%{uri: ctx.ws_uri, idle_timeout_ms: 0, plugin_id: plugin_id})
         |> cli_opts()
-        |> Map.put("extensions", [
+        |> Map.put("hooks", [
           %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
         ])
 
@@ -275,7 +275,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       opts
       |> with_plugin_id(provider, plugin_id)
       |> cli_opts()
-      |> Map.put("extensions", [
+      |> Map.put("hooks", [
         %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
       ])
 

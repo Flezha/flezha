@@ -3,19 +3,17 @@
 ## Purpose
 
 The operative-message-handlers capability enables typed request/reply messaging to a running operative from any cluster-reachable caller — including other operatives — routed by the operative's Overwatch to a per-operative handler plugin selected by an atom `handler_key`. Plugins are represented as `%Flezha.Plugin{}` entries subscribing to the `:on_message` extension point and are enabled per operative via `Flezha.Service.PluginManager.enable_plugin/2`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side operative factory via a new `OperativeMessage` / `OperativeMessageResponse` control-channel command pair, mirroring the existing `EntityState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive operative migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
-
 ## Requirements
-
 ### Requirement: Per-operative message handler plugin configuration
 
-The system SHALL allow configuring message handlers on a running operative via `Flezha.Service.PluginManager.enable_plugin/2` using `%Flezha.Plugin{}` entries whose `subscriptions` list contains one `{:on_message, sub_opts}` entry. `sub_opts` MUST contain `key: atom` identifying the request key this handler serves. The plugin's `provider` module MUST implement an `on_message/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Msg.t(), opts :: map())`.
+The system SHALL allow configuring message handlers on a running operative via `Flezha.Service.PluginManager.enable_plugin/2` using `%Flezha.Plugin{}` entries whose `hooks` list contains one `{:on_message, hook_opts}` entry. `hook_opts` MUST contain `key: atom` identifying the request key this handler serves. The plugin's `provider` module MUST implement an `on_message/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Msg.t(), opts :: map())`.
 
 #### Scenario: Enable handler with unique key
-- **WHEN** a `%Flezha.Plugin{}` subscribes to `{:on_message, [key: :fetch_init_state]}` on an operative where no other plugin uses that key on the `:on_message` extension
+- **WHEN** a `%Flezha.Plugin{}` has the hook `{:on_message, [key: :fetch_init_state]}` on an operative where no other plugin uses that key on the `:on_message` hook
 - **THEN** the enable call MUST succeed and subsequent requests to the operative with that key MUST be routed to this plugin's `on_message/2` callback
 
 #### Scenario: Enable handler with conflicting key
-- **WHEN** a `%Flezha.Plugin{}` subscribes to `{:on_message, [key: :fetch_init_state]}` on an operative where another plugin already serves that key on `:on_message`
+- **WHEN** a `%Flezha.Plugin{}` has the hook `{:on_message, [key: :fetch_init_state]}` on an operative where another plugin already serves that key on `:on_message`
 - **THEN** the enable call MUST return `{:error, {:key_conflict, :on_message, :fetch_init_state}}` and the existing handler MUST remain registered unchanged
 
 ### Requirement: Typed request envelope routing
@@ -118,10 +116,10 @@ The system SHALL expose an optional `handle_message` callback on the Rust and Ja
 
 ### Requirement: Handler plugins survive operative migration
 
-The system SHALL migrate `:on_message` subscriptions along with the operative via the existing ProcessHub handover path. `Flezha.Plugin.Extension.Table.rehydrate/2` MUST re-establish the subscription set on the destination node so that, after migration, previously registered handlers remain reachable under the same key and continue to route requests identically.
+The system SHALL migrate `:on_message` hooks along with the operative via the existing ProcessHub handover path. `Flezha.Plugin.Extension.Table.rehydrate/2` MUST re-establish the hook set on the destination node so that, after migration, previously registered handlers remain reachable under the same key and continue to route requests identically.
 
 #### Scenario: Handler remains registered after migration
-- **WHEN** an operative with an `:on_message` subscription serving `key: :k` is migrated to a new node
+- **WHEN** an operative with an `:on_message` hook serving `key: :k` is migrated to a new node
 - **THEN** sending `{:flezha_request, :k, payload, self(), ref}` to the new Overwatch pid MUST produce a reply from the same plugin code as before migration
 
 ### Requirement: Overwatch lifetime isolation from handler failures
@@ -133,3 +131,4 @@ The system SHALL isolate the Overwatch GenServer from handler plugin failures. A
 - **THEN** the Overwatch MUST continue running, MUST continue serving other requests on other `handler_key`s, and the caller MUST receive `{:error, {:exception, kind, reason}}`
 </content>
 </invoke>
+

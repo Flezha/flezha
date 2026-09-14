@@ -68,7 +68,7 @@ defmodule FlezhaTest.Operative.IngestTest do
         opts: %{regex_pattern: pattern, inverted: true},
         namespace: "default",
         operative_id: state.id,
-        subscriptions: [{:on_input, []}]
+        hooks: [{:on_input, []}]
       )
 
     {:ok, table} = Table.bulk_subscribe(state.extensions, [{"filter", plugin}])

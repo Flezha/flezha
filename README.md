@@ -253,14 +253,19 @@ for a minimal copy-paste starting point.
 ### Enabling websocket plugin for operative.
 
 `flz plugin enable <plugin_id> <provider_id> …`. Provider options carry the
-`--X` prefix and reach `init_provider/1`; attachment (`--operative_id`) and
-subscription (`--trigger`) are plain options the CLI consumes first — a
-provider with a strict allow-list refuses every `--X` key it does not own.
+`--X` prefix and reach `init_provider/1`, and a provider with a strict
+allow-list refuses every `--X` key it does not own. The enable itself reads
+three more options: `--namespace` (or `-n`), `--operative_id`, the operative the
+plugin attaches to, and `--hook`. Any other plain option is refused, naming it.
 
-A subscription says what a plugin SENDS. An enable naming neither `--trigger`
-nor `--extension` subscribes to nothing, which is what a plugin that only
-receives wants: the websocket below holds its own socket and injects every
-frame into the operative's input.
+A hook is a point at which the operative calls the plugin, named by the
+provider callback it runs. `--hook=on_output` sends the plugin every payload the
+operative emits, `--hook=on_input` every payload it ingests, and
+`--hook=on_interval --on_interval.interval_ms=5000` calls it on a timer whose
+interval has no default. `--hook` repeats, and a hook's own options are written
+`--<name>.<key>=<value>`. Naming no hook means no hooks, which is what a plugin
+that only receives wants: the websocket below holds its own socket and injects
+every frame into the operative's input.
 
 ```bash
 _build/dev/rel/flezha/bin/flz plugin enable my_ws operative_websocket \
@@ -272,7 +277,7 @@ _build/dev/rel/flezha/bin/flz plugin enable my_ws operative_websocket \
 ```bash
 _build/dev/rel/flezha/bin/flz plugin enable my_stdout operative_stdout \
   --operative_id=my_operative \
-  --trigger=on_output
+  --hook=on_output
 ```
 
 ### Get operative state.

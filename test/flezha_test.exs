@@ -139,7 +139,7 @@ defmodule FlezhaTest do
             }
           }
         },
-        subscriptions: [{:on_terminate, []}]
+        hooks: [{:on_terminate, []}]
       })
 
     assert res === {:ok, "plugin enabled"}
@@ -163,7 +163,7 @@ defmodule FlezhaTest do
         operative_id: operative_id,
         provider: Flezha.Plugin.Provider.BeamMsgForward,
         opts: %{recv_pid: self()},
-        subscriptions: [{:on_output, []}]
+        hooks: [{:on_output, []}]
       })
 
     assert res === {:ok, "plugin enabled"}
@@ -190,7 +190,7 @@ defmodule FlezhaTest do
       operative_id: operative_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self()},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     })
 
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
@@ -207,7 +207,7 @@ defmodule FlezhaTest do
           }
         }
       },
-      subscriptions: [{:on_terminate, []}]
+      hooks: [{:on_terminate, []}]
     })
 
     for _ <- 1..1 do
@@ -274,7 +274,7 @@ defmodule FlezhaTest do
       operative_id: operative_id,
       provider: Flezha.Plugin.Provider.StdOut,
       opts: %{},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     })
 
     {:ok, json_state} =

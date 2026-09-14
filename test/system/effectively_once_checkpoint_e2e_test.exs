@@ -48,7 +48,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
       operative_id: operative_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
 
     builder = %Builder{

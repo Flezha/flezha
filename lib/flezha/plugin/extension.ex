@@ -1,8 +1,7 @@
 defmodule Flezha.Plugin.Extension do
   @moduledoc """
-  Typed extension-point dispatch API. The host holds a
-  `Flezha.Plugin.Extension.Table` in its state and calls `run/3` at each
-  extension-point call site.
+  Typed hook dispatch API. The host holds a `Flezha.Plugin.Extension.Table` in
+  its state and calls `run/3` at each hook's call site.
 
   Five kinds: `:fold` (ordered accumulator, halts on `{:error, _}`),
   `:transform` (ordered, halts on `{:skip, _}`, tolerates `{:error, _}`),
@@ -36,12 +35,12 @@ defmodule Flezha.Plugin.Extension do
         end
 
       :error ->
-        {:error, {:unknown_extension, name}}
+        {:error, {:unknown_hook, name}}
     end
   end
 
   @doc """
-  Whether any running plugin subscribes to `name`. A caller on a hot path asks
+  Whether any running plugin has a hook on `name`. A caller on a hot path asks
   this before building the chain's context — an unsubscribed chain is a
   passthrough and the context would be thrown away.
   """

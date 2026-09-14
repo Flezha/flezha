@@ -276,17 +276,11 @@ defmodule Flezha.Service.Cli.Context do
     end
   end
 
-  @doc """
-  The value `written` names in `rows` — `{spelling, value}` in the order the
-  accepted set is printed in — or a refusal naming the word and that set.
-
-  The ONE way this surface tells an operator a word is not one it knows.
-  `atom!/3` is this answered by halting; a family that threads its refusal out
-  as a value reads the message instead.
-  """
+  # The value `written` names in `rows`, `{spelling, value}` in the order the
+  # accepted set is printed in, or a refusal naming the word and that set.
   @spec one_of(String.t(), [{String.t(), term()}], String.t()) ::
           {:ok, term()} | {:error, String.t()}
-  def one_of(written, rows, what) do
+  defp one_of(written, rows, what) do
     case List.keyfind(rows, written, 0) do
       {_written, value} ->
         {:ok, value}

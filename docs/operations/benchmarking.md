@@ -245,7 +245,7 @@ No CI workflow runs the `state` bench; the ceilings are checked by hand.
 ## Controller-side microbenches (Elixir, no runner)
 
 ```sh
-# Plugin extension hot path (`Extension.run/3` at 0/1/5 subscribers) plus the
+# Plugin hook hot path (`Extension.run/3` at 0/1/5 hooked plugins) plus the
 # Kafka chain mailbox-depth check (depth must stay <= 1). Default 200_000 iterations.
 mix bench.extension [--iterations N]
 

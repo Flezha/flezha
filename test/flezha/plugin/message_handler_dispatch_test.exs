@@ -73,7 +73,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
       operative_id: "ignored-by-direct-enable",
       provider: provider,
       opts: opts,
-      subscriptions: [{:on_message, [key: key]}]
+      hooks: [{:on_message, [key: key]}]
     }
 
     GenServer.call(overwatch_pid, {:plugin_subscribe, plugin_id, plugin})

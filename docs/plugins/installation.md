@@ -59,7 +59,7 @@ end
     %{
       id: "default",
       provider: Flezha.Examples.HelloWorld,
-      subscriptions: [{:on_input, []}],
+      hooks: [{:on_input, []}],
       default_opts: %{greeting: "hello"},
       scope: :operative
     }
@@ -74,7 +74,7 @@ sha256sum manifest.exs $(find src -type f | sort) > CHECKSUMS.sha256
 tar czf ../hello_world-1.0.0.fpz manifest.exs src/ CHECKSUMS.sha256
 ```
 
-A provider is an ordinary module: every subscription needs the matching `<extension>/2`
+A provider is an ordinary module: every hook needs the matching `<hook>/2`
 export (`{:missing_callback, name}` otherwise). The optional lifecycle callbacks —
 `init_provider/1`, `activate/1`, `health/1`, `terminate_provider/1` — are in
 [lifecycle.md](lifecycle.md). `use Flezha.Plugin.ProviderBehaviour` matters only for a
@@ -96,8 +96,8 @@ is rejected with `{:error, :non_literal_ast}`.
 | `:description`, `:author` | `binary` | no | shown by `flz plugin info` |
 
 Each `:provides` entry: `:id` (binary), `:provider` (a module listed in `:modules`),
-`:subscriptions` (non-empty list of `{extension :: atom, opts :: keyword}`, type-checked
-against the declaration for that extension's kind when the plugin is subscribed), `:scope`
+`:hooks` (non-empty list of `{hook :: atom, opts :: keyword}`, type-checked against the
+declaration for that hook's dispatch kind when the plugin is enabled), `:scope`
 (only `:operative`), and optional `:default_opts` (a map, the provider opts at enable).
 Violations return `{:error, {:manifest_invalid, reason}}` naming the first one.
 
@@ -179,7 +179,7 @@ Any failure rolls back what was produced — directories, loaded modules, the ro
 
 `Flezha.Plugin.Installer.enable/2` calls `Flezha.Service.PluginManager.enable_plugin/2`
 once per provision with the live id `"<plugin_id>:<provision_id>"` and the provision's
-`:provider`, `:subscriptions` and `:default_opts` (merged with `opts[:overrides][provision_id]`).
+`:provider`, `:hooks` and `:default_opts` (merged with `opts[:overrides][provision_id]`).
 The target operative is `opts[:namespace]` / `opts[:operative_id]`, falling back to the
 same keys inside the merged opts. `flz plugin enable <id>` passes no opts, so a provision
 enabled from the CLI must carry `:namespace` and `:operative_id` in its `default_opts` or
@@ -189,7 +189,7 @@ disables the ones enabled earlier in the same call. Refusals: `:not_found`,
 
 ### Disable
 
-Unsubscribes every provision and marks the row `:disabled`. Modules stay loaded, so
+Disables every provision and marks the row `:disabled`. Modules stay loaded, so
 re-enabling touches no disk. Disabling a `:disabled` or `:load_failed` row is a no-op.
 
 ### Upgrade

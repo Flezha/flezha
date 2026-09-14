@@ -83,10 +83,10 @@ A websocket text frame has no header slot, so a template is the only way the
 identity stamps reach the other end. To see them here, give the sink one:
 
 ```
---plugins '[{"provider":"operative_websocket","opts":{
+--plugins '[{"id":"out","provider":"operative_websocket","opts":{
   "uri":"ws://localhost:4500/out",
   "sink_template":"{\"payload\":{{payload}},\"entity\":\"{{entity}}\",\"seq\":{{seq}}}"
-},"subscriptions":[["on_output",{}]]}]'
+},"hooks":[["on_output",{}]]}]'
 ```
 
 ```

@@ -8,7 +8,7 @@
     %{
       id: "default",
       provider: Flezha.Examples.HelloWorld,
-      subscriptions: [{:on_input, []}],
+      hooks: [{:on_input, []}],
       default_opts: %{greeting: "hello"},
       scope: :operative
     }

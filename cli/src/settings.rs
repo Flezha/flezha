@@ -2,8 +2,8 @@
 //!
 //! `flz plugin enable` and `flz namespace create` take a map whose keys belong
 //! to a provider rather than to this surface: `X<key>=<value>` settings, the
-//! `--extension NAME` families with their `--NAME.key` sub-options, and the
-//! plain `--key value` pairs a provider's own options map holds. The walk in
+//! `--hook NAME` families with their `--NAME.key` sub-options, and the plain
+//! `--key value` options the controller reads beside them. The walk in
 //! `args.rs` steps over them and hands them on unread; these readers are what
 //! reads them.
 //!
@@ -89,14 +89,15 @@ pub(crate) fn bare_setting(arg: &str) -> Option<(&str, &str)> {
     (!key.is_empty()).then_some((key, value))
 }
 
-/// What declares an extension, stated once: `--extension=NAME`, or
-/// `--extension NAME` consuming the token after it.
-fn declared_extension(arg: &str, next: Option<&String>) -> Option<String> {
-    if let Some(rest) = arg.strip_prefix("--extension=") {
-        return Some(strip_quotes(rest));
+/// What declares a hook, stated once: `--hook=NAME`, or `--hook NAME`
+/// consuming the word after it. Answers the name and how many words it took.
+fn declared_hook(words: &[String], i: usize) -> Option<(String, usize)> {
+    let arg = &words[i];
+    if let Some(rest) = arg.strip_prefix("--hook=") {
+        return Some((strip_quotes(rest), 1));
     }
-    if arg == "--extension" {
-        return next.map(|n| strip_quotes(n));
+    if arg == "--hook" {
+        return words.get(i + 1).map(|next| (strip_quotes(next), 2));
     }
     None
 }
@@ -106,42 +107,23 @@ pub(crate) fn dotted_option(arg: &str) -> Option<(&str, &str)> {
     arg.strip_prefix("--")?.split_once('.')
 }
 
-/// The extension names `words` declares, in declaration order.
-pub(crate) fn extension_names(words: &[String]) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut i = 0;
-
-    while i < words.len() {
-        if let Some(name) = declared_extension(&words[i], words.get(i + 1)) {
-            if words[i] == "--extension" {
-                i += 1;
-            }
-            names.push(name);
-        }
-        i += 1;
-    }
-
-    names
-}
-
-/// Repeatable `--extension=NAME` flags with their `--NAME.key=value`
+/// Repeatable `--hook=NAME` flags with their `--NAME.key=value`
 /// sub-options, in declaration order. A dotted option only binds to a name
 /// already declared to its left.
-pub(crate) fn extract_extension_flags(words: &[String]) -> Vec<(String, Vec<(String, String)>)> {
+pub(crate) fn extract_hook_flags(words: &[String]) -> Vec<(String, Vec<(String, String)>)> {
     let mut out: Vec<(String, Vec<(String, String)>)> = Vec::new();
     let mut i = 0;
 
     while i < words.len() {
-        let arg = &words[i];
-
-        if let Some(name) = declared_extension(arg, words.get(i + 1)) {
-            if arg == "--extension" {
-                i += 1;
-            }
+        if let Some((name, taken)) = declared_hook(words, i) {
             if !out.iter().any(|(known, _)| *known == name) {
                 out.push((name, Vec::new()));
             }
-        } else if let Some((prefix, remainder)) = dotted_option(arg) {
+            i += taken;
+            continue;
+        }
+
+        if let Some((prefix, remainder)) = dotted_option(&words[i]) {
             if let Some((_, opts)) = out.iter_mut().find(|(name, _)| name == prefix) {
                 if let Some((key, value)) = remainder.split_once('=') {
                     opts.push((key.to_string(), strip_quotes(value)));
@@ -158,23 +140,23 @@ pub(crate) fn extract_extension_flags(words: &[String]) -> Vec<(String, Vec<(Str
     out
 }
 
-/// Strip the extension entries from an argument list so the option parser
+/// Strip the hook entries from an argument list so the option parser
 /// below does not read them as plain CLI options.
-pub(crate) fn filter_out_extension_entries(words: &[String]) -> Vec<String> {
-    let declared = extension_names(words);
+pub(crate) fn filter_out_hook_entries(words: &[String]) -> Vec<String> {
+    let declared = extract_hook_flags(words);
     let mut out = Vec::new();
     let mut i = 0;
 
     while i < words.len() {
-        let arg = &words[i];
+        if let Some((_, taken)) = declared_hook(words, i) {
+            i += taken;
+            continue;
+        }
 
-        if arg.starts_with("--extension=") || arg == "--extension" {
-            // The dotted form is always `--NAME.key=value`, so only the
-            // `--extension NAME` pair needs its value eaten.
-            if arg == "--extension" && i + 1 < words.len() {
-                i += 1;
-            }
-        } else if !dotted_option(arg).is_some_and(|(p, _)| declared.iter().any(|n| n == p)) {
+        let arg = &words[i];
+        let sub_option = dotted_option(arg)
+            .is_some_and(|(prefix, _)| declared.iter().any(|(name, _)| name == prefix));
+        if !sub_option {
             out.push(arg.clone());
         }
 
@@ -187,15 +169,15 @@ pub(crate) fn filter_out_extension_entries(words: &[String]) -> Vec<String> {
 /// Single-letter option aliases.
 const SHORT_KEYS: &[(&str, &str)] = &[("n", "namespace"), ("o", "output")];
 
-/// The plain-word keys of a plugin enable's settings document: written like an
-/// option and handed on unread by the walk, because they belong to the
-/// subscription and to the provider rather than to a row. `--X<key>=<value>`
-/// carries the rest. Declared here, where the parser that hands them on lives,
-/// so that the screens may teach them without a row claiming the word. Nothing
-/// in the walk consults it: the readers are the option-row gate, which exempts
-/// these words, and the test below, which proves each still reaches a document.
+/// The plain words a plugin enable's two documents carry: written like an
+/// option and handed on unread by the walk, because the controller reads them
+/// rather than a row. `--X<key>=<value>` carries the provider's own settings.
+/// Declared here, where the parser that hands them on lives, so that the
+/// screens may teach them without a row claiming the word. Nothing in the walk
+/// consults it: the readers are the option-row gate, which exempts these words,
+/// and the test below, which proves each still reaches a document.
 #[cfg(test)]
-pub(crate) const SETTING_KEYS: &[&str] = &["--extension", "--trigger"];
+pub(crate) const SETTING_KEYS: &[&str] = &["--hook", "--namespace", "--operative_id"];
 
 /// The plain `--key value` options of a plugin enable, with `namespace`
 /// defaulted to `"default"`. Both spellings of a setting are skipped:
@@ -291,22 +273,22 @@ mod tests {
         assert_eq!(parsed["ignore_pattern"], r#""event":"heartbeat""#);
     }
     #[test]
-    fn extract_extension_flags_single_no_opts() {
-        let args = v(&["--extension=on_input"]);
-        let got = extract_extension_flags(&args);
+    fn extract_hook_flags_single_no_opts() {
+        let args = v(&["--hook=on_input"]);
+        let got = extract_hook_flags(&args);
         assert_eq!(got, vec![("on_input".to_string(), vec![])]);
     }
 
     #[test]
-    fn extract_extension_flags_multiple_with_dotted_opts() {
+    fn extract_hook_flags_multiple_with_dotted_opts() {
         let args = v(&[
-            "--extension=on_input",
+            "--hook=on_input",
             "--on_input.position=0",
-            "--extension=on_interval",
+            "--hook=on_interval",
             "--on_interval.interval_ms=5000",
         ]);
 
-        let got = extract_extension_flags(&args);
+        let got = extract_hook_flags(&args);
 
         assert_eq!(
             got,
@@ -324,19 +306,19 @@ mod tests {
     }
 
     #[test]
-    fn extract_extension_flags_ignores_dotted_opts_for_unknown_extension() {
-        // `on_unknown.x=1` has no corresponding `--extension=on_unknown`, so
+    fn extract_hook_flags_ignores_dotted_opts_for_unknown_hook() {
+        // `on_unknown.x=1` has no corresponding `--hook=on_unknown`, so
         // it must not be captured.
-        let args = v(&["--extension=on_input", "--on_unknown.x=1"]);
-        let got = extract_extension_flags(&args);
+        let args = v(&["--hook=on_input", "--on_unknown.x=1"]);
+        let got = extract_hook_flags(&args);
         assert_eq!(got, vec![("on_input".to_string(), vec![])]);
     }
 
     #[test]
-    fn extract_extension_flags_space_separated_form() {
-        let args = v(&["--extension", "on_input", "--extension", "on_terminate"]);
+    fn extract_hook_flags_space_separated_form() {
+        let args = v(&["--hook", "on_input", "--hook", "on_terminate"]);
 
-        let got = extract_extension_flags(&args);
+        let got = extract_hook_flags(&args);
 
         assert_eq!(
             got,
@@ -347,38 +329,32 @@ mod tests {
         );
     }
 
-    /// Both extension scanners read `--extension` through one rule; a name the
-    /// list scanner misses is a dotted option the filter would leave behind.
+    /// Both spellings of a declaration are read through one rule, so the filter
+    /// leaves neither a hook nor one of its sub-options behind.
     #[test]
-    fn both_extension_scanners_see_the_same_names() {
+    fn the_filter_leaves_no_hook_word_behind() {
         let args = v(&[
-            "--extension=on_input",
-            "--extension",
+            "--hook=on_input",
+            "--hook",
             "on_terminate",
             "--on_input.position=0",
         ]);
 
-        let from_flags: Vec<String> = extract_extension_flags(&args)
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-
-        assert_eq!(extension_names(&args), from_flags);
-        assert_eq!(filter_out_extension_entries(&args), Vec::<String>::new());
+        assert_eq!(filter_out_hook_entries(&args), Vec::<String>::new());
     }
     #[test]
-    fn extract_opts_ignores_extension_flags() {
+    fn extract_opts_ignores_hook_flags() {
         let args = v(&[
-            "--extension=on_input",
+            "--hook=on_input",
             "--on_input.position=0",
             "--namespace=prod",
         ]);
 
-        let filtered = filter_out_extension_entries(&args);
+        let filtered = filter_out_hook_entries(&args);
         let opts = extract_opts(&filtered);
 
         assert!(opts.iter().any(|(k, v)| k == "namespace" && v == "prod"));
-        assert!(!opts.iter().any(|(k, _)| k == "extension"));
+        assert!(!opts.iter().any(|(k, _)| k == "hook"));
         assert!(!opts.iter().any(|(k, _)| k.starts_with("on_input")));
     }
 
@@ -418,20 +394,17 @@ mod tests {
             let joined = format!("{}=on_input", key);
 
             for form in [v(&[&joined]), v(&[key, "on_input"])] {
-                let opts = extract_opts(&filter_out_extension_entries(&form));
-                let extensions = extract_extension_flags(&form);
+                let opts = extract_opts(&filter_out_hook_entries(&form));
+                let hooks = extract_hook_flags(&form);
                 let bare = key.trim_start_matches('-');
 
-                let carried = extensions.iter().any(|(name, _)| name == "on_input")
+                let carried = hooks.iter().any(|(name, _)| name == "on_input")
                     || opts
                         .iter()
                         .any(|(read, value)| read == bare && value == "on_input");
 
                 if !carried {
-                    dropped.push(format!(
-                        "{:?} -> opts {:?}, extensions {:?}",
-                        form, opts, extensions
-                    ));
+                    dropped.push(format!("{:?} -> opts {:?}, hooks {:?}", form, opts, hooks));
                 }
             }
         }

@@ -62,11 +62,11 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
     do: Keyword.get(sub_opts, name, Keyword.get(@sub_opt_defaults, name))
 
   @doc """
-  Canonicalise a plugin's subscriptions against `catalog` and the declared
+  Canonicalise a plugin's hooks against `catalog` and the declared
   sub-option types: `{atom, keyword}` tuples whose values carry their declared
   type.
 
-  An extension name may arrive as text or as an atom, and sub-opts as a map or
+  A hook name may arrive as text or as an atom, and sub-opts as a map or
   a keyword list — the shapes the CLI, the operative-start spec, an installed
   package manifest and direct construction produce. Both are resolved against
   a declaration rather than interned, so operator text never creates an atom;
@@ -78,7 +78,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   idempotent: canonical input is returned unchanged.
   """
   @spec canonicalise(map(), Plugin.map()) :: {:ok, Plugin.map()} | {:error, term()}
-  def canonicalise(catalog, %Plugin{subscriptions: subs} = plugin)
+  def canonicalise(catalog, %Plugin{hooks: subs} = plugin)
       when is_map(catalog) and is_list(subs) do
     subs
     |> Enum.reduce_while({:ok, []}, fn sub, {:ok, acc} ->
@@ -88,13 +88,13 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
       end
     end)
     |> case do
-      {:ok, acc} -> {:ok, %Plugin{plugin | subscriptions: Enum.reverse(acc)}}
+      {:ok, acc} -> {:ok, %Plugin{plugin | hooks: Enum.reverse(acc)}}
       err -> err
     end
   end
 
   def canonicalise(catalog, %Plugin{}) when is_map(catalog),
-    do: {:error, {:invalid_subscription, :not_a_list}}
+    do: {:error, {:invalid_hook, :not_a_list}}
 
   defp canonicalise_subscription(catalog, {name, sub_opts}) do
     with {:ok, name, kind} <- resolve_extension(catalog, name),
@@ -104,19 +104,19 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   end
 
   defp canonicalise_subscription(_catalog, other),
-    do: {:error, {:invalid_subscription, other}}
+    do: {:error, {:invalid_hook, other}}
 
   defp resolve_extension(catalog, name) when is_atom(name) and not is_nil(name) do
     case Map.fetch(catalog, name) do
       {:ok, %{kind: kind}} -> {:ok, name, kind}
-      :error -> {:error, {:unknown_extension, name}}
+      :error -> {:error, {:unknown_hook, name}}
     end
   end
 
   defp resolve_extension(catalog, name) do
     case Enum.find(catalog, fn {known, _entry} -> same_name?(known, name) end) do
       {known, %{kind: kind}} -> {:ok, known, kind}
-      nil -> {:error, {:unknown_extension, name}}
+      nil -> {:error, {:unknown_hook, name}}
     end
   end
 
@@ -157,16 +157,16 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   defp declared_order(_declared, sub_opts) when is_list(sub_opts) do
     if Enum.all?(sub_opts, &match?({_k, _v}, &1)),
       do: {:ok, sub_opts},
-      else: {:error, {:invalid_subscription_opts, :not_a_keyword}}
+      else: {:error, {:invalid_hook_opts, :not_a_keyword}}
   end
 
   defp declared_order(_declared, _sub_opts),
-    do: {:error, {:invalid_subscription_opts, :not_a_keyword}}
+    do: {:error, {:invalid_hook_opts, :not_a_keyword}}
 
   defp resolve_sub_opt(declared, kind, key) do
     case Enum.find(declared, fn {name, _type} -> same_name?(name, key) end) do
       {name, type} -> {:ok, name, type}
-      nil -> {:error, {:unknown_subscription_opt, kind, key}}
+      nil -> {:error, {:unknown_hook_opt, kind, key}}
     end
   end
 
@@ -201,7 +201,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
 
   defp coerce_sub_opt(_type, name, value), do: invalid_sub_opt(name, value)
 
-  defp invalid_sub_opt(name, value), do: {:error, {:invalid_subscription_opts, {name, value}}}
+  defp invalid_sub_opt(name, value), do: {:error, {:invalid_hook_opts, {name, value}}}
 
   ## Private — validation
 
@@ -214,10 +214,10 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   end
 
   def validate_subscriptions(%{catalog: catalog} = table, %Plugin{} = plugin) do
-    Enum.reduce_while(plugin.subscriptions, :ok, fn {name, sub_opts}, :ok ->
-      with {:ok, entry} <- fetch_catalog_entry(catalog, name),
-           :ok <- validate_callback(plugin.provider, name, entry.kind),
-           :ok <- validate_kind_specific(entry.kind, name, sub_opts, table, plugin) do
+    Enum.reduce_while(plugin.hooks, :ok, fn {name, sub_opts}, :ok ->
+      with {:ok, name, kind} <- resolve_extension(catalog, name),
+           :ok <- validate_callback(plugin.provider, name),
+           :ok <- validate_kind_specific(kind, name, sub_opts, table, plugin) do
         {:cont, :ok}
       else
         {:error, _} = err -> {:halt, err}
@@ -225,32 +225,21 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
     end)
   end
 
-  defp fetch_catalog_entry(catalog, name) do
-    case Map.fetch(catalog, name) do
-      {:ok, entry} -> {:ok, entry}
-      :error -> {:error, {:unknown_extension, name}}
-    end
-  end
-
   # The declaration says which extension callbacks a provider implements. It is
   # derived at compile time from the same source a run-time export probe reads,
   # so the refusal is unchanged and nothing asks the code loader.
-  defp validate_callback(provider, name, kind) do
-    callback = callback_name(name, kind)
-
+  defp validate_callback(provider, name) do
     cond do
       not Code.ensure_loaded?(provider) ->
         {:error, {:module_not_loaded, provider}}
 
-      callback not in provider.__provider__().extensions ->
-        {:error, {:missing_callback, callback}}
+      name not in provider.__provider__().extensions ->
+        {:error, {:missing_callback, name}}
 
       true ->
         :ok
     end
   end
-
-  defp callback_name(name, _kind), do: name
 
   defp validate_kind_specific(:timer, _name, sub_opts, _table, _plugin),
     do: validate_positive(sub_opts, :interval_ms)
@@ -260,7 +249,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   defp validate_kind_specific(:request, name, sub_opts, table, _plugin) do
     case Keyword.fetch(sub_opts, :key) do
       :error ->
-        {:error, {:invalid_subscription_opts, :missing_key}}
+        {:error, {:invalid_hook_opts, :missing_key}}
 
       {:ok, key} ->
         case get_in(table.request_subs, [name, key]) do
@@ -285,7 +274,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
     case Keyword.get(sub_opts, :position) do
       nil -> :ok
       n when is_integer(n) and n >= 0 -> :ok
-      other -> {:error, {:invalid_subscription_opts, {:position, other}}}
+      other -> invalid_sub_opt(:position, other)
     end
   end
 
@@ -294,7 +283,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   defp validate_positive(sub_opts, name) do
     case sub_opt(sub_opts, name) do
       n when is_integer(n) and n > 0 -> :ok
-      other -> {:error, {:invalid_subscription_opts, {name, other}}}
+      other -> invalid_sub_opt(name, other)
     end
   end
 

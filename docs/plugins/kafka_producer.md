@@ -1,8 +1,8 @@
 # Kafka producer plugin
 
 For operators attaching `Flezha.Plugin.Provider.Kafka.Producer` (provider id
-`operative_kafka_producer`) and for anyone consuming what it writes. The plugin is an
-`:on_input` / `:on_output` subscriber that publishes chain messages to one Kafka
+`operative_kafka_producer`) and for anyone consuming what it writes. The plugin hooks
+`:on_input` or `:on_output` and publishes chain messages to one Kafka
 `(topic, partition)` with retries, linger batching, a bounded in-process queue, an
 optional idempotent producer session and a window of in-flight requests. This page is the
 contract: what is retried, how effectively-once records are keyed, every parameter and
@@ -103,7 +103,7 @@ identical key, header and partition:
 records passing through the operative, so on it that means "produce only records whose
 metadata names this channel". `channel_out` is the explicit spelling of the same
 restriction, for an operator writing one vocabulary across every provider. Writing both,
-or writing either on a plugin subscribed to neither `on_input` nor `on_output`, is
+or writing either on a plugin with neither an `on_input` nor an `on_output` hook, is
 refused when the plugin is enabled, because nothing would read it. There is no
 `channel_in`: the producer never feeds the operative.
 
@@ -113,7 +113,8 @@ first two and leaves the third to pass through the chain untouched.
 
 ```
 flz plugin enable alerts operative_kafka_producer \
-  --extension=on_output \
+  --operative_id=op1 \
+  --hook=on_output \
   --Xhosts=broker-1:9092 \
   --Xtopic=alerts \
   --Xchannel=alerts,audit
@@ -318,7 +319,8 @@ the head of the queue; the duplicate bound is the window, as above.
 
 ```bash
 flz plugin enable trades-producer operative_kafka_producer \
-  --extension=on_output \
+  --operative_id=trades \
+  --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=trades \
   --Xqueue_max=20000 \
@@ -326,9 +328,9 @@ flz plugin enable trades-producer operative_kafka_producer \
   --Xqueue_overflow=drop_oldest
 ```
 
-The subscription is what makes this a producer: an enable naming neither
-`--trigger` nor `--extension` subscribes to nothing and publishes nothing.
-`on_input` publishes what the operative ingests instead of what it emits.
+The hook is what makes this a producer: `--hook=on_output` publishes what the
+operative emits, and `--hook=on_input` publishes what it ingests instead. An
+enable that names no hook publishes nothing.
 
 ## See also
 

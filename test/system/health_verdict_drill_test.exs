@@ -457,7 +457,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
       id: plugin_id,
       provider: @stuck_provider,
       opts: %{},
-      subscriptions: [{:on_input, [position: 0]}]
+      hooks: [{:on_input, [position: 0]}]
     }
   end
 
@@ -471,7 +471,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
         operative_id: operative_id,
         provider: provider,
         opts: %{},
-        subscriptions: [{:on_input, [position: 0]}]
+        hooks: [{:on_input, [position: 0]}]
       })
 
     case result do

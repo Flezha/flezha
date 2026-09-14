@@ -123,7 +123,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     test "a value the declaration refuses is refused on the spec path too" do
       opts = %{regex_pattern: "x", inverted: "not-a-bool"}
 
-      plugin = %Plugin{id: "ki62", provider: Filter, opts: opts, subscriptions: [{:on_input, []}]}
+      plugin = %Plugin{id: "ki62", provider: Filter, opts: opts, hooks: [{:on_input, []}]}
 
       assert {:error, {"ki62", spec_refusal}} =
                Table.bulk_subscribe(Table.new(@catalog), [{"ki62", plugin}])
@@ -140,7 +140,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
         id: "ok",
         provider: Filter,
         opts: %{regex_pattern: "x", inverted: "true"},
-        subscriptions: [{:on_input, []}]
+        hooks: [{:on_input, []}]
       }
 
       {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{"ok", plugin}])
@@ -410,7 +410,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       refute Kafka.Producer.__provider__().feeds
     end
 
-    test "the jobs a plugin's channel can name are the declaration and the subscriptions" do
+    test "the jobs a plugin's channel can name are the declaration and the hooks" do
       chain = %{subscribed_extensions: [:on_output]}
 
       assert ProviderBehaviour.channel_jobs(Websocket.__provider__(), chain) == [:in, :out]
@@ -629,6 +629,14 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
           screen = capture_io(fn -> Cli.Plugin.plugin_help(id, %{opts: []}) end)
 
           assert screen =~ "flz plugin enable <plugin_id> #{id} [OPTIONS]"
+          assert screen =~ "SUPPORTED HOOKS:"
+
+          for hook <- module.__provider__().extensions,
+              do: assert(screen =~ "    --hook=#{hook}\n", "#{id}: --hook=#{hook} is not listed")
+
+          # A word the enable does not read is refused, so the screen names none.
+          refute screen =~ "--trigger"
+          refute screen =~ "--position"
 
           for {name, row} <- module.__provider__().options do
             internal = Keyword.get(row, :internal, false)

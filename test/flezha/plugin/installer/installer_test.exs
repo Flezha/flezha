@@ -173,6 +173,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
   use FlezhaTest.InstallerCase, async: false
 
   alias Flezha.Plugin.Installer
+  alias Flezha.Plugin.Installer.Store
 
   setup %{tmp: tmp} do
     start_installer_tree(tmp)
@@ -217,6 +218,26 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
     assert System.monotonic_time(:millisecond) >= t0
   end
 
+  # Fails when: a package an earlier build installed, whose stored provision names
+  # its hooks under `subscriptions`, is enabled with no hooks and nothing said.
+  test "a stored provision without hooks is refused when enabled", %{tmp: tmp} do
+    unique = System.unique_integer([:positive])
+    id = "earlier_#{unique}"
+    {:ok, _} = Installer.install(build_fpz!(tmp, id, "Earlier.M#{unique}"))
+
+    row = Store.get(id)
+
+    earlier =
+      Enum.map(row.provides, fn provision ->
+        provision |> Map.delete(:hooks) |> Map.put(:subscriptions, [{:on_input, []}])
+      end)
+
+    :ok = Store.put(id, %{row | provides: earlier})
+
+    assert {:error, {:invalid_hook, :not_a_list}} =
+             Installer.enable(id, namespace: "default", operative_id: "op")
+  end
+
   defp build_fpz!(tmp, id, mod) do
     fpz = Path.join(tmp, "#{id}.fpz")
     src_filename = Macro.underscore(mod) <> ".ex"
@@ -232,7 +253,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
         %{
           id: "main",
           provider: #{mod},
-          subscriptions: [{:on_input, []}],
+          hooks: [{:on_input, []}],
           default_opts: %{},
           scope: :operative
         }

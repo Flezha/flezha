@@ -7,7 +7,7 @@ TBD - created by archiving change bind-websocket-both-ways. Update Purpose after
 
 `Plugin.Provider.Websocket` SHALL implement `on_input/2` and `on_output/2` and SHALL
 send the dispatched payload upstream as a frame on the socket it already holds, without
-opening a second connection. A plugin subscribed to neither direction SHALL behave
+opening a second connection. A plugin with a hook in neither direction SHALL behave
 exactly as it does today and SHALL start no queue, no timer and no additional process.
 
 The provider SHALL accept `sink_frame_type` (`"text"` or `"binary"`, default `"text"`),
@@ -28,12 +28,12 @@ provider SHALL NOT use the connection library's public send function, whose disc
 path discards a frame without an error.
 
 #### Scenario: An output is sent on the established socket
-- **WHEN** an operative with a websocket plugin subscribed to `on_output` produces an output
+- **WHEN** an operative with a websocket plugin hooked on `on_output` produces an output
 - **THEN** the payload SHALL be sent as one frame of the configured type on the connection the plugin already holds
 - **AND** no second connection SHALL be opened
 
 #### Scenario: Both directions share one connection
-- **WHEN** a plugin is subscribed to `on_output` and the upstream sends an inbound frame
+- **WHEN** a plugin has an `on_output` hook and the upstream sends an inbound frame
 - **THEN** the inbound frame SHALL be injected into the operative as it is for a receive-only plugin
 - **AND** both directions SHALL use the same socket
 
@@ -48,12 +48,12 @@ path discards a frame without an error.
 - **THEN** no frame SHALL be sent, and the output SHALL pass through the chain unchanged
 
 #### Scenario: One `channel` names both directions
-- **GIVEN** a plugin subscribed to `on_output` and configured with `channel: "prices"`, on an operative declaring an entry channel `prices`
+- **GIVEN** a plugin with an `on_output` hook and configured with `channel: "prices"`, on an operative declaring an entry channel `prices`
 - **WHEN** an inbound frame arrives and an output naming `alerts` is dispatched
 - **THEN** the frame SHALL be injected on `prices`, and no frame SHALL be sent for the `alerts` output
 
-#### Scenario: An unsubscribed plugin costs nothing
-- **WHEN** a plugin is enabled with no `on_input` or `on_output` subscription
+#### Scenario: A plugin with no hook costs nothing
+- **WHEN** a plugin is enabled with no `on_input` or `on_output` hook
 - **THEN** no outbound queue SHALL be allocated and no outbound timer SHALL be armed
 
 ### Requirement: An outbound frame SHALL be queued while the socket is down, never dropped
@@ -162,7 +162,7 @@ from any state of its own.
 
 #### Scenario: Enabling on a tier operative warns and proceeds
 - **GIVEN** an operative running with effectively-once delivery
-- **WHEN** a websocket plugin subscribed to `on_output` is enabled on it
+- **WHEN** a websocket plugin with an `on_output` hook is enabled on it
 - **THEN** a warning naming the plugin and the acknowledgement mode SHALL be emitted
 - **AND** the plugin SHALL be enabled
 

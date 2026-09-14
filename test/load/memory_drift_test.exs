@@ -245,7 +245,7 @@ defmodule Flezha.Load.MemoryDriftTest do
           uri: uri,
           post_connect: %{payload: %{"type" => "text", "message" => message}}
         },
-        subscriptions: [{:on_terminate, []}]
+        hooks: [{:on_terminate, []}]
       })
 
     IO.puts("[memory_drift] WS plugin '#{@ws_plugin_id}' → #{uri}")
@@ -274,7 +274,7 @@ defmodule Flezha.Load.MemoryDriftTest do
           idempotent: true,
           delivery_timeout_ms: 30_000
         },
-        subscriptions: [{:on_input, []}]
+        hooks: [{:on_input, []}]
       })
 
     IO.puts("[memory_drift] Kafka producer plugin '#{@kafka_plugin_id}' → topic=#{topic}")

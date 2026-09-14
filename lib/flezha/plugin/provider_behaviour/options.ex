@@ -150,7 +150,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   #
   # `channel` names it in BOTH directions: the entry channel a plugin whose
   # provider feeds the operative injects on, and the filter over records passing
-  # through the operative a plugin subscribed to a chain extension acts on.
+  # through the operative a plugin hooked on a chain acts on.
   # `channel_in` and `channel_out` name one each, for a plugin whose two names
   # differ. The answer is the two host-side values the readers take —
   # `:entry_channel` for the injection sites, `:filter_channel` for
@@ -249,13 +249,13 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
   defp undone(:out),
     do:
-      "the plugin is subscribed to neither on_input nor on_output, so no record " <>
+      "the plugin has no on_input or on_output hook, so no record " <>
         "would ever reach it"
 
   defp undone(:either),
     do:
-      "the plugin neither feeds the operative nor is subscribed to on_input or " <>
-        "on_output, so nothing would read it"
+      "the plugin neither feeds the operative nor has an on_input or on_output " <>
+        "hook, so nothing would read it"
 
   defp put_converted(params, field, {:ok, converted}),
     do: {:cont, Map.put(params, field, converted)}
@@ -293,9 +293,9 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
       COMMON OPTIONS:
           --namespace <namespace>    Namespace (default: default)
-          --operative_id <id>       Target operative ID
-          --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
-          --position <num>          Plugin position
+          --operative_id <id>        Target operative ID
+          --hook=<name>              Call the plugin at this hook; repeatable
+          --<name>.<key>=<value>     A sub-option of the hook <name>
 
       Override this help/1 function in your provider module for custom help text.
       """

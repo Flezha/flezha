@@ -206,10 +206,10 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
   end
 
   describe "a key naming a job the plugin does not do is refused" do
-    test "`channel_out` on a plugin subscribed to no chain extension" do
+    test "`channel_out` on a plugin with no chain hook" do
       assert {:error, message} = prepared(%{channel_out: "prices"}, [])
       assert message =~ "websocket names channel_out"
-      assert message =~ "neither on_input nor on_output"
+      assert message =~ "no on_input or on_output hook"
     end
 
     test "`channel` together with an explicit key" do

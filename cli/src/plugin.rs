@@ -5,8 +5,7 @@ use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 use crate::settings::{
-    extract_extension_flags, extract_opts, extract_x_flags, filter_out_extension_entries,
-    serialize_flags,
+    extract_hook_flags, extract_opts, extract_x_flags, filter_out_hook_entries, serialize_flags,
 };
 
 const PLUGIN_ID: &[Positional] = &[Positional::required("<plugin_id>")];
@@ -120,23 +119,23 @@ fn handle_enable(read: &Reading) {
 }
 
 /// The plugin's own settings: the `--X` flags, with any declared
-/// `--extension=NAME` sub-options embedded so the Elixir side sees them.
+/// `--hook=NAME` sub-options embedded so the Elixir side sees them.
 fn plugin_flags_json(args: &[String]) -> String {
     let base = serialize_flags(&extract_x_flags(args));
-    let extensions = extract_extension_flags(args);
+    let hooks = extract_hook_flags(args);
 
-    if extensions.is_empty() {
+    if hooks.is_empty() {
         base
     } else {
-        embed_extensions_into_json(&base, &extensions)
+        embed_hooks_into_json(&base, &hooks)
     }
 }
 
-/// The plain CLI options. The extension entries are removed first, so the
+/// The plain CLI options. The hook entries are removed first, so the
 /// option parser does not read them as options of their own; the credential is
 /// the walk's and never reaches this document.
 fn opts_json(args: &[String]) -> String {
-    serialize_flags(&extract_opts(&filter_out_extension_entries(args)))
+    serialize_flags(&extract_opts(&filter_out_hook_entries(args)))
 }
 
 fn handle_disable(read: &Reading) {
@@ -206,13 +205,10 @@ fn handle_list(read: &Reading) {
     }
 }
 
-// Serialize a `"extensions": [{"name": "...", "opts": {...}}, ...]` list into
+// Serialize a `"hooks": [{"name": "...", "opts": {...}}, ...]` list into
 // the plugin_flags JSON object.
-fn embed_extensions_into_json(
-    base_json: &str,
-    extensions: &[(String, Vec<(String, String)>)],
-) -> String {
-    let entries: Vec<String> = extensions
+fn embed_hooks_into_json(base_json: &str, hooks: &[(String, Vec<(String, String)>)]) -> String {
+    let entries: Vec<String> = hooks
         .iter()
         .map(|(name, opts)| {
             let opts_json = serialize_flags(opts);
@@ -220,10 +216,10 @@ fn embed_extensions_into_json(
         })
         .collect();
 
-    let extensions_fragment = format!("\"extensions\":[{}]", entries.join(","));
+    let hooks_fragment = format!("\"hooks\":[{}]", entries.join(","));
 
     if base_json.trim() == "{}" {
-        return format!("{{{}}}", extensions_fragment);
+        return format!("{{{}}}", hooks_fragment);
     }
     // Splice before the object's OWN closing brace, not before every trailing
     // one: a JSON-valued flag written last (`--Xheaders='{"k":"v"}'`) ends the
@@ -233,9 +229,9 @@ fn embed_extensions_into_json(
         .strip_suffix('}')
         .expect("plugin flags always serialize to a JSON object");
     if body.trim_end().ends_with('{') {
-        format!("{}{}}}", body, extensions_fragment)
+        format!("{}{}}}", body, hooks_fragment)
     } else {
-        format!("{},{}}}", body, extensions_fragment)
+        format!("{},{}}}", body, hooks_fragment)
     }
 }
 
@@ -244,18 +240,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embed_extensions_into_empty_base() {
-        let got = embed_extensions_into_json("{}", &[("on_input".to_string(), vec![])]);
+    fn embed_hooks_into_empty_base() {
+        let got = embed_hooks_into_json("{}", &[("on_input".to_string(), vec![])]);
 
-        assert_eq!(
-            got,
-            "{\"extensions\":[{\"name\":\"on_input\",\"opts\":{}}]}"
-        );
+        assert_eq!(got, "{\"hooks\":[{\"name\":\"on_input\",\"opts\":{}}]}");
     }
 
     #[test]
-    fn embed_extensions_into_existing_json() {
-        let got = embed_extensions_into_json(
+    fn embed_hooks_into_existing_json() {
+        let got = embed_hooks_into_json(
             "{\"uri\": \"ws://x\"}",
             &[(
                 "on_interval".to_string(),
@@ -265,7 +258,7 @@ mod tests {
 
         assert!(got.starts_with("{\"uri\": \"ws://x\""));
         assert!(got.contains(
-            "\"extensions\":[{\"name\":\"on_interval\",\"opts\":{\"interval_ms\": \"5000\"}}]"
+            "\"hooks\":[{\"name\":\"on_interval\",\"opts\":{\"interval_ms\": \"5000\"}}]"
         ));
         assert!(got.ends_with('}'));
     }
@@ -274,20 +267,20 @@ mod tests {
     /// the controller then rejects the whole enable with a decode error, which
     /// is every attach that carries `--Xheaders`.
     #[test]
-    fn embed_extensions_after_a_json_valued_flag_stays_decodable() {
-        let got = embed_extensions_into_json(
+    fn embed_hooks_after_a_json_valued_flag_stays_decodable() {
+        let got = embed_hooks_into_json(
             "{\"url\": \"http://x\", \"headers\": {\"authorization\": \"Bearer t\"}}",
             &[("on_terminate".to_string(), vec![])],
         );
 
         let parsed: serde_json::Value = serde_json::from_str(&got).expect("decodable");
         assert_eq!(parsed["headers"]["authorization"], "Bearer t");
-        assert_eq!(parsed["extensions"][0]["name"], "on_terminate");
+        assert_eq!(parsed["hooks"][0]["name"], "on_terminate");
     }
 
     #[test]
-    fn embed_multiple_extensions_keeps_order() {
-        let got = embed_extensions_into_json(
+    fn embed_multiple_hooks_keeps_order() {
+        let got = embed_hooks_into_json(
             "{}",
             &[
                 (

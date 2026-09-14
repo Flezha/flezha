@@ -1,19 +1,14 @@
-defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
+defmodule FlezhaTest.Service.CliManagerHookTest do
   @moduledoc """
-  Guards the operator-facing subscription vocabulary: the legacy
-  `--trigger=<mode>` mapping, and the `--extension=NAME --NAME.key=value` and
-  `--plugins` spec paths that carry every value as text.
+  Guards the operator-facing hook vocabulary: the `--hook=NAME
+  --NAME.key=value` and `--plugins` spec paths that carry every value as text.
 
-  Fails when: a `--trigger=proactive` plugin is wired to `:on_terminate`
-  (or any non-`:on_interval` extension), so a proactive plugin would never
-  receive its periodic tick — the regression this test was written to catch;
-  or when a sub-option declared as text does not reach `Extension.Table` as
-  its declared type, which made the whole `--extension` vocabulary
-  inexpressible.
+  Fails when: a sub-option declared as text does not reach `Extension.Table` as
+  its declared type, which made the whole hook vocabulary inexpressible.
   """
   use ExUnit.Case, async: true
 
-  # An unconvertible subscription option is driven on purpose and the table
+  # An unconvertible hook option is driven on purpose and the table
   # reports the halt at error level; the refusal is asserted as a return value.
   @moduletag :capture_log
 
@@ -42,64 +37,52 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
     def on_message(%Ctx.Msg{payload: p}, _opts), do: {:ok, "seen:" <> p}
   end
 
-  defp cli_subscriptions(extensions) do
-    {:ok, subs} = CliPlugin.extract_subscriptions(%{"extensions" => extensions}, %{})
-    subs
+  defp cli_hooks(hooks) do
+    {:ok, read, _provider_opts} = CliPlugin.read_settings(%{"hooks" => hooks})
+    read
   end
 
-  defp extension(name, opts), do: %{"name" => name, "opts" => opts}
+  defp hook(name, opts), do: %{"name" => name, "opts" => opts}
 
-  defp subscribe(subs, overrides \\ []) do
-    plugin = struct(%Plugin{id: "cli", provider: EveryKind, subscriptions: subs}, overrides)
+  defp subscribe(hooks, overrides \\ []) do
+    plugin = struct(%Plugin{id: "cli", provider: EveryKind, hooks: hooks}, overrides)
 
     Table.bulk_subscribe(Table.new(Overwatch.__extensions_catalog__()), [{plugin.id, plugin}])
   end
 
-  describe "the --trigger vocabulary" do
-    test "every row names the subscriptions it stands for" do
-      for {written, subscriptions} <- [
-            {"none", []},
-            {"on_input", [{:on_input, []}]},
-            {"on_output", [{:on_output, []}]},
-            {"interval", [{:on_interval, [interval_ms: 5_000]}]},
-            {"proactive", [{:on_interval, [interval_ms: 5_000]}]}
-          ] do
-        assert CliPlugin.trigger_to_subscription(written) == {:ok, subscriptions}
-      end
-    end
-
-    # Fails when: an enable that names neither a trigger nor an extension is
-    # given a subscription it never asked for. `on_input` used to be that
-    # answer, and it is a SEND on every provider whose two io callbacks are
-    # one function.
-    test "an enable naming neither a trigger nor an extension subscribes to nothing" do
-      assert CliPlugin.extract_subscriptions(%{}, %{}) == {:ok, []}
-      assert CliPlugin.trigger_to_subscription(nil) == {:ok, []}
-    end
-
-    # Fails when: a typo is coerced onto a row instead of being refused, which
-    # changes what the plugin is bound to with nothing said to the operator.
-    test "a value naming no row is refused, naming the value and the accepted set" do
-      assert {:error, message} = CliPlugin.trigger_to_subscription("on_inptu")
-
-      assert message ==
-               "unknown --trigger 'on_inptu'. Use 'none' or 'on_input' or " <>
-                 "'on_output' or 'interval' or 'proactive'."
-    end
+  # Fails when: an enable that names no hook is given one it never asked for.
+  # `on_input` used to be that answer, and it is a SEND on every provider whose
+  # two io callbacks are one function.
+  test "an enable naming no hook has no hooks" do
+    assert CliPlugin.read_settings(%{}) == {:ok, [], %{}}
   end
 
-  # Fails when: an enable that names no trigger reaches the provider bound in a
+  # Fails when: the hooks a settings document names are not the hooks the
+  # plugin gets, so `--hook` enables a plugin that sends nothing.
+  test "a settings document's hooks are the plugin's hooks" do
+    assert CliPlugin.read_settings(%{"hooks" => [hook("on_output", %{})]}) ==
+             {:ok, [{"on_output", %{}}], %{}}
+  end
+
+  # Fails when: a hook entry of no shape the boundary reads crashes the verb
+  # instead of being refused as a value.
+  test "a hook entry of no known shape is refused" do
+    assert CliPlugin.read_settings(%{"hooks" => [7]}) ==
+             {:error, {:invalid_hook, {:unrecognised_shape, 7}}}
+  end
+
+  # Fails when: an enable that names no hook reaches the provider bound in a
   # direction nobody asked for. The websocket's `on_input` and `on_output` are
   # the same send, so a source made an echo ships every payload the operative
   # ingests back out on the socket it arrived on.
-  test "a source-only enable subscribes to nothing, allocates no sink and ships nothing" do
+  test "a source-only enable has no hooks, allocates no sink and ships nothing" do
     plugin_id = "cli_source_only_#{System.unique_integer([:positive])}"
     ProviderPrepare.stub_sink_worker(Websocket, plugin_id)
 
-    assert {:ok, subscriptions} = CliPlugin.extract_subscriptions(%{}, %{})
+    assert {:ok, hooks, _provider_opts} = CliPlugin.read_settings(%{})
 
     {:ok, table} =
-      subscribe(subscriptions,
+      subscribe(hooks,
         id: plugin_id,
         provider: Websocket,
         opts: %{uri: "wss://flezha-test.invalid:9/never-connect", plugin_id: plugin_id}
@@ -117,33 +100,28 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
     refute_receive {:shipped, _, _}, 200
   end
 
-  # Fails when: a subscription directive reaches `init_provider/1` as a plugin
-  # option — a provider with a strict allow-list (http_poll) then refuses every
-  # `flz plugin enable` that names an extension or a trigger.
-  test "subscription directives are stripped from the provider's options" do
-    opts =
-      CliPlugin.provider_opts(%{
-        "url" => "http://x",
-        "trigger" => "on_input",
-        "extensions" => [%{"name" => "on_terminate", "opts" => %{}}]
-      })
+  # Fails when: the hooks reach `init_provider/1` as a plugin option; a provider
+  # with a strict allow-list (http_poll) then refuses every `flz plugin enable`
+  # that names a hook.
+  test "the hooks are stripped from the provider's options" do
+    settings = %{"url" => "http://x", "hooks" => [hook("on_terminate", %{})]}
 
-    assert opts == %{url: "http://x"}
+    assert CliPlugin.read_settings(settings) == {:ok, [{"on_terminate", %{}}], %{url: "http://x"}}
   end
 
-  describe "the --extension vocabulary reaches the table typed" do
+  describe "the --hook vocabulary reaches the table typed" do
     test "an integer, an enum, a string and no sub-options at all" do
       subs =
-        cli_subscriptions([
-          extension("on_interval", %{"interval_ms" => "5000"}),
-          extension("on_operative_init", %{"on_error" => "empty", "timeout_ms" => "1000"}),
-          extension("on_message", %{"key" => "orders"}),
-          extension("on_terminate", %{})
+        cli_hooks([
+          hook("on_interval", %{"interval_ms" => "5000"}),
+          hook("on_operative_init", %{"on_error" => "empty", "timeout_ms" => "1000"}),
+          hook("on_message", %{"key" => "orders"}),
+          hook("on_terminate", %{})
         ])
 
       {:ok, table} = subscribe(subs)
 
-      assert %Plugin{subscriptions: stored} = Map.fetch!(table.plugins, "cli")
+      assert %Plugin{hooks: stored} = Map.fetch!(table.plugins, "cli")
 
       assert stored == [
                {:on_interval, [interval_ms: 5_000]},
@@ -154,7 +132,7 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
     end
 
     test "an ordered kind lands at the position the operator typed" do
-      subs = cli_subscriptions([extension("on_input", %{"position" => "0"})])
+      subs = cli_hooks([hook("on_input", %{"position" => "0"})])
 
       {:ok, table} = subscribe(subs)
 
@@ -162,17 +140,24 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
     end
 
     test "an ill-typed sub-option is refused naming the option, never raised" do
-      subs = cli_subscriptions([extension("on_interval", %{"interval_ms" => "soon"})])
+      subs = cli_hooks([hook("on_interval", %{"interval_ms" => "soon"})])
 
-      assert {:error, {_id, {:invalid_subscription_opts, {:interval_ms, "soon"}}}} =
+      assert {:error, {_id, {:invalid_hook_opts, {:interval_ms, "soon"}}}} =
                subscribe(subs)
+    end
+
+    # Fails when: an interval hook is given a period nobody wrote. The CLI has no
+    # default for it, so the refusal is the table's.
+    test "an interval hook with no interval is refused naming interval_ms" do
+      assert {:error, {"cli", {:invalid_hook_opts, {:interval_ms, nil}}}} =
+               subscribe(cli_hooks([hook("on_interval", %{})]))
     end
 
     # Fails when: a `:request` key declared on the CLI registers a subscriber
     # keyed on something dispatch can never match — accepted at enable, then
     # silently unreachable.
     test "a key declared on the CLI is reachable at dispatch" do
-      subs = cli_subscriptions([extension("on_message", %{"key" => "orders"})])
+      subs = cli_hooks([hook("on_message", %{"key" => "orders"})])
 
       {:ok, table} = subscribe(subs)
 
@@ -200,7 +185,7 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
             "id" => "spec_p",
             "provider" => "operative_stdout",
             "opts" => %{},
-            "subscriptions" => [
+            "hooks" => [
               %{"name" => "on_interval", "opts" => %{"interval_ms" => "5000"}},
               %{"name" => "on_operative_init", "opts" => %{"position" => "0"}},
               %{"name" => "on_message", "opts" => %{"key" => "orders"}},
@@ -211,7 +196,7 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
 
       assert {:ok, [plugin]} = SpecDecoder.decode(spec, "default", "spec_op")
 
-      assert {:ok, %Plugin{subscriptions: subs}} =
+      assert {:ok, %Plugin{hooks: subs}} =
                Table.canonicalise(Overwatch.__extensions_catalog__(), plugin)
 
       assert subs == [
@@ -222,6 +207,17 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
              ]
     end
 
+    # Fails when: a spec that still names its hooks `subscriptions` decodes to a
+    # plugin with no hooks.
+    test "hooks written under another key are refused" do
+      spec =
+        Jason.encode!([
+          %{"id" => "old", "provider" => "operative_stdout", "subscriptions" => ["on_output"]}
+        ])
+
+      assert SpecDecoder.decode(spec, "default", "spec_op") == {:error, {:invalid_hook, :empty}}
+    end
+
     test "an ill-typed value in the spec is refused naming the option" do
       spec =
         Jason.encode!([
@@ -229,13 +225,13 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
             "id" => "spec_bad",
             "provider" => "operative_stdout",
             "opts" => %{},
-            "subscriptions" => [%{"name" => "on_input", "opts" => %{"position" => "first"}}]
+            "hooks" => [%{"name" => "on_input", "opts" => %{"position" => "first"}}]
           }
         ])
 
       assert {:ok, [plugin]} = SpecDecoder.decode(spec, "default", "spec_op")
 
-      assert {:error, {:invalid_subscription_opts, {:position, "first"}}} =
+      assert {:error, {:invalid_hook_opts, {:position, "first"}}} =
                Table.canonicalise(Overwatch.__extensions_catalog__(), plugin)
     end
   end

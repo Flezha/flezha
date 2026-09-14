@@ -52,7 +52,7 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
       operative_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: collector, include_metadata: true},
-      subscriptions: [{:on_output, []}]
+      hooks: [{:on_output, []}]
     }
   end
 

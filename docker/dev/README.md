@@ -148,20 +148,20 @@ docker exec -it flezha_controller_dev bash
 _build/dev/rel/flezha/bin/flz operative start my_operative store_input --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}' 
 
 
-# `--X…` flags are PROVIDER options; attachment (`--operative_id`) and
-# subscription (`--trigger`) are plain CLI options, consumed before the
-# provider sees the map. A provider with a strict allow-list refuses every
-# `--X` key it does not own.
+# `--X…` flags are PROVIDER options; attachment (`--operative_id`) and hooks
+# (`--hook`) are read by the enable itself, before the provider sees the map.
+# A provider with a strict allow-list refuses every `--X` key it does not own,
+# and the enable refuses any other plain option. The websocket plugin names no
+# hook: it only receives, injecting what arrives on its socket.
 _build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws operative_websocket \
       --operative_id="my_operative" \
-      --trigger="proactive" \
       --Xuri="ws://localhost:4500" \
       --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}'
 
 
 _build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka operative_kafka_producer \
   --operative_id=my_operative \
-  --trigger=on_output \
+  --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=test_topic
   

@@ -391,7 +391,7 @@ pub(crate) const PLUGIN: Help = r#"flz plugin - Plugin management commands
 
 USAGE:
     flz plugin <COMMAND>
-    flz plugin enable <plugin_id> <provider_id> [--trigger <value>] [OPTIONS]
+    flz plugin enable <plugin_id> <provider_id> [--hook=<name>]... [OPTIONS]
 
 COMMANDS:
     install    Install a plugin from a .fpz package
@@ -404,22 +404,22 @@ COMMANDS:
     info       Show details for an installed plugin
     help       Show help for a specific plugin provider
 
-SUBSCRIPTIONS:
-    A subscription says what a plugin SENDS. `--trigger <value>` names one:
+HOOKS:
+    A hook is a point at which the operative calls its plugin, named by the
+    callback the provider defines: on_input sends every payload the operative
+    ingests, on_output every payload it emits, on_interval runs on a timer.
+    `flz plugin help <provider_id>` lists the hooks a provider has.
 
-        none         subscribe to nothing
-        on_input     send every payload the operative ingests
-        on_output    send every payload the operative emits
-        interval     tick the provider every 5 seconds
-        proactive    the same as interval
+    `--hook=<name>` names one and may be repeated. A hook's sub-options follow
+    it as `--<name>.<key>=<value>`. on_interval has no default interval, so
+    it needs `--on_interval.interval_ms=<ms>`.
 
-    An enable naming neither --trigger nor --extension subscribes to nothing,
-    exactly as `--trigger none` does. A plugin that only receives still feeds
-    its operative: its connection is held by the provider's own worker, which
-    no subscription governs. A value naming no row is refused.
+    An enable naming no hook has no hooks. A plugin that only receives still
+    feeds its operative: its connection is held by the provider's own worker,
+    which no hook governs.
 
-    `--extension=<name>` subscribes by extension name and carries its
-    sub-options as `--<name>.<key>=<value>`.
+    The enable reads --namespace, --operative_id, --hook and the X-prefixed
+    provider settings, and refuses any other option.
 
 EXAMPLES:
     flz plugin install /path/to/kafka_ingest-1.0.0.fpz
@@ -430,11 +430,12 @@ EXAMPLES:
     flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz
     flz plugin uninstall kafka_ingest
     # Legacy provider enable (compile-time providers):
-    flz plugin enable ws_id operative_websocket --Xuri=ws://localhost:4500 \
-        --extension=on_input --on_input.position=0
+    flz plugin enable ws_out operative_websocket --operative_id my_op \
+        --Xuri=ws://localhost:4500 --hook=on_output --on_output.position=0
     # Source only: it injects what arrives and sends nothing back.
-    flz plugin enable ws_in operative_websocket --Xuri=ws://localhost:4500
-    flz plugin disable ws_id"#;
+    flz plugin enable ws_in operative_websocket --operative_id my_op \
+        --Xuri=ws://localhost:4500
+    flz plugin disable ws_out"#;
 
 pub(crate) const RESET: Help = r#"flz reset - Clear Controller durable runtime data on disk
 

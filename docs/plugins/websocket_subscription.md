@@ -13,16 +13,16 @@ the source contract, the templates, the reconcile and commit rules, both
 watchdog tiers, durability, parameters, the partitioned-member share,
 observability and limits.
 
-The same plugin can also SEND. Subscribed to `on_output` (or `on_input`) it
+The same plugin can also SEND. With an `on_output` (or `on_input`) hook it
 ships each dispatched payload upstream as a frame on the connection it already
 holds — one socket, both directions, no second connection. That half is
 ["Sending output on the same socket"](#sending-output-on-the-same-socket).
 
 A plugin with no source configured is the plain static provider: no poll
 timer, no applied set, and no subscription state on the per-frame path. A
-plugin subscribed to neither `on_input` nor `on_output` allocates no outbound
-queue and awaits no acknowledgement, and that is what an enable naming neither
-`--trigger` nor `--extension` declares:
+plugin with neither an `on_input` nor an `on_output` hook allocates no outbound
+queue and awaits no acknowledgement, and that is what an enable naming no
+`--hook` declares:
 
 ```bash
 flz plugin enable prices-in operative_websocket \
@@ -30,12 +30,12 @@ flz plugin enable prices-in operative_websocket \
   --Xuri=wss://feed.example/stream
 ```
 
-The socket is held by the provider's own worker, which the extension table
-starts either way, so this plugin injects every frame it receives into the
-operative's input and sends nothing back. `--trigger none` says the same thing
-out loud. Naming a trigger here binds the other direction too: `on_input` on
-this provider is the same send as `on_output`, so it makes a source echo every
-payload the operative ingests back out on the socket it arrived on.
+The socket is held by the provider's own worker, which starts whether or not
+the plugin has hooks, so this plugin injects every frame it receives into the
+operative's input and sends nothing back. Naming a hook here binds the other
+direction too: `on_input` on this provider is the same send as `on_output`, so
+`--hook=on_input` makes a source echo every payload the operative ingests back
+out on the socket it arrived on.
 
 Those frames land on the operative's FIRST entry channel unless the plugin names
 one: `--Xchannel trades` makes every inbound frame an entry frame on `trades`.
@@ -162,7 +162,7 @@ the socket was actually subscribed to:
 |---|---|
 | Plugin restart (`Extension.Table.handle_down/5`) | the extension table's stored opts, which `init_provider/1` re-runs from |
 | Operative handover | the same stored opts, carried with the plugin |
-| Controller restart | the cspec, re-subscribed by `Plugins.prepare/2` |
+| Controller restart | the cspec, re-attached by `Plugins.prepare/2` |
 
 The write happens after the acknowledgement, so a crash between send and
 acknowledgement degrades to a re-send, never to a subscription nobody
@@ -172,14 +172,15 @@ array is a real instruction and unsubscribes everything.
 
 ## Sending output on the same socket
 
-Subscribe the plugin to `on_output` (or `on_input`) and every dispatched
+Give the plugin an `on_output` (or `on_input`) hook and every dispatched
 payload it sees is sent as one frame on the connection it already holds:
 
 ```
 flz plugin enable prices operative_websocket \
+  --operative_id prices \
   --Xuri wss://feed.example/stream \
   --Xchannel_out prices \
-  --extension on_output
+  --hook on_output
 ```
 
 `channel_out` restricts the plugin to outputs whose metadata names that channel,
