@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: an admin call made right after a runner starts is answered
+
+A runner's start returns once its connect is sent, before the controller has
+taken the connection over and admitted the session. An admin call made in that
+window was lost and reported unanswered after 30 seconds, or, once delivered,
+judged before the runner was recorded and refused with
+`no runners for factory`. The controller now keeps what a runner sends after
+its connect queued until the runner's own channel takes the stream, and judges
+an admin call or a workflow spawn once the session is admitted. No SDK changed.
+
 ### Fixed: an Elixir runner's admin call over a socket is answered
 
 `Flezha.SDK.Admin` from a standalone Elixir runner (`transport: :uds` or

@@ -53,8 +53,20 @@ fn send_frame<'a>(
 /// Enable active mode: the driver delivers incoming frames as Erlang messages.
 #[rustler::nif]
 fn set_active(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
+    activate(env, stream, false)
+}
+
+/// Deliver the next incoming frame as an Erlang message, then buffer again
+/// until the stream is activated.
+#[rustler::nif]
+fn set_active_once(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
+    activate(env, stream, true)
+}
+
+fn activate<'a>(env: Env<'a>, stream: StreamHandleArc, once: bool) -> NifResult<Term<'a>> {
     let _ = stream.cmd_tx.send(ServerCommand::SetActive {
         stream_id: stream.stream_id,
+        once,
     });
     stream.waker.wake();
     Ok(atoms::ok().encode(env))

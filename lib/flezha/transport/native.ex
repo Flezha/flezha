@@ -70,6 +70,13 @@ defmodule Flezha.Transport.Native do
   def set_passive(_stream_ref), do: :erlang.nif_error(:not_loaded)
 
   @doc """
+  Deliver the next incoming frame, then buffer again until the stream is
+  activated. What arrives behind that frame waits for the next activation, which
+  is how a stream changes owner without a frame reaching the wrong one.
+  """
+  def set_active_once(_stream_ref), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
   Return the driver-assigned stream id for a handle. Matches the id carried by
   `{:flz_data, stream_id, ...}` and `{:flz_closed, stream_id, ...}`, so an owner
   can correlate a `{:flz_connection, handle}` with that stream's later frames.

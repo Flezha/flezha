@@ -199,6 +199,32 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       refute session in FleetManager.active_runners(ns)
     end
 
+    test "a request sent during the handshake is judged once the session is admitted",
+         %{ns: ns} do
+      {sdk, {:ok, session}} = connect(ns, %{})
+      answer_next_frame(sdk, &accept/1)
+      connect_socket = next_frame()
+
+      request =
+        Flezha.SDK.Codec.encode_request(
+          "admin-during-handshake",
+          Flezha.SDK.Codec.admin_request_command("Operative.list_operatives", "[]")
+        )
+
+      :ok = Flezha.Transport.Stream.send_frame(sdk, "control_command", request, %{})
+
+      assert NodeTestHelper.wait_until(fn -> waiting_on?(session) end, 5_000),
+             "the request was judged before the session was admitted"
+
+      refute_received {:flz_data, _, "control_command", _, _}
+
+      answer_frame(sdk, connect_socket, &accept/1)
+
+      assert {:admin_response, %{error: ""}} = await_command("admin-during-handshake")
+      assert session in FleetManager.active_runners(ns)
+      Flezha.Transport.Stream.close(sdk)
+    end
+
     test "no node-wide call waits on a runner that has not answered", %{ns: ns} do
       {_sdk, _session} = stand_in_runner(ns, fn _ -> :silent end)
 
@@ -413,17 +439,44 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   defp stand_in_runner(namespace, answer, extra \\ %{}) do
     {sdk, {:ok, session}} = connect(namespace, extra)
 
-    for _frame <- 1..2 do
-      assert_receive {:flz_data, _, "control_command", bin, _}, 5_000
-      {:ok, %{reference_id: ref, command: {kind, _}}} = Flezha.SDK.Codec.decode_command(bin)
-
-      with {status, errors} <- answer.(kind) do
-        response = Flezha.SDK.Codec.encode_response(ref, status, errors)
-        Flezha.Transport.Stream.send_frame(sdk, "control_command", response, %{})
-      end
-    end
+    for _frame <- 1..2, do: answer_next_frame(sdk, answer)
 
     {sdk, session}
+  end
+
+  defp answer_next_frame(sdk, answer), do: answer_frame(sdk, next_frame(), answer)
+
+  defp next_frame do
+    assert_receive {:flz_data, _, "control_command", bin, _}, 5_000
+    {:ok, %{reference_id: ref, command: {kind, _}}} = Flezha.SDK.Codec.decode_command(bin)
+    {ref, kind}
+  end
+
+  defp answer_frame(sdk, {ref, kind}, answer) do
+    with {status, errors} <- answer.(kind) do
+      response = Flezha.SDK.Codec.encode_response(ref, status, errors)
+      Flezha.Transport.Stream.send_frame(sdk, "control_command", response, %{})
+    end
+  end
+
+  # The controller's next command answering `reference_id`, past any other.
+  defp await_command(reference_id) do
+    receive do
+      {:flz_data, _, "control_command", bin, _} ->
+        case Flezha.SDK.Codec.decode_command(bin) do
+          {:ok, %{reference_id: ^reference_id, command: command}} -> command
+          _other -> await_command(reference_id)
+        end
+    after
+      5_000 -> flunk("nothing answered #{reference_id}")
+    end
+  end
+
+  defp waiting_on?(session) do
+    match?(
+      %{^session => %{waiters: [_ | _]}},
+      :sys.get_state(FleetManager).pending_handshakes
+    )
   end
 
   # Open an in-node stream and connect over it, answering the connect's result.

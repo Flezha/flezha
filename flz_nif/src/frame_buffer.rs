@@ -19,8 +19,11 @@ pub struct ParsedFrame {
 /// Where one stream's parsed frames go: to the owner as `{:flz_data, …}`
 /// while the stream is active, into a queue while it is passive — flushed in
 /// order the moment it is activated, so no frame is delivered out of turn.
+/// Activated once, it hands over one frame and is passive again, so the frames
+/// behind that one wait for whoever activates the stream next.
 pub struct Inbox {
     active: bool,
+    once: bool,
     passive_queue: Vec<ParsedFrame>,
 }
 
@@ -29,28 +32,31 @@ impl Inbox {
     pub fn new() -> Self {
         Inbox {
             active: false,
+            once: false,
             passive_queue: Vec::new(),
         }
     }
 
-    /// Hand `frames` to `owner` now, or hold them until the stream is active.
+    /// Hand `frames` to `owner` while the stream is active, and hold the rest.
     pub fn deliver(&mut self, owner: LocalPid, stream_id: u64, frames: Vec<ParsedFrame>) {
-        if self.active {
-            for frame in frames {
-                send_data_msg(owner, stream_id, frame);
-            }
-        } else {
-            self.passive_queue.extend(frames);
-        }
-    }
-
-    /// Active from now on: everything held while passive goes first, in order.
-    pub fn activate(&mut self, owner: LocalPid, stream_id: u64) {
-        self.active = true;
-        let queued: Vec<_> = self.passive_queue.drain(..).collect();
-        for frame in queued {
+        let mut frames = frames.into_iter();
+        while self.active {
+            let Some(frame) = frames.next() else {
+                return;
+            };
+            self.active = !self.once;
             send_data_msg(owner, stream_id, frame);
         }
+        self.passive_queue.extend(frames);
+    }
+
+    /// Active from now on, or for one frame when `once`: everything held while
+    /// passive goes first, in order.
+    pub fn activate(&mut self, owner: LocalPid, stream_id: u64, once: bool) {
+        self.active = true;
+        self.once = once;
+        let queued = std::mem::take(&mut self.passive_queue);
+        self.deliver(owner, stream_id, queued);
     }
 
     pub fn deactivate(&mut self) {

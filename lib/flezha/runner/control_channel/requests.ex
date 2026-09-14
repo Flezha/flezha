@@ -319,14 +319,16 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
     answer_off_process(reference_id, fn ->
       outcome =
-        OperativeManager.spawn_or_deliver(
-          namespace,
-          instance_id,
-          factory_id,
-          payload,
-          if_running(if_running),
-          Session.runner_caller_context(namespace)
-        )
+        once_admitted(state, fn ->
+          OperativeManager.spawn_or_deliver(
+            namespace,
+            instance_id,
+            factory_id,
+            payload,
+            if_running(if_running),
+            Session.runner_caller_context(namespace)
+          )
+        end)
 
       {name, error} = spawn_reply(outcome)
 
@@ -359,8 +361,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
     answer_off_process(reference_id, fn ->
       {result, error} =
-        case Admin.call(namespace, verb, args) do
+        case once_admitted(state, fn -> Admin.call(namespace, verb, args) end) do
           {:ok, json} -> {json, ""}
+          {:refused, reason} -> {"", reason}
           {:error, reason} -> {"", reason}
         end
 
@@ -398,6 +401,16 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   # `{:refused, reason}` is the only outcome carrying detail; the rest are their
   # own name with nothing attached.
+  # A runner can send a request before its handshake completes, and the roster
+  # holds neither the runner nor its factories until then, so a request judged
+  # against it waits for the session to be admitted.
+  defp once_admitted(state, judge) do
+    case FleetManager.await_admitted(state.runner_id) do
+      :ok -> judge.()
+      {:error, :not_admitted} -> {:refused, "the runner's session ended before it was admitted"}
+    end
+  end
+
   defp spawn_reply({:refused, reason}), do: {:refused, reason}
   defp spawn_reply(outcome), do: {outcome, ""}
 end

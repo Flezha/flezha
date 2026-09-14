@@ -85,6 +85,8 @@ pub enum ServerCommand {
     },
     SetActive {
         stream_id: u64,
+        /// Deliver one frame, then hold the rest until the next activation.
+        once: bool,
     },
     SetPassive {
         stream_id: u64,
@@ -468,10 +470,10 @@ impl<T: Transport> DriverLoop<T> {
                     self.flush(stream_id);
                 }
             }
-            ServerCommand::SetActive { stream_id } => {
+            ServerCommand::SetActive { stream_id, once } => {
                 if let Some(state) = self.streams.get_mut(&stream_id) {
                     let owner = *state.owner.lock().unwrap();
-                    state.inbox.activate(owner, stream_id);
+                    state.inbox.activate(owner, stream_id, once);
                 }
             }
             ServerCommand::SetPassive { stream_id } => {

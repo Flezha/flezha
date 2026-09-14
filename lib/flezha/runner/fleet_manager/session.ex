@@ -406,7 +406,7 @@ defmodule Flezha.Runner.FleetManager.Session do
       end)
 
     bound = Durations.get(:control_unit_reply_timeout_ms)
-    pending = %{connect: connect, stream_ref: stream_ref, owed: @handshake}
+    pending = %{connect: connect, stream_ref: stream_ref, owed: @handshake, waiters: []}
 
     %{
       state
@@ -428,6 +428,7 @@ defmodule Flezha.Runner.FleetManager.Session do
         state
         |> cancel_timer({:handshake, session_token})
         |> finish_runner_connect(session_token, pending.connect)
+        |> tap(fn _state -> answer_waiters(pending, :ok) end)
 
       %{owed: owed} = pending ->
         put_in(state, [:pending_handshakes, session_token], %{pending | owed: owed -- [command]})
@@ -442,6 +443,25 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   def handshake_answered(state, session_token, command, {:error, {reason, _control_unit}}),
     do: end_handshake(state, session_token, {command, {:control_unit_unavailable, reason}})
+
+  @doc """
+  Hold `from` until `session_token` is admitted, when it is still in its
+  handshake: the handshake's end answers it. `:not_pending` for any other
+  session, which has nothing to wait for.
+  """
+  def hold_until_admitted(state, session_token, from) do
+    case Map.fetch(state.pending_handshakes, session_token) do
+      {:ok, pending} ->
+        pending = Map.update(pending, :waiters, [from], &[from | &1])
+        {:held, put_in(state, [:pending_handshakes, session_token], pending)}
+
+      :error ->
+        :not_pending
+    end
+  end
+
+  defp answer_waiters(pending, answer),
+    do: pending |> Map.get(:waiters, []) |> Enum.each(&GenServer.reply(&1, answer))
 
   @doc """
   End a session whose handshake did not complete: refused, timed out, revoked,
@@ -463,6 +483,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
         stop_runner_sup(session_token)
         Flezha.Transport.Stream.close(pending.stream_ref)
+        answer_waiters(pending, {:error, :not_admitted})
         cancel_timer(state, {:handshake, session_token})
     end
   end

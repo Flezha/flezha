@@ -23,8 +23,13 @@ defmodule Flezha.Transport.ServerTest do
   use Mimic
 
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.Admin
+  alias Flezha.Socket.Support
+  alias Flezha.Transport.Native
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.MessageTestHelper
+  alias FlezhaTest.Helper.MimicGlobal
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defp connect_frame(stream_id \\ 0) do
     message = Jason.encode!(%{"namespace" => "default", "factories" => []})
@@ -117,6 +122,79 @@ defmodule Flezha.Transport.ServerTest do
       assert {:noreply, _} = Server.handle_info(connect_frame(), state)
       refute_received {:rejected, _, _}
     end
+  end
+
+  describe "a frame a runner sends while its connect is still running" do
+    setup {MimicGlobal, :set_mimic_global_until_exit}
+
+    # A runner's start returns once its connect frame is written, and the connect
+    # runs inside this server, so the runner's next frame can arrive before the
+    # stream belongs to its control channel. The stub holds the connect open
+    # until that frame has been read.
+    @tag :capture_log
+    test "reaches the runner's control channel, so an admin call made then is answered" do
+      server_ref = :sys.get_state(Server.name(:uds)).server_ref
+      known = stream_ids(server_ref)
+      test_pid = self()
+
+      stub(FleetManager, :connect_handler, fn stream, namespace, payload, transport ->
+        send(test_pid, {:connecting, self()})
+
+        receive do
+          :release -> :ok
+        after
+          15_000 -> :ok
+        end
+
+        call_original(FleetManager, :connect_handler, [stream, namespace, payload, transport])
+      end)
+
+      prev = System.get_env("FLEZHA_SOCKET_FILES_PATH")
+      System.put_env("FLEZHA_SOCKET_FILES_PATH", Support.socket_dir())
+      ns = "handover_#{System.unique_integer([:positive])}"
+
+      runner = Flezha.SDK.create_runner(ns, transport: :uds) |> Flezha.SDK.start()
+
+      on_exit(fn ->
+        Flezha.SDK.close(runner)
+
+        if prev,
+          do: System.put_env("FLEZHA_SOCKET_FILES_PATH", prev),
+          else: System.delete_env("FLEZHA_SOCKET_FILES_PATH")
+
+        try do
+          FleetManager.stop_namespace(ns)
+        catch
+          _, _ -> :ok
+        end
+      end)
+
+      assert %Flezha.SDK{} = runner, "the runner did not start: #{inspect(runner)}"
+      assert_receive {:connecting, server}, 5_000
+      on_exit(fn -> send(server, :release) end)
+
+      admin = Task.async(fn -> Admin.list_operatives(runner) end)
+
+      read_past_connect = fn -> frames_read_since(server_ref, known) >= 2 end
+
+      assert NodeTestHelper.wait_until(read_past_connect, 5_000),
+             "the runner's frame after its connect never reached the driver"
+
+      send(server, :release)
+      assert {:ok, _} = Task.await(admin, 10_000)
+    end
+  end
+
+  defp stream_ids(server_ref),
+    do: server_ref |> Native.driver_stats() |> Map.fetch!(:streams) |> MapSet.new(& &1.stream_id)
+
+  defp frames_read_since(server_ref, known) do
+    server_ref
+    |> Native.driver_stats()
+    |> Map.fetch!(:streams)
+    |> Enum.reject(&(&1.stream_id in known))
+    |> Enum.map(& &1.frames_read)
+    |> Enum.max(fn -> 0 end)
   end
 
   describe "a data stream carries no credential of its own" do

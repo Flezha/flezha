@@ -330,8 +330,8 @@ defmodule Flezha.Transport.Server do
     end
   end
 
-  # New connection/stream accepted — activate and store the stream_ref.
-  # Streams start in passive mode by default, so we must set_active to receive data.
+  # New connection/stream accepted — activate it for its first frame and store
+  # the stream_ref. Streams start passive, so nothing arrives until then.
   @impl true
   def handle_info({:flz_connection, stream_ref}, state) do
     # Key pending streams by the driver-assigned stream id (the same id carried
@@ -347,8 +347,11 @@ defmodule Flezha.Transport.Server do
       "[Transport.Server] New connection accepted (#{state.transport}), stream_id=#{stream_id}, stream_ref=#{inspect(stream_ref)}"
     )
 
-    # Activate the stream so we receive the connect_control_channel frame.
-    TStream.set_active(stream_ref)
+    # Only the first frame, the connect_control_channel. The connect runs inside
+    # this server, and a runner sends its next frames without waiting for it:
+    # they stay in the driver until the runner's control channel takes the
+    # stream, where this server's mailbox would drop them.
+    TStream.set_active_once(stream_ref)
 
     pending = Map.put(state.pending_streams, stream_id, stream_ref)
     {:noreply, %{state | pending_streams: pending}}

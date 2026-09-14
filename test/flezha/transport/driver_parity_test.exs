@@ -121,6 +121,14 @@ defmodule Flezha.Transport.DriverParityTest do
            "the driver clock never advanced"
   end
 
+  defp relay(pid) do
+    receive do
+      message -> send(pid, {:relayed, message})
+    end
+
+    relay(pid)
+  end
+
   defp await_stream_row(server, stream_id, want) do
     Enum.find_value(1..200, fn _ ->
       row =
@@ -179,6 +187,37 @@ defmodule Flezha.Transport.DriverParityTest do
         assert row.last_write_ms > 0, "a write the peer took stamps the loop's clock"
         assert row.write_buffer_len == 0, "a reading peer leaves nothing buffered"
         assert row.write_buffer_dropped == 0, "a healthy peer has nothing refused"
+      end
+
+      test "a stream activated once hands its owner one frame and holds the rest",
+           %{transport: transport} do
+        {server, dial} = start_server(transport)
+        {client, server_handle} = connect(transport, dial)
+        server_id = Native.stream_id(server_handle)
+        test_pid = self()
+
+        opening = if transport == :quic, do: ["p-open"], else: []
+        sent = opening ++ ["p-1", "p-2", "p-3"]
+        for id <- sent -- opening, do: :ok = Native.send_frame(client, id, "", %{})
+
+        # Every frame is read before the stream is activated, so which ones reach
+        # an owner is decided by the mode and not by timing.
+        read_all = &(&1 != nil and &1.frames_read == length(sent))
+
+        assert await_stream_row(server, server_id, read_all),
+               "the driver never read the #{length(sent)} frames sent"
+
+        [first | held] = sent
+        :ok = Native.set_active_once(server_handle)
+        assert_receive {:flz_data, ^server_id, ^first, _, _}, 5_000
+
+        next_owner = spawn(fn -> relay(test_pid) end)
+        on_exit(fn -> Process.exit(next_owner, :kill) end)
+        :ok = Native.controlling_process(server_handle, next_owner)
+        :ok = Native.set_active(server_handle)
+
+        for id <- held, do: assert_receive({:relayed, {:flz_data, ^server_id, ^id, _, _}}, 5_000)
+        refute_received {:flz_data, ^server_id, _, _, _}
       end
 
       test "closing a stream releases it", %{transport: transport} do

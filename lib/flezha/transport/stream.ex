@@ -30,6 +30,14 @@ defmodule Flezha.Transport.Stream do
   def set_active(%Local.Stream{} = handle), do: Local.Stream.set_active(handle)
   def set_active(ref), do: Native.set_active(ref)
 
+  @doc """
+  Deliver the next frame, then buffer until the stream is activated again. There
+  is no native arm: the one caller is the socket server reading a connection's
+  first frame, and an in-node connect is a function call with no frame to read.
+  """
+  @spec set_active_once(reference()) :: :ok | {:error, term()}
+  def set_active_once(ref) when is_reference(ref), do: Native.set_active_once(ref)
+
   @spec close(handle()) :: :ok | {:error, term()}
   def close(%Local.Stream{} = handle), do: Local.Stream.close(handle)
   def close(ref), do: Native.close(ref)

@@ -97,6 +97,23 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
+  Return once the session `runner_id` is admitted. A runner can send a request
+  before its handshake completes, and until then the roster holds neither the
+  runner nor its factories, so a request judged against the roster waits here.
+  `:ok` at once for a session not in its handshake; `{:error, :not_admitted}`
+  when the handshake ends without admitting it.
+  """
+  @spec await_admitted(binary()) :: :ok | {:error, :not_admitted}
+  def await_admitted(runner_id) when is_binary(runner_id) do
+    SafeCall.bounded(
+      __MODULE__,
+      {:await_admitted, runner_id},
+      Durations.get(:control_unit_reply_timeout_ms) + manager_call_timeout(),
+      on_error: {:error, :not_admitted}
+    )
+  end
+
+  @doc """
   The caller context service calls attributed to a runner connection carry:
   a `runner`-role principal bound to the namespace the connection PROVED.
   """
@@ -462,6 +479,14 @@ defmodule Flezha.Runner.FleetManager do
       {:reply, {:ok, {namespace, session_token}}, state}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:await_admitted, runner_id}, from, state) do
+    case Session.hold_until_admitted(state, runner_id, from) do
+      {:held, state} -> {:noreply, state}
+      :not_pending -> {:reply, :ok, state}
     end
   end
 
