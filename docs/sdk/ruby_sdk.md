@@ -119,6 +119,10 @@ another process; a documented rule alone would not survive contact with Puma
 cluster mode. `Runner#boot` and `Runner#run` both take the core, so an operator
 who forks starts one in each child.
 
+`Runner#run` is `Runner#boot` followed by `Runner#await_termination`, which
+waits for shutdown and then drains. A host that wants the runner connected
+before it does work of its own, admin calls for one, calls the two apart.
+
 The SDK spawns no processes. Process count is the orchestrator's decision, and
 each process is one runner — which is what HRW placement spreads across.
 

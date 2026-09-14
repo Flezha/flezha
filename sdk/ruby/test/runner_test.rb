@@ -69,6 +69,25 @@ class RunnerTest < Minitest::Test
     assert_equal :free, events.last
   end
 
+  def test_await_termination_waits_for_a_stop_then_drains
+    core = Flezha::TestSupport::FakeCore.new
+    runner = Flezha::Runner.new("test-ns").define_stream(EchoOperative)
+    Flezha::TestSupport.without_a_terminal do
+      Process.stub(:warmup, -> { core.events << :warmup }) do
+        runner.boot(core: core)
+        core.polled.pop
+        waiter = Thread.new { runner.await_termination }
+        Thread.pass until waiter.status == "sleep" || !waiter.alive?
+        runner.stop
+
+        assert_same runner, waiter.value
+        assert_equal :free, core.events.last
+      ensure
+        runner.drain unless core.events.last == :free
+      end
+    end
+  end
+
   def test_a_runner_with_no_class_is_refused
     runner = Flezha::Runner.new("test-ns")
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added: a Ruby runner can do work between starting and waiting
+
+`Flezha::Runner#await_termination` waits for shutdown and then drains, and
+`run` is now `boot` followed by it, the way `start` and `awaitTermination`
+split in Java. An application can boot a runner, make its admin calls, and
+then wait, which the Ruby SDK had no public way to do.
+
 ### Fixed: an application's plugin options reach the plugin
 
 An application enabling a plugin through its runner's admin handle had every

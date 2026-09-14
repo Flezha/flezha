@@ -128,9 +128,16 @@ module Flezha
       self
     end
 
-    # Declare, warm up, connect and serve until shutdown.
+    # Declare, warm up, connect and serve until shutdown: `boot`, then
+    # `await_termination`.
     def run(core: nil)
       boot(core: core)
+      await_termination
+    end
+
+    # Wait for shutdown, then drain. A host that called `boot` can work between
+    # the two, making admin calls for one, and still stop the way `run` does.
+    def await_termination
       # Blocks here: the queue is pushed by `stop`, from a signal handler, the
       # stdin watcher, or the core's own shutdown.
       @stopped.pop
@@ -147,8 +154,9 @@ module Flezha
       nil
     end
 
-    # Stop fetching, drain what is in flight, and release the core. `run` calls
-    # it when the wait ends; a host that called `boot` calls it itself.
+    # Stop fetching, drain what is in flight, and release the core.
+    # `await_termination` calls it when the wait ends; a host that owns the
+    # waiting calls it itself.
     def drain
       Flezha.log.info("draining")
       @core&.shutdown
