@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: an application's plugin options reach the plugin
+
+An application enabling a plugin through its runner's admin handle had every
+option it passed refused as unknown, so it could attach only a plugin that
+takes none. Options now reach the provider by the names it declares, and an
+option it does not declare is still refused by the name it was given.
+
 ### Fixed: an admin call made right after a runner starts is answered
 
 A runner's start returns once its connect is sent, before the controller has

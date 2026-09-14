@@ -16,6 +16,8 @@ defmodule Flezha.Plugin do
   `{atom, keyword}` with typed values, which is what every later reader sees.
   """
 
+  alias Flezha.Plugin.ProviderBehaviour.Options
+
   @type hook_name :: atom() | binary()
   @type hook_opts :: keyword() | map()
   @type hook :: {hook_name(), hook_opts()}
@@ -51,13 +53,14 @@ defmodule Flezha.Plugin do
             "Flezha.Plugin.new/1 requires :id and :provider — got #{inspect(fields)}"
     end
 
-    struct!(__MODULE__, fields |> named_provider() |> read_hooks())
+    struct!(__MODULE__, fields |> named_provider() |> read_hooks() |> read_opts())
   end
 
-  # A caller that reached the controller over a wire names its provider as text
-  # and its hooks as arrays, because JSON has neither a module nor a
-  # tuple. Both are read here, at the one constructor, so the terminal, the
-  # console and an application all build the same struct from the same shapes.
+  # A caller that reached the controller over a wire names its provider as text,
+  # its hooks as arrays and its option keys as text, because JSON has neither a
+  # module, a tuple nor an atom. All three are read here, at the one constructor,
+  # so the terminal, the console and an application all build the same struct
+  # from the same shapes.
   defp named_provider(fields) do
     case Keyword.fetch!(fields, :provider) do
       provider when is_binary(provider) ->
@@ -71,6 +74,19 @@ defmodule Flezha.Plugin do
 
       _module ->
         fields
+    end
+  end
+
+  # Only a key the provider names becomes its atom, so a caller cannot create
+  # atoms, and any other key reaches the provider's refusal as it was written.
+  defp read_opts(fields) do
+    with {:ok, %{} = opts} <- Keyword.fetch(fields, :opts),
+         true <- Enum.any?(Map.keys(opts), &is_binary/1) do
+      names = Map.new(Options.known_names(fields[:provider]), &{Atom.to_string(&1), &1})
+      read = Map.new(opts, fn {key, value} -> {Map.get(names, key, key), value} end)
+      Keyword.put(fields, :opts, read)
+    else
+      _atom_keys_or_none -> fields
     end
   end
 

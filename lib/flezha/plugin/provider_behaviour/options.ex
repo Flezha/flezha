@@ -89,6 +89,16 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   end
 
   @doc """
+  The option names `provider` accepts: every declared row, and the options the
+  host injects. Any other name is refused as unknown.
+  """
+  @spec known_names(module()) :: [atom()]
+  def known_names(provider) do
+    %Decl{options: rows} = provider.__provider__()
+    Enum.map(rows, &elem(&1, 0)) ++ ProviderBehaviour.host_opts()
+  end
+
+  @doc """
   Every declared option present, converted and defaulted, with the required ones
   checked — the ONE thing that happens to a provider's options between the spec
   an operator wrote and the callback that reads them.
@@ -104,12 +114,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   def normalise_opts(provider, opts) when is_map(opts) do
     %Decl{name: name, options: rows} = decl = provider.__provider__()
 
-    with :ok <-
-           reject_unknown(
-             Map.keys(opts),
-             Enum.map(rows, &elem(&1, 0)) ++ ProviderBehaviour.host_opts(),
-             name
-           ),
+    with :ok <- reject_unknown(Map.keys(opts), known_names(provider), name),
          {:ok, converted} <- convert_declared(provider, rows, opts),
          {:ok, converted} <- resolve_channels(decl, opts, converted),
          :ok <- require_declared(name, rows, converted) do

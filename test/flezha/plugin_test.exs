@@ -40,6 +40,22 @@ defmodule Flezha.PluginTest do
     end
   end
 
+  describe "new/1 from the shapes a wire carries" do
+    # An application's enable reaches here as decoded JSON, so its options carry
+    # text keys, while a provider declares its options as atoms.
+    test "reads an option the provider declares, and leaves any other key as written" do
+      plugin =
+        Plugin.new(
+          id: "writer",
+          provider: "operative_file_sink",
+          opts: %{"path" => "echo-out.txt", "not_an_option" => 1}
+        )
+
+      assert plugin.provider == Flezha.Plugin.Provider.File.Sink
+      assert plugin.opts == %{:path => "echo-out.txt", "not_an_option" => 1}
+    end
+  end
+
   defmodule NoopProvider do
     @moduledoc false
   end
