@@ -5,7 +5,8 @@
     "type": "library",
     "require": {
         "php": ">=8.4",
-        "ext-ffi": "*"
+        "ext-ffi": "*",
+        "ext-mbstring": "*"
     },
     "suggest": {
         "ext-swoole": "^6.0, built against a ZTS PHP with --enable-swoole-thread: provides Swoole\\Thread, which SwooleExecutor runs the poll loop on. Not required \u2014 SyncExecutor needs no extension beyond ext-ffi."
