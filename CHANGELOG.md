@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: an Elixir runner's admin call over a socket is answered
+
+`Flezha.SDK.Admin` from a standalone Elixir runner (`transport: :uds` or
+`:quic`) crashed the runner's server on its first call, because the admin
+request had no guarantee class. It is now a control frame: sent once, never
+held, and a refused write answers the caller with the refusal.
+
 ### Fixed: a runner acts only on the operatives bound to it
 
 The controller now records, for every operative, the stable identity of the

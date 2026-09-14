@@ -231,7 +231,14 @@ defmodule Flezha.SDK.SocketRoundtripTest do
       end
     end)
 
-    {:ok, ns: ns}
+    {:ok, ns: ns, handle: handle}
+  end
+
+  test "a standalone UDS runner's admin call is answered", %{ns: ns, handle: handle} do
+    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
+           "runner never connected over UDS"
+
+    assert {:ok, []} = Flezha.SDK.Admin.list_operatives(handle)
   end
 
   test "a standalone UDS runner connects, places, and dispatches io_in to run/3", %{ns: ns} do
