@@ -27,4 +27,32 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
 
     request
   end
+
+  @doc """
+  The command answering `reference_id`, from the frames a runner played by the
+  calling process receives on `stream`. A handshake command read on the way is
+  answered `success`, which is all such a runner owes to be admitted, and any
+  other command is passed over.
+  """
+  @spec await_answering_handshake(term(), binary(), timeout()) :: tuple()
+  def await_answering_handshake(stream, reference_id, timeout \\ 5_000) do
+    receive do
+      {:flz_data, _stream_id, "control_command", message, _metadata} ->
+        case decode_request(message) do
+          %{reference_id: ^reference_id, command: command} ->
+            command
+
+          %{reference_id: handshake, command: {kind, _}}
+          when kind in [:assign_runner_id, :connect_socket] ->
+            response = Flezha.SDK.Codec.encode_response(handshake, "success")
+            Flezha.Transport.Stream.send_frame(stream, "control_command", response, %{})
+            await_answering_handshake(stream, reference_id, timeout)
+
+          _other ->
+            await_answering_handshake(stream, reference_id, timeout)
+        end
+    after
+      timeout -> ExUnit.Assertions.flunk("nothing answered #{reference_id} in #{timeout} ms")
+    end
+  end
 end

@@ -31,6 +31,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.TestHelpers
   alias Flezha.Transport.Server
+  alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -220,7 +221,9 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
       answer_frame(sdk, connect_socket, &accept/1)
 
-      assert {:admin_response, %{error: ""}} = await_command("admin-during-handshake")
+      assert {:admin_response, %{error: ""}} =
+               ControlFrameTestHelper.await_answering_handshake(sdk, "admin-during-handshake")
+
       assert session in FleetManager.active_runners(ns)
       Flezha.Transport.Stream.close(sdk)
     end
@@ -456,19 +459,6 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     with {status, errors} <- answer.(kind) do
       response = Flezha.SDK.Codec.encode_response(ref, status, errors)
       Flezha.Transport.Stream.send_frame(sdk, "control_command", response, %{})
-    end
-  end
-
-  # The controller's next command answering `reference_id`, past any other.
-  defp await_command(reference_id) do
-    receive do
-      {:flz_data, _, "control_command", bin, _} ->
-        case Flezha.SDK.Codec.decode_command(bin) do
-          {:ok, %{reference_id: ^reference_id, command: command}} -> command
-          _other -> await_command(reference_id)
-        end
-    after
-      5_000 -> flunk("nothing answered #{reference_id}")
     end
   end
 

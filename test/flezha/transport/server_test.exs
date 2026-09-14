@@ -23,10 +23,11 @@ defmodule Flezha.Transport.ServerTest do
   use Mimic
 
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.Admin
+  alias Flezha.SDK.Codec
   alias Flezha.Socket.Support
   alias Flezha.Transport.Native
   alias Flezha.Transport.Server
+  alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.MimicGlobal
   alias FlezhaTest.Helper.NodeTestHelper
@@ -149,19 +150,9 @@ defmodule Flezha.Transport.ServerTest do
         call_original(FleetManager, :connect_handler, [stream, namespace, payload, transport])
       end)
 
-      prev = System.get_env("FLEZHA_SOCKET_FILES_PATH")
-      System.put_env("FLEZHA_SOCKET_FILES_PATH", Support.socket_dir())
       ns = "handover_#{System.unique_integer([:positive])}"
 
-      runner = Flezha.SDK.create_runner(ns, transport: :uds) |> Flezha.SDK.start()
-
       on_exit(fn ->
-        Flezha.SDK.close(runner)
-
-        if prev,
-          do: System.put_env("FLEZHA_SOCKET_FILES_PATH", prev),
-          else: System.delete_env("FLEZHA_SOCKET_FILES_PATH")
-
         try do
           FleetManager.stop_namespace(ns)
         catch
@@ -169,11 +160,30 @@ defmodule Flezha.Transport.ServerTest do
         end
       end)
 
-      assert %Flezha.SDK{} = runner, "the runner did not start: #{inspect(runner)}"
+      # A runner played by this process, dialling the controller's own socket:
+      # its connect frame and an admin request go out back to back, as an SDK's
+      # start and first admin call do.
+      {:ok, runner} = Native.client_connect_uds(Support.control_socket_path(), self())
+
+      connect =
+        Jason.encode!(%{
+          "namespace" => ns,
+          "factory_ids" => [],
+          "factories" => [],
+          "stable_id" => "handover-#{System.unique_integer([:positive])}"
+        })
+
+      request =
+        Codec.encode_request(
+          "admin-during-connect",
+          Codec.admin_request_command("Operative.list_operatives", "[]")
+        )
+
+      :ok = Native.send_frame(runner, "connect_control_channel", connect, %{})
+      :ok = Native.send_frame(runner, "control_command", request, %{})
+
       assert_receive {:connecting, server}, 5_000
       on_exit(fn -> send(server, :release) end)
-
-      admin = Task.async(fn -> Admin.list_operatives(runner) end)
 
       read_past_connect = fn -> frames_read_since(server_ref, known) >= 2 end
 
@@ -181,7 +191,11 @@ defmodule Flezha.Transport.ServerTest do
              "the runner's frame after its connect never reached the driver"
 
       send(server, :release)
-      assert {:ok, _} = Task.await(admin, 10_000)
+
+      assert {:admin_response, %{error: ""}} =
+               ControlFrameTestHelper.await_answering_handshake(runner, "admin-during-connect")
+
+      Native.close(runner)
     end
   end
 
