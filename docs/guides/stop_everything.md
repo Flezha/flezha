@@ -29,6 +29,20 @@ runner has nothing to stop: it stops with the controller.
 
 ## The controller
 
+> #### Why stop it instead of killing it {: .info}
+>
+> `flz controller stop` lets the controller finish its work properly. It stops
+> taking new work, hands its operatives over to another controller while they
+> keep running, if you have more than one, and writes its last changes to disk
+> before it exits. No state is lost.
+>
+> Killing it is not a disaster either. The controller writes every change to
+> disk as it goes, syncing every few milliseconds, and the next start picks up
+> from there on its own. What a kill can cost is those last few milliseconds: an
+> operative may come back a step behind and send a few outputs a second time.
+> An operative that declares effectively-once delivery does not have that gap,
+> because its outputs wait until the change behind them is on disk.
+
 <!-- tabs-open -->
 
 ### Binaries
@@ -66,10 +80,8 @@ The controller stops with your application.
 
 Start the controller and then your runner, the way
 [`controller_deployment.md`](controller_deployment.md) and
-[`runner_deployment.md`](runner_deployment.md) showed. Under Docker that is
-`docker start flezha-controller`, not a second `docker run`. Whatever you did
-not stop above comes back without being asked, and the files in
-`app_data/files` are still on disk.
+[`runner_deployment.md`](runner_deployment.md) showed. Any operative or plugin
+you did not stop comes back on its own.
 
 ## Next
 

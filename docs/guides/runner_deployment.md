@@ -179,6 +179,14 @@ class of their own ([`stream_transforms.md`](https://github.com/alfetahe/flezha/
 A step that needs your own processing, or state that has to survive, is a
 procedure the graph routes messages into.
 
+The echo has one procedure, but an operative can chain as many as it needs, the
+output of one feeding the next, and split or join the path between them. A
+stream does that for as long as it runs, and a workflow runs its procedures as
+the steps of a job that ends.
+[`stream_basics.md`](stream_basics.md#several-procedures-in-one-operative) and
+[`workflow_basics.md`](workflow_basics.md#several-procedures-step-by-step) show
+both.
+
 The operative is the unit everything else works in: what the controller starts,
 places on a runner, restarts after a crash, and moves when a runner disappears.
 It has a durable name of its own, and that is the name you type to start one.
@@ -295,17 +303,17 @@ public final class EchoProcedure
 
     @Override
     public String name() {
-        return "echo";                       // durable: state is filed under it
+        return "echo";                       // state is saved under this name, so choose it once
     }
 
     @Override
     public None initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
-        return new None();                   // cold start for one entity
+        return new None();                   // the empty state it starts with
     }
 
     @Override
     public void run(String input, StateHandle<None, NoChange> state, ProcedureCtx ctx) {
-        ctx.emit("echo: " + input);          // what, never where
+        ctx.emit("echo: " + input);          // send the result out; the operative picks the channel
     }
 }
 ```
@@ -389,7 +397,7 @@ impl Procedure for EchoProcedure {
     type Config = ();
 
     fn name() -> &'static str {
-        "echo"               // durable: state is filed under it
+        "echo"               // state is saved under this name, so choose it once
     }
 
     fn init_state(_entity_key: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
@@ -400,7 +408,7 @@ impl Procedure for EchoProcedure {
         _state: StateHandle<'_, Self>,
         ctx: &mut ProcedureCtx<'_>,
     ) -> Result<(), ProcedureError> {
-        ctx.emit(format!("echo: {input}"))  // what, never where
+        ctx.emit(format!("echo: {input}"))  // send the result out; the operative picks the channel
     }
 }
 ```
@@ -475,7 +483,7 @@ value other than a string or bytes would leave as JSON. The module exports what
 import { defineProcedure } from '@flezha/sdk';
 
 export const EchoProcedure = defineProcedure({
-  name: 'echo',                         // durable: state is filed under it
+  name: 'echo',                         // state is saved under this name, so choose it once
   handle: (input) => `echo: ${input}`,  // what it returns is emitted
 });
 ```
@@ -522,7 +530,7 @@ The whole example:
 
 ```python
 # The procedure. The processing stage the graph routes each message into.
-@flezha.procedure(name="echo")  # durable: state is filed under it
+@flezha.procedure(name="echo")  # state is saved under this name, so choose it once
 def echo(value: str) -> str:
     return f"echo: {value}"  # what it returns is emitted
 ```
@@ -594,7 +602,7 @@ would go out as JSON.
 ```ruby
 # echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
 class EchoProcedure < Flezha::Procedure
-  procedure_name "echo"                          # durable: state is filed under it
+  procedure_name "echo"                          # state is saved under this name, so choose it once
 
   def process(input, _ctx) = "echo: #{input}"    # what it returns is emitted
 end
@@ -659,7 +667,7 @@ carries the graph.
 
 ```php
 // src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.
-#[Proc(name: 'echo')]                   // durable: state is filed under it
+#[Proc(name: 'echo')]                   // state is saved under this name, so choose it once
 final class EchoProcedure extends Procedure
 {
     public function run(mixed $input, Ctx $ctx): mixed
@@ -740,14 +748,14 @@ defmodule Echo.Procedure do
   alias Flezha.SDK.Ctx
 
   @impl true
-  def name, do: "echo"                   # durable: state is filed under it
+  def name, do: "echo"                   # state is saved under this name, so choose it once
 
   @impl true
   def init_state(_entity_key), do: nil   # nothing kept between messages
 
   @impl true
   def run(input, state, ctx) do
-    Ctx.emit(ctx, "echo: " <> input)     # what, never where
+    Ctx.emit(ctx, "echo: " <> input)     # send the result out; the operative picks the channel
     {:ok, state}
   end
 end

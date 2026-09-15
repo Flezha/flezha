@@ -26,15 +26,16 @@ Look at the declaration again:
 c.input(String.class, "in").into(EchoProcedure.class).sink("out");
 ```
 
-`sink("out")` terminates that channel **on the plugin layer**. The operative has
-always been emitting to a plugin-bound channel; there was simply nothing attached
-to it, and `operative listen` borrowed the output for the length of a window.
-Attaching a plugin is what makes it permanent, and it changes nothing in your
-code.
+Both ends of that line are open to plugins. `input(String.class, "in")` names
+the channel messages come in on, and `sink("out")` names the channel they leave
+on. Until now nothing was attached to either: `flz operative send` put your
+messages in, and `flz operative listen` watched what came out for as long as it
+ran. A plugin takes over one of those ends for good: a source feeds `in`, and a
+sink receives what leaves on `out`. Your code does not change.
 
-That is the shape to remember: **an operative declares where its edges are, and
-an operator decides what is on the other side.** The same `echo` runs against a
-file today and Kafka tomorrow with no rebuild.
+That is the shape to remember: **an operative declares where its data comes in
+and goes out, and an operator decides what is on the other side.** The same
+`echo` reads from a file today and Kafka tomorrow with no rebuild.
 
 ## The folder plugins may touch
 
@@ -73,6 +74,17 @@ until it is restarted, and a folder you name has to exist already:
 mkdir -p "$HOME/flezha-files"
 FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz controller start
 ```
+
+> #### Warning {: .warning}
+>
+> This folder is on the machine that runs the controller. With one controller
+> that is all there is to it. With several controllers, each has its own folder,
+> and an operative that moves to another controller reads and writes the folder
+> on that machine: a file source no longer finds its file, and a file sink starts
+> a new one there. To avoid that, give every controller the same shared folder at
+> the same path, or keep the files in an S3 bucket, as
+> [An S3 bucket instead of a folder](../plugins/file.md#an-s3-bucket-instead-of-a-folder)
+> shows.
 
 ## Write the output to a file
 
@@ -142,28 +154,48 @@ for growth, remembers the byte offset of the last line the operative took, and
 resumes there after a plugin restart, a move to another runner, or a controller
 restart.
 
+## See what is attached
+
+```sh
+flz operative info
+```
+
+```
+Fetching operative information for namespace 'default'...
+Operative information for namespace 'default':
+
+Operative: my_echo
+  Kind: stream
+  Phase: running
+  Health: healthy
+  Runner ID: default_b2e389ab1c13
+  Group ID: default
+  Uptime (ms): 7249
+  Default Input Type: 2
+  Plugins:
+    - reader: Flezha.Plugin.Provider.File.Source
+        path: /opt/flezha/app_data/files/echo-in.txt
+        health: :healthy
+    - writer: Flezha.Plugin.Provider.File.Sink
+        hook: on_output []
+        path: /opt/flezha/app_data/files/echo-out.txt
+        health: :healthy
+```
+
+It lists every operative in the namespace, and under each one the plugins
+attached to it: the id you chose, which plugin it is, the hook it is on, the
+full path of its file, and whether it is healthy. `reader` has no hook line,
+because a source is not sent anything. When an operative shows `degraded`, this
+is where to look for the plugin that is not healthy.
+
 ## Turn one off
 
 ```sh
 flz plugin disable reader
 ```
 
-The id is the one you chose at enable. `flz operative info my_echo` lists what is
-attached, with each plugin's path and health underneath it, which is where to
-look when an operative is `degraded` and you want to know which side is unhappy.
-
-## This is a single machine feature
-
-The root folder is a folder **on the controller the operative is running on**.
-One controller, or the same shared mount at the same path on every controller,
-and that is fine. Otherwise an operative that moves to a controller without the
-file reports `{:unhealthy, {:file_missing, path}}` within one health probe rather
-than quietly reading nothing. Or set the root to an S3 bucket instead, so an operative
-can move freely: see [An S3 bucket instead of a folder](../plugins/file.md#an-s3-bucket-instead-of-a-folder).
-
-So a file source is the right tool for replaying a log, loading an export, or
-seeing an operative work with your own eyes. It is not how a cluster ingests
-production traffic.
+The id is the one you chose at enable, the same one `flz operative info` lists
+under the operative.
 
 ## Or from your own code
 
