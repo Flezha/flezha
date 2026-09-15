@@ -8,8 +8,8 @@ Three files, one for each part the guides describe:
 
 | File | Part | What it does |
 |---|---|---|
-| `EchoOperative.java` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
 | `EchoProcedure.java` | the procedure | the processing stage: prefixes each message |
+| `EchoOperative.java` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
 | `Main.java` | the runner | this process: offers the operative and waits |
 
 ## Run it

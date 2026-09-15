@@ -8,8 +8,8 @@ Three files, one for each part the guides describe:
 
 | File | Part | What it does |
 |---|---|---|
-| `echo_operative.mjs` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
 | `echo_procedure.mjs` | the procedure | the processing stage: prefixes each message |
+| `echo_operative.mjs` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
 | `runner.mjs` | the runner | this process: offers the operative and waits |
 
 ## Run it

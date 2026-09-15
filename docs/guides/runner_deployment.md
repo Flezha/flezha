@@ -164,9 +164,27 @@ Every verdict, and the two failures that are not verdicts:
 
 ## The building blocks
 
-The hello world has three pieces: an operative, a procedure and a runner. They
+The hello world has three pieces: a procedure, an operative and a runner. They
 mean the same thing in all seven languages, so they are described once here and
 the code follows in [the next section](#the-code).
+
+### The procedure
+
+**A processing stage of your own.** Where a step needs more than a one-line
+transform, the operative hands the message to a procedure: typed input and output
+and, when you need them, per-key state that survives a restart, timers and
+retries.
+
+It emits its result without saying where the result goes. The operative decides
+that, so the same procedure can be rewired without being touched.
+
+Its name is durable. State is stored under that name, so renaming a procedure in
+a new release does not rename anything, it declares a different procedure.
+Choose it once.
+
+The echo's procedure keeps no state and takes no configuration, which is as
+simple as a procedure gets. State, keys and entities are
+[`stream_basics.md`](stream_basics.md).
 
 ### The operative
 
@@ -198,24 +216,6 @@ changing one is a breaking change rather than a rename.
 
 The graph is checked when the runner starts, so a graph that cannot work is
 refused there rather than failing halfway through a run.
-
-### The procedure
-
-**A processing stage of your own.** Where a step needs more than a one-line
-transform, the graph hands the message to a procedure: typed input and output
-and, when you need them, per-key state that survives a restart, timers and
-retries.
-
-It emits its result without saying where the result goes. The operative decides
-that, so the same procedure can be rewired without being touched.
-
-Its name is durable. State is stored under that name, so renaming a procedure in
-a new release does not rename anything, it declares a different procedure.
-Choose it once.
-
-The echo's procedure keeps no state and takes no configuration, which is as
-simple as a procedure gets. State, keys and entities are
-[`stream_basics.md`](stream_basics.md).
 
 ### The runner
 
@@ -273,27 +273,6 @@ The whole example:
 [`sdk/java/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo).
 
 ```java
-// The operative. The graph, and the unit the controller schedules.
-public final class EchoOperative implements StreamOperative {
-
-    @Override
-    public String factoryId() {
-        return "echo";
-    }
-
-    @Override
-    public void channels(ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
-    }
-}
-```
-
-One expression declares the whole data path: an entry channel `in` carrying
-strings, routed into the procedure, whose output channel is named `out` and
-terminated on the plugin layer. `sink(name)` does both jobs, so naming the
-channel again with `named(...)` is refused at registration rather than resolved.
-
-```java
 // The procedure. The processing stage the graph routes each message into.
 public final class EchoProcedure
         implements Procedure<String, EchoProcedure.None, String, NoChange, WallClock, Void> {
@@ -324,6 +303,27 @@ all six from the `implements` clause at registration, so each has to be a
 concrete class there rather than a type variable. `NoChange` is how this one
 declares that it records no state changes, and `Void` that it takes no
 configuration.
+
+```java
+// The operative. The graph, and the unit the controller schedules.
+public final class EchoOperative implements StreamOperative {
+
+    @Override
+    public String factoryId() {
+        return "echo";
+    }
+
+    @Override
+    public void channels(ChannelBuilder c) {
+        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
+    }
+}
+```
+
+One expression declares the whole data path: an entry channel `in` carrying
+strings, routed into the procedure, whose output channel is named `out` and
+terminated on the plugin layer. `sink(name)` does both jobs, so naming the
+channel again with `named(...)` is refused at registration rather than resolved.
 
 ```java
 // The runner. Connects, offers the operative, and serves.
@@ -361,29 +361,6 @@ The whole example:
 [`sdk/rust/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/rust/examples/echo).
 
 ```rust
-// The operative. The graph, and the unit the controller schedules.
-pub struct EchoOperative;
-
-impl StreamOperative for EchoOperative {
-    fn factory_id() -> &'static str {
-        "echo"
-    }
-
-    fn channels(c: &ChannelBuilder) {
-        c.input::<String>("in")
-            .into::<EchoProcedure>()
-            .sink_named("out");
-    }
-}
-```
-
-`input::<String>("in")` is the entry channel and the type it carries: a `String`
-or a `Vec<u8>` passes through as its bytes, and any other type is parsed from
-JSON. `sink_named("out")` names the channel it terminates on the plugin layer,
-and `sink()` would leave it the procedure's name. A graph whose types do not
-line up is refused when the runner declares it.
-
-```rust
 // The procedure. The processing stage the graph routes each message into.
 #[derive(Default)]
 pub struct EchoProcedure;
@@ -418,6 +395,29 @@ input, the output, the per-entity state, the change type, the clock and the
 configuration. `()` state and `NoChange` are how this one keeps nothing and
 journals nothing. The runtime constructs the procedure itself, which is why it
 is `Default`.
+
+```rust
+// The operative. The graph, and the unit the controller schedules.
+pub struct EchoOperative;
+
+impl StreamOperative for EchoOperative {
+    fn factory_id() -> &'static str {
+        "echo"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.input::<String>("in")
+            .into::<EchoProcedure>()
+            .sink_named("out");
+    }
+}
+```
+
+`input::<String>("in")` is the entry channel and the type it carries: a `String`
+or a `Vec<u8>` passes through as its bytes, and any other type is parsed from
+JSON. `sink_named("out")` names the channel it terminates on the plugin layer,
+and `sink()` would leave it the procedure's name. A graph whose types do not
+line up is refused when the runner declares it.
 
 ```rust
 // The runner. Connects, offers the operative, and serves.
@@ -457,6 +457,19 @@ The whole example:
 [`sdk/node/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/node/examples/echo).
 
 ```javascript
+// echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
+import { defineProcedure } from '@flezha/sdk';
+
+export const EchoProcedure = defineProcedure({
+  name: 'echo',                         // state is saved under this name, so choose it once
+  handle: (input) => `echo: ${input}`,  // what it returns is emitted
+});
+```
+
+With no `initialState` and no `applyChange`, it keeps nothing between messages
+and journals nothing.
+
+```javascript
 // echo_operative.mjs: the operative. The graph, and the unit the controller schedules.
 import { defineOperative } from '@flezha/sdk';
 
@@ -477,19 +490,6 @@ delivers as a string; an entry that names no codec reads JSON instead. The sink
 names no codec, so the procedure's string leaves as its UTF-8 bytes, and any
 value other than a string or bytes would leave as JSON. The module exports what
 `defineOperative` returned, and that export is what the runner finds.
-
-```javascript
-// echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
-import { defineProcedure } from '@flezha/sdk';
-
-export const EchoProcedure = defineProcedure({
-  name: 'echo',                         // state is saved under this name, so choose it once
-  handle: (input) => `echo: ${input}`,  // what it returns is emitted
-});
-```
-
-With no `initialState` and no `applyChange`, it keeps nothing between messages
-and journals nothing.
 
 ```javascript
 // runner.mjs: the runner. Connects, offers the operative, and serves.
@@ -582,6 +582,19 @@ The whole example:
 [`sdk/ruby/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/ruby/examples/echo).
 
 ```ruby
+# echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
+class EchoProcedure < Flezha::Procedure
+  procedure_name "echo"                          # state is saved under this name, so choose it once
+
+  def process(input, _ctx) = "echo: #{input}"    # what it returns is emitted
+end
+```
+
+Without `procedure_name` the name is the class name in snake case. Which optional
+hooks a procedure has is read from the methods it defines, so with no
+`initial_state` and no `apply_change` it keeps nothing and journals nothing.
+
+```ruby
 # echo_operative.rb: the operative. The graph, and the unit the controller schedules.
 class EchoOperative < Flezha::StreamOperative
   factory_id "echo"
@@ -598,19 +611,6 @@ end
 as a String; an entry that names no codec reads JSON instead. The sink names no
 codec, so the procedure's String goes back out as its bytes, and any other value
 would go out as JSON.
-
-```ruby
-# echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
-class EchoProcedure < Flezha::Procedure
-  procedure_name "echo"                          # state is saved under this name, so choose it once
-
-  def process(input, _ctx) = "echo: #{input}"    # what it returns is emitted
-end
-```
-
-Without `procedure_name` the name is the class name in snake case. Which optional
-hooks a procedure has is read from the methods it defines, so with no
-`initial_state` and no `apply_change` it keeps nothing and journals nothing.
 
 ```ruby
 # runner.rb: the runner. Connects, offers the operative, and serves.
@@ -646,6 +646,22 @@ The whole example:
 [`sdk/php/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/php/examples/echo).
 
 ```php
+// src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.
+#[Proc(name: 'echo')]                   // state is saved under this name, so choose it once
+final class EchoProcedure extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return 'echo: ' . $input;       // what it returns is emitted
+    }
+}
+```
+
+Only `run()` is required. Which optional hooks a procedure has is read from the
+methods it overrides, so with no `state` and no `applyChange` it keeps nothing and
+journals nothing.
+
+```php
 // src/EchoOperative.php: the operative. The graph, and the unit the controller schedules.
 #[Operative(factoryId: 'echo')]
 final class EchoOperative extends StreamOperative
@@ -664,22 +680,6 @@ sends, checked as UTF-8; an entry that names no codec reads JSON instead. The
 sink names no codec, so the procedure's string goes out as it is, and any other
 value would go out as JSON. The attribute carries the declaration and the method
 carries the graph.
-
-```php
-// src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.
-#[Proc(name: 'echo')]                   // state is saved under this name, so choose it once
-final class EchoProcedure extends Procedure
-{
-    public function run(mixed $input, Ctx $ctx): mixed
-    {
-        return 'echo: ' . $input;       // what it returns is emitted
-    }
-}
-```
-
-Only `run()` is required. Which optional hooks a procedure has is read from the
-methods it overrides, so with no `state` and no `applyChange` it keeps nothing and
-journals nothing.
 
 ```php
 // runner.php: the runner. Connects, offers the operative, and serves.
@@ -721,26 +721,6 @@ The whole example:
 [`examples/elixir/echo`](https://github.com/alfetahe/flezha/tree/main/examples/elixir/echo).
 
 ```elixir
-# lib/echo/operative.ex: the operative. The graph, and the unit the controller schedules.
-defmodule Echo.Operative do
-  @behaviour Flezha.SDK.StreamOperative
-
-  @impl true
-  def factory_id, do: "echo"
-
-  @impl true
-  def channels(c) do
-    import Flezha.SDK.Channels
-
-    c |> input("in") |> into(Echo.Procedure) |> sink("out")
-  end
-end
-```
-
-The graph is a pipe. A binary crosses a channel as it is, so plain text needs no
-decoder or encoder here.
-
-```elixir
 # lib/echo/procedure.ex: the procedure. The processing stage the graph routes each message into.
 defmodule Echo.Procedure do
   @behaviour Flezha.SDK.Procedure
@@ -763,6 +743,26 @@ end
 
 `run/3` answers `{:ok, state}`, and what it emitted is released only then. With no
 `apply_change/2` it journals nothing.
+
+```elixir
+# lib/echo/operative.ex: the operative. The graph, and the unit the controller schedules.
+defmodule Echo.Operative do
+  @behaviour Flezha.SDK.StreamOperative
+
+  @impl true
+  def factory_id, do: "echo"
+
+  @impl true
+  def channels(c) do
+    import Flezha.SDK.Channels
+
+    c |> input("in") |> into(Echo.Procedure) |> sink("out")
+  end
+end
+```
+
+The graph is a pipe. A binary crosses a channel as it is, so plain text needs no
+decoder or encoder here.
 
 ```elixir
 # lib/echo/application.ex: the runner. Connects, offers the operative, and serves.
