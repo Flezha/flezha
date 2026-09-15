@@ -481,6 +481,7 @@ dependencies = [
  "crossbeam-deque",
  "dashmap",
  "flz_transport",
+ "libc",
  "postcard",
  "prost",
  "serde",

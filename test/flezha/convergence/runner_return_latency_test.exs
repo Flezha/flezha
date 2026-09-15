@@ -3,7 +3,8 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   The acceptance check driven live: a real runner over the real transport, a
   real operative, and a convergence Loop whose periodic tick is far outside the
   assertion budget — so only the release a connecting runner performs, and the
-  immediate tick it triggers, can rebind the operative in time.
+  immediate tick it triggers, can rebind the operative in time. The same fleet
+  then checks the health a rebound operative reports.
   """
 
   # async: false: real runners, the global EventManager, a shared on-disk root.
@@ -68,6 +69,54 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
            "the operative did not bind within #{@budget_ms} ms of a capable runner returning"
   end
 
+  @tag :runner_return_latency
+  test "an operative rebound after its runner died reads healthy within seconds, not after the stall grace" do
+    {:ok, _} = start_supervised({Loop, tick_ms: @periodic_tick_ms})
+
+    {first_port, first} = NodeTestHelper.start_runner_port(@namespace, port_opts: [:exit_status])
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(first_port) end)
+
+    {:ok, _info} =
+      @operative
+      |> OperativeFixture.get(@factory)
+      |> OperativeFixture.start(@namespace)
+
+    assert bound_to?(first), "the operative never bound to the first runner"
+
+    # A data stream names only the operatives that have taken an input on it,
+    # and only those are flagged when it closes.
+    OperativeManager.send_io(@operative, @namespace, "before the stop", %{"input_type" => "2"})
+
+    assert NodeTestHelper.wait_until(
+             fn -> Enum.any?(data_stream_channels(first), &carries_operative?/1) end,
+             @budget_ms
+           ),
+           "no data stream of the first runner ever carried the operative"
+
+    # A runner that dies closes its data streams and its control session in no
+    # fixed order, and only a data stream the controller sees close first
+    # declares the stall. The close is delivered first here, then the runner is
+    # signalled the way an operator stops one.
+    Enum.each(data_stream_channels(first), &send(&1, {:flz_closed, :test_close, :eof}))
+    {:os_pid, os_pid} = :erlang.port_info(first_port, :os_pid)
+    {_, 0} = System.cmd("kill", ["-TERM", Integer.to_string(os_pid)])
+    assert_receive {^first_port, {:exit_status, _}}, @budget_ms
+
+    second = NodeTestHelper.start_runner(@namespace)
+    assert bound_to?(second), "the operative never bound to the second runner"
+
+    assert NodeTestHelper.wait_until(
+             fn ->
+               :ok = Loop.tick_now()
+               ConvergenceSnapshot.operative_health(@namespace, @operative) == :healthy
+             end,
+             @budget_ms,
+             100
+           ),
+           "the rebound operative still read " <>
+             "#{ConvergenceSnapshot.operative_health(@namespace, @operative)} after #{@budget_ms} ms"
+  end
+
   defp bound_to?(runner_id) do
     NodeTestHelper.wait_until(
       fn ->
@@ -79,6 +128,21 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
       @budget_ms,
       25
     )
+  end
+
+  # Every primary and secondary data stream channel `runner_id` holds, by the
+  # `<runner>_scp_<n>` and `<runner>_scs_<n>` names they register under.
+  defp data_stream_channels(runner_id) do
+    pattern = ~r/^#{Regex.escape(runner_id)}_sc[ps]_\d+$/
+
+    for {key, pid} <-
+          Registry.select(Flezha.Identificator, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}]),
+        is_binary(key) and key =~ pattern,
+        do: pid
+  end
+
+  defp carries_operative?(channel) do
+    Map.has_key?(:sys.get_state(channel).operative_mapping, @operative)
   end
 
   defp seed_top_rung() do

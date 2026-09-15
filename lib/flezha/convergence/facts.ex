@@ -310,6 +310,18 @@ defmodule Flezha.Convergence.Facts do
     end
   end
 
+  # A stall a runner's stream declared is about that binding, so it is repaired
+  # once the probe sees the operative bound to any other runner, or not at all.
+  # The Watchdog's stall names no runner and ages out on its grace.
+  defp repaired?(:output_stall, id, %{runner_id: runner_id}, reality) do
+    reality
+    |> Map.get(:operatives, %{})
+    |> Enum.all?(fn
+      {{_ns, ^id}, %{bound_runner: bound}} -> bound not in [:unknown, runner_id]
+      _ -> true
+    end)
+  end
+
   # A park is repaired once the probe sees the operative unparked, and gone
   # once the probe sees no operative at all.
   defp repaired?(:operative_parked, ref, _args, reality) do

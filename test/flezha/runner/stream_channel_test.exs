@@ -1,4 +1,5 @@
 defmodule FlezhaTest.Runner.StreamChannelTest do
+  alias Flezha.Convergence.Loop
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
@@ -75,6 +76,27 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       _ = GenServer.call(pid, :stream_ref_status)
 
       refute_received {:output_stall, _}
+    end
+
+    test "{:flz_closed} declares each stall against the runner whose stream closed", %{pid: pid} do
+      :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_z})
+
+      MessageTestHelper.become_loop()
+      handler_id = "stall_declare_#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:flezha, :state, :output_stall],
+        &Loop.handle_telemetry/4,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      send(pid, {:flz_closed, :ref_z, :eof})
+
+      assert_receive {:declare, :output_stall, "operative_a", %{runner_id: "ce_test"}}
     end
   end
 

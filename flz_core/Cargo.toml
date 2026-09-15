@@ -20,6 +20,9 @@ crossbeam.workspace = true
 crossbeam-deque.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 # The same path dependency the crate already has, with the QUIC test peers
 # turned on: `flz_nif` reaches them the same way, so the connect tests drive

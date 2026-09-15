@@ -271,7 +271,7 @@ pub fn exit_terminally(reason: &str) -> ! {
     // A no-op when the caller already shipped state — the bridge latches.
     run_active_graceful_shutdown();
     crate::poll_core::global().shutdown();
-    std::process::exit(TERMINAL_EXIT_CODE);
+    end_process(TERMINAL_EXIT_CODE)
 }
 
 /// Run the registered bridge's shutdown, if any; the bridge's latch makes a
@@ -360,7 +360,29 @@ fn end_gracefully(what: &str, grace_ms: u32) -> ! {
     while core.outstanding_count() > 0 && std::time::Instant::now() < deadline {
         thread::sleep(DRAIN_POLL_INTERVAL);
     }
-    std::process::exit(0);
+    end_process(0)
+}
+
+/// End the process at once, without running the exit handlers.
+///
+/// Both callers run on a thread of the core's own while the host's runtime is
+/// still alive, and often while it is tearing itself down: exit handlers run
+/// from here destroy state the host's main thread is still using, and a Node
+/// main thread leaving its event loop then locks a destroyed mutex and aborts.
+/// Every operative's state has shipped by now, so the handlers have nothing
+/// left to do.
+fn end_process(code: i32) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+
+    #[cfg(unix)]
+    // SAFETY: `_exit` takes no pointer and does not return.
+    unsafe {
+        libc::_exit(code)
+    }
+
+    #[cfg(not(unix))]
+    std::process::exit(code)
 }
 
 fn wait_for_stdin_eof() {
@@ -518,6 +540,37 @@ mod tests {
         // dropped its registration; a late ack arrives and finds nothing.
         // Must not panic.
         signal_result("never-registered-ref", Ok(String::new()));
+    }
+
+    #[test]
+    fn end_process_runs_no_exit_handler() {
+        const CHILD: &str = "FLZ_END_PROCESS_CHILD";
+
+        // The child: a handler that aborts stands in for a host runtime whose
+        // teardown an exit handler would race.
+        if std::env::var_os(CHILD).is_some() {
+            extern "C" fn abort_on_exit() {
+                std::process::abort();
+            }
+            // SAFETY: registers a plain function with no captured state.
+            unsafe { libc::atexit(abort_on_exit) };
+            end_process(0);
+        }
+
+        let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "shutdown::tests::end_process_runs_no_exit_handler",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .expect("run the child");
+
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "the exit ran an exit handler: {status}"
+        );
     }
 
     #[test]

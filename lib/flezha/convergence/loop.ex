@@ -124,7 +124,10 @@ defmodule Flezha.Convergence.Loop do
   @doc false
   def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, _loop_pid) do
     operative_id = Map.get(metadata, :operative_instance)
-    if is_binary(operative_id), do: Facts.declare({:output_stall, operative_id, %{}})
+
+    if is_binary(operative_id),
+      do: Facts.declare({:output_stall, operative_id, Map.take(metadata, [:runner_id])})
+
     :ok
   catch
     _, _ -> :ok

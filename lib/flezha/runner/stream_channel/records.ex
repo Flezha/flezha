@@ -212,15 +212,17 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   # Emit `output_stall` for each mapped operative whose kind runs the output-stall
-  # watchdog. A kind without it (a durable workflow operative) legitimately goes
+  # watchdog, naming the runner whose stream stalled: the stall is about that
+  # binding, and the loop drops it once the operative is bound elsewhere. A kind
+  # without the watchdog (a durable workflow operative) legitimately goes
   # silent, so flagging it would spuriously rebind.
-  def emit_output_stall(operative_mapping) do
+  def emit_output_stall(runner_id, operative_mapping) do
     for {operative_id, _} <- operative_mapping,
         ClassRegistry.capable?(operative_id, :output_stall_watch?) do
       :telemetry.execute(
         [:flezha, :state, :output_stall],
         %{count: 1},
-        %{operative_instance: operative_id}
+        %{operative_instance: operative_id, runner_id: runner_id}
       )
     end
   end

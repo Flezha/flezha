@@ -391,7 +391,7 @@ defmodule Flezha.Runner.StreamChannel do
           "runner=#{inspect(state.runner_id)} operatives=#{inspect(Map.keys(state.operative_mapping))}"
       )
 
-      Records.emit_output_stall(state.operative_mapping)
+      Records.emit_output_stall(state.runner_id, state.operative_mapping)
     end
 
     {:noreply, state}
@@ -484,7 +484,7 @@ defmodule Flezha.Runner.StreamChannel do
       # Emit output_stall immediately for every operative in the mapping so the
       # convergence Loop triggers a rebind tick rather than waiting for the
       # Watchdog's 60s grace period to detect the dead socket.
-      Records.emit_output_stall(state.operative_mapping)
+      Records.emit_output_stall(state.runner_id, state.operative_mapping)
       ControlChannel.rebind_data_streams(state.runner_id)
     end
 

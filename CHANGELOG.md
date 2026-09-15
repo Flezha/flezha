@@ -30,6 +30,21 @@ bodies, keep their formats.
 split in Java. An application can boot a runner, make its admin calls, and
 then wait, which the Ruby SDK had no public way to do.
 
+### Fixed: an operative reads healthy as soon as a restarted runner takes it
+
+After a runner stopped and came back, its operatives were bound again and answering
+within seconds but reported `degraded` for about a minute, while the controller kept
+retrying a repair they no longer needed. The stall a closed stream reports now clears
+as soon as the operative is bound to another runner.
+
+### Fixed: a runner stopped with Ctrl-C or SIGTERM exits cleanly
+
+A Node runner could end with `Aborted (core dumped)` instead of exiting 0, because the
+SDK core ended the process while Node was still shutting itself down. The core now
+ends the process at once, once every operative's final state has shipped, without the
+exit-time cleanup that raced Node's own. The change is in the core that every SDK but
+Elixir is built on.
+
 ### Fixed: an application's plugin options reach the plugin
 
 An application enabling a plugin through its runner's admin handle had every

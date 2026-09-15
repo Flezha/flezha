@@ -14,7 +14,7 @@ defmodule Flezha.Convergence.HealTest do
 
   alias Flezha.Config.Backoff
   alias Flezha.Cluster.Directory
-  alias Flezha.Convergence.{Diff, Heal, Intent, Planner, Snapshot}
+  alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Snapshot}
   alias Flezha.Operative.Overwatch
   alias Flezha.Service.{HubManager, OperativeManager}
   alias Flezha.SafeCall
@@ -441,6 +441,39 @@ defmodule Flezha.Convergence.HealTest do
              })
 
       refute Planner.ladder?(%{primitive: :rebind_operative, target: "r", args: %{}})
+    end
+
+    test "a stall a runner's stream declared is repaired once its operative is bound elsewhere" do
+      facts =
+        Map.new(
+          [
+            {"op_moved", %{runner_id: "e_gone"}},
+            {"op_stayed", %{runner_id: "e_live"}},
+            {"op_unread", %{runner_id: "e_gone"}},
+            {"op_watchdog", %{}}
+          ],
+          fn {id, args} -> {{:output_stall, id}, %{at: 0, args: args}} end
+        )
+
+      reality = %{
+        operatives: %{
+          {@stall_ns, "op_moved"} => %{bound_runner: "e_live"},
+          {@stall_ns, "op_stayed"} => %{bound_runner: "e_live"},
+          {@stall_ns, "op_unread"} => %{bound_runner: :unknown},
+          {@stall_ns, "op_watchdog"} => %{bound_runner: "e_live"}
+        }
+      }
+
+      {held, released} = Facts.settle(facts, reality, 60_000, 1_000)
+
+      assert Enum.sort(Map.keys(held)) ==
+               [
+                 {:output_stall, "op_stayed"},
+                 {:output_stall, "op_unread"},
+                 {:output_stall, "op_watchdog"}
+               ]
+
+      assert released == [Planner.ladder_key("op_moved")]
     end
   end
 
