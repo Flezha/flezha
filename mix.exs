@@ -7,10 +7,10 @@ defmodule Flezha.MixProject do
       version: "0.1.0",
       elixir: "~> 1.17",
       description: "Distributed stateful operatives — durable stream and workflow compute",
-      source_url: "https://github.com/alfetahe/flezha",
+      source_url: "https://github.com/flezha/flezha",
       package: [
         licenses: ["MPL-2.0", "Apache-2.0"],
-        links: %{"GitHub" => "https://github.com/alfetahe/flezha"}
+        links: %{"GitHub" => "https://github.com/flezha/flezha"}
       ],
       start_permanent: Mix.env() == :prod,
       releases: releases(),

@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alfetahe/flezha.git",
+    "url": "git+https://github.com/flezha/flezha.git",
     "directory": "sdk/node"
   },
   "type": "module",

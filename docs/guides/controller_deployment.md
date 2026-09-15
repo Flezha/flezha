@@ -188,7 +188,7 @@ boot await: ready
 ### Kubernetes
 
 TODO. The reference manifests are in
-[`kubernetes/`](https://github.com/alfetahe/flezha/tree/main/kubernetes) and `make k8s-apply` applies them in
+[`kubernetes/`](https://github.com/flezha/flezha/tree/main/kubernetes) and `make k8s-apply` applies them in
 dependency order, but this section has not been walked through end to end yet.
 
 ### Inside an Elixir application
@@ -199,14 +199,14 @@ Your application depends on flezha and becomes the controller. There is nothing
 to start: flezha is an OTP application, and its controller tree comes up with
 yours.
 
-Working example: [`examples/elixir/embedded_controller`](https://github.com/alfetahe/flezha/tree/main/examples/elixir/embedded_controller).
+Working example: [`examples/elixir/embedded_controller`](https://github.com/flezha/flezha/tree/main/examples/elixir/embedded_controller).
 
 #### Add the dependency
 
 ```elixir
 # mix.exs
 defp deps do
-  [{:flezha, github: "alfetahe/flezha", branch: "dev"}]   # TODO: hex package
+  [{:flezha, github: "flezha/flezha", branch: "dev"}]   # TODO: hex package
 end
 ```
 

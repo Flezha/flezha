@@ -205,7 +205,7 @@ admin calls go between them: nothing extra keeps the process alive, the wait
 does, exactly as before.
 
 The echo example carries these lines commented out in its `Main`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/java/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/java/examples/echo).
 
 ### Rust
 
@@ -226,7 +226,7 @@ the controller's own result as a `serde_json::Value`, and a refusal as an
 `AdminError`.
 
 The echo example carries the calls commented out in its `main.rs`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/rust/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/rust/examples/echo).
 
 ### Node
 
@@ -245,7 +245,7 @@ it and the process keeps serving without a wait of its own. Each call is a promi
 of the controller's result.
 
 The echo example carries the calls commented out in its `runner.mjs`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/node/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/node/examples/echo).
 
 ### Python
 
@@ -266,7 +266,7 @@ runner.await_termination()
 for the controller's answer.
 
 The echo example carries the calls commented out in its `runner.py`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/python/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/python/examples/echo).
 
 ### Ruby
 
@@ -287,7 +287,7 @@ runner.await_termination
 already has.
 
 The echo example carries the calls commented out in its `runner.rb`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/ruby/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/ruby/examples/echo).
 
 ### PHP
 
@@ -309,7 +309,7 @@ answered at once, but PHP has no threads: a message they send is processed once
 `awaitTermination()` starts serving.
 
 The echo example carries the calls commented out in its `runner.php`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/php/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/php/examples/echo).
 
 ### Elixir
 
@@ -330,7 +330,7 @@ and answers `{:ok, result}` or `{:error, reason}`. The runner is connected once 
 child has started, so the calls can follow `Supervisor.start_link/2`.
 
 The echo example carries the calls commented out in its `application.ex`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/examples/elixir/echo).
+[ready to uncomment](https://github.com/flezha/flezha/tree/main/examples/elixir/echo).
 
 <!-- tabs-close -->
 

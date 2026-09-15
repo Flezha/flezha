@@ -15,7 +15,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/alfetahe/flezha"
+repository = "https://github.com/flezha/flezha"
 
 # Every dependency two or more crates pin. A dependency exactly one crate uses
 # stays in that crate, so this stays the shared-pin table and not a catalogue.

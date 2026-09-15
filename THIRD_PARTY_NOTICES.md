@@ -590,11 +590,11 @@ limitations under the License.
 ### Apache License 2.0
 
 Used by:
-- `flezha-macros` 0.1.0 — https://github.com/alfetahe/flezha
-- `flz_core` 0.1.0 — https://github.com/alfetahe/flezha
-- `flz_core_ffi` 0.1.0 — https://github.com/alfetahe/flezha
-- `flz_transport` 0.1.0 — https://github.com/alfetahe/flezha
-- `flezha_runner` 0.1.0 — https://github.com/alfetahe/flezha
+- `flezha-macros` 0.1.0 — https://github.com/flezha/flezha
+- `flz_core` 0.1.0 — https://github.com/flezha/flezha
+- `flz_core_ffi` 0.1.0 — https://github.com/flezha/flezha
+- `flz_transport` 0.1.0 — https://github.com/flezha/flezha
+- `flezha_runner` 0.1.0 — https://github.com/flezha/flezha
 
 ```
 Apache License

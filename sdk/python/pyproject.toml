@@ -37,8 +37,8 @@ attrs = ["attrs>=23.1"]
 uvloop = ["uvloop>=0.19"]
 
 [project.urls]
-Homepage = "https://github.com/alfetahe/flezha"
-Documentation = "https://github.com/alfetahe/flezha/blob/main/docs/sdk/python_sdk.md"
+Homepage = "https://github.com/flezha/flezha"
+Documentation = "https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md"
 
 [dependency-groups]
 # Exact versions for the tools, because CI installs what these lines name and

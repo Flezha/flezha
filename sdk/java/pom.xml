@@ -29,9 +29,9 @@
     </developers>
 
     <scm>
-        <url>https://github.com/alfetahe/flezha</url>
-        <connection>scm:git:https://github.com/alfetahe/flezha.git</connection>
-        <developerConnection>scm:git:git@github.com:alfetahe/flezha.git</developerConnection>
+        <url>https://github.com/flezha/flezha</url>
+        <connection>scm:git:https://github.com/flezha/flezha.git</connection>
+        <developerConnection>scm:git:git@github.com:flezha/flezha.git</developerConnection>
     </scm>
 
     <properties>

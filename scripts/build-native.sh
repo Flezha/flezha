@@ -48,7 +48,7 @@
 #
 # Environment:
 #   FLEZHA_RELEASE_BASE_URL  Override the release download root
-#                            (default https://github.com/alfetahe/flezha/releases/download).
+#                            (default https://github.com/flezha/flezha/releases/download).
 #
 set -euo pipefail
 
@@ -115,7 +115,7 @@ esac
 command -v cargo  >/dev/null 2>&1 || { echo "cargo not found on PATH" >&2; exit 1; }
 command -v rustup >/dev/null 2>&1 || { echo "rustup not found on PATH" >&2; exit 1; }
 
-RELEASE_BASE_URL="${FLEZHA_RELEASE_BASE_URL:-https://github.com/alfetahe/flezha/releases/download}"
+RELEASE_BASE_URL="${FLEZHA_RELEASE_BASE_URL:-https://github.com/flezha/flezha/releases/download}"
 MANIFEST_NAME="SHA256SUMS.txt"
 MANIFEST_FILE=""
 

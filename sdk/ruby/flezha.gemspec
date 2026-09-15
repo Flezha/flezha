@@ -14,7 +14,7 @@ Gem::Specification.new do |spec|
     surface, the MessagePack codec, and a thread host that releases the GVL
     around every blocking core call.
   TEXT
-  spec.homepage = "https://github.com/alfetahe/flezha"
+  spec.homepage = "https://github.com/flezha/flezha"
   spec.license = "Apache-2.0"
   spec.authors = ["Flezha contributors"]
 

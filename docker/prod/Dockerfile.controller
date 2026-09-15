@@ -97,7 +97,7 @@ RUN --mount=type=cache,target=/root/.hex \
 FROM debian:bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.licenses="MPL-2.0" \
-      org.opencontainers.image.source="https://github.com/alfetahe/flezha"
+      org.opencontainers.image.source="https://github.com/flezha/flezha"
 
 WORKDIR /flezha
 

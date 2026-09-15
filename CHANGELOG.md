@@ -5,7 +5,7 @@
 ### Changed: the testnet lives in its own repository and streams market data
 
 The fake exchange at `test/apps/testnet` is now the git submodule
-[`alfetahe/flezha_testnet`](https://github.com/alfetahe/flezha_testnet). Clone with
+[`flezha/flezha_testnet`](https://github.com/flezha/flezha_testnet). Clone with
 `--recurse-submodules`, or run `git submodule update --init test/apps/testnet` in an
 existing checkout; `mix test.setup` says so when it is missing. The testnet now ships
 the trade and order book generators its Kraken channels use, so a subscription streams

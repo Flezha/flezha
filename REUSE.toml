@@ -1,7 +1,7 @@
 version = 1
 SPDX-PackageName = "Flezha"
 SPDX-PackageSupplier = "Anuar Alfetahe"
-SPDX-PackageDownloadLocation = "https://github.com/alfetahe/flezha"
+SPDX-PackageDownloadLocation = "https://github.com/flezha/flezha"
 
 # Default: the controller, CLI, NIF, tests, docs and operations tooling.
 [[annotations]]

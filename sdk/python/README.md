@@ -45,6 +45,6 @@ flezha.create_runner("default").define_stream(echo_operative).run()
   dataclasses, Pydantic models or attrs classes.
 
 Full documentation:
-[`docs/sdk/python_sdk.md`](https://github.com/alfetahe/flezha/blob/main/docs/sdk/python_sdk.md).
+[`docs/sdk/python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md).
 
 Licensed under Apache-2.0.
