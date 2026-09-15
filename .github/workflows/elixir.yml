@@ -25,6 +25,7 @@ on:
       - "sdk/rust/**"
       - "cli/**"
       - "test/apps/rust_runner/**"
+      - "test/apps/testnet"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
   push:
@@ -42,6 +43,7 @@ on:
       - "sdk/rust/**"
       - "cli/**"
       - "test/apps/rust_runner/**"
+      - "test/apps/testnet"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
 
@@ -56,6 +58,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - name: Set up Erlang + Elixir
         uses: ./.github/actions/setup-beam

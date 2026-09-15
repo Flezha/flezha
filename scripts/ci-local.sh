@@ -140,6 +140,7 @@ run_java() {
   # `npm ci` and no fallback: it installs the committed lockfile or fails, and
   # a lockfile that has drifted from package.json is a finding, not a nuisance.
   bold ">>> npm ci + npm run build (testnet)"
+  git submodule update --init test/apps/testnet
   ( cd test/apps/testnet && npm ci && npm run build )
 
   bold ">>> mix deps.get"

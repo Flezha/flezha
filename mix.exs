@@ -159,6 +159,14 @@ defmodule Flezha.MixProject do
     end
   end
 
+  # The testnet is a git submodule, so a clone made without
+  # `--recurse-submodules` leaves its directory empty.
+  defp testnet_checked_out(_args) do
+    unless File.exists?("test/apps/testnet/package.json") do
+      Mix.raise("test/apps/testnet is empty: run `git submodule update --init test/apps/testnet`")
+    end
+  end
+
   # Aliases are invoked via `mix <alias>`.
   defp aliases do
     [
@@ -172,6 +180,7 @@ defmodule Flezha.MixProject do
       # alias those cases skip with a clear message rather than crash
       # inside the WS plugin connect path.
       "test.setup": [
+        &testnet_checked_out/1,
         "cmd npm --prefix test/apps/testnet install",
         "cmd npm --prefix test/apps/testnet run build"
       ],

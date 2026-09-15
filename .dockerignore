@@ -87,3 +87,5 @@ test/apps/rust_runner/target
 test/apps/rust_runner/dist
 test/apps/testnet/node_modules
 test/apps/testnet/dist
+test/apps/testnet/dist-test
+test/apps/testnet/.git

@@ -109,6 +109,7 @@ The `protoc` install layer rejects any other `uname -m` with
 
 ## Building
 - Copy `.env.example` and rename to `.env`
+- Check out the testnet, a git submodule: `git submodule update --init test/apps/testnet`
 - Install testnet dependencies: `cd test/apps/testnet && npm ci`
 - Build the testnet: `npm run build` (from `test/apps/testnet`)
 - Build the `rust_runner` application.

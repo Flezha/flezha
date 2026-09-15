@@ -133,7 +133,8 @@ cd test/apps/rust_runner
 cargo run --target-dir=./target
 ```
 
-- Build the testnet TS app inside the container (one-time setup):
+- Build the testnet TS app inside the container (one-time setup). It is a git submodule, so check it
+  out on the host first with `git submodule update --init test/apps/testnet`:
 ```bash
 docker exec -it flezha_controller_dev bash -c "cd test/apps/testnet && npm ci && npm run build"
 ```
