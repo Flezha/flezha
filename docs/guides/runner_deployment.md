@@ -526,10 +526,10 @@ workflow kind.
 ### Python
 
 The whole example:
-[`examples/python/echo`](https://github.com/alfetahe/flezha/tree/main/examples/python/echo).
+[`sdk/python/examples/echo`](https://github.com/alfetahe/flezha/tree/main/sdk/python/examples/echo).
 
 ```python
-# The procedure. The processing stage the graph routes each message into.
+# echo_procedure.py: the procedure. The processing stage the graph routes each message into.
 @flezha.procedure(name="echo")  # state is saved under this name, so choose it once
 def echo(value: str) -> str:
     return f"echo: {value}"  # what it returns is emitted
@@ -539,7 +539,7 @@ A function becomes a procedure through the decorator. It declares no state, so i
 keeps nothing between messages, and where its result goes is not its business.
 
 ```python
-# The operative. The graph, and the unit the controller schedules.
+# echo_operative.py: the operative. The graph, and the unit the controller schedules.
 @flezha.stream_operative("echo")
 def echo_operative(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).sink("out")
@@ -551,7 +551,7 @@ codec, so the procedure's string goes back out as its UTF-8 bytes, and any value
 other than a string or bytes would go out as JSON.
 
 ```python
-# The runner. Connects, offers the operative, and serves.
+# runner.py: the runner. Connects, offers the operative, and serves.
 def main() -> None:
     runner = flezha.create_runner(sys.argv[1] if len(sys.argv) > 1 else "default")
     runner.define_stream(echo_operative)
@@ -872,15 +872,15 @@ when omitted.
 
 ### Python
 
-From the echo example's folder, with Python 3.11 or later and the `flezha`
-package installed:
+From the echo example's folder, with Python 3.11 or later:
 
 ```sh
-python3 echo.py
+pip install -r requirements.txt && python3 runner.py
 ```
 
-The first argument is the namespace, `default` when omitted. The example's README
-also starts a controller and this runner together with Docker.
+The first argument is the namespace, `default` when omitted.
+[`examples/python/echo`](https://github.com/alfetahe/flezha/tree/main/examples/python/echo)
+starts a controller and this runner together with Docker.
 
 ### Ruby
 

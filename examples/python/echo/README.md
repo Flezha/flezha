@@ -1,8 +1,9 @@
 # Echo: the smallest complete deployment
 
 A controller, one runner offering an `echo` operative, and a message that goes
-in and comes back. Three files: the example itself is `echo.py`, and it is
-about forty lines including the comments.
+in and comes back. The runner is the standalone Python hello world in
+[`sdk/python/examples/echo`](../../../sdk/python/examples/echo), and this folder
+is the deployment around it.
 
 This is the same `echo` the guides build by hand in
 [`docs/guides/runner_deployment.md`](../../../docs/guides/runner_deployment.md).
@@ -52,14 +53,9 @@ and the first run becomes immediate.
 
 ## Without Docker
 
-Against a controller you are already running, with the Python SDK built
-(`scripts/build-python-sdk.sh`):
-
-```sh
-sdk/python/.venv/bin/python examples/python/echo/echo.py
-```
-
-Then the same `flz operative start` and `flz operative send` as above.
+Against a controller you are already running, follow the README in
+[`sdk/python/examples/echo`](../../../sdk/python/examples/echo): the same
+`flz operative start` and `flz operative send` as above then apply.
 
 **Do not background it with its standard input closed.** The SDK treats end of
 file on standard input as a shutdown request, which is how a supervising
@@ -70,9 +66,9 @@ That is also why the compose file sets `stdin_open: true`.
 
 | File | Part | What it does |
 |---|---|---|
-| `echo.py` → `echo` | the procedure | the processing stage: prefixes each message |
-| `echo.py` → `echo_operative` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
-| `echo.py` → `main` | the runner | this process: offers the operative and waits |
+| `echo_procedure.py` | the procedure | the processing stage: prefixes each message |
+| `echo_operative.py` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
+| `runner.py` | the runner | this process: offers the operative and waits |
 
 The procedure never says where its output goes; the operative decides that.
 That split is what lets the graph be rewired without touching the procedure.

@@ -265,8 +265,8 @@ runner.await_termination()
 `start()` rather than `run()`, for the same reason as in Java. Each call blocks
 for the controller's answer.
 
-The echo example carries the calls commented out in its `echo.py`,
-[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/examples/python/echo).
+The echo example carries the calls commented out in its `runner.py`,
+[ready to uncomment](https://github.com/alfetahe/flezha/tree/main/sdk/python/examples/echo).
 
 ### Ruby
 

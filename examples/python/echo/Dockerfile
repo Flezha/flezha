@@ -1,4 +1,5 @@
-# The echo runner: echo.py, and the SDK it needs.
+# The echo runner: the three files of sdk/python/examples/echo, and the SDK
+# they need.
 #
 # Two stages, because the flezha wheel is BUILT here rather than installed.
 # The package is not on PyPI yet. When it is published, delete the wheel stage
@@ -40,7 +41,7 @@ RUN useradd --create-home --uid 1000 runner
 COPY --from=wheel /wheels/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
 
-COPY examples/python/echo/echo.py /app/echo.py
+COPY sdk/python/examples/echo/*.py /app/
 
 USER runner
 WORKDIR /app
@@ -48,4 +49,4 @@ WORKDIR /app
 ENV FLEZHA_SOCKET_FILES_PATH=/flezha/app_data/sockets
 
 # -u so the runner's own lines reach `docker compose logs` as they happen.
-ENTRYPOINT ["python", "-u", "/app/echo.py"]
+ENTRYPOINT ["python", "-u", "/app/runner.py"]
