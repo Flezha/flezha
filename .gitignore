@@ -38,6 +38,9 @@ __pycache__/
 # Ignore environment variables file
 .env
 
+# VS Code workspace settings.
+.vscode/
+
 # ElixirLS
 .elixir_ls/
 
