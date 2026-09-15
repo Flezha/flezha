@@ -10,6 +10,7 @@ what both the completion and the abandon meet.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -113,7 +114,7 @@ def test_an_async_handler_is_driven_off_an_event_loop(fake_core: FakeCore) -> No
 
     deps = solo_deps(slow, fake_core)
     (effect,) = answered(work_activation(7, "hi", factory="solo"), deps)["effects"]
-    assert codec.decode(effect["outputs"][0]["payload"]) == "HI"
+    assert effect["outputs"][0]["payload"] == b"HI"
 
 
 def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore) -> None:
@@ -159,7 +160,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
             "kind": "key_request",
             "key_request": {
                 "channel": 0,
-                "payloads": [codec.encode({"k": "a"}), codec.encode({"k": "b"})],
+                "payloads": [json.dumps({"k": "a"}).encode(), json.dumps({"k": "b"}).encode()],
                 "want_keys": True,
                 "want_event_time": False,
             },
@@ -196,7 +197,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
             "kind": "key_request",
             "key_request": {
                 "channel": 0,
-                "payloads": [codec.encode({"k": "bad"}), codec.encode({"k": "ok"})],
+                "payloads": [json.dumps({"k": "bad"}).encode(), json.dumps({"k": "ok"}).encode()],
                 "want_keys": True,
                 "want_event_time": False,
             },
@@ -408,14 +409,21 @@ def _delivered(factory: str, procedure: int, payload: bytes, deps: DispatchDeps)
     return list(_DELIVERED)
 
 
+def _payload_of(output: dict[str, Any]) -> Any:
+    """An edge payload is the class codec's MessagePack; the ``handoff`` sink
+    names no codec, so its frame for a number is JSON."""
+    if output["target"] == "plugin":
+        return json.loads(output["payload"])
+    return codec.decode(output["payload"])
+
+
 def test_a_structured_workflow_releases_one_untransformed_edge_output(
     fake_core: FakeCore,
 ) -> None:
     deps = deps_for(_wf_emit, fake_core)
     (effect,) = answered(work_activation(40, 10, factory="wf_emit"), deps)["effects"]
     assert [
-        (o["target"], o["consumer"], o["plugin_channel"], codec.decode(o["payload"]))
-        for o in effect["outputs"]
+        (o["target"], o["consumer"], o["plugin_channel"], _payload_of(o)) for o in effect["outputs"]
     ] == [("edge", 1, None, 10), ("plugin", None, "handoff", 10)]
     assert effect["outputs"][0]["key"] is None
     assert effect["outputs"][0]["event_time"] is None
@@ -443,7 +451,7 @@ def test_an_edge_payload_is_the_encoders_own_bytes(
     (effect,) = answered(work_activation(43, 10, factory="wf_emit_stream"), deps)["effects"]
 
     assert len(effect["outputs"]) == 3
-    for output in effect["outputs"]:
+    for output in (o for o in effect["outputs"] if o["target"] == "edge"):
         assert any(made is output["payload"] for made in produced), (
             "the frame carries a copy of the bytes MessagePack returned, not the bytes"
         )
@@ -454,9 +462,11 @@ def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer(
 ) -> None:
     deps = deps_for(_wf_emit_stream, fake_core)
     (effect,) = answered(work_activation(41, 10, factory="wf_emit_stream"), deps)["effects"]
-    assert [
-        (o["target"], o["consumer"], codec.decode(o["payload"])) for o in effect["outputs"]
-    ] == [("edge", 1, 11), ("edge", 2, 10), ("plugin", None, 10)]
+    assert [(o["target"], o["consumer"], _payload_of(o)) for o in effect["outputs"]] == [
+        ("edge", 1, 11),
+        ("edge", 2, 10),
+        ("plugin", None, 10),
+    ]
 
 
 # The other end of the same two arms: what the CONSUMER is handed. A stream
@@ -480,3 +490,22 @@ def test_a_workflow_consumer_applies_its_own_edge_exactly_once_at_delivery(
     # each evaluates its own edge here.
     assert _delivered("wf_emit", 1, released, deps) == [11]
     assert _delivered("wf_emit", 2, released, deps) == [10]
+
+
+def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
+    fake_core: FakeCore,
+) -> None:
+    """An entry naming no codec reads JSON, so plain text fails its decode: the
+    item rides the retry ladder and the handler is never handed it."""
+    seen: list[Any] = []
+
+    @flezha.procedure
+    def record(value: Any) -> None:
+        seen.append(value)
+
+    activation = work_activation(60, {"a": 1}, "placeholder", factory="solo")
+    activation["items"][1]["payload"] = b"hello"
+    effects = answered(activation, solo_deps(record, fake_core))["effects"]
+    assert [effect["verdict"] for effect in effects] == ["ok", "retryable"]
+    assert effects[1]["message"].startswith("JSONDecodeError")
+    assert seen == [{"a": 1}]

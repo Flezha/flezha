@@ -91,9 +91,7 @@ upcase = flezha.procedure(Upcase)
 
 @flezha.stream_operative("upcase")
 def upcase_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=lambda body: bytes(body).decode()).into(upcase).sink(
-        "out", encode=lambda value: str(value).encode()
-    )
+    c.input("input", codec="text").into(upcase).sink("out")
 
 
 flezha.create_runner("default").define_stream(upcase_operative).run()
@@ -161,6 +159,38 @@ invocation, and reproduce on replay. `time.time()`, `datetime.now()` and
 `uuid.uuid4()` do not — so calling one inside a handler emits a warning naming
 the file and line, and the invocation completes normally. Detection is armed
 only while an invocation runs and only on the thread running it.
+
+## Channel payloads
+
+A channel names the format of its payload with `codec=` on `input` and on
+`sink`, a string typed as `flezha.ChannelCodec`:
+
+| Codec | An entry hands the procedure | A sink sends |
+| --- | --- | --- |
+| `"text"` | a `str`; invalid UTF-8 fails the decode | a `str` as UTF-8; any other value fails the emit |
+| `"bytes"` | `bytes`, unchanged | `bytes`, `bytearray` or `memoryview` unchanged; any other value fails the emit |
+| `"json"` | the parsed JSON | any value as compact JSON, a `str` quoted |
+| `"msgpack"` | the value MessagePack decodes to | any value as MessagePack |
+
+An entry with no codec and no `decode=` reads JSON: `{"a":1}` arrives as
+`{"a": 1}`, and plain text fails its decode and rides the retry and dead-letter
+ladder. A sink with no codec and no `encode=` follows the value: bytes pass
+through, a `str` is sent as UTF-8, and anything else as JSON. So a sink needs no
+codec for a string, bytes or a JSON value, and names one only to pick another
+format, `"json"` to quote a string or `"msgpack"`. A `decode=` or `encode=`
+callable takes the place of a codec for anything else. A codec name outside the
+four, or a codec named beside a callable on one channel, is refused when the
+operative is declared, naming the operative and the channel.
+
+Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
+`NaN` or an infinity has no JSON form, so sending one to a sink that names no
+codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries
+it.
+
+A value passed between two procedures of one operative never crosses a channel
+codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
+procedure the binary instead, since an Elixir string is its binary, so the same
+bytes on an undeclared entry are a `dict` here and a string there.
 
 ## Encoding
 

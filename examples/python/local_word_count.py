@@ -53,9 +53,9 @@ class Tally:
 def word_count(c: Channels) -> None:
     # One Entity per word: the hop from `split` to `Tally` is the runtime's,
     # not this file's.
-    c.input("lines", decode=lambda raw: bytes(raw).decode()).into(split).key_by(
-        lambda word: word
-    ).into(Tally).keyed().sink("totals", encode=lambda text: text.encode())
+    c.input("lines", codec="text").into(split).key_by(lambda word: word).into(Tally).keyed().sink(
+        "totals"
+    )
 
 
 if __name__ == "__main__":

@@ -1,24 +1,13 @@
-"""Helpers every fixture module shares: the wire codecs the reference's
-`String` payloads need, the environment readers the tunable fixtures use, and
-the pass-through procedure six operatives declare identically.
+"""Helpers every fixture module shares: the key convention, the environment
+readers the tunable fixtures use, and the pass-through procedure six operatives
+declare identically.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import flezha
-
-
-def text(body: Any) -> str:
-    """The wire bytes as the reference's `String` entry payload."""
-    return bytes(body).decode()
-
-
-def raw(value: Any) -> bytes:
-    """A plugin frame as the reference's bytes."""
-    return str(value).encode()
 
 
 def prefix(value: str) -> str:
@@ -31,11 +20,6 @@ def _as_int(value: str) -> int:
         return int(value)
     except ValueError:
         return 0
-
-
-def _bytes_through(value: Any) -> bytes:
-    """A handler that already produced the wire bytes hands them through."""
-    return value if isinstance(value, bytes) else raw(value)
 
 
 def _env_int(key: str, default: int | None) -> int | None:

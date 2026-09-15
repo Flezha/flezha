@@ -3,15 +3,14 @@
 // factory ids, procedure names, channel names and output bytes.
 //
 // Entry payloads and plugin frames are UTF-8 text on the wire, as in the
-// reference: its bare `.sink(name)` serialises a String as UTF-8, while this
-// SDK's plugin default is MessagePack — so every sink here declares an encoder.
+// reference: every entry names the text codec, and a bare `.sink(name)` sends a
+// string as UTF-8 here as it does there, so only a sink that prefixes its value
+// declares an encoder.
 // An inter-procedure hop between two Node procedures carries MessagePack, and
 // the core derives that channel's journal codec from the channel's kind, so no
 // fixture declares one.
 
 import { defineProcedure, defineWorkflow } from '@flezha/sdk';
-
-import { bytes, text } from './fixture_support.mjs';
 
 // -- the release gate -------------------------------------------------------
 
@@ -115,7 +114,7 @@ const CommitA = durableStep('commit_a');
 const BlockB = statelessStep('block_b', blockUntilReleased);
 
 const commitBlockChain = (c) => {
-  c.input('in', text).into(CommitA).named('mid').into(BlockB);
+  c.input('in', { codec: 'text' }).into(CommitA).named('mid').into(BlockB);
 };
 
 export const commitBlockWorkflow = defineWorkflow({
@@ -140,9 +139,9 @@ export const optoutCommitBlock = defineWorkflow({
   factoryId: 'optout_commit_block',
   persistent: false,
   channels: (c) => {
-    c.input('in', text)
+    c.input('in', { codec: 'text' })
       .into(CommitA)
-      .sink('mid', (value) => bytes(`a-ran:${value}`))
+      .sink('mid', (value) => Buffer.from(`a-ran:${value}`, 'utf8'))
       .into(BlockB);
   },
 });
@@ -163,7 +162,7 @@ export const tierCommitBlockWorkflow = defineWorkflow({
   factoryId: 'tier_commit_block_workflow',
   channels: (c) => {
     c.effectivelyOnce();
-    c.input('in', text).into(TierCommitA).keyed().sink('mid', bytes).into(BlockB);
+    c.input('in', { codec: 'text' }).into(TierCommitA).keyed().sink('mid').into(BlockB);
   },
 });
 
@@ -181,7 +180,7 @@ const SagaC = failingStep('saga_c');
 export const sagaBlockWorkflow = defineWorkflow({
   factoryId: 'saga_block_workflow',
   channels: (c) => {
-    c.input('in', text).into(SagaA).named('s1').into(SagaB).named('s2').into(SagaC);
+    c.input('in', { codec: 'text' }).into(SagaA).named('s1').into(SagaB).named('s2').into(SagaC);
   },
 });
 
@@ -196,9 +195,9 @@ export const sagaBlockWorkflow = defineWorkflow({
 export const outboxBlockWorkflow = defineWorkflow({
   factoryId: 'outbox_block_workflow',
   channels: (c) => {
-    c.input('in', text)
+    c.input('in', { codec: 'text' })
       .into(CommitA)
-      .sink('mid', (value) => bytes(`a-out:${value}`))
+      .sink('mid', (value) => Buffer.from(`a-out:${value}`, 'utf8'))
       .into(BlockB);
   },
 });
@@ -226,9 +225,9 @@ const UndoC = failingStep('undo_outbox_c');
 export const undoOutboxWorkflow = defineWorkflow({
   factoryId: 'undo_outbox_workflow',
   channels: (c) => {
-    c.input('in', text)
+    c.input('in', { codec: 'text' })
       .into(UndoOutboxA)
-      .sink('mid', (value) => bytes(`out:${value}`))
+      .sink('mid', (value) => Buffer.from(`out:${value}`, 'utf8'))
       .into(UndoC);
   },
 });
@@ -282,15 +281,15 @@ export const branchWorkflow = defineWorkflow({
     // One channel, two consumers: THE fan-out. Both branches read exactly what
     // BranchA released on it (held handle, wired twice).
     const mid = c
-      .input('in', text)
+      .input('in', { codec: 'text' })
       .into(BranchA)
-      .sink('mid', (value) => bytes(`a:${value}`));
+      .sink('mid', (value) => Buffer.from(`a:${value}`, 'utf8'));
     mid
       .into(BranchB)
-      .sink('bmid', (value) => bytes(`b:${value}`))
+      .sink('bmid', (value) => Buffer.from(`b:${value}`, 'utf8'))
       .into(BranchD)
-      .sink('d_out', bytes);
-    mid.into(BranchC).sink('c_out', bytes);
+      .sink('d_out');
+    mid.into(BranchC).sink('c_out');
   },
 });
 
@@ -326,11 +325,11 @@ export const diamondWorkflow = defineWorkflow({
     // Held handle wired twice = the fan-out; two arms naming DiamJoin with no
     // node name = the fan-in, since two unnamed mentions are one node.
     const fan = c
-      .input('in', text)
+      .input('in', { codec: 'text' })
       .into(DiamA)
-      .sink('dfan', (value) => bytes(`a:${value}`));
-    fan.into(DiamB1).named('db1').into(DiamB2).sink('db2', bytes).into(DiamJoin);
-    fan.into(DiamC).sink('dc', bytes).into(DiamJoin).sink('j_out', bytes);
+      .sink('dfan', (value) => Buffer.from(`a:${value}`, 'utf8'));
+    fan.into(DiamB1).named('db1').into(DiamB2).sink('db2').into(DiamJoin);
+    fan.into(DiamC).sink('dc').into(DiamJoin).sink('j_out');
   },
 });
 
@@ -364,11 +363,11 @@ const RetryFlaky = statelessStep('retry_flaky', (input, ctx) => {
 export const retryWorkflow = defineWorkflow({
   factoryId: 'retry_workflow',
   channels: (c) => {
-    c.input('in', text)
+    c.input('in', { codec: 'text' })
       .into(RetryA)
-      .sink('mid', (value) => bytes(`res:${value}`))
+      .sink('mid', (value) => Buffer.from(`res:${value}`, 'utf8'))
       .into(RetryFlaky)
-      .sink('out', bytes);
+      .sink('out');
   },
 });
 
@@ -433,7 +432,7 @@ export const chatLoopWorkflow = defineWorkflow({
   factoryId: 'chat_loop_workflow',
   ...loopKnobs,
   channels: (c) => {
-    c.input('in', text).into(ChatTurn).named('mid').into(ChatReply).sink('out', bytes);
+    c.input('in', { codec: 'text' }).into(ChatTurn).named('mid').into(ChatReply).sink('out');
   },
 });
 
@@ -441,7 +440,7 @@ export const statelessLoopWorkflow = defineWorkflow({
   factoryId: 'stateless_loop_workflow',
   ...loopKnobs,
   channels: (c) => {
-    c.input('in', text).into(ChatReply).sink('out', bytes);
+    c.input('in', { codec: 'text' }).into(ChatReply).sink('out');
   },
 });
 
@@ -449,7 +448,11 @@ export const chatRewindWorkflow = defineWorkflow({
   factoryId: 'chat_rewind_workflow',
   ...loopKnobs,
   channels: (c) => {
-    c.input('in', text).into(ChatTurn).named('mid').into(ChatReplyUndoable).sink('out', bytes);
+    c.input('in', { codec: 'text' })
+      .into(ChatTurn)
+      .named('mid')
+      .into(ChatReplyUndoable)
+      .sink('out');
   },
 });
 
@@ -469,11 +472,11 @@ const benchChain = (factoryId, steps, persistent) =>
     factoryId,
     persistent,
     channels: (c) => {
-      let stream = c.input('in', text).into(benchSteps[0]);
+      let stream = c.input('in', { codec: 'text' }).into(benchSteps[0]);
       for (let at = 1; at < steps; at += 1) {
         stream = stream.named(`edge_BenchS${at}`).into(benchSteps[at]);
       }
-      stream.sink('out', bytes);
+      stream.sink('out');
     },
   });
 
@@ -511,6 +514,6 @@ export const benchLoopWorkflow = defineWorkflow({
   maxDurationMs: 24 * 3_600_000,
   wakeAfterMs: Number.parseInt(process.env[WAKE_AFTER_ENV] ?? '', 10) || undefined,
   channels: (c) => {
-    c.input('in', text).into(BenchTurn).named('mid').into(ChatReply).sink('out', bytes);
+    c.input('in', { codec: 'text' }).into(BenchTurn).named('mid').into(ChatReply).sink('out');
   },
 });

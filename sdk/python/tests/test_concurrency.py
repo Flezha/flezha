@@ -353,6 +353,5 @@ def _assert_releases_the_gil(blocking_call: Any) -> None:
 
 
 def _payload_of(result: dict[str, Any]) -> Any:
-    from flezha import codec
-
-    return codec.decode(result["effects"][0]["outputs"][0]["payload"])
+    # The sink names no codec, so a string output is its UTF-8 bytes.
+    return bytes(result["effects"][0]["outputs"][0]["payload"]).decode()

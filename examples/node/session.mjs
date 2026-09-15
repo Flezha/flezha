@@ -69,12 +69,14 @@ export const Session = defineProcedure({
 export default defineOperative({
   factoryId: 'sessions',
   channels: (c) => {
-    c.input('activity', (bytes) => JSON.parse(Buffer.from(bytes).toString('utf8')))
+    // Neither channel names a codec: the activity event is read as JSON, and
+    // the summary object is sent as JSON.
+    c.input('activity')
       // Keying is declared on the wiring, which is what makes `Session`
       // dynamic: one entity per user, created on first sight.
       .keyBy((event) => event.user)
       .into(Session)
       .keyed()
-      .sink('closed_sessions', (summary) => Buffer.from(JSON.stringify(summary), 'utf8'));
+      .sink('closed_sessions');
   },
 });

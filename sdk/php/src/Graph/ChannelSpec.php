@@ -49,10 +49,15 @@ final class ChannelSpec
         public bool $keyed = false,
         /** The plugin sink attached to this channel; null means none. */
         public ?string $sink = null,
-        /** @var (callable(string):mixed)|null */
+        /**
+         * The entry payload's decoder, which `input` always sets. A channel
+         * between procedures has none: its payload is the class codec's.
+         *
+         * @var (callable(string):mixed)|null
+         */
         public $decode = null,
         /**
-         * The plugin sink's payload encoder; null means the class codec. It
+         * The plugin sink's payload encoder, which `sink` always sets. It
          * belongs to the sink frame alone: an inter-procedure frame is decoded
          * with the class codec, so encoding one with this hands the consuming
          * procedure bytes it cannot read.

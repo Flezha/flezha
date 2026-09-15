@@ -40,13 +40,13 @@ end
 class WordCount < Flezha::StreamOperative
   factory_id "local_word_count_example"
   channels do |c|
-    c.input("lines", decode: ->(b) { b.dup.force_encoding("UTF-8") })
+    c.input("lines", codec: :text)
      .into(Split)
      # One Entity per word: the hop from `Split` to `Tally` is the runtime's,
      # not this file's.
      .key_by { |word| word }
      .into(Tally).keyed
-     .sink("totals", encode: ->(v) { v.to_s.b })
+     .sink("totals")
   end
 end
 

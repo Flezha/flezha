@@ -43,9 +43,7 @@ def echo_operative(c: flezha.Channels) -> None:
     ``out`` is the name stamped on every value the channel delivers. Both are
     addresses rather than labels, so changing either is a breaking change.
     """
-    c.input("in", decode=lambda body: bytes(body).decode()).into(echo).sink(
-        "out", encode=lambda value: str(value).encode()
-    )
+    c.input("in", codec="text").into(echo).sink("out")
 
 
 def main() -> None:

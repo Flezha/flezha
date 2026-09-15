@@ -83,9 +83,9 @@ module Flezha
       error.respond_to?(:non_retryable?) && error.non_retryable?
     end
 
-    # A payload as the handler sees it: the channel's declared decoder (or the
-    # MessagePack default), then its transforms in declaration order. `DROPPED`
-    # when a filter rejected it.
+    # A payload as the handler sees it: the entry channel's decoder, or the
+    # class codec for a payload between procedures, then its transforms in
+    # declaration order. `DROPPED` when a filter rejected it.
     #
     # One function for the two places a payload crosses in — an input item, and
     # a payload at the prepare crossing — so a filter cannot mean one thing on

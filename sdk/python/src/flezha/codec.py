@@ -23,6 +23,9 @@ class paths so a refactor breaks the restore of every record written before it.
 Field evolution is additive: a body is decoded into the fields the class
 declares *now*, so a field added with a default takes its default when an older
 record does not carry it, and a field since removed is ignored.
+
+The payload formats a channel names on ``input`` and ``sink`` are here too, as
+:data:`ChannelCodec`.
 """
 
 from __future__ import annotations
@@ -33,11 +36,24 @@ import datetime as _datetime
 import json
 import types
 import typing
-from typing import Any, Protocol, get_args, get_origin, runtime_checkable
+from collections.abc import Callable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NoReturn,
+    Protocol,
+    get_args,
+    get_origin,
+    runtime_checkable,
+)
 
 import msgpack
 
-from .errors import UnrepresentableValueError
+from .errors import EmitError, UnrepresentableValueError
+
+if TYPE_CHECKING:
+    from .builder import ChannelSpec
 
 __all__ = [
     "TypeCodec",
@@ -49,6 +65,10 @@ __all__ = [
     "assert_representable",
     "to_state_json",
     "from_state_json",
+    "ChannelCodec",
+    "CHANNEL_CODECS",
+    "channel_decoder",
+    "channel_encoder",
 ]
 
 # What a plain (undeclared) value may be. Anything else is refused at
@@ -87,6 +107,77 @@ def decode(body: Any) -> Any:
     if len(body) == 0:
         return None
     return msgpack.unpackb(body, raw=False, strict_map_key=False, timestamp=3)
+
+
+# ---------------------------------------------------------------------------
+# Channel payloads
+# ---------------------------------------------------------------------------
+
+ChannelCodec = Literal["bytes", "text", "json", "msgpack"]
+"""A payload format a channel names on ``input`` and ``sink``.
+
+A payload between two procedures names none: it stays in the MessagePack above.
+"""
+
+CHANNEL_CODECS: tuple[ChannelCodec, ...] = get_args(ChannelCodec)
+
+_BYTES = (bytes, bytearray, memoryview)
+
+
+def channel_decoder(codec: ChannelCodec | None) -> Callable[[Any], Any]:
+    """How ``input`` reads a channel's payload: the named codec, or JSON when
+    the channel names none."""
+    if codec == "bytes":
+        return bytes
+    if codec == "text":
+        return lambda body: bytes(body).decode()
+    if codec == "msgpack":
+        return decode
+    return lambda body: json.loads(bytes(body)) if len(body) else None
+
+
+def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callable[[Any], bytes]:
+    """How ``sink`` writes a channel's payload: the named codec, or, when the
+    channel names none, bytes as they are, a string as UTF-8 and anything else
+    as JSON."""
+    if codec == "msgpack":
+        return encode
+    if codec == "json":
+        return lambda value: _json_payload(channel, value)
+    if codec == "bytes":
+        return lambda value: (
+            bytes(value) if isinstance(value, _BYTES) else _refuse_payload(channel, codec, value)
+        )
+    if codec == "text":
+        return lambda value: (
+            value.encode() if isinstance(value, str) else _refuse_payload(channel, codec, value)
+        )
+
+    def by_value(value: Any) -> bytes:
+        if isinstance(value, _BYTES):
+            return bytes(value)
+        if isinstance(value, str):
+            return value.encode()
+        return _json_payload(channel, value)
+
+    return by_value
+
+
+def _json_payload(channel: ChannelSpec, value: Any) -> bytes:
+    try:
+        return json.dumps(
+            value, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode()
+    except (TypeError, ValueError) as error:
+        raise EmitError(
+            f"channel `{channel.name}`: a {type(value).__name__} cannot be sent as JSON: {error}"
+        ) from error
+
+
+def _refuse_payload(channel: ChannelSpec, codec: str, value: Any) -> NoReturn:
+    raise EmitError(
+        f"channel `{channel.name}` names the {codec} codec and cannot send a {type(value).__name__}"
+    )
 
 
 # ---------------------------------------------------------------------------

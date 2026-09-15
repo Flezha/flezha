@@ -15,9 +15,14 @@
  * Offsets, sequences and timestamps are `bigint` throughout the SDK for the
  * same reason: they are unsigned 64-bit in the core, and a `number` loses
  * precision above 2^53 — which is inside the range the core uses.
+ *
+ * The payload formats a channel names on `input` and `sink` are here too, as
+ * `channelDecoder` and `channelEncoder`.
  */
 
 import { decode as msgpackDecode, encode as msgpackEncode, ExtensionCodec } from '@msgpack/msgpack';
+
+import { EmitError, type ChannelCodec } from './types.js';
 
 /** A hand-written codec, for a type the default cannot carry. */
 export interface Codec<T> {
@@ -65,17 +70,22 @@ export function encodeValue(value: unknown): Uint8Array {
 }
 
 export function decodeValue<T>(bytes: Uint8Array): T {
-  // Decoded through a plain `Uint8Array` view, never the caller's `Buffer`.
-  // MessagePack hands out `bin` values as subarrays of whatever it was given,
-  // and a subarray of a `Buffer` is a `Buffer` — which carries a `toJSON` that
-  // rewrites it as `{type:'Buffer',data:[…]}` the moment the state is
-  // serialized for a live read or a migration handover. One representation
-  // means one, and this is where it is decided.
-  const view =
-    bytes.constructor === Uint8Array
-      ? bytes
-      : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return msgpackDecode(view, { extensionCodec, useBigInt64: false }) as T;
+  return msgpackDecode(plainView(bytes), { extensionCodec, useBigInt64: false }) as T;
+}
+
+/**
+ * Bytes as a plain `Uint8Array` view, never the caller's `Buffer`.
+ *
+ * MessagePack hands out `bin` values as subarrays of whatever it was given,
+ * and a subarray of a `Buffer` is a `Buffer` — which carries a `toJSON` that
+ * rewrites it as `{type:'Buffer',data:[…]}` the moment the state is serialized
+ * for a live read or a migration handover. One representation means one, and
+ * this is where it is decided.
+ */
+function plainView(bytes: Uint8Array): Uint8Array {
+  return bytes.constructor === Uint8Array
+    ? bytes
+    : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 /** The MessagePack codec, as the default for a declared State or Change. */
@@ -83,6 +93,101 @@ export const msgpack: Codec<unknown> = {
   encode: encodeValue,
   decode: decodeValue,
 };
+
+/**
+ * The payload formats a channel names on `input` and `sink`. A payload between
+ * two procedures names none: it stays in the MessagePack above.
+ */
+export const CHANNEL_CODECS: readonly ChannelCodec[] = ['bytes', 'text', 'json', 'msgpack'];
+
+/** What a refusal names, read when it is raised. */
+interface NamedChannel {
+  name: string;
+}
+
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+/** How `input` reads a channel's payload: the named codec, or JSON when the channel names none. */
+export function channelDecoder(
+  codec: ChannelCodec | undefined,
+  channel: NamedChannel,
+): (bytes: Uint8Array) => unknown {
+  switch (codec) {
+    case 'bytes':
+      return plainView;
+    case 'text':
+      return (bytes) => utf8Text(bytes, channel);
+    case 'msgpack':
+      return decodeValue;
+    default:
+      return (bytes) => (bytes.length === 0 ? null : JSON.parse(utf8Text(bytes, channel)));
+  }
+}
+
+/**
+ * How `sink` writes a channel's payload: the named codec, or, when the channel
+ * names none, bytes as they are, a string as UTF-8 and anything else as JSON.
+ */
+export function channelEncoder(
+  codec: ChannelCodec | undefined,
+  channel: NamedChannel,
+): (value: unknown) => Uint8Array {
+  switch (codec) {
+    case 'bytes':
+      return (value) =>
+        value instanceof Uint8Array ? value : refusePayload(channel, codec, value);
+    case 'text':
+      return (value) =>
+        typeof value === 'string'
+          ? Buffer.from(value, 'utf8')
+          : refusePayload(channel, codec, value);
+    case 'json':
+      return (value) => jsonPayload(channel, value);
+    case 'msgpack':
+      return encodeValue;
+    default:
+      return (value) =>
+        value instanceof Uint8Array
+          ? value
+          : typeof value === 'string'
+            ? Buffer.from(value, 'utf8')
+            : jsonPayload(channel, value);
+  }
+}
+
+function utf8Text(bytes: Uint8Array, channel: NamedChannel): string {
+  try {
+    return utf8.decode(bytes);
+  } catch {
+    throw new TypeError(`channel \`${channel.name}\`: the payload is not valid UTF-8`);
+  }
+}
+
+function jsonPayload(channel: NamedChannel, value: unknown): Uint8Array {
+  // `stringify` throws for a `bigint`, and answers `undefined` rather than
+  // throwing for `undefined`, a function and a symbol.
+  let reason = 'it has no JSON form';
+  try {
+    const text = JSON.stringify(value);
+    if (text !== undefined) return Buffer.from(text, 'utf8');
+  } catch (error) {
+    reason = (error as Error).message;
+  }
+  throw new EmitError(
+    `channel \`${channel.name}\`: a ${typeName(value)} cannot be sent as JSON: ${reason}`,
+  );
+}
+
+function refusePayload(channel: NamedChannel, codec: ChannelCodec, value: unknown): never {
+  throw new EmitError(
+    `channel \`${channel.name}\` names the ${codec} codec and cannot send a ${typeName(value)}`,
+  );
+}
+
+function typeName(value: unknown): string {
+  if (value === null) return 'null';
+  return typeof value === 'object' ? (value.constructor?.name ?? 'object') : typeof value;
+}
 
 /**
  * A value the codec cannot represent, named by the declaring type and the

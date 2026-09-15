@@ -45,12 +45,12 @@ const Tally = defineProcedure({
 const WordCount = defineOperative({
   factoryId: 'local_word_count_node',
   channels: (c) => {
-    c.input('lines', utf8)
+    c.input('lines', { codec: 'text' })
       .into(Split)
       .keyBy((word) => word)
       .into(Tally)
       .keyed()
-      .sink('totals', bytes);
+      .sink('totals');
   },
 });
 
@@ -142,4 +142,33 @@ test('a channel the class does not declare is refused by name', async () => {
   } finally {
     await run.close();
   }
+});
+
+/** Reads the map an undeclared entry decodes, and emits a string and a map. */
+const Defaults = defineProcedure({
+  name: 'defaults',
+  handle: (value, ctx) => {
+    ctx.emit(`a is ${value.a}`);
+    ctx.emit({ a: value.a });
+  },
+});
+
+const DefaultCodecs = defineOperative({
+  factoryId: 'local_default_codecs_node',
+  channels: (c) => {
+    c.input('in').into(Defaults).sink('out');
+  },
+});
+
+test('an undeclared entry reads JSON and an undeclared sink follows the value', async () => {
+  const released = [];
+  const run = LocalOperative.start(DefaultCodecs);
+  try {
+    run.onSink('out', (output) => released.push(utf8(output.payload)));
+    await run.feed('in', '{"a":1}');
+    await run.runUntilIdle(5_000);
+  } finally {
+    await run.close();
+  }
+  assert.deepEqual(released, ['a is 1', '{"a":1}']);
 });

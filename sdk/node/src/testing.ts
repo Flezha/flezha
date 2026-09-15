@@ -85,16 +85,16 @@ export class ProcedureTestHarness<TIn, TOut, TState, TChange> {
     this.clock = options.now ?? 0n;
     // Wired by the production builder rather than by a hand-written topology
     // literal: one entry channel in, one plugin channel out. A field the
-    // declaration gains later reaches the harness for free, and the emits the
-    // harness reads back have gone through the declared codec exactly as they
-    // would on the wire.
+    // declaration gains later reaches the harness for free. The sink names the
+    // MessagePack codec, so the emits the harness reads back are each value
+    // exactly as the handler emitted it.
     this.spec = defineOperative({
       factoryId: `harness_${procedure.name}`,
       channels: (c) =>
         c
           .input('harness_in')
           .into(procedure as never)
-          .sink(),
+          .sink({ codec: 'msgpack' }),
     });
     this.node = this.spec.procedures[0] as ProcNode;
     this.outgoing = this.spec.channels.filter((channel) => channel.producer !== undefined);

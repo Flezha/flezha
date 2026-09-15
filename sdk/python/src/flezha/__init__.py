@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from .admin import Admin
 from .builder import DROPPED, Channels, Edge
-from .codec import TypeCodec, ValueCodec
+from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
 from .entity_state import state
 from .errors import (
@@ -67,6 +67,7 @@ __all__ = [
     "SinkOutput",
     "configure_logging",
     # codec
+    "ChannelCodec",
     "TypeCodec",
     "ValueCodec",
     # errors

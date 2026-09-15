@@ -22,6 +22,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\ChannelCodec;
 use Flezha\Ctx;
 use Flezha\Graph\Builder;
 use Flezha\LocalOperative;
@@ -71,13 +72,13 @@ final class WordCountOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('lines', static fn (string $bytes): string => $bytes)
+        $c->input('lines', codec: ChannelCodec::Text)
             ->into(Split::class)
             // One Entity per word: the hop from `Split` to `Tally` is the
             // runtime's, not this file's.
             ->keyBy(static fn (string $word): string => $word)
             ->into(Tally::class)->keyed()
-            ->sink('totals', static fn (string $text): string => $text);
+            ->sink('totals');
     }
 }
 

@@ -37,14 +37,14 @@ const Tally = defineProcedure({
 const WordCount = defineOperative({
   factoryId: 'local_word_count_example',
   channels: (c) => {
-    c.input('lines', (raw) => Buffer.from(raw).toString('utf8'))
+    c.input('lines', { codec: 'text' })
       .into(Split)
       // One Entity per word: the hop from `Split` to `Tally` is the
       // runtime's, not this file's.
       .keyBy((word) => word)
       .into(Tally)
       .keyed()
-      .sink('totals', (text) => Buffer.from(text, 'utf8'));
+      .sink('totals');
   },
 });
 

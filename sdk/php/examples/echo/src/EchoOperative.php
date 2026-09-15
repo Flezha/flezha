@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flezha\Examples\Echo;
 
 use Flezha\Attribute\Operative;
+use Flezha\ChannelCodec;
 use Flezha\Graph\Builder;
 use Flezha\StreamOperative;
 
@@ -17,17 +18,17 @@ use Flezha\StreamOperative;
  * `flz operative start` takes. The graph is checked as a whole when the runner
  * declares it, so one that cannot work is refused at startup.
  *
- * Values cross the wire as JSON unless a channel says otherwise. This one
- * carries plain text both ways, so `flz operative send --text` reads naturally
- * and the output is the text itself.
+ * The entry names the text codec, so what `flz operative send --text` sends
+ * arrives as that string. The sink names nothing: a string is sent as it
+ * stands, so the output is the text itself, and any other value would be JSON.
  */
 #[Operative(factoryId: 'echo')]
 final class EchoOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', static fn (string $bytes): string => $bytes)
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(EchoProcedure::class)
-            ->sink('out', static fn (mixed $value): string => (string) $value);
+            ->sink('out');
     }
 }

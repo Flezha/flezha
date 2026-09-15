@@ -9,7 +9,7 @@ import os
 from typing import Any
 
 import flezha
-from fixture_support import _as_int, _bytes_through, _env_int, raw, text
+from fixture_support import _as_int, _env_int
 from flezha import codec as flezha_codec
 
 # -- bench_keyed_nopersist ---------------------------------------------------
@@ -49,9 +49,7 @@ tier_store = flezha.procedure(TierStore, name="tier_store_procedure")
 def bench_keyed_nopersist_operative(c: flezha.Channels) -> None:
     """Per-entity persistence off: the heap-only posture the bench isolates
     against the durable one."""
-    c.input("input", decode=text).on_full("drop_nothing").into(tier_store).keyed().sink(
-        "sink", encode=raw
-    )
+    c.input("input", codec="text").on_full("drop_nothing").into(tier_store).keyed().sink("sink")
 
 
 # -- store_input / stateful_counter / coalescing_counter / persistence_off ---
@@ -77,7 +75,7 @@ store_input = flezha.procedure(StoreInput, name="store_input_procedure")
 
 @flezha.stream_operative("store_input")
 def store_input_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(store_input).sink("sink", encode=raw)
+    c.input("input", codec="text").into(store_input).sink("sink")
 
 
 @flezha.procedure(name="counter_entry_procedure")
@@ -101,7 +99,7 @@ counter = flezha.procedure(Counter, name="counter_procedure")
 
 @flezha.stream_operative("stateful_counter")
 def stateful_counter_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(counter_entry).named("ticks").into(counter)
+    c.input("input", codec="text").into(counter_entry).named("ticks").into(counter)
 
 
 @flezha.stream_operative("persistence_off_counter", persistent=False)
@@ -112,7 +110,7 @@ def persistence_off_operative(c: flezha.Channels) -> None:
     class, so reusing `stateful_counter`'s would leave the two classes
     indistinguishable to anything that reads a declaration.
     """
-    c.input("input", decode=text).into(counter_entry, "persistence_off_entry_procedure").named(
+    c.input("input", codec="text").into(counter_entry, "persistence_off_entry_procedure").named(
         "ticks"
     ).into(counter, "persistence_off_counter_procedure")
 
@@ -152,7 +150,7 @@ tick = flezha.procedure(Tick, name="tick_procedure")
 
 @flezha.stream_operative("coalescing_counter")
 def coalescing_counter_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(tick_entry).named("ticks").into(tick)
+    c.input("input", codec="text").into(tick_entry).named("ticks").into(tick)
 
 
 class ResumeProbe:
@@ -178,16 +176,16 @@ resume_probe = flezha.procedure(ResumeProbe, name="resume_probe_procedure")
 
 @flezha.stream_operative("resume_probe")
 def resume_probe_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(resume_probe).sink("total", encode=_bytes_through)
+    c.input("input", codec="text").into(resume_probe).sink("total")
 
 
 @flezha.stream_operative("bench_keyed")
 def bench_keyed_operative(c: flezha.Channels) -> None:
     """`bench_keyed_nopersist`'s durable twin: the same keyed upsert with
     per-Entity persistence on, so the bench can isolate that cost."""
-    c.input("input", decode=text).on_full("drop_nothing").into(
+    c.input("input", codec="text").on_full("drop_nothing").into(
         tier_store, "tier_store_procedure"
-    ).keyed().sink("sink", encode=raw)
+    ).keyed().sink("sink")
 
 
 # -- schema_evolution_v1 / schema_evolution_v2 -------------------------------
@@ -254,12 +252,12 @@ evolving_cart_v2 = flezha.procedure(
 
 @flezha.stream_operative("schema_evolution_v1")
 def schema_evolution_v1_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(evolving_cart_v1).sink("total", encode=_bytes_through)
+    c.input("input", codec="text").into(evolving_cart_v1).sink("total")
 
 
 @flezha.stream_operative("schema_evolution_v2")
 def schema_evolution_v2_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(evolving_cart_v2).sink("total", encode=_bytes_through)
+    c.input("input", codec="text").into(evolving_cart_v2).sink("total")
 
 
 # -- tier_store / checkpoint_store / checkpoint_batched_store / bench_checkpoint
@@ -275,9 +273,9 @@ def tier_store_operative(c: flezha.Channels) -> None:
     log behind it kept growing.
     """
     c.effectively_once()
-    c.input("input", decode=text).on_full("drop_nothing").retry_backoff_ms(300).into(
+    c.input("input", codec="text").on_full("drop_nothing").retry_backoff_ms(300).into(
         tier_store, "tier_store_procedure"
-    ).keyed().sink("sink", encode=raw)
+    ).keyed().sink("sink")
 
 
 class CheckpointStore(KeyedUpsert):
@@ -296,7 +294,7 @@ checkpoint_store = flezha.procedure(CheckpointStore, name="checkpoint_store_proc
 @flezha.stream_operative("checkpoint_store")
 def checkpoint_store_operative(c: flezha.Channels) -> None:
     c.effectively_once().checkpoint_ack()
-    c.input("input", decode=text).into(checkpoint_store).keyed().sink("sink", encode=raw)
+    c.input("input", codec="text").into(checkpoint_store).keyed().sink("sink")
 
 
 @flezha.stream_operative("checkpoint_batched_store")
@@ -309,9 +307,9 @@ def checkpoint_batched_operative(c: flezha.Channels) -> None:
     delay alone for the quiet-Entity case.
     """
     c.effectively_once().checkpoint_ack().outputs_at_checkpoint(1_500)
-    c.input("input", decode=text).into(checkpoint_store, "checkpoint_store_procedure").keyed().sink(
-        "sink", encode=raw
-    )
+    c.input("input", codec="text").into(
+        checkpoint_store, "checkpoint_store_procedure"
+    ).keyed().sink("sink")
 
 
 class BenchCheckpoint(KeyedUpsert):
@@ -329,6 +327,6 @@ def bench_checkpoint_operative(c: flezha.Channels) -> None:
     c.effectively_once().checkpoint_every(_env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500) or 500)
     if os.environ.get("FLEZHA_BENCH_CHECKPOINT_OUTPUTS") == "at_checkpoint":
         c.outputs_at_checkpoint(_env_int("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50) or 50)
-    c.input("input", decode=text).on_full("drop_nothing").into(bench_checkpoint).keyed().sink(
-        "sink", encode=raw
+    c.input("input", codec="text").on_full("drop_nothing").into(bench_checkpoint).keyed().sink(
+        "sink"
     )

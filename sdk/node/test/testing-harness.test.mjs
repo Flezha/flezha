@@ -180,3 +180,17 @@ test('a reserved metadata key is refused naming the key', async () => {
     (error) => error.message.includes('flz.key') && error.message.includes('reserved'),
   );
 });
+
+test('a string and an object output are reported exactly as emitted', async () => {
+  // The harness reads its sink back as MessagePack, so a string output is the
+  // string rather than the bytes a plugin would receive.
+  const Emitter = defineProcedure({
+    name: 'emitter',
+    handle: (input, ctx) => {
+      ctx.emit({ said: input });
+      return `echo: ${input}`;
+    },
+  });
+  const harness = ProcedureTestHarness.of(Emitter);
+  assert.deepEqual((await harness.input('hi')).emits, [{ said: 'hi' }, 'echo: hi']);
+});

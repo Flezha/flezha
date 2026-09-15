@@ -6,10 +6,16 @@ namespace Flezha\Tests;
 
 require_once __DIR__ . '/../examples/E07_LocalMode.php';
 
+use Flezha\Attribute\Operative;
+use Flezha\Attribute\Proc;
+use Flezha\Ctx;
 use Flezha\Examples\E07\WordCountOperative;
 use Flezha\Exception\FlezhaException;
+use Flezha\Graph\Builder;
 use Flezha\LocalOperative;
+use Flezha\Procedure;
 use Flezha\SinkOutput;
+use Flezha\StreamOperative;
 
 /**
  * The PHP SDK's local mode: the shipped example's operative class, its
@@ -94,5 +100,45 @@ final class LocalModeTest extends RepositoryTestCase
         } finally {
             $run->close();
         }
+    }
+
+    public function testAnUndeclaredEntryReadsJsonAndAnUndeclaredSinkFollowsTheValue(): void
+    {
+        $released = [];
+        $run = LocalOperative::start(DefaultCodecs::class);
+
+        try {
+            $run->onSink('out', static function (SinkOutput $out) use (&$released): void {
+                $released[] = $out->payload;
+            });
+            $run->feed('in', '{"a":1}');
+            $run->runUntilIdle(5_000);
+        } finally {
+            $run->close();
+        }
+
+        self::assertSame(['a is 1', '{"a":1}'], $released);
+    }
+}
+
+/** Reads the map an undeclared entry decodes, and emits a string and a map. */
+#[Proc(name: 'defaults')]
+final class DefaultCodecsProcedure extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->emit('a is ' . $input['a']);
+        $ctx->emit(['a' => $input['a']]);
+
+        return null;
+    }
+}
+
+#[Operative(factoryId: 'local_default_codecs_php')]
+final class DefaultCodecs extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(DefaultCodecsProcedure::class)->sink('out');
     }
 }

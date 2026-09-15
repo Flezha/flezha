@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added: a channel names its payload format in the Ruby, Python, Node and PHP SDKs
+
+`input` and `sink` take a named codec: `bytes`, `text` and `json` in all four,
+and `msgpack` in Ruby, Python and Node. It is spelled the way each SDK spells a
+policy: `codec: :text` in Ruby, `codec="text"` in Python, `{ codec: 'text' }` in
+Node and `codec: ChannelCodec::Text` in PHP. A text channel no longer needs a
+hand-written decoder and encoder. An unknown name, or a codec given beside a
+decoder or encoder, is refused when the operative is declared, and `text` refuses
+invalid UTF-8 rather than replacing it.
+
+### Changed: an undeclared entry reads JSON, and an undeclared sink sends by the value
+
+**Breaking for the Ruby, Python, Node and PHP SDKs.** In Ruby, Python and Node an
+entry with no codec and no decoder now reads JSON instead of MessagePack, as PHP
+already did. In all four a sink with no codec and no encoder sends bytes
+unchanged, a string as its UTF-8 bytes and any other value as JSON, the rule Java,
+Rust and Elixir already follow, so a PHP sink no longer quotes a string and the
+other three no longer send MessagePack. `msgpack` restores the previous format in
+one word. Payloads between procedures of one operative, and state and change
+bodies, keep their formats.
+
 ### Added: a Ruby runner can do work between starting and waiting
 
 `Flezha::Runner#await_termination` waits for shutdown and then drains, and

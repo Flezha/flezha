@@ -264,11 +264,12 @@ def run_now(coroutine: Any) -> Any:
 def value_of(channel: ChannelSpec | None, edge: ConsumerEdge | None, payload: Any) -> Any:
     """A payload as the handler sees it.
 
-    The channel's declared decoder (or the MessagePack default), then the
-    consuming edge's transforms in declaration order. :data:`~flezha.builder.DROPPED` when a
-    filter rejected it. One function for the two places a payload crosses in —
-    an input item, and a payload at the prepare crossing — so a filter cannot
-    mean one thing on one path and another on the other.
+    The entry channel's decoder, or the class codec for a payload between
+    procedures, then the consuming edge's transforms in declaration order.
+    :data:`~flezha.builder.DROPPED` when a filter rejected it. One function for
+    the two places a payload crosses in — an input item, and a payload at the
+    prepare crossing — so a filter cannot mean one thing on one path and
+    another on the other.
     """
     if channel is not None and channel.decode is not None:
         decoded = channel.decode(payload)

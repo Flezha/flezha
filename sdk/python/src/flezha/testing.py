@@ -72,9 +72,10 @@ class ProcedureTestHarness(Generic[S]):
         # The real channel builder, not a hand-written spec: one entry channel
         # into the procedure and one plugin sink so `ctx.emit` has somewhere to
         # go — a procedure under test emits to be observed, not to be routed.
-        # Driving the builder means the harness proves it too.
+        # Driving the builder means the harness proves it too. The sink is
+        # MessagePack so `outputs` reports exactly the value a handler emitted.
         channels = Channels("<harness>")
-        channels.input("in").into(proc).sink()
+        channels.input("in").into(proc).sink(codec="msgpack")
         self._spec = ClassSpec(
             factory_id="<harness>",
             kind="stream",

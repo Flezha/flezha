@@ -6,11 +6,15 @@ namespace Flezha\Tests;
 
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\ChannelCodec;
 use Flezha\CheckpointOutputs;
 use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Definition;
 use Flezha\Exception\DeclarationException;
+use Flezha\Exception\DecodeException;
+use Flezha\Exception\EmitException;
+use Flezha\Exception\UnrepresentableValueException;
 use Flezha\Ffi\Core;
 use Flezha\Graph\Builder;
 use Flezha\Graph\ClassSpec;
@@ -20,7 +24,6 @@ use Flezha\Graph\Validate;
 use Flezha\Procedure;
 use Flezha\StreamOperative;
 use Flezha\WorkflowOperative;
-use PHPUnit\Framework\TestCase;
 
 #[Proc(clock: Clock::EventTime)]
 final class NoExtractor extends Procedure
@@ -64,7 +67,7 @@ final class FoldWithoutState extends Procedure
  * procedure produces on), and that the core's verdict reaches an author as this
  * package's own refusal.
  */
-final class AuthoringTest extends TestCase
+final class AuthoringTest extends RepositoryTestCase
 {
     /** @return iterable<string, array{callable, string}> */
     public static function refusals(): iterable
@@ -481,6 +484,151 @@ final class AuthoringTest extends TestCase
 
         self::assertTrue($spec->effectivelyOnce);
         self::assertArrayNotHasKey('effectively_once', HostClassDecl::of($spec));
+    }
+
+    // -- channel codecs --------------------------------------------------------
+    //
+    // A codec is resolved when the class is declared, into the two slots the
+    // dispatcher and the plugin frame already read. What every SDK sends alike
+    // is `test/fixtures/channel_codecs.txt`; what is PHP's own is asserted here.
+
+    /**
+     * The entry decoder and the sink encoder `input` and `sink` resolved.
+     *
+     * @param array<string, mixed> $input
+     * @param array<string, mixed> $sink
+     * @return array{callable(string):mixed, callable(mixed):string}
+     */
+    private static function codecSlots(array $input = [], array $sink = []): array
+    {
+        $builder = new Builder('codecs');
+        $builder->input('in', ...$input)->into(Echoer::class)->sink('out', ...$sink);
+
+        return [$builder->channels[0]->decode, $builder->channels[1]->sinkEncode];
+    }
+
+    public function testTheCodecVocabularyIsBytesTextAndJson(): void
+    {
+        self::assertSame(
+            ['Bytes' => 'bytes', 'Text' => 'text', 'Json' => 'json'],
+            array_column(ChannelCodec::cases(), 'value', 'name'),
+        );
+    }
+
+    public function testEverySharedCodecCaseSendsTheBytesTheFixtureRecords(): void
+    {
+        $rows = array_filter(
+            file($this->repositoryFile('test/fixtures/channel_codecs.txt'), FILE_IGNORE_NEW_LINES) ?: [],
+            // PHP ships no MessagePack, so a case naming it is not PHP's.
+            static fn (string $row): bool => $row !== ''
+                && !str_starts_with($row, '#')
+                && !str_contains($row, 'msgpack'),
+        );
+        self::assertNotEmpty($rows, 'the shared codec cases were read');
+
+        foreach ($rows as $row) {
+            [$entry, $sink, $payload, $expected] = explode('|', $row, 4);
+            [$decode, $encode] = self::codecSlots(self::codecArgument($entry), self::codecArgument($sink));
+            $want = str_ends_with($expected, '_error') ? $expected : self::caseBytes($expected);
+
+            self::assertSame($want, self::caseOutcome($decode, $encode, self::caseBytes($payload)), $row);
+        }
+    }
+
+    public function testAJsonEntryReadsAnObjectAsAnArray(): void
+    {
+        self::assertSame(['a' => 1], self::codecSlots()[0]('{"a":1}'));
+    }
+
+    /** @return array<string, ChannelCodec> */
+    private static function codecArgument(string $name): array
+    {
+        return $name === 'none' ? [] : ['codec' => ChannelCodec::from($name)];
+    }
+
+    private static function caseBytes(string $field): string
+    {
+        return match (true) {
+            $field === '<empty>' => '',
+            str_starts_with($field, 'hex:') => (string) hex2bin(substr($field, 4)),
+            default => $field,
+        };
+    }
+
+    /** A case records that a step refused, whatever it threw. */
+    private static function caseOutcome(callable $decode, callable $encode, string $payload): string
+    {
+        try {
+            $value = $decode($payload);
+        } catch (\Throwable) {
+            return 'decode_error';
+        }
+
+        try {
+            return $encode($value);
+        } catch (\Throwable) {
+            return 'encode_error';
+        }
+    }
+
+    public function testAJsonFailureNamesTheChannel(): void
+    {
+        $this->expectException(UnrepresentableValueException::class);
+        $this->expectExceptionMessage('out.<root>');
+
+        self::codecSlots()[1](NAN);
+    }
+
+    public function testTextRefusesInvalidUtf8OnTheWayInNamingTheChannel(): void
+    {
+        $this->expectException(DecodeException::class);
+        $this->expectExceptionMessage('channel `in`');
+
+        self::codecSlots(['codec' => ChannelCodec::Text])[0]("\xFF");
+    }
+
+    /** @return iterable<string, array{ChannelCodec, mixed}> */
+    public static function unsendable(): iterable
+    {
+        yield 'a number to a text sink' => [ChannelCodec::Text, 42];
+        yield 'invalid UTF-8 to a text sink' => [ChannelCodec::Text, "\xFF"];
+        yield 'a number to a bytes sink' => [ChannelCodec::Bytes, 42];
+    }
+
+    /** @dataProvider unsendable */
+    public function testASinkRefusesAValueItsCodecCannotCarryNamingTheChannel(ChannelCodec $codec, mixed $value): void
+    {
+        $this->expectException(EmitException::class);
+        $this->expectExceptionMessage("channel `out` names the {$codec->value} codec");
+
+        self::codecSlots([], ['codec' => $codec])[1]($value);
+    }
+
+    /** A PHP string is its bytes, so a `Bytes` sink takes one, where Python and Node refuse a string there. */
+    public function testABytesSinkPassesAnyString(): void
+    {
+        self::assertSame("\xFF", self::codecSlots([], ['codec' => ChannelCodec::Bytes])[1]("\xFF"));
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, array<string, mixed>, string}> */
+    public static function codecBesideCallable(): iterable
+    {
+        $same = static fn (mixed $v): mixed => $v;
+        yield 'an entry' => [['codec' => ChannelCodec::Text, 'decode' => $same], [], 'in'];
+        yield 'a sink' => [[], ['codec' => ChannelCodec::Text, 'encode' => $same], 'out'];
+    }
+
+    /**
+     * @dataProvider codecBesideCallable
+     * @param array<string, mixed> $input
+     * @param array<string, mixed> $sink
+     */
+    public function testACodecAndACallableTogetherAreRefused(array $input, array $sink, string $channel): void
+    {
+        $this->expectException(DeclarationException::class);
+        $this->expectExceptionMessage("codecs: $channel: names both a codec");
+
+        self::codecSlots($input, $sink);
     }
 }
 

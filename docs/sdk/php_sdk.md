@@ -106,6 +106,41 @@ Everything a type system would have caught is refused at registration, naming
 the class, the handler and the defect: the same set, in the same vocabulary, as
 the Rust builder's compile-time refusals.
 
+### Channel payloads
+
+A channel names the format of its payload with `codec:` on `input` and on
+`sink`, a case of the `Flezha\ChannelCodec` enum:
+
+| Codec | An entry hands the procedure | A sink sends |
+| --- | --- | --- |
+| `ChannelCodec::Text` | the string, if it is valid UTF-8; otherwise the decode fails | a valid UTF-8 string as it is; any other value fails the emit |
+| `ChannelCodec::Bytes` | the string as it arrived | any string as it is; any other value fails the emit |
+| `ChannelCodec::Json` | the decoded JSON, an object as an array | any value as JSON, a string quoted |
+
+```php
+$c->input('in', codec: ChannelCodec::Text)->into(Echo::class)->sink('out');
+```
+
+An entry with no codec and no decoder reads JSON: `{"a":1}` arrives as
+`['a' => 1]`, and plain text fails its decode and rides the retry and
+dead-letter ladder. A sink with no codec and no encoder follows the value: a
+string is sent as it is and anything else as JSON. So a sink needs no codec for
+a string or a JSON value, and names one only to quote a string, with
+`ChannelCodec::Json`. A decoder or encoder callable takes the place of a codec
+for anything else, and a codec given beside a callable on one channel is refused
+when the operative is declared, naming the operative and the channel. PHP ships
+no MessagePack library, so the enum has no MessagePack case.
+
+A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
+string that is not valid UTF-8 or an object that is not `Codable` has no JSON
+form, and sending one to a sink that names no codec fails the emit naming the
+channel.
+
+A value passed between two procedures of one operative never crosses a channel
+codec: it stays JSON. An Elixir entry declared with no decoder hands its
+procedure the binary instead, so the same bytes on an undeclared entry are an
+array here and a string there.
+
 ### State and Change
 
 Durable `State` and `Change` values serialize as **JSON**, produced by an

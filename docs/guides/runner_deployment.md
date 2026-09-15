@@ -457,17 +457,18 @@ import { EchoProcedure } from './echo_procedure.mjs';
 export default defineOperative({
   factoryId: 'echo',
   channels: (c) => {
-    c.input('in', (bytes) => Buffer.from(bytes).toString('utf8'))
+    c.input('in', { codec: 'text' })
       .into(EchoProcedure)
-      .sink('out', (value) => Buffer.from(value, 'utf8'));
+      .sink('out');
   },
 });
 ```
 
-The channel carries plain text both ways: the decoder turns the bytes
-`flz operative send --text` delivers into a string, and the encoder turns the
-procedure's string back into bytes. The module exports what `defineOperative`
-returned, and that export is what the runner finds.
+`{ codec: 'text' }` hands the procedure the bytes `flz operative send --text`
+delivers as a string; an entry that names no codec reads JSON instead. The sink
+names no codec, so the procedure's string leaves as its UTF-8 bytes, and any
+value other than a string or bytes would leave as JSON. The module exports what
+`defineOperative` returned, and that export is what the runner finds.
 
 ```javascript
 // echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
@@ -533,14 +534,13 @@ keeps nothing between messages, and where its result goes is not its business.
 # The operative. The graph, and the unit the controller schedules.
 @flezha.stream_operative("echo")
 def echo_operative(c: flezha.Channels) -> None:
-    c.input("in", decode=lambda body: bytes(body).decode()).into(echo).sink(
-        "out", encode=lambda value: str(value).encode()
-    )
+    c.input("in", codec="text").into(echo).sink("out")
 ```
 
-`decode=` and `encode=` make the channel carry plain text both ways: the bytes
-`flz operative send --text` delivers become a string, and the procedure's string
-goes back out as bytes.
+`codec="text"` hands the procedure the bytes `flz operative send --text` delivers
+as a string; an entry that names no codec reads JSON instead. The sink names no
+codec, so the procedure's string goes back out as its UTF-8 bytes, and any value
+other than a string or bytes would go out as JSON.
 
 ```python
 # The runner. Connects, offers the operative, and serves.
@@ -579,16 +579,17 @@ class EchoOperative < Flezha::StreamOperative
   factory_id "echo"
 
   channels do |c|
-    c.input("in", decode: ->(bytes) { bytes.dup.force_encoding("UTF-8") })
+    c.input("in", codec: :text)
      .into(EchoProcedure)
-     .sink("out", encode: ->(value) { value.to_s.b })
+     .sink("out")
   end
 end
 ```
 
-`decode:` and `encode:` make the channel carry plain text both ways: the bytes
-`flz operative send --text` delivers become a string, and the procedure's string
-goes back out as bytes.
+`codec: :text` hands the procedure the bytes `flz operative send --text` delivers
+as a String; an entry that names no codec reads JSON instead. The sink names no
+codec, so the procedure's String goes back out as its bytes, and any other value
+would go out as JSON.
 
 ```ruby
 # echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
@@ -643,16 +644,18 @@ final class EchoOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', static fn (string $bytes): string => $bytes)
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(EchoProcedure::class)
-            ->sink('out', static fn (mixed $value): string => (string) $value);
+            ->sink('out');
     }
 }
 ```
 
-A channel's values are JSON unless it passes its own decoder and encoder, and
-these two keep the text as it is, which is what `flz operative send --text`
-sends. The attribute carries the declaration and the method carries the graph.
+`ChannelCodec::Text` hands the procedure the text `flz operative send --text`
+sends, checked as UTF-8; an entry that names no codec reads JSON instead. The
+sink names no codec, so the procedure's string goes out as it is, and any other
+value would go out as JSON. The attribute carries the declaration and the method
+carries the graph.
 
 ```php
 // src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.

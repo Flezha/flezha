@@ -251,3 +251,72 @@ The graph builder SHALL offer `route_latest(document_stream, traffic_stream, key
 - **WHEN** the packaged procedure's journal is replayed over its inputs by the replay-determinism harness
 - **THEN** the rebuilt `{document, version, delivered}` state SHALL equal the live run's state
 
+### Requirement: Named payload codecs in the SDKs whose channels carry no type
+The Ruby, Python, Node and PHP SDKs SHALL accept a named codec on `input` and on `sink`, from the vocabulary `bytes`, `text` and `json`, plus `msgpack` in the Ruby, Python and Node SDKs. `bytes` SHALL deliver and send bytes unchanged; `text` SHALL decode UTF-8 into a string and encode a string as UTF-8; `json` SHALL decode JSON and encode any value as JSON, a string included; `msgpack` SHALL decode and encode with the SDK's own MessagePack codec. Each SDK SHALL spell the codec the way it spells a named policy: a symbol in Ruby (`codec: :text`), a string in Python (`codec="text"`), a string in an options object in Node (`{ codec: 'text' }`), and a case of the backed enum `ChannelCodec` in PHP (`codec: ChannelCodec::Text`), whose cases SHALL be exactly `Bytes`, `Text` and `Json`.
+
+An entry channel declared with no codec and no decoder SHALL decode JSON. A sink declared with no codec and no encoder SHALL apply the default serialization rules of the `sink` requirement: bytes unchanged, a string as UTF-8, any other value as JSON.
+
+An unknown codec name, or a codec given together with a decoder or an encoder, SHALL be refused when the operative is declared, with the SDK's declaration error naming the operative and the channel. Under `text`, a payload that is not valid UTF-8 SHALL be a decode failure riding the entry channel's retry and dead-letter ladder, and a value that is not a string SHALL be an encode failure naming the channel. Under `bytes`, a value that is not bytes SHALL be an encode failure naming the channel.
+
+The Java, Rust and Elixir SDKs carry the same formats without a codec argument: Java and Rust choose `bytes`, `text` or `json` from the declared type, and Elixir's `input/2` delivers the binary unchanged while `input_with/3` takes any other decoder.
+
+#### Scenario: A text channel is one word
+
+- **WHEN** a Ruby operative declares `c.input("in", codec: :text).into(Echo).sink("out")`, the bytes `hello` arrive on `in`, and the procedure returns `"echo: hello"`
+- **THEN** the procedure SHALL receive the string `hello`, and the plugin frame SHALL carry the bytes `echo: hello`, identical to what a Java operative declaring `c.input(String.class, "in")` and `.sink("out")` sends for the same output
+
+#### Scenario: A sink call is its name alone in every dynamic SDK
+
+- **WHEN** a Ruby, Python, Node or PHP operative declares its sink as `sink("out")` with no codec and no encoder, and the procedure returns the string `echo: hello`
+- **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header, in each of the four SDKs
+
+#### Scenario: An undeclared entry reads JSON in every dynamic SDK
+
+- **WHEN** a Ruby, Python, Node or PHP operative declares an entry with no codec and no decoder, and the bytes `{"a":1}` arrive on it
+- **THEN** the procedure SHALL receive a map whose key `a` holds the number 1
+
+#### Scenario: Plain text into an undeclared entry fails its decode
+
+- **WHEN** the bytes `hello` arrive on an entry declared with no codec and no decoder
+- **THEN** the decode SHALL fail and ride the entry channel's retry and dead-letter ladder, and the procedure SHALL NOT be invoked with the payload
+
+#### Scenario: An undeclared sink follows the value
+
+- **WHEN** a procedure emits a string, a byte value and a map to a sink declared with no codec and no encoder
+- **THEN** the plugin frames SHALL carry the string's UTF-8 bytes, the byte value unchanged, and the map as JSON, in each of the four SDKs
+
+#### Scenario: A json sink quotes a string
+
+- **WHEN** a procedure emits the string `hi` to a sink declared with codec `json`
+- **THEN** the plugin frame SHALL carry the four bytes `"hi"`, quotes included
+
+#### Scenario: MessagePack stays one word away where it ships
+
+- **WHEN** a Ruby, Python or Node operative declares an entry and a sink with codec `msgpack`
+- **THEN** the entry SHALL decode and the sink SHALL encode with that SDK's MessagePack codec, byte-identical to that SDK's class codec
+
+#### Scenario: An unknown codec name is refused at declaration
+
+- **WHEN** a Ruby, Python or Node operative declares an entry named `in` with the codec name `yaml`
+- **THEN** declaring the operative SHALL raise the SDK's declaration error naming the operative, the channel `in`, the name `yaml` and the accepted names, before any message is processed
+
+#### Scenario: A codec and a callable together are refused
+
+- **WHEN** an operative in any of the four SDKs declares an entry with both a codec and a decoder, or a sink with both a codec and an encoder
+- **THEN** declaring the operative SHALL raise the SDK's declaration error naming the operative and the channel
+
+#### Scenario: Invalid UTF-8 under text is a failure, not a replacement
+
+- **WHEN** bytes that are not valid UTF-8 arrive on an entry declared with codec `text`
+- **THEN** the decode SHALL fail and ride the entry channel's retry and dead-letter ladder, and no string carrying replacement characters SHALL reach the procedure
+
+#### Scenario: A text sink refuses a value that is not a string
+
+- **WHEN** a procedure emits the number 42 to a sink declared with codec `text`
+- **THEN** the invocation SHALL fail with an error naming the channel, and no plugin frame SHALL carry the value
+
+#### Scenario: A bytes sink refuses a value that is not bytes
+
+- **WHEN** a procedure emits the number 42 to a sink declared with codec `bytes`
+- **THEN** the invocation SHALL fail with an error naming the channel, and no plugin frame SHALL carry the value; a Ruby or PHP string, which is the byte value in those languages, SHALL pass through unchanged
+

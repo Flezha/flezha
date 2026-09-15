@@ -2,10 +2,9 @@
 under the same factory ids, procedure names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, the same as the
-reference: the SDK's default codec is MessagePack, so every fixture that
-exchanges bytes with another SDK or with a plugin declares its own decoder and
-encoder. An inter-procedure hop between two Python procedures carries
-MessagePack, which no one else reads.
+reference: every entry names the text codec, and a sink naming no codec sends a
+string as its UTF-8 bytes and a bytes value unchanged. An inter-procedure hop
+between two Python procedures carries MessagePack, which no one else reads.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ import time
 from typing import Any, ClassVar
 
 import flezha
-from fixture_support import _as_int, _bytes_through, _env_int, passthrough, prefix, raw, text
+from fixture_support import _as_int, _env_int, passthrough, prefix
 from fixtures_state import (
     bench_checkpoint_operative,
     bench_keyed_nopersist_operative,
@@ -40,7 +39,7 @@ do_nothing = passthrough("do_nothing_procedure")
 
 @flezha.stream_operative("do_nothing")
 def do_nothing_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(do_nothing).sink("echo", encode=raw)
+    c.input("input", codec="text").into(do_nothing).sink("echo")
 
 
 @flezha.stream_operative("bench_echo")
@@ -50,7 +49,7 @@ def bench_echo_operative(c: flezha.Channels) -> None:
     ``do_nothing`` is the merge-blocking bench factory and must not change; this
     keeps the round-trip bench's back-pressure posture independent of it.
     """
-    c.input("input", decode=text).on_full("drop_nothing").into(do_nothing).sink("echo", encode=raw)
+    c.input("input", codec="text").on_full("drop_nothing").into(do_nothing).sink("echo")
 
 
 # -- compare_filter ----------------------------------------------------------
@@ -74,7 +73,7 @@ compare_filter = flezha.procedure(CompareFilter, name="compare_filter_procedure"
 
 @flezha.stream_operative("compare_filter")
 def compare_filter_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(compare_filter).sink("sink", encode=raw)
+    c.input("input", codec="text").into(compare_filter).sink("sink")
 
 
 # -- static_entity / sugar_static_entity / mixed_operative -------------------
@@ -123,8 +122,8 @@ macro_static_downstream = passthrough("macro_static_downstream_procedure")
 
 @flezha.stream_operative("static_entity")
 def static_entity_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(static_entry).named("hop").into(static_downstream).sink(
-        "kafka", encode=raw
+    c.input("input", codec="text").into(static_entry).named("hop").into(static_downstream).sink(
+        "kafka"
     )
 
 
@@ -132,8 +131,8 @@ def static_entity_operative(c: flezha.Channels) -> None:
 def sugar_static_entity_operative(c: flezha.Channels) -> None:
     """The reference pipeline sugar leaves the hop unnamed and lets the sink
     name the producing channel."""
-    c.input("input", decode=text).into(macro_static_entry).into(macro_static_downstream).sink(
-        "test_kafka", encode=raw
+    c.input("input", codec="text").into(macro_static_entry).into(macro_static_downstream).sink(
+        "test_kafka"
     )
 
 
@@ -145,9 +144,9 @@ mixed_hand_downstream = passthrough("mixed_hand_downstream")
 
 @flezha.stream_operative("mixed_operative")
 def mixed_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(mixed_macro_entry).named("hop").into(
+    c.input("input", codec="text").into(mixed_macro_entry).named("hop").into(
         mixed_hand_downstream
-    ).sink("kafka", encode=raw)
+    ).sink("kafka")
 
 
 # -- sugar_do_nothing / sugar_store_input ------------------------------------
@@ -158,7 +157,7 @@ sugar_do_nothing = passthrough("sugar_do_nothing")
 
 @flezha.stream_operative("sugar_do_nothing")
 def sugar_do_nothing_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(sugar_do_nothing).sink("sugar_do_nothing_echo", encode=raw)
+    c.input("input", codec="text").into(sugar_do_nothing).sink("sugar_do_nothing_echo")
 
 
 class SugarStoreInput:
@@ -178,7 +177,7 @@ sugar_store_input = flezha.procedure(SugarStoreInput, name="sugar_store_input")
 
 @flezha.stream_operative("sugar_store_input")
 def sugar_store_input_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(sugar_store_input).sink("sugar_store_sink", encode=raw)
+    c.input("input", codec="text").into(sugar_store_input).sink("sugar_store_sink")
 
 
 # -- hybrid_channel ----------------------------------------------------------
@@ -221,7 +220,7 @@ def hybrid_encode(value: int) -> bytes:
 
 @flezha.stream_operative("hybrid_channel")
 def hybrid_channel_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(hybrid_producer).branch(
+    c.input("input", codec="text").into(hybrid_producer).branch(
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
         lambda edge: edge.named("hybrid_indicator").into(hybrid_consumer),
@@ -260,9 +259,9 @@ stress_d = flezha.procedure(StressToP0, name="stress_d", entity_keys=STRESS_KEYS
 
 @flezha.stream_operative("entity_stress")
 def entity_stress_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(stress_a).named("a_to_b").into(stress_b).named(
+    c.input("input", codec="text").into(stress_a).named("a_to_b").into(stress_b).named(
         "b_to_c"
-    ).into(stress_c).named("c_to_d").into(stress_d).sink("echo", encode=raw)
+    ).into(stress_c).named("c_to_d").into(stress_d).sink("echo")
 
 
 # -- candle ------------------------------------------------------------------
@@ -301,7 +300,7 @@ candle = flezha.procedure(Candle, name="candle_procedure", clock="event_time")
 @flezha.stream_operative("candle")
 def candle_operative(c: flezha.Channels) -> None:
     c.effectively_once().correction_window(600_000)
-    c.input("input", decode=text).into(candle).keyed().sink("sink", encode=raw)
+    c.input("input", codec="text").into(candle).keyed().sink("sink")
 
 
 # -- poison_probe / wedge_probe ----------------------------------------------
@@ -320,7 +319,7 @@ def poison_probe(value: str) -> str:
 
 @flezha.stream_operative("poison_probe")
 def poison_probe_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).retry_backoff_ms(25).into(poison_probe).sink("out", encode=raw)
+    c.input("input", codec="text").retry_backoff_ms(25).into(poison_probe).sink("out")
 
 
 _ABORTED = {"done": False}
@@ -350,7 +349,7 @@ def wedge_probe(value: str) -> str:
 
 @flezha.stream_operative("wedge_probe")
 def wedge_probe_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(wedge_probe).sink("out", encode=raw)
+    c.input("input", codec="text").into(wedge_probe).sink("out")
 
 
 # -- session_timeout ---------------------------------------------------------
@@ -388,7 +387,7 @@ session_timeout = flezha.procedure(SessionTimeout, name="session_timeout_procedu
 
 @flezha.stream_operative("session_timeout")
 def session_timeout_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(session_timeout).sink("kafka", encode=_bytes_through)
+    c.input("input", codec="text").into(session_timeout).sink("kafka")
 
 
 # -- bounded_mailbox_{drop_nothing,drop_newest,drop_oldest} ------------------
@@ -414,8 +413,8 @@ def _bounded_mailbox(policy: str) -> flezha.Operative:
 
     @flezha.stream_operative(f"bounded_mailbox_{policy}")
     def operative(c: flezha.Channels) -> None:
-        c.input(f"{policy}_input", decode=text).on_full(policy).into(procedure).sink(
-            f"{policy}_echo", encode=raw
+        c.input(f"{policy}_input", codec="text").on_full(policy).into(procedure).sink(
+            f"{policy}_echo"
         )
 
     return operative
@@ -448,9 +447,7 @@ partition_relay = flezha.procedure(
 
 @flezha.stream_operative("partition_relay")
 def partition_relay_operative(c: flezha.Channels) -> None:
-    c.input("in", decode=text).key_by(prefix).into(partition_relay).keyed().sink(
-        "input", encode=raw
-    )
+    c.input("in", codec="text").key_by(prefix).into(partition_relay).keyed().sink("input")
 
 
 # -- dynamic_entity ----------------------------------------------------------
@@ -472,11 +469,11 @@ dynamic_entity = flezha.procedure(
 
 @flezha.stream_operative("dynamic_entity")
 def dynamic_entity_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).on_full("drop_nothing").filter(
+    c.input("input", codec="text").on_full("drop_nothing").filter(
         # Filtered before keying: a dropped value answers no key, so the core
         # never mints an entity for it.
         lambda value: value != "drop"
-    ).key_by(prefix).into(dynamic_entity).sink("kafka", encode=raw)
+    ).key_by(prefix).into(dynamic_entity).sink("kafka")
 
 
 #: Every operative this app registers, in declaration order.

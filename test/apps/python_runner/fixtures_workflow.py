@@ -3,11 +3,11 @@
 same factory ids, procedure names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, as in the
-reference: its bare ``sink(name)`` serialises a String as UTF-8, while this
-SDK's plugin default is MessagePack — so every sink here declares an encoder. An
-inter-procedure hop between two Python procedures carries MessagePack, and the
-core derives that channel's journal codec from the channel's kind, so no fixture
-declares one.
+reference: every entry names the text codec, and a bare ``sink(name)`` sends a
+string as its UTF-8 bytes, as the reference's does, so only a sink that prefixes
+what it sends declares an encoder. An inter-procedure hop between two Python
+procedures carries MessagePack, and the core derives that channel's journal
+codec from the channel's kind, so no fixture declares one.
 
 A procedure node owns exactly one output channel, not one per outgoing edge, so
 the whole topology vocabulary is edge reuse: a fan-out is one held ``Edge``
@@ -24,7 +24,6 @@ from collections.abc import Callable
 from typing import Any
 
 import flezha
-from fixture_support import raw, text
 
 # -- the release gate --------------------------------------------------------
 
@@ -186,7 +185,7 @@ block_b = stateless_step("block_b", _block)
 
 
 def commit_block_chain(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(commit_a).named("mid").into(block_b)
+    c.input("in", codec="text").into(commit_a).named("mid").into(block_b)
 
 
 commit_block_workflow = flezha.workflow_operative("commit_block_workflow")(commit_block_chain)
@@ -206,8 +205,8 @@ sync_durable_workflow = flezha.workflow_operative("sync_durable_workflow", sync_
 
 @flezha.workflow_operative("optout_commit_block", persistent=False)
 def optout_commit_block(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(commit_a).sink(
-        "mid", encode=lambda value: raw(f"a-ran:{value}")
+    c.input("in", codec="text").into(commit_a).sink(
+        "mid", encode=lambda value: f"a-ran:{value}".encode()
     ).into(block_b)
 
 
@@ -228,7 +227,7 @@ tier_commit_a = durable_step(
 @flezha.workflow_operative("tier_commit_block_workflow")
 def tier_commit_block_workflow(c: flezha.Channels) -> None:
     c.effectively_once()
-    c.input("in", decode=text).into(tier_commit_a).keyed().sink("mid", encode=raw).into(block_b)
+    c.input("in", codec="text").into(tier_commit_a).keyed().sink("mid").into(block_b)
 
 
 # -- saga_block_workflow -----------------------------------------------------
@@ -250,7 +249,7 @@ saga_c = failing_step("saga_c")
 
 @flezha.workflow_operative("saga_block_workflow")
 def saga_block_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(saga_a).named("s1").into(saga_b).named("s2").into(saga_c)
+    c.input("in", codec="text").into(saga_a).named("s1").into(saga_b).named("s2").into(saga_c)
 
 
 # -- outbox_block_workflow ---------------------------------------------------
@@ -264,8 +263,8 @@ def saga_block_workflow(c: flezha.Channels) -> None:
 
 @flezha.workflow_operative("outbox_block_workflow")
 def outbox_block_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(commit_a).sink(
-        "mid", encode=lambda value: raw(f"a-out:{value}")
+    c.input("in", codec="text").into(commit_a).sink(
+        "mid", encode=lambda value: f"a-out:{value}".encode()
     ).into(block_b)
 
 
@@ -292,8 +291,8 @@ undo_outbox_c = failing_step("undo_outbox_c")
 
 @flezha.workflow_operative("undo_outbox_workflow")
 def undo_outbox_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(undo_outbox_a).sink(
-        "mid", encode=lambda value: raw(f"out:{value}")
+    c.input("in", codec="text").into(undo_outbox_a).sink(
+        "mid", encode=lambda value: f"out:{value}".encode()
     ).into(undo_outbox_c)
 
 
@@ -347,14 +346,14 @@ def branch_workflow(c: flezha.Channels) -> None:
     # One channel, two consumers: THE fan-out. Both branches read exactly what
     # BranchA released on it (held edge, wired twice).
     mid = (
-        c.input("in", decode=text)
+        c.input("in", codec="text")
         .into(branch_a)
-        .sink("mid", encode=lambda value: raw(f"a:{value}"))
+        .sink("mid", encode=lambda value: f"a:{value}".encode())
     )
-    mid.into(branch_b).sink("bmid", encode=lambda value: raw(f"b:{value}")).into(branch_d).sink(
-        "d_out", encode=raw
+    mid.into(branch_b).sink("bmid", encode=lambda value: f"b:{value}".encode()).into(branch_d).sink(
+        "d_out"
     )
-    mid.into(branch_c).sink("c_out", encode=raw)
+    mid.into(branch_c).sink("c_out")
 
 
 # -- diamond_workflow --------------------------------------------------------
@@ -395,10 +394,12 @@ def diamond_workflow(c: flezha.Channels) -> None:
     # Held edge wired twice = the fan-out; two arms naming diam_join with no
     # node name = the fan-in, since two unnamed mentions are one node.
     fan = (
-        c.input("in", decode=text).into(diam_a).sink("dfan", encode=lambda value: raw(f"a:{value}"))
+        c.input("in", codec="text")
+        .into(diam_a)
+        .sink("dfan", encode=lambda value: f"a:{value}".encode())
     )
-    fan.into(diam_b1).named("db1").into(diam_b2).sink("db2", encode=raw).into(diam_join)
-    fan.into(diam_c).sink("dc", encode=raw).into(diam_join).sink("j_out", encode=raw)
+    fan.into(diam_b1).named("db1").into(diam_b2).sink("db2").into(diam_join)
+    fan.into(diam_c).sink("dc").into(diam_join).sink("j_out")
 
 
 # -- retry_workflow ----------------------------------------------------------
@@ -439,9 +440,9 @@ retry_flaky = stateless_step("retry_flaky", _flaky)
 
 @flezha.workflow_operative("retry_workflow")
 def retry_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(retry_a).sink(
-        "mid", encode=lambda value: raw(f"res:{value}")
-    ).into(retry_flaky).sink("out", encode=raw)
+    c.input("in", codec="text").into(retry_a).sink(
+        "mid", encode=lambda value: f"res:{value}".encode()
+    ).into(retry_flaky).sink("out")
 
 
 # -- the durable loop family -------------------------------------------------
@@ -514,7 +515,7 @@ LOOP_KNOBS: dict[str, Any] = {"loop_mode": "per_input", "max_duration_ms": 600_0
 
 
 def chat_chain(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(chat_turn).named("mid").into(chat_reply).sink("out", encode=raw)
+    c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply).sink("out")
 
 
 chat_loop_workflow = flezha.workflow_operative("chat_loop_workflow", **LOOP_KNOBS)(chat_chain)
@@ -522,14 +523,12 @@ chat_loop_workflow = flezha.workflow_operative("chat_loop_workflow", **LOOP_KNOB
 
 @flezha.workflow_operative("stateless_loop_workflow", **LOOP_KNOBS)
 def stateless_loop_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(chat_reply).sink("out", encode=raw)
+    c.input("in", codec="text").into(chat_reply).sink("out")
 
 
 @flezha.workflow_operative("chat_rewind_workflow", **LOOP_KNOBS)
 def chat_rewind_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(chat_turn).named("mid").into(chat_reply_undoable).sink(
-        "out", encode=raw
-    )
+    c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).sink("out")
 
 
 # -- the bench chains --------------------------------------------------------
@@ -547,10 +546,10 @@ BENCH_STEPS = [durable_step(f"bench_s{at}") for at in range(16)]
 def bench_chain(factory_id: str, steps: int, persistent: bool) -> flezha.Operative:
     @flezha.workflow_operative(factory_id, persistent=persistent)
     def declare(c: flezha.Channels) -> None:
-        edge = c.input("in", decode=text).into(BENCH_STEPS[0])
+        edge = c.input("in", codec="text").into(BENCH_STEPS[0])
         for at in range(1, steps):
             edge = edge.named(f"edge_BenchS{at}").into(BENCH_STEPS[at])
-        edge.sink("out", encode=raw)
+        edge.sink("out")
 
     return declare
 
@@ -599,9 +598,7 @@ def _wake_after_ms() -> int | None:
     wake_after_ms=_wake_after_ms(),
 )
 def bench_loop_workflow(c: flezha.Channels) -> None:
-    c.input("in", decode=text).into(bench_turn).named("mid").into(chat_reply).sink(
-        "out", encode=raw
-    )
+    c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).sink("out")
 
 
 #: Every workflow operative this app registers, in the reference's order.

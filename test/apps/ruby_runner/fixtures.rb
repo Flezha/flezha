@@ -4,10 +4,9 @@
 # under the same factory ids, procedure names, channel names and output bytes.
 #
 # Entry payloads and plugin frames are UTF-8 text on the wire, the same as the
-# reference: the SDK's default codec is MessagePack, so every fixture that
-# exchanges bytes with another SDK or with a plugin declares its own decoder
-# and encoder. An inter-procedure hop between two Ruby procedures carries
-# MessagePack, which no one else reads.
+# reference: every entry names the text codec, and a sink naming none sends a
+# String as its own bytes, as the reference's does. An inter-procedure hop
+# between two Ruby procedures carries MessagePack, which no one else reads.
 
 require "flezha"
 
@@ -15,9 +14,6 @@ require "flezha"
 require_relative "fixtures_state"
 
 module Fixtures
-  TEXT = ->(bytes) { bytes.dup.force_encoding(Encoding::UTF_8) }
-  BYTES = ->(value) { value.to_s.b }
-
   # The key convention every keyed fixture shares: text before the first ':'.
   PREFIX = ->(input) { input.to_s.split(":").first.to_s }
 
@@ -31,8 +27,8 @@ module Fixtures
   class DoNothingOperative < Flezha::StreamOperative
     factory_id "do_nothing"
     channels do |c|
-      c.input("input", decode: TEXT).into(DoNothing)
-       .sink("echo", encode: BYTES)
+      c.input("input", codec: :text).into(DoNothing)
+       .sink("echo")
     end
   end
 
@@ -42,9 +38,9 @@ module Fixtures
   class BenchEchoOperative < Flezha::StreamOperative
     factory_id "bench_echo"
     channels do |c|
-      c.input("input", decode: TEXT).on_full(:drop_nothing)
+      c.input("input", codec: :text).on_full(:drop_nothing)
        .into(DoNothing)
-       .sink("echo", encode: BYTES)
+       .sink("echo")
     end
   end
 
@@ -61,8 +57,8 @@ module Fixtures
   class CompareFilterOperative < Flezha::StreamOperative
     factory_id "compare_filter"
     channels do |c|
-      c.input("input", decode: TEXT).into(CompareFilter)
-       .sink("sink", encode: BYTES)
+      c.input("input", codec: :text).into(CompareFilter)
+       .sink("sink")
     end
   end
 
@@ -110,9 +106,9 @@ module Fixtures
   class StaticEntityOperative < Flezha::StreamOperative
     factory_id "static_entity"
     channels do |c|
-      c.input("input", decode: TEXT).into(StaticEntry).named("hop")
+      c.input("input", codec: :text).into(StaticEntry).named("hop")
        .into(StaticDownstream)
-       .sink("kafka", encode: BYTES)
+       .sink("kafka")
     end
   end
 
@@ -121,9 +117,9 @@ module Fixtures
   class SugarStaticEntityOperative < Flezha::StreamOperative
     factory_id "sugar_static_entity"
     channels do |c|
-      c.input("input", decode: TEXT).into(MacroStaticEntry)
+      c.input("input", codec: :text).into(MacroStaticEntry)
        .into(MacroStaticDownstream)
-       .sink("test_kafka", encode: BYTES)
+       .sink("test_kafka")
     end
   end
 
@@ -138,9 +134,9 @@ module Fixtures
   class MixedOperative < Flezha::StreamOperative
     factory_id "mixed_operative"
     channels do |c|
-      c.input("input", decode: TEXT).into(MixedMacroEntry).named("hop")
+      c.input("input", codec: :text).into(MixedMacroEntry).named("hop")
        .into(MixedHandDownstream)
-       .sink("kafka", encode: BYTES)
+       .sink("kafka")
     end
   end
 
@@ -153,8 +149,8 @@ module Fixtures
   class SugarDoNothingOperative < Flezha::StreamOperative
     factory_id "sugar_do_nothing"
     channels do |c|
-      c.input("input", decode: TEXT).into(SugarDoNothing)
-       .sink("sugar_do_nothing_echo", encode: BYTES)
+      c.input("input", codec: :text).into(SugarDoNothing)
+       .sink("sugar_do_nothing_echo")
     end
   end
 
@@ -172,8 +168,8 @@ module Fixtures
   class SugarStoreInputOperative < Flezha::StreamOperative
     factory_id "sugar_store_input"
     channels do |c|
-      c.input("input", decode: TEXT).into(SugarStoreInput)
-       .sink("sugar_store_sink", encode: BYTES)
+      c.input("input", codec: :text).into(SugarStoreInput)
+       .sink("sugar_store_sink")
     end
   end
 
@@ -219,7 +215,7 @@ module Fixtures
   class HybridChannelOperative < Flezha::StreamOperative
     factory_id "hybrid_channel"
     channels do |c|
-      c.input("input", decode: TEXT).into(HybridProducer).branch(
+      c.input("input", codec: :text).into(HybridProducer).branch(
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
         ->(edge) { edge.named("hybrid_indicator").into(HybridConsumer) },
@@ -260,11 +256,11 @@ module Fixtures
   class EntityStressOperative < Flezha::StreamOperative
     factory_id "entity_stress"
     channels do |c|
-      c.input("input", decode: TEXT).into(StressA).named("a_to_b")
+      c.input("input", codec: :text).into(StressA).named("a_to_b")
        .into(StressB).named("b_to_c")
        .into(StressC).named("c_to_d")
        .into(StressD)
-       .sink("echo", encode: BYTES)
+       .sink("echo")
     end
   end
 
@@ -285,9 +281,9 @@ module Fixtures
   class PoisonProbeOperative < Flezha::StreamOperative
     factory_id "poison_probe"
     channels do |c|
-      c.input("input", decode: TEXT).retry_backoff_ms(25)
+      c.input("input", codec: :text).retry_backoff_ms(25)
        .into(PoisonProbe)
-       .sink("out", encode: BYTES)
+       .sink("out")
     end
   end
 
@@ -321,8 +317,8 @@ module Fixtures
   class WedgeProbeOperative < Flezha::StreamOperative
     factory_id "wedge_probe"
     channels do |c|
-      c.input("input", decode: TEXT).into(WedgeProbe)
-       .sink("out", encode: BYTES)
+      c.input("input", codec: :text).into(WedgeProbe)
+       .sink("out")
     end
   end
 
@@ -359,8 +355,8 @@ module Fixtures
     channels do |c|
       c.effectively_once
       c.correction_window(600_000)
-      c.input("input", decode: TEXT).into(Candle).keyed
-       .sink("sink", encode: BYTES)
+      c.input("input", codec: :text).into(Candle).keyed
+       .sink("sink")
     end
   end
 
@@ -402,8 +398,8 @@ module Fixtures
   class SessionTimeoutOperative < Flezha::StreamOperative
     factory_id "session_timeout"
     channels do |c|
-      c.input("input", decode: TEXT).into(SessionTimeout)
-       .sink("kafka", encode: BYTES)
+      c.input("input", codec: :text).into(SessionTimeout)
+       .sink("kafka")
     end
   end
 
@@ -429,9 +425,9 @@ module Fixtures
     Class.new(Flezha::StreamOperative) do
       factory_id "bounded_mailbox_#{policy}"
       channels do |c|
-        c.input("#{policy}_input", decode: TEXT).on_full(policy.to_sym)
+        c.input("#{policy}_input", codec: :text).on_full(policy.to_sym)
          .into(procedure)
-         .sink("#{policy}_echo", encode: BYTES)
+         .sink("#{policy}_echo")
       end
     end
   end.freeze
@@ -460,9 +456,9 @@ module Fixtures
   class PartitionRelayOperative < Flezha::StreamOperative
     factory_id "partition_relay"
     channels do |c|
-      c.input("in", decode: TEXT).key_by { |value| PREFIX.call(value) }
+      c.input("in", codec: :text).key_by { |value| PREFIX.call(value) }
        .into(PartitionRelay).keyed
-       .sink("input", encode: BYTES)
+       .sink("input")
     end
   end
 
@@ -483,13 +479,13 @@ module Fixtures
   class DynamicEntityOperative < Flezha::StreamOperative
     factory_id "dynamic_entity"
     channels do |c|
-      c.input("input", decode: TEXT).on_full(:drop_nothing)
+      c.input("input", codec: :text).on_full(:drop_nothing)
        # Filtered before keying: a dropped value answers no key, so the core
        # never mints an entity for it.
        .filter { |input| input != "drop" }
        .key_by { |value| PREFIX.call(value) }
        .into(DynamicEntity)
-       .sink("kafka", encode: BYTES)
+       .sink("kafka")
     end
   end
 

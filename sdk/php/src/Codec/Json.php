@@ -113,7 +113,7 @@ final class Json
                 'a resource has no durable form; hold what it names instead',
             );
         }
-        if (is_string($value) && !mb_check_encoding($value, 'UTF-8')) {
+        if (is_string($value) && !self::isUtf8($value)) {
             throw new UnrepresentableValueException(
                 $typeName,
                 $where,
@@ -128,6 +128,12 @@ final class Json
                 'JSON has no representation for NAN or INF',
             );
         }
+    }
+
+    /** Whether a string is valid UTF-8, which JSON and a text channel both require. */
+    public static function isUtf8(string $value): bool
+    {
+        return mb_check_encoding($value, 'UTF-8');
     }
 
     /** Re-raise an encoding failure naming the type that could not be carried. */

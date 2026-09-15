@@ -331,12 +331,10 @@ final class Ctx
         return Json::guard($channel->name, static fn (): string => Json::encode($value));
     }
 
-    /** The plugin frame's bytes: the sink's own serializer, or the class codec. */
+    /** The plugin frame's bytes: the sink's encoder, which `sink` always sets. */
     private function pluginPayload(ChannelSpec $channel, mixed $value): string
     {
-        return $channel->sinkEncode !== null
-            ? ($channel->sinkEncode)($value)
-            : $this->edgePayload($channel, $value);
+        return ($channel->sinkEncode)($value);
     }
 
     /**

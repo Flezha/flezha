@@ -55,9 +55,9 @@ end
 class UpcaseOperative < Flezha::StreamOperative
   factory_id "upcase"
   channels do |c|
-    c.input("input", decode: ->(bytes) { bytes.dup.force_encoding("UTF-8") })
+    c.input("input", codec: :text)
      .into(Upcase)
-     .sink("out", encode: ->(value) { value.to_s.b })
+     .sink("out")
   end
 end
 
@@ -72,6 +72,37 @@ register timers, `entities_for` present means it fans out over a static key set
 Everything a type system would have caught is refused at registration instead,
 naming the class, the handler and the defect. That is the same set, for the
 same reasons, as the Rust builder's `TopologyIssue`.
+
+### Channel payloads
+
+A channel names the format of its payload with `codec:` on `input` and on
+`sink`, as a symbol:
+
+| Codec | An entry hands the procedure | A sink sends |
+| --- | --- | --- |
+| `:text` | a UTF-8 `String`; invalid UTF-8 fails the decode | a `String` as its bytes if it is valid UTF-8; any other value fails the emit |
+| `:bytes` | a binary `String`, the bytes unchanged | any `String` unchanged; any other value fails the emit |
+| `:json` | the parsed JSON, with symbol keys | any value as JSON, a `String` quoted |
+| `:msgpack` | the value MessagePack decodes to | any value as MessagePack |
+
+An entry with no codec and no `decode:` reads JSON: `{"a":1}` arrives as
+`{ a: 1 }`, and plain text fails its decode and rides the retry and dead-letter
+ladder. A sink with no codec and no `encode:` follows the value: a `String` is
+sent as its bytes and anything else as JSON. So a sink needs no codec for a
+string or a JSON value, and names one only to pick another format, `:json` to
+quote a string or `:msgpack`. A `decode:` or `encode:` callable takes the place
+of a codec for anything else. A codec name outside the four, or a codec named
+beside a callable on one channel, is refused when the class is declared, naming
+the class and the channel.
+
+Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
+or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
+naming the channel.
+
+A value passed between two procedures of one operative never crosses a channel
+codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
+procedure the binary instead, since an Elixir string is its binary, so the same
+bytes on an undeclared entry are a `Hash` here and a string there.
 
 ### State and Change
 

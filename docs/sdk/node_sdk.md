@@ -184,6 +184,42 @@ expecting the same effects — so a handler that reads `Date.now()`,
 warned about by file and line, once per site. The warning never aborts the
 invocation.
 
+## Channel payloads
+
+A channel names the format of its payload with `{ codec }` on `input` and on
+`sink`, typed as the `ChannelCodec` union:
+
+| Codec | An entry hands the procedure | A sink sends |
+| --- | --- | --- |
+| `'text'` | a `string` (`Stream<string>`); invalid UTF-8 fails the decode | a `string` as UTF-8; any other value fails the emit |
+| `'bytes'` | a `Uint8Array` (`Stream<Uint8Array>`) | a `Uint8Array` or `Buffer` unchanged; any other value fails the emit |
+| `'json'` | the parsed JSON | any value as JSON, a string quoted |
+| `'msgpack'` | the value MessagePack decodes to | any value as MessagePack |
+
+```ts
+c.input('in', { codec: 'text' }).into(Echo).sink('out');
+```
+
+An entry with no codec and no decoder reads JSON: `{"a":1}` arrives as
+`{ a: 1 }`, and plain text fails its decode and rides the retry and dead-letter
+ladder. A sink with no codec and no encoder follows the value: a `Uint8Array`
+passes through, a string is sent as UTF-8, and anything else as JSON. So a sink
+needs no codec for a string, bytes or a JSON value, and names one only to pick
+another format, `'json'` to quote a string or `'msgpack'`. A decoder or encoder
+function takes the place of a codec for anything else. A codec name outside the
+four does not type-check, and from JavaScript it is refused when the operative
+is declared, as is a codec given beside a function on one channel, naming the
+operative and the channel.
+
+A JSON number is a double, so an integer above 2^53 loses precision on the way
+in and out. A `bigint`, `undefined` or a function has no JSON form and fails
+the emit naming the channel; `'msgpack'` carries a `bigint` at any width.
+
+A value passed between two procedures of one operative never crosses a channel
+codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
+procedure the binary instead, since an Elixir string is its binary, so the same
+bytes on an undeclared entry are an object here and a string there.
+
 ## Durable state
 
 State and change bodies serialize as MessagePack (`format_id = 5`) with a

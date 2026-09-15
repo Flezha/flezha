@@ -8,6 +8,7 @@ so a test of the executor tests the executor rather than a mock of it.
 from __future__ import annotations
 
 import inspect
+import json
 import queue
 import threading
 import time
@@ -18,7 +19,7 @@ from typing import Any
 import pytest
 
 import flezha
-from flezha import codec, native
+from flezha import native
 
 #: The process context ``graph.validate`` submits a record through. One per test
 #: session: a check registers nothing, so every suite shares it.
@@ -224,7 +225,8 @@ def work_activation(
     """One work activation, as the veneer produces it.
 
     Variadic because a batch is the interesting case — a failure mid-batch stops
-    it — and a one-payload call is the same builder with one argument.
+    it — and a one-payload call is the same builder with one argument. Each
+    payload is JSON, which is what an entry naming no codec reads.
     """
     return {
         "token": token,
@@ -237,7 +239,7 @@ def work_activation(
             {
                 "kind": "input",
                 "channel": 0,
-                "payload": codec.encode(payload),
+                "payload": json.dumps(payload).encode(),
                 "metadata": [],
                 "consumed_offset": token + index,
                 "replay": False,

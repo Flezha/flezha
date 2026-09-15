@@ -1,0 +1,48 @@
+# One payload rule per channel codec, and the same rule in every SDK whose
+# channels carry no type.
+#
+# `entry|sink|payload|expected`, one case per line. `entry` and `sink` name the
+# codec each end of a channel declares, or `none` when it names no codec. The
+# payload is decoded by the entry, the value it yields is encoded by the sink,
+# and `expected` is the bytes that encoding sends, or `decode_error` or
+# `encode_error` when that step refuses.
+#
+# `<empty>` is no bytes, and `hex:` spells bytes that are not text. A case that
+# names `msgpack` is read only by the SDKs that ship MessagePack.
+#
+# The cases are what every one of these SDKs sends alike. Where the rule lets
+# them differ, each SDK's own test says so: a Ruby or PHP string is its bytes, so
+# it passes a `bytes` sink, and a Python or Node string does not.
+#
+# Every SDK's own suite feeds this file to the slots its builder resolves:
+#   sdk/ruby/test/authoring_test.rb       Ruby
+#   sdk/python/tests/test_authoring.py    Python
+#   sdk/node/test/authoring.test.mjs      Node
+#   sdk/php/tests/AuthoringTest.php       PHP
+
+text|none|hello|hello
+text|text|hello|hello
+text|json|hi|"hi"
+text|json|héllo|"héllo"
+text|none|hex:ff|decode_error
+none|none|{"a":1}|{"a":1}
+none|json|{"a":1}|{"a":1}
+none|none|[1,2]|[1,2]
+none|none|42|42
+none|none|1.5|1.5
+none|none|true|true
+none|none|<empty>|null
+none|none|"hi"|hi
+none|none|"é"|é
+none|json|"hi"|"hi"
+none|none|hello|decode_error
+none|text|42|encode_error
+none|bytes|42|encode_error
+json|json|"hi"|"hi"
+bytes|none|hex:ff00|hex:ff00
+bytes|bytes|hex:ff00|hex:ff00
+bytes|text|hex:ff|encode_error
+none|msgpack|42|hex:2a
+msgpack|none|hex:a26869|hi
+msgpack|text|hex:a26869|hi
+msgpack|none|hex:81a16101|{"a":1}

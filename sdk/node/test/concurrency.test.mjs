@@ -14,14 +14,13 @@ import { Worker } from 'node:worker_threads';
 
 import {
   ACTIVATION_SCHEMA_VERSION,
-  decodeValue,
   defineOperative,
   defineProcedure,
   loadNative,
 } from '../dist/esm/index.js';
 import { answer } from '../dist/esm/dispatch.js';
 
-import { activationFor, depsFor, inputItem } from './dispatch-fixtures.mjs';
+import { activationFor, depsFor, inputItem, jsonOf } from './dispatch-fixtures.mjs';
 
 // `depsFor` submits each spec, so this file needs the process context too.
 loadNative().contextNew(ACTIVATION_SCHEMA_VERSION);
@@ -66,7 +65,7 @@ test('inputs for one entity are processed in enqueue order', async () => {
   const first = await answer(work(1n, 'a', ['x', 'y']), shared);
   const second = await answer(work(2n, 'a', ['z']), shared);
   const emitted = [...first.effects, ...second.effects].map((effect) =>
-    decodeValue(effect.outputs[0].payload),
+    jsonOf(effect.outputs[0].payload),
   );
   assert.deepEqual(emitted, [['x'], ['x', 'y'], ['x', 'y', 'z']]);
 });
@@ -75,7 +74,7 @@ test('two entities do not see each other state', async () => {
   const shared = deps();
   await answer(work(1n, 'a', ['x']), shared);
   const other = await answer(work(2n, 'b', ['q']), shared);
-  assert.deepEqual(decodeValue(other.effects[0].outputs[0].payload), ['q']);
+  assert.deepEqual(jsonOf(other.effects[0].outputs[0].payload), ['q']);
 });
 
 test('the dispatch path is one function, shared by both configurations', async () => {

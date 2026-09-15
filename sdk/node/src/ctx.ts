@@ -13,7 +13,14 @@ import type { ChannelSpec, ClassSpec, ConsumerEdge, ProcNode } from './authoring
 import type { NativeItemEffect, NativeMeta, NativeOutput, NativeTimerOp } from './native.js';
 import { entityIdentity, stableId } from './identity.js';
 import { readOnlyState } from './state.js';
-import { DROPPED, type Ctx, type EmitOptions, type IfRunning, type TimerKind } from './types.js';
+import {
+  DROPPED,
+  EmitError,
+  type Ctx,
+  type EmitOptions,
+  type IfRunning,
+  type TimerKind,
+} from './types.js';
 
 /** Metadata keys the runtime owns. A handler that sets one is refused. */
 const RESERVED_PREFIX = 'flz.';
@@ -40,8 +47,6 @@ export interface InvocationInput {
   state: unknown;
   bridge: SpawnBridge;
 }
-
-export class EmitError extends Error {}
 
 function metaList(metadata: Record<string, string> | undefined, procedure: string): NativeMeta[] {
   if (!metadata) return [];
@@ -230,7 +235,8 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key,
       eventTime: undefined,
       metadata,
-      payload: channel.sinkEncode ? Buffer.from(channel.sinkEncode(value)) : encodeValue(value),
+      // A plugin output leaves only on a sink, and every `sink` sets its encoder.
+      payload: Buffer.from(channel.sinkEncode!(value)),
     };
   }
 

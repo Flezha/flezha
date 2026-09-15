@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flezha\Testing;
 
 use Flezha\BeyondWindow;
+use Flezha\ChannelCodec;
 use Flezha\CheckpointOutputs;
 use Flezha\Codec\Json;
 use Flezha\Ctx;
@@ -12,10 +13,9 @@ use Flezha\Definition;
 use Flezha\Dispatch\Dispatcher;
 use Flezha\Dispatch\RegisteredClass;
 use Flezha\Dispatch\Restore;
-use Flezha\Graph\ChannelSpec;
+use Flezha\Graph\Builder;
 use Flezha\Graph\ClassSpec;
 use Flezha\Graph\ProcNode;
-use Flezha\Overflow;
 use Flezha\Procedure;
 use Flezha\SpawnBridge;
 use Flezha\Timer;
@@ -48,10 +48,16 @@ final class Harness implements SpawnBridge
         private readonly string $operative = 'harness',
     ) {
         $this->definition = Definition::of($procedureClass);
-        $this->node = new ProcNode(0, $this->definition->name, $procedureClass, $this->definition);
 
-        // One plugin channel so `emit` has somewhere to go. A procedure under
-        // test emits to be observed, not to be routed.
+        // The real channel builder, not a hand-written spec: one entry channel
+        // into the procedure, and one plugin sink so `ctx->emit` has somewhere
+        // to go. A procedure under test emits to be observed, not to be routed,
+        // and the sink names JSON so `outputs` reports exactly the value a
+        // handler emitted.
+        $builder = new Builder('<harness>');
+        $builder->input('in')->into($procedureClass)->sink('out', codec: ChannelCodec::Json);
+        $this->node = $builder->procedures[0];
+
         $spec = new ClassSpec(
             factoryId: '<harness>',
             kind: 'stream',
@@ -65,17 +71,8 @@ final class Harness implements SpawnBridge
             beyondWindowPolicy: BeyondWindow::ProcessAsArrival,
             compactAfterBytes: null,
             syncDurability: false,
-            procedures: [$this->node],
-            // One plugin-bound channel so `ctx->emit` has somewhere to go: with
-            // no consumer behind it the sink IS the terminal.
-            channels: [new ChannelSpec(
-                index: 0,
-                name: 'out',
-                kind: 'inter_proc',
-                producer: 0,
-                overflow: Overflow::DropNothing,
-                sink: 'out',
-            )],
+            procedures: $builder->procedures,
+            channels: $builder->channels,
         );
 
         // The dispatcher's own entity store, so the state this harness reports

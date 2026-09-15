@@ -36,11 +36,11 @@ class LocalModeTest < Minitest::Test
   class WordCount < Flezha::StreamOperative
     factory_id "local_word_count_ruby"
     channels do |c|
-      c.input("lines", decode: ->(b) { b.dup.force_encoding("UTF-8") })
+      c.input("lines", codec: :text)
        .into(Split)
        .key_by { |word| word }
        .into(Tally).keyed
-       .sink("totals", encode: ->(v) { v.to_s.b })
+       .sink("totals")
     end
   end
 
@@ -93,5 +93,34 @@ class LocalModeTest < Minitest::Test
     ensure
       run.close
     end
+  end
+
+  # Reads the map an undeclared entry decodes, and emits a string and a map.
+  class Defaults < Flezha::Procedure
+    procedure_name "defaults"
+    def process(value, ctx)
+      ctx.emit("a is #{value[:a]}")
+      ctx.emit({ a: value[:a] })
+      nil
+    end
+  end
+
+  class DefaultCodecs < Flezha::StreamOperative
+    factory_id "local_default_codecs_ruby"
+    channels { |c| c.input("in").into(Defaults).sink("out") }
+  end
+
+  def test_an_undeclared_entry_reads_json_and_an_undeclared_sink_follows_the_value
+    released = []
+    run = Flezha::LocalOperative.start(DefaultCodecs)
+    begin
+      run.on_sink("out") { |output| released << output.payload }
+      run.feed("in", '{"a":1}')
+      run.run_until_idle(5_000)
+    ensure
+      run.close
+    end
+
+    assert_equal ["a is 1", '{"a":1}'], released
   end
 end

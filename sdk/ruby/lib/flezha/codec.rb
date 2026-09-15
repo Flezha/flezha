@@ -6,7 +6,8 @@ require "set"
 
 module Flezha
   # The MessagePack codec for durable `State` and `Change` bodies, and the Ruby
-  # type mapping that goes with it.
+  # type mapping that goes with it. The payload formats a channel names on
+  # `input` and `sink` are here too, as `CHANNEL_CODECS`.
   #
   # The mapping is specified here rather than inherited from a library default,
   # because the defaults are wrong for a format that has to survive a restart:
@@ -51,6 +52,51 @@ module Flezha
       return nil if bytes.nil? || bytes.empty?
 
       FACTORY.load(bytes.b, symbolize_keys: true)
+    end
+
+    # The payload formats a channel names on `input` and `sink`. A payload
+    # between two procedures names none: it stays in the MessagePack above.
+    CHANNEL_CODECS = %i[bytes text json msgpack].freeze
+
+    # How `input` reads a channel's payload: the named codec, or JSON when the
+    # channel names none. JSON keys are symbolized, as the MessagePack decode
+    # symbolizes them, so a handler reads `value[:a]` under either.
+    def channel_decoder(codec, channel)
+      case codec
+      when :bytes then ->(bytes) { bytes.b }
+      when :text then ->(bytes) { utf8_text(bytes, channel) }
+      when :msgpack then method(:decode)
+      else ->(bytes) { bytes.empty? ? nil : JSON.parse(utf8_text(bytes, channel), symbolize_names: true) }
+      end
+    end
+
+    # How `sink` writes a channel's payload: the named codec, or, when the
+    # channel names none, a String as its bytes and anything else as JSON.
+    def channel_encoder(codec, channel)
+      case codec
+      when :bytes then ->(value) { value.is_a?(String) ? value : refuse_payload(channel, codec, value) }
+      when :text then ->(value) { value.is_a?(String) ? utf8_text(value, channel) : refuse_payload(channel, codec, value) }
+      when :json then ->(value) { json_payload(channel, value) }
+      when :msgpack then method(:encode)
+      else ->(value) { value.is_a?(String) ? value : json_payload(channel, value) }
+      end
+    end
+
+    def utf8_text(bytes, channel)
+      text = bytes.dup.force_encoding(Encoding::UTF_8)
+      return text if text.valid_encoding?
+
+      raise EncodingError, "channel `#{channel.name}`: the payload is not valid UTF-8"
+    end
+
+    def json_payload(channel, value)
+      JSON.generate(value)
+    rescue JSON::GeneratorError => e
+      raise EmitError, "channel `#{channel.name}`: a #{value.class} cannot be sent as JSON: #{e.message}"
+    end
+
+    def refuse_payload(channel, codec, value)
+      raise EmitError, "channel `#{channel.name}` names the #{codec} codec and cannot send a #{value.class}"
     end
 
     # A value the codec cannot carry, named by the declaring type and the path

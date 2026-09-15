@@ -181,3 +181,15 @@ def test_a_missing_hook_is_refused_by_name() -> None:
         harness.fire_timer("processing_time", 1)
     with pytest.raises(flezha.FlezhaError, match="compensate"):
         harness.compensate([])
+
+
+def test_the_harness_reports_a_string_and_a_dict_exactly_as_emitted() -> None:
+    """The harness reads its sink back as MessagePack, so a string output is
+    reported as the string rather than as the bytes a plugin would receive."""
+
+    @flezha.procedure(name="harness_emitter")
+    def emitter(value: str, ctx: flezha.Ctx[None]) -> str:
+        ctx.emit({"said": value})
+        return f"echo: {value}"
+
+    assert ProcedureTestHarness(emitter).feed("hi").outputs == [{"said": "hi"}, "echo: hi"]

@@ -356,6 +356,16 @@ trait WorkflowEmitGraph
     }
 }
 
+/** An entry naming no codec, into a consumer that records what it was handed. */
+#[Operative(factoryId: 'json_entry_operative')]
+final class JsonEntryOperative extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(WfB::class);
+    }
+}
+
 #[Operative(factoryId: 'wf_emit')]
 final class WfEmitOperative extends WorkflowOperative
 {

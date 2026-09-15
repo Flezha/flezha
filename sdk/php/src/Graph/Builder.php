@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flezha\Graph;
 
 use Flezha\BeyondWindow;
+use Flezha\ChannelCodec;
 use Flezha\CheckpointOutputs;
 use Flezha\Definition;
 use Flezha\Exception\DeclarationException;
@@ -128,21 +129,31 @@ final class Builder
 
     /**
      * Declare a controller-fed entry channel. `$decode` turns the wire bytes
-     * into the value a handler sees; its absence means the JSON default.
+     * into the value a handler sees, `$codec` names a format instead, and with
+     * neither the bytes are JSON.
      *
      * @param (callable(string):mixed)|null $decode
      */
-    public function input(string $name, ?callable $decode = null): Edge
+    public function input(string $name, ?callable $decode = null, ?ChannelCodec $codec = null): Edge
     {
-        $channel = new ChannelSpec(
-            index: count($this->channels),
-            name: $name,
-            kind: 'entry',
-            decode: $decode,
-        );
+        $channel = new ChannelSpec(index: count($this->channels), name: $name, kind: 'entry');
+        $this->refuseCodecBesideCallable($channel, $codec, $decode);
+        $channel->decode = $decode ?? ($codec ?? ChannelCodec::Json)->decoder($channel);
         $this->channels[] = $channel;
 
         return new Edge($this, ['entry', $channel], []);
+    }
+
+    /** A codec named beside the channel's own decoder or encoder is refused. */
+    public function refuseCodecBesideCallable(ChannelSpec $channel, ?ChannelCodec $codec, ?callable $callable): void
+    {
+        if ($codec !== null && $callable !== null) {
+            throw new DeclarationException(
+                $this->factoryId,
+                $channel->name,
+                'names both a codec and its own callable; give one',
+            );
+        }
     }
 
     /**

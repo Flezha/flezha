@@ -34,6 +34,8 @@ export { DeclarationError } from './types.js';
 export type {
   BeyondWindowPolicy,
   ChannelBuilder,
+  ChannelCodec,
+  CodecOptions,
   ClockKind,
   Ctx,
   DynamicEntities,

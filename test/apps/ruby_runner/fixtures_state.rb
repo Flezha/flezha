@@ -64,9 +64,9 @@ module Fixtures
   # bench can isolate the cost of per-Entity persistence.
   class KeyedUpsertOperative < Flezha::StreamOperative
     channels do |c|
-      c.input("input", decode: TEXT).on_full(:drop_nothing)
+      c.input("input", codec: :text).on_full(:drop_nothing)
        .into(TierStore).keyed
-       .sink("sink", encode: BYTES)
+       .sink("sink")
     end
   end
 
@@ -90,9 +90,9 @@ module Fixtures
     factory_id "tier_store"
     channels do |c|
       c.effectively_once
-      c.input("input", decode: TEXT).on_full(:drop_nothing).retry_backoff_ms(300)
+      c.input("input", codec: :text).on_full(:drop_nothing).retry_backoff_ms(300)
        .into(TierStore).keyed
-       .sink("sink", encode: BYTES)
+       .sink("sink")
     end
   end
 
@@ -101,8 +101,8 @@ module Fixtures
     channels do |c|
       c.effectively_once
       c.checkpoint_ack
-      c.input("input", decode: TEXT).into(CheckpointStore).keyed
-       .sink("sink", encode: BYTES)
+      c.input("input", codec: :text).into(CheckpointStore).keyed
+       .sink("sink")
     end
   end
 
@@ -117,8 +117,8 @@ module Fixtures
       c.effectively_once
       c.checkpoint_ack
       c.outputs_at_checkpoint(1_500)
-      c.input("input", decode: TEXT).into(CheckpointStore).keyed
-       .sink("sink", encode: BYTES)
+      c.input("input", codec: :text).into(CheckpointStore).keyed
+       .sink("sink")
     end
   end
 
@@ -138,9 +138,9 @@ module Fixtures
       if ENV["FLEZHA_BENCH_CHECKPOINT_OUTPUTS"] == "at_checkpoint"
         c.outputs_at_checkpoint(ENV_INT.call("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50))
       end
-      c.input("input", decode: TEXT).on_full(:drop_nothing)
+      c.input("input", codec: :text).on_full(:drop_nothing)
        .into(BenchCheckpoint).keyed
-       .sink("sink", encode: BYTES)
+       .sink("sink")
     end
   end
 
@@ -161,8 +161,8 @@ module Fixtures
   class StoreInputOperative < Flezha::StreamOperative
     factory_id "store_input"
     channels do |c|
-      c.input("input", decode: TEXT).into(StoreInput)
-       .sink("sink", encode: BYTES)
+      c.input("input", codec: :text).into(StoreInput)
+       .sink("sink")
     end
   end
 
@@ -187,7 +187,7 @@ module Fixtures
   class StatefulCounterOperative < Flezha::StreamOperative
     factory_id "stateful_counter"
     channels do |c|
-      c.input("input", decode: TEXT).into(CounterEntry).named("ticks").into(Counter)
+      c.input("input", codec: :text).into(CounterEntry).named("ticks").into(Counter)
     end
   end
 
@@ -197,7 +197,7 @@ module Fixtures
     factory_id "persistence_off_counter"
     persistent false
     channels do |c|
-      c.input("input", decode: TEXT)
+      c.input("input", codec: :text)
        .into(CounterEntry, "persistence_off_entry_procedure").named("ticks")
        .into(Counter, "persistence_off_counter_procedure")
     end
@@ -234,7 +234,7 @@ module Fixtures
   class CoalescingCounterOperative < Flezha::StreamOperative
     factory_id "coalescing_counter"
     channels do |c|
-      c.input("input", decode: TEXT).into(TickEntry).named("ticks").into(Tick)
+      c.input("input", codec: :text).into(TickEntry).named("ticks").into(Tick)
     end
   end
 
@@ -258,8 +258,8 @@ module Fixtures
   class ResumeProbeOperative < Flezha::StreamOperative
     factory_id "resume_probe"
     channels do |c|
-      c.input("input", decode: TEXT).into(ResumeProbe)
-       .sink("total", encode: BYTES)
+      c.input("input", codec: :text).into(ResumeProbe)
+       .sink("total")
     end
   end
 
@@ -319,16 +319,16 @@ module Fixtures
   class SchemaEvolutionV1Operative < Flezha::StreamOperative
     factory_id "schema_evolution_v1"
     channels do |c|
-      c.input("input", decode: TEXT).into(EvolvingCartV1)
-       .sink("total", encode: BYTES)
+      c.input("input", codec: :text).into(EvolvingCartV1)
+       .sink("total")
     end
   end
 
   class SchemaEvolutionV2Operative < Flezha::StreamOperative
     factory_id "schema_evolution_v2"
     channels do |c|
-      c.input("input", decode: TEXT).into(EvolvingCartV2)
-       .sink("total", encode: BYTES)
+      c.input("input", codec: :text).into(EvolvingCartV2)
+       .sink("total")
     end
   end
 

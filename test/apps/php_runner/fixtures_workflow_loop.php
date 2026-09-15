@@ -15,6 +15,7 @@ namespace Flezha\TestApp;
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
 use Flezha\Attribute\Workflow;
+use Flezha\ChannelCodec;
 use Flezha\Ctx;
 use Flezha\Graph\Builder;
 use Flezha\LoopMode;
@@ -121,10 +122,10 @@ final class ChatLoopWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(ChatTurn::class)->named('mid')
             ->into(ChatReply::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }
 
@@ -134,9 +135,9 @@ final class StatelessLoopWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(ChatReply::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }
 
@@ -146,10 +147,10 @@ final class ChatRewindWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(ChatTurn::class)->named('mid')
             ->into(ChatReplyUndoable::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }
 
@@ -257,11 +258,11 @@ abstract class BenchChain extends WorkflowOperative
 
     public static function channels(Builder $c): void
     {
-        $edge = $c->input('in', Wire::text(...))->into(self::STEP_CLASSES[0]);
+        $edge = $c->input('in', codec: ChannelCodec::Text)->into(self::STEP_CLASSES[0]);
         for ($at = 1; $at < static::STEPS; $at++) {
             $edge = $edge->named("edge_BenchS$at")->into(self::STEP_CLASSES[$at]);
         }
-        $edge->sink('out', Wire::bytes(...));
+        $edge->sink('out');
     }
 }
 
@@ -342,9 +343,9 @@ final class BenchLoopWorkflow extends WorkflowOperative
 
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(BenchTurn::class)->named('mid')
             ->into(ChatReply::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }

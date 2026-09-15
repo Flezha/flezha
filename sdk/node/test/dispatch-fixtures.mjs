@@ -1,6 +1,6 @@
 // The builders the dispatch-shaped suites share: what one operative's dispatch
 // depends on, and the activation the core hands out.
-import { encodeValue, validate } from '../dist/esm/index.js';
+import { validate } from '../dist/esm/index.js';
 import { Registry } from '../dist/esm/dispatch.js';
 
 /**
@@ -33,13 +33,16 @@ export const activationFor =
     ...overrides,
   });
 
-/** One input item of a work batch. */
+/** One input item of a work batch, as the JSON an entry naming no codec reads. */
 export const inputItem = (value, overrides = {}) => ({
   kind: 'input',
   channel: 0,
-  payload: Buffer.from(encodeValue(value)),
+  payload: Buffer.from(JSON.stringify(value)),
   metadata: [],
   replay: false,
   now: 1_000n,
   ...overrides,
 });
+
+/** A plugin frame read back as the JSON a sink naming no codec sends. */
+export const jsonOf = (bytes) => JSON.parse(Buffer.from(bytes).toString('utf8'));

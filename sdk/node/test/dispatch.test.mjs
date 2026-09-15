@@ -19,7 +19,7 @@ import {
 import { Registry, answer, dispatch } from '../dist/esm/dispatch.js';
 import { importModule, loadRegistry, specsFrom } from '../dist/esm/runner.js';
 
-import { activationFor, depsFor, inputItem } from './dispatch-fixtures.mjs';
+import { activationFor, depsFor, inputItem, jsonOf } from './dispatch-fixtures.mjs';
 
 // The handout-contract tests below answer against the core itself, so the
 // refusal they assert is the core's own. Nothing starts a runner, so no
@@ -84,7 +84,7 @@ test('a work batch answers one effect per item, in order', async () => {
     ['ok', 'ok'],
   );
   assert.deepEqual(
-    result.effects.flatMap((effect) => effect.outputs.map((o) => decodeValue(o.payload))),
+    result.effects.flatMap((effect) => effect.outputs.map((o) => jsonOf(o.payload))),
     [2, 5],
   );
   assert.equal(result.effects[0].outputs[0].target, 'plugin');
@@ -236,7 +236,7 @@ test('a prepare crossing answers one key per payload, in order', async () => {
       entityKey: undefined,
       keyRequest: {
         channel: 0,
-        payloads: [encodeValue(7), encodeValue(8)].map(Buffer.from),
+        payloads: ['7', '8'].map((text) => Buffer.from(text)),
         wantKeys: true,
         wantEventTime: false,
       },
@@ -278,7 +278,7 @@ test('one payload failing its prepare does not fail the others', async () => {
       kind: 'key_request',
       keyRequest: {
         channel: 0,
-        payloads: [{ k: 'a', at: 5 }, { k: 'b' }].map((v) => Buffer.from(encodeValue(v))),
+        payloads: [{ k: 'a', at: 5 }, { k: 'b' }].map((v) => Buffer.from(JSON.stringify(v))),
         wantKeys: true,
         wantEventTime: true,
       },
@@ -619,6 +619,13 @@ const workflowGraph = (c) => {
   edge.sink();
 };
 
+/**
+ * An edge payload is the class codec's MessagePack; the `handoff` sink names no
+ * codec, so its frame for a number is JSON.
+ */
+const payloadOf = (output) =>
+  output.target === 'plugin' ? jsonOf(output.payload) : decodeValue(output.payload);
+
 const WorkflowSpec = defineWorkflow({ factoryId: 'wf_emit', channels: workflowGraph });
 const StreamTwinSpec = defineOperative({ factoryId: 'wf_emit_stream', channels: workflowGraph });
 
@@ -630,7 +637,7 @@ test('a structured workflow releases one untransformed edge output per emit', as
   assert.equal(result.outcome, 'work');
   const outputs = result.effects[0].outputs;
   assert.deepEqual(
-    outputs.map((o) => [o.target, o.consumer, o.pluginChannel, decodeValue(o.payload)]),
+    outputs.map((o) => [o.target, o.consumer, o.pluginChannel, payloadOf(o)]),
     [
       ['edge', 1, undefined, 10],
       ['plugin', undefined, 'handoff', 10],
@@ -646,7 +653,7 @@ test("an edge payload is the encoder's own bytes, with nothing layered on top", 
     depsFor(StreamTwinSpec),
   );
   const outputs = result.effects[0].outputs;
-  for (const output of outputs) {
+  for (const output of outputs.filter((o) => o.target === 'edge')) {
     assert.ok(output.payload instanceof Uint8Array);
     assert.equal(
       Buffer.isBuffer(output.payload),
@@ -664,7 +671,7 @@ test('the same graph on a stream class releases one output per consumer', async 
   );
   const outputs = result.effects[0].outputs;
   assert.deepEqual(
-    outputs.map((o) => [o.target, o.consumer, decodeValue(o.payload)]),
+    outputs.map((o) => [o.target, o.consumer, payloadOf(o)]),
     [
       ['edge', 1, 11],
       ['edge', 2, 10],
@@ -710,4 +717,29 @@ test('a workflow consumer applies its own edge exactly once, at delivery', async
   // evaluates its own edge here.
   assert.deepEqual(await delivered(WorkflowSpec, 1, released), [11]);
   assert.deepEqual(await delivered(WorkflowSpec, 2, released), [10]);
+});
+
+// An entry naming no codec reads JSON, so plain text fails its decode: the
+// item rides the retry ladder and the handler is never handed it.
+test('plain text into an entry naming no codec never reaches the handler', async () => {
+  const spec = defineOperative({
+    factoryId: 'json_entry',
+    channels: (c) => {
+      c.input('in').into(record('json_entry_procedure'));
+    },
+  });
+  DELIVERED.length = 0;
+  const result = await answer(
+    activationFor('json_entry')({
+      entityKey: undefined,
+      items: [inputItem({ a: 1 }), inputItem(0, { payload: Buffer.from('hello') })],
+    }),
+    depsFor(spec),
+  );
+  assert.deepEqual(
+    result.effects.map((effect) => effect.verdict),
+    ['ok', 'retryable'],
+  );
+  assert.match(result.effects[1].message, /not valid JSON/);
+  assert.deepEqual(DELIVERED, [{ a: 1 }]);
 });

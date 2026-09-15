@@ -148,4 +148,19 @@ class TestingTest < Minitest::Test
     refute_equal first[0], first[1], "repeated calls in one invocation differ"
     assert_equal 32, first[0].length
   end
+
+  class Emitter < Flezha::Procedure
+    procedure_name "harness_emitter"
+
+    def process(input, ctx)
+      ctx.emit({ said: input })
+      "echo: #{input}"
+    end
+  end
+
+  # The harness reads its sink back as MessagePack, so a string output is
+  # reported as the string rather than as the bytes a plugin would receive.
+  def test_the_harness_reports_a_string_and_a_map_exactly_as_emitted
+    assert_equal [{ said: "hi" }, "echo: hi"], Flezha::Testing::Harness.new(Emitter).feed("hi").outputs
+  end
 end

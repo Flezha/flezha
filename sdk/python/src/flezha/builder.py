@@ -17,6 +17,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
+from . import codec as _codec
+from .codec import ChannelCodec
 from .errors import DeclarationError
 from .procedure import Procedure
 
@@ -129,7 +131,7 @@ class ChannelSpec:
     """The plugin sink attached to this channel; ``None`` means none."""
     decode: Callable[[Any], Any] | None = None
     sink_encode: Callable[[Any], bytes] | None = None
-    """The plugin sink's payload encoder; ``None`` means the MessagePack default.
+    """The plugin sink's payload encoder, set with the sink by ``sink``.
 
     It belongs to the sink frame alone: an inter-procedure frame is decoded
     with the class codec, so encoding one with this hands the consuming
@@ -238,15 +240,44 @@ class Channels:
 
     # -- the graph --------------------------------------------------------
 
-    def input(self, name: str, *, decode: Callable[[Any], Any] | None = None) -> Edge[Any]:
+    def input(
+        self,
+        name: str,
+        *,
+        decode: Callable[[Any], Any] | None = None,
+        codec: ChannelCodec | None = None,
+    ) -> Edge[Any]:
         """Declare a controller-fed entry channel.
 
-        ``decode`` turns the wire bytes into the value a handler sees; its
-        absence means the MessagePack default.
+        ``decode`` turns the wire bytes into the value a handler sees, ``codec``
+        names a format from :data:`~flezha.codec.ChannelCodec` instead, and with
+        neither the bytes are JSON.
         """
-        channel = ChannelSpec(index=len(self.channels), name=name, kind="entry", decode=decode)
+        channel = ChannelSpec(index=len(self.channels), name=name, kind="entry")
+        named = self.channel_codec(channel, codec, decode)
+        channel.decode = decode or _codec.channel_decoder(named)
         self.channels.append(channel)
         return Edge(self, ("entry", channel), {})
+
+    def channel_codec(
+        self, channel: ChannelSpec, codec: str | None, callable_: object
+    ) -> ChannelCodec | None:
+        """The codec a channel names, refused when it is unknown or named beside
+        the channel's own decoder or encoder; ``None`` when it names none."""
+        if codec is None:
+            return None
+        if callable_ is not None:
+            raise DeclarationError(
+                self.factory_id, channel.name, "names both a codec and its own callable; give one"
+            )
+        if codec not in _codec.CHANNEL_CODECS:
+            raise DeclarationError(
+                self.factory_id,
+                channel.name,
+                f"unknown codec `{codec}`; a channel codec is one of "
+                f"{', '.join(_codec.CHANNEL_CODECS)}",
+            )
+        return codec
 
     def node_for(self, proc: Procedure[Any, Any], name: str | None = None) -> ProcNode:
         """The node for a procedure.
@@ -388,7 +419,11 @@ class Edge(Generic[T]):
         return Edge(self._builder, ("procedure", node), {})
 
     def sink(
-        self, name: str | None = None, *, encode: Callable[[Any], bytes] | None = None
+        self,
+        name: str | None = None,
+        *,
+        encode: Callable[[Any], bytes] | None = None,
+        codec: ChannelCodec | None = None,
     ) -> Edge[T]:
         """Terminate this edge's channel on the plugin layer, and answer the edge.
 
@@ -398,6 +433,11 @@ class Edge(Generic[T]):
         reaches both. A channel with no consumer behind it is the plugin-bound
         terminal — terminality is the absence of further wiring, not a
         different method.
+
+        ``encode`` turns a value into the plugin frame's bytes, and ``codec``
+        names a format instead. With neither, bytes are sent as they are, a
+        string as UTF-8 and any other value as JSON, so a sink needs neither for
+        a string, bytes or a JSON value.
         """
         if self._from[0] != "procedure":
             # Not a topology rule the core states: a record whose entry channel
@@ -415,10 +455,11 @@ class Edge(Generic[T]):
         if name is not None:
             link["name"] = name
             channel.name = name
+        named = self._builder.channel_codec(channel, codec, encode)
         channel.chains.append([link])
         if channel.sink is None:
             channel.sink = channel.name
-            channel.sink_encode = encode
+            channel.sink_encode = encode or _codec.channel_encoder(named, channel)
         return self
 
     # -- internals ---------------------------------------------------------

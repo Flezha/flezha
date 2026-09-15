@@ -64,6 +64,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       "test/flezha/plugin/kafka_test.exs — a wedged client is replaced once per window",
     postgres_flush:
       "test/flezha/plugin/provider/postgres_sink_test.exs — a failing flush retries on its timer",
+    file_flush:
+      "test/flezha/plugin/provider/file_sink_test.exs drives it: a failed write drops nothing and retries on its timer",
     forward_deliver:
       "test/flezha/plugin/provider/operative_forward_test.exs — an unconfirmed delivery retries",
     durability_ship: "test/flezha/state/durability_tier_test.exs — a refused ship retries",

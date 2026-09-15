@@ -43,7 +43,7 @@ final class DispatchTest extends TestCase
         foreach (
             [EchoOperative::class, CounterOperative::class, KeyedOperative::class, StampOperative::class,
                 MixedStampOperative::class, WfEmitOperative::class,
-                WfEmitStreamOperative::class] as $class
+                WfEmitStreamOperative::class, JsonEntryOperative::class] as $class
         ) {
             $spec = $class::spec();
             Validate::spec($spec, self::core());
@@ -58,7 +58,8 @@ final class DispatchTest extends TestCase
 
         self::assertSame('work', $result['outcome']);
         self::assertSame('ok', $result['effects'][0]['verdict']);
-        self::assertSame('"hello"', $result['effects'][0]['outputs'][0]['payload']);
+        // The sink names no codec, so the string is sent as it stands.
+        self::assertSame('hello', $result['effects'][0]['outputs'][0]['payload']);
         self::assertSame('plugin', $result['effects'][0]['outputs'][0]['target']);
         // The CHANNEL's name, which the fixture sets with `named('out')`, not
         // the sink's — it is what rides the frame as `channel` metadata.
@@ -83,6 +84,23 @@ final class DispatchTest extends TestCase
 
         self::assertSame('retryable', $result['effects'][0]['verdict']);
         self::assertStringContainsString('JsonException', $result['effects'][0]['message']);
+    }
+
+    /**
+     * An entry naming no codec reads JSON, so plain text fails its decode: the
+     * item rides the retry ladder and the handler is never handed it.
+     */
+    public function testPlainTextIntoAnEntryNamingNoCodecNeverReachesTheHandler(): void
+    {
+        Delivered::$values = [];
+        $result = $this->work('json_entry_operative', 0, [self::input('{"a":1}'), self::input('hello')]);
+
+        self::assertSame(
+            ['ok', 'retryable'],
+            array_map(static fn (array $e): string => $e['verdict'], $result['effects']),
+        );
+        self::assertStringContainsString('JsonException', $result['effects'][1]['message']);
+        self::assertSame([['a' => 1]], Delivered::$values);
     }
 
     public function testANonRetryableErrorParksImmediately(): void

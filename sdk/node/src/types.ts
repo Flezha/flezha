@@ -20,6 +20,12 @@ import type { Codec } from './codec.js';
 export const DROPPED: unique symbol = Symbol('flezha.dropped');
 
 export type OverflowPolicy = 'drop_nothing' | 'drop_newest' | 'drop_oldest';
+/** A payload format a channel names on `input` and `sink`. */
+export type ChannelCodec = 'bytes' | 'text' | 'json' | 'msgpack';
+/** The options `input` and `sink` take to name a channel's codec. */
+export interface CodecOptions {
+  codec: ChannelCodec;
+}
 export type ClockKind = 'wall' | 'logical' | 'event_time';
 export type TimerKind = 'event_time' | 'processing_time';
 export type BeyondWindowPolicy = 'process_as_arrival' | 'drop';
@@ -218,9 +224,15 @@ export interface Stream<T> {
    * A name given here IS the channel's name, which is the address a plugin
    * filter and a local-mode callback use; the no-argument form leaves it
    * derived. A function in the first position is the serializer.
+   *
+   * With neither a serializer nor a `{ codec }`, bytes are sent as they are, a
+   * string as UTF-8 and any other value as JSON, so a sink needs neither for a
+   * string, bytes or a JSON value.
    */
   sink(name: string, encode?: (value: T) => Uint8Array): Stream<T>;
+  sink(name: string, options: CodecOptions): Stream<T>;
   sink(encode: (value: T) => Uint8Array): Stream<T>;
+  sink(options: CodecOptions): Stream<T>;
   sink(): Stream<T>;
 }
 
@@ -245,7 +257,14 @@ export interface ChannelBuilder {
   compactAfterBytes(bytes: number): ChannelBuilder;
   /** Synchronous remote durability. Workflow classes only. */
   syncDurability(): ChannelBuilder;
-  /** Declare a controller-fed entry channel carrying values of type `T`. */
+  /**
+   * Declare a controller-fed entry channel carrying values of type `T`.
+   * `{ codec }` names the payload's format instead of a decoder; with neither,
+   * the payload is read as JSON.
+   */
+  input(name: string, options: { codec: 'text' }): Stream<string>;
+  input(name: string, options: { codec: 'bytes' }): Stream<Uint8Array>;
+  input<T = unknown>(name: string, options: { codec: 'json' | 'msgpack' }): Stream<T>;
   input<T>(name: string, decode?: (bytes: Uint8Array) => T): Stream<T>;
 }
 
@@ -272,6 +291,12 @@ export interface WorkflowDefinition {
   /** A structured chain over a channels graph. Mutually exclusive with `run`. */
   channels?: (builder: ChannelBuilder) => void;
 }
+
+/**
+ * An emit the declaration cannot carry: a reserved metadata key, a keyed
+ * channel with no key, a value the channel's codec cannot send.
+ */
+export class EmitError extends Error {}
 
 /** A registration refusal: names the offending handler and the defect. */
 export class DeclarationError extends Error {

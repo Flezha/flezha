@@ -14,7 +14,7 @@
 #
 #   class EchoOperative < Flezha::StreamOperative
 #     factory_id "echo"
-#     channels { |c| c.input("input").into(Echo).sink("out") }
+#     channels { |c| c.input("input", codec: :text).into(Echo).sink("out") }
 #   end
 #
 #   Flezha.create_runner("default").define_stream(EchoOperative).run

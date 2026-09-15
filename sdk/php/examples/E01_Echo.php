@@ -16,6 +16,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\ChannelCodec;
 use Flezha\Ctx;
 use Flezha\Flezha;
 use Flezha\Graph\Builder;
@@ -36,7 +37,7 @@ final class EchoOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input')->into(Echoer::class)->sink('out');
+        $c->input('input', codec: ChannelCodec::Text)->into(Echoer::class)->sink('out');
     }
 }
 

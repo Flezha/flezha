@@ -205,10 +205,9 @@ module Flezha
 
       pairs = meta_list(metadata)
       stamp_identity(pairs, channel, resolved)
-      # A user serializer's string carries whatever encoding the user gave it,
-      # so that one is copied into bytes; MessagePack already hands back
-      # ASCII-8BIT, and `String#b` copies it even when the encoding matches.
-      payload = channel.sink_encode ? channel.sink_encode.call(value).b : Codec.encode(value)
+      # An encoder's string carries whatever encoding it was built in, so it is
+      # copied into bytes; `String#b` copies even when the encoding matches.
+      payload = channel.sink_encode.call(value).b
       {
         target: "plugin", channel: nil, consumer: nil, plugin_channel: channel.name,
         key: resolved, event_time: nil, metadata: pairs, payload: payload

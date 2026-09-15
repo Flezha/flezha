@@ -12,6 +12,7 @@ namespace Flezha\TestApp;
 
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\ChannelCodec;
 use Flezha\Ctx;
 use Flezha\Graph\Builder;
 use Flezha\Procedure;
@@ -42,9 +43,9 @@ final class PoisonProbeOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))->retryBackoffMs(25)
+        $c->input('input', codec: ChannelCodec::Text)->retryBackoffMs(25)
             ->into(PoisonProbe::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }
 
@@ -88,8 +89,8 @@ final class WedgeProbeOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(WedgeProbe::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }

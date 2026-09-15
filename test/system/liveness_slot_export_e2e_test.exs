@@ -70,7 +70,8 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     hb_timers_armed: "test/system/entity_timers_e2e_test.exs",
     hb_timers_fired: "test/system/entity_timers_e2e_test.exs",
     stale_writer_refused: "test/flezha/state/runner_restart_realign_test.exs",
-    send_gate_held: "test/flezha/runner/stream_channel_gate_test.exs"
+    send_gate_held: "test/flezha/runner/stream_channel_gate_test.exs",
+    foreign_frame_refused: "test/system/runner_ownership_e2e_test.exs"
   }
 
   setup do

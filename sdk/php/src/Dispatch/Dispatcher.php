@@ -460,8 +460,9 @@ final class Dispatcher
     }
 
     /**
-     * A payload as the handler sees it: the channel's declared decoder (or the
-     * JSON default), then the consuming edge's transforms in declaration order.
+     * A payload as the handler sees it: the entry channel's decoder, or JSON for
+     * a payload between procedures, then the consuming edge's transforms in
+     * declaration order.
      *
      * One function for the two places a payload crosses in — an input item and
      * a payload at the prepare crossing — so a filter cannot mean one thing on

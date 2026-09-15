@@ -57,9 +57,9 @@ class Tally:
 
 @stream_operative("local_word_count_python")
 def word_count(c: Channels) -> None:
-    c.input("lines", decode=lambda raw: bytes(raw).decode()).into(split).key_by(
-        lambda word: word
-    ).into(Tally).keyed().sink("totals", encode=lambda text: text.encode())
+    c.input("lines", codec="text").into(split).key_by(lambda word: word).into(Tally).keyed().sink(
+        "totals"
+    )
 
 
 def scenario() -> tuple[list[str], Counter[str]]:
@@ -101,3 +101,24 @@ def test_a_channel_the_class_does_not_declare_is_refused_by_name() -> None:
     assert "nope" in message and "lines" in message, (
         f"the refusal names the channel and what is declared: {message}"
     )
+
+
+@procedure(name="defaults")
+def defaults(value: Any, ctx: Ctx[None]) -> None:
+    """Reads the map an undeclared entry decodes, and emits a string and a map."""
+    ctx.emit(f"a is {value['a']}")
+    ctx.emit({"a": value["a"]})
+
+
+@stream_operative("local_default_codecs_python")
+def default_codecs(c: Channels) -> None:
+    c.input("in").into(defaults).sink("out")
+
+
+def test_an_undeclared_entry_reads_json_and_an_undeclared_sink_follows_the_value() -> None:
+    released: list[bytes] = []
+    with LocalOperative.start(default_codecs) as run:
+        run.on_sink("out", lambda output: released.append(bytes(output.payload)))
+        run.feed("in", '{"a":1}')
+        run.run_until_idle(5_000)
+    assert released == [b"a is 1", b'{"a":1}']

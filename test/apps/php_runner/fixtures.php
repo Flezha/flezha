@@ -17,6 +17,7 @@ namespace Flezha\TestApp;
 
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\ChannelCodec;
 use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Exception\NonRetryableException;
@@ -26,21 +27,9 @@ use Flezha\Procedure;
 use Flezha\StreamOperative;
 use Flezha\Timer;
 
-/** The wire codecs every fixture that talks to another SDK declares. */
+/** The readings of a text input every fixture that talks to another SDK shares. */
 final class Wire
 {
-    /** Entry bytes as the text the reference sends. */
-    public static function text(string $bytes): string
-    {
-        return $bytes;
-    }
-
-    /** A value as the bytes the reference's plugin frames carry. */
-    public static function bytes(mixed $value): string
-    {
-        return (string) $value;
-    }
-
     /** The key convention every keyed fixture shares: text before the first ':'. */
     public static function prefix(mixed $input): string
     {
@@ -70,9 +59,9 @@ final class DoNothingOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(DoNothing::class)
-            ->sink('echo', Wire::bytes(...));
+            ->sink('echo');
     }
 }
 
@@ -86,9 +75,9 @@ final class BenchEchoOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)
+        $c->input('input', codec: ChannelCodec::Text)->onFull(Overflow::DropNothing)
             ->into(DoNothing::class)
-            ->sink('echo', Wire::bytes(...));
+            ->sink('echo');
     }
 }
 
@@ -117,9 +106,9 @@ final class CompareFilterOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(CompareFilter::class)
-            ->sink('sink', Wire::bytes(...));
+            ->sink('sink');
     }
 }
 
@@ -183,10 +172,10 @@ final class StaticEntityOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(StaticEntry::class)->named('hop')
             ->into(StaticDownstream::class)
-            ->sink('kafka', Wire::bytes(...));
+            ->sink('kafka');
     }
 }
 
@@ -199,10 +188,10 @@ final class SugarStaticEntityOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(MacroStaticEntry::class)
             ->into(MacroStaticDownstream::class)
-            ->sink('test_kafka', Wire::bytes(...));
+            ->sink('test_kafka');
     }
 }
 
@@ -221,10 +210,10 @@ final class MixedOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(MixedMacroEntry::class)->named('hop')
             ->into(MixedHandDownstream::class)
-            ->sink('kafka', Wire::bytes(...));
+            ->sink('kafka');
     }
 }
 
@@ -240,9 +229,9 @@ final class SugarDoNothingOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(SugarDoNothing::class)
-            ->sink('sugar_do_nothing_echo', Wire::bytes(...));
+            ->sink('sugar_do_nothing_echo');
     }
 }
 
@@ -272,9 +261,9 @@ final class SugarStoreInputOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(SugarStoreInput::class)
-            ->sink('sugar_store_sink', Wire::bytes(...));
+            ->sink('sugar_store_sink');
     }
 }
 
@@ -321,7 +310,7 @@ final class HybridChannelOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))->into(HybridProducer::class)->branch(
+        $c->input('input', codec: ChannelCodec::Text)->into(HybridProducer::class)->branch(
             // The consumer edge first, so a refused plugin serialization leaves
             // the in-process fan-out already recorded — the reference's isolation.
             static fn ($edge) => $edge->named('hybrid_indicator')->into(HybridConsumer::class),
@@ -386,12 +375,12 @@ final class EntityStressOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(StressA::class)->named('a_to_b')
             ->into(StressB::class)->named('b_to_c')
             ->into(StressC::class)->named('c_to_d')
             ->into(StressD::class)
-            ->sink('echo', Wire::bytes(...));
+            ->sink('echo');
     }
 }
 
@@ -442,9 +431,9 @@ final class CandleOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->effectivelyOnce()->correctionWindow(600_000);
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(Candle::class)->keyed()
-            ->sink('sink', Wire::bytes(...));
+            ->sink('sink');
     }
 }
 
@@ -494,9 +483,9 @@ final class SessionTimeoutOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))
+        $c->input('input', codec: ChannelCodec::Text)
             ->into(SessionTimeout::class)
-            ->sink('kafka', Wire::bytes(...));
+            ->sink('kafka');
     }
 }
 
@@ -544,9 +533,9 @@ final class BoundedMailboxDropNothingOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('drop_nothing_input', Wire::text(...))->onFull(Overflow::DropNothing)
+        $c->input('drop_nothing_input', codec: ChannelCodec::Text)->onFull(Overflow::DropNothing)
             ->into(DropNothingMailbox::class)
-            ->sink('drop_nothing_echo', Wire::bytes(...));
+            ->sink('drop_nothing_echo');
     }
 }
 
@@ -555,9 +544,9 @@ final class BoundedMailboxDropNewestOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('drop_newest_input', Wire::text(...))->onFull(Overflow::DropNewest)
+        $c->input('drop_newest_input', codec: ChannelCodec::Text)->onFull(Overflow::DropNewest)
             ->into(DropNewestMailbox::class)
-            ->sink('drop_newest_echo', Wire::bytes(...));
+            ->sink('drop_newest_echo');
     }
 }
 
@@ -566,9 +555,9 @@ final class BoundedMailboxDropOldestOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('drop_oldest_input', Wire::text(...))->onFull(Overflow::DropOldest)
+        $c->input('drop_oldest_input', codec: ChannelCodec::Text)->onFull(Overflow::DropOldest)
             ->into(DropOldestMailbox::class)
-            ->sink('drop_oldest_echo', Wire::bytes(...));
+            ->sink('drop_oldest_echo');
     }
 }
 
@@ -607,9 +596,9 @@ final class PartitionRelayOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))->keyBy(Wire::prefix(...))
+        $c->input('in', codec: ChannelCodec::Text)->keyBy(Wire::prefix(...))
             ->into(PartitionRelay::class)->keyed()
-            ->sink('input', Wire::bytes(...));
+            ->sink('input');
     }
 }
 
@@ -644,13 +633,13 @@ final class DynamicEntityOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)
+        $c->input('input', codec: ChannelCodec::Text)->onFull(Overflow::DropNothing)
             // Filtered before keying: a dropped value answers no key, so the
             // core never mints an entity for it.
             ->filter(static fn (mixed $input): bool => $input !== 'drop')
             ->keyBy(Wire::prefix(...))
             ->into(DynamicEntity::class)
-            ->sink('kafka', Wire::bytes(...));
+            ->sink('kafka');
     }
 }
 

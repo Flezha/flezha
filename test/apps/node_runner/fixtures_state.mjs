@@ -4,8 +4,6 @@
 
 import { decodeValue, defineOperative, defineProcedure } from '@flezha/sdk';
 
-import { bytes, text } from './fixture_support.mjs';
-
 /** The reference parses `i64` and reads an unparsable input as 0. */
 const asInt = (input) => (/^-?\d+$/.test(String(input)) ? Number(input) : 0);
 
@@ -64,7 +62,11 @@ const keyedUpsert = (factoryId, options = {}) =>
     factoryId,
     ...options,
     channels: (c) => {
-      c.input('input', text).onFull('drop_nothing').into(TierStore).keyed().sink('sink', bytes);
+      c.input('input', { codec: 'text' })
+        .onFull('drop_nothing')
+        .into(TierStore)
+        .keyed()
+        .sink('sink');
     },
   });
 
@@ -82,12 +84,12 @@ export const tierStore = defineOperative({
   factoryId: 'tier_store',
   channels: (c) => {
     c.effectivelyOnce();
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .onFull('drop_nothing')
       .retryBackoffMs(300)
       .into(TierStore)
       .keyed()
-      .sink('sink', bytes);
+      .sink('sink');
   },
 });
 
@@ -95,7 +97,7 @@ export const checkpointStore = defineOperative({
   factoryId: 'checkpoint_store',
   channels: (c) => {
     c.effectivelyOnce().checkpointAck();
-    c.input('input', text).into(CheckpointStore).keyed().sink('sink', bytes);
+    c.input('input', { codec: 'text' }).into(CheckpointStore).keyed().sink('sink');
   },
 });
 
@@ -108,7 +110,7 @@ export const checkpointBatchedStore = defineOperative({
   factoryId: 'checkpoint_batched_store',
   channels: (c) => {
     c.effectivelyOnce().checkpointAck().outputsAtCheckpoint(1_500);
-    c.input('input', text).into(CheckpointStore).keyed().sink('sink', bytes);
+    c.input('input', { codec: 'text' }).into(CheckpointStore).keyed().sink('sink');
   },
 });
 
@@ -126,7 +128,11 @@ export const benchCheckpoint = defineOperative({
     if (process.env.FLEZHA_BENCH_CHECKPOINT_OUTPUTS === 'at_checkpoint') {
       c.outputsAtCheckpoint(envInt('FLEZHA_BENCH_CHECKPOINT_DELAY_MS', 50));
     }
-    c.input('input', text).onFull('drop_nothing').into(BenchCheckpoint).keyed().sink('sink', bytes);
+    c.input('input', { codec: 'text' })
+      .onFull('drop_nothing')
+      .into(BenchCheckpoint)
+      .keyed()
+      .sink('sink');
   },
 });
 
@@ -148,7 +154,7 @@ const StoreInput = defineProcedure({
 export const storeInput = defineOperative({
   factoryId: 'store_input',
   channels: (c) => {
-    c.input('input', text).into(StoreInput).sink('sink', bytes);
+    c.input('input', { codec: 'text' }).into(StoreInput).sink('sink');
   },
 });
 
@@ -173,7 +179,7 @@ const Counter = defineProcedure({
 export const statefulCounter = defineOperative({
   factoryId: 'stateful_counter',
   channels: (c) => {
-    c.input('input', text).into(CounterEntry).named('ticks').into(Counter);
+    c.input('input', { codec: 'text' }).into(CounterEntry).named('ticks').into(Counter);
   },
 });
 
@@ -183,7 +189,7 @@ export const persistenceOffCounter = defineOperative({
   factoryId: 'persistence_off_counter',
   persistent: false,
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .into(CounterEntry, 'persistence_off_entry_procedure')
       .named('ticks')
       .into(Counter, 'persistence_off_counter_procedure');
@@ -219,7 +225,7 @@ const Tick = defineProcedure({
 export const coalescingCounter = defineOperative({
   factoryId: 'coalescing_counter',
   channels: (c) => {
-    c.input('input', text).into(TickEntry).named('ticks').into(Tick);
+    c.input('input', { codec: 'text' }).into(TickEntry).named('ticks').into(Tick);
   },
 });
 
@@ -244,7 +250,7 @@ const ResumeProbe = defineProcedure({
 export const resumeProbe = defineOperative({
   factoryId: 'resume_probe',
   channels: (c) => {
-    c.input('input', text).into(ResumeProbe).sink('total', bytes);
+    c.input('input', { codec: 'text' }).into(ResumeProbe).sink('total');
   },
 });
 
@@ -304,7 +310,7 @@ const evolvingCart = (factoryId, procedure) =>
   defineOperative({
     factoryId,
     channels: (c) => {
-      c.input('input', text).into(procedure).sink('total', bytes);
+      c.input('input', { codec: 'text' }).into(procedure).sink('total');
     },
   });
 

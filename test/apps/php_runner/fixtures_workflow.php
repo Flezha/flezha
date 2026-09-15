@@ -12,11 +12,11 @@ declare(strict_types=1);
  * bench families and is loaded after this file, as the reference splits them.
  *
  * Entry payloads and plugin frames are UTF-8 text on the wire, as in the
- * reference: its bare `sink(name)` serialises a String as UTF-8, while a bare
- * sink here falls back to the class codec, which is JSON — so every sink below
- * declares an encoder. An inter-procedure hop between two PHP procedures
- * carries JSON, and the core derives that channel's journal codec from the
- * channel's kind, so no fixture declares one.
+ * reference: an entry names the text codec, and a bare `sink(name)` sends a
+ * string as it stands, so only a sink that prefixes its value declares an
+ * encoder. An inter-procedure hop between two PHP procedures carries JSON, and
+ * the core derives that channel's journal codec from the channel's kind, so no
+ * fixture declares one.
  *
  * A fixture is a class here rather than a factory call, so the reference's
  * macros are abstract bases with overridable hooks.
@@ -27,6 +27,7 @@ namespace Flezha\TestApp;
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
 use Flezha\Attribute\Workflow;
+use Flezha\ChannelCodec;
 use Flezha\Codec\Json;
 use Flezha\Ctx;
 use Flezha\Definition;
@@ -245,7 +246,7 @@ abstract class CommitBlockChain extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(CommitA::class)->named('mid')
             ->into(BlockB::class);
     }
@@ -274,7 +275,7 @@ final class OptoutCommitBlock extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(CommitA::class)
             ->sink('mid', static fn (mixed $v): string => "a-ran:$v")
             ->into(BlockB::class);
@@ -304,9 +305,9 @@ final class TierCommitBlockWorkflow extends WorkflowOperative
     public static function channels(Builder $c): void
     {
         $c->effectivelyOnce();
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(TierCommitA::class)->keyed()
-            ->sink('mid', Wire::bytes(...))
+            ->sink('mid')
             ->into(BlockB::class);
     }
 }
@@ -342,7 +343,7 @@ final class SagaBlockWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(SagaA::class)->named('s1')
             ->into(SagaB::class)->named('s2')
             ->into(SagaC::class);
@@ -362,7 +363,7 @@ final class OutboxBlockWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(CommitA::class)
             ->sink('mid', static fn (mixed $v): string => "a-out:$v")
             ->into(BlockB::class);
@@ -404,7 +405,7 @@ final class UndoOutboxWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(UndoOutboxA::class)
             ->sink('mid', static fn (mixed $v): string => "out:$v")
             ->into(UndoOutboxC::class);
@@ -490,14 +491,14 @@ final class BranchWorkflow extends WorkflowOperative
     {
         // One channel, two consumers: THE fan-out. Both branches read exactly
         // what BranchA released on it (held edge, wired twice).
-        $mid = $c->input('in', Wire::text(...))
+        $mid = $c->input('in', codec: ChannelCodec::Text)
             ->into(BranchA::class)
             ->sink('mid', static fn (mixed $v): string => "a:$v");
         $mid->into(BranchB::class)
             ->sink('bmid', static fn (mixed $v): string => "b:$v")
             ->into(BranchD::class)
-            ->sink('d_out', Wire::bytes(...));
-        $mid->into(BranchC::class)->sink('c_out', Wire::bytes(...));
+            ->sink('d_out');
+        $mid->into(BranchC::class)->sink('c_out');
     }
 }
 
@@ -570,17 +571,17 @@ final class DiamondWorkflow extends WorkflowOperative
     {
         // Held edge wired twice = the fan-out; two arms naming DiamJoin with no
         // node name = the fan-in, since two unnamed mentions are one node.
-        $fan = $c->input('in', Wire::text(...))
+        $fan = $c->input('in', codec: ChannelCodec::Text)
             ->into(DiamA::class)
             ->sink('dfan', static fn (mixed $v): string => "a:$v");
         $fan->into(DiamB1::class)->named('db1')
             ->into(DiamB2::class)
-            ->sink('db2', Wire::bytes(...))
+            ->sink('db2')
             ->into(DiamJoin::class);
         $fan->into(DiamC::class)
-            ->sink('dc', Wire::bytes(...))
+            ->sink('dc')
             ->into(DiamJoin::class)
-            ->sink('j_out', Wire::bytes(...));
+            ->sink('j_out');
     }
 }
 
@@ -634,11 +635,11 @@ final class RetryWorkflow extends WorkflowOperative
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', Wire::text(...))
+        $c->input('in', codec: ChannelCodec::Text)
             ->into(RetryA::class)
             ->sink('mid', static fn (mixed $v): string => "res:$v")
             ->into(RetryFlaky::class)
-            ->sink('out', Wire::bytes(...));
+            ->sink('out');
     }
 }
 

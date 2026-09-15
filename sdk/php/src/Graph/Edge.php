@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Flezha\Graph;
 
+use Flezha\ChannelCodec;
 use Flezha\Dropped;
 use Flezha\Fanned;
 use Flezha\Overflow;
@@ -153,11 +154,18 @@ final class Edge
      * serialize, and the core reads a sink as the terminal of the channel it
      * sits on — it cannot see that this one is fed by the controller.
      *
+     * `$encode` turns a value into the plugin frame's bytes, and `$codec` names
+     * a format instead. With neither, a string is sent as it stands and any
+     * other value as JSON, so a sink needs neither for a string or a JSON value.
+     *
      * @param string|(callable(mixed):string)|null $nameOrEncode
      * @param (callable(mixed):string)|null         $encode
      */
-    public function sink(string|callable|null $nameOrEncode = null, ?callable $encode = null): self
-    {
+    public function sink(
+        string|callable|null $nameOrEncode = null,
+        ?callable $encode = null,
+        ?ChannelCodec $codec = null,
+    ): self {
         // One method, two positions: a string names the channel, a callable is
         // the serializer. PHP has no overloading, so telling them apart here is
         // what keeps the serializer-only form from spelling `sink(null, $enc)`.
@@ -180,12 +188,13 @@ final class Edge
             $link['name'] = $name;
             $channel->name = $name;
         }
+        $this->builder->refuseCodecBesideCallable($channel, $codec, $encode);
         $this->builder->linkChain($this->from, $this->pending['chain'] ?? null, $link);
         // First call wins on the builder's own side, as the reference does; a
         // second `sink` link is what the core refuses the class for.
         if ($channel->sink === null) {
             $channel->sink = $channel->name;
-            $channel->sinkEncode = $encode;
+            $channel->sinkEncode = $encode ?? $codec?->encoder($channel) ?? ChannelCodec::defaultEncoder($channel);
         }
 
         return $this;

@@ -302,6 +302,8 @@ class Ctx(Generic[S]):
                 f"has no entity key of its own to fall back on; pass `key=` on the emit"
             )
         resolved = None if resolved is None else str(resolved)
+        # `sink` sets the encoder with the sink, so a plugin channel has one.
+        assert channel.sink_encode is not None
         stamps = self._meta_list(metadata) + self._identity_stamps(channel, resolved)
         self._emit_ordinal += 1
         return {
@@ -312,7 +314,7 @@ class Ctx(Generic[S]):
             "key": resolved,
             "event_time": None,
             "metadata": stamps,
-            "payload": channel.sink_encode(value) if channel.sink_encode else _codec.encode(value),
+            "payload": channel.sink_encode(value),
         }
 
     def _identity_stamps(self, channel: ChannelSpec, key: str | None) -> list[tuple[str, str]]:

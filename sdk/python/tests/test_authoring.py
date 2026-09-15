@@ -11,15 +11,18 @@ proved by ``test_typing.py``.
 
 from __future__ import annotations
 
+import pathlib
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
 import flezha
 from conftest import Bumped, Counter, count_up, declare, demo, echo
-from flezha import graph
-from flezha.errors import DeclarationError, UnrepresentableValueError
+from flezha import codec, graph
+from flezha.errors import DeclarationError, EmitError, UnrepresentableValueError
 
 
 def _derived(operative: flezha.Operative) -> list[tuple[object, ...]]:
@@ -450,3 +453,108 @@ def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
     declare(tier_workflow)
     assert tier_workflow.spec.effectively_once is True
     assert "effectively_once" not in graph.to_host_class_decl(tier_workflow.spec)
+
+
+# ---------------------------------------------------------------------------
+# Channel codecs
+# ---------------------------------------------------------------------------
+#
+# A codec is resolved when the class is declared, into the two slots the
+# dispatcher and the plugin frame already read. What every SDK sends alike is
+# ``test/fixtures/channel_codecs.txt``; what is Python's own is asserted here.
+
+_CODEC_CASES = (
+    pathlib.Path(__file__).resolve().parents[3] / "test" / "fixtures" / "channel_codecs.txt"
+)
+
+
+def _codec_slots(
+    input_options: dict[str, Any] | None = None, sink_options: dict[str, Any] | None = None
+) -> tuple[Callable[[Any], Any], Callable[[Any], bytes]]:
+    channels = flezha.Channels("codecs")
+    channels.input("in", **(input_options or {})).into(echo).sink("out", **(sink_options or {}))
+    entry, out = channels.channels
+    assert entry.decode is not None and out.sink_encode is not None
+    return entry.decode, out.sink_encode
+
+
+def _case_bytes(field: str) -> bytes:
+    if field == "<empty>":
+        return b""
+    return bytes.fromhex(field.removeprefix("hex:")) if field.startswith("hex:") else field.encode()
+
+
+def _case_outcome(
+    decode: Callable[[Any], Any], encode: Callable[[Any], bytes], payload: bytes
+) -> bytes | str:
+    # A case records that a step refused, whatever it raised.
+    try:
+        value = decode(payload)
+    except Exception:  # noqa: BLE001
+        return "decode_error"
+    try:
+        return encode(value)
+    except Exception:  # noqa: BLE001
+        return "encode_error"
+
+
+def test_every_shared_codec_case_sends_the_bytes_the_fixture_records() -> None:
+    rows = [row for row in _CODEC_CASES.read_text().splitlines() if row and not row.startswith("#")]
+    assert rows, "the shared codec cases were read"
+    for row in rows:
+        entry, sink, payload, expected = row.split("|", 3)
+        decode, encode = _codec_slots(
+            {} if entry == "none" else {"codec": entry}, {} if sink == "none" else {"codec": sink}
+        )
+        want = expected if expected.endswith("_error") else _case_bytes(expected)
+        assert _case_outcome(decode, encode, _case_bytes(payload)) == want, row
+
+
+def test_a_json_entry_reads_a_dict_and_a_sink_takes_every_bytes_type() -> None:
+    decode, encode = _codec_slots()
+    assert decode(b'{"a":1}') == {"a": 1}
+    assert encode(bytearray(b"\xff")) == b"\xff"
+    with pytest.raises(EmitError, match="channel `out`: a object cannot be sent as JSON"):
+        encode(object())
+
+
+def test_msgpack_is_the_class_codec() -> None:
+    decode, encode = _codec_slots({"codec": "msgpack"}, {"codec": "msgpack"})
+    assert decode(codec.encode({"a": 1})) == {"a": 1}
+    assert encode({"a": 1}) == codec.encode({"a": 1})
+
+
+def test_a_refusal_names_the_channel_and_a_bytes_sink_refuses_a_string() -> None:
+    """A Python ``str`` is not bytes, so a ``bytes`` sink refuses one, where Ruby
+    and PHP take a string there."""
+    text = _codec_slots(sink_options={"codec": "text"})[1]
+    with pytest.raises(EmitError, match="channel `out` names the text codec"):
+        text(42)
+    raw = _codec_slots(sink_options={"codec": "bytes"})[1]
+    with pytest.raises(EmitError, match="channel `out` names the bytes codec"):
+        raw(42)
+    with pytest.raises(
+        EmitError, match="channel `out` names the bytes codec and cannot send a str"
+    ):
+        raw("hello")
+
+
+def test_an_unknown_codec_name_is_refused_naming_the_operative_the_channel_and_the_names() -> None:
+    for input_options, sink_options, channel in (
+        ({"codec": "yaml"}, {}, "in"),
+        ({}, {"codec": "yaml"}, "out"),
+    ):
+        with pytest.raises(DeclarationError) as caught:
+            _codec_slots(input_options, sink_options)
+        message = str(caught.value)
+        assert f"codecs: {channel}: unknown codec `yaml`" in message
+        assert "bytes, text, json, msgpack" in message
+
+
+def test_a_codec_and_a_callable_together_are_refused() -> None:
+    for input_options, sink_options, channel in (
+        ({"codec": "text", "decode": bytes}, {}, "in"),
+        ({}, {"codec": "text", "encode": bytes}, "out"),
+    ):
+        with pytest.raises(DeclarationError, match=f"codecs: {channel}: names both a codec"):
+            _codec_slots(input_options, sink_options)

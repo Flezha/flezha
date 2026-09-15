@@ -142,14 +142,35 @@ module Flezha
     end
 
     # Declare a controller-fed entry channel. `decode` turns the wire bytes
-    # into the value a handler sees; its absence means the MessagePack default.
-    def input(name, decode: nil)
+    # into the value a handler sees, `codec` names a format from
+    # `Codec::CHANNEL_CODECS` instead, and with neither the bytes are JSON.
+    def input(name, decode: nil, codec: nil)
       channel = ChannelSpec.new(
         index: @channels.size, name: name.to_s, kind: :entry, consumers: [],
-        chains: [], chain_edges: [], overflow: :drop_nothing, keyed: false, decode: decode
+        chains: [], chain_edges: [], overflow: :drop_nothing, keyed: false
       )
+      named = channel_codec(channel, codec, decode)
+      channel.decode = decode || Codec.channel_decoder(named, channel)
       @channels << channel
       Edge.new(self, [:entry, channel], {})
+    end
+
+    # The codec a channel names, refused when it is unknown or named beside
+    # the channel's own decoder or encoder; nil when it names none.
+    def channel_codec(channel, codec, callable)
+      return nil if codec.nil?
+
+      if callable
+        raise DeclarationError.new(@factory_id, channel.name, "names both a codec and its own callable; give one")
+      end
+
+      known = Codec::CHANNEL_CODECS.find { |name| name.to_s == codec.to_s }
+      return known if known
+
+      raise DeclarationError.new(
+        @factory_id, channel.name,
+        "unknown codec `#{codec}`; a channel codec is one of #{Codec::CHANNEL_CODECS.join(', ')}"
+      )
     end
 
     # The node for a procedure. Two unnamed mentions of one procedure are one
@@ -318,7 +339,11 @@ module Flezha
     # The one refusal left here: a channel with no producer has no value to
     # serialize, and the core reads a sink as the terminal of the channel it
     # sits on — it cannot see that this one is fed by the controller.
-    def sink(name = nil, encode: nil)
+    #
+    # `encode` turns a value into the plugin frame's bytes, and `codec` names a
+    # format instead. With neither, a String is sent as its bytes and any other
+    # value as JSON, so a sink needs neither for a string, bytes or a JSON value.
+    def sink(name = nil, encode: nil, codec: nil)
       unless @from[0] == :procedure
         raise DeclarationError.new(
           @builder.factory_id, name || "<derived>",
@@ -334,12 +359,13 @@ module Flezha
         link["name"] = name.to_s
         target.name = name.to_s
       end
+      named = @builder.channel_codec(target, codec, encode)
       @builder.link_chain(@from, @pending[:chain], link)
       # First call wins on the builder's own side, as the reference does; a
       # second `sink` link is what the core refuses the class for.
       if target.sink.nil?
         target.sink = target.name
-        target.sink_encode = encode
+        target.sink_encode = encode || Codec.channel_encoder(named, target)
       end
       self
     end

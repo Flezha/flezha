@@ -81,6 +81,18 @@ export const refusals = defineOperative({
     // @ts-expect-error the edge carries a string here, not a Trade
     c.input<Trade>('f').into(Ohlc).into(Publish).sink((value: Trade) => Buffer.from(value.symbol));
 
+    // A named codec types the stream it opens.
+    c.input('k', { codec: 'text' }).map((line) => line.toUpperCase());
+    c.input('l', { codec: 'bytes' }).map((raw) => raw.byteLength);
+    c.input<Trade>('m', { codec: 'json' }).into(Ohlc).into(Publish).sink('n', { codec: 'text' });
+    c.input<Trade>('o', { codec: 'msgpack' }).into(Ohlc).sink({ codec: 'json' });
+
+    // @ts-expect-error a text entry carries a string, not bytes
+    c.input('p', { codec: 'text' }).map((line) => line.byteLength);
+
+    // @ts-expect-error `yaml` is not a channel codec
+    c.input('q', { codec: 'yaml' });
+
     // A wrong overflow policy is a typo the compiler catches.
     // @ts-expect-error `drop_everything` is not an overflow policy
     c.input<Trade>('h').onFull('drop_everything').into(Ohlc);

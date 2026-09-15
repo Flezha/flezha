@@ -19,7 +19,7 @@ def echo(value: str) -> str:
 
 @flezha.stream_operative("echo")
 def echo_operative(c: flezha.Channels) -> None:
-    c.input("input").into(echo).sink("out")
+    c.input("input", codec="text").into(echo).sink("out")
 
 
 flezha.create_runner("default").define_stream(echo_operative).run()
@@ -36,6 +36,11 @@ flezha.create_runner("default").define_stream(echo_operative).run()
   activation decode all run in parallel in Rust.
 - **Typed end to end**, shipping `py.typed`: a wrong edge is a type-checker
   error before it is a registration error.
+- **A channel names its payload format.** `codec=` on `input` and `sink` takes
+  `"bytes"`, `"text"`, `"json"` or `"msgpack"`. With none, an entry reads JSON and
+  a sink sends bytes unchanged, a string as UTF-8 and anything else as JSON, so a
+  sink needs no codec for a string, bytes or a JSON value. An Elixir entry
+  declared with no decoder hands over the binary instead.
 - **Never `pickle`.** Durable state is MessagePack from author-declared
   dataclasses, Pydantic models or attrs classes.
 

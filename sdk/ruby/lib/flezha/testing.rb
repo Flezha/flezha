@@ -37,19 +37,19 @@ module Flezha
         @definition = procedure_class.definition
         @entity_key = entity_key
         @operative = operative
-        @node = ProcNode.new(0, @definition.name, procedure_class, @definition)
-        # One plugin-bound channel so `ctx.emit` has somewhere to go. A
-        # procedure under test emits to be observed, not to be routed: with no
-        # consumer behind it the sink IS the terminal.
-        @channel = ChannelSpec.new(
-          index: 0, name: "out", kind: :inter_proc, producer: 0, consumers: [],
-          chains: [], overflow: :drop_nothing, keyed: false, sink: "out"
-        )
+        # The real channel builder, not a hand-written spec: one entry channel
+        # into the procedure, and one plugin sink so `ctx.emit` has somewhere
+        # to go. A procedure under test emits to be observed, not to be routed,
+        # and the sink names MessagePack so `outputs` reports exactly the value
+        # a handler emitted.
+        builder = Builder.new("<harness>")
+        builder.input("in").into(procedure_class).sink("out", codec: :msgpack)
+        @node = builder.procedures.first
         @spec = ClassSpec.new(
           factory_id: "<harness>", kind: :stream, persistent: true, effectively_once: false,
           checkpoint_ack: false, checkpoint_outputs: :as_produced,
           beyond_window_policy: :process_as_arrival, sync_durability: false,
-          procedures: [@node], channels: [@channel]
+          procedures: builder.procedures, channels: builder.channels
         )
         # The dispatcher's own entity store, so the state this harness reports
         # is the state a runner would hold.

@@ -390,11 +390,17 @@ class DispatchTest < Minitest::Test
     channels(&WORKFLOW_GRAPH)
   end
 
+  # An edge payload is the class codec's MessagePack; the `handoff` sink names
+  # no codec, so its frame for a number is JSON.
+  def payload_of(output)
+    output[:target] == "plugin" ? JSON.parse(output[:payload]) : Flezha::Codec.decode(output[:payload])
+  end
+
   def emit_arm_outputs(operative, factory)
     deps = wired_deps(operative)
     activation = Flezha::TestSupport.activation(
       factory: factory, kind: :work, entity_key: "ek", change_seq: 0,
-      items: [input_item(Flezha::Codec.encode(10))]
+      items: [input_item("10")]
     )
     Flezha::Dispatch.answer(activation, deps)[:effects][0][:outputs]
   end
@@ -404,7 +410,7 @@ class DispatchTest < Minitest::Test
 
     assert_equal [["edge", 1, nil, 10], ["plugin", nil, "handoff", 10]],
                  outputs.map { |o|
-                   [o[:target], o[:consumer], o[:plugin_channel], Flezha::Codec.decode(o[:payload])]
+                   [o[:target], o[:consumer], o[:plugin_channel], payload_of(o)]
                  }
     assert_nil outputs[0][:key]
     assert_nil outputs[0][:event_time]
@@ -417,7 +423,7 @@ class DispatchTest < Minitest::Test
       emit_arm_outputs(WfEmitStreamOperative, "wf_emit_stream")
     end
 
-    outputs.each do |output|
+    outputs.select { |output| output[:target] == "edge" }.each do |output|
       assert_equal Encoding::ASCII_8BIT, output[:payload].encoding
       assert produced.any? { _1.equal?(output[:payload]) },
              "the frame carries a copy of what MessagePack returned, not the string itself"
@@ -428,7 +434,7 @@ class DispatchTest < Minitest::Test
     outputs = emit_arm_outputs(WfEmitStreamOperative, "wf_emit_stream")
 
     assert_equal [["edge", 1, 11], ["edge", 2, 10], ["plugin", nil, 10]],
-                 outputs.map { |o| [o[:target], o[:consumer], Flezha::Codec.decode(o[:payload])] }
+                 outputs.map { |o| [o[:target], o[:consumer], payload_of(o)] }
   end
 
   # The other end of the same two arms: what the CONSUMER is handed. A stream
@@ -460,5 +466,25 @@ class DispatchTest < Minitest::Test
     # each evaluates its own edge here.
     assert_equal [11], delivered(WfEmitOperative, "wf_emit", 1, released)
     assert_equal [10], delivered(WfEmitOperative, "wf_emit", 2, released)
+  end
+
+  # An entry naming no codec reads JSON, so plain text fails its decode: the
+  # item rides the retry ladder and the handler is never handed it.
+  class JsonEntryOperative < Flezha::StreamOperative
+    factory_id "json_entry_op"
+    channels { |c| c.input("in").into(WfB) }
+  end
+
+  def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler
+    DELIVERED.clear
+    deps = wired_deps(JsonEntryOperative)
+    activation = Flezha::TestSupport.activation(
+      factory: "json_entry_op", kind: :work, items: [input_item('{"a":1}'), input_item("hello")]
+    )
+    effects = Flezha::Dispatch.answer(activation, deps)[:effects]
+
+    assert_equal %w[ok retryable], effects.map { |e| e[:verdict] }
+    assert_includes effects[1][:message], "JSON::ParserError"
+    assert_equal [{ a: 1 }], DELIVERED
   end
 end

@@ -176,11 +176,9 @@ def durable_agent(c: flezha.Channels) -> None:
     user-1's conversation. Every edge into a dynamic procedure must name the
     entity its inputs reach; the SDK refuses one that does not.
     """
-    c.input("prompts", decode=lambda body: bytes(body).decode()).retry_max(4).retry_backoff_ms(
-        250
-    ).key_by(lambda prompt: prompt.split("|", 1)[0]).into(agent).keyed().sink(
-        "answers", encode=lambda answer: str(answer).encode()
-    )
+    c.input("prompts", codec="text").retry_max(4).retry_backoff_ms(250).key_by(
+        lambda prompt: prompt.split("|", 1)[0]
+    ).into(agent).keyed().sink("answers")
 
 
 # ---------------------------------------------------------------------------

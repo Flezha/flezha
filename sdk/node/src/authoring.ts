@@ -8,12 +8,20 @@
  * input does not accept, before the program runs.
  */
 
-import { assertRepresentable, type Codec } from './codec.js';
+import {
+  assertRepresentable,
+  CHANNEL_CODECS,
+  channelDecoder,
+  channelEncoder,
+  type Codec,
+} from './codec.js';
 import {
   DeclarationError,
   DROPPED,
   type BeyondWindowPolicy,
   type ChannelBuilder,
+  type ChannelCodec,
+  type CodecOptions,
   type OperativeDefinition,
   type OverflowPolicy,
   type Procedure,
@@ -82,10 +90,14 @@ export interface ChannelSpec {
   keyed: boolean;
   /** The plugin sink attached to this channel; absent means none. */
   sink?: string;
-  /** Entry payload decoder; absent means the MessagePack default. */
+  /**
+   * An entry channel's payload decoder: its own, its codec's, or JSON. Absent
+   * on a channel between procedures, whose payloads are the class codec's.
+   */
   decode?: (bytes: Uint8Array) => unknown;
   /**
-   * The plugin sink's payload encoder; absent means the MessagePack default.
+   * The plugin sink's payload encoder: its own, its codec's, or the default
+   * that sends bytes as they are, a string as UTF-8 and anything else as JSON.
    * It belongs to the sink frame alone: an inter-procedure frame is decoded
    * with the class codec, so encoding one with this hands the consuming
    * procedure bytes it cannot read.
@@ -251,7 +263,11 @@ class Builder implements ChannelBuilder {
     return this;
   }
 
-  input<T>(name: string, decode?: (bytes: Uint8Array) => T): Stream<T> {
+  input<T>(
+    name: string,
+    decodeOrOptions?: ((bytes: Uint8Array) => T) | CodecOptions,
+    options?: CodecOptions,
+  ): Stream<T> {
     const channel: ChannelSpec = {
       index: this.channels.length,
       name,
@@ -261,10 +277,45 @@ class Builder implements ChannelBuilder {
       consumers: [],
       overflow: 'drop_nothing',
       keyed: false,
-      decode: decode as ((bytes: Uint8Array) => unknown) | undefined,
     };
+    const [decode, codec] = this.channelCodec<(bytes: Uint8Array) => unknown>(channel, [
+      decodeOrOptions,
+      options,
+    ]);
+    channel.decode = decode ?? channelDecoder(codec, channel);
     this.channels.push(channel);
     return new EdgeStream<T>(this, { source: 'entry', channel }, { transforms: [] });
+  }
+
+  /**
+   * A channel's own callable and the codec it names, read from the arguments
+   * after its name in either order. The codec is refused when it is unknown or
+   * named beside the callable, which only a JavaScript caller can write.
+   */
+  channelCodec<F extends (value: never) => unknown>(
+    channel: ChannelSpec,
+    args: unknown[],
+  ): [F | undefined, ChannelCodec | undefined] {
+    const callable = args.find((arg) => typeof arg === 'function') as F | undefined;
+    const codec = (
+      args.find((arg) => typeof arg === 'object' && arg !== null) as CodecOptions | undefined
+    )?.codec;
+    if (codec === undefined) return [callable, undefined];
+    if (callable !== undefined) {
+      throw new DeclarationError(
+        this.factoryId,
+        channel.name,
+        'names both a codec and its own callable; give one',
+      );
+    }
+    if (!CHANNEL_CODECS.includes(codec)) {
+      throw new DeclarationError(
+        this.factoryId,
+        channel.name,
+        `unknown codec \`${codec}\`; a channel codec is one of ${CHANNEL_CODECS.join(', ')}`,
+      );
+    }
+    return [undefined, codec];
   }
 
   /**
@@ -474,14 +525,15 @@ class EdgeStream<T> implements Stream<T> {
   }
 
   sink(
-    nameOrEncode?: string | ((value: T) => Uint8Array),
-    encode?: (value: T) => Uint8Array,
+    nameOrEncode?: string | ((value: T) => Uint8Array) | CodecOptions,
+    encodeOrOptions?: ((value: T) => Uint8Array) | CodecOptions,
+    options?: CodecOptions,
   ): Stream<T> {
-    // One method, two positions: a string names the channel, a function is the
-    // serializer. Telling them apart here is what keeps the serializer-only
-    // form from spelling `sink(undefined, encode)`.
+    // A string first names the channel; a function is the serializer and an
+    // object names a codec, in whichever position follows. Telling them apart
+    // here is what keeps the shorter forms from spelling `sink(undefined, x)`.
     const name = typeof nameOrEncode === 'string' ? nameOrEncode : undefined;
-    const serialize = typeof nameOrEncode === 'function' ? nameOrEncode : encode;
+    const rest = name === undefined ? [nameOrEncode, encodeOrOptions] : [encodeOrOptions, options];
     if (this.from.source !== 'procedure') {
       // Not a topology rule the core states: a record whose entry channel
       // carries a sink derives a plugin channel with no producer, and there is
@@ -501,9 +553,13 @@ class EdgeStream<T> implements Stream<T> {
     // The sink names the channel: `sink('x')` IS the name, and `sink()` leaves
     // it derived. One string, which is what the core answers back.
     if (name !== undefined) channel.name = name;
+    const [serialize, codec] = this.builder.channelCodec<(value: unknown) => Uint8Array>(
+      channel,
+      rest,
+    );
     if (channel.sink === undefined) {
       channel.sink = channel.name;
-      channel.sinkEncode = serialize as ((value: unknown) => Uint8Array) | undefined;
+      channel.sinkEncode = serialize ?? channelEncoder(codec, channel);
     }
     return this;
   }

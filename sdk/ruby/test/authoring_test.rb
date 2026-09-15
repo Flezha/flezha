@@ -362,4 +362,91 @@ class AuthoringTest < Minitest::Test
     assert_equal true, klass.spec.effectively_once
     refute_includes Flezha::Graph.to_host_class_decl(klass.spec).keys, "effectively_once"
   end
+  # -- channel codecs ---------------------------------------------------------
+  #
+  # A codec is resolved when the class is declared, into the two slots the
+  # dispatcher and the plugin frame already read. What every SDK sends alike is
+  # `test/fixtures/channel_codecs.txt`; what is Ruby's own is asserted here.
+
+  CODEC_CASES = File.join(Flezha::TestSupport.repo_root, "test/fixtures/channel_codecs.txt")
+
+  def codec_slots(input = {}, sink = {})
+    klass = operative("codecs") { |c| c.input("in", **input).into(pass_through("echo")).sink("out", **sink) }
+    entry, out = klass.spec.channels
+    [entry.decode, out.sink_encode]
+  end
+
+  def case_bytes(field)
+    return "".b if field == "<empty>"
+
+    field.start_with?("hex:") ? [field.delete_prefix("hex:")].pack("H*") : field.b
+  end
+
+  def case_outcome(decode, encode, payload)
+    value = decode.call(payload)
+  rescue StandardError
+    "decode_error"
+  else
+    begin
+      encode.call(value).b
+    rescue StandardError
+      "encode_error"
+    end
+  end
+
+  def test_every_shared_codec_case_sends_the_bytes_the_fixture_records
+    cases = File.readlines(CODEC_CASES, chomp: true).grep_v(/\A(#|\z)/)
+    refute_empty cases
+    codec = ->(name) { name == "none" ? {} : { codec: name.to_sym } }
+
+    cases.each do |row|
+      entry, sink, payload, expected = row.split("|", 4)
+      decode, encode = codec_slots(codec.call(entry), codec.call(sink))
+      want = expected.end_with?("_error") ? expected : case_bytes(expected)
+
+      assert_equal want, case_outcome(decode, encode, case_bytes(payload)), row
+    end
+  end
+
+  def test_a_text_entry_hands_over_utf8_and_a_json_entry_symbolizes_keys
+    assert_equal Encoding::UTF_8, codec_slots({ codec: :text })[0].call("hello".b).encoding
+    assert_equal({ a: 1 }, codec_slots[0].call('{"a":1}'.b))
+  end
+
+  def test_msgpack_is_the_class_codec
+    decode, encode = codec_slots({ codec: :msgpack }, { codec: :msgpack })
+
+    assert_equal({ a: 1 }, decode.call(Flezha::Codec.encode({ a: 1 })))
+    assert_equal Flezha::Codec.encode({ a: 1 }), encode.call({ a: 1 })
+  end
+
+  # A Ruby String is its bytes, so a `bytes` sink takes one, where Python and
+  # Node refuse a string there.
+  def test_a_refusal_names_the_channel_and_a_bytes_sink_takes_a_string
+    decode, text = codec_slots({ codec: :text }, { codec: :text })
+    assert_includes assert_raises(EncodingError) { decode.call("\xFF".b) }.message, "`in`"
+    assert_includes assert_raises(Flezha::EmitError) { text.call(42) }.message, "`out`"
+
+    bytes = codec_slots({}, { codec: :bytes })[1]
+    assert_includes assert_raises(Flezha::EmitError) { bytes.call(42) }.message, "`out`"
+    assert_equal "hello", bytes.call("hello")
+  end
+
+  def test_an_unknown_codec_name_is_refused_naming_the_operative_the_channel_and_the_names
+    [[{ codec: :yaml }, {}, "in"], [{}, { codec: "yaml" }, "out"]].each do |input, sink, channel|
+      message = refusal { codec_slots(input, sink) }.message
+
+      assert_includes message, "codecs: #{channel}: unknown codec `yaml`"
+      assert_includes message, "bytes, text, json, msgpack"
+    end
+  end
+
+  def test_a_codec_and_a_callable_together_are_refused
+    [
+      [{ codec: :text, decode: ->(bytes) { bytes } }, {}, "in"],
+      [{}, { codec: :text, encode: ->(value) { value } }, "out"]
+    ].each do |input, sink, channel|
+      assert_includes refusal { codec_slots(input, sink) }.message, "codecs: #{channel}: names both a codec"
+    end
+  end
 end

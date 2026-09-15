@@ -7,7 +7,10 @@
 // which closure reaches which edge, and the two defects the record cannot
 // carry. `validate` is the call that submits, so it needs the process context.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   ACTIVATION_SCHEMA_VERSION,
@@ -15,11 +18,13 @@ import {
   defineOperative,
   defineProcedure,
   defineWorkflow,
+  encodeValue,
   loadNative,
   toHostClassDecl,
   validate,
 } from '../dist/esm/index.js';
 import { ProcedureTestHarness } from '../dist/esm/testing.js';
+import { EmitError } from '../dist/esm/types.js';
 
 loadNative().contextNew(ACTIVATION_SCHEMA_VERSION);
 
@@ -608,4 +613,129 @@ test('a workflow class carries its effectivelyOnce() declaration', () => {
   validate(spec);
   assert.equal(spec.effectivelyOnce, true);
   assert.equal('effectively_once' in toHostClassDecl(spec), false);
+});
+
+// -- channel codecs -------------------------------------------------------------
+//
+// A codec is resolved when the class is declared, into the two slots the
+// dispatcher and the plugin frame already read. What every SDK sends alike is
+// `test/fixtures/channel_codecs.txt`; what is Node's own is asserted here.
+
+const CODEC_CASES = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../test/fixtures/channel_codecs.txt',
+);
+
+const codecSpec = (input = [], sink = []) =>
+  defineOperative({
+    factoryId: 'codecs',
+    channels: (c) => {
+      c.input('in', ...input)
+        .into(echo('echo'))
+        .sink('out', ...sink);
+    },
+  });
+
+const codecSlots = (input, sink) => {
+  const [entry, out] = codecSpec(input, sink).channels;
+  return [entry.decode, out.sinkEncode];
+};
+
+const caseBytes = (field) => {
+  if (field === '<empty>') return Buffer.alloc(0);
+  return field.startsWith('hex:') ? Buffer.from(field.slice(4), 'hex') : Buffer.from(field, 'utf8');
+};
+
+// A case records that a step refused, whatever it threw.
+const caseOutcome = (decode, encode, payload) => {
+  let value;
+  try {
+    value = decode(payload);
+  } catch {
+    return 'decode_error';
+  }
+  try {
+    return Buffer.from(encode(value));
+  } catch {
+    return 'encode_error';
+  }
+};
+
+const emitRefusal = (channel) => (error) =>
+  error instanceof EmitError && error.message.includes(`\`${channel}\``);
+
+test('every shared codec case sends the bytes the fixture records', () => {
+  const rows = readFileSync(CODEC_CASES, 'utf8')
+    .split('\n')
+    .filter((row) => row && !row.startsWith('#'));
+  assert.ok(rows.length > 0, 'the shared codec cases were read');
+  const codec = (name) => (name === 'none' ? [] : [{ codec: name }]);
+  for (const row of rows) {
+    const [entry, sink, payload, expected] = row.split('|');
+    const [decode, encode] = codecSlots(codec(entry), codec(sink));
+    const want = expected.endsWith('_error') ? expected : caseBytes(expected);
+    assert.deepEqual(caseOutcome(decode, encode, caseBytes(payload)), want, row);
+  }
+});
+
+test('a JSON entry reads an object, and a sink sends bytes as the same array', () => {
+  const [decode, encode] = codecSlots();
+  assert.deepEqual(decode(Buffer.from('{"a":1}')), { a: 1 });
+  const raw = new Uint8Array([0xff, 0x00]);
+  assert.equal(encode(raw), raw);
+});
+
+test('msgpack is the class codec', () => {
+  const [decode, encode] = codecSlots([{ codec: 'msgpack' }], [{ codec: 'msgpack' }]);
+  assert.deepEqual(decode(encodeValue({ a: 1 })), { a: 1 });
+  assert.deepEqual(encode({ a: 1 }), encodeValue({ a: 1 }));
+});
+
+// A Node string is not bytes, so a `bytes` sink refuses one, where Ruby and PHP
+// take a string there.
+test('a refusal names the channel, and a bytes sink refuses a string', () => {
+  const [decode, text] = codecSlots([{ codec: 'text' }], [{ codec: 'text' }]);
+  assert.throws(() => decode(new Uint8Array([0xff])), /`in`: the payload is not valid UTF-8/);
+  assert.throws(() => text(42), emitRefusal('out'));
+
+  const bytes = codecSlots([], [{ codec: 'bytes' }])[1];
+  assert.throws(() => bytes(42), emitRefusal('out'));
+  assert.throws(() => bytes('hello'), emitRefusal('out'));
+});
+
+test('a value JSON has no form for is refused naming the channel', () => {
+  const encode = codecSlots()[1];
+  assert.throws(() => encode(10n), emitRefusal('out'));
+  assert.throws(() => encode(undefined), emitRefusal('out'));
+});
+
+test('an unknown codec name is refused naming the operative, the channel and the names', () => {
+  for (const [input, sink, channel] of [
+    [[{ codec: 'yaml' }], [], 'in'],
+    [[], [{ codec: 'yaml' }], 'out'],
+  ]) {
+    const { message } = refusal(() => codecSpec(input, sink));
+    assert.ok(message.includes(`codecs: ${channel}: unknown codec \`yaml\``), message);
+    assert.ok(message.includes('bytes, text, json, msgpack'), message);
+  }
+});
+
+test('a codec and a callable together are refused', () => {
+  const unnamed = () =>
+    defineOperative({
+      factoryId: 'codecs',
+      channels: (c) => {
+        c.input('in')
+          .into(echo('echo'))
+          .sink((value) => value, { codec: 'text' });
+      },
+    });
+  for (const [build, channel] of [
+    [() => codecSpec([(bytes) => bytes, { codec: 'text' }]), 'in'],
+    [() => codecSpec([], [(value) => value, { codec: 'text' }]), 'out'],
+    [unnamed, 'echo'],
+  ]) {
+    const { message } = refusal(build);
+    assert.ok(message.includes(`codecs: ${channel}: names both a codec`), message);
+  }
 });

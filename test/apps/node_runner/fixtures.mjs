@@ -2,16 +2,15 @@
 // under the same factory ids, procedure names, channel names and output bytes.
 //
 // Entry payloads and plugin frames are UTF-8 text on the wire, the same as the
-// reference: the SDK's default codec is MessagePack, so every fixture that
-// exchanges bytes with another SDK or with a plugin declares its own decoder
-// and encoder. An inter-procedure hop between two Node procedures carries
-// MessagePack, which no one else reads.
+// reference: every entry names the text codec, and a sink naming none sends a
+// string as its UTF-8 bytes. An inter-procedure hop between two Node
+// procedures carries MessagePack, which no one else reads.
 
 import { BroadcastChannel } from 'node:worker_threads';
 
 import { defineOperative, defineProcedure } from '@flezha/sdk';
 
-import { bytes, prefix, text } from './fixture_support.mjs';
+import { prefix } from './fixture_support.mjs';
 
 // The persisted-state family is registered from its own module.
 export * from './fixtures_state.mjs';
@@ -26,7 +25,7 @@ const DoNothing = defineProcedure({
 export const doNothing = defineOperative({
   factoryId: 'do_nothing',
   channels: (c) => {
-    c.input('input', text).into(DoNothing).sink('echo', bytes);
+    c.input('input', { codec: 'text' }).into(DoNothing).sink('echo');
   },
 });
 
@@ -36,7 +35,7 @@ export const doNothing = defineOperative({
 export const benchEcho = defineOperative({
   factoryId: 'bench_echo',
   channels: (c) => {
-    c.input('input', text).onFull('drop_nothing').into(DoNothing).sink('echo', bytes);
+    c.input('input', { codec: 'text' }).onFull('drop_nothing').into(DoNothing).sink('echo');
   },
 });
 
@@ -53,7 +52,7 @@ const CompareFilter = defineProcedure({
 export const compareFilter = defineOperative({
   factoryId: 'compare_filter',
   channels: (c) => {
-    c.input('input', text).into(CompareFilter).sink('sink', bytes);
+    c.input('input', { codec: 'text' }).into(CompareFilter).sink('sink');
   },
 });
 
@@ -87,11 +86,11 @@ const StaticDownstream = passThrough('static_downstream_procedure');
 export const staticEntity = defineOperative({
   factoryId: 'static_entity',
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .into(StaticEntry)
       .named('hop')
       .into(StaticDownstream)
-      .sink('kafka', bytes);
+      .sink('kafka');
   },
 });
 
@@ -103,10 +102,10 @@ const MacroStaticDownstream = passThrough('macro_static_downstream_procedure');
 export const sugarStaticEntity = defineOperative({
   factoryId: 'sugar_static_entity',
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .into(MacroStaticEntry)
       .into(MacroStaticDownstream)
-      .sink('test_kafka', bytes);
+      .sink('test_kafka');
   },
 });
 
@@ -116,11 +115,11 @@ const MixedHandDownstream = passThrough('mixed_hand_downstream');
 export const mixedOperative = defineOperative({
   factoryId: 'mixed_operative',
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .into(MixedMacroEntry)
       .named('hop')
       .into(MixedHandDownstream)
-      .sink('kafka', bytes);
+      .sink('kafka');
   },
 });
 
@@ -131,7 +130,7 @@ const SugarDoNothing = passThrough('sugar_do_nothing');
 export const sugarDoNothing = defineOperative({
   factoryId: 'sugar_do_nothing',
   channels: (c) => {
-    c.input('input', text).into(SugarDoNothing).sink('sugar_do_nothing_echo', bytes);
+    c.input('input', { codec: 'text' }).into(SugarDoNothing).sink('sugar_do_nothing_echo');
   },
 });
 
@@ -150,7 +149,7 @@ const SugarStoreInput = defineProcedure({
 export const sugarStoreInput = defineOperative({
   factoryId: 'sugar_store_input',
   channels: (c) => {
-    c.input('input', text).into(SugarStoreInput).sink('sugar_store_sink', bytes);
+    c.input('input', { codec: 'text' }).into(SugarStoreInput).sink('sugar_store_sink');
   },
 });
 
@@ -186,7 +185,7 @@ const HybridConsumer = defineProcedure({
 export const hybridChannel = defineOperative({
   factoryId: 'hybrid_channel',
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .into(HybridProducer)
       .branch([
         // The consumer edge first, so a refused plugin serialization leaves the
@@ -224,7 +223,7 @@ const StressD = stress('stress_d', () => ['p0']);
 export const entityStress = defineOperative({
   factoryId: 'entity_stress',
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .into(StressA)
       .named('a_to_b')
       .into(StressB)
@@ -232,7 +231,7 @@ export const entityStress = defineOperative({
       .into(StressC)
       .named('c_to_d')
       .into(StressD)
-      .sink('echo', bytes);
+      .sink('echo');
   },
 });
 
@@ -252,7 +251,7 @@ const PoisonProbe = defineProcedure({
 export const poisonProbe = defineOperative({
   factoryId: 'poison_probe',
   channels: (c) => {
-    c.input('input', text).retryBackoffMs(25).into(PoisonProbe).sink('out', bytes);
+    c.input('input', { codec: 'text' }).retryBackoffMs(25).into(PoisonProbe).sink('out');
   },
 });
 
@@ -281,7 +280,7 @@ const WedgeProbe = defineProcedure({
 export const wedgeProbe = defineOperative({
   factoryId: 'wedge_probe',
   channels: (c) => {
-    c.input('input', text).into(WedgeProbe).sink('out', bytes);
+    c.input('input', { codec: 'text' }).into(WedgeProbe).sink('out');
   },
 });
 
@@ -317,7 +316,7 @@ export const candle = defineOperative({
   factoryId: 'candle',
   channels: (c) => {
     c.effectivelyOnce().correctionWindow(600_000);
-    c.input('input', text).into(Candle).keyed().sink('sink', bytes);
+    c.input('input', { codec: 'text' }).into(Candle).keyed().sink('sink');
   },
 });
 
@@ -351,7 +350,7 @@ const SessionTimeout = defineProcedure({
 export const sessionTimeout = defineOperative({
   factoryId: 'session_timeout',
   channels: (c) => {
-    c.input('input', text).into(SessionTimeout).sink('kafka', bytes);
+    c.input('input', { codec: 'text' }).into(SessionTimeout).sink('kafka');
   },
 });
 
@@ -375,10 +374,10 @@ const boundedMailbox = (policy) =>
   defineOperative({
     factoryId: `bounded_mailbox_${policy}`,
     channels: (c) => {
-      c.input(`${policy}_input`, text)
+      c.input(`${policy}_input`, { codec: 'text' })
         .onFull(policy)
         .into(boundedMailboxProcedure(`${policy}_test_procedure`))
-        .sink(`${policy}_echo`, bytes);
+        .sink(`${policy}_echo`);
     },
   });
 
@@ -410,7 +409,7 @@ const PartitionRelay = defineProcedure({
 export const partitionRelay = defineOperative({
   factoryId: 'partition_relay',
   channels: (c) => {
-    c.input('in', text).keyBy(prefix).into(PartitionRelay).keyed().sink('input', bytes);
+    c.input('in', { codec: 'text' }).keyBy(prefix).into(PartitionRelay).keyed().sink('input');
   },
 });
 
@@ -434,13 +433,13 @@ const DynamicEntity = defineProcedure({
 export const dynamicEntity = defineOperative({
   factoryId: 'dynamic_entity',
   channels: (c) => {
-    c.input('input', text)
+    c.input('input', { codec: 'text' })
       .onFull('drop_nothing')
       // Filtered before keying: a dropped value answers no key, so the core
       // never mints an entity for it.
       .filter((input) => input !== 'drop')
       .keyBy(prefix)
       .into(DynamicEntity)
-      .sink('kafka', bytes);
+      .sink('kafka');
   },
 });
