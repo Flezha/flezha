@@ -14,7 +14,7 @@ services:
     # `flz operative listen` and `send --await` are newer than the published
     # 0.1.0 image, so the commands in README.md need an image built from a tree
     # that carries them. Everything else here works against 0.1.0 as it stands.
-    image: alfetahe/flezha:0.1.0
+    image: flezha/flezha:0.1.0
     environment:
       # Enforcement off, so a first run needs no bootstrap token and no
       # credential on the runner. See docs/guides/authorization.md.

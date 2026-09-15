@@ -52,7 +52,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 #### Scenario: Boot succeeds end-to-end against a fresh image
 
-- **GIVEN** the controller is started from a freshly-built `alfetahe/flezha:latest-dev` image with an empty `app_data/process_hub/` directory
+- **GIVEN** the controller is started from a freshly-built `flezha/flezha:latest-dev` image with an empty `app_data/process_hub/` directory
 - **WHEN** an SDK opens its first UDS `connect_control_channel` frame
 - **THEN** `ProcessHub.Initializer.setup_storage/2` returns successfully for `:default_hub`
 - **AND** the connect starts the namespace's hub and the runner's session completes its handshake

@@ -100,7 +100,7 @@ spec:
           # Pinned, never `:latest` — with imagePullPolicy: IfNotPresent a
           # mutable tag silently leaves a node running a stale controller.
           # Bump on every controller release (see docker/prod/README.md).
-          image: alfetahe/flezha:0.2.0
+          image: flezha/flezha:0.2.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: epmd

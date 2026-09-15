@@ -100,7 +100,7 @@ If the runner is also a container, a named volume is the whole answer:
 docker run -d --name flezha-controller \
   -v flezha_data:/flezha/app_data \
   -v flezha_sockets:/flezha/app_data/sockets \
-  alfetahe/flezha:0.1.0
+  flezha/flezha:0.1.0
 
 docker run -d --name my-runner \
   -e FLEZHA_SOCKET_FILES_PATH=/flezha/app_data/sockets \
@@ -122,7 +122,7 @@ the named volume:
 docker run -d --name flezha-controller \
   -v flezha_data:/flezha/app_data \
   -v /tmp/flz_sock:/flezha/app_data/sockets \
-  alfetahe/flezha:0.1.0
+  flezha/flezha:0.1.0
 
 FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock flz runner check
 ```

@@ -148,7 +148,7 @@ Both exit zero only on success.
 #### Get the image
 
 ```sh
-docker pull alfetahe/flezha:0.1.0
+docker pull flezha/flezha:0.1.0
 ```
 
 TODO: amd64 only for now, other architectures to follow.
@@ -159,7 +159,7 @@ TODO: amd64 only for now, other architectures to follow.
 docker run -d --name flezha-controller \
   -e FLEZHA_AUTHZ_ENABLED=false \
   -v flezha_data:/flezha/app_data \
-  alfetahe/flezha:0.1.0
+  flezha/flezha:0.1.0
 ```
 
 One volume is enough: every durable tree the controller owns (state, auth,
@@ -171,7 +171,7 @@ starts cold after every `docker rm`.
 
 ```sh
 $ docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
-flezha-controller	alfetahe/flezha:0.1.0	Up 20 seconds (healthy)
+flezha-controller	flezha/flezha:0.1.0	Up 20 seconds (healthy)
 ```
 
 `healthy` is the controller's own verdict: the image's healthcheck runs

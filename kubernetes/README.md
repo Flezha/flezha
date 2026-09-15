@@ -26,7 +26,7 @@ what the Secret is. Nothing about minting removes the need for it.
 The Flezha controller is a multi-architecture (`linux/amd64`, `linux/arm64`) Docker
 image on Docker Hub.
 
-The DaemonSet pins an **immutable version tag** — `alfetahe/flezha:0.1.0` — not
+The DaemonSet pins an **immutable version tag** — `flezha/flezha:0.1.0` — not
 `:latest`. This is deliberate: the pull policy is `IfNotPresent`, so a mutable tag
 means a node that already has a layer cached keeps running the controller it pulled
 weeks ago, and two nodes silently run different code. **Bump the tag on every

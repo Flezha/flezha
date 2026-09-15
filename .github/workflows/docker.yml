@@ -45,21 +45,21 @@ jobs:
         run: |
           docker build \
             -f docker/prod/Dockerfile.controller \
-            -t alfetahe/flezha:latest \
+            -t flezha/flezha:latest \
             .
 
       - name: Build runtime-dev image (FROM :latest)
         run: |
           docker build \
             -f docker/dev/Dockerfile.runtime \
-            -t alfetahe/flezha:latest-dev \
+            -t flezha/flezha:latest-dev \
             .
 
       - name: Measure image sizes
         id: size
         run: |
-          PROD_SIZE=$(docker image inspect alfetahe/flezha:latest --format '{{.Size}}')
-          DEV_SIZE=$(docker image inspect alfetahe/flezha:latest-dev --format '{{.Size}}')
+          PROD_SIZE=$(docker image inspect flezha/flezha:latest --format '{{.Size}}')
+          DEV_SIZE=$(docker image inspect flezha/flezha:latest-dev --format '{{.Size}}')
           mb() { awk "BEGIN { printf \"%.1f\", $1/1024/1024 }"; }
           PROD_MB=$(mb "$PROD_SIZE")
           DEV_MB=$(mb "$DEV_SIZE")
@@ -78,8 +78,8 @@ jobs:
             echo ""
             echo "| Tag | Size | Limit |"
             echo "|-----|------|-------|"
-            echo "| \`alfetahe/flezha:latest\` | ${PROD_MB} MiB | ${PROD_LIMIT_MB} MiB |"
-            echo "| \`alfetahe/flezha:latest-dev\` | ${DEV_MB} MiB | ${DEV_LIMIT_MB} MiB |"
+            echo "| \`flezha/flezha:latest\` | ${PROD_MB} MiB | ${PROD_LIMIT_MB} MiB |"
+            echo "| \`flezha/flezha:latest-dev\` | ${DEV_MB} MiB | ${DEV_LIMIT_MB} MiB |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce size budgets

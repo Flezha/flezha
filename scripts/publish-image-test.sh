@@ -28,7 +28,7 @@ chmod +x "$WORK/bin/docker"
 
 version="$(sed -n 's/^ *version: *"\([^"]*\)".*/\1/p' "$ROOT/mix.exs" | head -1)"
 case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
-tag="alfetahe/flezha:$version-$arch"
+tag="flezha/flezha:$version-$arch"
 
 # publish <published-refs> [REPUBLISH]: run the script against the stub.
 publish() {

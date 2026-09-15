@@ -6,10 +6,10 @@ Run the following commands from the **flezha project root** directory.
 
 | Tag                                | Built from                          | Notes |
 |------------------------------------|-------------------------------------|-------|
-| `alfetahe/flezha:<version>`        | `docker/prod/Dockerfile.controller` | Prod runtime, immutable. Version comes from `mix.exs`. **This is what clusters run.** |
-| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.controller` | Same build, mutable convenience tag. Never pin a cluster to it. |
-| `alfetahe/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
-| `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
+| `flezha/flezha:<version>`        | `docker/prod/Dockerfile.controller` | Prod runtime, immutable. Version comes from `mix.exs`. **This is what clusters run.** |
+| `flezha/flezha:latest`           | `docker/prod/Dockerfile.controller` | Same build, mutable convenience tag. Never pin a cluster to it. |
+| `flezha/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
+| `flezha/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
 
 **On every controller release**: bump `version:` in `mix.exs`, run
 `scripts/publish-image.sh` on each architecture, then bump the pinned tag in
@@ -66,7 +66,7 @@ The release ships its own `vm.args`, which the image bakes in at
 `ERL_FLAGS` is added after that file and wins any flag both set.
 
 ```bash
-docker run -e ERL_FLAGS="+S 4:4" alfetahe/flezha:latest
+docker run -e ERL_FLAGS="+S 4:4" flezha/flezha:latest
 ```
 
 A flag the VM does not accept refuses the boot and prints the reason, so a typo
@@ -105,7 +105,7 @@ published.
 `--platform`, per the project policy). Use `scripts/publish-image.sh`:
 
 ```bash
-docker login -u alfetahe
+docker login -u flezha
 
 # Run on each architecture host (e.g. an arm64 Pi, and amd64 moon):
 scripts/publish-image.sh           # prod  → pushes :<version>-<arch> + :latest-<arch>, rebuilds both manifests
@@ -129,17 +129,17 @@ base image or toolchain.
 docker run -d \
   --name flezha_container \
   -e FLEZHA_MAX_RECONNECTS=3 \
-  alfetahe/flezha:latest
+  flezha/flezha:latest
 ```
 
 ## Export Docker Image
 
 ```bash
 # Export latest
-docker save -o flezha-latest.tar alfetahe/flezha:latest
+docker save -o flezha-latest.tar flezha/flezha:latest
 
 # Export specific version
-docker save -o flezha-0.2.0.tar alfetahe/flezha:0.2.0
+docker save -o flezha-0.2.0.tar flezha/flezha:0.2.0
 ```
 
 ## Docker Compose Deployment

@@ -72,7 +72,7 @@ clean:
 # Usage: VERSION=0.2.0 make docker-build
 docker-build:
 	docker build \
-	  -t alfetahe/flezha:$(VERSION) \
+	  -t flezha/flezha:$(VERSION) \
 	  -f docker/prod/Dockerfile.controller \
 	  .
 
@@ -89,7 +89,7 @@ docker-publish:
 # `make docker-build VERSION=latest` first).
 docker-build-dev:
 	docker build \
-	  -t alfetahe/flezha:latest-dev \
+	  -t flezha/flezha:latest-dev \
 	  -f docker/dev/Dockerfile.runtime \
 	  .
 
@@ -98,7 +98,7 @@ docker-build-dev:
 # shell against bind-mounted source while hacking on Flezha itself.
 docker-build-toolchain:
 	docker build \
-	  -t alfetahe/flezha:latest-toolchain \
+	  -t flezha/flezha:latest-toolchain \
 	  -f docker/dev/Dockerfile.toolchain \
 	  .
 

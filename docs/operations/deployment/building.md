@@ -41,7 +41,7 @@ SKIP_JAVA=1 make stabilize-test-check # the fuller gate, without the Maven step
 ```
 
 Build the production image. The variable goes **before** `make`; with no
-`VERSION` the tag expands to `alfetahe/flezha:` and docker refuses it:
+`VERSION` the tag expands to `flezha/flezha:` and docker refuses it:
 
 ```bash
 VERSION=0.2.0 make docker-build
@@ -68,7 +68,7 @@ make clean
 | `clean` | `cargo clean`, `mix clean`, remove `_build`, `deps`, `priv/native/*.so` |
 | `docker-build` | Prod image for the host architecture; requires `VERSION=x.y.z` |
 | `docker-publish` | `scripts/publish-image.sh $(ARGS)` — native per-arch build, push, manifest rebuild |
-| `docker-build-dev` | `alfetahe/flezha:latest-dev` from `docker/dev/Dockerfile.runtime` (needs `:latest` in the local cache) |
-| `docker-build-toolchain` | `alfetahe/flezha:latest-toolchain` from `docker/dev/Dockerfile.toolchain` |
+| `docker-build-dev` | `flezha/flezha:latest-dev` from `docker/dev/Dockerfile.runtime` (needs `:latest` in the local cache) |
+| `docker-build-toolchain` | `flezha/flezha:latest-toolchain` from `docker/dev/Dockerfile.toolchain` |
 | `k8s-apply` | Apply the six manifests in dependency order |
 | `k8s-delete` | Delete the DaemonSet and ConfigMap (`--ignore-not-found`) |

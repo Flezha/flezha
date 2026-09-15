@@ -1,6 +1,6 @@
 services:
   controller:
-    image: alfetahe/flezha:latest-toolchain
+    image: flezha/flezha:latest-toolchain
     container_name: flezha_controller_dev
     user: "${FLEZHA_CONTAINER_USER:-1000:1000}"
     working_dir: /flezha
@@ -53,7 +53,7 @@ services:
       - flezha_network
 
   rust:
-    image: alfetahe/flezha:latest-toolchain
+    image: flezha/flezha:latest-toolchain
     container_name: flezha_rust_runner
     user: "${FLEZHA_CONTAINER_USER:-1000:1000}"
     stdin_open: true

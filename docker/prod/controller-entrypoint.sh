@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Default entrypoint for alfetahe/flezha:latest (prod runtime) and
-# alfetahe/flezha:latest-dev (runtime + testnet — same script, the
+# Default entrypoint for flezha/flezha:latest (prod runtime) and
+# flezha/flezha:latest-dev (runtime + testnet — same script, the
 # testnet branch only fires when FLEZHA_TESTNET_WS_PORT is set and the
 # pre-built bundle is present).
 #

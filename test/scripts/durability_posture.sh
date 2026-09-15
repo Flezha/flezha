@@ -32,7 +32,7 @@
 
 set -uo pipefail
 
-IMAGE="${FLEZHA_IMAGE:-alfetahe/flezha:durability-validation}"
+IMAGE="${FLEZHA_IMAGE:-flezha/flezha:durability-validation}"
 BACKENDS="${BACKENDS-local_path postgres}"
 # The release refuses to start Erlang distribution without one, and every `flz`
 # verb reaches the BEAM over distribution.

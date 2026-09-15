@@ -7,9 +7,9 @@ from the published runtime images:
 
 | Tag                              | Purpose                                                  | Dockerfile                          |
 |----------------------------------|----------------------------------------------------------|-------------------------------------|
-| `alfetahe/flezha:latest`         | Prod runtime — Mix release + graceful-restart plumbing   | `docker/prod/Dockerfile.controller`      |
-| `alfetahe/flezha:latest-dev`     | Runtime + Node.js + pre-built testnet WS server          | `docker/dev/Dockerfile.runtime`     |
-| `alfetahe/flezha:latest-toolchain` | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted) | `docker/dev/Dockerfile.toolchain` |
+| `flezha/flezha:latest`         | Prod runtime — Mix release + graceful-restart plumbing   | `docker/prod/Dockerfile.controller`      |
+| `flezha/flezha:latest-dev`     | Runtime + Node.js + pre-built testnet WS server          | `docker/dev/Dockerfile.runtime`     |
+| `flezha/flezha:latest-toolchain` | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted) | `docker/dev/Dockerfile.toolchain` |
 
 Build it, exec into it, run the controller, attach plugins, etc. Run all
 commands below from the project *root* directory.
@@ -42,7 +42,7 @@ cp .env.example .env
 
 # Build, run and manage docker image
 
-The toolchain image (`alfetahe/flezha:latest-toolchain`) bundles the full
+The toolchain image (`flezha/flezha:latest-toolchain`) bundles the full
 toolchain — Elixir+OTP, Rust, Node.js+npm+TypeScript, protoc — so
 `docker compose up` gives a ready-to-go shell against bind-mounted source.
 This is the image used for hacking on Flezha itself; downstream consumers
@@ -66,7 +66,7 @@ compose:
 ```bash
 docker run --rm -v "$PWD/scripts/harness-boot.sh:/boot.sh:ro" \
   -e FLEZHA_HARNESS_PATHS=/home/flezha/_build \
-  alfetahe/flezha:latest-toolchain /boot.sh sh -c 'echo uid=$(id -u) pid=$$'
+  flezha/flezha:latest-toolchain /boot.sh sh -c 'echo uid=$(id -u) pid=$$'
 ```
 
 On a host where the image-supplied ownership does not apply (userns-remap),
@@ -79,29 +79,29 @@ privileges with `setpriv`. It never uses `su` — see
 
 ```bash
 # Build for the current host arch (run natively per arch — no QEMU/buildx)
-make docker-build-toolchain        # or: docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .
-docker push alfetahe/flezha:latest-toolchain
+make docker-build-toolchain        # or: docker build -f docker/dev/Dockerfile.toolchain -t flezha/flezha:latest-toolchain .
+docker push flezha/flezha:latest-toolchain
 ```
 
 ## Build and push the runtime-dev image (`:latest-dev`)
 
-`Dockerfile.runtime` is `FROM alfetahe/flezha:latest`, so the prod runtime
+`Dockerfile.runtime` is `FROM flezha/flezha:latest`, so the prod runtime
 must be available locally (built per `../prod/README.md`, or pulled with
-`docker pull alfetahe/flezha:latest`) before this step.
+`docker pull flezha/flezha:latest`) before this step.
 
 ```bash
 # Ensure :latest exists locally first (skip if you already pulled it)
 make docker-build VERSION=latest
 
 # Build for the current host arch (run natively per arch — no QEMU/buildx)
-# or: docker build -f docker/dev/Dockerfile.runtime -t alfetahe/flezha:latest-dev .
+# or: docker build -f docker/dev/Dockerfile.runtime -t flezha/flezha:latest-dev .
 make docker-build-dev              
-docker push alfetahe/flezha:latest-dev
+docker push flezha/flezha:latest-dev
 ```
 
 For a multi-arch manifest, mirror the two-native-machines flow in
 `../prod/README.md` — build `:latest-dev-amd64` / `:latest-dev-arm64` on
-each host, then `docker manifest create alfetahe/flezha:latest-dev …` and
+each host, then `docker manifest create flezha/flezha:latest-dev …` and
 `docker manifest push`.
 
 ## Run via docker compose

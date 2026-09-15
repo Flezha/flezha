@@ -21,7 +21,7 @@
 # process_hub is fetched from hex at the version mix.lock pins, so a plain git
 # checkout is all the build context needs.
 #
-# Usage (logged in as alfetahe — `docker login -u alfetahe`):
+# Usage (logged in as flezha — `docker login -u flezha`):
 #   scripts/publish-image.sh            # prod (default): :<version> + :latest manifests
 #   scripts/publish-image.sh --prod     # same as default
 #   scripts/publish-image.sh --dev      # dev: :latest-dev-<arch> + :latest-dev manifest
@@ -37,7 +37,7 @@
 # "is a manifest list".
 set -euo pipefail
 
-IMAGE="alfetahe/flezha"
+IMAGE="flezha/flezha"
 
 mode="prod"
 case "${1:-}" in

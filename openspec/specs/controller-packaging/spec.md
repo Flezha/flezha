@@ -6,9 +6,9 @@ The controller-packaging capability defines what the Flezha agent ships as. Thre
 
 | Tag                                | Dockerfile                          | Purpose                                                            |
 |------------------------------------|-------------------------------------|--------------------------------------------------------------------|
-| `alfetahe/flezha:latest`           | `docker/prod/Dockerfile.controller`      | Prod runtime — Mix release + graceful-restart entrypoint           |
-| `alfetahe/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | Runtime + Node.js + pre-built testnet WS server                    |
-| `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
+| `flezha/flezha:latest`           | `docker/prod/Dockerfile.controller`      | Prod runtime — Mix release + graceful-restart entrypoint           |
+| `flezha/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | Runtime + Node.js + pre-built testnet WS server                    |
+| `flezha/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
 
 The capability defines the prod runtime image base, layer composition, supported architectures, exposed binaries, and the explicitly excluded surface (no Node.js, no testnet, no full Elixir installation, no extra arches). It also covers the runtime-dev image contract (prod runtime + Node + pre-built testnet, for downstream consumers), the toolchain image contract (host-arch only, full dev toolchain bundled, for hacking on Flezha itself), and the build-context discipline (Java SDK natives and fat jars are committed artefacts; CI never cross-compiles them).
 ## Requirements
@@ -24,18 +24,18 @@ The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the
 
 - **GIVEN** a clean checkout of `main`
 - **WHEN** `VERSION=test make docker-build` is run
-- **THEN** `docker image inspect alfetahe/flezha:test --format '{{.Size}}'` returns a value less than `314572800` (300 MiB)
+- **THEN** `docker image inspect flezha/flezha:test --format '{{.Size}}'` returns a value less than `314572800` (300 MiB)
 
 #### Scenario: Runtime image has no system Elixir
 
-- **GIVEN** a built prod image `alfetahe/flezha:test`
-- **WHEN** the runner runs `docker run --rm alfetahe/flezha:test which elixir`
-- **THEN** the container exits non-zero with empty stdout (no system `elixir` binary on `$PATH`); the assembled release at `/flezha/bin/flzvm` SHALL still start, verified by `docker run --rm alfetahe/flezha:test bin/flzvm version` printing the release version
+- **GIVEN** a built prod image `flezha/flezha:test`
+- **WHEN** the runner runs `docker run --rm flezha/flezha:test which elixir`
+- **THEN** the container exits non-zero with empty stdout (no system `elixir` binary on `$PATH`); the assembled release at `/flezha/bin/flzvm` SHALL still start, verified by `docker run --rm flezha/flezha:test bin/flzvm version` printing the release version
 
 #### Scenario: Runtime image has no Node.js or testnet sources
 
 - **GIVEN** a built prod image
-- **WHEN** the runner runs `docker run --rm alfetahe/flezha:test sh -c 'which node; ls test/apps/testnet 2>&1; true'`
+- **WHEN** the runner runs `docker run --rm flezha/flezha:test sh -c 'which node; ls test/apps/testnet 2>&1; true'`
 - **THEN** stdout contains no path for `node` and contains "No such file or directory" for the testnet path
 
 ### Requirement: Prod image SHALL be buildable for `linux/amd64` and `linux/arm64` only
@@ -43,7 +43,7 @@ The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the
 The controller image SHALL be published for exactly `linux/amd64` and `linux/arm64`,
 one architecture per publishing host. `make docker-publish` runs
 `scripts/publish-image.sh`, which builds the HOST architecture natively — no QEMU,
-no `buildx --platform` — pushes the per-arch tag `alfetahe/flezha:<family>-<arch>`,
+no `buildx --platform` — pushes the per-arch tag `flezha/flezha:<family>-<arch>`,
 and then rebuilds the `<family>` manifest list from whichever of the `amd64` and
 `arm64` per-arch tags exist on Docker Hub, so publishing one architecture never
 overwrites the other. The script SHALL refuse any other `uname -m` before it builds.
@@ -54,9 +54,9 @@ The Dockerfile SHALL NOT contain branches for any other Linux architecture. The 
 
 #### Scenario: A publish assembles the manifest from the per-arch tags
 
-- **GIVEN** `alfetahe/flezha:latest-amd64` is already published and the operator is on an arm64 host
+- **GIVEN** `flezha/flezha:latest-amd64` is already published and the operator is on an arm64 host
 - **WHEN** `make docker-publish` runs
-- **THEN** `scripts/publish-image.sh` builds and pushes `alfetahe/flezha:latest-arm64` natively, then rebuilds the `alfetahe/flezha:latest` manifest list from exactly the `amd64` and `arm64` per-arch tags that exist, leaving the amd64 variant intact
+- **THEN** `scripts/publish-image.sh` builds and pushes `flezha/flezha:latest-arm64` natively, then rebuilds the `flezha/flezha:latest` manifest list from exactly the `amd64` and `arm64` per-arch tags that exist, leaving the amd64 variant intact
 
 #### Scenario: Publishing from an unsupported host arch fails before the build
 
@@ -128,7 +128,7 @@ The TypeScript source under `test/apps/testnet/` SHALL NOT be copied into the pr
 
 ### Requirement: Toolchain Docker image SHALL bundle the full toolchain
 
-`docker/dev/Dockerfile.toolchain` SHALL ship as `alfetahe/flezha:latest-toolchain`
+`docker/dev/Dockerfile.toolchain` SHALL ship as `flezha/flezha:latest-toolchain`
 and SHALL include Elixir+OTP, Rust, `protobuf-compiler`, Node.js, npm,
 and a global TypeScript install. The container SHALL be runnable against
 bind-mounted source via `docker compose -f docker/dev/docker-compose.yml
@@ -142,20 +142,20 @@ under that path are wasted). The build is left to a one-time
 
 #### Scenario: Toolchain image ships the dev toolchain
 
-- **GIVEN** a built toolchain image `alfetahe/flezha:latest-toolchain`
-- **WHEN** the runner runs `docker run --rm alfetahe/flezha:latest-toolchain sh -c 'which elixir; which cargo; which node; which npm; which tsc; which protoc'`
+- **GIVEN** a built toolchain image `flezha/flezha:latest-toolchain`
+- **WHEN** the runner runs `docker run --rm flezha/flezha:latest-toolchain sh -c 'which elixir; which cargo; which node; which npm; which tsc; which protoc'`
 - **THEN** every binary resolves to a path on `$PATH`
 
 #### Scenario: Toolchain image is built and pushed under the toolchain tag
 
 - **GIVEN** a clean checkout
-- **WHEN** the runner runs `docker build -f docker/dev/Dockerfile.toolchain -t alfetahe/flezha:latest-toolchain .`
-- **THEN** the build completes with exit 0 and the resulting tag is `alfetahe/flezha:latest-toolchain` (NOT `:latest`, which is the prod runtime, nor `:latest-dev`, which is the runtime + Node + testnet image)
+- **WHEN** the runner runs `docker build -f docker/dev/Dockerfile.toolchain -t flezha/flezha:latest-toolchain .`
+- **THEN** the build completes with exit 0 and the resulting tag is `flezha/flezha:latest-toolchain` (NOT `:latest`, which is the prod runtime, nor `:latest-dev`, which is the runtime + Node + testnet image)
 
 ### Requirement: Runtime-dev Docker image SHALL bundle Node.js and a pre-built testnet WS server
 
-`docker/dev/Dockerfile.runtime` SHALL ship as `alfetahe/flezha:latest-dev`.
-It SHALL `FROM alfetahe/flezha:latest` (the prod runtime), then layer:
+`docker/dev/Dockerfile.runtime` SHALL ship as `flezha/flezha:latest-dev`.
+It SHALL `FROM flezha/flezha:latest` (the prod runtime), then layer:
 
 1. Node.js + npm via apt.
 2. The testnet TypeScript app at `test/apps/testnet/`, COPYed into `/flezha/testnet` and built at image-build time (`npm ci --omit=dev && npm run build`) so consumers do NOT rebuild it on container start.
@@ -167,20 +167,20 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 
 #### Scenario: Runtime-dev image has Node.js and the pre-built testnet
 
-- **GIVEN** a built runtime-dev image `alfetahe/flezha:latest-dev`
-- **WHEN** the runner runs `docker run --rm alfetahe/flezha:latest-dev sh -c 'which node; ls /flezha/testnet/dist/index.js'`
+- **GIVEN** a built runtime-dev image `flezha/flezha:latest-dev`
+- **WHEN** the runner runs `docker run --rm flezha/flezha:latest-dev sh -c 'which node; ls /flezha/testnet/dist/index.js'`
 - **THEN** `node` resolves to a path on `$PATH` and `/flezha/testnet/dist/index.js` exists
 
 #### Scenario: Testnet auto-starts when FLEZHA_TESTNET_WS_PORT is set
 
 - **GIVEN** the runtime-dev image
-- **WHEN** the runner runs `docker run --rm -e FLEZHA_TESTNET_WS_PORT=4500 alfetahe/flezha:latest-dev` and waits for startup
+- **WHEN** the runner runs `docker run --rm -e FLEZHA_TESTNET_WS_PORT=4500 flezha/flezha:latest-dev` and waits for startup
 - **THEN** the entrypoint launches `node /flezha/testnet/dist/index.js` listening on port 4500 in addition to the agent
 
 #### Scenario: Runtime-dev image inherits prod size budget plus a testnet allowance
 
 - **GIVEN** a built runtime-dev image
-- **WHEN** the runner runs `docker image inspect alfetahe/flezha:latest-dev --format '{{.Size}}'`
+- **WHEN** the runner runs `docker image inspect flezha/flezha:latest-dev --format '{{.Size}}'`
 - **THEN** the value SHALL be less than `471859200` (450 MiB) — prod's 300 MiB budget plus an allowance for Node.js and the built testnet bundle
 
 ### Requirement: Prod image entrypoint SHALL provide graceful-restart lifecycle
