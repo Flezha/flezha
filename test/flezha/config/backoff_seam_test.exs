@@ -154,6 +154,8 @@ defmodule Flezha.Config.BackoffSeamTest do
       control_unit = File.read!("flz_core/src/control_unit.rs")
       commit = File.read!("flz_core/src/workflow/commit.rs")
       liveness = File.read!("flz_transport/src/transport/liveness.rs")
+      shutdown = File.read!("flz_core/src/shutdown.rs")
+      resume = File.read!("flz_core/src/workflow/resume.rs")
 
       retry = Backoff.ladder(:sdk_retry)
       reconnect = Backoff.ladder(:sdk_reconnect)
@@ -177,6 +179,9 @@ defmodule Flezha.Config.BackoffSeamTest do
 
       assert Durations.default(:control_liveness_window_ms) ==
                rust_const(liveness, "DEFAULT_IDLE_TIMEOUT_MS")
+
+      assert Durations.default(:sdk_spawn_reply_ms) == rust_const(shutdown, "REPLY_TIMEOUT")
+      assert Durations.default(:sdk_owed_inbox_wait_ms) == rust_const(resume, "OWED_INBOX_WAIT")
     end
 
     test "both runtimes reset the reconnect ladder on a completed handshake, and only there" do
@@ -329,10 +334,22 @@ defmodule Flezha.Config.BackoffSeamTest do
 
   defp named?(text, name), do: String.contains?(text, ":#{name}")
 
+  # A `u64` millisecond constant, or a `Duration` of whole seconds read in milliseconds.
   defp rust_const(source, name) do
-    [[_, value]] = Regex.scan(~r/#{name}: u64 = ([0-9_]+)/, source)
-    value |> String.replace("_", "") |> String.to_integer()
+    case Regex.scan(~r/#{name}: u64 = ([0-9_]+)/, source) do
+      [[_, ms]] ->
+        digits(ms)
+
+      [] ->
+        secs =
+          ~r/#{name}: (?:std::time::)?Duration = (?:std::time::)?Duration::from_secs\(([0-9_]+)\)/
+
+        [[_, value]] = Regex.scan(secs, source)
+        digits(value) * 1_000
+    end
   end
+
+  defp digits(value), do: value |> String.replace("_", "") |> String.to_integer()
 
   defp manifest_value(file, shape) do
     [[_, value]] = Regex.scan(shape, File.read!(file))

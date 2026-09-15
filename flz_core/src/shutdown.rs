@@ -548,7 +548,7 @@ mod tests {
 
         // The child: a handler that aborts stands in for a host runtime whose
         // teardown an exit handler would race.
-        if std::env::var_os(CHILD).is_some() {
+        if crate::util::env_raw(CHILD).is_some() {
             extern "C" fn abort_on_exit() {
                 std::process::abort();
             }

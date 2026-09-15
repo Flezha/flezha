@@ -652,3 +652,143 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
         do: pid
   end
 end
+
+defmodule Flezha.SDK.SpawnWorkflowE2ETest do
+  @moduledoc """
+  Procedure-requested spawn against the same-BEAM controller: a stream
+  procedure on an in-node runner spawns an instance of a workflow class the same
+  runner offers, delivers to it under the same id, and is answered
+  `already_running` under the error policy. The request, the controller's
+  resolution and the runner server's waiter run end to end.
+  """
+  # async: false: the live controller and its fleet; registered singletons.
+  use ExUnit.Case, async: false
+
+  alias Flezha.Operative.Builder
+  alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.{Ctx, Spawn}
+  alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @probe :sdk_spawn_probe
+
+  # One spawn per `<instance id>:<policy>:<payload>` input, read inside the
+  # invocation that made it.
+  defmodule Requester do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "requester"
+    def init_state(_), do: nil
+
+    def run(input, s, ctx) do
+      [instance_id, policy, payload] = String.split(input, ":", parts: 3)
+      if_running = if policy == "error", do: :error, else: :deliver
+      handle = Ctx.spawn_workflow(ctx, instance_id, "sdk_spawned_inbox", payload, if_running)
+      result = Spawn.await(handle)
+
+      case Process.whereis(:sdk_spawn_probe) do
+        nil -> :ok
+        pid -> send(pid, {:spawn_result, payload, result})
+      end
+
+      {:ok, s}
+    end
+  end
+
+  defmodule RequesterOp do
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "sdk_spawn_requester"
+
+    def channels(c) do
+      import Flezha.SDK.Channels
+      c |> input("in") |> into(Requester) |> sink("requested")
+    end
+  end
+
+  # What the spawned instance consumes, one iteration per input.
+  defmodule Received do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "received"
+    def init_state(_), do: nil
+
+    def run(input, s, _ctx) do
+      case Process.whereis(:sdk_spawn_probe) do
+        nil -> :ok
+        pid -> send(pid, {:workflow_received, input})
+      end
+
+      {:ok, s}
+    end
+  end
+
+  defmodule InboxWorkflow do
+    @behaviour Flezha.SDK.WorkflowOperative
+    def factory_id, do: "sdk_spawned_inbox"
+    def loop_mode, do: :per_input
+    def self_terminating?, do: false
+    def max_duration_ms, do: 60_000
+
+    def procedures(c) do
+      import Flezha.SDK.Channels
+      c |> input("in") |> into(Received)
+    end
+  end
+
+  setup do
+    ns = "sdk_spawn_#{System.unique_integer([:positive])}"
+    Process.register(self(), @probe)
+
+    handle =
+      Flezha.SDK.create_runner(ns, transport: :native)
+      |> Flezha.SDK.define_stream(RequesterOp)
+      |> Flezha.SDK.define_workflow(InboxWorkflow)
+      |> Flezha.SDK.start()
+
+    assert %Flezha.SDK{} = handle, "SDK start failed: #{inspect(handle)}"
+
+    on_exit(fn ->
+      Flezha.SDK.close(handle)
+
+      try do
+        FleetManager.stop_namespace(ns)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    {:ok, ns: ns}
+  end
+
+  test "a procedure spawns a workflow instance, delivers to it, and is refused under the error policy",
+       %{ns: ns} do
+    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
+
+    requester = "spawn_requester_#{System.unique_integer([:positive])}"
+    instance = "spawned_#{System.unique_integer([:positive])}"
+
+    builder = %Builder{
+      id: requester,
+      factory_id: RequesterOp.factory_id(),
+      init_values: %{},
+      opts: []
+    }
+
+    assert {:ok, _info} = OperativeManager.start_operative(ns, builder)
+
+    request = fn policy, payload ->
+      OperativeManager.send_io(requester, ns, "#{instance}:#{policy}:#{payload}", %{
+        "channel" => "in",
+        "input_type" => "2"
+      })
+    end
+
+    request.("deliver", "p1")
+    assert_receive {:spawn_result, "p1", {:ok, :spawned}}, 20_000
+    request.("deliver", "p2")
+    assert_receive {:spawn_result, "p2", {:ok, :delivered}}, 20_000
+    request.("error", "p3")
+    assert_receive {:spawn_result, "p3", {:error, {:already_running, ^instance}}}, 20_000
+
+    assert_receive {:workflow_received, "p1"}, 20_000
+    assert_receive {:workflow_received, "p2"}, 20_000
+  end
+end

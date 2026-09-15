@@ -123,7 +123,9 @@ invocation; the scheduled timestamp inside `on_timer/4`), `entity_key/1`, and th
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
 `{:ok, at}`, the absolute timestamp a cancel takes, or
 `{:error, {:event_time_timer_without_event_time_clock, procedure, clock}}` /
-`{:error, {:timer_cap_exceeded, procedure, max}}`.
+`{:error, {:timer_cap_exceeded, procedure, max}}`. `spawn_workflow/5` requests spawn-or-deliver
+of a workflow instance and answers a `Flezha.SDK.Spawn` handle at once; the contract is
+`docs/sdk/procedure_requested_spawn.md`.
 
 ## Graph builder (v1 subset)
 
@@ -499,8 +501,7 @@ other SDK registers, and the scenarios are `test/system/late_input_correction_e2
 
 The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)'s
 `deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
-the conformance gate ([`conformance.md`](conformance.md)). In prose: the workflow kind (`kind: workflow` on `AddOperative` is
-refused: `workflow kind is not supported by the Elixir stream SDK`); `merge`, `route_latest`,
+the conformance gate ([`conformance.md`](conformance.md)). In prose: `merge`, `route_latest`,
 `branch`. A builder/ctx call into a deferred surface fails registration loudly,
 naming the operative module.
 

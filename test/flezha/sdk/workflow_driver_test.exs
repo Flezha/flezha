@@ -1,8 +1,10 @@
 defmodule Flezha.SDK.Workflow.DriverTest do
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Counters, Ctx}
+  alias Flezha.SDK.{Channels, Counters, Ctx, Spawn}
+  alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.Workflow.{Driver, Resume, Spec}
+  alias Flezha.SDK.Workflow.Ctx, as: WorkflowCtx
 
   # A stand-in for the runner: it answers every barrier the way a controller
   # that journalled it would, and forwards what it was asked to ship so a test
@@ -22,6 +24,13 @@ defmodule Flezha.SDK.Workflow.DriverTest do
 
     def handle_cast({:notify, command}, s) do
       send(s.test, {:shipped, command})
+      {:noreply, s}
+    end
+
+    # A spawn request, answered as a controller that started the instance would.
+    def handle_cast({:spawn, caller, spawn, payload, if_running}, s) do
+      send(s.test, {:spawn_requested, payload, if_running})
+      Spawn.answer(caller, %{spawn | claimed?: true}, "spawned", "")
       {:noreply, s}
     end
 
@@ -173,21 +182,53 @@ defmodule Flezha.SDK.Workflow.DriverTest do
     def run(_ctx, _args), do: raise("nope")
   end
 
+  # A run-sugar body that spawns, reads its handle and reports what it resolved to.
+  defmodule SpawningSugar do
+    def factory_id, do: "spawning_sugar"
+
+    def run(ctx, args) do
+      handle = WorkflowCtx.spawn_workflow(ctx, "child-" <> args, "worker", args, :deliver)
+      send(:workflow_driver_test_collector, {:spawned, Spawn.await(handle, 5_000)})
+      :ok
+    end
+  end
+
+  # The same request from a structured procedure, released as its stage's handoff.
+  defmodule SpawnStep do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "spawn_step"
+    def init_state(_), do: nil
+
+    def run(input, state, ctx) do
+      handle = Ctx.spawn_workflow(ctx, "child-" <> input, "worker", input, :error)
+      Ctx.emit(ctx, inspect(Spawn.await(handle, 5_000)))
+      {:ok, state}
+    end
+  end
+
+  defmodule SpawningFlow do
+    def factory_id, do: "spawning_flow"
+    def procedures(c), do: c |> Channels.input("in") |> Channels.into(SpawnStep)
+  end
+
   # --- harness ---
 
-  defp drive(module, opts \\ []) do
+  # A driver of `module` on a stub runner, reporting to this process.
+  defp start_driver(module, opts) do
     Process.register(self(), :workflow_driver_test_collector)
     assert {:ok, spec} = Spec.build(module)
-    {:ok, runner} = StubRunner.start_link(test: self(), error: Keyword.get(opts, :error, ""))
+    {error, opts} = Keyword.pop(opts, :error, "")
+    {:ok, runner} = StubRunner.start_link(test: self(), error: error)
+    defaults = [operative_id: "wf-1", args: "go", counters: Counters.new()]
 
     {:ok, driver} =
-      Driver.start_link(
-        operative_id: Keyword.get(opts, :operative_id, "wf-1"),
-        spec: spec,
-        args: Keyword.get(opts, :args, "go"),
-        counters: Counters.new(),
-        runner: runner
-      )
+      Driver.start_link(Keyword.merge(defaults, opts) ++ [spec: spec, runner: runner])
+
+    driver
+  end
+
+  defp drive(module, opts \\ []) do
+    driver = start_driver(module, opts)
 
     # A run-sugar body can finish before the monitor is set, which reports
     # `:noproc` rather than `:normal`; both mean the same thing here.
@@ -232,6 +273,22 @@ defmodule Flezha.SDK.Workflow.DriverTest do
     messages = drive(Exploding)
     assert %{status: "error", error: error} = completion(messages)
     assert error =~ "nope"
+  end
+
+  test "a run-sugar body's spawn reaches the runner and its handle resolves" do
+    messages = drive(SpawningSugar, args: "go")
+    assert {:spawn_requested, "go", :deliver} in messages
+    assert {:spawned, {:ok, :spawned}} in messages
+    assert %{status: "ok"} = completion(messages)
+  end
+
+  test "a structured procedure's spawn reaches the runner through its stage Entity" do
+    messages = drive(SpawningFlow)
+    assert {:spawn_requested, "go", :error} in messages
+    assert [commit] = commits(messages)
+
+    assert commit.handoff |> hd() |> Map.get(:payload) |> Resume.decode() ==
+             inspect({:ok, :spawned})
   end
 
   # --- the structured chain ---
@@ -321,10 +378,34 @@ defmodule Flezha.SDK.Workflow.DriverTest do
     def loop_mode, do: :per_input
     def self_terminating?, do: false
     def max_duration_ms, do: 600_000
-    def persistence_enabled, do: false
 
     def procedures(c) do
       c |> Channels.input("in") |> Channels.into(Tagger)
+    end
+  end
+
+  # Reports every input it runs over, so a class that journals nothing, and so
+  # commits nothing, can still be seen to have run.
+  defmodule Heard do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "heard"
+    def init_state(_), do: nil
+
+    def run(input, state, _ctx) do
+      send(:workflow_driver_test_collector, {:heard, input})
+      {:ok, state}
+    end
+  end
+
+  defmodule QuietChatLoop do
+    def factory_id, do: "quiet_chat_loop"
+    def loop_mode, do: :per_input
+    def self_terminating?, do: false
+    def max_duration_ms, do: 600_000
+    def persistence_enabled, do: false
+
+    def procedures(c) do
+      c |> Channels.input("in") |> Channels.into(Heard)
     end
   end
 
@@ -352,39 +433,33 @@ defmodule Flezha.SDK.Workflow.DriverTest do
   end
 
   test "a chained loop re-seeds each pass from the previous terminal batch" do
-    Process.register(self(), :workflow_driver_test_collector)
-    assert {:ok, spec} = Spec.build(ChainedLoop)
-    {:ok, runner} = StubRunner.start_link(test: self())
-
-    {:ok, driver} =
-      Driver.start_link(
-        operative_id: "wf-loop",
-        spec: spec,
-        args: "3",
-        counters: Counters.new(),
-        runner: runner
-      )
-
-    ref = Process.monitor(driver)
-    assert_receive {:DOWN, ^ref, :process, ^driver, reason}, 5_000
-    assert reason in [:normal, :noproc]
-    assert %{status: "ok"} = completion(drain())
+    messages = drive(ChainedLoop, operative_id: "wf-loop", args: "3")
+    assert %{status: "ok"} = completion(messages)
   end
 
-  test "a per-input loop parks when its inbox is empty rather than completing" do
-    Process.register(self(), :workflow_driver_test_collector)
-    assert {:ok, spec} = Spec.build(ChatLoop)
-    {:ok, runner} = StubRunner.start_link(test: self())
+  # A per-input loop started with spawn args. A state read is answered only
+  # after the bootstrap, so whatever the test sends next reaches a loop that has
+  # already looked at its empty inbox.
+  defp start_loop(module, opts) do
+    driver = start_driver(module, [operative_id: "wf-chat", args: "hello"] ++ opts)
+    _state = :sys.get_state(driver)
+    driver
+  end
 
-    {:ok, driver} =
-      Driver.start_link(
-        operative_id: "wf-chat",
-        spec: spec,
-        args: "hello",
-        counters: Counters.new(),
-        runner: runner
-      )
+  test "a per-input loop's first iteration consumes its first input, never the args, and commits its offset" do
+    driver = start_loop(ChatLoop, park_idle_ms: 60_000)
 
+    Inbox.input(driver, "in", "turn", %{"flz.inbox_offset" => "7"})
+    assert_receive {:shipped, {:iter_commit, %{consumed_offset: 7}}}, 5_000
+    Driver.stop_workflow(driver)
+
+    messages = drain()
+    assert for(c <- commits(messages), h <- c.handoff, do: Resume.decode(h.payload)) == ["a:turn"]
+    assert %{status: "cancelled"} = completion(messages)
+  end
+
+  test "a per-input loop parks after its idle window with nothing to consume" do
+    driver = start_loop(ChatLoop, park_idle_ms: 0)
     ref = Process.monitor(driver)
     assert_receive {:DOWN, ^ref, :process, ^driver, reason}, 5_000
     assert reason in [:normal, :noproc]
@@ -393,6 +468,29 @@ defmodule Flezha.SDK.Workflow.DriverTest do
     # A park is NOT a terminal outcome: no WorkflowCompleted is shipped.
     assert Enum.any?(messages, &match?({:shipped, {:iter_park, _}}, &1))
     refute Enum.any?(messages, &match?({:shipped, {:workflow_completed, _}}, &1))
+    assert commits(messages) == []
+  end
+
+  test "the tail a rehydrating bind still owes is waited for past the idle window" do
+    driver = start_loop(ChatLoop, park_idle_ms: 0, owed_inbox: 1)
+
+    Driver.push_inbox(driver, "owed")
+    assert_receive {:shipped, {:proc_commit, commit}}, 5_000
+    assert Enum.map(commit.handoff, &Resume.decode(&1.payload)) == ["a:owed"]
+    assert_receive {:shipped, {:iter_park, _}}, 5_000
+  end
+
+  test "a loop that journals nothing waits for its next input instead of parking, until a stop" do
+    driver = start_loop(QuietChatLoop, park_idle_ms: 0)
+
+    Driver.push_inbox(driver, "late")
+    assert_receive {:heard, "late"}, 5_000
+    refute_received {:heard, "hello"}
+    Driver.stop_workflow(driver)
+
+    messages = drain()
+    refute Enum.any?(messages, &match?({:shipped, {:iter_park, _}}, &1))
+    assert %{status: "cancelled"} = completion(messages)
   end
 
   defp collect_all(acc \\ []) do
@@ -440,26 +538,7 @@ defmodule Flezha.SDK.Workflow.DriverTest do
 
   # --- crash resume ---
 
-  defp resume(module, journal) do
-    Process.register(self(), :workflow_driver_test_collector)
-    assert {:ok, spec} = Spec.build(module)
-    {:ok, runner} = StubRunner.start_link(test: self())
-
-    {:ok, driver} =
-      Driver.start_link(
-        operative_id: "wf-resume",
-        spec: spec,
-        args: "go",
-        journal: journal,
-        counters: Counters.new(),
-        runner: runner
-      )
-
-    ref = Process.monitor(driver)
-    assert_receive {:DOWN, ^ref, :process, ^driver, reason}, 5_000
-    assert reason in [:normal, :noproc]
-    drain()
-  end
+  defp resume(module, journal), do: drive(module, operative_id: "wf-resume", journal: journal)
 
   test "a committed procedure is skipped and its child re-seeds from the journal" do
     messages =

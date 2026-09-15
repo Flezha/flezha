@@ -1,9 +1,9 @@
 # Procedure-requested spawn
 
-For operative authors. `ctx.spawn_workflow` (Rust) / `ctx.spawnWorkflow` (Java) lets a running
-procedure — in a stream or a workflow operative — spawn-or-feed a workflow instance in its own
-namespace with one call. This page is the contract: what the verb does, returns, refuses and
-inherits. The Elixir SDK has no workflow kind and so no spawn call.
+For operative authors. `ctx.spawn_workflow` (Rust), `ctx.spawnWorkflow` (Java) and
+`Flezha.SDK.Ctx.spawn_workflow/5` (Elixir) let a running procedure — in a stream or a workflow
+operative — spawn-or-feed a workflow instance in its own namespace with one call. This page is
+the contract: what the verb does, returns, refuses and inherits.
 
 ## Contract
 
@@ -28,6 +28,10 @@ let _ = ctx.spawn_workflow(
 
 ```java
 ctx.spawnWorkflow("triage@" + subject, "triage", input.getBytes(UTF_8), IfRunning.DELIVER);
+```
+
+```elixir
+Flezha.SDK.Ctx.spawn_workflow(ctx, "triage@" <> subject, "triage", input, :deliver)
 ```
 
 Worked example: `sdk/rust/examples/spawn_workflow_worker.rs`.
@@ -69,14 +73,20 @@ Factory resolution is cluster-wide: a controller node with no runner for the fac
 the call to a node that has one, so `FactoryUnknown` is an honest cluster-wide verdict.
 
 Reading the handle is optional (Rust `wait()` / `try_result()`, Java `await()` /
-`tryResult()`). An uninspected handle still reports a failure once, as a warning line — Rust
-through one process-wide reaper thread on drop, Java from the reply callback unless the caller
-already claimed the handle.
+`tryResult()`, Elixir `Flezha.SDK.Spawn.await/2` / `Flezha.SDK.Spawn.try_result/1`). An
+uninspected handle still reports a failure once, as a warning line: Rust through one
+process-wide reaper thread on drop, Java from the reply callback unless the caller already
+claimed the handle, Elixir from the runner process that answered it unless a read claimed the
+handle first.
+
+An Elixir handle's answer is a message to the process that made the request, so read it inside
+the invocation that made it or not at all. A reply that arrives after `run/3` returned is
+dropped, and the warning is then what reaches you.
 
 ## Replay issues nothing
 
 A replayed invocation — a crash-resume re-forward, a late-input correction re-running the
-slice — answers `SkippedOnReplay` / `SKIPPED_ON_REPLAY` without touching the wire, so a replay
+slice — answers `SkippedOnReplay` / `SKIPPED_ON_REPLAY` / `{:ok, :skipped_on_replay}` without touching the wire, so a replay
 never doubles the workers a run created.
 
 ## Inheritance and limits

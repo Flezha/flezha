@@ -13,6 +13,7 @@ defmodule Flezha.SDK.LocalTest do
   alias Flezha.SDK.{Channels, Local, Operative}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.SdkPersistenceFixtures.CounterOp
+  alias FlezhaTest.Helper.SdkSpawnFixtures.SpawnerOp
 
   # --- the moduledoc's worked example ---
 
@@ -316,5 +317,14 @@ defmodule Flezha.SDK.LocalTest do
              "local-mode" |> Flezha.SDK.create_runner() |> Flezha.SDK.define_stream(WordCount)
 
     assert is_pid(start_run(WordCount))
+  end
+
+  test "a procedure's spawn request is answered unavailable at once: there is no control plane" do
+    run = start_run(SpawnerOp)
+    collect(run, "out")
+
+    :ok = Local.feed(run, "in", "w-local")
+    assert :ok = Local.run_until_idle(run, 5_000)
+    assert payloads() == [inspect({:error, :unavailable})]
   end
 end

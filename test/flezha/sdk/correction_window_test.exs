@@ -8,16 +8,51 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Entity, Hold, Record}
+  alias Flezha.SDK.{Channels, Ctx, Entity, Hold, Record, Spawn}
   alias Flezha.SDK.Entity.{State, Tier}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
-  alias FlezhaTest.Helper.SdkTierFixtures.{CorrectionDropOp, CorrectionOp}
+  alias FlezhaTest.Helper.SdkTierFixtures.{CorrectionDropOp, CorrectionOp, CorrectionProc}
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
   @window 600_000
   @proc "correction_procedure"
+
+  # The correction probe, spawning once per input and folding what the handle
+  # answered into the output it records.
+  defmodule SpawningCorrectionProc do
+    @moduledoc false
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "spawning_correction_procedure"
+    def clock, do: :event_time
+    defdelegate init_state(key), to: CorrectionProc
+    defdelegate apply_change(state, at), to: CorrectionProc
+    defdelegate event_time_of(input), to: CorrectionProc
+
+    def run(input, s, ctx) do
+      handle = Ctx.spawn_workflow(ctx, "w-" <> input, "worker", input, :deliver)
+      Ctx.emit_keyed(ctx, "fold", inspect(Spawn.try_result(handle)))
+      {:ok, Ctx.apply(ctx, s, Ctx.now(ctx))}
+    end
+  end
+
+  defmodule SpawningCorrectionOp do
+    @moduledoc false
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "spawning_correction_probe"
+
+    def channels(c),
+      do:
+        c
+        |> Channels.effectively_once()
+        |> Channels.correction_window(600_000)
+        |> Channels.input("input")
+        |> Channels.into(SpawningCorrectionProc)
+        |> Channels.named("sink")
+        |> Channels.keyed()
+        |> Channels.sink()
+  end
 
   defp push(op, input, offset),
     do: Inbox.input(op, "input", input, %{"flz.offset" => Integer.to_string(offset)})
@@ -244,7 +279,29 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       push(op, "400000:b", 9)
       assert [{1, [400_000]}] == frames(1) |> Enum.map(&folds/1)
     end
+
+    test "a spawn issues nothing from a replayed member, and once from the same input live" do
+      %{op: op} = start_operative(SpawningCorrectionOp)
+
+      push(op, "100:a", 0)
+      assert [live] = frames(1)
+      assert outputs(live) == [inspect(:pending)]
+
+      assert_received {:"$gen_cast",
+                       {:spawn, _, %Spawn{instance_id: "w-100:a"}, "100:a", :deliver}}
+
+      refute_received {:"$gen_cast", {:spawn, _, _, _, _}}
+
+      replay(op, "100:a", 5)
+      end_slice(op)
+      assert [replayed] = frames(1)
+      assert outputs(replayed) == [inspect({:ok, :skipped_on_replay})]
+      refute_received {:"$gen_cast", {:spawn, _, _, _, _}}
+    end
   end
+
+  defp outputs(frame),
+    do: frame |> effect() |> elem(1) |> Map.fetch!(:outputs) |> Enum.map(& &1.payload)
 
   test "an Entity of a correction class still reports its procedure name" do
     %{op: op} = start_operative(CorrectionOp)

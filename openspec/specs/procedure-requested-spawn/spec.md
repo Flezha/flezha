@@ -6,7 +6,14 @@ The procedure-requested-spawn capability lets a running procedure ask the cluste
 ## Requirements
 ### Requirement: A procedure SHALL be able to request spawn-or-deliver of a workflow operative
 
-Both SDKs (Rust and Java, released together) SHALL expose a context call `spawn_workflow(instance_id, factory_id, payload, if_running)` usable from inside any procedure. With `if_running: deliver` (default), the controller SHALL spawn a workflow instance of `factory_id` under `instance_id` if absent, or deliver `payload` to the existing instance's inbox if present. With `if_running: error`, an existing instance SHALL yield an `already_running` result to the requester. The spawned instance SHALL receive `payload` as its first inbox frame and SHALL follow all existing workflow lifecycle semantics (quota, exit triggers, `WorkflowCompleted`, teardown, retention).
+Every SDK SHALL expose a context call `spawn_workflow(instance_id, factory_id, payload, if_running)`
+usable from inside any procedure: Rust, Java, Node, Python, Ruby and PHP through the shared
+core, and Elixir in its own core. With `if_running: deliver` (default), the controller SHALL
+spawn a workflow instance of `factory_id` under `instance_id` if absent, or deliver `payload` to
+the existing instance's inbox if present. With `if_running: error`, an existing instance SHALL
+yield an `already_running` result to the requester. The spawned instance SHALL receive `payload`
+as its first inbox frame and SHALL follow all existing workflow lifecycle semantics (quota, exit
+triggers, `WorkflowCompleted`, teardown, retention).
 
 The request SHALL NOT carry a namespace: the controller resolves it against the control channel the request arrived on, so a request cannot reach another namespace.
 
@@ -32,10 +39,10 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 - **WHEN** a procedure whose runner is connected to controller node A requests spawn of a factory whose only runner is connected to controller node B
 - **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `factory_unknown`
 
-#### Scenario: Java and Rust parity
+#### Scenario: Every SDK exposes the call with one meaning
 
-- **WHEN** the capability ships
-- **THEN** both SDKs SHALL expose the call with identical semantics and the cross-SDK test suites SHALL cover the same scenarios
+- **WHEN** the capability ships in an SDK
+- **THEN** that SDK SHALL expose the call with the semantics above, and its own suite SHALL cover the outcomes, the error policy, the refusal, the timeout, the replay skip and the no-control-plane case
 
 ### Requirement: Spawn requests SHALL be idempotent under concurrency on (namespace, instance_id)
 

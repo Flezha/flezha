@@ -901,3 +901,115 @@ If the Elixir SDK discards no queued input on restore, it SHALL still declare th
 - **WHEN** the Elixir SDK performs a restore that discards no queued input
 - **THEN** it SHALL report zero rather than omitting the key, so the surface distinguishes "nothing was discarded" from "nothing was measured"
 
+### Requirement: An Elixir procedure requests spawn-or-deliver of a workflow instance
+
+The Elixir SDK SHALL let a procedure request spawn-or-deliver of a workflow instance in its
+own namespace with one call, under the contract the other SDKs implement
+(`docs/sdk/procedure_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_workflow/5`, and the same call
+on `Flezha.SDK.Workflow.Ctx` for a run-sugar body, SHALL take an instance id, a workflow
+factory id, a binary payload and `:deliver` or `:error`, send `SpawnWorkflowRequest` on the
+runner's control plane, and return a handle without waiting for the controller.
+
+The handle SHALL resolve, through `Flezha.SDK.Spawn.await/2` or `Flezha.SDK.Spawn.try_result/1`,
+to `{:ok, :spawned | :delivered | :skipped_on_replay}` or to
+`{:error, {:already_running, instance_id} | {:factory_unknown, factory_id} | {:refused, reason} | :timeout | :unavailable}`.
+A refusal SHALL NOT fault the invocation, its emits or its records. A failure no caller read
+SHALL be logged once as a warning. An invocation of a replayed input SHALL resolve
+`:skipped_on_replay` and send nothing. A context with no runner, or a runner with no control
+plane, SHALL resolve `:unavailable` at once and send nothing. A request the controller never
+answers SHALL resolve `:timeout` after the runner's reply deadline, and the runner SHALL keep
+no waiter for it afterwards. The handle SHALL be read inside the invocation that made it; the
+SDK MAY drop a reply that arrives after the invocation returned, and the warning is what
+reaches such a caller. The request SHALL be written as a `:control` frame.
+
+#### Scenario: A free id spawns and a taken id delivers
+
+- **WHEN** an Elixir stream procedure calls `spawn_workflow` twice with one instance id and
+  `:deliver`, and a connected runner offers the workflow factory
+- **THEN** the first handle resolves `{:ok, :spawned}`, the second `{:ok, :delivered}`, and the
+  workflow instance receives both payloads as inputs
+
+#### Scenario: The error policy refuses a running id
+
+- **WHEN** a procedure calls `spawn_workflow` with `:error` for an instance id that is running
+- **THEN** the handle resolves `{:error, {:already_running, instance_id}}`
+
+#### Scenario: The call returns before the controller answers
+
+- **WHEN** a procedure calls `spawn_workflow` and the controller has not answered yet
+- **THEN** the call has already returned a handle, and `try_result/1` answers `:pending`
+
+#### Scenario: A refusal leaves the invocation intact
+
+- **WHEN** the controller refuses a spawn, and the procedure emits a value and returns
+  `{:ok, state}`
+- **THEN** the emit ships, the invocation is not retried, and the handle resolves
+  `{:error, {:refused, reason}}`
+
+#### Scenario: An unread failure is logged once
+
+- **WHEN** a spawn fails and no caller reads its handle
+- **THEN** exactly one warning names the instance id, the factory id and the reason
+
+#### Scenario: A replayed input issues nothing
+
+- **WHEN** a correction-declaring class re-runs a replayed slice and its procedure calls
+  `spawn_workflow`
+- **THEN** the handle resolves `{:ok, :skipped_on_replay}` and no `SpawnWorkflowRequest` leaves
+  the runner
+
+#### Scenario: A context with no runner is unavailable
+
+- **WHEN** a procedure runs under a context that carries no runner, or under a runner whose
+  session is down, and calls `spawn_workflow`
+- **THEN** the handle resolves `{:error, :unavailable}` at once, and nothing is sent or kept
+
+#### Scenario: An unanswered request times out and is forgotten
+
+- **WHEN** the request is written and no `SpawnWorkflowResponse` arrives within the reply
+  deadline
+- **THEN** the handle resolves `{:error, :timeout}`, an unread one is logged once, and the
+  runner holds no waiter for the request
+
+#### Scenario: The request is a control frame
+
+- **WHEN** the runner writes a `SpawnWorkflowRequest`
+- **THEN** `Hold` classes it `:control`, and the runner server does not raise
+
+### Requirement: The Elixir per-input loop waits for its inbox as the shared core does
+
+A `:per_input` workflow loop in the Elixir SDK SHALL seed every iteration, the first included,
+from the next input in its inbox and never from the spawn args. With nothing queued it SHALL
+wait, for up to 60 seconds while a rehydrating bind still owes it inputs and otherwise for
+`FLEZHA_WORKFLOW_PARK_IDLE_MS`, and SHALL park only when that wait ends with nothing to consume.
+A class that journals nothing SHALL wait until an input or a stop arrives, because it cannot
+park. A stop or the duration cap reached during the wait SHALL complete the run as `cancelled`.
+An iteration SHALL commit the durable-inbox offset its input carried in `flz.inbox_offset`.
+
+#### Scenario: The first iteration consumes the first input
+
+- **WHEN** a per-input loop is started with spawn args and one input then arrives
+- **THEN** its first committed iteration ran over that input, and no iteration ran over the args
+
+#### Scenario: An empty inbox parks only after the idle window
+
+- **WHEN** a journaling per-input loop finds its inbox empty and no input arrives within the idle
+  window
+- **THEN** it ships `IterPark` and no `WorkflowCompleted`
+
+#### Scenario: An owed tail is waited for past the idle window
+
+- **WHEN** a rehydrated loop still owes an input and its inbox is empty
+- **THEN** it waits for that input rather than parking at the idle window or completing
+
+#### Scenario: A loop that journals nothing waits instead of parking
+
+- **WHEN** a per-input loop whose class journals nothing finds its inbox empty
+- **THEN** it ships no `IterPark`, runs the next input that arrives, and a stop completes it as
+  `cancelled`
+
+#### Scenario: An iteration commits its input's inbox offset
+
+- **WHEN** an input stamped `flz.inbox_offset` `7` is consumed
+- **THEN** that iteration's `IterCommit` carries consumed offset `7`
+

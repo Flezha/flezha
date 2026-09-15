@@ -81,7 +81,7 @@ journal's **released** offset (the maximum consumed offset over the raw journal,
 lowers), so a re-sent consumed message is absorbed rather than re-delivered.
 
 **Suspension.** A `PerInput` loop whose inbox stays empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
-(default 5 000; read in the shared core, so Rust and Java agree) at a committed boundary tears
+(default 5 000; read in the shared core, so Rust and Java agree, and by the Elixir SDK's own driver) at a committed boundary tears
 its run down without a completion and ships `IterPark`. The controller journals
 `parked(iter[, wake_deadline_ms])` **before** `Migration.suspend/3` evicts the instance
 (`RemOperative`, runner tag `nil`); a park whose append fails leaves the instance bound and

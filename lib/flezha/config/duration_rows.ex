@@ -258,11 +258,16 @@ defmodule Flezha.Config.DurationRows do
      derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}},
     {:sdk_idle_probe_ms, :ms, 50, []},
     {:sdk_max_reap_interval_ms, :ms, 30_000, []},
+    # How long a rehydrated per-input workflow loop waits for the inbox tail its
+    # bind still owes before it may park: a park there would drop the tail.
+    {:sdk_owed_inbox_wait_ms, :ms, 60_000, []},
     {:sdk_serialize_wait_ms, :ms, 5_000, []},
     # The task yield outlasts the read it awaits, so a wedged Entity answers the
     # read's own bound rather than the yield's.
     {:sdk_serialize_yield_ms, :ms, nil, derived: {:headroom, :sdk_serialize_wait_ms, 1_000}},
-    {:sdk_shutdown_ack_ms, :ms, 2_000, []}
+    {:sdk_shutdown_ack_ms, :ms, 2_000, []},
+    # How long a procedure's spawn request waits for the controller's answer.
+    {:sdk_spawn_reply_ms, :ms, 30_000, []}
   ]
 
   @doc "The duration rows, in the table's own declaration shape."

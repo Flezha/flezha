@@ -409,7 +409,7 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — write failures inside the window that request a reconnect. The Elixir SDK reads them for its `data_heartbeat`, which is owed no delivery and whose misses are the only signal an idle runner gives |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — an unanswered reconnect request re-arms after this, so it cannot disarm the detector for good |
 | `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` | `30000` | `flz_core::workflow::driver` — proc-commit ack deadline |
-| `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | `flz_core::workflow::driver` — inbox-loop park hysteresis |
+| `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | `flz_core::workflow::driver` and the Elixir SDK's workflow driver — inbox-loop park hysteresis |
 | `FLEZHA_WORKFLOW_DRIVER_STACK_KIB` | platform default | `flz_core::workflow::driver` — driver-thread stack size; address space only |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
 

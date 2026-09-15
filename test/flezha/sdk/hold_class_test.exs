@@ -27,6 +27,7 @@ defmodule Flezha.SDK.HoldClassTest do
       {{"control_command", :runner_shutdown_notification}, :durable},
       {{"control_command", :update_factories}, :control},
       {{"control_command", :admin_request}, :control},
+      {{"control_command", :spawn_workflow_request}, :control},
       {{"control_command", :proc_commit}, :control},
       {{"control_command", :iter_commit}, :control},
       {{"control_command", :iter_park}, :control},
