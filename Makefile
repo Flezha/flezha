@@ -69,7 +69,7 @@ clean:
 # ── Docker ───────────────────────────────────────────────────────────────────
 
 # Build prod Docker image for the current host architecture.
-# Usage: VERSION=0.2.0 make docker-build
+# Usage: VERSION=0.1.0 make docker-build
 docker-build:
 	docker build \
 	  -t flezha/flezha:$(VERSION) \

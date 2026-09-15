@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/component: controller
     app.kubernetes.io/part-of: flezha
     app.kubernetes.io/managed-by: kubectl
-    app.kubernetes.io/version: "0.2.0"
+    app.kubernetes.io/version: "0.1.0"
 spec:
   selector:
     matchLabels:
@@ -26,7 +26,7 @@ spec:
         app.kubernetes.io/component: controller
         app.kubernetes.io/part-of: flezha
         app.kubernetes.io/managed-by: kubectl
-        app.kubernetes.io/version: "0.2.0"
+        app.kubernetes.io/version: "0.1.0"
     spec:
       serviceAccountName: flezha-reader
       # The controller image is public, so a stock apply needs no registry
@@ -100,7 +100,7 @@ spec:
           # Pinned, never `:latest` — with imagePullPolicy: IfNotPresent a
           # mutable tag silently leaves a node running a stale controller.
           # Bump on every controller release (see docker/prod/README.md).
-          image: flezha/flezha:0.2.0
+          image: flezha/flezha:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: epmd

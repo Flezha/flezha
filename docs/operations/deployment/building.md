@@ -44,7 +44,7 @@ Build the production image. The variable goes **before** `make`; with no
 `VERSION` the tag expands to `flezha/flezha:` and docker refuses it:
 
 ```bash
-VERSION=0.2.0 make docker-build
+VERSION=0.1.0 make docker-build
 ```
 
 Start over. This deletes `_build` and `deps` and runs `cargo clean`, so the next

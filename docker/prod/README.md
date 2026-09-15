@@ -139,7 +139,7 @@ docker run -d \
 docker save -o flezha-latest.tar flezha/flezha:latest
 
 # Export specific version
-docker save -o flezha-0.2.0.tar flezha/flezha:0.2.0
+docker save -o flezha-0.1.0.tar flezha/flezha:0.1.0
 ```
 
 ## Docker Compose Deployment
