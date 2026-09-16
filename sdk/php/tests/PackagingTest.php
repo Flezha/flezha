@@ -24,9 +24,9 @@ final class PackagingTest extends RepositoryTestCase
         return json_decode((string) file_get_contents(dirname(__DIR__) . '/composer.json'), true);
     }
 
-    public function testThePackageRequiresOnlyPhpExtFfiAndExtMbstring(): void
+    public function testThePackageRequiresOnlyPhpItsExtensionsAndThePluginApi(): void
     {
-        self::assertSame(['php', 'ext-ffi', 'ext-mbstring'], array_keys($this->composer()['require']));
+        self::assertSame(['php', 'ext-ffi', 'ext-mbstring', 'composer-plugin-api'], array_keys($this->composer()['require']));
     }
 
     public function testTheDeclaredFloorIsTheSupportedPhpLine(): void

@@ -11,5 +11,10 @@
         "psr-4": {
             "Flezha\\Examples\\Echo\\": "src/"
         }
+    },
+    "config": {
+        "allow-plugins": {
+            "flezha/sdk": true
+        }
     }
 }

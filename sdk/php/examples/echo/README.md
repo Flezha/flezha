@@ -23,6 +23,10 @@ composer install
 php runner.php
 ```
 
+`composer install` also downloads the native library the SDK loads, for your
+platform, from the release matching that version. The `allow-plugins` entry in
+`composer.json` is what lets it.
+
 Then, from another terminal:
 
 ```sh

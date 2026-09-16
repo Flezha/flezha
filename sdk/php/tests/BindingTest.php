@@ -211,10 +211,39 @@ final class BindingTest extends TestCase
         }
     }
 
-    public function testThePlatformIsOneTheDistributionCarries(): void
+    public function testThePlatformIsOneAReleasePublishes(): void
     {
         self::assertMatchesRegularExpression('/^(linux|macos|windows)-(x64|arm64)$/', Binding::platform());
         self::assertFileExists(Binding::libraryPath());
+    }
+
+    public function testAPopulatedCheckoutDownloadsNothing(): void
+    {
+        $fetched = Binding::obtain(
+            Binding::platform(),
+            '0.1.0',
+            static fn (string $url): string => self::fail("a populated checkout fetched {$url}"),
+        );
+
+        self::assertNull($fetched);
+    }
+
+    /** The refusal tells such a host to name its own build in the override, so the override must be read. */
+    public function testTheOverrideServesAPlatformNoReleasePublishesFor(): void
+    {
+        $unpublished = strstr(Binding::platform(), '-', true) . '-riscv64';
+        $previous = getenv(Binding::NATIVE_LIB_DIR_ENV);
+        putenv(Binding::NATIVE_LIB_DIR_ENV . '=' . dirname(Binding::libraryPath()));
+
+        try {
+            self::assertNull(Binding::obtain(
+                $unpublished,
+                '0.1.0',
+                static fn (string $url): string => self::fail("an overridden platform fetched {$url}"),
+            ));
+        } finally {
+            putenv($previous === false ? Binding::NATIVE_LIB_DIR_ENV : Binding::NATIVE_LIB_DIR_ENV . '=' . $previous);
+        }
     }
 
     public function testAnAvailabilityCheckPassesOnABuildThatCanCall(): void

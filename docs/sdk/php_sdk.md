@@ -33,21 +33,38 @@ selected rather than at install: see [Choosing an executor](#choosing-an-executo
 composer require flezha/sdk
 ```
 
-Installation pulls no further packages. The package carries prebuilt
-`libflz_core_ffi` binaries for the five target triples the Java distribution
-already ships, and selects one at runtime from the detected platform.
-`FLEZHA_NATIVE_LIB_DIR` names a directory to load in preference to the bundle —
-which is what this repository's own build script and test app use.
+Installation pulls no further packages. The package is also a Composer plugin:
+as Composer installs it, it downloads the one `libflz_core_ffi` binary the host
+needs from the release matching the package's version, checks it against that
+release's SHA-256 manifest, and places it in the package's `lib/<platform>/`.
+Releases publish it for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`
+and `windows-x64`. A checksum mismatch or a failed download refuses the install
+rather than leave a package that cannot load.
+
+Composer asks once whether to trust the plugin. A non-interactive install needs
+it allowed in the project's `composer.json`:
+
+```json
+"config": { "allow-plugins": { "flezha/sdk": true } }
+```
+
+`FLEZHA_NATIVE_LIB_DIR` names a directory to load the binary from in preference
+to the package's own, on any platform. When it already holds the binary at
+install, nothing is downloaded, which is how an offline install works. This
+repository's own build script and test app use it too.
+
+An install that skipped the plugin, through `--no-plugins` or by not allowing
+it, has no binary, and the first call into the core refuses naming how to
+finish: allow the plugin and run `composer reinstall flezha/sdk`, or download
+the asset and manifest the message names, check the checksum, and put the
+binary where it says.
 
 The binaries are build output, not source: `scripts/build-dist.sh` cross-builds
 all five triples into `sdk/php/lib/<platform>/` from the same libraries the
 Java distribution embeds — the *same* library, which is the point of using
 `ext-ffi` rather than a compiled extension — and `scripts/build-php-sdk.sh`
-stages just the host's for a checkout. They are not committed.
-
-The bundling is deliberately provisional while flezha is private. Splitting to
-platform-specific distribution across every SDK is recorded in `TODO.md` under
-"Before going public: split SDK native binaries out of the main package".
+stages just the host's for a checkout. They are not committed, and a checkout
+that has them downloads nothing.
 
 ## Authoring
 
@@ -457,7 +474,8 @@ both rules against the parsed source rather than the prose.
   so an FFI misuse takes the runner down with them. The SDK owns every FFI
   call; no raw pointer, `FFI\CData` or handle is exposed on the authoring
   surface. The blast radius is one runner.
-- **Native binaries are bundled for all five triples** — provisional, as above.
+- **Installing needs the release's binary.** An offline or plugin-less install
+  supplies it by hand, as above.
 
 ## Deferred fixtures
 

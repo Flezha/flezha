@@ -4,10 +4,12 @@
 #
 # `scripts/build-native.sh` fetches assets by these names and
 # `scripts/build-dist.sh` uploads them under the same ones, so the two sides of
-# the fetch contract are written once, here. The same table also decides the
-# resource path the Java runtime loads from — see
-# sdk/java/flezha-sdk-native/.../NativeLibraryLoader.java, whose SUPPORTED set
-# is the directory column.
+# the fetch contract are written once, here. The PHP package is the exception:
+# it fetches its host's asset at install, where no script is sourced, so
+# sdk/php/src/Ffi/Binding.php spells the asset name and the directory column
+# again. The same table also decides the resource path the Java runtime loads
+# from — see sdk/java/flezha-sdk-native/.../NativeLibraryLoader.java, whose
+# SUPPORTED set is the directory column.
 
 ALL_TRIPLES=(
   "x86_64-unknown-linux-gnu"
