@@ -199,3 +199,36 @@ deferred.
 - **WHEN** any SDK's documentation is read
 - **THEN** it SHALL NOT name local mode as deferred, because every SDK carries it
 
+### Requirement: Local mode proves every capability the language layer owns
+
+Each SDK SHALL run, in its own suite and in local mode, the fixture class its
+conformance manifest names for each of `graph_builder`, `keyed_channels`,
+`dynamic_entity`, `retry_ladder` and `entity_timers`, and SHALL assert the
+outputs and refusals the end-to-end scenario for that capability asserts, as
+far as they are observable without a controller. A capability the controller
+owns SHALL stay refused by name and SHALL NOT be approximated locally; adding a
+sixth capability to this list needs its own proposal.
+
+#### Scenario: A language-layer capability runs locally in every SDK
+- **WHEN** an SDK's suite runs
+- **THEN** it SHALL contain a local-mode run for each of the five capabilities, or a refusal assertion where every fixture class for that capability declares something controller-only
+
+#### Scenario: A controller capability is not faked
+- **WHEN** a local-mode test is added for `state_persistence`, `effectively_once`, `workflow` or another controller-owned capability
+- **THEN** it SHALL assert the refusal by name and nothing else
+
+### Requirement: A local run fires the timers a class declares
+
+A local run SHALL fire processing-time and event-time timers through the
+core's own timer path, so that `on_timer` runs in local mode with the
+scheduled timestamp exactly as it does under a controller. It SHALL NOT hold a
+timer implementation of its own.
+
+#### Scenario: A processing-time timer fires locally
+- **WHEN** an entity in a local run schedules a timer after a duration and the run continues past it
+- **THEN** the timer callback SHALL run with the scheduled timestamp
+
+#### Scenario: An event-time timer fires locally
+- **WHEN** an entity in a local run schedules a timer at an event time and a later input carries a later event time
+- **THEN** the timer callback SHALL run before that input is processed
+

@@ -97,6 +97,11 @@ ALLOWLIST = "scripts/docs-citation-allowlist.txt"
 SELF_FILES = {ALLOWLIST, "scripts/check-docs-citations.sh", ".github/workflows/naming.yml"}
 
 TRACKED = set(naming_gate.tracked_files())
+# An extracted SDK is a submodule at the path it always occupied, reached
+# through a tracked symlink for its test app. An index walk sees neither the
+# files inside the submodule nor the names reached through the link, and would
+# call every citation into one dead.
+TRACKED |= set(naming_gate.carried_files())
 # Every tail of every tracked path, so a citation written from an SDK's own root
 # (`lib/flezha/runner.rb`) or with a `.../` elision resolves without the
 # gate having to know which roots this repository nests.

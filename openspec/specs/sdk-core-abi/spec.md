@@ -323,3 +323,44 @@ implementation.
 - **THEN** the entry SHALL be present in each, and the ABI-cannot-lag check SHALL
   fail if a host is missing it
 
+### Requirement: The fake controller is a feature and a binary of the ABI crate
+
+`flz_core_ffi` SHALL carry its fake controller, the control-socket peer that
+captures every runner frame and pushes commands, as a public module behind a
+`fake-controller` feature and as a `[[bin]]` requiring that feature. The ABI
+tests SHALL drive the crate through the module, and the binary SHALL be a
+command line over the same module: a socket directory, a transport, a class
+to start, inputs to feed, an expected output count and a timeout. It SHALL
+exit non-zero naming the first frame that is wrong or late. The release SHALL
+publish it for every supported triple beside the native libraries, with its
+checksum in the same manifest. The binary SHALL NOT be tracked.
+
+#### Scenario: The tests and the binary cannot drift
+- **WHEN** the module's frame handling changes
+- **THEN** both the ABI lifecycle test and the binary SHALL see the change, because neither holds a copy
+
+#### Scenario: A runner outside this tree is driven to completion
+- **GIVEN** the binary started on a socket directory and a runner launched against it with the pinned connect environment
+- **WHEN** the runner connects, starts the named class, completes the inputs and is told to shut down
+- **THEN** the binary SHALL exit zero
+
+#### Scenario: A wrong frame is named
+- **WHEN** the runner sends a frame the binary did not await, or sends nothing within the timeout
+- **THEN** the binary SHALL exit non-zero naming the frame it awaited and what it received
+
+### Requirement: The C ABI surface is a fixture the crate asserts against
+
+`test/fixtures/abi_surface.txt` SHALL list every `extern "C"` entry point the
+crate exports, and a test in the crate SHALL assert the exports equal the file
+in both directions. A host binding that declares the C surface in its own
+language SHALL assert its declaration against that file and SHALL NOT read the
+crate's source.
+
+#### Scenario: An entry point added without the file is red here
+- **WHEN** an `extern "C" fn flz_core_*` is added to `lib.rs` or `local.rs` and not to the file
+- **THEN** the crate's test SHALL fail naming the entry point
+
+#### Scenario: A host declaration reads the file, not the source
+- **WHEN** the PHP surface test runs from a tree that carries the fixtures and no Rust source
+- **THEN** it SHALL run and pass against the file rather than skip
+

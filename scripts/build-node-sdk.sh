@@ -30,11 +30,15 @@ echo "==> installing @flezha/sdk dependencies"
 cd "$sdk"
 npm ci --no-audit --no-fund --silent
 
+# `--from` because the package's own default source is its wrapper crate,
+# which fetches the core at a tag. In this tree the core IS the workspace that
+# was just built, so the staged library is named rather than fetched.
 echo "==> installing the $profile addon"
+built="$root/target/$profile/libflz_core_ffi.so"
 if [[ "$profile" == "release" ]]; then
-  node scripts/install-native.mjs
+  node scripts/install-native.mjs --from "$built"
 else
-  node scripts/install-native.mjs --debug
+  node scripts/install-native.mjs --debug --from "$built"
 fi
 
 echo "==> building the package"

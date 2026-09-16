@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pytest
 
+import contract
 from flezha import Channels, CoreError, Ctx, LocalOperative, procedure, state, stream_operative
 
-FIXTURE = Path(__file__).resolve().parents[3] / "test" / "fixtures" / "local_mode_word_count.txt"
+FIXTURE = contract.member("test/fixtures/local_mode_word_count.txt")
 
 
 @procedure(name="split")

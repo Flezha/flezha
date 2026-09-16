@@ -19,7 +19,9 @@ use crate::pb;
 
 /// Per-operative ack wait, run in parallel so the total is bounded by this
 /// regardless of operative count (Kubernetes' default grace period is 30 s).
-const ACK_TIMEOUT: Duration = Duration::from_secs(2);
+/// Public so a controller can wait exactly as long as the runner does for the
+/// notification it is about to answer, rather than pick its own number.
+pub const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The bidirectional `CommandRequest` envelope's payload id.
 const SHUTDOWN_PAYLOAD_ID: &str = "control_command";

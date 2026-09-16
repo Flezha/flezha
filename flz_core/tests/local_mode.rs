@@ -18,8 +18,8 @@ use flz_core::host;
 use flz_core::local::{self, LocalRun, SinkOutput};
 use flz_core::poll_core::{self, Polled};
 use flz_core::schema::{
-    Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, Verdict,
-    WorkItem,
+    Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, PrepareAnswer,
+    TimerKind, TimerOp, Verdict, WorkItem,
 };
 use flz_transport::transport::FlezhaStream;
 
@@ -57,7 +57,23 @@ struct Host {
 }
 
 impl Host {
+    /// A host that answers every item with outputs and nothing else.
     fn spawn(answer: impl Fn(&Activation, &[u8]) -> Vec<Output> + Send + 'static) -> Host {
+        Host::spawn_effects(move |activation, item| {
+            let payload = match item {
+                WorkItem::Input(input) => input.payload.clone(),
+                WorkItem::Timer(_) => Vec::new(),
+            };
+            ok_effect(answer(activation, &payload))
+        })
+    }
+
+    /// A host that answers the whole item: what a timer test needs, because a
+    /// registration and a firing are both carried by the effect rather than
+    /// by an output.
+    fn spawn_effects(
+        answer: impl Fn(&Activation, &WorkItem) -> ItemEffect + Send + 'static,
+    ) -> Host {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let thread = std::thread::spawn(move || {
@@ -67,37 +83,42 @@ impl Host {
                     continue;
                 };
                 let schema_activation = host::to_schema(&activation);
-                let ActivationKind::Work(items) = &schema_activation.kind else {
-                    panic!(
-                        "local mode hands out work, not {:?}",
-                        schema_activation.kind
-                    );
+                let outcome = match &schema_activation.kind {
+                    ActivationKind::Work(items) => ActivationOutcome::Work(
+                        items
+                            .iter()
+                            .map(|item| answer(&schema_activation, item))
+                            .collect(),
+                    ),
+                    // A keyed or event-time class asks the host for each entry
+                    // payload's key and time before the payload is
+                    // dispatched. The key is its first byte, which is this
+                    // suite's own convention and the one its classes declare.
+                    ActivationKind::KeyRequest(request) => ActivationOutcome::Prepared(
+                        request
+                            .payloads
+                            .iter()
+                            .map(|payload| {
+                                Ok(PrepareAnswer {
+                                    keys: request
+                                        .want_keys
+                                        .then(|| {
+                                            vec![String::from_utf8_lossy(&payload[..1]).to_string()]
+                                        })
+                                        .unwrap_or_default(),
+                                    event_time: event_time_in(payload),
+                                })
+                            })
+                            .collect(),
+                    ),
+                    other => panic!("local mode hands out work and key requests, not {other:?}"),
                 };
-                let effects = items
-                    .iter()
-                    .map(|item| {
-                        let payload = match item {
-                            WorkItem::Input(input) => input.payload.clone(),
-                            WorkItem::Timer(_) => Vec::new(),
-                        };
-                        ItemEffect {
-                            verdict: Verdict::Ok,
-                            changes: Vec::new(),
-                            outputs: answer(&schema_activation, &payload),
-                            consumed_offset: None,
-                            event_time: 0,
-                            timers: Vec::new(),
-                            checkpoint: false,
-                            dlq: None,
-                        }
-                    })
-                    .collect();
                 host::apply_result(
                     core,
                     activation,
                     flz_core::schema::ActivationResult {
                         token: schema_activation.token,
-                        outcome: ActivationOutcome::Work(effects),
+                        outcome,
                     },
                 )
                 .expect("the completion fits its activation");
@@ -116,6 +137,31 @@ impl Drop for Host {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// The event time a payload of this suite's carries, spelled `<word>@<ms>`.
+/// A host is where event time comes from (the core never parses a payload),
+/// so a test that wants one has to put it in the bytes and read it back.
+fn event_time_in(payload: &[u8]) -> Option<u64> {
+    String::from_utf8_lossy(payload)
+        .split_once('@')?
+        .1
+        .parse()
+        .ok()
+}
+
+/// The effect a host returns when an item did nothing but release values.
+fn ok_effect(outputs: Vec<Output>) -> ItemEffect {
+    ItemEffect {
+        verdict: Verdict::Ok,
+        changes: Vec::new(),
+        outputs,
+        consumed_offset: None,
+        event_time: 0,
+        timers: Vec::new(),
+        checkpoint: false,
+        dlq: None,
     }
 }
 
@@ -426,4 +472,157 @@ fn the_same_declaration_serves_local_mode_and_class_registration() {
         "local mode consumes the class the controller would receive"
     );
     assert_eq!(run.instance().topology.channels.len(), 3);
+}
+
+// ---------------------------------------------------------------- timers
+
+/// `ticks → tick → fired`, on the processing-time clock a class carries
+/// unless it says otherwise.
+const PROCESSING_TIMER: &str = r#"{
+    "factory_id": "local_pt_timer", "sdk_lang": 1, "sdk_version": "0.1.0",
+    "channels": [{"name": "ticks", "kind": "entry",  "chains": [[{"link": "into", "procedure": 0}]]},
+                 {"name": "fired", "kind": "plugin", "producer": 0,
+                                   "chains": [[{"link": "sink", "name": "fired"}]]}],
+    "procedures": [{"name": "tick"}]
+}"#;
+
+/// The same graph on the event-time clock, so an input's own time drives the
+/// high-water the deadlines fire off, and so every entry payload crosses to
+/// the host to be told what time it carries.
+const EVENT_TIMER: &str = r#"{
+    "factory_id": "local_et_timer", "sdk_lang": 1, "sdk_version": "0.1.0",
+    "channels": [{"name": "ticks", "kind": "entry",  "chains": [[{"link": "into", "procedure": 0}]]},
+                 {"name": "fired", "kind": "plugin", "producer": 0,
+                                   "chains": [[{"link": "sink", "name": "fired"}]]}],
+    "procedures": [{"name": "tick", "clock": "event_time"}]
+}"#;
+
+/// Every timestamp a [`timer_host`] armed, in registration order.
+type Armed = Arc<Mutex<Vec<u64>>>;
+
+/// A host that arms one timer of `kind` on the input payload `arm`, `delay`
+/// past the clock that class runs on, and releases `<kind>:<scheduled_at>` on
+/// the `fired` sink for every firing it is handed.
+fn timer_host(kind: TimerKind, delay: u64) -> (Host, Armed) {
+    let armed: Armed = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&armed);
+    let host = Host::spawn_effects(move |_activation, item| match item {
+        WorkItem::Input(input) if input.payload.starts_with(b"arm") => {
+            let at = event_time_in(&input.payload).unwrap_or(input.now) + delay;
+            recorded.lock().unwrap_or_else(|p| p.into_inner()).push(at);
+            let mut effect = ok_effect(Vec::new());
+            effect.timers = vec![TimerOp::register(kind, at)];
+            effect
+        }
+        WorkItem::Input(_) => ok_effect(Vec::new()),
+        WorkItem::Timer(fire) => ok_effect(vec![sink_output(
+            "fired",
+            "t",
+            format!("{}:{}", fire.kind.as_str(), fire.scheduled_at).as_bytes(),
+        )]),
+    });
+    (host, armed)
+}
+
+fn armed_ops(armed: &Armed) -> Vec<u64> {
+    armed.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+#[test]
+fn a_local_run_fires_a_processing_time_timer() {
+    let _serialized = one_run();
+    declare(PROCESSING_TIMER);
+    let (_host, armed) = timer_host(TimerKind::ProcessingTime, 30);
+    let run = LocalRun::start("local_pt_timer", "pt-1").expect("the run starts");
+    let (seen, callback) = recorder();
+    run.on_sink("fired", callback).expect("`fired` is declared");
+
+    run.feed("ticks", b"arm".to_vec()).expect("`ticks` accepts");
+    // The registration and the firing are 30 ms apart, and the graph is idle
+    // by every other measure in between: settling has to wait for the wake.
+    run.run_until_idle(Duration::from_secs(10))
+        .expect("the graph settles");
+
+    assert_eq!(
+        payloads(&seen),
+        vec![format!("processing_time:{}", armed_ops(&armed)[0])],
+        "the deadline fired, carrying the timestamp it was scheduled for"
+    );
+}
+
+#[test]
+fn a_local_run_fires_an_event_time_timer_on_the_advancing_high_water() {
+    let _serialized = one_run();
+    declare(EVENT_TIMER);
+    let (_host, armed) = timer_host(TimerKind::EventTime, 50);
+    let run = LocalRun::start("local_et_timer", "et-1").expect("the run starts");
+    let (seen, callback) = recorder();
+    run.on_sink("fired", callback).expect("`fired` is declared");
+
+    // The deadline lands at 1_050, so the first input leaves it pending and
+    // the second one carries the high-water past it.
+    run.feed("ticks", b"arm@1000".to_vec()).expect("accepted");
+    run.run_until_idle(Duration::from_secs(10))
+        .expect("the graph settles");
+    assert_eq!(
+        payloads(&seen),
+        Vec::<String>::new(),
+        "no input has carried event time past the deadline yet"
+    );
+
+    run.feed("ticks", b"tick@2000".to_vec()).expect("accepted");
+    run.run_until_idle(Duration::from_secs(10))
+        .expect("the graph settles");
+    assert_eq!(
+        payloads(&seen),
+        vec![format!("event_time:{}", armed_ops(&armed)[0])],
+        "the later input's event time brought the deadline due"
+    );
+}
+
+// ------------------------------------------------- the prepare crossing
+
+/// `in → relay → out`, keyed on the way in, so every entry payload crosses to
+/// the host for its key before it is dispatched. The shape the conformance
+/// fixtures call `partition_relay` and `dynamic_entity`.
+const KEYED_ENTRY: &str = r#"{
+    "factory_id": "local_keyed_entry", "sdk_lang": 1, "sdk_version": "0.1.0",
+    "channels": [{"name": "in",  "kind": "entry",  "chains": [[{"link": "into", "procedure": 0}]]},
+                 {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
+                                 "chains": [[{"link": "sink", "name": "out"}]]}],
+    "procedures": [{"name": "relay", "entity_mode": "dynamic"}]
+}"#;
+
+#[test]
+fn a_keyed_entry_class_crosses_for_every_key_and_loses_nothing() {
+    let _serialized = one_run();
+    declare(KEYED_ENTRY);
+    // The key is the payload's first byte, answered at the crossing; the
+    // procedure echoes what reaches it.
+    let _host = Host::spawn_effects(|_activation, item| match item {
+        WorkItem::Input(input) => ok_effect(vec![sink_output(
+            "out",
+            &String::from_utf8_lossy(&input.payload[..1]),
+            &input.payload,
+        )]),
+        WorkItem::Timer(_) => ok_effect(Vec::new()),
+    });
+    let run = LocalRun::start("local_keyed_entry", "keyed-1").expect("the run starts");
+    let (seen, callback) = recorder();
+    run.on_sink("out", callback).expect("`out` is declared");
+
+    for payload in ["a:1", "b:1", "a:2"] {
+        run.feed("in", payload.as_bytes().to_vec())
+            .expect("accepted");
+    }
+    run.run_until_idle(Duration::from_secs(10))
+        .expect("the graph settles");
+
+    // Every payload crosses to the host for its key before it is dispatched,
+    // and the crossing is an activation like any other, so settling waits for
+    // it. What this pins is the whole path: feed, cross, answer, dispatch,
+    // release, with no value dropped between the steps.
+    let mut released = payloads(&seen);
+    released.sort();
+    assert_eq!(released, vec!["a:1", "a:2", "b:1"]);
 }

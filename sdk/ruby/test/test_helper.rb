@@ -6,15 +6,92 @@ require "minitest/autorun"
 # its own gem — so an unpinned resolution fails here, once, by name, instead of
 # as a missing method on whatever a suite happened to stub first.
 require "minitest/mock"
+require "json"
+require "pathname"
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 require "flezha"
 
 module Flezha
   module TestSupport
-    # The repository root, for the fixtures the gem's tests share with the
-    # other SDKs' tests.
-    def self.repo_root = File.expand_path("../../..", __dir__)
+    # The contract set's root: the directory the repository-relative paths in
+    # `test/fixtures/contract.txt` hang off. The set is the cross-language
+    # contracts this gem's tests share with every other SDK's, and the release
+    # publishes it as one archive, so a gem developed outside the core's
+    # repository vendors it at `contract/` instead of walking to a tree it has
+    # not got.
+    #
+    # Resolved once, in the order every SDK uses: `FLEZHA_CONTRACT_DIR`, else
+    # `contract/` at the package root, else the nearest enclosing tree that
+    # carries the manifest. Nowhere is a failure naming the three, never a skip.
+    MANIFEST = "test/fixtures/contract.txt"
+
+    def self.contract_root
+      @contract_root ||= contract_candidates.compact.find { |dir|
+        File.file?(File.join(dir, MANIFEST))
+      } || raise(<<~MESSAGE)
+        the contract set is nowhere this suite looked:
+          #{contract_candidates.zip(contract_unresolved).map { |dir, why| dir || why }.join("\n  ")}
+        Unpack flezha-fixtures-<version>.tar.gz at #{package_root}/contract, or set
+        FLEZHA_CONTRACT_DIR.
+      MESSAGE
+    end
+
+    # One member of the set, as an absolute path.
+    def self.contract_file(relative) = File.join(contract_root, relative)
+
+    # Where this package's conformance test app is.
+    #
+    # The app declares the fixture classes `conformance.json` names for each
+    # capability, and the local-mode suite runs the same ones rather than a
+    # second set declared beside them: a class that drifts from the one
+    # end-to-end drives would prove nothing about the SDK under test.
+    #
+    # Two layouts, found rather than counted: `test_app/` beside the package
+    # once this gem has a repository of its own, and `test/apps/ruby_runner`
+    # in the enclosing tree while it sits inside the core's.
+    TEST_APP = "test/apps/ruby_runner"
+
+    def self.test_app_root
+      @test_app_root ||= test_app_candidates.find { |dir|
+        File.file?(File.join(dir, "conformance.json"))
+      } || raise(<<~MESSAGE)
+        no conformance test app beside #{package_root} (test_app/) or in any tree above
+        it (#{TEST_APP}); the local-mode suite runs the classes it declares.
+      MESSAGE
+    end
+
+    # One file of the test app, loaded.
+    def self.require_test_app(file) = require(File.join(test_app_root, file))
+
+    # The capability-to-fixture-class table `conformance.json` declares.
+    def self.declared_fixtures
+      @declared_fixtures ||=
+        JSON.parse(File.read(File.join(test_app_root, "conformance.json"))).fetch("fixtures")
+    end
+
+    def self.test_app_candidates
+      tree = enclosing_tree(File.join(TEST_APP, "conformance.json"))
+      [File.join(package_root, "test_app"), tree && File.join(tree, TEST_APP)].compact
+    end
+
+    def self.package_root = File.expand_path("..", __dir__)
+
+    def self.contract_candidates
+      [ENV["FLEZHA_CONTRACT_DIR"], File.join(package_root, "contract"), enclosing_tree]
+    end
+
+    # How a refusal names each candidate that resolved to no directory.
+    def self.contract_unresolved
+      ["$FLEZHA_CONTRACT_DIR (unset)", nil, "no directory above #{package_root} carries #{MANIFEST}"]
+    end
+
+    # The nearest ancestor of the package that carries +marker+.
+    def self.enclosing_tree(marker = MANIFEST)
+      Pathname.new(package_root).ascend.find { |dir|
+        File.file?(File.join(dir, marker))
+      }&.to_s
+    end
 
     # Whether the compiled veneer is present. The pure-Ruby tests run without
     # it; the ones that drive the core say why they are skipped rather than

@@ -368,7 +368,7 @@ class AuthoringTest < Minitest::Test
   # dispatcher and the plugin frame already read. What every SDK sends alike is
   # `test/fixtures/channel_codecs.txt`; what is Ruby's own is asserted here.
 
-  CODEC_CASES = File.join(Flezha::TestSupport.repo_root, "test/fixtures/channel_codecs.txt")
+  CODEC_CASES = Flezha::TestSupport.contract_file("test/fixtures/channel_codecs.txt")
 
   def codec_slots(input = {}, sink = {})
     klass = operative("codecs") { |c| c.input("in", **input).into(pass_through("echo")).sink("out", **sink) }

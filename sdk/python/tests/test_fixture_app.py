@@ -9,18 +9,12 @@ one red.
 
 from __future__ import annotations
 
-import pathlib
-import sys
 from typing import Any
 
+import app
 from flezha import graph
 
-# The runner app is not a package and is not installed, so it is importable
-# only after its directory is on the path — which is why the import below it.
-_APP = pathlib.Path(__file__).resolve().parents[3] / "test" / "apps" / "python_runner"
-sys.path.insert(0, str(_APP))
-
-import fixtures_state
+fixtures_state = app.module("fixtures_state")
 
 
 def _procedure_names(decl: dict[str, Any]) -> list[str]:

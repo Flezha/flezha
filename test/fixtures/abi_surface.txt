@@ -1,0 +1,41 @@
+# Every `extern "C"` entry point the C ABI exports, one per line, sorted.
+#
+# The surface a host binding declares in its own language, as data rather than
+# as Rust source. Three readers pin it: a `flz_core_ffi` test asserts the
+# crate's exports are exactly these in both directions; `sdk/php`'s
+# `AbiSurfaceTest` asserts its `cdef` declares exactly these; and
+# `sdk/node/test/native.test.mjs` asserts the addon's declared surface names
+# nothing else. A binding that reads the crate's source instead cannot run
+# outside a checkout of it, which is the whole reason this file exists.
+#
+# Adding an entry point: teach `flz_core_ffi/src/lib.rs` or `local.rs`, add it
+# here, and declare it in every host binding that spells the surface: one
+# change, every SDK (docs/architecture/runner.md).
+flz_core_abandon
+flz_core_admin_call
+flz_core_buf_free
+flz_core_check_class
+flz_core_complete
+flz_core_context_free
+flz_core_context_new
+flz_core_declare_class
+flz_core_init_error
+flz_core_last_error
+flz_core_local_feed
+flz_core_local_next_output
+flz_core_local_on_sink
+flz_core_local_run_until_idle
+flz_core_local_start
+flz_core_local_stop
+flz_core_monotonic_nanos
+flz_core_poll
+flz_core_schema_version
+flz_core_set_log_callback
+flz_core_shutdown
+flz_core_spawn_workflow
+flz_core_start
+flz_core_wait_starvation
+flz_core_watch_stdin_eof
+flz_core_workflow_cancelled
+flz_core_workflow_emit
+flz_core_workflow_recv

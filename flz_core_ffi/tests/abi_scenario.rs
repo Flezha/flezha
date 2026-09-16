@@ -24,6 +24,8 @@ mod lifecycle;
 mod shape;
 #[path = "abi/shutdown.rs"]
 mod shutdown;
+#[path = "abi/surface.rs"]
+mod surface;
 
 #[cfg(feature = "jni")]
 #[path = "abi/veneer_jni.rs"]

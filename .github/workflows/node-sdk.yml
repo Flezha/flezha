@@ -1,80 +1,36 @@
 name: Node SDK
 
+# What this repository still owns for Node. The package's own suite, its
+# per-platform binaries and its publish live in `flezha/flezha_node_sdk` now,
+# where the package is developed; `sdk/node` here is that repository as a
+# submodule, pinned to a commit. What cannot move is on this side of the pin:
+# the veneer is a feature of this repository's own crate, and end to end needs
+# the controller.
+#
+# A change to the SDK reaches these jobs when the pin is bumped, which is the
+# change that brings it into end to end at all.
+
 on:
   pull_request:
     paths:
-      - "sdk/node/**"
+      - "sdk/node"
       - "examples/node/**"
       - "flz_core/**"
       - "flz_core_ffi/**"
       - "flz_transport/**"
-      - "test/apps/node_runner/**"
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-node-sdk.sh"
       - ".github/workflows/node-sdk.yml"
-  # No `paths:` here, deliberately. A path filter is evaluated against the
-  # commits a push carries, and a tag pushed onto an existing commit carries
-  # none, so a filtered push trigger would skip the release job every time.
-  # The pull-request trigger above keeps its filter, which is where the cost is.
   push:
     branches: [main]
-    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The package's own suite. Everything here runs against a freshly built
-  # addon, so a veneer change and a package change fail together rather than
-  # one of them passing against a stale binary.
-  package:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # The N-API version floor is what makes one binary serve every
-        # supported release; both ends of the support window prove it.
-        node: [20, 24]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Node ${{ matrix.node }}
-        uses: ./.github/actions/setup-node
-        with:
-          version: ${{ matrix.node }}
-
-      - name: Install Rust
-        uses: ./.github/actions/setup-rust
-
-      - name: Build the addon and the package
-        run: scripts/build-node-sdk.sh
-
-      - name: Type-check, including the fixtures expected to fail
-        working-directory: sdk/node
-        # `tsc --noEmit` fails when a `@ts-expect-error` directive goes unused,
-        # which is exactly what a compile-time refusal that stopped working
-        # looks like. The second command is the negative control: with the
-        # directives stripped, each pinned line must still produce a
-        # diagnostic, so a fixture cannot pass for the wrong reason.
-        run: |
-          npm run typecheck
-          npm run typecheck:expected-failures
-
-      - name: Unit tests
-        working-directory: sdk/node
-        run: npm test
-
-      - name: The worked example's own test
-        working-directory: examples/node
-        # `npm ci` against the example's own committed lock. The example is an
-        # application, not a published package, so the lock is the pin and this
-        # is the only install command that honours it.
-        run: |
-          npm ci --no-audit --no-fund
-          npm test
-
-  # The veneer, from the Rust side. `--features napi` must stay additive: the
-  # crate's other artifacts and the Java shim are built from the same source.
+  # The veneer is a feature of this repository's `flz_core_ffi`, never a crate
+  # of its own, so its ABI scenario stays here whatever repository the package
+  # is developed in.
   veneer:
     runs-on: ubuntu-latest
     steps:
@@ -94,156 +50,38 @@ jobs:
         # script is the one place that spells it.
         run: scripts/check-feature-symbols.sh target/debug/libflz_core_ffi.so napi
 
-  # The native binaries the per-platform packages carry. Cross-built rather
-  # than one runner per platform: N-API is ABI-stable across Node versions, so
-  # one binary per platform serves every supported release.
-  #
-  # Each arm stages its addon under the platform suffix and nothing else. The
-  # packaging is one job below, because "all five were produced" is a statement
-  # about the set and cannot be made from inside one arm.
-  binaries:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            package: linux-x64-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            package: linux-arm64-gnu
-            cross: true
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            package: darwin-x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            package: darwin-arm64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            package: win32-x64-msvc
+  # End to end, which is the half an SDK repository cannot run: it needs the
+  # controller. The submodule is what this job runs the Node runtime from, at
+  # the commit this tree pins.
+  smoke:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Erlang and Elixir
+        uses: ./.github/actions/setup-beam
+
+      - name: Set up Node
+        uses: ./.github/actions/setup-node
 
       - name: Install Rust
-        # No cargo cache: each arm is a different target triple, and what this
-        # job publishes is the artifact rather than a warm tree.
         uses: ./.github/actions/setup-rust
-        with:
-          targets: ${{ matrix.target }}
-          cache: "false"
 
-      - name: Install the cross linker
-        if: matrix.cross
+      - name: Build the Node SDK and its test app
+        run: scripts/build-node-sdk.sh
+
+      - name: Build the reference runner the suite boots against
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          cargo build --quiet \
+            --manifest-path=test/apps/rust_runner/Cargo.toml \
+            --target-dir=./target
 
-      - name: Build
-        run: cargo build -p flz_core_ffi --features napi --release --target ${{ matrix.target }}
-
-      - name: Stage the addon under its platform suffix
-        shell: bash
-        run: |
-          set -euo pipefail
-          addon=""
-          for name in libflz_core_ffi.so libflz_core_ffi.dylib flz_core_ffi.dll; do
-            built="target/${{ matrix.target }}/release/$name"
-            if [ -f "$built" ]; then addon="$built"; fi
-          done
-          test -n "$addon"
-          mkdir -p "staging/${{ matrix.package }}"
-          cp "$addon" "staging/${{ matrix.package }}/flz_core_ffi.node"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: node-addon-${{ matrix.package }}
-          path: staging/
-          retention-days: 14
-
-  # The publishable set: five per-platform packages and the parent tarball that
-  # declares them. The packaging refuses a build missing any platform, so the
-  # parent is never packed beside an optional dependency nothing produced.
-  packages:
-    runs-on: ubuntu-latest
-    needs: binaries
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Node
-        uses: ./.github/actions/setup-node
-        with:
-          deps-dir: sdk/node
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: node-addon-*
-          merge-multiple: true
-          path: staging
-
-      - name: Build the package
-        working-directory: sdk/node
-        run: npm run build
-
-      - name: Write the per-platform packages
-        # `--require-all` is what makes this job the gate: every platform the
-        # SDK declares must have an addon here, or nothing is packed.
-        run: node sdk/node/scripts/platform-package.mjs staging packages --require-all
-
-      - name: Pack the parent
-        run: npm pack --pack-destination "$PWD/packages" ./sdk/node
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: flezha-sdk-packages
-          path: packages/
-          retention-days: 14
-
-  # Publishing, in the one order that works: the platform packages first, then
-  # the parent that declares them, in one run and at one version. A parent
-  # published first names versions that do not resolve yet, and npm treats an
-  # optional dependency it cannot resolve as a non-event, so that window
-  # produces installations that are quietly broken rather than failed.
-  #
-  # This job is the one the publication readiness record's B2 asks for: a
-  # reviewed, repeatable publication rather than a hand-run one. B2's other
-  # half, a rehearsal against a scratch name, and N1, claiming the six real
-  # names, are both the owner's and are what the gate below holds the release
-  # on. The job is therefore red by design today, and `packages` above builds
-  # and packs the exact artefacts on every run in the meantime.
-  publish:
-    runs-on: ubuntu-latest
-    needs: packages
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v5
-
-      # First, before anything is published. A registry name cannot be
-      # reclaimed and a published package cannot be withdrawn, so an open
-      # blocking entry in the publication readiness record stops the release.
-      - name: Publication readiness
-        run: python3 scripts/naming_gate.py --run @release
-
-      - name: Set up Node
-        uses: ./.github/actions/setup-node
-        with:
-          registry-url: "https://registry.npmjs.org"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: flezha-sdk-packages
-          path: packages
-
-      - name: Publish the platform packages, then the parent
+      - name: Run the shared smoke tier against the Node runtime
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          FLEZHA_E2E_RUNTIME: node
         run: |
-          set -euo pipefail
-          for pkg in packages/@flezha-sdk-*/; do
-            echo "== $pkg"
-            npm publish --access public "$pkg"
-          done
-          echo "== the parent"
-          npm publish --access public packages/flezha-sdk-*.tgz
+          mix test --include sdk_smoke \
+            --formatter FlezhaTest.Helper.TimingFormatter \
+            --formatter ExUnit.CLIFormatter

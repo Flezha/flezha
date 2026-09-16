@@ -50,7 +50,7 @@ class LocalModeTest < Minitest::Test
 
   # The scenario every core runs: the lines to feed, and the sink values.
   def scenario
-    path = File.join(Flezha::TestSupport.repo_root, "test/fixtures/local_mode_word_count.txt")
+    path = Flezha::TestSupport.contract_file("test/fixtures/local_mode_word_count.txt")
     lines = []
     totals = Hash.new(0)
     File.read(path).each_line(chomp: true) do |row|

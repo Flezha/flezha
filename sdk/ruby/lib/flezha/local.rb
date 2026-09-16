@@ -85,11 +85,19 @@ module Flezha
       return if @closed
 
       @closed = true
-      @core.local_stop
       begin
         # `join` re-raises whatever the drain thread died of, so the teardown
         # below is an `ensure`: a failed delivery must not strand the context.
         @drain.join(OUTPUT_POLL_MS / 1000.0 * 20)
+        # Stop the run first, then take what it released and the drain thread
+        # had not reached: a value can be queued for up to one poll interval,
+        # and ending the run while it sits there is how an author loses output
+        # the graph did produce. Stopping drops the sender, so this ends at the
+        # first empty read rather than waiting.
+        @core.local_stop
+        while (output = @core.local_next_output(0))
+          deliver(output)
+        end
       ensure
         # Not `Core#shutdown`: that stops the process-wide poll core, and a
         # process may start another local run after this one. The workers

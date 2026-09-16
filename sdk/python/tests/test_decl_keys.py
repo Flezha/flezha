@@ -9,18 +9,16 @@ never learned already fails at the core's ``deny_unknown_fields``.
 from __future__ import annotations
 
 import dataclasses
-import pathlib
 
 import pytest
 
+import contract
 import flezha
 from conftest import declare
 from flezha import graph
 from flezha.builder import ClassSpec
 
-_FIXTURE = (
-    pathlib.Path(__file__).resolve().parents[3] / "test" / "fixtures" / "host_class_decl_keys.txt"
-)
+_FIXTURE = contract.member("test/fixtures/host_class_decl_keys.txt")
 
 
 def _expected() -> dict[str, set[str]]:

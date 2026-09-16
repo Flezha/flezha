@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+import contract
 from flezha import env
 
-FIXTURE = Path(__file__).resolve().parents[3] / "test" / "fixtures" / "knob_parse_cases.txt"
+FIXTURE = contract.member("test/fixtures/knob_parse_cases.txt")
 
 RULE = {
     "positive_int": env.parse_positive,

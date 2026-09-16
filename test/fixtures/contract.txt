@@ -1,0 +1,38 @@
+# The contract set: every file of this repository an SDK's own suite reads as
+# data, so an SDK developed in a repository of its own can still be proven
+# against the core.
+#
+# One row per member, `<repository-relative path>|<what reads it and why>`.
+# The release publishes the set as `flezha-fixtures-<version>.tar.gz`, whose
+# entries are these paths verbatim, and an SDK unpacks it at `contract/` in its
+# own tree. Each SDK's tests resolve the directory the paths are relative to
+# once (`$FLEZHA_CONTRACT_DIR`, else `contract/`, else the tree the package
+# sits in), and fail rather than skip when none of the three resolves.
+#
+# The static gate (`test/sdk_conformance/gate_test.exs`) holds this list and
+# `test/fixtures/` equal: a fixture the directory gains and this file does not
+# list fails, and so does a row naming a file that is not there.
+#
+# Members outside `test/fixtures/` are here because an SDK suite reads them as
+# data too. Vendoring a Rust source is not a licence to parse the core from a
+# host binding. A binding that declares the C surface reads
+# `abi_surface.txt`, which is why that fixture exists. This is how the two
+# contracts that are still written as Rust tables travel.
+#
+# Adding a member: add the file, add the row, and teach whichever SDK reads it
+# to resolve it through the contract root.
+test/fixtures/contract.txt|This list. Vendored with the set so a consumer can see what it got and why.
+test/fixtures/abi_surface.txt|Every `extern "C"` entry point the C ABI exports. PHP's `AbiSurfaceTest` and Node's `native.test.mjs` assert their declared surface against it.
+test/fixtures/channel_codecs.txt|One payload rule per channel codec. Every SDK whose channels carry no type asserts its coder against it.
+test/fixtures/durable_frame.txt|The on-disk record frame, byte for byte. The controller's writer and the core's reader are held to it.
+test/fixtures/host_class_decl_keys.txt|Every key of the `HostClassDecl` JSON. Six builders assert they spell exactly these.
+test/fixtures/knob_parse_cases.txt|How a configuration knob parses. Every SDK's `Env` asserts the same verdicts.
+test/fixtures/layout_rows.txt|Where the product puts its files and what `flz reset` does with each subtree.
+test/fixtures/local_mode_word_count.txt|The local-mode example's declared graph and its expected output, run by every SDK's local-mode test.
+test/fixtures/reference_topologies.txt|The reference channel topology for the shared fixture classes, and the refusals every authoring layer owes.
+test/fixtures/runner_connect_env.txt|The environment contract every SDK's connect path reads, and the socket-directory ladder in the order it is walked.
+protobufs/runner_commands.proto|The controller-runner command envelope. An SDK that encodes a command of its own generates from this file.
+flz_core/src/schema.rs|The activation and result wire shapes, and the hex vectors PHP's `SchemaFixtureTest` decodes. Read as data, never compiled by an SDK.
+flz_core_ffi/src/veneer/shape.rs|The veneer's record key tables. Node's `native-types.test.mjs` holds its TypeScript interfaces equal to them.
+flz_core_ffi/src/napi_glue.rs|The Node addon's `#[napi(object)]` structs, read by the same test.
+flz_core_ffi/src/napi_host/mod.rs|The Node addon's host-side objects, read by the same test.

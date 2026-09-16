@@ -687,3 +687,63 @@ vocabulary from the tier tags and SHALL NOT be folded into it.
 - **THEN** the report states, per tier, how many of its modules ran over each
   declared transport
 
+### Requirement: An SDK repository runs three tiers and no controller
+
+An SDK developed outside this tree SHALL prove itself with three tiers, none
+of which starts a controller: its unit suite, its local-mode tests, and a
+smoke tier that starts the fake controller binary, launches the SDK's own test
+app with the environment `test/fixtures/runner_connect_env.txt` pins, and
+exits with the binary's code. All three SHALL run from the SDK's tree with only
+the fixture set, the fake controller and the core source fetched from one core
+tag. Every end-to-end scenario SHALL stay in this tree.
+
+#### Scenario: The smoke tier runs with nothing of this tree checked out
+- **GIVEN** an SDK tree carrying `contract/`, the fetched fake controller and its wrapper crate pinned to one core tag
+- **WHEN** its CI script runs
+- **THEN** unit, local mode and smoke SHALL all run and no controller SHALL be built or started
+
+#### Scenario: A runner that cannot connect fails the smoke tier
+- **WHEN** the SDK's connect path stops honouring a variable the connect fixture pins
+- **THEN** the fake controller SHALL time out awaiting the connect frame and the tier SHALL fail naming it
+
+### Requirement: The fixtures are a named set an SDK vendors
+
+`test/fixtures/contract.txt` SHALL list every cross-language fixture and
+`protobufs/runner_commands.proto` with its purpose, and the static gate SHALL
+fail when the list and the directory disagree. The release SHALL publish the
+set as one archive with its checksum. Each SDK's tests SHALL resolve the fixture
+directory once, in this order: the directory `FLEZHA_CONTRACT_DIR` names, else
+`contract/` at the package root, else `test/fixtures` of the tree the package
+sits in, and SHALL fail rather than skip when none resolves.
+
+#### Scenario: A fixture without a manifest line fails the gate
+- **WHEN** a file with the fixture header exists under `test/fixtures/` and `contract.txt` does not list it
+- **THEN** the gate SHALL fail naming the file
+
+#### Scenario: The suite runs from a vendored copy
+- **WHEN** an SDK suite runs from a tree that carries `contract/` and no `test/fixtures`
+- **THEN** every fixture-reading test SHALL run against the vendored copy
+
+#### Scenario: No fixtures is a failure
+- **WHEN** none of the three locations resolves
+- **THEN** the suite SHALL fail naming the three it tried
+
+### Requirement: An extracted SDK is a pinned submodule at its original path
+
+An SDK that has moved to its own repository SHALL be present in this tree as
+a git submodule at `sdk/<lang>`, pinned to a commit, with
+`test/apps/<lang>_runner` a symlink to the test app inside it. The suite, the
+static gate, the build scripts and `PortPilot` SHALL run against it unchanged,
+and every end-to-end tier for that runtime SHALL run here against the pinned
+commit. Bumping the pin SHALL be the change that brings an SDK change into
+end-to-end.
+
+#### Scenario: The suite does not know the SDK moved
+- **GIVEN** `sdk/node` is a submodule and `test/apps/node_runner` its symlink
+- **WHEN** the gate, plain `mix test` and the Node smoke tier run
+- **THEN** they SHALL pass with no code path that distinguishes a submodule from a directory
+
+#### Scenario: An uninitialised submodule is a plain failure
+- **WHEN** the submodule is not checked out
+- **THEN** the gate SHALL fail on the missing manifest as it would for any absent test app, naming the path
+

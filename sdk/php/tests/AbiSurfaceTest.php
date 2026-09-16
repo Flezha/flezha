@@ -12,8 +12,8 @@ use ReflectionClass;
  *
  * A shim that binds the ABI directly has no exported symbols of its own to
  * compare, so what stands in for that is this: every function the `cdef`
- * declares must exist in the built library, and the declaration must name no
- * entry point the ABI does not have. Both directions matter — a typo in a
+ * declares must be in `test/fixtures/abi_surface.txt`, and the declaration must
+ * name no entry point that file does not have. Both directions matter: a typo in a
  * declaration is a runtime failure at the first call rather than a link error,
  * which is the one way binding a C ABI from a dynamic language is weaker than
  * a compiled veneer, and this is what closes it.
@@ -31,18 +31,20 @@ final class AbiSurfaceTest extends RepositoryTestCase
         return $names;
     }
 
-    /** @return list<string> the entry points `flz_core_ffi/src/lib.rs` exports */
+    /** @return list<string> the entry points the C ABI exports */
     private function exported(): array
     {
-        // Two files, because the C ABI is two: the general entry points and
-        // the local-mode ones. Reading only the first reports a name the
-        // crate does export as one it does not.
-        $source = '';
-        foreach (['flz_core_ffi/src/lib.rs', 'flz_core_ffi/src/local.rs'] as $file) {
-            $source .= (string) file_get_contents($this->repositoryFile($file));
-        }
-        preg_match_all('/extern "C" fn (flz_core_\w+)/', $source, $matches);
-        $names = array_values(array_unique($matches[1]));
+        // The fixture, not the crate's source: a `flz_core_ffi` test holds the
+        // two equal in both directions, and reading the source would make this
+        // suite runnable only inside a checkout of it.
+        $lines = file(
+            $this->repositoryFile('test/fixtures/abi_surface.txt'),
+            FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES,
+        ) ?: [];
+        $names = array_values(array_filter(
+            array_map('trim', $lines),
+            static fn (string $line): bool => $line !== '' && !str_starts_with($line, '#'),
+        ));
         sort($names);
 
         return $names;

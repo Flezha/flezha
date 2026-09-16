@@ -30,27 +30,21 @@ if File.exist?(prebuilt)
   exit 0
 end
 
-workspace = File.expand_path("../..", gem_root)
-manifest = File.join(workspace, "flz_core_ffi", "Cargo.toml")
-
-unless File.exist?(manifest)
-  abort <<~MESSAGE
-    flezha: no precompiled native library for #{RUBY_PLATFORM}, and no Rust workspace
-    to build one from. Install a precompiled platform gem, or build from a checkout
-    of the flezha repository, where `scripts/build-ruby-sdk.sh` produces it.
-  MESSAGE
-end
+# The wrapper crate beside this file: it names the core at a tag and turns the
+# `ruby` feature on, so building the source gem needs this package and a Rust
+# toolchain and nothing else on disk.
+manifest = File.join(ext_dir, "Cargo.toml")
 
 abort "flezha: building the source gem needs a Rust toolchain (`cargo` was not found)" unless
   find_executable("cargo")
 
 profile = ENV.fetch("FLEZHA_RUST_PROFILE", "release")
-args = ["cargo", "build", "--manifest-path=#{manifest}", "--features", "ruby"]
+args = ["cargo", "build", "--manifest-path=#{manifest}"]
 args << "--release" if profile == "release"
 
 abort "flezha: cargo failed to build flz_core_ffi" unless system(*args)
 
-built = File.join(workspace, "target", profile, "libflz_core_ffi.#{RbConfig::CONFIG['SOEXT'] || 'so'}")
+built = File.join(ext_dir, "target", profile, "libflz_core_ffi.#{RbConfig::CONFIG['SOEXT'] || 'so'}")
 FileUtils.mkdir_p(File.dirname(prebuilt))
 FileUtils.cp(built, prebuilt)
 

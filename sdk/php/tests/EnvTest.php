@@ -5,13 +5,10 @@ declare(strict_types=1);
 namespace Flezha\Tests;
 
 use Flezha\Env;
-use PHPUnit\Framework\TestCase;
 
 /** This runtime's reading of the shared parse fixture. */
-final class EnvTest extends TestCase
+final class EnvTest extends RepositoryTestCase
 {
-    private const FIXTURE = __DIR__ . '/../../../test/fixtures/knob_parse_cases.txt';
-
     public function testEveryCaseParsesTheWayTheFixtureSays(): void
     {
         $seen = [];
@@ -46,7 +43,10 @@ final class EnvTest extends TestCase
     /** @return list<array{0: string, 1: string, 2: string}> */
     private function cases(): array
     {
-        $lines = file(self::FIXTURE, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $lines = file(
+            $this->repositoryFile('test/fixtures/knob_parse_cases.txt'),
+            FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES,
+        );
         $cases = [];
         foreach ($lines as $line) {
             if (trim($line) === '' || str_starts_with($line, '#')) {

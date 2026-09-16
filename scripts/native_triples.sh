@@ -43,8 +43,24 @@ declare -A TRIPLE_TO_PREFIX=(
   ["x86_64-pc-windows-gnu"]=""
 )
 
+# Cargo's executable suffix for the platform; empty everywhere but Windows.
+declare -A TRIPLE_TO_BIN_EXT=(
+  ["x86_64-unknown-linux-gnu"]=""
+  ["aarch64-unknown-linux-gnu"]=""
+  ["x86_64-apple-darwin"]=""
+  ["aarch64-apple-darwin"]=""
+  ["x86_64-pc-windows-gnu"]=".exe"
+)
+
 # The published name of one triple's asset on a GitHub Release.
 release_asset_name() {
   local dir="$1" ext="$2"
   echo "libflz_core_ffi-${dir}.${ext}"
+}
+
+# The published name of one triple's fake controller. An SDK repository's CI
+# fetches it by this name the way the Java build fetches a missing library.
+release_binary_name() {
+  local dir="$1" bin_ext="$2"
+  echo "flz-fake-controller-${dir}${bin_ext}"
 }

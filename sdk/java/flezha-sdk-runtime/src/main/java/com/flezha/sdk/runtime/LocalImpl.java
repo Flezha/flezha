@@ -97,8 +97,18 @@ public final class LocalImpl implements LocalRunHandle {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        FlzCore.localStop(core);
         joinOutputs();
+        // Stop the run first, then take what it released and the drain thread
+        // had not reached: a value can be queued for up to one poll interval,
+        // and ending the run while it sits there is how an author loses output
+        // the graph did produce. Stopping drops the sender, so this ends at
+        // the first empty read rather than waiting.
+        FlzCore.localStop(core);
+        for (byte[] encoded = FlzCore.localNextOutput(core, 0);
+                encoded != null;
+                encoded = FlzCore.localNextOutput(core, 0)) {
+            deliver(ActivationCodec.decodeOutput(encoded));
+        }
         // Not `FlzCore.shutdown`: that stops the process-wide poll core, and
         // a process may start another local run after this one.
         pollHost.stopFetching();

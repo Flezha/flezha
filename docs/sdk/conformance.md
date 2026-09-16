@@ -243,6 +243,67 @@ declares is its `capability:`, which the manifests read; a second tag naming the
 same scenario reads like a filter and selects nothing. Run one module by naming
 its file.
 
+## An SDK repository's own tiers
+
+An SDK developed in a repository of its own runs three tiers, and none of them
+starts a controller.
+
+| Tier | What it proves | What it needs |
+| --- | --- | --- |
+| unit | the package's own suite, including every test that reads a shared fixture | the contract set |
+| local mode | the five capabilities the language layer owns, run in process on the production dispatch path | the contract set and the native binary |
+| smoke | the SDK connects, is given work, completes it and shuts down | the native binary and the fake controller |
+
+All three run against artefacts one core release published: the native binary,
+`flz-fake-controller`, and `flezha-fixtures-<version>.tar.gz`. None of them
+builds the core, and none needs a checkout of it.
+
+What an SDK repository cannot see is everything in the capability vocabulary
+the controller owns: persistence, effectively-once, correction, partitioning,
+workflows, liveness, restarts. Every one of those is an end-to-end scenario and
+runs here, against the commit this tree pins the SDK at. Bumping that pin is
+what brings an SDK change into end-to-end.
+
+### The fake controller
+
+`flz-fake-controller` is the control-socket peer a runner meets when there is
+no controller. It is a binary of `flz_core_ffi` behind its `fake-controller`
+feature, over the same module the crate's own ABI scenario drives, so the
+binary and the suite here cannot read the wire two different ways. It is
+published for every supported triple beside the native libraries, with its
+checksum in the same manifest.
+
+```
+flz-fake-controller --socket-dir <dir> --factory <id> [--operative <id>]
+                    [--transport uds] [--channel <name>] [--inputs <file>]
+                    [--runner-id <id>] [--expect-outputs <n>] [--timeout-ms <ms>]
+```
+
+It binds the control socket and the two data sockets in `--socket-dir`, waits
+for a runner to connect and declare `--factory`, walks the handshake, starts
+the class, feeds one input per line of `--inputs`, counts `--expect-outputs`
+frames back, and then disconnects and waits for the runner to go. It prints
+each frame as it awaits it and exits non-zero naming the first that is wrong or
+late, so a failing tier says which end stopped. The tier's verdict is this
+binary's exit code, never the runner's: a terminal disconnect ends a runner
+non-zero on purpose.
+
+`--transport` takes `uds`. QUIC is refused by name rather than ignored,
+because its peer needs this repository's test certificates.
+
+### An extracted SDK is a submodule at its old path
+
+An SDK that has moved to its own repository is present here as a git submodule
+at `sdk/<lang>`, pinned to a commit, with `test/apps/<lang>_runner` a symlink to
+the test app inside it. Nothing in the harness learns about repositories: the
+gate globs the same paths, the build scripts `cd` into the same directories,
+and `PortPilot` reads the manifest where it always was. An uninitialised
+submodule fails the gate on the missing manifest, as any absent test app would.
+
+The one thing that does change is the static gates that walk `git ls-files`,
+which does not enter a submodule. Those that apply to an extracted SDK's source
+run in its own repository's CI instead.
+
 ## The report
 
 With `FLEZHA_E2E_RUNTIME` set, or after any `:system` test ran, the
@@ -264,6 +325,37 @@ and nothing else compares them: the gate names the set once and measures each
 SDK's own wrapper against it, and refuses a wrapper that names a verb it will
 not call or a refusal reason of its own. Reachability is the controller's
 answer, so an SDK that decided for itself would be a second policy point.
+
+### The contract set
+
+The cross-language fixtures are a named set, and `test/fixtures/contract.txt`
+is the name. Every member is listed there with its repository-relative path and
+what reads it: the declaration keys, the knob parse rule, the reference
+topologies, the channel codecs, the local-mode scenario, the durable frame, the
+layout rows, the connect environment, the C ABI surface,
+`protobufs/runner_commands.proto`, and the few files that are still written as
+Rust tables and read as data. The gate holds the list and the directory equal,
+so a fixture the tree gains and the list does not name fails by name.
+
+A release publishes the set as one archive,
+`flezha-fixtures-<version>.tar.gz`, whose entries are those paths verbatim. An
+SDK developed outside this tree unpacks it at `contract/` in its own package.
+
+Every SDK's tests resolve the directory those paths hang off **once**, in this
+order:
+
+1. the directory `FLEZHA_CONTRACT_DIR` names,
+2. else `contract/` at the package root,
+3. else the nearest enclosing tree that carries the manifest.
+
+None of the three resolving is a **failure naming all three**, never a skip. A
+skip is how twelve of the PHP package's tests stopped running outside a
+checkout without anyone noticing.
+
+`test/fixtures/abi_surface.txt` is the member that exists so that a host
+binding declaring the C surface in its own language asserts against data rather
+than against the crate's source. A `flz_core_ffi` test holds the file and the
+crate's exports equal in both directions.
 
 It also pins the half a fixture cannot express. `test/fixtures/runner_connect_env.txt`
 holds the environment contract every SDK's connect path reads — the
@@ -380,6 +472,20 @@ What the gate enforces, in the order it checks — a pull request adding
     `test/fixtures/reference_topologies.txt` through its own builder, and the
     manifest declares `topology_surfaces` — the authoring surfaces that builder
     carries. See "The refusal table" below.
+
+### From outside this tree
+
+An SDK developed in a repository of its own joins the suite the same way, with
+two differences. Its test app is a directory of its own repository rather than
+of this one, and it arrives here as a submodule at `sdk/<lang>` with
+`test/apps/<lang>_runner` a symlink to it, so every path above is the path the
+gate already checks. And its own suite carries the three tiers described under
+"An SDK repository's own tiers", which is what makes a change to it provable
+before this tree bumps the pin.
+
+The manifest's `build` line names the command that builds the runner in the
+repository the manifest lives in. `PortPilot` quotes it when an artifact is
+missing and never runs it.
 
 ### The refusal table
 

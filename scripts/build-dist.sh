@@ -5,6 +5,14 @@
 #   1. flz_core_ffi cdylib (poll-core ABI + JNI, feature "jni") for all 5
 #      platforms ->
 #      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_core_ffi.<ext>
+#   1a. flz-fake-controller (feature "fake-controller") for all 5 platforms ->
+#      dist/tools/<sdk-dir>/flz-fake-controller
+#   1b. The contract set (test/fixtures/contract.txt) as one archive, staged
+#      by --stage-release only: it is files already in the tree, not a build.
+#   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
+#      package's own table declares -> dist/node-addons/<suffix>/, packed into
+#      the per-platform packages at dist/node-packages/
+#   1d. abi3 wheels (feature "python-abi3") for all 5 platforms -> dist/wheels/
 #   2. The same five libraries staged for the PHP package ->
 #      sdk/php/lib/<sdk-dir>/libflz_core_ffi.<ext>
 #   3. SDK fat jar ->
@@ -25,7 +33,7 @@
 #             on first run; cached afterward. Bind-mounts the repo and a
 #             persistent named volume for cargo + maven caches.
 #   --stage-release <dir>
-#             Do not build. Copy the seven artefacts already on disk into
+#             Do not build. Copy the artefacts already on disk into
 #             <dir> under their published asset names and write a SHA-256
 #             manifest beside them. This is what the release job uploads,
 #             and the names are the ones `scripts/build-native.sh
@@ -33,6 +41,8 @@
 #
 # Host-mode requirements that this script will NOT auto-install:
 #   - Rust stable (rustup), Maven 3.8+, JDK 21, python3 + python3-venv
+#   - Node 20+, and maturin in sdk/python/.venv (scripts/build-python-sdk.sh
+#     creates the venv; then `.venv/bin/pip install maturin`)
 # Docker-mode requirements:
 #   - docker (CLI access; group membership or sudo set up by the caller)
 #
@@ -104,11 +114,23 @@ fi
 # ---------------------------------------------------------------------------
 # Output paths
 # ---------------------------------------------------------------------------
+# The contract set an SDK vendors: the list, and the archive staged from it.
+CONTRACT_MANIFEST="test/fixtures/contract.txt"
 NATIVE_OUT="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
 # The PHP package loads the same libraries through ext-ffi, from directories
 # named the same way. Not committed: they are build output the release job
 # stages, which is why `sdk/php/.gitignore` excludes them.
 PHP_NATIVE_OUT="${REPO_ROOT}/sdk/php/lib"
+# The fake controller is loaded by no package; it is a release asset an SDK
+# repository fetches, so it is staged on its own rather than into an SDK tree.
+TOOLS_OUT="${REPO_ROOT}/dist/tools"
+# The Node addons, one directory per platform suffix, and the per-platform
+# packages `scripts/platform-package.mjs` writes around them.
+NODE_ADDONS_OUT="${REPO_ROOT}/dist/node-addons"
+NODE_PACKAGES_OUT="${REPO_ROOT}/dist/node-packages"
+NODE_PLATFORM_TABLE="${REPO_ROOT}/sdk/node/dist/esm/platforms.js"
+# The `abi3` wheels, one per platform.
+WHEELS_OUT="${REPO_ROOT}/dist/wheels"
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
 TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
 
@@ -139,6 +161,19 @@ require_cmd() {
 # shellcheck source=scripts/native_triples.sh
 source "${SCRIPT_DIR}/native_triples.sh"
 
+# The Node package's platform table, one `<suffix>|<target>` row per platform.
+# Read from what the package built rather than transcribed here: the loader
+# resolves against that table, and a platform declared in one place and
+# forgotten in the other is an optional dependency npm skips in silence at
+# install time.
+node_platforms() {
+  node -e '
+    import(process.argv[1]).then(({ NATIVE_PLATFORMS }) => {
+      for (const p of NATIVE_PLATFORMS) console.log(`${p.suffix}|${p.target}`);
+    });
+  ' "${NODE_PLATFORM_TABLE}"
+}
+
 # ---------------------------------------------------------------------------
 # stage-release mode: publish what is already on disk. No build, no toolchain.
 # ---------------------------------------------------------------------------
@@ -151,6 +186,7 @@ if [[ "${MODE}" == "stage-release" ]]; then
 
   missing=()
   assets=()
+  RELEASE_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "${REPO_ROOT}/Cargo.toml")"
   stage_asset() {
     local src="$1" name="$2"
     if [[ ! -f "${src}" ]]; then missing+=("${src}"); return; fi
@@ -158,14 +194,85 @@ if [[ "${MODE}" == "stage-release" ]]; then
     assets+=("${name}")
   }
 
+  # One packed package per platform the Node package declares, named by the
+  # table rather than globbed: a release that publishes a parent declaring five
+  # optional dependencies and carries four is an install that fails at first
+  # load, on the one platform nobody tested.
+  stage_node_packages() {
+    if [[ ! -f "${NODE_PLATFORM_TABLE}" ]]; then
+      missing+=("${NODE_PLATFORM_TABLE} (the Node platform table; build the package first)")
+      return 0
+    fi
+    while IFS='|' read -r suffix _; do
+      [[ -n "${suffix}" ]] || continue
+      stage_asset "${NODE_PACKAGES_OUT}/flezha-sdk-${suffix}-${RELEASE_VERSION}.tgz" \
+                  "flezha-sdk-${suffix}-${RELEASE_VERSION}.tgz"
+    done < <(node_platforms)
+  }
+
+  # One wheel per platform. The file name carries a platform tag this script
+  # cannot predict (`manylinux_2_34_x86_64`, `macosx_11_0_arm64`), so the count
+  # is what is checked: a release that shipped four of five would leave one
+  # platform on the source distribution and a Rust toolchain. No wheel at all
+  # is a build that did not run, not an empty release.
+  stage_wheels() {
+    local wheels=()
+    shopt -s nullglob
+    wheels=("${WHEELS_OUT}"/*.whl)
+    shopt -u nullglob
+    if (( ${#wheels[@]} == 0 )); then
+      missing+=("${WHEELS_OUT}/*.whl (an abi3 wheel)")
+    elif (( ${#wheels[@]} != ${#ALL_TRIPLES[@]} )); then
+      missing+=("${#wheels[@]} of ${#ALL_TRIPLES[@]} abi3 wheels in ${WHEELS_OUT}")
+    fi
+    for src in "${wheels[@]}"; do
+      stage_asset "${src}" "$(basename "${src}")"
+    done
+  }
+
+  # The contract set as one archive: every member `test/fixtures/contract.txt`
+  # lists, at the same repository-relative path inside it, so an SDK unpacks it
+  # at `contract/` and its tests resolve what they already spell. Built from
+  # the list and never from a glob: a file the list does not name is not part
+  # of the contract, and one it names and the tree has not got is a staging
+  # failure rather than a short archive nobody notices.
+  stage_fixture_archive() {
+    local archive="flezha-fixtures-${RELEASE_VERSION}.tar.gz" members=()
+
+    while IFS= read -r member; do
+      members+=("${member}")
+      [[ -f "${REPO_ROOT}/${member}" ]] || missing+=("${member} (named by ${CONTRACT_MANIFEST})")
+    done < <(sed -e 's/#.*$//' -e 's/|.*$//' -e '/^[[:space:]]*$/d' "${REPO_ROOT}/${CONTRACT_MANIFEST}")
+
+    if (( ${#members[@]} == 0 )); then
+      missing+=("${CONTRACT_MANIFEST} names no members")
+      return 0
+    fi
+    # Something else is already missing, so the release will be refused anyway;
+    # building the archive would only add a file nobody uploads. `return 0`
+    # rather than a bare `return`: under `set -e` a function that answers the
+    # `||` with a non-zero status ends the script, silently.
+    (( ${#missing[@]} == 0 )) || return 0
+
+    tar -czf "${STAGE_RELEASE_DIR}/${archive}" -C "${REPO_ROOT}" "${members[@]}"
+    assets+=("${archive}")
+    echo "  -> ${archive} (${#members[@]} members)"
+  }
+
   for t in "${ALL_TRIPLES[@]}"; do
     dir="${TRIPLE_TO_DIR[${t}]}"
     ext="${TRIPLE_TO_EXT[${t}]}"
+    bin_ext="${TRIPLE_TO_BIN_EXT[${t}]}"
     stage_asset "${NATIVE_OUT}/${dir}/libflz_core_ffi.${ext}" \
                 "$(release_asset_name "${dir}" "${ext}")"
+    stage_asset "${TOOLS_OUT}/${dir}/flz-fake-controller${bin_ext}" \
+                "$(release_binary_name "${dir}" "${bin_ext}")"
   done
   stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
   stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
+  stage_fixture_archive
+  stage_node_packages
+  stage_wheels
 
   if (( ${#missing[@]} > 0 )); then
     red "cannot stage a release: these artefacts are not built yet"
@@ -235,34 +342,144 @@ done
 HOST_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
 mkdir -p "${NATIVE_OUT}"
 
-build_native() {
-  local crate="$1" features="$2" t="$3"
-  step "building ${crate} for ${t}"
-  local feature_args=()
-  [[ -n "${features}" ]] && feature_args=(--features "${features}")
+# One release build for one triple: native on the host, through zig everywhere
+# else. Every artefact this script produces goes through here, so a change to
+# how a triple is cross-built is a change in one place.
+cargo_for_triple() {
+  local t="$1"; shift
   if [[ "${t}" == "${HOST_TRIPLE}" ]]; then
-    cargo build --release -p "${crate}" "${feature_args[@]}" --target "${t}"
+    cargo build --release --target "${t}" "$@"
   else
-    cargo zigbuild --release -p "${crate}" "${feature_args[@]}" --target "${t}"
+    cargo zigbuild --release --target "${t}" "$@"
   fi
+}
 
-  local src="${CARGO_TARGET_DIR}/${t}/release/${TRIPLE_TO_PREFIX[${t}]}${crate}.${TRIPLE_TO_EXT[${t}]}"
-  local dst_dir="${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}"
-  local dst="${dst_dir}/lib${crate}.${TRIPLE_TO_EXT[${t}]}"
-
+# The one file a `cargo_for_triple` build produced for `t`, copied to where a
+# package or the release takes it from. Output that is not there stops the
+# script: the build did not produce what it was asked for.
+stage_built() {
+  local t="$1" built="$2" dst="$3"
+  local src="${CARGO_TARGET_DIR}/${t}/release/${built}"
   if [[ ! -f "${src}" ]]; then
     red "expected build output missing: ${src}"
     exit 1
   fi
-
-  mkdir -p "${dst_dir}"
+  mkdir -p "$(dirname "${dst}")"
   cp "${src}" "${dst}"
   echo "  -> ${dst}"
 }
 
 for t in "${ALL_TRIPLES[@]}"; do
-  build_native flz_core_ffi jni "${t}"
+  step "building flz_core_ffi for ${t}"
+  cargo_for_triple "${t}" -p flz_core_ffi --features jni
+  stage_built "${t}" "${TRIPLE_TO_PREFIX[${t}]}flz_core_ffi.${TRIPLE_TO_EXT[${t}]}" \
+              "${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}/libflz_core_ffi.${TRIPLE_TO_EXT[${t}]}"
 done
+
+# ---------------------------------------------------------------------------
+# 4a. The fake controller, one per triple.
+#
+#     An SDK repository's smoke tier fetches this and drives its own runner
+#     with it, so it ships beside the libraries and under the same manifest.
+#     Built from the same crate with the `fake-controller` feature: the binary
+#     and the ABI scenario read one module, so a tier that passes out there and
+#     the suite here cannot be measuring two different wires.
+# ---------------------------------------------------------------------------
+for t in "${ALL_TRIPLES[@]}"; do
+  step "building flz-fake-controller for ${t}"
+  cargo_for_triple "${t}" -p flz_core_ffi --features fake-controller --bin flz-fake-controller
+  bin="flz-fake-controller${TRIPLE_TO_BIN_EXT[${t}]}"
+  stage_built "${t}" "${bin}" "${TOOLS_OUT}/${TRIPLE_TO_DIR[${t}]}/${bin}"
+done
+
+# ---------------------------------------------------------------------------
+# 4c. The Node addons, one per row of the package's own platform table, and
+#     the per-platform packages around them.
+#
+#     Its Windows row is `x86_64-pc-windows-msvc`, which zig cannot produce:
+#     the addon has to be built on an MSVC host. A row this host cannot build
+#     is named and skipped rather than filled with a binary of the wrong ABI,
+#     and `--stage-release` refuses the incomplete set by name.
+# ---------------------------------------------------------------------------
+step "building the Node addons"
+require_cmd node "install Node 20+"
+# What this host cannot produce, collected across the Node and Python arms and
+# reported once. A release takes each from the job that runs on the right host.
+UNBUILDABLE=()
+
+( cd "${REPO_ROOT}/sdk/node" && npm ci --no-audit --no-fund --silent && node scripts/build.mjs )
+
+while IFS='|' read -r suffix target; do
+  [[ -n "${suffix}" ]] || continue
+  echo
+  bold "── building the ${suffix} addon (${target})"
+  if ! rustup target list --installed 2>/dev/null | grep -qx "${target}"; then
+    rustup target add "${target}" || true
+  fi
+  if ! cargo_for_triple "${target}" -p flz_core_ffi --features napi; then
+    red "  cannot build ${target} on this host; the ${suffix} addon is not staged"
+    UNBUILDABLE+=("${suffix} (${target})")
+    continue
+  fi
+  case "${target}" in
+    *windows*) built="flz_core_ffi.dll" ;;
+    *apple*)   built="libflz_core_ffi.dylib" ;;
+    *)         built="libflz_core_ffi.so" ;;
+  esac
+  stage_built "${target}" "${built}" "${NODE_ADDONS_OUT}/${suffix}/flz_core_ffi.node"
+done < <(node_platforms)
+
+step "packing the per-platform Node packages"
+( cd "${REPO_ROOT}/sdk/node" \
+  && node scripts/platform-package.mjs "${NODE_ADDONS_OUT}" "${NODE_PACKAGES_OUT}" )
+
+# `npm pack` on each, so a release asset is one file with one checksum. The
+# tarball npm publishes and the tarball the release carries are then the same
+# bytes, which is the only way a consumer can check what they installed.
+for package in "${NODE_PACKAGES_OUT}"/*/; do
+  [[ -d "${package}" ]] || continue
+  ( cd "${package}" && npm pack --pack-destination "${NODE_PACKAGES_OUT}" --silent >/dev/null )
+  echo "  -> $(basename "${package%/}").tgz"
+done
+
+# ---------------------------------------------------------------------------
+# 4d. The `abi3` wheels.
+#
+#     Built through the package's own `pyproject.toml`, which is the only way
+#     the wheel carries the `flezha` project metadata rather than the crate's.
+#     That means maturin builds `sdk/python/native`, the wrapper, and cargo
+#     fetches the core at the tag it names. A release IS that tag, so the wheel
+#     it publishes is built from exactly the source the tag holds; a build from
+#     a tree whose tag is not reachable fails here, with cargo's own message.
+#
+#     This is the one step of this script that reaches the network. The
+#     day-to-day loop does not: `scripts/build-python-sdk.sh` builds the
+#     feature from the workspace and copies the library into the package.
+# ---------------------------------------------------------------------------
+step "building the abi3 wheels"
+MATURIN="${REPO_ROOT}/sdk/python/.venv/bin/maturin"
+if [[ ! -x "${MATURIN}" ]]; then
+  red "maturin is not installed at ${MATURIN}"
+  red "  scripts/build-python-sdk.sh creates the venv; then: .venv/bin/pip install maturin"
+  exit 1
+fi
+mkdir -p "${WHEELS_OUT}"
+for t in "${ALL_TRIPLES[@]}"; do
+  echo
+  bold "── building the ${t} wheel"
+  wheel_args=(--release --target "${t}" --out "${WHEELS_OUT}" --features python-abi3)
+  [[ "${t}" == "${HOST_TRIPLE}" ]] || wheel_args+=(--zig)
+  if ! ( cd "${REPO_ROOT}/sdk/python" && "${MATURIN}" build "${wheel_args[@]}" ); then
+    red "  cannot build the ${t} wheel on this host"
+    UNBUILDABLE+=("the ${t} wheel")
+  fi
+done
+
+if (( ${#UNBUILDABLE[@]} > 0 )); then
+  red "these artefacts need a host this one is not:"
+  printf '  %s\n' "${UNBUILDABLE[@]}" >&2
+  red "a release takes them from the job that runs on it; --stage-release refuses without them"
+fi
 
 # ---------------------------------------------------------------------------
 # 4b. Stage the same five binaries into the PHP package.

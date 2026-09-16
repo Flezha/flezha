@@ -1,124 +1,57 @@
-//! What the scenario drives the ABI with: a fake controller on a real control
-//! socket, and the poll/complete pair every phase calls.
+//! What the scenario drives the ABI with: the poll/complete pair every phase
+//! calls, over the crate's own fake controller.
 //!
-//! The controller captures every runner→controller frame and wakes
-//! [`Controller::await_frame`] on each one, so a phase waits for the frame it
-//! needs rather than for a duration.
-
-use std::os::unix::net::UnixListener;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+//! The controller is [`flz_core_ffi::fake_controller::Controller`], the one
+//! `flz-fake-controller` drives rather than a copy of it, so a frame it learns to
+//! handle is learnt here and in the binary at once. It captures every
+//! runner→controller frame and wakes [`Controller::await_frame`] on each one,
+//! so a phase waits for the frame it needs rather than for a duration.
 
 use flz_core::schema;
+pub use flz_core_ffi::fake_controller::Controller;
 use flz_core_ffi::veneer::{last_error_of, CtxPtr};
 use flz_core_ffi::*;
-use flz_transport::transport::FlezhaStream;
-use prost::Message;
 
-/// A captured runner→controller frame: its payload id and its message bytes.
-pub type CapturedFrame = (String, Vec<u8>);
-
-type Frames = Arc<(Mutex<Vec<CapturedFrame>>, Condvar)>;
-
-/// The controller end of the control channel: accepts, captures every frame
-/// the runner writes, and holds the write half so a phase can push commands.
-pub struct Controller {
-    accepted: Arc<AtomicUsize>,
-    frames: Frames,
-    writer: Arc<Mutex<Option<FlezhaStream>>>,
+/// The controller's answers in a test's voice.
+///
+/// The module reports a refusal rather than raising one, because
+/// `flz-fake-controller` turns it into an exit code and a message an SDK
+/// author reads. A phase of this scenario has nothing to do with a refusal but
+/// fail, so it gets the short name and the panic here rather than a second
+/// method on the module.
+pub trait Demanded {
+    fn send(&self, reference_id: &str, command: flz_core::pb::command_request::Command);
+    fn await_frame<T>(
+        &self,
+        what: &str,
+        probe: impl Fn(&[flz_core_ffi::fake_controller::CapturedFrame]) -> Option<T>,
+    ) -> T;
+    fn await_reply(&self, what: &str, reference_id: &str) -> flz_core::pb::CommandResponse;
+    fn await_success(&self, what: &str, reference_id: &str);
 }
 
-impl Controller {
-    pub fn start(dir: &std::path::Path) -> Self {
-        let listener = UnixListener::bind(dir.join("runner_control_channel.sock"))
-            .expect("bind control socket");
-        let controller = Self {
-            accepted: Arc::new(AtomicUsize::new(0)),
-            frames: Arc::new((Mutex::new(Vec::new()), Condvar::new())),
-            writer: Arc::new(Mutex::new(None)),
-        };
-        let counter = Arc::clone(&controller.accepted);
-        let frames = Arc::clone(&controller.frames);
-        let writer_slot = Arc::clone(&controller.writer);
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(s) = stream else { break };
-                counter.fetch_add(1, Ordering::SeqCst);
-                let write_half = s.try_clone().expect("clone control stream");
-                *writer_slot.lock().unwrap() = Some(FlezhaStream::Unix(write_half));
-                let frames = Arc::clone(&frames);
-                thread::spawn(move || capture(FlezhaStream::Unix(s), frames));
-            }
-        });
-        controller
+impl Demanded for Controller {
+    fn send(&self, reference_id: &str, command: flz_core::pb::command_request::Command) {
+        self.try_send(reference_id, command)
+            .expect("write command frame");
     }
 
-    /// How many control connections have been accepted.
-    pub fn accepted(&self) -> usize {
-        self.accepted.load(Ordering::SeqCst)
+    fn await_frame<T>(
+        &self,
+        what: &str,
+        probe: impl Fn(&[flz_core_ffi::fake_controller::CapturedFrame]) -> Option<T>,
+    ) -> T {
+        self.try_await_frame(what, probe)
+            .unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// Push a controller→runner command down the accepted connection.
-    pub fn send(&self, reference_id: &str, command: flz_core::pb::command_request::Command) {
-        use std::io::Write;
-        let request = flz_core::pb::CommandRequest {
-            reference_id: reference_id.to_string(),
-            command: Some(command),
-        };
-        let frame = flz_transport::service::payloader::build_from_binary(
-            "cmd",
-            &request.encode_to_vec(),
-            Default::default(),
-        )
-        .unwrap();
-        let mut guard = self.writer.lock().unwrap();
-        let stream = guard.as_mut().expect("control connection accepted");
-        (&*stream).write_all(&frame).expect("write command frame");
+    fn await_reply(&self, what: &str, reference_id: &str) -> flz_core::pb::CommandResponse {
+        self.try_await_reply(what, reference_id)
+            .unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// Wait until `probe` finds what it is looking for among the captured
-    /// frames, or fail naming `what`.
-    pub fn await_frame<T>(&self, what: &str, probe: impl Fn(&[CapturedFrame]) -> Option<T>) -> T {
-        let (captured, arrived) = &*self.frames;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut frames = captured.lock().unwrap();
-        loop {
-            if let Some(found) = probe(&frames) {
-                return found;
-            }
-            let left = deadline.saturating_duration_since(Instant::now());
-            assert!(!left.is_zero(), "timed out waiting for {what}");
-            frames = arrived.wait_timeout(frames, left).unwrap().0;
-        }
-    }
-
-    /// Wait for the command reply carrying `reference_id`.
-    pub fn await_reply(&self, what: &str, reference_id: &str) -> flz_core::pb::CommandResponse {
-        self.await_frame(what, |captured| {
-            captured.iter().find_map(|(id, m)| {
-                (id == "cmd")
-                    .then(|| flz_core::pb::CommandResponse::decode(m.as_slice()).ok())
-                    .flatten()
-                    .filter(|r| r.reference_id == reference_id)
-            })
-        })
-    }
-
-    /// Wait for a successful command reply carrying `reference_id`.
-    pub fn await_success(&self, what: &str, reference_id: &str) {
+    fn await_success(&self, what: &str, reference_id: &str) {
         assert_eq!(self.await_reply(what, reference_id).status, "success");
-    }
-}
-
-fn capture(stream: FlezhaStream, frames: Frames) {
-    let (captured, arrived) = &*frames;
-    while let Ok((payload_id, message, _metadata)) =
-        flz_transport::service::payloader::extract_payload(&stream)
-    {
-        captured.lock().unwrap().push((payload_id, message));
-        arrived.notify_all();
     }
 }
 

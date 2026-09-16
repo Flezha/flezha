@@ -37,12 +37,13 @@ and no Rust toolchain is needed. The five are published from one table,
 against, and the release refuses to pack the parent unless all five were built.
 
 The published package carries no binary of its own, so a platform with no
-prebuilt package is a source build from a checkout of this repository, with a
-stable Rust toolchain:
+prebuilt package is a source build. It needs a stable Rust toolchain and the
+package itself, not a checkout of this repository: `native/` is a wrapper crate
+whose one dependency is the core at a git tag.
 
 ```bash
-cargo build -p flz_core_ffi --features napi --release
-node sdk/node/scripts/install-native.mjs
+cargo build --manifest-path native/Cargo.toml --release
+node scripts/install-native.mjs
 ```
 
 `FLEZHA_NATIVE_BINARY` points the loader at an already-built addon from

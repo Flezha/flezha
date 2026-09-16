@@ -157,7 +157,12 @@ final class LocalOperative
             return;
         }
         $this->closed = true;
+        // Stop the run first, then take what it released and the loop had not
+        // reached: ending the run while a value sits in the queue is how an
+        // author loses output the graph did produce. Stopping drops the
+        // sender, so the drain ends at the first empty read.
         $this->core->localStop();
+        $this->drainOutputs();
         // Not `shutdown`: that stops the process-wide poll core, and a process
         // may start another local run after this one.
         $this->core->free();

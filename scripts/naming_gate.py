@@ -111,6 +111,42 @@ def tracked_files(pathspec=()):
     return [rel for rel in listing.split("\0") if rel]
 
 
+def carried_files():
+    """Every path this repository carries that `git ls-files` does not report.
+
+    Two kinds, both of which an extracted SDK produces. A SUBMODULE's contents:
+    the index holds the gitlink and nothing inside it, but the files are on
+    disk at the path `.gitmodules` names and a reader following a citation into
+    one finds them. And a path through a tracked DIRECTORY SYMLINK: the index
+    holds the link, so `sdk/node/test_app/conformance.json` is reported and
+    `test/apps/node_runner/conformance.json`, the name every manifest reader
+    and every document uses, is not.
+
+    A submodule that is not checked out contributes nothing, which is the same
+    answer the rest of the tooling gives for one.
+    """
+    paths = []
+    listing = subprocess.run(
+        ["git", "submodule", "--quiet", "foreach", "--recursive", "echo $sm_path"],
+        capture_output=True,
+        check=False,
+    )
+    for sm_path in listing.stdout.decode().split("\n"):
+        sm_path = sm_path.strip()
+        if not sm_path:
+            continue
+        inner = subprocess.run(
+            ["git", "-C", sm_path, "ls-files", "-z"], capture_output=True, check=False
+        ).stdout.decode()
+        paths += [f"{sm_path}/{rel}" for rel in inner.split("\0") if rel]
+
+    # A tracked symlink to a directory, as the paths reached through it.
+    for link in tracked_files():
+        if os.path.islink(link) and os.path.isdir(link):
+            paths += disk_files([link])
+    return paths
+
+
 # Directories that hold build output or a vendored tree rather than source.
 # A disk walk has to name them; `git ls-files` never lists them at all.
 UNWALKED_DIRS = {

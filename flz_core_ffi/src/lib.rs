@@ -28,6 +28,8 @@
 //! one.
 
 mod error;
+#[cfg(feature = "fake-controller")]
+pub mod fake_controller;
 #[cfg(feature = "jni")]
 pub mod jni_glue;
 mod local;

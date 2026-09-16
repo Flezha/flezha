@@ -18,7 +18,7 @@ use prost::Message;
 
 use crate::harness::{
     abi_complete, abi_complete_mapped, abi_poll, last_error, ok_effect, through_veneers,
-    work_payloads, Controller,
+    work_payloads, Controller, Demanded,
 };
 
 #[test]

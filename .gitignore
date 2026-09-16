@@ -80,6 +80,9 @@ examples/**/target/
 sdk/java/flezha-sdk-native/src/main/resources/native/
 sdk/java/flezha-sdk/dist/
 test/apps/java_runner/dist/
+# The release staging root: the fake controller, the addons and the wheels the
+# five-triple build produces. Build output, never tracked.
+/dist/
 
 # scripts/ci-local.sh isolates its Cargo artifacts here so it doesn't
 # collide with anything else under /target/.

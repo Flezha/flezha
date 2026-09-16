@@ -6,10 +6,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use flz_core::schema;
+use flz_core_ffi::fake_controller::shutdown_notification;
 use flz_core_ffi::*;
-use prost::Message;
 
-use crate::harness::{abi_complete_mapped, abi_poll, Controller};
+use crate::harness::{abi_complete_mapped, abi_poll, Controller, Demanded};
 
 /// `flz_core_shutdown` ships every live Entity's state as a
 /// `RunnerShutdownNotification` before the core reports shutting down: the
@@ -98,26 +98,5 @@ fn serve_until_shutdown(ctx: *mut FlzContext) -> (usize, Duration) {
             }
             (status, _) => panic!("unexpected poll status {status} during shutdown"),
         }
-    }
-}
-
-/// The `RunnerShutdownNotification` for `operative` in a captured frame, as
-/// its reference id and serialized state.
-fn shutdown_notification(
-    payload_id: &str,
-    message: &[u8],
-    operative: &str,
-) -> Option<(String, Vec<u8>)> {
-    if payload_id != "control_command" {
-        return None;
-    }
-    let request = flz_core::pb::CommandRequest::decode(message).ok()?;
-    match request.command {
-        Some(flz_core::pb::command_request::Command::RunnerShutdownNotification(n))
-            if n.operative_id == operative =>
-        {
-            Some((request.reference_id, n.serialized_state))
-        }
-        _ => None,
     }
 }

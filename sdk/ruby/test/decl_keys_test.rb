@@ -11,7 +11,7 @@ require_relative "test_helper"
 # change, and this is what makes forgetting one a red build rather than a
 # silently narrower SDK.
 class DeclKeysTest < Minitest::Test
-  KEYS_FILE = File.join(Flezha::TestSupport.repo_root, "test/fixtures/host_class_decl_keys.txt")
+  KEYS_FILE = Flezha::TestSupport.contract_file("test/fixtures/host_class_decl_keys.txt")
 
   # A declaration populated far enough that every optional key is present.
   class Entry < Flezha::Procedure
@@ -142,7 +142,7 @@ end
 # the CORE DERIVES from its record must be the golden's, in order.
 class ReferenceTopologiesTest < Minitest::Test
   TOPOLOGIES_FILE =
-    File.join(Flezha::TestSupport.repo_root, "test/fixtures/reference_topologies.txt")
+    Flezha::TestSupport.contract_file("test/fixtures/reference_topologies.txt")
 
   BYTES = ->(value) { value.to_s }
 

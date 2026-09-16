@@ -1,0 +1,43 @@
+# The wrapper crate flezha's native binary is built from when it is built from
+# source outside the core's repository.
+#
+# It carries no code: the veneer is a feature of `flz_core_ffi`, which
+# `sdk-core-abi` makes a requirement rather than a preference. All this
+# manifest does is name the core at a tag, turn on the one feature the Python wheel's extension module
+# needs, and ask for a `cdylib`. Switching to a registry is a change to the
+# dependency line and nothing else.
+[package]
+name = "flezha-python-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Detached from any workspace. In this repository the file sits inside the
+# core's own cargo workspace, and a member of it would inherit a lockfile and
+# a target directory an SDK checkout does not have.
+[workspace]
+
+# The artefact keeps the core's own name, so the build scripts that stage it
+# and the loaders that find it read one file name whichever side built it.
+[lib]
+name = "flz_core_ffi"
+crate-type = ["cdylib"]
+
+# The two tiers the wheel is built in, forwarded to the veneer. They are
+# features of this crate rather than of the dependency line because maturin
+# adds the tier on its command line, and cargo can only be asked for a feature
+# the package it is building declares.
+#
+# `python-extension` is the module that must NOT link libpython, which every
+# wheel needs; `python-abi3` adds the compatibility tier on top of it. The
+# free-threaded tier is the default alone: `abi3` has no free-threaded form
+# before CPython 3.15.
+[features]
+default = ["python-extension"]
+python-extension = ["veneer/python-extension"]
+python-abi3 = ["veneer/python-abi3"]
+
+[dependencies]
+# Renamed, because a dependency spelled like this crate's own lib target is
+# ambiguous at the glob below.
+veneer = { package = "flz_core_ffi", git = "https://github.com/flezha/flezha", tag = "v0.1.0", default-features = false }

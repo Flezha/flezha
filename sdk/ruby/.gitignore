@@ -1,4 +1,5 @@
 /lib/flezha/flz_core_ffi.*
+/ext/flz_core_ffi/target/
 /ext/flz_core_ffi/Makefile
 /ext/flz_core_ffi/mkmf.log
 /pkg/

@@ -54,8 +54,8 @@ trap 'rm -f "$gate_log"' EXIT
 #
 # `--nested` says the command answers on the same contract, so its status is read
 # as one of ours: 2 is a missing tool and 3 a tool that did not complete. It has
-# to be asked for, because a plain tool's 2 is not a gate's 2 — prettier, ruff
-# and rubocop all use exit 2 for "the tool errored", which they declare with
+# to be asked for, because a plain tool's 2 is not a gate's 2: ruff and rubocop
+# both use exit 2 for "the tool errored", which they declare with
 # `--finding status:1`.
 gate_run() {
   local label nested=0 skip=0 tool rc=0 finding= out
@@ -118,7 +118,7 @@ gate_report() {
 }
 
 # What each formatter does when it finds drift, as opposed to failing for its
-# own reasons. prettier, ruff and rubocop document 1 for the first and 2 for the
+# own reasons. ruff and rubocop document 1 for the first and 2 for the
 # second; php-cs-fixer's status is a bit field where exactly 8 is "needs fixing"
 # and every other bit set is an error. rustfmt, mix and mvn return 1 either way,
 # so the verdict each prints for drift, and for nothing else, decides. In write
@@ -127,17 +127,16 @@ gate_report() {
 declare -A drift=()
 if [[ "${1:-}" == "--check" ]]; then
   rust=(-- --check) elixir=(--check-formatted) java=(spotless:check)
-  prettier=(--check) ruff=(--check) rubocop=() phpcs=(--dry-run)
+  ruff=(--check) rubocop=() phpcs=(--dry-run)
   drift=([rust]='says:Diff in '
     [elixir]='says:format failed due to --check-formatted'
     [java]='says:files had format violations'
-    [prettier]=status:1 [ruff]=status:1 [rubocop]=status:1 [phpcs]=status:8)
+    [ruff]=status:1 [rubocop]=status:1 [phpcs]=status:8)
 else
   rust=() elixir=() java=(spotless:apply)
-  prettier=(--write) ruff=() rubocop=(-a) phpcs=()
+  ruff=() rubocop=(-a) phpcs=()
 fi
 
-prettier_bin=sdk/node/node_modules/.bin/prettier
 phpcs_bin=sdk/php/vendor/bin/php-cs-fixer
 ruff_bin=sdk/python/.venv/bin/ruff
 [[ -x "$ruff_bin" ]] || ruff_bin=ruff
@@ -157,11 +156,6 @@ gate_run --finding "${drift[elixir]:-}" "mix format" mix:"install Elixir" -- \
   mix format "${elixir[@]}"
 gate_run --finding "${drift[java]:-}" "mvn spotless" mvn:"install Maven and a JDK" -- \
   mvn -q -f sdk/java/pom.xml -DskipTests "${java[@]}"
-gate_run --finding "${drift[prettier]:-}" prettier \
-  "$prettier_bin":"run npm ci in sdk/node" -- \
-  "$prettier_bin" "${prettier[@]}" \
-  'sdk/node/{src,test,scripts,types-tests}/**/*.{ts,mts,cts,js,mjs,cjs}' \
-  'test/apps/node_runner/*.mjs'
 gate_run --finding "${drift[ruff]:-}" "ruff format" "$ruff_need" -- \
   "$ruff_bin" format "${ruff[@]}" "${ruff_paths[@]}"
 # The linter, in both modes and never with `--fix`: a format pass has to stay

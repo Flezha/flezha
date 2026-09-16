@@ -58,13 +58,16 @@ dev = [
 
 [tool.maturin]
 # The veneer is a feature of the shared ABI crate, never a crate of its own —
-# `sdk-core-abi` makes that a requirement, not a preference. maturin builds it
-# from where it lives.
-manifest-path = "../../flz_core_ffi/Cargo.toml"
+# `sdk-core-abi` makes that a requirement, not a preference. `native/` is the
+# wrapper that names the core at a tag and turns that feature on; it adds no
+# code, and it is what lets a wheel be built from a checkout of this package
+# alone. `python-extension` and not `python` is the feature it asks for: the
+# wheel's module must not link libpython, while the Rust test binary that
+# proves the veneer must.
+manifest-path = "native/Cargo.toml"
 module-name = "flezha.flz_core_ffi"
 python-source = "src"
-# `python-extension` and not `python`: the wheel's module must not link
-# libpython, while the Rust test binary that proves the veneer must.
+# The wrapper's own name for the tier, which forwards to the veneer's.
 features = ["python-extension"]
 include = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 

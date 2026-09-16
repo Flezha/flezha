@@ -29,7 +29,8 @@ gem install flezha
 A precompiled platform gem carries the native library, so installation needs no
 Rust toolchain, no cargo invocation and no network fetch of Rust dependencies.
 A platform with no prebuilt gem falls back to the source gem, which does need a
-stable Rust toolchain and this repository's `flz_core_ffi` crate.
+stable Rust toolchain and fetches the core at the git tag
+`ext/flz_core_ffi/Cargo.toml` names.
 
 From a checkout, `scripts/build-ruby-sdk.sh` builds the veneer and installs it
 where the gem loads it from.

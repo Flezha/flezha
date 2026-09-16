@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 #
-# Stage the flz_core_ffi cdylib (poll-core ABI + JNI, feature "jni") for one or
-# more target platforms into the Java SDK's resources tree.
+# Stage a flz_core_ffi cdylib for one or more target platforms into a veneer's
+# resources tree. The feature decides which veneer: "jni" (the default) is the
+# poll-core ABI plus the Java SDK's exports, "napi" the Node addon's, and so on
+# for every veneer the crate carries. The ABI underneath is the same binary
+# either way, which is why one script builds them all.
 #
 # *The binaries are build output and are NOT tracked in git.* Build the host
 # triple once after cloning, and again whenever flz_core_ffi, flz_core or
@@ -15,8 +18,13 @@
 #   scripts/build-native.sh --output <dir> --targets a,b,c       # specific triples
 #   scripts/build-native.sh --output <dir> --targets all \
 #       --skip-present --fetch-missing 0.1.0                     # portable packaging
+#   scripts/build-native.sh --output <dir> --features napi       # the Node addon
 #
 # Options:
+#   --features <list>      The cargo features to build the cdylib with; the
+#                          default is "jni". A veneer is a feature of one crate,
+#                          never a crate of its own, so this is the whole of
+#                          what distinguishes one veneer's binary from another's.
 #   --skip-present         Leave a triple that is already staged alone, instead
 #                          of producing it again. A source change therefore does
 #                          NOT refresh a staged binary — omit the flag (the plain
@@ -59,6 +67,7 @@ OUTPUT_DIR=""
 TARGETS_ARG="host"
 SKIP_PRESENT=0
 FETCH_VERSION=""
+FEATURES="jni"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +77,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --targets)
       TARGETS_ARG="$2"
+      shift 2
+      ;;
+    --features)
+      FEATURES="$2"
       shift 2
       ;;
     --skip-present)
@@ -229,7 +242,7 @@ for triple in "${TRIPLES[@]}"; do
   fi
 
   if [[ "${triple}" == "${HOST_TRIPLE}" ]]; then
-    (cd "${REPO_ROOT}" && cargo build --release -p flz_core_ffi --features jni --target "${triple}")
+    (cd "${REPO_ROOT}" && cargo build --release -p flz_core_ffi --features "${FEATURES}" --target "${triple}")
   else
     command -v cargo-zigbuild >/dev/null 2>&1 || {
       echo "cargo-zigbuild required for non-host triples ('${triple}')." >&2
@@ -241,7 +254,7 @@ for triple in "${TRIPLES[@]}"; do
       echo "  pip install ziglang  (a venv is fine), then ensure 'zig' is on PATH" >&2
       exit 1
     }
-    (cd "${REPO_ROOT}" && cargo zigbuild --release -p flz_core_ffi --features jni --target "${triple}")
+    (cd "${REPO_ROOT}" && cargo zigbuild --release -p flz_core_ffi --features "${FEATURES}" --target "${triple}")
   fi
 
   SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}flz_core_ffi.${EXT}"

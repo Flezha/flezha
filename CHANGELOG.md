@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Changed: the Node SDK lives in its own repository
+
+`@flezha/sdk` is developed in
+[`flezha/flezha_node_sdk`](https://github.com/flezha/flezha_node_sdk) now and is
+present here as a git submodule at `sdk/node`, pinned to a commit, with
+`test/apps/node_runner` a symlink to the test app inside it. Clone with
+`--recurse-submodules`, or run `git submodule update --init sdk/node` in an
+existing checkout. Every end-to-end scenario still runs here, against the commit
+the pin names.
+
+### Added: an SDK can be proven against the core without a checkout of it
+
+A release now publishes what an SDK needs to test itself: the N-API addons as
+the five `@flezha/sdk-<platform>` packages, the `abi3` wheels,
+`flz-fake-controller` for every supported triple, and the cross-language
+fixtures as `flezha-fixtures-<version>.tar.gz`. `flz-fake-controller` is the
+control-socket peer the crate's own ABI scenario drives, as a command: it binds
+a socket directory, walks the handshake, starts a class, feeds inputs, counts
+outputs and shuts the runner down, exiting non-zero naming the first frame that
+is wrong or late.
+
+A package that builds its native binary from source now does so through a
+wrapper crate it carries, whose one dependency is the core at a git tag, so a
+source build needs cargo and git rather than a checkout of this repository.
+
+### Fixed: a local run hands over every value it released
+
+Closing a local run stopped it and discarded whatever the graph had released in
+the last poll interval, so an author could miss output the run did produce. It
+is worst for a keyed or dynamically keyed class. Fixed in the core and in all
+five SDKs.
+
+### Fixed: a local run fires the timers a class declares
+
+`run_until_idle` called a graph settled while a processing-time timer was still
+armed, so `on_timer` never ran. It now waits for the deadline, and an event-time
+timer fires off the high-water a later input advances, exactly as under a
+controller.
+
 ### Changed: the testnet lives in its own repository and streams market data
 
 The fake exchange at `test/apps/testnet` is now the git submodule

@@ -43,7 +43,8 @@ pip install flezha
 Prebuilt wheels carry the native library, so installation needs no Rust
 toolchain, no cargo invocation and no network fetch of Rust dependencies. A
 platform with no prebuilt wheel falls back to the source distribution, which
-does need a stable Rust toolchain and this repository's `flz_core_ffi` crate.
+does need a stable Rust toolchain and fetches the core at the git tag
+`native/Cargo.toml` names.
 
 From a checkout, `scripts/build-python-sdk.sh` builds the veneer, installs it
 where the package loads it from, and creates the checkout-local virtual

@@ -9,21 +9,7 @@
 use std::fs;
 use std::path::Path;
 
-/// Every `flz_core_*` entry point the crate exports, from its own source.
-fn exported_entry_points() -> Vec<String> {
-    let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
-        .expect("the crate's own lib.rs is readable");
-    source
-        .lines()
-        .filter_map(|line| {
-            let rest = line
-                .trim_start()
-                .strip_prefix("pub unsafe extern \"C\" fn ")
-                .or_else(|| line.trim_start().strip_prefix("pub extern \"C\" fn "))?;
-            Some(rest.split(['(', '<']).next()?.trim().to_string())
-        })
-        .collect()
-}
+use crate::surface::exported_entry_points;
 
 #[test]
 fn the_c_abi_carries_exactly_one_administration_entry() {

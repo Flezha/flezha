@@ -1,3 +1,7 @@
 [submodule "test/apps/testnet"]
 	path = test/apps/testnet
 	url = https://github.com/flezha/flezha_testnet.git
+[submodule "sdk/node"]
+	path = sdk/node
+	url = git@github.com:flezha/flezha_node_sdk.git
+	branch = main

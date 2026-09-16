@@ -100,7 +100,19 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # Bench tasks whose `--runtime` resolves against `PortPilot.runtimes/0`. Their
   # help text may name a runtime as an example but may not enumerate the set: a
   # second copy of it goes stale the run after an SDK is added.
-  @manifest_runtime_tasks [Mix.Tasks.Bench, Mix.Tasks.Bench.Roundtrip, Mix.Tasks.Bench.Workflow]
+  #
+  # Filtered to what this checkout compiled. `mix bench.roundtrip` lives outside
+  # the tree, so naming it unconditionally made both tests below die on
+  # `module_info/1` in every clean clone: a red row about a module that is not
+  # there, which says nothing about the runtime set either way.
+  @manifest_runtime_tasks Enum.filter(
+                            [
+                              Mix.Tasks.Bench,
+                              Mix.Tasks.Bench.Roundtrip,
+                              Mix.Tasks.Bench.Workflow
+                            ],
+                            &Code.ensure_loaded?/1
+                          )
 
   describe "the administration surface" do
     test "every runtime carries one, and it is the declared set" do
@@ -528,6 +540,57 @@ defmodule FlezhaTest.SdkConformance.GateTest do
           )
         end
       end
+    end
+  end
+
+  describe "the contract set" do
+    # `test/fixtures/*.txt` and nothing else: the cross-language data tables
+    # carry the fixture header, while `declarations/` is this tree's own golden
+    # JSON and the `.ex`/`.exs` beside them are Elixir the suite compiles.
+    @contract_manifest "test/fixtures/contract.txt"
+
+    test "every fixture under test/fixtures is listed" do
+      unlisted = Path.wildcard("test/fixtures/*.txt") -- contract_members()
+
+      if unlisted != [] do
+        fail(
+          "these fixtures are not listed in #{@contract_manifest}: #{inspect(unlisted)}. " <>
+            "An SDK vendoring the set would not receive them, and its tests would fail " <>
+            "outside this tree"
+        )
+      end
+    end
+
+    test "every member the list names is present" do
+      absent = Enum.reject(contract_members(), &File.regular?/1)
+
+      if absent != [] do
+        fail(
+          "#{@contract_manifest} names members that are not in the tree: #{inspect(absent)}. " <>
+            "The release stages the set from this list, so a row naming nothing stages nothing"
+        )
+      end
+    end
+
+    test "every member says what reads it" do
+      for {path, purpose} <- contract_rows() do
+        assert String.length(purpose) > 20,
+               "#{@contract_manifest} row #{path} says `#{purpose}`; a member with no stated " <>
+                 "reader cannot be removed by anyone who did not write it"
+      end
+    end
+
+    defp contract_members, do: Enum.map(contract_rows(), &elem(&1, 0))
+
+    defp contract_rows do
+      @contract_manifest
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.reject(&(String.starts_with?(&1, "#") or String.trim(&1) == ""))
+      |> Enum.map(fn row ->
+        [path, purpose] = String.split(row, "|", parts: 2)
+        {String.trim(path), String.trim(purpose)}
+      end)
     end
   end
 

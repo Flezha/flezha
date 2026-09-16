@@ -187,11 +187,61 @@ jobs:
             --formatter FlezhaTest.Helper.TimingFormatter \
             --formatter ExUnit.CLIFormatter
 
+  # The two release artefacts this repository cannot cross-build, both for the
+  # same reason and neither fixable with zig:
+  #
+  #   the Node addon   its target is `x86_64-pc-windows-msvc`, the ABI the
+  #                    published `@flezha/sdk-win32-x64-msvc` package declares,
+  #                    and zig cannot produce the MSVC ABI
+  #   the abi3 wheel   maturin writes the module's export list from
+  #                    `module-name`, and the dotted `flezha.flz_core_ffi` it
+  #                    needs there does not link under the mingw linker
+  #
+  # Both are built here and handed to the staging job, which refuses a release
+  # that is missing either of them by name.
+  release-windows-artefacts:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+
+      - name: Set up Python
+        uses: ./.github/actions/setup-python
+
+      - name: Build the napi addon
+        run: cargo build --release -p flz_core_ffi --features napi
+
+      - name: Stage it under its platform suffix
+        shell: bash
+        run: |
+          mkdir -p dist/node-addons/win32-x64-msvc
+          cp target/release/flz_core_ffi.dll dist/node-addons/win32-x64-msvc/flz_core_ffi.node
+
+      - name: Build the abi3 wheel
+        shell: bash
+        run: |
+          pip install --quiet maturin
+          cd sdk/python && maturin build --release --out ../../dist/wheels --features python-abi3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artefacts
+          path: |
+            dist/node-addons/win32-x64-msvc/flz_core_ffi.node
+            dist/wheels/*.whl
+          if-no-files-found: error
+
   # The five-triple cross-build, on a version tag and nowhere else. This is the
   # narrow reinstatement of what `2026-04-25-slim-app-footprint` removed: a
   # release needs every supported platform, a pull request needs one.
   release-artifacts:
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-windows-artefacts
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -216,6 +266,25 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache: "false"
+
+      # The build stages the Node addons and the abi3 wheels as well as the
+      # libraries and the jars, so it needs both toolchains.
+      - name: Set up Node
+        uses: ./.github/actions/setup-node
+
+      - name: Set up Python
+        uses: ./.github/actions/setup-python
+
+      - name: Install maturin
+        run: |
+          scripts/build-python-sdk.sh
+          sdk/python/.venv/bin/pip install --quiet maturin
+
+      - name: Take the Windows artefacts from their own runner
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artefacts
+          path: dist
 
       - name: Build all five triples and both fat jars
         # The same script that is run locally. It installs cargo-zigbuild and a

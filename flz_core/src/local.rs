@@ -12,6 +12,14 @@
 //! costs what it costs), plugins, placement and migration, the dead-letter
 //! queue, observability export, authz and multi-runner scale. Every one of
 //! those needs a controller.
+//!
+//! Timers it has got, and through the core's own path rather than one of its
+//! own: a committed `TimerOp` arms the poll core's wake list exactly as it
+//! does under a controller, and an event-time deadline fires off the
+//! high-water the dispatch path advances. The one thing a local run owes them
+//! is patience: [`LocalRun::run_until_idle`] counts an armed timer as work,
+//! or it would call a graph settled in the gap between a registration and its
+//! firing and the callback would never run.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -195,9 +203,15 @@ impl LocalRun {
         &self.instance
     }
 
+    /// An armed processing-time timer counts as work: it is due to become a
+    /// firing on the wake list the core already holds, and a run that called
+    /// itself settled before it fired would drop it. A payload staged for a
+    /// prepare crossing needs nothing here: the crossing is handed out as an
+    /// activation, so it is already outstanding.
     fn working(&self, core: &PollCore) -> bool {
         core.outstanding_count() > 0
             || core.pending_push_count() > 0
+            || core.timers_armed() > 0
             || self
                 .instance
                 .all_slots()

@@ -173,15 +173,15 @@ pub unsafe extern "C" fn flz_core_local_run_until_idle(
 /// End the local run and release its Entities. A context with none is a
 /// no-op, so a host's close path needs no test of its own.
 ///
+/// Values already released stay readable. Dropping the run drops the sender,
+/// so [`flz_core_local_next_output`] hands out what is still queued and then
+/// reports a timeout, and a host that drains after stopping loses nothing.
+///
 /// # Safety
 /// `ctx` must be live.
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_local_stop(ctx: *mut FlzContext) -> i32 {
     let ctx = &*ctx;
     ctx.local.lock().unwrap_or_else(|p| p.into_inner()).take();
-    ctx.local_outputs
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .take();
     FLZ_OK
 }

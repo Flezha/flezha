@@ -73,15 +73,14 @@ jobs:
       # written a second time here. None of these builds the native library:
       # the formatters are pure tooling.
       #
-      # `continue-on-error` on all four for the same reason the script collects
-      # instead of aborting — an install that fails must cost one language, not
+      # `continue-on-error` on all three for the same reason the script collects
+      # instead of aborting: an install that fails must cost one language, not
       # the whole report. The check step below still fails the job, and it says
       # which formatter it could not find and that the others are clean.
-      - name: Install prettier (sdk/node)
-        continue-on-error: true
-        working-directory: sdk/node
-        run: npm ci
-
+      #
+      # No prettier here. Node source is developed in `flezha/flezha_node_sdk`
+      # and formatted by that repository's own CI, which is where an extracted
+      # SDK's gates run.
       - name: Install ruff (sdk/python)
         continue-on-error: true
         run: pip install "ruff==$(scripts/manifest_pin.sh sdk/python/pyproject.toml ruff)"

@@ -11,7 +11,6 @@ proved by ``test_typing.py``.
 
 from __future__ import annotations
 
-import pathlib
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -19,6 +18,7 @@ from typing import Any
 
 import pytest
 
+import contract
 import flezha
 from conftest import Bumped, Counter, count_up, declare, demo, echo
 from flezha import codec, graph
@@ -463,9 +463,7 @@ def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
 # dispatcher and the plugin frame already read. What every SDK sends alike is
 # ``test/fixtures/channel_codecs.txt``; what is Python's own is asserted here.
 
-_CODEC_CASES = (
-    pathlib.Path(__file__).resolve().parents[3] / "test" / "fixtures" / "channel_codecs.txt"
-)
+_CODEC_CASES = contract.member("test/fixtures/channel_codecs.txt")
 
 
 def _codec_slots(

@@ -110,8 +110,15 @@ class LocalOperative:
         if self._closed.is_set():
             return
         self._closed.set()
-        self._core.local_stop()
         self._drain.join(timeout=_OUTPUT_POLL_MS / 1000 * 20)
+        # Stop the run first, then take what it released and the drain thread
+        # had not reached: a value can be queued for up to one poll interval,
+        # and ending the run while it sits there is how an author loses output
+        # the graph did produce. Stopping drops the sender, so this ends at the
+        # first empty read rather than waiting.
+        self._core.local_stop()
+        while (output := self._core.local_next_output(0)) is not None:
+            self._deliver(output)
         # Not `Core.shutdown`: that stops the process-wide poll core, and a
         # process may start another local run after this one. The workers
         # leave on the flag instead, which is why it is raised before the

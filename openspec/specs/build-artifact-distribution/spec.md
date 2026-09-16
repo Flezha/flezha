@@ -68,9 +68,13 @@ against a host-triple-only tree, with no network access.
 ### Requirement: A release SHALL publish every supported triple
 
 A tag matching the release pattern SHALL trigger a CI job that cross-builds
-`flz_core_ffi` (feature `jni`) for all five supported triples, assembles the SDK
-and test-runner fat jars, and attaches the five binaries, both jars, and a
-SHA-256 manifest to the GitHub Release for that tag.
+`flz_core_ffi` for all five supported triples with the `jni` feature and again
+with the `napi` feature, builds the `abi3` wheels for the five triples, builds
+the fake controller binary for the five triples, assembles the SDK and
+test-runner fat jars, stages the fixture archive, and attaches all of them and
+a SHA-256 manifest covering all of them to the GitHub Release for that tag.
+The `napi` binaries SHALL be staged under the per-platform package layout the
+Node SDK's `package.json` declares.
 
 Pull-request CI SHALL NOT cross-compile any non-host triple. The five-triple
 matrix SHALL run on release tags only.
@@ -78,13 +82,18 @@ matrix SHALL run on release tags only.
 #### Scenario: A release tag publishes the full matrix
 
 - **WHEN** a release tag is pushed and its workflow completes
-- **THEN** the GitHub Release SHALL carry five `libflz_core_ffi.*` assets, `flezha-sdk.jar`, `java_runner.jar`, and a checksum manifest covering all seven
+- **THEN** the GitHub Release SHALL carry five `jni` `libflz_core_ffi.*` assets, five `napi` addons, five `abi3` wheels, five fake controller binaries, `flezha-sdk.jar`, `java_runner.jar`, the fixture archive, and a checksum manifest covering all of them
 
 #### Scenario: Pull-request CI does not cross-compile
 
 - **GIVEN** the merged `.github/workflows/java-sdk.yml`
 - **WHEN** the pull-request-triggered jobs are inspected
 - **THEN** none SHALL install or invoke `zig`, `cargo-zigbuild`, or `ziglang`
+
+#### Scenario: A veneer that links its host is not in the bundle
+
+- **WHEN** the release assets are inspected for a Ruby extension
+- **THEN** none SHALL be present, because the extension links the host Ruby and is built at install from the wrapper crate
 
 ### Requirement: Portable packaging SHALL fetch and verify published assets
 
@@ -153,4 +162,29 @@ regression is caught at the commit that causes it.
 - **GIVEN** a pull request whose commits push the packed size over 150 MB
 - **WHEN** the quality workflow runs
 - **THEN** the size check SHALL fail naming the paths responsible
+
+### Requirement: A veneer SHALL be built from outside through a wrapper crate on a git dependency
+
+An SDK that builds its native binary from source SHALL do so through a wrapper
+crate in its own tree: a `cdylib` package whose one dependency is
+`flz_core_ffi` from this repository at a git tag with that veneer's feature,
+and which adds no veneer code. No SDK build SHALL name a path outside its own
+tree. Inside this tree the build scripts SHALL keep building the feature from
+the workspace and staging the binary where the SDK's loader looks first.
+Switching the dependency to a registry SHALL be a change to that one line.
+
+#### Scenario: The wrapper exports the veneer
+
+- **WHEN** the wrapper for a feature is built
+- **THEN** its exported symbols SHALL include every entry point `abi_surface.txt` lists and the feature's module-init export
+
+#### Scenario: No build walks to the workspace
+
+- **WHEN** an SDK's build scripts, package manifests and extension configuration are searched for a path that leaves the SDK's tree
+- **THEN** none SHALL be found
+
+#### Scenario: An in-tree build needs no network
+
+- **WHEN** `scripts/build-node-sdk.sh` runs in this tree
+- **THEN** it SHALL build from the workspace and fetch nothing
 
