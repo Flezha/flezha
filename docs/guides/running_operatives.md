@@ -38,7 +38,7 @@ you stop it.
 behind a commit barrier, ending by itself on chain completion, on
 `ctx.complete`, on a durable loop's terminal predicate, or at `max_duration`.
 Stopping one by hand ends it early; it is not how one is meant to finish.
-[`workflow_basics.md`](workflow_basics.md) is the kind's own guide.
+[`workflow_basics.md`](tradedesk/workflow_basics.md) is the kind's own guide.
 
 ## Start one
 

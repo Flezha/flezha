@@ -301,12 +301,12 @@ and both are picked up later.
 **Authorization is off.** Every command above sets `FLEZHA_AUTHZ_ENABLED=false`.
 With it on, operator verbs refuse until you claim an admin, and a runner has to
 prove the namespace it connects to.
-[`authorization.md`](authorization.md) turns it on.
+[`authorization.md`](tradedesk/authorization.md) turns it on.
 
 **The boot prints decisions you can ignore for now:** the node cookie it minted,
 the state root it resolved, and that no durability backend is set. They start to
 matter once there is a second machine or a second disk, which is
-[`clustering.md`](clustering.md) and [`durability.md`](durability.md). One more
+[`clustering.md`](tradedesk/clustering.md) and [`durability.md`](tradedesk/durability.md). One more
 line names the folder file plugins may use, which
 [`sources_and_sinks.md`](sources_and_sinks.md) comes back to.
 

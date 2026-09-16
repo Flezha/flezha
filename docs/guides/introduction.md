@@ -39,8 +39,8 @@ Two kinds of process make that work:
   capacity to a controller and does what it is told.
 
 The guides below build that up in order. **Part 1 gets something running.**
-Parts 2 and 3 take it apart one subject at a time, and you can read those in any
-order once Part 1 works.
+Part 2 builds a bigger example step by step, and Part 3 takes advanced subjects
+one at a time, in any order once Part 1 works.
 
 ## Part 1: getting started
 
@@ -90,30 +90,39 @@ docker compose down
 
 **Part 1 turns authorization off**, to keep things simple while you get a first
 run working. That is a real feature switched off, not a default, and
-[`authorization.md`](authorization.md) turns it back on.
+[`authorization.md`](tradedesk/authorization.md) turns it back on.
 
-## Part 2: the basics
+## Part 2: digging deeper
 
-One subject each. Read what you need.
+A trading desk, `tradedesk`, built step by step on Docker. Read these in order:
+each one builds on the one before it.
 
-| Guide | Covers |
+| Guide | What you do |
 |---|---|
-| [`cli.md`](cli.md) | `flz` itself: how it reaches a controller, its output formats, and how a gated verb is identified |
-| [`namespaces.md`](namespaces.md) | The boundary every runner, operative and credential sits inside |
-| [`authorization.md`](authorization.md) | Turning enforcement on, claiming the admin, tokens, roles, and what a runner has to prove |
-| [`using_plugins.md`](using_plugins.md) | The plugin system, the ones that ship, and what each costs |
-| [`clustering.md`](clustering.md) | More than one machine: how controllers find each other and what that buys |
-| [`durability.md`](durability.md) | What survives a crash, and what it costs |
-| [`stream_basics.md`](stream_basics.md) | The stream profile: channels, keys, entities, and state |
-| [`workflow_basics.md`](workflow_basics.md) | The workflow profile: steps, retries, and compensation |
+| [`setup.md`](tradedesk/setup.md) | Start the controller and the testnet with Docker Compose |
+| [`namespaces.md`](tradedesk/namespaces.md) | Move tradedesk into its own namespace |
+| [`stream_basics.md`](tradedesk/stream_basics.md) | Write the stream operative by hand: chained procedures, `map`, `filter`, `key_by`, a merge, and state per symbol |
+| [`workflow_basics.md`](tradedesk/workflow_basics.md) | Write the paper-order workflow by hand: steps, retries and compensation, started by the stream operative |
+| [`authorization.md`](tradedesk/authorization.md) | Turn enforcement on, claim the admin, give the runner a credential and the spawn role |
+| [`durability.md`](tradedesk/durability.md) | Kill the runner mid-order: the order continues from its step, is never placed twice, and candles keep coming |
+| [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
+| [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operative scale` |
+| [`clustering.md`](tradedesk/clustering.md) | Run several controllers in Docker, then stop one |
+| [`kubernetes_deployment.md`](tradedesk/kubernetes_deployment.md) | Run the same images on k3s |
 
 ## Part 3: advanced topics
 
 | Guide | Covers |
 |---|---|
-| [`custom_plugins.md`](custom_plugins.md) | Writing and installing a plugin of your own |
-| [`effectively_once.md`](effectively_once.md) | The delivery guarantee, what it requires, and what it costs |
-| [`erlang_vm_tuning.md`](erlang_vm_tuning.md) | Scheduler, memory and IO settings for a controller under load |
+| [`custom_plugins.md`](advanced/custom_plugins.md) | Writing and installing a plugin of your own |
+| [`effectively_once.md`](advanced/effectively_once.md) | The delivery guarantee, what it requires, and what it costs |
+| [`erlang_vm_tuning.md`](advanced/erlang_vm_tuning.md) | Scheduler, memory and IO settings for a controller under load |
+| [`elixir_applications.md`](advanced/elixir_applications.md) | Flezha inside an Elixir application of your own |
+
+## Reference
+
+[`cli.md`](cli.md) covers `flz` itself: how it reaches a controller, its output
+formats, and how a gated verb is identified.
 
 ## When something is wrong
 

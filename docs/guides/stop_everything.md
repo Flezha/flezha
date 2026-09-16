@@ -85,6 +85,5 @@ you did not stop comes back on its own.
 
 ## Next
 
-That is Part 1. [`introduction.md`](introduction.md) lists what Part 2 takes
-apart, and [`authorization.md`](authorization.md) is the one to read first,
-because Part 1 left it switched off.
+That is Part 1. [`introduction.md`](introduction.md) lists what Part 2 builds,
+starting at [`setup.md`](tradedesk/setup.md).

@@ -1,5 +1,8 @@
 # Authorization
 
+TODO: a draft, written before Part 2 was a tutorial and not yet run against
+tradedesk.
+
 Flezha enforces authorization by default. The Part 1 guides turn it off, so if
 you followed them your controller is running with `FLEZHA_AUTHZ_ENABLED=false`
 and every caller is trusted. This guide turns it back on.
@@ -116,7 +119,7 @@ variable goes. The boot says so on every start:
 
 ## See also
 
-[`../operations/authn_authz.md`](../operations/authn_authz.md) is the reference
+[`../../operations/authn_authz.md`](../../operations/authn_authz.md) is the reference
 behind this guide: postures, certificates, role bindings, the verb table and
 recovery.
 

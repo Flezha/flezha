@@ -184,7 +184,7 @@ Choose it once.
 
 The echo's procedure keeps no state and takes no configuration, which is as
 simple as a procedure gets. State, keys and entities are
-[`stream_basics.md`](stream_basics.md).
+[`stream_basics.md`](tradedesk/stream_basics.md).
 
 ### The operative
 
@@ -201,8 +201,8 @@ The echo has one procedure, but an operative can chain as many as it needs, the
 output of one feeding the next, and split or join the path between them. A
 stream does that for as long as it runs, and a workflow runs its procedures as
 the steps of a job that ends.
-[`stream_basics.md`](stream_basics.md#several-procedures-in-one-operative) and
-[`workflow_basics.md`](workflow_basics.md#several-procedures-step-by-step) show
+[`stream_basics.md`](tradedesk/stream_basics.md#several-procedures-in-one-operative) and
+[`workflow_basics.md`](tradedesk/workflow_basics.md#several-procedures-step-by-step) show
 both.
 
 The operative is the unit everything else works in: what the controller starts,
@@ -229,7 +229,7 @@ many operatives, and many runners can offer the same one, which is how a
 deployment grows.
 
 It takes a namespace, the tenant it belongs to. These guides use `default`
-throughout; [`namespaces.md`](namespaces.md) is where it becomes a decision.
+throughout; [`namespaces.md`](tradedesk/namespaces.md) is where it becomes a decision.
 
 If the connection drops, the runner reconnects on its own.
 

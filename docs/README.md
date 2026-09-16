@@ -36,17 +36,21 @@ answer "what are the options"; a guide answers "what do I type".
 | [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner offering an operative class |
 | [`running_operatives.md`](guides/running_operatives.md) | Part 1. Starting an operative, watching it, stopping it, and what survives a restart |
 | [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
-| [`cli.md`](guides/cli.md) | Part 2. `flz` itself: reaching a controller, output formats, identity for a gated verb |
-| [`namespaces.md`](guides/namespaces.md) | Part 2. The boundary runners, operatives and credentials sit inside |
-| [`authorization.md`](guides/authorization.md) | Part 2. Turning enforcement on, claiming the admin, tokens and roles |
-| [`using_plugins.md`](guides/using_plugins.md) | Part 2. The plugin system and the plugins that ship |
-| [`clustering.md`](guides/clustering.md) | Part 2. More than one machine |
-| [`durability.md`](guides/durability.md) | Part 2. What survives a crash |
-| [`stream_basics.md`](guides/stream_basics.md) | Part 2. Channels, keys, entities and state |
-| [`workflow_basics.md`](guides/workflow_basics.md) | Part 2. Steps, retries and compensation |
-| [`custom_plugins.md`](guides/custom_plugins.md) | Part 3. Writing and installing your own plugin |
-| [`effectively_once.md`](guides/effectively_once.md) | Part 3. The delivery guarantee and its cost |
-| [`erlang_vm_tuning.md`](guides/erlang_vm_tuning.md) | Part 3. Settings for a controller under load |
+| [`cli.md`](guides/cli.md) | Reference. `flz` itself: reaching a controller, output formats, identity for a gated verb |
+| [`setup.md`](guides/tradedesk/setup.md) | Part 2. The tradedesk stack in Docker Compose |
+| [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. The boundary runners, operatives and credentials sit inside |
+| [`stream_basics.md`](guides/tradedesk/stream_basics.md) | Part 2. Writing the stream operative: chained procedures, transforms, a merge and state |
+| [`workflow_basics.md`](guides/tradedesk/workflow_basics.md) | Part 2. Writing the workflow: steps, retries and compensation |
+| [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Turning enforcement on, claiming the admin, tokens and roles |
+| [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
+| [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
+| [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
+| [`clustering.md`](guides/tradedesk/clustering.md) | Part 2. More than one machine |
+| [`kubernetes_deployment.md`](guides/tradedesk/kubernetes_deployment.md) | Part 2. The same images on k3s |
+| [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Writing and installing your own plugin |
+| [`effectively_once.md`](guides/advanced/effectively_once.md) | Part 3. The delivery guarantee and its cost |
+| [`erlang_vm_tuning.md`](guides/advanced/erlang_vm_tuning.md) | Part 3. Settings for a controller under load |
+| [`elixir_applications.md`](guides/advanced/elixir_applications.md) | Part 3. Flezha inside an Elixir application of your own |
 
 ## sdk
 

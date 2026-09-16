@@ -17,7 +17,7 @@ services:
     image: flezha/flezha:0.1.0
     environment:
       # Enforcement off, so a first run needs no bootstrap token and no
-      # credential on the runner. See docs/guides/authorization.md.
+      # credential on the runner. See docs/guides/tradedesk/authorization.md.
       FLEZHA_AUTHZ_ENABLED: "false"
     volumes:
       - data:/flezha/app_data

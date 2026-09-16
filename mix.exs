@@ -76,16 +76,20 @@ defmodule Flezha.MixProject do
         "docs/guides/sources_and_sinks.md",
         "docs/guides/stop_everything.md",
         "docs/guides/cli.md",
-        "docs/guides/namespaces.md",
-        "docs/guides/authorization.md",
-        "docs/guides/using_plugins.md",
-        "docs/guides/clustering.md",
-        "docs/guides/durability.md",
-        "docs/guides/stream_basics.md",
-        "docs/guides/workflow_basics.md",
-        "docs/guides/custom_plugins.md",
-        "docs/guides/effectively_once.md",
-        "docs/guides/erlang_vm_tuning.md",
+        "docs/guides/tradedesk/setup.md",
+        "docs/guides/tradedesk/namespaces.md",
+        "docs/guides/tradedesk/stream_basics.md",
+        "docs/guides/tradedesk/workflow_basics.md",
+        "docs/guides/tradedesk/authorization.md",
+        "docs/guides/tradedesk/durability.md",
+        "docs/guides/tradedesk/plugins.md",
+        "docs/guides/tradedesk/partitioning.md",
+        "docs/guides/tradedesk/clustering.md",
+        "docs/guides/tradedesk/kubernetes_deployment.md",
+        "docs/guides/advanced/custom_plugins.md",
+        "docs/guides/advanced/effectively_once.md",
+        "docs/guides/advanced/erlang_vm_tuning.md",
+        "docs/guides/advanced/elixir_applications.md",
         "docs/quickstart.md",
         "docs/sdk/admin.md",
         "docs/plugins/file.md",
@@ -110,25 +114,28 @@ defmodule Flezha.MixProject do
           "docs/guides/sources_and_sinks.md",
           "docs/guides/stop_everything.md"
         ],
-        "The basics": [
-          "docs/guides/cli.md",
-          "docs/guides/namespaces.md",
-          "docs/guides/authorization.md",
-          "docs/guides/using_plugins.md",
-          "docs/guides/clustering.md",
-          "docs/guides/durability.md",
-          "docs/guides/stream_basics.md",
-          "docs/guides/workflow_basics.md"
+        "Digging deeper": [
+          "docs/guides/tradedesk/setup.md",
+          "docs/guides/tradedesk/namespaces.md",
+          "docs/guides/tradedesk/stream_basics.md",
+          "docs/guides/tradedesk/workflow_basics.md",
+          "docs/guides/tradedesk/authorization.md",
+          "docs/guides/tradedesk/durability.md",
+          "docs/guides/tradedesk/plugins.md",
+          "docs/guides/tradedesk/partitioning.md",
+          "docs/guides/tradedesk/clustering.md",
+          "docs/guides/tradedesk/kubernetes_deployment.md"
         ],
         "Advanced topics": [
-          "docs/guides/custom_plugins.md",
-          "docs/guides/effectively_once.md",
-          "docs/guides/erlang_vm_tuning.md"
+          "docs/guides/advanced/custom_plugins.md",
+          "docs/guides/advanced/effectively_once.md",
+          "docs/guides/advanced/erlang_vm_tuning.md",
+          "docs/guides/advanced/elixir_applications.md"
         ],
         SDK: ~r"docs/sdk/",
         Plugins: ~r"docs/plugins/",
         Troubleshooting: ~r"docs/troubleshooting/",
-        Reference: ~r"docs/(quickstart|configuration|operations)"
+        Reference: ~r"docs/(quickstart|configuration|operations|guides/cli)"
       ]
     ]
   end
