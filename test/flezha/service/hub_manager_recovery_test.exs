@@ -166,9 +166,12 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert declared_start_arg(operative_id) ==
              {@namespace, %{id: operative_id, factory_id: "market"}}
 
-    # The runner stops; the controller stays up. Zero budget removes every
-    # timing dependency from the lookup that now cannot succeed.
-    FleetStateHelper.seed(@namespace, %{})
+    # The runner's session goes but the fleet still advertises `market`, so this
+    # controller still serves the factory's group and the hub still places the
+    # replay here — while the lookup the hook makes cannot succeed, because a
+    # runner with no control unit registration is not one placement hands out.
+    # Zero budget removes every timing dependency from that lookup.
+    FleetStateHelper.seed(@namespace, %{"unregistered_runner" => ["market"]})
     on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
 
     {bound_node, log} =

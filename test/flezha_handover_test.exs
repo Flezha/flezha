@@ -407,9 +407,14 @@ defmodule FlezhaTest.Handover do
     num_operatives = 15
     operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
 
-    # Losing the last local runner is the loop's `replace_operative`, per child
-    # through the consent gate — no hub drain.
+    # Losing its last runner for a factory makes a controller stop serving that
+    # factory's group, and the hub then reassigns every operative of it through
+    # the migration-consent gate with handover. No convergence op, no hub drain.
     {peer_pid, peer_node} = start_healing_peer(:anode1)
+
+    # The withdrawal's grace is what a returning runner buys; this test has no
+    # returning runner, so it is cut to keep the move prompt.
+    :erpc.call(peer_node, Application, :put_env, [:flezha, :group_withdraw_grace_ms, 500])
 
     # Start the runners.
     runner_id_1 = NodeTestHelper.start_runner(namespace)
@@ -547,8 +552,8 @@ defmodule FlezhaTest.Handover do
     end
 
     # A controller whose fleet does not serve the namespace leaves its
-    # cluster on the loop's next tick after it re-places its last operative,
-    # so this is an eventual property like the two above it.
+    # cluster on the loop's next tick after the hub has moved its last
+    # operative away, so this is an eventual property like the two above it.
     assert NodeTestHelper.wait_until(
              fn -> length(HubManager.get_hub_nodes(namespace, true)) === 1 end,
              10_000

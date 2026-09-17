@@ -105,8 +105,6 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   # The rows this tier cannot drive, each with the reason recorded.
   @deferred %{
-    replace_operative:
-      "needs a peer BEAM's fleet advertising the factory (the multi_node tier); recorded deferral",
     reset_control_channel:
       "needs an operative that is PARKED and still in the hub's declared set: the start " <>
         "authority stops a child whose start fails, and an Overwatch started outside it is " <>

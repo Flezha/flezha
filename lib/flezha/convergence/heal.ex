@@ -1,13 +1,18 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: ten idempotent, bounded primitives. Every
+  The entire heal surface: nine idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive, and adding a remedy is one entry in the table.
 
-      rebind_operative  replace_operative  resync_runner
+      rebind_operative  resync_runner
       start_plugin  stop_plugin  restart_plugin
       evict_runner  restart_runner
       reset_control_channel  publish_binding
+
+  None of them moves an operative between controllers. Which controller hosts
+  an operative is the namespace hub's decision alone
+  (`Flezha.Cluster.GroupedHashing`), and it only ever names a controller whose
+  fleet can run the operative's factory.
 
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
@@ -15,12 +20,6 @@ defmodule Flezha.Convergence.Heal do
     * `rebind_operative` — migrate a operative tagged to a dead/wrong runner (or
       not yet bound, or parked) onto an available one: flip the registry tag,
       fan its pid into the new runner's stream channels, replay the WAL.
-    * `replace_operative` — move an operative whose factory no LOCAL runner
-      advertises onto a node whose fleet has one, through the hub's per-child
-      handover (`Migration.migrate_child/3`): state rides the HotSwap
-      handover or is adopted from the source's WAL, the declared entry is
-      untouched, and the drain's consent gate decides whether the operative
-      may move now.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
       operative against the runner it is already bound to, or for ONE Entity
       against the runner a declared gap named. The rung below
@@ -49,16 +48,13 @@ defmodule Flezha.Convergence.Heal do
       named a stale runner.
   """
 
-  alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Planner
-  alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.{ControlUnit, FleetManager}
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.{HubManager, OperativeManager}
   alias Flezha.State.Recovery
-  alias ProcessHub.Service.Migration
 
   require Logger
 
@@ -68,7 +64,6 @@ defmodule Flezha.Convergence.Heal do
   # reason's evidence instead (`Flezha.Convergence.Facts`).
   @table [
     %{name: :rebind_operative, executor: "Overwatch {:runner_migrate, target}", evidence: :ok},
-    %{name: :replace_operative, executor: "ProcessHub Migration.migrate_child/3", evidence: :ok},
     %{
       name: :resync_runner,
       executor: "State.Recovery.resync_for_overwatch/2 | resync/2",
@@ -124,33 +119,6 @@ defmodule Flezha.Convergence.Heal do
 
   defp apply_primitive(:rebind_operative, %{namespace: namespace, target: operative_id} = op) do
     on_operative(namespace, operative_id, &rebind_operative(op, &1))
-  end
-
-  # Move the operative to a node whose fleet can actually host it. Runs only
-  # on the node hosting the Overwatch (every controller's Loop plans the same
-  # op; the others fail it under Backoff) so the consent read inspects the
-  # right disk. The declared entry never changes — a crash mid-move heals
-  # through the hub reconcile rather than losing the operative.
-  defp apply_primitive(:replace_operative, %{namespace: namespace, target: operative_id}) do
-    on_operative(namespace, operative_id, fn pid ->
-      with true <- node(pid) == node(),
-           %Overwatch{} = ow <- overwatch_snapshot(pid),
-           :ready <- Overwatch.migration_consent(ow),
-           {:ok, target_node} <- placed(replacement_node(namespace, ow.factory_id, operative_id)),
-           :ok <- Migration.migrate_child(Identificator.hub(namespace), operative_id, target_node) do
-        Logger.info(
-          "[convergence] re-placed operative #{operative_id} (#{namespace}) onto " <>
-            "#{target_node} — no local runner advertises factory #{inspect(ow.factory_id)}"
-        )
-
-        :ok
-      else
-        # No other node's fleet serves the factory either: the same unmet
-        # precondition a rebind meets, one scope out.
-        :unplaced -> :unmet
-        _ -> :error
-      end
-    end)
   end
 
   # One Entity, against the runner the declared gap or give-up named: the
@@ -356,18 +324,6 @@ defmodule Flezha.Convergence.Heal do
       {:ok, %Overwatch{} = ow} -> ow
       _ -> nil
     end
-  end
-
-  # The OTHER nodes advertising the factory, picked through the same HRW the
-  # start path uses — so repeated ticks and concurrent loops converge on one
-  # destination.
-  defp replacement_node(_namespace, nil, _operative_id), do: nil
-
-  defp replacement_node(namespace, factory_id, operative_id) do
-    namespace
-    |> Directory.factory_nodes(factory_id)
-    |> List.delete(node())
-    |> OperativeManager.pick_runner(operative_id)
   end
 
   # A runner restarting on a schedule must be visible rather than mysterious:

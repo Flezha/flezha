@@ -16,6 +16,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Parallel
   alias Flezha.Process.Hub
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Shutdown.Coordinator
@@ -82,6 +83,11 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     # Advertise placement cluster-wide; membership dies with the hub pid,
     # so stop/crash/nodedown need no leave call.
     Directory.join_hub(pid, namespace)
+
+    # A hub's group table dies with the hub, so this node declares again which
+    # of the namespace's factories its fleet can run. A cast, because this
+    # often runs inside `FleetManager`'s own call.
+    FleetManager.hub_started(namespace)
 
     # Everything below reaches into the hub, and this runs inside
     # `FleetManager`'s own `handle_call`: a hub that dies in the window between

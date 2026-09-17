@@ -178,6 +178,7 @@ the value and the type.
 |---|---|---|
 | `FLEZHA_RUNNER_KEEPALIVE` | `30000` | `:runner_keepalive`; how long a disconnected runner is kept before removal, `0` removes at once |
 | `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | `30000` | `:runner_retiring_mark_ttl_ms`; how long a controller-initiated disconnect stays marked, so the close it produces is reported as expected rather than as an incident. A runner id is reused across reconnects, so the mark expires: past this window a close is diagnosed as unexpected again |
+| `FLEZHA_GROUP_WITHDRAW_GRACE_MS` | `5000` | `:group_withdraw_grace_ms`; how long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no operative; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace |
 | `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT` | `100` | `:placement_load_cap_percent`; the fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer operatives than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | `5000` | `:migration_consent[:consent_timeout_ms]` |
 | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | `2000` | `:migration_consent[:retry_interval_ms]` |

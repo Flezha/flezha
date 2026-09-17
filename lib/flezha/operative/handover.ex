@@ -71,14 +71,22 @@ defmodule Flezha.Operative.Handover do
       serialized_state: serialized_state
     }
 
-    result =
-      Overwatch.with_proc_span(:migration_deserialize, state.id, fn ->
-        ControlUnit.send_control_await(state.runner_id, {:migration_deserialization, command})
-      end)
+    # An operative can arrive with nothing bound: this controller served its
+    # group when the move started and no longer does, or its last runner for
+    # the factory went while the move was in flight. There is no runner to ship
+    # the state to, and the bind that follows restores it.
+    bound? = is_binary(state.runner_id)
 
-    case result do
-      {:error, reason} -> Logger.error("Failed to deserialize operative: #{inspect(reason)}")
-      _else -> :ok
+    if bound? do
+      result =
+        Overwatch.with_proc_span(:migration_deserialize, state.id, fn ->
+          ControlUnit.send_control_await(state.runner_id, {:migration_deserialization, command})
+        end)
+
+      case result do
+        {:error, reason} -> Logger.error("Failed to deserialize operative: #{inspect(reason)}")
+        _else -> :ok
+      end
     end
 
     # Tear down existing, then rehydrate; bring up so providers reconnect.
@@ -94,12 +102,12 @@ defmodule Flezha.Operative.Handover do
         state
         | extensions: brought_up.extensions,
           init_values: handover_state.init_values,
-          # Only a handover that actually carried state suppresses the WAL
-          # restore. An empty one carries nothing to double-apply, so the
-          # operative must fall through to its on-disk state — otherwise a
-          # migration away from a dead runner starts fresh AND locks the
-          # replay out, including the explicit `kick_restore` repair.
-          arrived_via_hotswap?: serialized_state != <<>>
+          # Only a handover that actually reached a runner suppresses the WAL
+          # restore. One that carried nothing, or that found nothing bound to
+          # carry it to, must fall through to the operative's on-disk state —
+          # otherwise a migration away from a dead runner starts fresh AND
+          # locks the replay out, including the explicit `kick_restore` repair.
+          arrived_via_hotswap?: bound? and serialized_state != <<>>
       }
 
     if migrated.arrived_via_hotswap?,

@@ -257,6 +257,20 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   streams** (`Flezha.Runner.StreamChannel`: primary `0x01` carries input to the runner, secondary
   `0x02` carries state changes, outputs and the data heartbeat back). See [`sdk/protocol_spec.md`](sdk/protocol_spec.md).
 
+- **Served group** — a factory a controller declares to a namespace's hub because its own fleet
+  can run it. An operative's group is its factory id, and the hub places the operative among the
+  controllers serving that group and no others, so an operative is never assigned to a controller
+  that cannot run it. A controller serves a factory while `placeable_runners/3` answers for it,
+  which excludes a runner advertising the factory at a language other than the established one.
+  `Flezha.Cluster.GroupedHashing` is the distribution strategy that reads the table; an operative
+  with no factory carries no group and is placed over every controller in the hub.
+- **Withdrawal grace** — how long a controller keeps declaring a factory after its last runner for
+  it goes (`FLEZHA_GROUP_WITHDRAW_GRACE_MS`, default 5 s). A runner back inside the grace moves no
+  operative at all; past it the hub reassigns them to a controller that can still run the factory,
+  through the migration-consent gate with handover. A disconnect the controller asked for
+  (`flz runner disconnect`, a namespace stop) withdraws at once. While no controller serves a
+  factory its operatives stay where they are, alive and unbound.
+
 ## Control-plane liveness
 
 - **Overwatch** — `Flezha.Operative.Overwatch`, the controller-side process owning one operative

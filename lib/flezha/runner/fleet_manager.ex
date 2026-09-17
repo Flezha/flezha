@@ -23,6 +23,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Parallel
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.FleetManager.Announce
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Load
   alias Flezha.Runner.FleetManager.Marks
@@ -291,6 +292,14 @@ defmodule Flezha.Runner.FleetManager do
     )
   end
 
+  @doc """
+  Declare again, to `namespace`'s freshly started hub, which of its factories
+  this node's fleet can run. A hub's group table dies with the hub, so a
+  restarted one holds nothing this controller declared before it.
+  """
+  @spec hub_started(String.t()) :: :ok
+  def hub_started(namespace), do: GenServer.cast(__MODULE__, {:hub_started, namespace})
+
   def stop_namespace(namespace) do
     GenServer.call(__MODULE__, {:stop_namespace, namespace}, manager_call_timeout())
   end
@@ -326,7 +335,10 @@ defmodule Flezha.Runner.FleetManager do
        pending_handshakes: %{},
        handshake_requests: :gen_server.reqids_new(),
        runner_loads: %{},
-       directory_groups: MapSet.new()
+       directory_groups: MapSet.new(),
+       # What this node last declared to each namespace hub as the groups it
+       # serves, so a sync announces only what moved.
+       announced_groups: %{}
      })}
   end
 
@@ -355,9 +367,13 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call({:runner_disconnected, namespace, runner_id}, _from, state) do
+    # Read before the disconnect clears the mark: a retiring runner is one this
+    # controller asked to leave, so its factories are withdrawn from the
+    # namespace hub without waiting out the grace.
+    retiring? = Marks.runner_retiring?(runner_id)
     state = Session.handle_runner_disconnect(state, namespace, runner_id)
 
-    {:reply, :ok, Session.sync_directory(state)}
+    {:reply, :ok, Announce.sync(state, immediate_withdrawal: retiring?)}
   end
 
   @impl true
@@ -448,7 +464,7 @@ defmodule Flezha.Runner.FleetManager do
     state = Map.put(state, :runner_namespaces, runner_namespaces)
     state = Map.update!(state, :namespace_factories, &Map.delete(&1, namespace))
     state = Map.update!(state, :runner_loads, &Map.delete(&1, namespace))
-    {:reply, reply, Session.sync_directory(state)}
+    {:reply, reply, Announce.sync(state)}
   end
 
   @impl true
@@ -499,7 +515,7 @@ defmodule Flezha.Runner.FleetManager do
     # after the revocation if it were left to complete.
     {state, pending} = Session.end_handshakes(state, &(&1.credential == hash), :revoked)
 
-    {:reply, length(sessions) + pending, Session.sync_directory(state)}
+    {:reply, length(sessions) + pending, Announce.sync(state)}
   end
 
   @impl true
@@ -514,13 +530,13 @@ defmodule Flezha.Runner.FleetManager do
     if not proved_wedged and Roster.runner_active?(state, runner_id) do
       {:reply, :ok, state}
     else
-      {:reply, :ok, state |> Session.do_evict_runner(runner_id) |> Session.sync_directory()}
+      {:reply, :ok, state |> Session.do_evict_runner(runner_id) |> Announce.sync()}
     end
   end
 
   @impl true
   def handle_call(:runner_cleanup, _from, state) do
-    {:reply, :ok, state |> runner_cleanup() |> Session.sync_directory()}
+    {:reply, :ok, state |> runner_cleanup() |> Announce.sync()}
   end
 
   # Full-set replacement of one runner's declared factory list, cast from
@@ -540,12 +556,24 @@ defmodule Flezha.Runner.FleetManager do
 
     Factories.warn_dropped_factories(state, namespace, runner_id, dropped)
 
-    {:noreply, Session.sync_directory(state)}
+    {:noreply, Announce.sync(state)}
+  end
+
+  @impl true
+  def handle_cast({:hub_started, namespace}, state) do
+    {:noreply, state |> Announce.forget(namespace) |> Announce.sync()}
   end
 
   @impl true
   def handle_info(:schedule_runner_cleanup, state) do
-    {:noreply, state |> arm_runner_cleanup() |> runner_cleanup() |> Session.sync_directory()}
+    {:noreply, state |> arm_runner_cleanup() |> runner_cleanup() |> Announce.sync()}
+  end
+
+  # The grace elapsed with no runner for the factory back. Withdrawing it is
+  # what hands its operatives to a controller that can still run them.
+  @impl true
+  def handle_info({:withdraw_group, namespace, factory_id}, state) do
+    {:noreply, Announce.withdraw(state, namespace, [factory_id])}
   end
 
   @impl true

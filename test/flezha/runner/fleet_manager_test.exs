@@ -676,3 +676,112 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
 
   defp roster, do: :sys.get_state(FleetManager).runner_namespaces[@namespace] || %{}
 end
+
+defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
+  @moduledoc """
+  What this controller declares to a namespace hub as the groups it serves.
+
+  The hub places an operative among the controllers serving its factory, so the
+  fleet manager declares exactly the factories `placeable_runners/3` answers
+  for — the same filter the runner choice reads. A factory becoming placeable
+  is declared at once; one that stops being placeable is held for
+  `group_withdraw_grace_ms`, unless the controller asked for the disconnect.
+  """
+
+  # async: false: the live controller and its fleet; a real namespace hub.
+
+  use ExUnit.Case, async: false
+
+  alias Flezha.Cluster.GroupedHashing
+  alias Flezha.Identificator
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Marks
+  alias FlezhaTest.Helper.FleetStateHelper
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @moduletag :capture_log
+
+  @grace_ms 200
+
+  setup do
+    namespace = "served_groups_#{System.unique_integer([:positive])}"
+    original = :sys.get_state(FleetManager)
+    previous_grace = Application.get_env(:flezha, :group_withdraw_grace_ms)
+
+    Application.put_env(:flezha, :group_withdraw_grace_ms, @grace_ms)
+    {:ok, _pid} = Flezha.Service.HubManager.start_hub(namespace)
+
+    on_exit(fn ->
+      :sys.replace_state(FleetManager, fn _ -> original end)
+      Flezha.Service.HubManager.stop_hub(namespace)
+      FleetStateHelper.forget_langs(namespace, ["alpha", "beta"])
+
+      case previous_grace do
+        nil -> Application.delete_env(:flezha, :group_withdraw_grace_ms)
+        value -> Application.put_env(:flezha, :group_withdraw_grace_ms, value)
+      end
+    end)
+
+    {:ok, namespace: namespace, hub_id: Identificator.hub(namespace)}
+  end
+
+  test "the placeable factories are declared, and a wrong-language runner is not",
+       %{namespace: ns, hub_id: hub_id} do
+    FleetStateHelper.seed(ns, %{"r1" => ["alpha", "beta"]})
+    FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
+
+    assert declared(hub_id, ["alpha", "beta"])
+
+    # `beta` is established at `r1`'s language, so a runner advertising it at
+    # another one is no candidate and makes its controller no eligible host.
+    FleetStateHelper.seed(ns, %{"r2" => ["alpha", {"beta", 2}]})
+    FleetStateHelper.sync(ns, "r2", ["alpha", {"beta", 2}])
+
+    assert declared(hub_id, ["alpha"])
+  end
+
+  test "a factory that stops being placeable is withdrawn after the grace",
+       %{namespace: ns, hub_id: hub_id} do
+    FleetStateHelper.seed(ns, %{"r1" => ["alpha", "beta"]})
+    FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
+    assert declared(hub_id, ["alpha", "beta"])
+
+    FleetStateHelper.sync(ns, "r1", ["alpha"])
+
+    # Still declared inside the grace: a runner back before it elapses moves
+    # no operative at all.
+    assert GroupedHashing.served_groups(hub_id) |> Enum.sort() == ["alpha", "beta"]
+    assert declared(hub_id, ["alpha"])
+  end
+
+  test "a runner back inside the grace withdraws nothing", %{namespace: ns, hub_id: hub_id} do
+    FleetStateHelper.seed(ns, %{"r1" => ["alpha", "beta"]})
+    FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
+    assert declared(hub_id, ["alpha", "beta"])
+
+    FleetStateHelper.sync(ns, "r1", ["alpha"])
+    FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
+
+    Process.sleep(@grace_ms * 3)
+    assert GroupedHashing.served_groups(hub_id) |> Enum.sort() == ["alpha", "beta"]
+  end
+
+  test "a retiring runner's factories are withdrawn without the grace",
+       %{namespace: ns, hub_id: hub_id} do
+    FleetStateHelper.seed(ns, %{"r1" => ["alpha", "beta"]})
+    FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
+    assert declared(hub_id, ["alpha", "beta"])
+
+    Marks.mark_runner_retiring("r1")
+    :ok = GenServer.call(FleetManager, {:runner_disconnected, ns, "r1"})
+
+    assert declared(hub_id, [])
+  end
+
+  defp declared(hub_id, groups) do
+    NodeTestHelper.wait_until(
+      fn -> Enum.sort(GroupedHashing.served_groups(hub_id)) == Enum.sort(groups) end,
+      2_000
+    ) || flunk("declared #{inspect(GroupedHashing.served_groups(hub_id))}, wanted #{inspect(groups)}")
+  end
+end

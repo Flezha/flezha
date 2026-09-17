@@ -48,7 +48,6 @@ defmodule Flezha.Convergence.Planner do
   # planned twice fails there by name.
   @rules [
     misbound_operatives: [:evict_runner, :rebind_operative],
-    replace_operatives: [:evict_runner, :replace_operative],
     parked_operatives: [:reset_control_channel, :rebind_operative],
     data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_operative],
     unbound_operatives: [:rebind_operative],
@@ -98,8 +97,7 @@ defmodule Flezha.Convergence.Planner do
     %Diff{
       unbound_operatives: [ref],
       misbound_operatives: for(r <- Facts.reasons_for(Diff.waiting_fields()), do: {ref, nil, r}),
-      parked_operatives: [{ref, %{}, nil}],
-      replace_operatives: [{ref, nil}]
+      parked_operatives: [{ref, %{}, nil}]
     }
     |> waiting_ops()
     |> Enum.map(&key/1)
@@ -109,7 +107,7 @@ defmodule Flezha.Convergence.Planner do
   # The ops those fields plan, and only those: the eviction and the channel
   # reset planned beside them target the RUNNER, and no waiting operative cools
   # on a key of its runner's.
-  defp waiting_ops(%Diff{} = d), do: bind_ops(d) ++ replace_ops(d)
+  defp waiting_ops(%Diff{} = d), do: bind_ops(d)
 
   @doc """
   Backoff key for an op: `{primitive, target}`; for a plugin op
@@ -191,15 +189,14 @@ defmodule Flezha.Convergence.Planner do
   end
 
   # Prerequisite order: evictions and channel resets, then the data-plane
-  # wedge (at most one op, of either kind), then (re)binds, re-placements,
-  # Entity resyncs, plugin starts, and the row re-publish last. Each group
-  # preserves Delta order within it.
+  # wedge (at most one op, of either kind), then (re)binds, Entity resyncs,
+  # plugin starts, and the row re-publish last. Each group preserves Delta
+  # order within it.
   defp ordered_ops(%Diff{} = d, backoff) do
     eviction_ops(d) ++
       reset_ops(d, backoff) ++
       wedge_ops(d, backoff) ++
       bind_ops(d) ++
-      replace_ops(d) ++
       resync_ops(d) ++
       plugin_ops(d) ++
       publish_ops(d)
@@ -241,12 +238,9 @@ defmodule Flezha.Convergence.Planner do
 
   defp wedge_args(layer), do: %{reason: @wedge_reason, layer: layer}
 
-  defp eviction_ops(%Diff{misbound_operatives: misbound, replace_operatives: replace}) do
-    dead_from_replace = for {_ref, dead} <- replace, is_binary(dead), do: dead
-
+  defp eviction_ops(%Diff{misbound_operatives: misbound}) do
     misbound
     |> Enum.map(fn {_ref, dead_runner, _reason} -> dead_runner end)
-    |> Enum.concat(dead_from_replace)
     |> Enum.uniq()
     |> Enum.map(&op(:evict_runner, nil, &1, %{}))
   end
@@ -272,13 +266,6 @@ defmodule Flezha.Convergence.Planner do
   defp cut_channel?(:dead, _attempt), do: true
   defp cut_channel?(:busy, attempt), do: attempt >= @busy_runner_cut_at
   defp cut_channel?(_unclassified, _attempt), do: false
-
-  # An operative whose factory only another node's fleet serves: the local
-  # bind is doomed, so the op moves the operative through the existing
-  # stop/start handover with state transfer. Its own backoff key bounds churn.
-  defp replace_ops(%Diff{replace_operatives: replace}) do
-    Enum.map(replace, fn {{ns, rid}, _dead} -> op(:replace_operative, ns, rid, %{}) end)
-  end
 
   defp bind_ops(%Diff{} = d) do
     rebind =

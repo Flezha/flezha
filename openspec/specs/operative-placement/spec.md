@@ -64,16 +64,25 @@ alone, so an operator can return to unweighted placement without a code change.
 
 ### Requirement: Node selection is not load-aware
 
-Selection of a controller node SHALL use rendezvous hashing with no load input.
-The re-placement path that chooses a destination node for an operative whose
-local fleet cannot host its factory SHALL rank nodes by rendezvous hash alone,
-so that repeated convergence ticks and concurrent loops on different nodes agree
-on one destination. Runner counts SHALL NOT be consulted for a node decision.
+Selection of a controller node SHALL be made by the namespace hub's
+distribution strategy, `Flezha.Cluster.GroupedHashing`, by consistent hashing
+of the operative id over the controllers that serve the operative's factory,
+with no load input. An operative with no factory SHALL be hashed over every
+controller in the hub. Every node SHALL compute the same controller for the
+same operative from the same group table, so concurrent decisions on different
+nodes agree. Runner counts SHALL NOT be consulted for a node decision, and no
+path outside the hub SHALL choose a destination node for a running operative.
 
-#### Scenario: Two ticks agree on the destination node
+#### Scenario: Two controllers agree on the hosting node
 
-- **WHEN** the same operative's re-placement is planned twice against an unchanged set of factory-advertising nodes
-- **THEN** both SHALL name the same destination node, whatever the runner counts on either node
+- **WHEN** two controllers holding the same group table are asked where the same operative belongs
+- **THEN** both SHALL name the same controller, whatever the runner counts on either node
+
+#### Scenario: A factory on one controller only
+
+- **GIVEN** controllers A and B in one namespace hub, where only B has a runner advertising `report`
+- **WHEN** twenty `report` operatives are started from A
+- **THEN** every one of them SHALL be hosted on B and none SHALL ever be started on A
 
 ### Requirement: A count never refuses a placement or moves a healthy operative
 
@@ -104,3 +113,52 @@ operator can see the distribution the cap governs rather than infer it.
 
 - **WHEN** operatives are bound across several runners in a namespace and the controller's measurements are scraped
 - **THEN** the exposition SHALL report a per-runner bound-operative count for each of them
+
+### Requirement: A controller declares the factories it can run as served groups
+
+`Flezha.Runner.FleetManager` SHALL declare factory `F` of namespace `N` as a
+served group on `N`'s hub while `Factories.placeable_runners/3` is non-empty
+for it on this node, deriving the desired set in `Session.sync_directory/1`
+beside the `:pg` groups and announcing the whole change of one sync in one
+call. A factory advertised here only at a language other than the established
+one SHALL NOT be declared. The current set SHALL be announced again after every
+start of the namespace's hub on this node.
+
+An operative SHALL be started with its factory id as its group, under the
+`:group` key of its registry metadata, and an operative with no factory SHALL
+carry no group. No handler SHALL rewrite or drop the key, and a registry row
+restored without it SHALL be given it from the operative's factory when the
+child is next started.
+
+A factory that stops being placeable here SHALL be withdrawn after
+`group_withdraw_grace_ms`, and SHALL NOT be withdrawn if it becomes placeable
+again first. When the runner whose loss made it unplaceable carries the
+retiring mark, the withdrawal SHALL be announced at once. The pending
+withdrawals SHALL live in the fleet manager's state under its existing timer
+seam, and the call handling a disconnect SHALL NOT block on any of it.
+
+#### Scenario: A rolling deploy adds a factory
+
+- **GIVEN** controllers A and B, each with one runner advertising `echo`
+- **WHEN** B's runner is replaced by one advertising `echo` and `report`
+- **THEN** a `report` operative started from either controller SHALL be hosted on B
+- **AND** the `echo` operatives SHALL keep their controllers
+
+#### Scenario: A runner back within the grace moves nothing
+
+- **GIVEN** `report` operatives on B, whose only `report` runner disconnects without a retiring mark
+- **WHEN** a runner advertising `report` connects to B before `group_withdraw_grace_ms` elapses
+- **THEN** no operative SHALL have changed controller, and each SHALL be rebound to the new runner
+
+#### Scenario: A retired runner withdraws at once
+
+- **GIVEN** `report` operatives on B and a second controller A serving `report`
+- **WHEN** an operator runs `flz runner disconnect` against B's only `report` runner
+- **THEN** B SHALL withdraw `report` without waiting for the grace and the operatives SHALL move to A with their state
+
+#### Scenario: A wrong-language runner does not make its controller eligible
+
+- **GIVEN** `report` established at one SDK language by a runner on B
+- **WHEN** a runner on A advertises `report` at another language
+- **THEN** A SHALL NOT serve `report` and no `report` operative SHALL be hosted on A
+

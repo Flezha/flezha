@@ -198,7 +198,9 @@ defmodule Flezha.Service.OperativeManager.Init do
       timeout: Durations.get(:hub_start_child_ms),
       # A partition member's identity is on its row from the first
       # registration, so `PartitionGroup.members/2` sees it before it binds.
-      metadata: partition_metadata(operative),
+      # The factory is the group the hub places the operative by, so it travels
+      # with the start request and lands on the row.
+      metadata: start_metadata(operative),
       # Declared intent: the start records the child in the hub's declared
       # set BEFORE anything runs, so a whole-cluster cold start restores it
       # and a deliberate stop (hub stop path) removes it for good. Off in
@@ -209,10 +211,16 @@ defmodule Flezha.Service.OperativeManager.Init do
     |> ProcessHub.Future.await()
   end
 
-  defp partition_metadata(operative) do
-    case Flezha.Partition.identity(operative.opts) do
-      nil -> %{}
-      partition -> %{partition: partition}
+  defp start_metadata(operative) do
+    metadata =
+      case Flezha.Partition.identity(operative.opts) do
+        nil -> %{}
+        partition -> %{partition: partition}
+      end
+
+    case operative.factory_id do
+      nil -> metadata
+      factory_id -> Map.put(metadata, :group, factory_id)
     end
   end
 

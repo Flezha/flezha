@@ -5,7 +5,7 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 ## Requirements
 ### Requirement: Single convergence loop owns all self-healing decisions
 
-The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an operator verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
+The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an operator verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
 
 #### Scenario: stall is observed in one place, decision happens in another
 - **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` procedure 0
@@ -518,24 +518,34 @@ Every path that starts or binds an operative — the ProcessHub orphan reconcile
 The heal/rebind path SHALL only bind an operative to a runner reachable from
 the node hosting that operative's Overwatch, and every rebind path SHALL pick
 its target through the same factory-filtered placement function as the start
-path. An operative whose node has no eligible runner SHALL be re-placed onto a
-node whose fleet has one — through the existing drain/handover machinery with
-state transfer — rather than left permanently degraded retrying a doomed local
-bind.
+path.
 
-#### Scenario: No local runner triggers re-placement, not a stuck bind
+The convergence loop SHALL NOT move an operative to another node. Which
+controller hosts an operative is decided by the namespace hub's distribution
+strategy alone (see `operative-placement`), so an operative with a factory is
+never assigned to a node whose fleet cannot run it, and there SHALL be no
+`replace_operative` primitive, no `replace_operatives` Diff field and no call to
+`ProcessHub.Service.Migration.migrate_child/3` in `lib/`.
+
+An operative whose node has no eligible runner while a peer's fleet has one is
+in that state only during the group withdrawal grace or while the hub's own
+move is in flight. The Diff SHALL classify it as waiting: no op is planned
+against it and no backoff key advances.
+
+#### Scenario: No local runner plans nothing
 
 - **WHEN** an operative's Overwatch is on a node whose local fleet has no
   runner advertising its factory, while another node's fleet does
-- **THEN** convergence re-places the operative onto that node with its durable
-  state intact, instead of retrying a local rebind forever
+- **THEN** the plan contains no op targeting the operative
+- **AND** the operative reaches the other node through the hub's
+  redistribution once this node withdraws the factory's group
 
 #### Scenario: No eligible fleet anywhere degrades loudly, without churn
 
 - **WHEN** no node in the cluster has a runner advertising the operative's
   factory
-- **THEN** the operative stays visibly degraded under backoff and no
-  re-placement churn is generated
+- **THEN** the operative stays where it is, visibly degraded under backoff, and
+  no move is attempted
 
 ### Requirement: Registry rebinds commit only on a confirmed migrate
 
@@ -666,7 +676,7 @@ consumed by exactly one Diff field and planned by exactly one Planner rule; and 
 walk over `lib/**/*.ex` finds no call to a remedy entry point — `Recovery.resync/2`,
 `Recovery.resync_for_overwatch/2`, any `Heal` function, `FleetManager.evict_runner/2`,
 `FleetManager.reset_control_channel/1`, `Overwatch.plugin_restart/3`,
-`Extension.Table.attempt_restart/3`, `Migration.migrate_child/3`,
+`Extension.Table.attempt_restart/3`,
 `Lifecycle.publish_binding/1`, a terminal `ControlUnit.disconnect/2` — outside
 `lib/flezha/convergence/`, nor to `HubManager.drain_hub/2` outside
 `lib/flezha/shutdown/`. One end-to-end drill in the system tier SHALL walk the same

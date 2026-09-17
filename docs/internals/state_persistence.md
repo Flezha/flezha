@@ -86,8 +86,8 @@ unknown suffixes, so nothing surfaces as a phantom Entity.
 `state_root` is node-local and never assumed shared, so durable state pins an Operative to the
 controller whose disk holds it. A HotSwap handover normally carries state in-band, but
 `Flezha.Operative.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
-the runner, so a migration triggered by that runner's death (the loop's `replace_operative`, when
-a controller loses its last runner for a namespace) ships an empty payload. The handover stamps `source_node`; on an
+the runner, so a migration triggered by that runner's death (the hub's own redistribution, after
+a controller loses its last runner for a factory and withdraws it) ships an empty payload. The handover stamps `source_node`; on an
 empty payload the destination runs `WalTransfer.pull_operative/3` against that node before the
 ordinary replay. The transfer is destination-driven — the source only answers reads
 (`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails

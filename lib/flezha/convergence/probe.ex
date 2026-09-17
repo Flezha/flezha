@@ -209,9 +209,10 @@ defmodule Flezha.Convergence.Probe do
 
   # For every observed `{namespace, factory}` pair: this node's runners
   # advertising the factory, and the OTHER nodes whose fleets do. The facts
-  # that turn a doomed local rebind into a re-place op. A failed local read is
-  # `:unknown`, never `[]` — the Diff must not move an operative off a node on
-  # the strength of a read that failed.
+  # that tell a doomed local rebind — the hub is already moving the operative
+  # to a controller that can run it — from one worth planning. A failed local
+  # read is `:unknown`, never `[]`, so the Diff never stops planning for an
+  # operative on the strength of a read that failed.
   defp placement(operatives) do
     operatives
     |> Enum.flat_map(fn {{ns, _rid}, observed} ->

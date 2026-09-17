@@ -216,7 +216,7 @@ defmodule Flezha.Convergence.DiffTest do
       assert Diff.empty?(diff(intent, reality))
     end
 
-    test "re-places instead of rebinding when the factory is only served elsewhere" do
+    test "plans nothing when the factory is only served elsewhere: the hub is moving it" do
       intent = %Intent{
         operatives: [
           %{namespace: :ns, operative_id: "movable", factory_id: "f", plugins: []},
@@ -234,15 +234,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = diff(intent, reality)
-
-      assert delta.unbound_operatives == []
-      assert delta.misbound_operatives == []
-
-      assert delta.replace_operatives == [
-               {{:ns, "movable"}, nil},
-               {{:ns, "stale_movable"}, "e_dead"}
-             ]
+      assert Diff.empty?(diff(intent, reality))
     end
 
     test "an unknown local placement read falls back to an ordinary rebind" do
@@ -259,7 +251,6 @@ defmodule Flezha.Convergence.DiffTest do
 
       delta = diff(intent, reality)
       assert delta.unbound_operatives == [{:ns, "r"}]
-      assert delta.replace_operatives == []
     end
 
     test "no eligible fleet anywhere stays an ordinary rebind — degraded, no re-place churn" do
@@ -276,7 +267,6 @@ defmodule Flezha.Convergence.DiffTest do
 
       delta = diff(intent, reality)
       assert delta.unbound_operatives == [{:ns, "r"}]
-      assert delta.replace_operatives == []
     end
 
     test "I2: classifies missing and extra plugins on a live operative" do
@@ -551,24 +541,6 @@ defmodule Flezha.Convergence.DiffTest do
       delta = %Diff{unbound_operatives: [{:ns, "parked"}]}
 
       assert [%{primitive: :rebind_operative, namespace: :ns, target: "parked"}] =
-               Planner.plan(delta, Backoff.new(:heal))
-    end
-
-    test "a re-place evicts its dead runner first and keys its own backoff" do
-      delta = %Diff{replace_operatives: [{{:ns, "r"}, "e_dead"}]}
-
-      assert [
-               %{primitive: :evict_runner, target: "e_dead"},
-               %{primitive: :replace_operative, namespace: :ns, target: "r"} = replace
-             ] = Planner.plan(delta, Backoff.new(:heal))
-
-      assert Planner.key(replace) == {:replace_operative, "r"}
-    end
-
-    test "an unbound re-place plans no eviction" do
-      delta = %Diff{replace_operatives: [{{:ns, "r"}, nil}]}
-
-      assert [%{primitive: :replace_operative, namespace: :ns, target: "r"}] =
                Planner.plan(delta, Backoff.new(:heal))
     end
 

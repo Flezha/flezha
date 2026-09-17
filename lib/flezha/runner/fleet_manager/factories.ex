@@ -187,6 +187,23 @@ defmodule Flezha.Runner.FleetManager.Factories do
     |> Enum.map(& &1.id)
   end
 
+  @doc """
+  The factories of `namespace` this node can actually place on, which is what
+  makes its controller an eligible host for their operatives.
+
+  `placeable_runners/3` over every factory the namespace holds, so this set
+  cannot disagree with the runner choice: a factory advertised here only at a
+  language other than the established one is in neither.
+  """
+  @spec placeable_factories(map(), String.t()) :: MapSet.t()
+  def placeable_factories(state, namespace) do
+    state.namespace_factories
+    |> Map.get(namespace, %{})
+    |> Map.keys()
+    |> Enum.filter(&(MapSet.size(placeable_runners(state, namespace, &1)) > 0))
+    |> MapSet.new()
+  end
+
   # ACTIVE runners advertising `factory_id` **in that factory's established SDK
   # language** — the one filter every placement path reads (initial start, the
   # convergence rebind, the reroute off a dead runner), so a future caller

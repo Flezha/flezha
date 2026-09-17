@@ -113,9 +113,19 @@ defmodule Flezha.Runner.ControlUnit do
   shape (`EntityState` stamps `flz.change_seq` there for a single selected
   Entity).
   """
-  @spec send_control_await(binary(), tuple(), keyword()) ::
+  @spec send_control_await(binary() | nil, tuple(), keyword()) ::
           {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
-  def send_control_await(runner_id, command, opts \\ []) when is_binary(runner_id) do
+  def send_control_await(runner_id, command, opts \\ [])
+
+  # An operative with nothing bound has no control unit either, which is the
+  # same answer as one whose unit was never started. Callers reach this on
+  # every path that talks to "the operative's runner" while it has none — a
+  # migration arriving or leaving during a group change, a snapshot of an
+  # unbound operative — and none of them may be crashed by it.
+  def send_control_await(runner_id, _command, _opts) when not is_binary(runner_id),
+    do: {:error, :no_control_unit}
+
+  def send_control_await(runner_id, command, opts) do
     # A control unit that was never started is a distinct failure from one that
     # is wedged, and the callers log or park on the difference. A wedged one
     # (waiting on a reply the dead transport will never deliver) is caught below,

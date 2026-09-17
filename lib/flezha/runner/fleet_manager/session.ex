@@ -20,15 +20,14 @@ defmodule Flezha.Runner.FleetManager.Session do
   held `:inactive` for its window rather than dropped.
   """
 
-  alias Flezha.AuthZ.QuotaCounters
   alias Flezha.AuthZ.Quotas
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.Verb
-  alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Process.Cspec
+  alias Flezha.Runner.FleetManager.Announce
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.FleetManager.Roster
@@ -291,11 +290,6 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   defp tree_standing?(runner_id), do: GenServer.whereis(Identificator.unit_sup(runner_id)) != nil
 
-  defp set_runner_counter({namespace, runners}) do
-    active = Enum.count(runners, fn {_id, {status, _ts}} -> status == :active end)
-    QuotaCounters.set(namespace, :runners, active)
-  end
-
   # Every way a session ends stops its tree here, which is where its identity
   # is forgotten.
   def stop_runner_sup(runner_id) do
@@ -336,9 +330,11 @@ defmodule Flezha.Runner.FleetManager.Session do
           put_roster(state, namespace, runner_preserve(state, namespace, runner_id))
       end
 
-    # The loop chooses what becomes of the operatives this runner held: a
-    # rebind onto a surviving runner, or a re-place onto a peer's fleet, each
-    # under its own key. Nothing is rerouted here.
+    # The loop rebinds the operatives this runner held onto a surviving local
+    # one. If none is left, the factory's group is withdrawn from the namespace
+    # hub — at once for a retiring runner, after the grace otherwise — and the
+    # HUB moves them to a controller that can still run them. Nothing is
+    # rerouted here.
     Facts.declare({:runner_disconnected, {namespace, runner_id}, %{}})
 
     EventManager.dispatch(
@@ -600,47 +596,6 @@ defmodule Flezha.Runner.FleetManager.Session do
     Map.get(init_payload, "factories") || []
   end
 
-  # Re-advertise this node's capability into the cluster directory from the
-  # state just committed. Desired-state diff, not refcounts: a group stays
-  # joined while ANY runner on this node still backs it, and a crashed
-  # FleetManager's memberships are cleaned by `:pg`'s monitors.
-  def sync_directory(state) do
-    sync_runner_counters(state)
-
-    %{
-      state
-      | directory_groups:
-          Directory.sync_membership(desired_directory_groups(state), state.directory_groups)
-    }
-  end
-
-  # Every session mutation ends in `sync_directory/1`, so the per-namespace
-  # `:runners` quota counter is DERIVED from the live session map here rather
-  # than incremented/decremented at each of the several removal seams — the
-  # counter cannot drift from the truth it is quota-checked against. A
-  # briefly-down counter store costs one sync, never the FleetManager.
-  def sync_runner_counters(state) do
-    if Flezha.AuthZ.enabled?(), do: Enum.each(state.runner_namespaces, &set_runner_counter/1)
-
-    :ok
-  catch
-    _, _ -> :ok
-  end
-
-  def desired_directory_groups(state) do
-    runner_groups =
-      for {namespace, runners} <- state.runner_namespaces,
-          Enum.any?(runners, fn {_id, {status, _ts}} -> status == :active end),
-          do: Directory.runners_group(namespace)
-
-    factory_groups =
-      for {namespace, factories} <- state.namespace_factories,
-          {factory_id, _info} <- factories,
-          do: Directory.factory_group(namespace, factory_id)
-
-    MapSet.new(runner_groups ++ factory_groups)
-  end
-
   def catch_runner_connect(stream_ref, connect) do
     runner_connect(stream_ref, connect)
   catch
@@ -676,6 +631,6 @@ defmodule Flezha.Runner.FleetManager.Session do
       %{members: :local}
     )
 
-    sync_directory(state)
+    Announce.sync(state)
   end
 end

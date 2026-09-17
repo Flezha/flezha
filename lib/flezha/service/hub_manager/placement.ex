@@ -154,6 +154,18 @@ defmodule Flezha.Service.HubManager.Placement do
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
     |> put_in([:metadata, :tag], assigned_runner)
+    |> stamp_group(factory_id)
+  end
+
+  # The hub places an operative among the controllers serving its factory, and
+  # reads that factory from the `:group` key of its row. A row written before
+  # an operative carried one has none, so it is stamped here — `put_new`, so a
+  # row that already carries a group keeps it and this handler never rewrites a
+  # placement decision.
+  defp stamp_group(child_data, nil), do: child_data
+
+  defp stamp_group(child_data, factory_id) do
+    update_in(child_data[:metadata], &Map.put_new(&1, :group, factory_id))
   end
 
   # Keep whatever the cspec recorded — a runner id, or nothing, which is what a

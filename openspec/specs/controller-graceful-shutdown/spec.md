@@ -76,7 +76,7 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 
 - **GIVEN** a coordinator that has declared `{:node_draining, deadline}` and a misbound operative whose Overwatch is on this node
 - **WHEN** the convergence loop ticks
-- **THEN** it SHALL plan no `rebind_operative` or `replace_operative` placing onto this node and no `publish_binding` for a local row, and the drain's forced pass SHALL run as the last step inside the budget
+- **THEN** it SHALL plan no `rebind_operative` placing onto this node and no `publish_binding` for a local row, and the drain's forced pass SHALL run as the last step inside the budget
 
 #### Scenario: The drain fact clears with finalise
 

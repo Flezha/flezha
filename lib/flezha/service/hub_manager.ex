@@ -6,6 +6,7 @@ defmodule Flezha.Service.HubManager do
   """
 
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.Cluster.GroupedHashing
   alias Flezha.Config.Durations
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Convergence.Snapshot
@@ -170,8 +171,8 @@ defmodule Flezha.Service.HubManager do
   across a runner restart — so runner cleanup and the loop's vacancy reclaim go
   through this guard. A peer's operatives are that peer's business: the reclaim
   is node-local, which is what lets a controller whose fleet does not serve a
-  namespace leave that namespace's cluster while the operatives it re-placed
-  keep running elsewhere.
+  namespace leave that namespace's cluster while the operatives the hub moved
+  off it keep running elsewhere.
 
   **What it was declared to hold counts too, and so does a recovery that has
   not settled.** The reclaim runs on every convergence tick over each hub with
@@ -253,7 +254,11 @@ defmodule Flezha.Service.HubManager do
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
-      distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
+      # An operative's group is its factory id, and a controller serves the
+      # factories its fleet can run, so an operative is only ever assigned to a
+      # controller that can run it. An operative with no factory has no group
+      # and is hashed over every controller in the hub.
+      distribution_strategy: %GroupedHashing{},
       migration_strategy: Lifecycle.migration_strategy(),
       registry_backend: Lifecycle.registry_backend_config(hub_id),
       auto_recovery: Lifecycle.auto_recovery_config(),

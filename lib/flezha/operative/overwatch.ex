@@ -564,7 +564,7 @@ defmodule Flezha.Operative.Overwatch do
 
   # A bind-time restore the SDK refused, reported from the off-process replay.
   # The Entity's durable state never reached the runner, so the operative parks
-  # rather than serving from empty state; the convergence loop re-places it.
+  # rather than serving from empty state; the convergence loop rebinds it.
   @impl true
   def handle_info({:restore_refused, reason}, %__MODULE__{} = state) do
     {:noreply, Lifecycle.park(state, {:restore_refused, reason})}

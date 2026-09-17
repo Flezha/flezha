@@ -218,8 +218,7 @@ defmodule Flezha.Convergence.LoopTest do
       %Diff{
         unbound_operatives: [ref],
         misbound_operatives: Enum.map(reasons, &{ref, "e_dead", &1}),
-        parked_operatives: [{ref, %{reason: :timeout}, "e_dead"}],
-        replace_operatives: [{ref, "e_dead"}]
+        parked_operatives: [{ref, %{reason: :timeout}, "e_dead"}]
       }
     end
 
@@ -241,14 +240,12 @@ defmodule Flezha.Convergence.LoopTest do
       assert Enum.sort(planned) == Enum.sort(Planner.waiting_keys({:ns, "op-1"}))
     end
 
-    # fails when: the two shapes this change was reported for stop being
-    # released — a rebind carrying the declared disconnect, and the re-place a
-    # factory only another node serves is planned on.
-    test "the reasoned rebind and the re-place are both in the released set" do
+    # fails when: the shape this change was reported for stops being released —
+    # a rebind carrying the declared disconnect.
+    test "the reasoned rebind is in the released set" do
       released = Planner.waiting_keys({:ns, "op-1"})
 
       assert {:runner_disconnected, "op-1"} in released
-      assert {:replace_operative, "op-1"} in released
     end
 
     # fails when: a namespace-wide release becomes a namespace-wide tick. The

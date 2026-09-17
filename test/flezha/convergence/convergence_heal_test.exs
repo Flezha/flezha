@@ -13,7 +13,6 @@ defmodule Flezha.Convergence.HealTest do
   use Mimic
 
   alias Flezha.Config.Backoff
-  alias Flezha.Cluster.Directory
   alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Snapshot}
   alias Flezha.Operative.Overwatch
   alias Flezha.Service.{HubManager, OperativeManager}
@@ -257,11 +256,10 @@ defmodule Flezha.Convergence.HealTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the ten reachable primitives" do
+    test "the heal surface is exactly the nine reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
                  :rebind_operative,
-                 :replace_operative,
                  :resync_runner,
                  :start_plugin,
                  :stop_plugin,
@@ -271,17 +269,6 @@ defmodule Flezha.Convergence.HealTest do
                  :reset_control_channel,
                  :publish_binding
                ])
-    end
-
-    test "replace_operative against an unknown operative is a failed heal, not a crash" do
-      op = %{
-        primitive: :replace_operative,
-        namespace: "ghost_ns",
-        target: "ghost_operative",
-        args: %{}
-      }
-
-      assert Heal.execute(op) == :error
     end
 
     test "resync_runner against an unknown operative is a failed heal, not a crash" do
@@ -325,18 +312,6 @@ defmodule Flezha.Convergence.HealTest do
       stub(OperativeManager, :assign_runner, fn :ns, "f", "op" -> nil end)
 
       op = %{primitive: :rebind_operative, namespace: :ns, target: "op", args: %{}}
-      assert Heal.execute(op) == :unmet
-    end
-
-    # A operative whose factory NO node's fleet serves meets the same unmet
-    # precondition one scope out, so the re-place answers it the same way.
-    test "a re-place with no node for the factory is unmet, not a failed heal" do
-      pid = overwatch_double(%Overwatch{id: "op", namespace: :ns, factory_id: "f"})
-
-      stub(HubManager, :get_pid, fn :ns, "op" -> {:ok, pid} end)
-      stub(Directory, :factory_nodes, fn :ns, "f" -> [] end)
-
-      op = %{primitive: :replace_operative, namespace: :ns, target: "op", args: %{}}
       assert Heal.execute(op) == :unmet
     end
 

@@ -79,6 +79,15 @@ defmodule Flezha.Config.DurationRows do
     {:placement_load_refresh_ms, :ms, 1_000, key: true},
     {:runner_retiring_mark_ttl_ms, :ms, 30_000,
      key: true, env: "FLEZHA_RUNNER_RETIRING_MARK_TTL_MS"},
+    # How long this controller keeps declaring a factory to the namespace hub
+    # after its last runner for it goes. A runner that comes back inside the
+    # grace moves no operative at all; past it, the hub reassigns them to a
+    # controller that can still run the factory. A disconnect the controller
+    # asked for skips the grace. Measured on this box, kill to placeable again:
+    # 125-185 ms for a Rust runner, 475-573 ms for a Java one, so five seconds
+    # covers a restart an order of magnitude over the slowest of them while
+    # keeping a genuine loss degraded for no longer than that.
+    {:group_withdraw_grace_ms, :ms, 5_000, key: true, env: "FLEZHA_GROUP_WITHDRAW_GRACE_MS"},
     {:superseded_mark_ttl_ms, :ms, 600_000, []},
 
     # ---- operatives: the calls the loop and the manager make ----------------

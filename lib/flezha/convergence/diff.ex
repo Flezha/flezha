@@ -36,7 +36,6 @@ defmodule Flezha.Convergence.Diff do
           unbound_operatives: [operative_ref()],
           misbound_operatives: [{operative_ref(), binary(), misbound_reason()}],
           parked_operatives: [{operative_ref(), map(), binary() | nil}],
-          replace_operatives: [{operative_ref(), binary() | nil}],
           stalled_operatives: [operative_ref()],
           resync_entities: [{tuple(), binary(), atom()}],
           missing_plugins: [{operative_ref(), binary(), map()}],
@@ -51,7 +50,6 @@ defmodule Flezha.Convergence.Diff do
   defstruct unbound_operatives: [],
             misbound_operatives: [],
             parked_operatives: [],
-            replace_operatives: [],
             stalled_operatives: [],
             resync_entities: [],
             missing_plugins: [],
@@ -70,7 +68,6 @@ defmodule Flezha.Convergence.Diff do
     :unbound_operatives,
     :misbound_operatives,
     :parked_operatives,
-    :replace_operatives,
     :stalled_operatives,
     :resync_entities,
     :missing_plugins,
@@ -86,8 +83,7 @@ defmodule Flezha.Convergence.Diff do
   @waiting_fields [
     :unbound_operatives,
     :misbound_operatives,
-    :parked_operatives,
-    :replace_operatives
+    :parked_operatives
   ]
 
   # The verdict states `classify/6` answers with a binding: never bound, bound
@@ -118,7 +114,7 @@ defmodule Flezha.Convergence.Diff do
     placement = Map.get(reality, :placement, %{})
     verdict = wedge_verdict(verdicts)
 
-    {unbound, misbound, parked, replace} =
+    {unbound, misbound, parked} =
       binding_divergence(declared, observed, verdicts, placement, facts)
 
     {missing, extra, unhealthy} = plugin_divergence(declared, observed)
@@ -127,7 +123,6 @@ defmodule Flezha.Convergence.Diff do
       unbound_operatives: Enum.reverse(unbound),
       misbound_operatives: Enum.reverse(misbound),
       parked_operatives: Enum.reverse(parked),
-      replace_operatives: Enum.reverse(replace),
       stalled_operatives: stalled_refs(declared, verdicts),
       resync_entities: resync_entities(facts),
       missing_plugins: missing,
@@ -148,12 +143,12 @@ defmodule Flezha.Convergence.Diff do
   end
 
   # The per-operative binding classification, the sibling of `plugin_divergence/2`:
-  # one pass over the declared set answering `{unbound, misbound, parked, replace}`.
+  # one pass over the declared set answering `{unbound, misbound, parked}`.
   defp binding_divergence(declared, observed, verdicts, placement, facts) do
     disconnected = disconnected_runners(facts)
 
-    Enum.reduce(declared, {[], [], [], []}, fn %{namespace: ns, operative_id: rid},
-                                               {unb, mis, park, repl} ->
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid},
+                                           {unb, mis, park} ->
       ref = {ns, rid}
 
       case classify(
@@ -164,11 +159,10 @@ defmodule Flezha.Convergence.Diff do
              facts,
              disconnected
            ) do
-        :skip -> {unb, mis, park, repl}
-        {:unbound, entry} -> {[entry | unb], mis, park, repl}
-        {:misbound, entry} -> {unb, [entry | mis], park, repl}
-        {:parked, entry} -> {unb, mis, [entry | park], repl}
-        {:replace, entry} -> {unb, mis, park, [entry | repl]}
+        :skip -> {unb, mis, park}
+        {:unbound, entry} -> {[entry | unb], mis, park}
+        {:misbound, entry} -> {unb, [entry | mis], park}
+        {:parked, entry} -> {unb, mis, [entry | park]}
       end
     end)
   end
@@ -259,15 +253,19 @@ defmodule Flezha.Convergence.Diff do
   defp normalize_runner(_), do: nil
 
   # An operative needing a binding whose factory no LOCAL runner advertises
-  # while another node's fleet does is a re-place, not a rebind — a local bind
-  # is doomed, the operative must move. The local read must be a definite `[]`
-  # (`:unknown` classifies as an ordinary rebind, which the heal then skips or
-  # fails safely) and the factory must be known.
+  # while another node's fleet does is WAITING, not diverging. The hub places an
+  # operative among the controllers serving its factory, so this state lasts
+  # only while this controller's withdrawal grace runs or the hub's own move is
+  # in flight; a bind planned against it could only fail and advance a key. The
+  # local read must be a definite `[]` — `:unknown` classifies as an ordinary
+  # rebind, which the heal then skips or fails safely — and the factory must be
+  # known. With no eligible fleet anywhere the operative is ordinary again, and
+  # degrades loudly under its rebind's backoff.
   defp classify_bindable({ns, _rid} = ref, dead_runner, observed_operative, placement) do
     factory = Map.get(observed_operative, :factory_id)
 
     case is_binary(factory) && Map.get(placement, {ns, factory}) do
-      %{local: [], remote_nodes: [_ | _]} -> {:replace, {ref, dead_runner}}
+      %{local: [], remote_nodes: [_ | _]} -> :skip
       _ when is_nil(dead_runner) -> {:unbound, ref}
       _ -> {:misbound, {ref, dead_runner}}
     end

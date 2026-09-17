@@ -17,7 +17,6 @@ defmodule Flezha.Convergence.RemedySeamTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Cluster.Directory
   alias FlezhaTest.Helper.ConvergenceFixtures
 
   alias Flezha.Config.Backoff
@@ -40,7 +39,6 @@ defmodule Flezha.Convergence.RemedySeamTest do
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias FlezhaTest.Helper.HubRegistryTestHelper
-  alias ProcessHub.Service.Migration
   alias ProcessHub.Service.ProcessRegistry
 
   setup :set_mimic_global_until_exit
@@ -55,7 +53,6 @@ defmodule Flezha.Convergence.RemedySeamTest do
   # the Planner would emit, and what the executor must answer without a crash.
   @ghost_ops %{
     rebind_operative: %{namespace: "ghost_ns", target: "ghost_op", args: %{}},
-    replace_operative: %{namespace: "ghost_ns", target: "ghost_op", args: %{}},
     resync_runner: %{namespace: "ghost_ns", target: "ghost_op", args: %{reason: :output_stall}},
     start_plugin: %{
       namespace: "ghost_ns",
@@ -200,7 +197,6 @@ defmodule Flezha.Convergence.RemedySeamTest do
   }
   @rule_samples %{
     misbound_operatives: %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]},
-    replace_operatives: %Diff{replace_operatives: [{{:ns, "r"}, "e_dead"}]},
     parked_operatives: %Diff{
       parked_operatives: [
         {{:ns, "r"}, %{reason: {:ping_failed, :closed}, transport: :dead}, "e1"}
@@ -294,7 +290,6 @@ defmodule Flezha.Convergence.RemedySeamTest do
     {Flezha.Runner.FleetManager, :reset_control_channel, []},
     {Flezha.Operative.Overwatch, :plugin_restart, []},
     {Flezha.Plugin.Extension.Table, :attempt_restart, ["lib/flezha/operative/plugins.ex"]},
-    {ProcessHub.Service.Migration, :migrate_child, []},
     # A bind publishes its OWN binding, which is not a remedy: those sites run
     # in the Overwatch as it binds, and the third IS the primitive's executor
     # (the `:publish_binding` call the loop makes). Repairing a row that named
@@ -325,6 +320,20 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
     assert bypasses == [],
            "remedy entry points called outside the loop:\n  " <> Enum.join(bypasses, "\n  ")
+  end
+
+  # `migrate_child/3` is not a remedy any more, and no longer a remedy anyone
+  # may bypass the loop with: the hub decides where a child belongs, and Flezha
+  # never names a destination. `drain/2`, which the graceful shutdown reaches
+  # through its one seam, is the only migration call left in the tree.
+  test "clause 4: no source in lib/ moves a child between nodes itself" do
+    movers =
+      for {file, calls} <- remote_calls("lib/**/*.ex"),
+          {ProcessHub.Service.Migration, :migrate_child, line, _args} <- calls,
+          do: "#{file}:#{line}"
+
+    assert movers == [],
+           "lib/ names a destination node for a child:\n  " <> Enum.join(movers, "\n  ")
   end
 
   defp entry_point?(:any, _fun, _args), do: true
@@ -479,94 +488,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
       end
     end
 
-    test "replace_operative executes the per-child handover to the HRW-picked eligible node" do
-      test_pid = self()
-      id = "replaceable_op"
-      {:ok, pid} = start_shell(id, "market")
-      inject_pid(id, pid)
-
-      Directory
-      |> stub(:factory_nodes, fn @namespace, "market" -> [node(), :peer_a@host, :peer_b@host] end)
-
-      expected = Enum.max_by([:peer_a@host, :peer_b@host], &:erlang.phash2({id, &1}))
-
-      Migration
-      |> stub(:migrate_child, fn hub_id, ^id, target ->
-        send(test_pid, {:migrate_child, hub_id, target})
-        :ok
-      end)
-
-      op = %{primitive: :replace_operative, namespace: @namespace, target: id, args: %{}}
-      assert Heal.execute(op) == :ok
-
-      hub_id = Identificator.hub(@namespace)
-      assert_receive {:migrate_child, ^hub_id, ^expected}, 500
-    end
-
-    test "a deferring consent, or no other node, leaves the operative in place" do
-      test_pid = self()
-
-      Migration
-      |> stub(:migrate_child, fn _hub, _id, _target ->
-        send(test_pid, :moved)
-        :ok
-      end)
-
-      {:ok, deferring} =
-        FakeOverwatch.start_link(%Overwatch{
-          id: "deferring_op",
-          namespace: @namespace,
-          factory_id: "market",
-          corrections: %{"k" => :pending}
-        })
-
-      inject_pid("deferring_op", deferring)
-      Directory |> stub(:factory_nodes, fn @namespace, "market" -> [:peer_a@host] end)
-
-      assert Heal.execute(%{
-               primitive: :replace_operative,
-               namespace: @namespace,
-               target: "deferring_op",
-               args: %{}
-             }) ==
-               :error
-
-      # A deferring consent is a repair that failed; no other node serving the
-      # factory is a precondition that was never met, and the two are told
-      # apart so only the first is charged a rung.
-      {:ok, nowhere} = start_shell("nowhere_to_go_op", "market")
-      inject_pid("nowhere_to_go_op", nowhere)
-      Directory |> stub(:factory_nodes, fn @namespace, "market" -> [node()] end)
-
-      assert Heal.execute(%{
-               primitive: :replace_operative,
-               namespace: @namespace,
-               target: "nowhere_to_go_op",
-               args: %{}
-             }) ==
-               :unmet
-
-      refute_received :moved
-    end
-
     defp rebind(id),
       do: %{primitive: :rebind_operative, namespace: @namespace, target: id, args: %{}}
-
-    defp inject_pid(id, pid) do
-      cspec = %{id: id, start: {HubRegistryTestHelper.StubChild, :start_link, [{@namespace, id}]}}
-      hub_id = Identificator.hub(@namespace)
-
-      :ok = ProcessRegistry.bulk_insert(hub_id, %{id => {cspec, [{node(), pid}], %{}}})
-    end
-
-    defp start_shell(id, factory) do
-      FakeOverwatch.start_link(%Overwatch{
-        id: id,
-        namespace: @namespace,
-        factory_id: factory,
-        runner_id: nil
-      })
-    end
 
     defp inject(id, opts) do
       {:ok, pid} =

@@ -137,7 +137,7 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 #### Scenario: Controller loses all runners — operatives migrate with their state
 
 - **GIVEN** controller A hosting operative `p1` with Entity state on A's local disk and no snapshot of `p1` held by its Overwatch; peer controller B with a runner for `p1`'s factory
-- **WHEN** A's last runner disconnects and A's convergence loop re-places `p1` with `replace_operative`, because no runner left on A advertises `p1`'s factory
+- **WHEN** A's last runner disconnects and, after the withdrawal grace, A stops serving `p1`'s factory, so the hub's redistribution assigns `p1` to B
 - **THEN** `p1` migrates to B through the consent gate
 - **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Entity files from A and replays them
 - **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them
@@ -257,7 +257,7 @@ defense-in-depth for the case where reaping has not yet fired at replay time.
 Recovery-triggering hub creation SHALL occur only after the cluster is formed (or the
 bounded degrade-to-solo timeout has elapsed), so a hub is never created on a
 not-yet-clustered node and then diverge from its peers. After the gate, the reconciler
-owns post-replay convergence (re-place, rebind, reissue) so a operative that replay started
+owns post-replay convergence (rebind, reissue) so a operative that replay started
 but did not bring to production is still healed.
 
 The gate SHALL be one seam that every hub-creating path waits on, and no path SHALL write its own wait: boot-time creation of the declared set, on-demand creation for a connecting runner, and the schedule hub's own creation SHALL all reach the cluster through it. Boot-time creation SHALL wait on the gate once for the whole declared set rather than once per namespace, because cluster formation is a property of the node and not of a namespace. The wait SHALL stay synchronous for the on-demand path, which runs inside the fleet manager's own call and must answer that caller rather than defer it.
@@ -300,27 +300,6 @@ A plain restart of the sole controller SHALL preserve its operative list. The du
 - **GIVEN** a sole controller has operatives bound
 - **WHEN** the controller restarts, with nothing armed beforehand
 - **THEN** the first reconcile round replays the operative list from the durable registry, `/healthz` reports `recovering` until rebound, and the operatives return.
-
-### Requirement: A last-runner loss SHALL move operatives one by one through the planner
-
-When this controller's last runner for a namespace disconnects while a peer controller's fleet advertises the operatives' factory, `Flezha.Runner.FleetManager` SHALL declare the disconnect and run no migration of its own: the convergence Diff's `replace_operatives` (no local runner for the factory, a peer fleet has one) plans `replace_operative` per child, executed through `Migration.migrate_child/3` and ProcessHub's migration-consent gate with live handover (`migration_strategy: HotSwap{handover: true}`), at most the loop's per-tick cap per tick and under the loop's table — NOT via a hub drain, which held this node out of the namespace's distribution for its budget and force-migrated whatever still deferred, and NOT via direct hub teardown, which would kill the Overwatches without a handover and orphan their state. Nothing is forced: a child that defers stays put, visible and misbound, for the next tick. The `FleetManager` call handling the disconnect SHALL NOT block on any move. No `Migration.drain/2` SHALL run, so this node's place in the distribution is never held open by a drain marker that outlives the move: a runner reconnecting while operatives are still leaving is a placement candidate at once.
-
-Once this node's fleet no longer advertises the namespace AND this node hosts none of the namespace's operatives, the convergence loop SHALL reclaim the hub here through `Flezha.Service.HubManager.stop_hub_if_vacant/1`, so a controller that cannot host is not handed children by the distribution. That guard SHALL be node-local: a peer's operatives never keep this node's hub alive, and this node's own — running or durably suspended — always do. A later runner connect starts the hub again, so the reclaim costs a returning runner nothing.
-
-`ProcessHub.Service.Migration.drain/2` remains the function graceful shutdown and the namespace stop reach through the single seam `Flezha.Service.HubManager.drain_hub/2`, callable from `lib/flezha/shutdown/` only. `drain_hub/2` SHALL wait for the local children to actually be gone before its caller proceeds — the migration start requests are async and HotSwap stops a local child only AFTER the remote start succeeds — by monitoring the hub's local children, never by polling.
-
-#### Scenario: A returning runner is not blocked by a stale drain
-
-- **GIVEN** controller A lost its last runner for a namespace and the loop has begun moving its operatives
-- **WHEN** a runner reconnects to A shortly afterwards
-- **THEN** no drain marker SHALL be holding A out of the distribution, the runner SHALL be a placement candidate at once, and the operatives not yet moved SHALL be rebound to it rather than moved
-
-#### Scenario: Nothing is forced, and the vacated hub is reclaimed
-
-- **GIVEN** controller A whose last runner for a namespace disconnects, with peer controller B in the hub cluster
-- **WHEN** the disconnect is declared
-- **THEN** each child SHALL be planned as `replace_operative` and moved through the consent gate with handover, no `Migration.drain/2` SHALL run, and the `FleetManager` call handling the disconnect SHALL NOT block
-- **AND** once A hosts none of the namespace's operatives, the loop SHALL stop A's hub, so B is the only node left in the namespace's cluster
 
 ### Requirement: The controller SHALL publish one readiness verdict, folded from a declared precondition table
 
@@ -616,4 +595,25 @@ timeout of zero SHALL ask exactly once.
 
 - **WHEN** `flz boot await --timeout 0` cannot reach a controller
 - **THEN** the CLI asks exactly once and exits 1
+
+### Requirement: A last-runner loss withdraws this controller's groups and the hub moves the operatives
+
+When this controller's last placeable runner for a factory disconnects, `Flezha.Runner.FleetManager` SHALL declare the disconnect, SHALL run no migration of its own, and SHALL withdraw the factory's group from the namespace hub as `operative-placement` states: after `group_withdraw_grace_ms`, or at once for a retiring runner. The withdrawal SHALL be the only thing that moves the operatives: the hub's redistribution reassigns each to a controller still serving the factory and moves it through ProcessHub's migration-consent gate with live handover (`migration_strategy: HotSwap{handover: true}`), as a controller join does. A child that defers SHALL stay put until it consents or reaches `max_defer_time`, when it SHALL be force-moved through the existing best-effort handover. When no controller serves the factory the operatives SHALL stay on this node, unbound. The `FleetManager` call handling the disconnect SHALL NOT block on any move. No `Migration.drain/2` SHALL run, so this node's place in the distribution is never held open by a drain marker: a runner reconnecting inside the grace is a placement candidate at once, and one reconnecting after it serves the group again at once.
+
+Once this node's fleet no longer advertises the namespace AND this node hosts none of the namespace's operatives, the convergence loop SHALL reclaim the hub here through `Flezha.Service.HubManager.stop_hub_if_vacant/1`, so a controller that cannot host is not handed children by the distribution. That guard SHALL be node-local: a peer's operatives never keep this node's hub alive, and this node's own — running or durably suspended — always do. A later runner connect starts the hub again, so the reclaim costs a returning runner nothing.
+
+`ProcessHub.Service.Migration.drain/2` remains the function graceful shutdown and the namespace stop reach through the single seam `Flezha.Service.HubManager.drain_hub/2`, callable from `lib/flezha/shutdown/` only. `drain_hub/2` SHALL wait for the local children to actually be gone before its caller proceeds — the migration start requests are async and HotSwap stops a local child only AFTER the remote start succeeds — by monitoring the hub's local children, never by polling.
+
+#### Scenario: A returning runner is not blocked by a stale drain
+
+- **GIVEN** controller A lost its last runner for a namespace and the withdrawal grace is running
+- **WHEN** a runner reconnects to A before it elapses
+- **THEN** no drain marker SHALL be holding A out of the distribution, no group SHALL have been withdrawn, and A's operatives SHALL be rebound to the runner rather than moved
+
+#### Scenario: The hub moves the operatives, and the vacated hub is reclaimed
+
+- **GIVEN** controller A whose last runner for a namespace disconnects, with peer controller B serving the same factories
+- **WHEN** the grace elapses
+- **THEN** A SHALL withdraw its groups in one announcement, each child SHALL move to B through the consent gate with handover, no `Migration.drain/2` SHALL run, and the `FleetManager` call handling the disconnect SHALL NOT have blocked
+- **AND** once A hosts none of the namespace's operatives, the loop SHALL stop A's hub, so B is the only node left in the namespace's cluster
 
