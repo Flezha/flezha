@@ -198,7 +198,7 @@ proved, so nothing holds a credential and nothing expires.
 
 ```java
 FlezhaRunner runner = Flezha.createRunner("default")
-        .defineStream(EchoOperative.class)
+        .registerFactory(EchoOperative.class)
         .start();
 
 Admin admin = runner.admin();
@@ -221,7 +221,7 @@ The echo example carries these lines commented out in its `Main`,
 
 ```rust
 let runner = Flezha::create_runner("default")?;
-runner.define_stream::<EchoOperative>()?.start()?;
+runner.register_factory(EchoOperative)?.start()?;
 
 let admin = runner.admin();
 admin.start_operative(&OperativeSpec::new("echo").id("my_echo"))?;
@@ -241,7 +241,7 @@ The echo example carries the calls commented out in its `main.rs`,
 ### Node
 
 ```javascript
-const runner = createRunner('default').defineStream('./echo_operative.mjs');
+const runner = createRunner('default').registerFactory('./echo_operative.mjs');
 await runner.run();
 
 const admin = runner.admin();
@@ -261,7 +261,7 @@ The echo example carries the calls commented out in its `runner.mjs`,
 
 ```python
 runner = flezha.create_runner("default")
-runner.define_stream(echo_operative)
+runner.register_factory(echo_operative)
 runner.start()
 
 admin = runner.admin()
@@ -281,7 +281,7 @@ The echo example carries the calls commented out in its `runner.py`,
 ### Ruby
 
 ```ruby
-runner = Flezha.create_runner("default").define_stream(EchoOperative)
+runner = Flezha.create_runner("default").register_factory(EchoOperative)
 runner.boot
 
 admin = runner.admin
@@ -303,7 +303,7 @@ The echo example carries the calls commented out in its `runner.rb`,
 
 ```php
 $runner = Flezha::createRunner('default')
-    ->defineStream(EchoOperative::class)
+    ->registerFactory(EchoOperative::class)
     ->start();
 
 $admin = $runner->admin();
@@ -324,7 +324,7 @@ The echo example carries the calls commented out in its `runner.php`,
 ### Elixir
 
 ```elixir
-children = [{Flezha.SDK, namespace: "default", streams: [Echo.Operative], transport: :uds}]
+children = [{Flezha.SDK, namespace: "default", operatives: [Echo.Operative], transport: :uds}]
 {:ok, _supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
 
 alias Flezha.SDK.Admin

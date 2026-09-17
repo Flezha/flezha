@@ -169,3 +169,53 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **WHEN** `c.routeLatest(config, trades, (t) => t.symbol)` is declared and the harness feeds a document, then trades for `A` and `B`, then the same document, then a trade for `A`
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
+### Requirement: The single-procedure short form is four definition fields
+`defineProcedure` SHALL accept `kind` (`'stream'` or `'workflow'`), `sink`, `input` and `codec` beside `name`. A definition carrying `name`, `kind` and `sink` SHALL return a procedure that also carries a generated `ClassSpec` of that kind whose factory id is `name`: a stream, or a `once` workflow with every workflow setting at its default, wiring an entry channel named `input` (or the `input` field's value) into the procedure and the procedure to the `sink` plugin channel. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is. `defineProcedure` SHALL throw `DeclarationError` with the refusal's name in `refusals` and at the start of the message: `SinkWithoutId` for a `sink` with an empty `name`, raised before the plain non-empty-name check; `SinkWithoutKind` for a `sink` with no `kind`; and `ShorthandKeyWithoutSink` for `kind`, `input` or `codec` with no `sink`, naming the fields. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short-form procedure the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. Whether `SinkWithoutOutput` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`.
+
+#### Scenario: A module exporting one procedure is a whole stream operative
+
+- **WHEN** `./upcase.mjs` default-exports `defineProcedure({ name: 'upcase', kind: 'stream', sink: 'out', codec: 'text', handle })` and the runner is given `registerFactory('./upcase.mjs')`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and the module calls no `defineOperative`
+
+#### Scenario: A module exporting one procedure is a whole workflow operative
+
+- **WHEN** `./place.mjs` exports `defineProcedure({ name: 'place', kind: 'workflow', sink: 'placed', input: 'order', codec: 'text', handle })`, the runner is given `registerFactory('./place.mjs')`, and an instance is started with init values
+- **THEN** `handle` receives the start values as text, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A sink without a name is refused by the short form's name
+
+- **WHEN** a module calls `defineProcedure({ kind: 'stream', sink: 'out', handle })`
+- **THEN** loading it throws `DeclarationError` whose refusals contain `SinkWithoutId`
+
+#### Scenario: A sink without a kind is refused
+
+- **WHEN** a module calls `defineProcedure({ name: 'upcase', sink: 'out', handle })`
+- **THEN** loading it throws `DeclarationError` whose refusals contain `SinkWithoutKind`
+
+#### Scenario: Plain JavaScript still needs no build step
+
+- **WHEN** the short form is used from a `.mjs` module
+- **THEN** it registers and runs with no transpilation
+
+### Requirement: A Node runner registers a factory with one awaited call
+The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide `defineStream`, `defineWorkflow` or `declare`. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operatives (stream, workflow or short form, the kind read from each), rejecting with an error naming the specifier when the import fails or the module exports no operative; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operative against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions `defineProcedure`, `defineOperative` and `defineWorkflow` SHALL keep their names, because they declare a class.
+
+#### Scenario: Registration is awaited before run
+
+- **WHEN** a program runs `const runner = createRunner('default'); await runner.registerFactory('./echo_operative.mjs'); await runner.run();`
+- **THEN** the runner declares the module's operative at start
+
+#### Scenario: A broken module rejects where it is registered
+
+- **WHEN** a program awaits `runner.registerFactory('./missing.mjs')` before `run()`
+- **THEN** the promise rejects with an error naming `./missing.mjs`, before `run()` is called
+
+#### Scenario: A post-start registration reaches the running core
+
+- **WHEN** `registerFactory('./late.mjs')` is awaited after `run()` has started the runner
+- **THEN** the module's operative is declared to the core and to every worker, as `declare` did
+
+#### Scenario: A post-start removal is rejected, not ignored
+
+- **WHEN** `unregisterFactory('./echo_operative.mjs')` is awaited after `run()`
+- **THEN** the promise rejects saying a running Node runner cannot stop serving a started declaration, and the operative stays declared

@@ -118,7 +118,7 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 `runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
 `entity_timers`, `correction_window`, `keyed_channels`, `workflow`,
-`dynamic_entity`, `partitioned`, `schema_evolution`.
+`dynamic_entity`, `partitioned`, `schema_evolution`, `shorthand`.
 
 A capability can carry no fixtures at all, where the scenarios that prove it
 need none of their own. Carrying fixtures and being required are independent:
@@ -142,7 +142,7 @@ neither forgotten nor claimed twice. The **required set**
 (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `retry_ladder`, `partitioned`, `pool_wedge`, `state_persistence`,
 `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`,
-`effectively_once`, `correction_window`) can never be deferred, and it holds
+`effectively_once`, `correction_window`, `shorthand`) can never be deferred, and it holds
 **every capability no manifest defers**: a capability every SDK carries is one
 none of them may drop. The gate refuses drift in both directions, with a
 different message for each — a manifest deferring a required capability names
@@ -391,6 +391,57 @@ node and walks no socket ladder; it does not arise here because
 `test/apps/elixir_runner/conformance.json` declares `transports: ["uds", "quic"]`,
 so the conformance app runs the standalone binary protocol like the other six.
 
+## The short form
+
+`shorthand` is a required capability: the §5 single-procedure short form is one
+every SDK carries, so no manifest may defer it. Four fixtures, each a single
+declaration in every app, with no hand-written operative beside it:
+
+| Id | Kind | Entry | Sink |
+| --- | --- | --- | --- |
+| `sugar_do_nothing` | stream | `input`, text | `sugar_do_nothing_echo` |
+| `sugar_store_input` | stream | `input`, text | `sugar_store_sink` |
+| `sugar_named_input` | stream | `prices`, text | `sugar_named_input_sink` |
+| `sugar_workflow` | workflow | `order`, text | `sugar_workflow_placed` |
+
+Text entries, so the bytes a sink carries are equal across runtimes: a JSON
+round trip re-spaces the start values in some languages.
+`test/system/shorthand_e2e_test.exs` drives all four on the selected runtime.
+
+The refusal table carries one row per short-form refusal, written with the step
+`shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)` and the `.noout` modifier for
+a procedure declaring no output. Their names are the authoring contract's, not
+`flz_core`'s — the core never sees a short form — so a row whose `needs` begins
+with `shorthand` is exempt from the issue-variant pairing and is checked
+against the list `docs/sdk/authoring_contract.md` §5.2 carries.
+
+Three `needs` surfaces say what a spelling can write:
+
+| Surface | Carried by |
+| --- | --- |
+| `shorthand` | every manifest; the short form itself |
+| `shorthand_typed_output` | Rust, Java, Python — the SDKs that can see a procedure declares no output |
+| `shorthand_omittable_sink` | every manifest but Ruby's, whose keys ride the `sink` call |
+
+### A compile-time refusal is cited, and the citation is checked
+
+Rust, Java and — through the `use` macro — Elixir cannot boot a program that
+does not compile, so for a row they refuse at compile time the app answers
+`"outcome": "cited"` with the refusal's name and the repository-relative path of
+the compile-fail test that pins it:
+
+```json
+{"topology": "shorthand_sink_without_kind", "outcome": "cited",
+ "names": ["SinkWithoutKind"],
+ "citation": "sdk/rust/tests/ui/procedure_sink_without_kind.stderr"}
+```
+
+The drill checks the cited file exists and carries the name, so a citation
+nothing holds fails the same way a missing refusal does. Under
+`FLEZHA_REFUSAL_FIXTURE` the app prints the name and the path and exits
+non-zero. `DuplicateFactoryId` is a runtime refusal in all seven, so that row
+boots for real everywhere.
+
 ## Golden declaration snapshots
 
 The smoke tier binds one fixture per declaration key the controller reads and
@@ -399,6 +450,13 @@ compares the decoded `AddOperativeResponse` metadata — intercepted at
 form is decoded — against `test/fixtures/declarations/<fixture>.json`. One more
 snapshot pins the `flz.*` identity stamps on a keyed output. A key one SDK adds,
 drops or spells differently is a diff on every other.
+
+The committed goldens are `candle`, `checkpoint_batched_store`,
+`commit_block_workflow`, `keyed_output_stamps`, `saga_block_workflow`,
+`static_entity`, `store_input`, `sugar_do_nothing`, `sugar_named_input`,
+`sugar_static_entity`, `sugar_workflow` and `tier_store`. The three `sugar_*`
+short-form ones pin that a short form declares the entry channel, the sink and
+the kind its author wrote, in every runtime.
 
 Regenerate with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any
 other runtime refuses.

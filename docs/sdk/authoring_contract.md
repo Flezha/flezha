@@ -3,19 +3,22 @@
 For operative authors who use the attribute/annotation sugar and for SDK
 implementers who must keep it identical across bindings. It specifies how a
 sugared declaration — `#[flezha::procedure]` / `#[derive(flezha::State)]` /
-`flezha::operative!` in Rust, `@Procedure` / `@State` / `@StreamOperative` in
-Java — maps onto the `StreamOperative` / `Procedure` / `Change` / `Channel`
+`flezha::operative!` in Rust, `@Procedure` / `@State` in Java — maps onto the `StreamOperative` / `Procedure` / `Change` / `Channel`
 trait (interface) surface. The sugar is **pure expansion**: a macro (Rust,
 `sdk/rust/macros/`) or an annotation processor (Java, `sdk/java/flezha-sdk-processor/`)
 generates exactly the impls a user would write by hand, against the unchanged
 runtime. There is no parallel runtime path, no new protobuf message and no
 WAL-format change.
 
-The sugar exists in the Rust and Java SDKs. The Elixir SDK exposes the
-`Flezha.SDK.Procedure` behaviour directly (`name/0`, `init_state/1`, `run/3`,
-`entity_keys/0`, `entities_for/1`, …) and has no derive layer — see
-[`elixir_sdk.md`](elixir_sdk.md). The Node SDK exposes factory functions —
-`defineProcedure`, `defineOperative`, `defineWorkflow`, wired by a fluent
+The sugar exists in the Rust and Java SDKs. The Elixir SDK expands the same
+declarations through `use` macros — `use Flezha.SDK.Procedure`,
+`use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative` take
+the scalar settings as options named after the behaviour's own callbacks and
+define only the callbacks written, so every default stays where
+`function_exported?` resolves it; a `state do field … end` block is its §3
+derive layer and `defchange` its manual boundary. The plain `@behaviour` form
+keeps working unchanged — see [`elixir_sdk.md`](elixir_sdk.md). The Node SDK exposes factory functions —
+`defineProcedure`, `defineOperative`, `registerFactory`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
 which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). The Ruby SDK
@@ -55,7 +58,7 @@ after a restart, and nothing reports the difference until the restart.
 | --- | --- |
 | Rust | The borrow checker. `StateHandle` hands out the generated mutators and `apply`; there is no `&mut S` to assign through, so an unrecorded mutation does not compile. |
 | Java | The generated `<State>Handle`. The state object is reachable, so an unrecorded mutation is possible in principle and prevented by the generated surface being the only one an author is given. |
-| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Entity's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
+| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. A `state do field … end` block generates that path: `set_<field>` / `push_<field>` and `defchange`'s named recorder each journal exactly one change through `Ctx.apply/3`, so the hand-written fold is only for what the block does not cover. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Entity's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 | PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `Harness::assertReplayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
@@ -176,7 +179,7 @@ for what its declaration does not already state:
   (type variables are substituted at every hop). `kryoTypes()` defaults to the
   resolved Change and State classes, and to the empty list for a `NoChange`
   procedure, which persists nothing. An argument still generic at the concrete
-  class is **never guessed**: `defineStream` / `defineWorkflow` fails naming the
+  class is **never guessed**: `registerFactory` fails naming the
   class and the parameter, and nothing is registered — a startup error, not a
   dispatch error.
 - **Rust** — `SimpleProcedure` declares `Input`, `Output`, `State`, `name`,
@@ -205,6 +208,21 @@ Rust, `@State` in Java) generates:
   trait, Java through a generated `<State>Handle` class) plus the explicit
   `state.apply(change)` path. Both journal the change to the WAL.
 
+**Elixir spells the same derivation as a block.** `use Flezha.SDK.Procedure`
+makes `state do field :qty, :integer, default: 0 end` available. A `field`
+takes a name, a type (`:integer`, `:float`, `:string`, `:boolean`, `:list`,
+`:map`, `:term`) and a `default`, and the block generates `init_state/1`
+returning the map of defaults, `state_from_json/1` reading each field's string
+key, `apply_change/2` clauses for `{:set, field, value}` on every field and
+`{:push, field, item}` on every `:list` field, and the recorders
+`set_<field>(state, ctx, value)` and `push_<field>(state, ctx, item)`, each
+journaling through `Flezha.SDK.Ctx.apply/3`. A module with a `state` block that
+also writes `apply_change/2` or `state_from_json/1` by hand fails to compile,
+naming both: the block owns them. §3.1's keyed-map and deque modes are
+**deferred for Elixir** — its block carries the field and `:list` modes only.
+A field-granular derivation is likewise **deferred for Python, Node, Ruby and
+PHP**, which declare their change types by hand.
+
 **The manual boundary.** Only field-granular mutations are derivable. A
 mutation that is conditional, spans multiple fields atomically, or is a
 computed function of the prior state is **not** expressible as a single
@@ -212,7 +230,11 @@ generated variant: the SDK requires a hand-written `Change` and reports an
 error rather than journaling incorrectly. The derive requires a struct with
 named fields and at least one field; every field type must be
 cloneable/serializable (Rust derives `Clone` + serde on the generated enum), so
-a field that is not fails to compile and the author hand-writes a `Change`.
+a field that is not fails to compile and the author hand-writes a `Change`. In
+Elixir, `defchange name(state, args…) do body end` is that hand-written change:
+it generates the `apply_change(state, {:name, args…})` clause and the recorder
+`name(state, ctx, args…)`, so a mutation spanning several fields is one journal
+record.
 
 ### 3.0 Changing a State or Change type after it has been deployed
 
@@ -476,49 +498,152 @@ name) — by [`naming_conventions.md`](naming_conventions.md) rule 10 two unname
 mentions of one class are one node, and here that means one retained document
 shared between them.
 
-## 5. Single-procedure auto-wiring and registration
+## 5. The single-procedure short form, and registration
 
-Exactly **one** topology may be auto-wired: a single procedure from a
-controller input to one named sink (`input → procedure → plugin(sink)`). A
-sugared procedure that declares both an `id` and a `sink` generates that
-operative (the producing channel named by the `sink` string, which is what a
-sink does everywhere) and registers it automatically — the user writes no
-registration call. `sink` without `id`, or `sink` on a procedure with no
-output, is refused.
+Exactly **one** topology may be written short: a single procedure from a
+controller input to one named sink (`input → procedure → plugin(sink)`), as an
+operative of either kind. **Every SDK carries it** — Rust, Java, Python, Node,
+Ruby, PHP and Elixir — and a procedure declaration is a short form exactly when
+it declares a `sink`.
+
+The declaration is the procedure's own. It carries its identity (`id` in Rust
+and Java, `name` in Python, Node, PHP and Elixir, `procedure_name` in Ruby), a
+`kind` of `stream` or `workflow`, the `sink`, optionally an entry channel name
+`input`, and — in an SDK whose channel builder names an entry codec (Python,
+Node, Ruby, PHP) — optionally that SDK's `codec` with the builder's own
+vocabulary. With a `sink`, the identity and the `kind` are **written by the
+author**: an SDK that otherwise derives a procedure's name does not derive it
+here, because the factory id is an address an operator types and a rename must
+not move it.
+
+| SDK | Stream short form | Workflow short form |
+| --- | --- | --- |
+| Rust | `#[flezha::procedure(id = "echo", kind = "stream", sink = "out", input = "in")] fn echo(s: String) -> String` | `kind = "workflow"` |
+| Java | `@Procedure(id = "echo", kind = OperativeKind.STREAM, sink = "out", input = "in") class Echo { String run(String s) }` | `kind = OperativeKind.WORKFLOW` |
+| Python | `@flezha.procedure(name="echo", kind="stream", sink="out", input="in", codec="text") def echo(s: str) -> str` | `kind="workflow"` |
+| Node | `defineProcedure({ name: 'echo', kind: 'stream', sink: 'out', input: 'in', codec: 'text', handle })` | `kind: 'workflow'` |
+| Ruby | `class Echo < Flezha::Procedure; procedure_name "echo"; sink "out", kind: :stream, input: "in", codec: :text; …; end` | `kind: :workflow` |
+| PHP | `#[Proc(name: 'echo', kind: OperativeKind::Stream, sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends Procedure` | `kind: OperativeKind::Workflow` |
+| Elixir | `use Flezha.SDK.Procedure, name: "echo", kind: :stream, sink: "out", input: "in"` | `kind: :workflow` |
+
+**The generated operative is the hand-written one, nothing more.** One entry
+channel named by `input` (or `input` when none is written) and decoded by
+`codec` where one is written; the procedure; a plugin sink named by `sink`; a
+factory id equal to the identity; and every class-level setting at that SDK's
+default for that kind. A stream short form is a default stream. A workflow
+short form is a `once` workflow: `flz operative start --kind workflow
+--init-values '<json>'` seeds the entry channel, the procedure runs once, its
+output reaches the sink after the commit, and the instance completes. A
+workflow short form started by a spawn does not see its payload yet — that is
+`KB-381`, not a property of the short form.
+
+Per-procedure settings the declaration already carries keep working (entity
+keys and `entities_for`, mailbox capacity and `on_full`, clock, schema
+version), because they belong to the procedure, not to the class.
 
 - **The entry channel takes the name the author writes, and `input` when the
   author writes none.** That name is the address an operator injects on and the
-  name a forwarded frame has to match, so growing out of the shorthand no
-  longer means abandoning it. Java spells it as an annotation element,
-  `@Procedure(id = "…", sink = "…", input = "prices")`; Rust spells it as an
-  attribute key, `#[flezha::procedure(id = "…", sink = "…", input = "prices")]`,
-  and as an optional name on the `flezha::operative!` pipeline head,
-  `input::<String>("prices")`, in the same position the `plugin` terminator
-  takes one. Omitted, the generated topology is unchanged, which is what keeps
-  §6's table and every existing operative still true. A name on a spelling that
-  can omit its `sink` is refused, naming both, because no operative is
-  generated for it to name a channel on; the `flezha::operative!` pipeline
-  cannot omit its terminator and owes no such refusal. Only Rust and Java have
-  a §5 shorthand at all.
+  name a forwarded frame has to match, so growing out of the short form no
+  longer means abandoning it. In Rust it is also an optional name on the
+  `flezha::operative!` pipeline head, `input::<String>("prices")`, in the same
+  position the `plugin` terminator takes one.
 
-- **Multi-procedure topology stays explicit.** More than one procedure, or any
-  fan-out / multi-input edge, requires an explicit `channels()` body (Rust and
-  Java) or, in Rust, the linear `flezha::operative! { id: "…", pipeline:
-  input::<T> -> A -> B -> plugin::<U>("name") }` sugar for a strictly linear
-  chain. The SDK refuses (compile error) rather than guessing a graph.
-- **Auto-registration** uses a compile-time-collected registry. Rust:
-  `inventory`, merged into the runner's declared set at every
-  `FlezhaRunner::start()`. Java: the processor emits a
-  `com.flezha.generated.GeneratedStreamOperatives.defineAll(FlezhaRunner)`
-  aggregator covering every generated single-procedure operative and every
-  hand-written `@StreamOperative` class (which must implement
-  `com.flezha.sdk.operative.StreamOperative`). Explicit declaration —
-  `FlezhaRunner::define_stream::<R>()` / `FlezhaRunner.defineStream(Class)`,
-  legal before and after `start()`, with `remove_stream` / `removeStream` as
-  the inverse — stays valid for hand-written operatives.
-- **Duplicate factory id fails fast.** Declaring two operatives with the same
-  `factory_id` on one runner fails at the second `define*` call with an error
-  naming the colliding id (Rust: `FlezhaError::DuplicateFactoryId`).
+- **Multi-procedure topology stays explicit.** More than one procedure, any
+  fan-out or multi-input edge, a keyed edge, or any class-level setting (a loop
+  mode, a retry ladder, a duration, persistence off, the effectively-once tier,
+  a correction window) requires the full form — an explicit `channels()` /
+  `procedures()` body, or, in Rust, the linear `flezha::operative! { pub struct
+  Name; id: "…", pipeline: input::<T> -> A -> B -> plugin::<U>("name") }` sugar
+  for a strictly linear chain. The SDK refuses rather than guessing a graph.
+
+- **Registration is written by the author, in every SDK.** The author hands the
+  short form to the runner's `register_factory` like any operative; nothing is
+  harvested, scanned or collected. A program that declares a short form and
+  never registers it declares no operative.
+
+### 5.1 One `register_factory`, one `unregister_factory`
+
+Both authoring surfaces are rooted in a shared `Operative` base: in Java an
+interface `StreamOperative` and `WorkflowOperative` both extend, and in Rust a
+sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
+`Operative<StreamKind>`) and every `WorkflowOperative` (as
+`Operative<WorkflowKind>`), so an author implements only the kind trait. The
+base's shared member is `factory_id()`; the kind-divergent surface (`channels`
+and the persistence opt-in on one side, `run` and `procedures` on the other)
+stays on the per-kind traits.
+
+An operative declares its kind where it is written, so a runner call that names
+the kind again says nothing new and can disagree with the declaration. Every
+runner has **one** registration method and **one** inverse, both taking the
+same argument:
+
+| SDK | Register | Unregister | How the kind is read |
+| --- | --- | --- | --- |
+| Rust | `runner.register_factory(EchoOperative)?` | `runner.unregister_factory(EchoOperative)?` | the sealed `Operative<K>` impl; `K` is inferred from the value |
+| Java | `runner.registerFactory(EchoOperative.class)` | `runner.unregisterFactory(EchoOperative.class)` | the kind interface the class implements |
+| Python | `runner.register_factory(echo)`, `runner.register_modules("app.ops")` | `runner.unregister_factory(echo)` | read from the operative |
+| Node | `await runner.registerFactory('./echo.mjs')` | `await runner.unregisterFactory('./echo.mjs')` | read from the module's exports |
+| Ruby | `runner.register_factory(Echo)` | `runner.unregister_factory(Echo)` | read from the class |
+| PHP | `$runner->registerFactory(Echo::class)` | `$runner->unregisterFactory(Echo::class)` | read from the class |
+| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `operatives: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the callbacks the module exports: `channels/1` a stream, `procedures/1` or `run/2` a workflow |
+
+Both are methods on the concrete runner handle (functions over the handle in
+Elixir), legal before and after `start()`, and generic over the shared base
+where the host language expresses such a bound. Rust passes the operative as a
+value because a generic function over two unrelated traits cannot be called
+with a type argument alone without naming the marker; operatives are unit
+structs, so the value costs nothing.
+
+`unregister_factory` undoes a registration made before the runner starts in
+every SDK, and one made after start in every SDK whose runner can stop serving
+a started declaration. A runner that cannot **rejects** a post-start call with
+an error that says so, and never ignores it.
+
+An operative whose kind cannot be read — it declares both kinds, or neither —
+is refused at registration with an error beginning `AmbiguousOperativeKind` or
+`UnknownOperativeKind` naming the class or module. In Rust such a type cannot
+be passed to `register_factory` at all: the kind parameter is unresolvable, so
+it is a compile error. Adding a future operative kind means implementing the
+base and teaching `register_factory` / `unregister_factory` the kind, without
+editing either existing authoring surface and without adding a runner method.
+
+Node's registration imports a module, which is asynchronous, so its pair is
+awaited: before `run()` it imports, reads the exports and records the
+specifier, so a module that fails to load or exports no operative rejects at
+the line that registers it; after `run()` it also declares the operative
+against the running core and every worker.
+
+### 5.2 The five refusal names
+
+Each name appears **verbatim** in the error the author reads — the compile
+error text in Rust, Java and an Elixir `use` declaration, the declaration
+error's refusal list and message in Python, Node, Ruby and PHP, and the printed
+form of the registration error in Elixir. These are the names the conformance
+refusal table's short-form rows are checked against:
+
+| Name | Condition |
+| --- | --- |
+| `SinkWithoutId` | a `sink` with no written identity |
+| `SinkWithoutKind` | a `sink` with no `kind` |
+| `SinkWithoutOutput` | a `sink` on a procedure the SDK can see declares no output |
+| `ShorthandKeyWithoutSink` | `input`, `kind` or `codec` on a procedure with no `sink`, naming the keys |
+| `DuplicateFactoryId` | a second operative, of either kind, under a factory id the runner holds |
+
+They are not `TopologyIssue` variants: the core never sees a short form. An SDK
+whose procedures declare no output type (Ruby, Elixir) owes no
+`SinkWithoutOutput` and says so in its conformance manifest; a spelling that
+cannot omit the sink (Ruby's keys ride the `sink` call) owes no
+`ShorthandKeyWithoutSink` and says so the same way. An Elixir author who skips
+the macro writes the operative callbacks by hand, which is the full form and
+owes no short-form refusal.
+
+**Duplicate factory id fails fast across kinds.** Declaring a second operative
+under a factory id the runner already holds fails at that call, whichever kind
+either one is, with an error naming `DuplicateFactoryId` and the colliding id
+(Rust: `FlezhaError::DuplicateFactoryId`, whose display begins with the name;
+Elixir: the tuple `{:duplicate_factory_id, id}`, whose printed form carries
+it).
+
 - **A declaration that contradicts a durability contract is refused, naming
   both halves.** A channel may not declare a dropping overflow policy
   (`DropNewest` / `DropOldest`) on a class that declares `effectively_once` — a
@@ -583,7 +708,7 @@ are in `test/apps/rust_runner/src/main.rs`; the Java twin is
 `test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticEntityStreamOperative.java`
 (`sugar_static_entity`, `SugarEntry` with `@EntitiesFor`), asserted by
 `SugarTwinTest.referenceOperativeMatchesContract`. Java has no pipeline macro,
-so its two-procedure twin is an explicit `@StreamOperative` class with a
+so its two-procedure twin is an explicit `StreamOperative` class with a
 `channels()` body.
 
 ### 6.1 Canonical keyed-collection reference procedure
@@ -659,5 +784,5 @@ logically-equal state, and the sugared form passes `replay_equals` /
 - [`poll_core.md`](poll_core.md) — the kernel the sugar's expansion runs on
 - [`stream_transforms.md`](stream_transforms.md) — `key_by` and the edge transforms
 - [`entity_timers.md`](entity_timers.md) — the timer contract behind §3.4
-- [`elixir_sdk.md`](elixir_sdk.md) — the behaviour-only authoring surface
+- [`elixir_sdk.md`](elixir_sdk.md) — the `use` macros, the `state` block and the behaviour beneath them
 - [`../architecture/runner.md`](../architecture/runner.md) — "One change, every SDK"

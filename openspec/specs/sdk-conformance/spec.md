@@ -107,7 +107,7 @@ A fixture that implements the same scenario SHALL register the same factory id i
 
 ### Requirement: Scenarios are tagged by capability; deferred capabilities and unsupported transports skip by name
 
-The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`, `keyed_channels`, `workflow`, `dynamic_entity`, `partitioned`, `schema_evolution`). A capability MAY carry no fixtures in any manifest, when the scenarios that prove it need no fixture of their own; whether a capability may be deferred is a separate question from whether it carries fixtures, and `pool_wedge` is both required and fixture-carrying — a host that cannot be wedged on demand cannot prove it recovers. Every module under `test/system/` SHALL carry `@moduletag capability: <atom>` from the vocabulary; a test MAY override it with `@tag capability:`. For the selected runtime, `test_helper.exs` SHALL exclude every test whose capability the runtime's manifest defers and every test tagged with a transport the manifest does not list, and SHALL print one line naming the runtime, the manifest path, the deferred capabilities and the skipped transports. A capability the manifest does not defer SHALL run and SHALL pass; there is no third state. A capability no module or test under `test/system/` is tagged for SHALL be deferred by every manifest, so that a capability carried under `fixtures` is one at least one scenario proves: claiming a capability and covering it cannot diverge, and an SDK that carries the mechanism proves it rather than resting on the SDK's own unit tests.
+The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`, `keyed_channels`, `workflow`, `dynamic_entity`, `partitioned`, `schema_evolution`, `shorthand`). A capability MAY carry no fixtures in any manifest, when the scenarios that prove it need no fixture of their own; whether a capability may be deferred is a separate question from whether it carries fixtures, and `pool_wedge` is both required and fixture-carrying — a host that cannot be wedged on demand cannot prove it recovers. Every module under `test/system/` SHALL carry `@moduletag capability: <atom>` from the vocabulary; a test MAY override it with `@tag capability:`. For the selected runtime, `test_helper.exs` SHALL exclude every test whose capability the runtime's manifest defers and every test tagged with a transport the manifest does not list, and SHALL print one line naming the runtime, the manifest path, the deferred capabilities and the skipped transports. A capability the manifest does not defer SHALL run and SHALL pass; there is no third state. A capability no module or test under `test/system/` is tagged for SHALL be deferred by every manifest, so that a capability carried under `fixtures` is one at least one scenario proves: claiming a capability and covering it cannot diverge, and an SDK that carries the mechanism proves it rather than resting on the SDK's own unit tests.
 
 #### Scenario: A deferred capability skips visibly
 - **WHEN** `FLEZHA_E2E_RUNTIME=elixir mix test --include system` is run and the Elixir manifest defers `workflow`
@@ -481,6 +481,12 @@ assert the runner refuses at boot with the row's name. A row a runtime's `needs`
 SHALL be asserted as a skip by name. Rows SHALL be read from the fixture and runtimes from
 the manifests, so a new refusal or a new SDK is covered with no test edit.
 
+A row whose refusal a runtime raises at compile time (Rust, Java, and Elixir for a `use`
+declaration) SHALL be answered by that runtime's app printing the refusal name and the
+repository-relative path of the compile-fail test that pins it, then exiting non-zero; the
+drill SHALL assert the name in the output and that the cited file exists and contains the
+name. A row a runtime refuses at run time SHALL boot for real, whichever the language.
+
 #### Scenario: A veneer that accepts what the reference refuses fails the drill
 
 - **WHEN** a runtime's builder registers a topology whose fixture row names a refusal
@@ -492,6 +498,21 @@ the manifests, so a new refusal or a new SDK is covered with no test edit.
 - **WHEN** the Elixir runtime skips a `merge` row
 - **THEN** the drill records the skip with its surface, and a skip whose surface the
   runtime's documented subset carries fails
+
+#### Scenario: A compile-time refusal is cited, and the citation is checked
+
+- **WHEN** the Rust app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_kind`
+- **THEN** it exits non-zero printing `SinkWithoutKind` and `sdk/rust/tests/ui/procedure_sink_without_kind.stderr`, and the drill fails if that file is absent or does not contain the name
+
+#### Scenario: An Elixir `use` refusal is cited the same way
+
+- **WHEN** the Elixir app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_id`
+- **THEN** it exits non-zero printing `SinkWithoutId` and the path of the SDK test that compiles that declaration and asserts the `CompileError`, and the drill checks the cited file contains the name
+
+#### Scenario: A runtime refusal boots on every runtime
+
+- **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_duplicate_id`
+- **THEN** it defines the row's stream and workflow under one id, dies on the second, and its output contains `DuplicateFactoryId`
 
 ### Requirement: Every SDK's declaration output is compared against the shared expected set in one run
 
@@ -747,3 +768,42 @@ end-to-end.
 - **WHEN** the submodule is not checked out
 - **THEN** the gate SHALL fail on the missing manifest as it would for any absent test app, naming the path
 
+### Requirement: The short form is a required capability every manifest carries and every app spells
+`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input` and `sugar_workflow`, and those ids SHALL NOT appear under `graph_builder` or `workflow`. Every test app SHALL declare each of the four through its SDK's short form (one procedure declaration carrying identity, kind and sink, and a text entry codec where the SDK's builder names codecs) and SHALL register each with one call; no app SHALL hand-write an operative for them. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all four fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input` and `sugar_workflow`.
+
+The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a procedure declaring no output), needing the surface `shorthand`; `shorthand_typed_output` for the row only an SDK that can read a procedure's output type at declaration time can write; and `shorthand_omittable_sink` for the row only an SDK whose spelling can omit the sink can write. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
+
+#### Scenario: A manifest carrying the old grouping fails the gate
+
+- **WHEN** a manifest still lists `sugar_do_nothing` under `graph_builder`
+- **THEN** the gate fails naming the manifest, the capability and the id
+
+#### Scenario: The named entry channel is reached by name on every runtime
+
+- **WHEN** the scenario injects a frame naming channel `prices` on a `sugar_named_input` operative under any runtime
+- **THEN** the sink `sugar_named_input_sink` carries the input's bytes
+
+#### Scenario: The default entry channel is reached on every runtime
+
+- **WHEN** the scenario injects a frame on channel `input` of a `sugar_do_nothing` operative
+- **THEN** `sugar_do_nothing_echo` carries the input's bytes
+
+#### Scenario: A workflow short form completes on every runtime
+
+- **WHEN** the scenario starts `sugar_workflow` with init values under any runtime
+- **THEN** `sugar_workflow_placed` carries the start values' bytes and the instance completes with status `ok`
+
+#### Scenario: A row an untyped SDK cannot write skips by name
+
+- **WHEN** the Ruby app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_output`
+- **THEN** it prints that its builder carries no `shorthand_typed_output` and the drill counts the skip against the Ruby manifest, which does not list that surface
+
+#### Scenario: A spelling that cannot omit the sink skips by name
+
+- **WHEN** the Ruby app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_key_without_sink`
+- **THEN** it prints that its builder carries no `shorthand_omittable_sink`, and the drill accepts the skip because the Ruby manifest does not list that surface
+
+#### Scenario: A short-form row's name is checked against the contract, not the core
+
+- **WHEN** the refusal table carries a row named `SinkWithoutKind` with `needs` `shorthand`
+- **THEN** `topology_check_test.exs` passes without an issue variant of that name, and fails if `docs/sdk/authoring_contract.md` §5 does not list the name

@@ -62,7 +62,7 @@ class UpcaseOperative < Flezha::StreamOperative
   end
 end
 
-Flezha.create_runner("default").define_stream(UpcaseOperative).run
+Flezha.create_runner("default").register_factory(UpcaseOperative).run
 ```
 
 Which optional hooks a procedure declares is read from the methods it defines —
@@ -73,6 +73,51 @@ register timers, `entities_for` present means it fans out over a static key set
 Everything a type system would have caught is refused at registration instead,
 naming the class, the handler and the defect. That is the same set, for the
 same reasons, as the Rust builder's `TopologyIssue`.
+
+### The short form
+
+A `Flezha::Procedure` subclass that declares `sink` in its class body is a
+whole operative: one class, no `StreamOperative` beside it. `kind:` says which
+kind it generates, and `codec:` is the entry codec the builder's `input` takes.
+
+```ruby
+class Upcase < Flezha::Procedure
+  procedure_name "upcase"
+  sink "out", kind: :stream, codec: :text
+
+  def process(value, _ctx) = value.upcase
+end
+
+class Place < Flezha::Procedure
+  procedure_name "place"
+  sink "placed", kind: :workflow, input: "order", codec: :text
+
+  def process(order, _ctx) = order
+end
+
+Flezha.create_runner("default").register_factory(Upcase).register_factory(Place).run
+```
+
+The generated operative is the one you would have written by hand with that
+single procedure: an entry channel named `input` — or the `input:` value —
+decoded by `codec:`, the procedure, a plugin sink named by `sink`, a factory id
+equal to `procedure_name`, and every class-level setting at its default. A
+workflow short form is a `once` workflow, seeded on its entry channel from
+`flz operative start --kind workflow --init-values`.
+
+Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+window.
+
+With a `sink`, `procedure_name` must be written: the factory id is an address
+an operator types, and a class rename must not move it. Two refusals are raised
+at `register_factory`, where this SDK places every refusal, each naming itself:
+`SinkWithoutId` and `SinkWithoutKind`. The other keys ride the `sink` call, so
+Ruby cannot write one without a sink and owes no `ShorthandKeyWithoutSink`; it
+cannot see a procedure's output type either, so it owes no `SinkWithoutOutput`.
+
+> A workflow short form started by a *spawn* does not see its payload yet —
+> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ### Channel payloads
 

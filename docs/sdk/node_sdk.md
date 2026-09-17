@@ -86,7 +86,9 @@ export default defineOperative({
 ```
 
 ```ts
-await createRunner('default').defineStream('./candles.js').run();
+const runner = createRunner('default');
+await runner.registerFactory('./candles.js');
+await runner.run();
 ```
 
 **A wrong edge is a compile error.** `.into(procedure)` accepts only a
@@ -105,6 +107,63 @@ there and reported nowhere.
 **Handlers are registered by module specifier**, never as imported values, in
 every dispatch configuration. A dispatch loop imports the module itself, which
 is what makes enabling worker threads a flag rather than a rewrite.
+
+### The short form
+
+A `defineProcedure` that declares a `sink` is a whole operative: one
+definition, no `defineOperative` beside it. `kind` says which kind it
+generates, and `codec` is the entry codec `c.input` takes.
+
+```ts
+// upcase.mjs
+export const upcase = defineProcedure({
+  name: 'upcase',
+  kind: 'stream',
+  sink: 'out',
+  codec: 'text',
+  handle: (value) => value.toUpperCase(),
+});
+
+// place.mjs
+export const place = defineProcedure({
+  name: 'place',
+  kind: 'workflow',
+  sink: 'placed',
+  input: 'order',
+  codec: 'text',
+  handle: (order) => order,
+});
+```
+
+```ts
+const runner = createRunner('default');
+await runner.registerFactory('./upcase.mjs');
+await runner.registerFactory('./place.mjs');
+await runner.run();
+```
+
+The generated operative is the one you would have written by hand with that
+single procedure: an entry channel named `input` — or the `input` field's value
+— decoded by `codec`, the procedure, a plugin sink named by `sink`, a factory
+id equal to `name`, and every class-level setting at its default. A workflow
+short form is a `once` workflow, seeded on its entry channel from
+`flz operative start --kind workflow --init-values`.
+
+Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+window.
+
+The spec is built where `defineProcedure` runs, so a malformed short form is
+refused while the module loads rather than inside `run()`. Three refusals name
+themselves: `SinkWithoutId` (a `sink` with an empty `name`), `SinkWithoutKind`
+and `ShorthandKeyWithoutSink` (`kind`, `input` or `codec` with no `sink`).
+There is no `SinkWithoutOutput`: a plain `.mjs` author runs no type checker and
+this SDK ships no build step, so a handler that returns nothing cannot be seen
+here — the manifest leaves `shorthand_typed_output` off and the conformance row
+skips by name.
+
+> A workflow short form started by a *spawn* does not see its payload yet —
+> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## The parallelism model, as arithmetic
 

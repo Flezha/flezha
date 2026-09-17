@@ -95,7 +95,7 @@ def upcase_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(upcase).sink("out")
 
 
-flezha.create_runner("default").define_stream(upcase_operative).run()
+flezha.create_runner("default").register_factory(upcase_operative).run()
 ```
 
 A procedure is a function when it is a transform and a class when it has state,
@@ -112,6 +112,47 @@ def test_price() -> None:
     assert price(Tick(...)) == Quote(...)
 ```
 
+### The short form
+
+A procedure that declares a `sink` is a whole operative: one declaration, no
+`stream_operative` beside it. `kind` says which kind it generates, and `codec`
+is the entry codec `Channels.input` takes.
+
+```python
+@flezha.procedure(name="upcase", kind="stream", sink="out", codec="text")
+def upcase(value: str) -> str:
+    return value.upper()
+
+
+@flezha.procedure(name="place", kind="workflow", sink="placed", input="order", codec="text")
+def place(order: str) -> str:
+    return order
+
+
+runner = flezha.create_runner("default")
+runner.register_factory(upcase).register_factory(place).run()
+```
+
+The generated operative is the one you would have written by hand with that
+single procedure: an entry channel named `input` — or the `input` keyword's
+value — decoded by `codec`, the procedure, a plugin sink named by `sink`, a
+factory id equal to `name`, and every class-level setting at its default. A
+workflow short form is a `once` workflow, seeded on its entry channel from
+`flz operative start --kind workflow --init-values`.
+
+Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+window. The short form declares none of them, and nothing is harvested — an
+operative a runner declares is one you registered.
+
+Four refusals are raised where the decorator runs, each naming itself:
+`SinkWithoutId` (a `sink` with no `name`), `SinkWithoutKind`,
+`SinkWithoutOutput` (no return annotation, or `None`) and
+`ShorthandKeyWithoutSink` (`kind`, `input` or `codec` with no `sink`).
+
+> A workflow short form started by a *spawn* does not see its payload yet —
+> `KB-381`. Start it with `--init-values` until that is fixed.
+
 ### Type hints are the declaration
 
 The graph is wired from the annotations, and the package ships `py.typed`, so a
@@ -125,7 +166,7 @@ c.input("orders").into(bill).named("invoices").into(dispatch)
 
 pyright and mypy report that in the editor. What a type checker cannot see — a
 cycle, a missing entry channel, an unservable clock, a keyed channel with no
-plugin wire — is refused at the `define_stream` call site, naming the handler
+plugin wire — is refused at the `register_factory` call site, naming the handler
 and the defect, before any input is served. That pairing is what this SDK has
 in place of the Rust SDK's `tests/ui` compile-fail pins.
 
@@ -394,7 +435,7 @@ with it. It also drives `async def` handlers, so a test needs no event loop.
 - **Declarative routing keys and edge transforms** — evaluating a key spec or a
   simple transform in Rust so the common path never enters Python at all. The
   largest remaining performance lever; owed to `sdk-declarative-keys`.
-- **Post-start factory resync to a live controller.** `define_stream` after
+- **Post-start factory resync to a live controller.** `register_factory` after
   `start()` reaches the core immediately and the controller at the next bind,
   because the ABI has no entry point that ships `UpdateFactories` or retracts a
   declaration — only the in-process Rust host, which owns the runner channel

@@ -145,7 +145,7 @@ TODO.
 all.** The Elixir SDK's in-node mode is a function call:
 
 ```elixir
-children = [{Flezha.SDK, namespace: "default", streams: [MyOperative], transport: :native}]
+children = [{Flezha.SDK, namespace: "default", operatives: [MyOperative], transport: :native}]
 ```
 
 `:native` is the default, and it is deliberately not taken from the environment:
@@ -329,7 +329,7 @@ channel again with `named(...)` is refused at registration rather than resolved.
 // The runner. Connects, offers the operative, and serves.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
-            .defineStream(EchoOperative.class)
+            .registerFactory(EchoOperative.class)
             .start();
 
     runner.awaitTermination();
@@ -337,7 +337,7 @@ public static void main(String[] args) throws Exception {
 ```
 
 `start()` connects and hands back the runner, and `awaitTermination()` blocks
-until shutdown, which is either a SIGTERM or a `close()` from another thread, `run()` does both in one call. `defineWorkflow` is the same call
+until shutdown, which is either a SIGTERM or a `close()` from another thread, `run()` does both in one call. `registerFactory` is the same call
 for the workflow kind.
 
 > #### Concurrency in Java {: .info}
@@ -425,7 +425,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let namespace = std::env::args().nth(1).unwrap_or_else(|| "default".to_string());
 
     let runner = Flezha::create_runner(namespace)?;
-    runner.define_stream::<EchoOperative>()?.start()?;
+    runner.register_factory(EchoOperative)?.start()?;
 
     runner.await_termination()?;
     Ok(())
@@ -436,7 +436,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 until shutdown, a SIGTERM or Ctrl-C; `run()` does both in one call. The runner is
 bound to a name first because a chained temporary would be dropped, and shut
 down, at the end of its statement. Every call answers a `Result`, so a refusal
-leaves `main` through `?`. `define_workflow` is the same call for the workflow
+leaves `main` through `?`. `register_factory` is the same call for the workflow
 kind.
 
 > #### Concurrency in Rust {: .info}
@@ -495,7 +495,7 @@ value other than a string or bytes would leave as JSON. The module exports what
 // runner.mjs: the runner. Connects, offers the operative, and serves.
 import { createRunner } from '@flezha/sdk';
 
-const runner = createRunner(process.argv[2] ?? 'default').defineStream('./echo_operative.mjs');
+const runner = createRunner(process.argv[2] ?? 'default').registerFactory('./echo_operative.mjs');
 
 await runner.run();
 ```
@@ -504,7 +504,7 @@ The operative is registered by **module specifier**, a path rather than an
 imported value, because every dispatch loop imports the module itself. A relative
 specifier resolves against the working directory. `run()` resolves once the
 runner is connected and serving, and the process keeps running until a SIGTERM
-or until its standard input closes. `defineWorkflow` is the same call for the
+or until its standard input closes. `registerFactory` is the same call for the
 workflow kind.
 
 > #### Concurrency in Node {: .info}
@@ -554,7 +554,7 @@ other than a string or bytes would go out as JSON.
 # runner.py: the runner. Connects, offers the operative, and serves.
 def main() -> None:
     runner = flezha.create_runner(sys.argv[1] if len(sys.argv) > 1 else "default")
-    runner.define_stream(echo_operative)
+    runner.register_factory(echo_operative)
 
     runner.start()
     runner.await_termination()
@@ -614,7 +614,7 @@ would go out as JSON.
 
 ```ruby
 # runner.rb: the runner. Connects, offers the operative, and serves.
-runner = Flezha.create_runner(ARGV[0] || "default").define_stream(EchoOperative)
+runner = Flezha.create_runner(ARGV[0] || "default").register_factory(EchoOperative)
 
 runner.boot
 runner.await_termination
@@ -623,7 +623,7 @@ runner.await_termination
 `boot` connects and starts serving, and `await_termination` blocks until
 shutdown and then drains; `run` is the two in one call. Classes are registered
 explicitly: nothing is autoloaded, and what runs is what you named.
-`define_workflow` is the same call for the workflow kind.
+`register_factory` is the same call for the workflow kind.
 
 > #### Concurrency in Ruby {: .info}
 >
@@ -686,7 +686,7 @@ carries the graph.
 require __DIR__ . '/vendor/autoload.php';
 
 $runner = Flezha::createRunner($argv[1] ?? 'default')
-    ->defineStream(EchoOperative::class)
+    ->registerFactory(EchoOperative::class)
     ->start();
 
 $runner->awaitTermination();
@@ -694,7 +694,7 @@ $runner->awaitTermination();
 
 `start()` connects, and `awaitTermination()` is where this process serves: PHP has
 no threads, so under the default executor nothing is processed until the wait
-begins. `run()` does both in one call, and `defineWorkflow` is the same call for
+begins. `run()` does both in one call, and `registerFactory` is the same call for
 the workflow kind.
 
 > #### Concurrency in PHP {: .info}
@@ -774,7 +774,7 @@ defmodule Echo.Application do
     namespace = List.first(System.argv(), "default")
 
     children = [
-      {Flezha.SDK, namespace: namespace, streams: [Echo.Operative], transport: :uds}
+      {Flezha.SDK, namespace: namespace, operatives: [Echo.Operative], transport: :uds}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)
@@ -786,8 +786,8 @@ The runner is a child of your own supervision tree, so a crash restarts it and i
 reconnects under the same identity. `transport: :uds` because this node is not the
 controller's: the default, `:native`, is for code inside the controller's own node,
 and it is not taken from the environment. The example depends on the `flezha_sdk`
-package alone, which starts no controller. `workflows:` is the same list for the
-workflow kind.
+package alone, which starts no controller. `operatives:` takes either kind: the
+kind is read from the module, never named by the list.
 
 > #### Concurrency in Elixir {: .info}
 >

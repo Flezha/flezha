@@ -8,7 +8,7 @@ defmodule Flezha.SDK.DispatchTest do
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup, Merge}
+  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup}
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.Wire
@@ -222,10 +222,10 @@ defmodule Flezha.SDK.DispatchTest do
 
       c
       |> Channels.merge()
-      |> Merge.from(ticks, &"ticks:#{&1}")
-      |> Merge.from(quotes, &"quotes:#{&1}")
-      |> Merge.key_by(&(&1 |> String.split(":") |> Enum.at(1)))
-      |> Merge.into(EchoProc)
+      |> Channels.from(ticks, &"ticks:#{&1}")
+      |> Channels.from(quotes, &"quotes:#{&1}")
+      |> Channels.key_by(&(&1 |> String.split(":") |> Enum.at(1)))
+      |> Channels.into(EchoProc)
       |> Channels.named("labels")
       |> Channels.sink()
     end

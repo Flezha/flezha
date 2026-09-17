@@ -47,7 +47,7 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single procedure's critical section. Operative classes are declared via `FlezhaRunner::define_stream::<R: StreamOperative>()`, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<StreamInstance>` or equivalent handle. Workflow instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single procedure's critical section. Operative classes are declared via `FlezhaRunner::register_factory(operative)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<StreamInstance>` or equivalent handle. Workflow instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
@@ -56,11 +56,11 @@ The "registry" name carries forward from the pre-change implementation; what's s
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
 #### Scenario: Registry preserves the declaration contract
-- **WHEN** user code calls `.define_stream::<R>()` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
+- **WHEN** user code calls `.register_factory(R)` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
 - **THEN** the resulting `StreamInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-procedure-entity-model` capability's scenarios
 
 #### Scenario: Post-start removal is serialized with AddOperative
-- **WHEN** a `remove_stream` request and an `AddOperative` command for the same factory race
+- **WHEN** an `unregister_factory` request and an `AddOperative` command for the same factory race
 - **THEN** both SHALL be processed on the coordinator loop in some serial order — either the add lands first and the removal returns `Err(FlezhaError::OperativeTypeInUse { .. })`, or the removal lands first and the add fails as an unknown factory — with no interleaving where the removal succeeds while an instance exists
 
 ### Requirement: Reconnect Semantics Preserved
@@ -114,18 +114,18 @@ Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `Con
 
 ### Requirement: Per-Entity flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `EntityFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::define_stream::<R>()` call that declares a Procedure with a non-`NoChange` Change type. Programs that declare only `NoChange` Procedures SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `EntityFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::register_factory(operative)` call that declares a Procedure with a non-`NoChange` Change type. Programs that declare only `NoChange` Procedures SHALL NOT spawn a flusher thread.
 
 The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Entities; (c) for each Entity, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Entity's `send_frame` function pointer.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process calls `.define_stream::<R>()` for an Operative whose Procedures all have `Change = NoChange`
+- **WHEN** a Rust process calls `.register_factory(R)` for an Operative whose Procedures all have `Change = NoChange`
 - **THEN** no `EntityFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
 #### Scenario: First non-NoChange declaration starts the flusher
 
-- **WHEN** a Rust process calls `.define_stream::<R>()` for an Operative containing a Procedure with `Change = MyChange`
+- **WHEN** a Rust process calls `.register_factory(R)` for an Operative containing a Procedure with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
 ### Requirement: Toggle-aware drain semantics for persistence_enabled = false
@@ -341,7 +341,7 @@ On a fresh process start (not a reconnect) the SDK SHALL load its node-local per
 The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operatives()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
 
 #### Scenario: Successful connection returns a live handle
-- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.define_stream::<MarketOperative>()?.start()` (binding the runner with `let`) with the controller running
+- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.register_factory(MarketOperative)?.start()` (binding the runner with `let`) with the controller running
 - **THEN** the call blocks until the connect handshake completes, and the runner's `namespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
@@ -349,7 +349,7 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
 #### Scenario: start() with zero defined operative types is legal
-- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.define_stream(...)`/`.define_workflow(...)` calls and no `inventory`-harvested classes on the binary
+- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.register_factory(...)` calls, whatever short-form or `operative!` types the binary contains
 - **THEN** the runner SHALL connect successfully with an empty factory list in the handshake init message, and operative types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder does not compile
@@ -358,13 +358,13 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
 `operatives()` SHALL return `Result<HashMap<String, Arc<StreamInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
 #### Scenario: Invalid topology is reported as a Result, not a panic
 - **WHEN** an Operative declares the same channel name twice
-- **THEN** `.define_stream::<ThatOperative>()` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::DuplicateChannel` diagnosis naming the channel — the call SHALL NOT panic
+- **THEN** `.register_factory(ThatOperative)` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::DuplicateChannel` diagnosis naming the channel — the call SHALL NOT panic
 
 #### Scenario: A payload type mismatch is a compile error
 - **WHEN** user code wires a consumer whose `Procedure::Input` is not the channel's payload type
@@ -375,7 +375,7 @@ Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError
 - **THEN** `.start()` SHALL return `Err(FlezhaError::ConnectFailed(..))` — the caller's thread SHALL NOT panic
 
 #### Scenario: The fluent chain compiles under one question mark
-- **WHEN** user code writes `Flezha::create_runner("ns")?.define_stream::<A>()?.define_workflow::<B>()?.run()?` in a function returning `Result<(), FlezhaError>`
+- **WHEN** user code writes `Flezha::create_runner("ns")?.register_factory(A)?.register_factory(B)?.run()?` in a function returning `Result<(), FlezhaError>`
 - **THEN** it SHALL compile without intermediate `map_err` calls
 
 #### Scenario: operatives() on a never-started runner
@@ -431,24 +431,36 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 ### Requirement: On-demand operative type declaration and removal (Rust)
 
-`FlezhaRunner` SHALL provide `define_stream::<R>()` / `define_workflow::<T>()` and their inverses `remove_stream::<R>()` / `remove_workflow::<T>()`, each returning `Result<&Self, FlezhaError>`, legal before and after `.start()`. The declared factory set SHALL be per-runner, starting empty each generation (inventory-harvested classes are merged into it at every `.start()`). A post-start define or remove SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `remove_*` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperativeTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`.
+`FlezhaRunner` SHALL provide `register_factory(operative)` and its inverse `unregister_factory(operative)`, each generic as `fn register_factory<O: Operative<K>, K>(&self, operative: O) -> Result<&Self, FlezhaError>` over the sealed `Operative<K>` trait the SDK implements for every `StreamOperative` and every `WorkflowOperative`, so one method takes an operative of either kind, passed as a value, and dispatches on the kind the trait impl names; both are legal before and after `.start()`. There SHALL be no `define_stream`, `define_workflow`, `remove_stream` or `remove_workflow`. The declared factory set SHALL be per-runner, starting empty each generation and holding exactly what `register_factory` and `unregister_factory` put in it; nothing SHALL be merged into it at `.start()`. A post-start `register_factory` or `unregister_factory` SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `unregister_factory` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperativeTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner, of either kind, SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, whose display SHALL begin with `DuplicateFactoryId`.
 
-#### Scenario: Pre-start remove shapes the init frame
-- **WHEN** user code defines A and B on an unstarted runner, removes B, then starts
+#### Scenario: Pre-start unregister shapes the init frame
+- **WHEN** user code registers A and B on an unstarted runner, unregisters B, then starts
 - **THEN** the handshake init frame's factory list SHALL contain only A
 
-#### Scenario: Post-start define ships UpdateFactories
-- **WHEN** user code calls `.define_stream::<C>()` on a started runner already declaring A
+#### Scenario: Post-start register ships UpdateFactories
+- **WHEN** user code calls `.register_factory(C)` on a started runner already declaring A
 - **THEN** the SDK SHALL send an `UpdateFactories` control message carrying the full set {A, C}, and a subsequent `AddOperative{factory_id: C}` SHALL succeed
 
 #### Scenario: Post-start remove with live instances refuses
 - **GIVEN** a started runner with one live instance of factory `"market"`
-- **WHEN** user code calls `.remove_stream::<MarketOperative>()`
+- **WHEN** user code calls `.unregister_factory(MarketOperative)`
 - **THEN** the call SHALL return `Err(FlezhaError::OperativeTypeInUse { factory_id: "market", live_instances: 1 })` and the type SHALL remain defined
 
 #### Scenario: Removing an undefined factory
-- **WHEN** user code calls `.remove_stream::<X>()` and X's factory id is not in the runner's declared set
+- **WHEN** user code calls `.unregister_factory(X)` and X's factory id is not in the runner's declared set
 - **THEN** the call SHALL return `Err(FlezhaError::NotDefined { .. })`
+
+#### Scenario: One method registers either kind
+- **WHEN** user code calls `.register_factory(EchoOperative)` for a `StreamOperative` and `.register_factory(PlaceOrder)` for a `WorkflowOperative` on one runner
+- **THEN** both factory ids SHALL be in the declared set, the first in the stream class registry and the second in the workflow class registry
+
+#### Scenario: A type of both kinds does not compile
+- **WHEN** a type implements both `StreamOperative` and `WorkflowOperative` and is passed to `.register_factory(...)`
+- **THEN** compilation SHALL fail, because the kind parameter cannot be inferred
+
+#### Scenario: A duplicate across kinds is refused, never skipped
+- **WHEN** user code calls `.register_factory(A)` for a stream and then `.register_factory(B)` for a workflow where both declare factory id `plain`
+- **THEN** the second call SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, the declared set SHALL still hold only A, and the process-global registry entry for `plain` SHALL still be A's
 
 ### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
 
@@ -689,4 +701,3 @@ The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both 
 - **WHEN** the entity-stress bench (`8 operatives × 4 procedures × 8 entities × 20K msg/operative`, fan-out per input to all 8 entities of the entry procedure; invoked via `mix bench --shape entity --pool-sizes 1,8`) is run on an 8-core host
 - **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that entity-mode dispatch is not the bottleneck
 - **AND** the `bench-entity-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)
-

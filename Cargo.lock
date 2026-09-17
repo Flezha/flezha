@@ -447,7 +447,6 @@ dependencies = [
  "flezha-macros",
  "flz_core",
  "flz_transport",
- "inventory",
  "lazy_static",
  "loom",
  "mio",

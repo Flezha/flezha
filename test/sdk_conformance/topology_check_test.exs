@@ -74,6 +74,11 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   # earns a name earns a row with it.
   @unnamed_residue "Declaration"
 
+  # The authoring contract's §5, which lists the short-form refusal names. A row
+  # whose `needs` starts with `shorthand` refuses something the core never sees,
+  # so it is judged against this file instead of the issue vocabulary.
+  @contract "docs/sdk/authoring_contract.md"
+
   describe "the vocabulary and the fixture are one set" do
     test "every refusal the core can raise has a row, and every row names one" do
       variants = variants()
@@ -82,7 +87,12 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
       assert length(variants) > 25,
              "the vocabulary should be the reference set, read #{length(variants)} variants"
 
-      missing_rows = variants -- ([@unnamed_residue] ++ Enum.map(rows, & &1.refusal))
+      {shorthand_rows, core_rows} = Enum.split_with(rows, &shorthand_row?/1)
+
+      assert shorthand_rows != [],
+             "the short-form refusals are part of the reference table; #{@fixture} names none"
+
+      missing_rows = variants -- ([@unnamed_residue] ++ Enum.map(core_rows, & &1.refusal))
 
       assert missing_rows == [],
              """
@@ -94,13 +104,31 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
       known = MapSet.new(["ok", @unnamed_residue | variants])
 
       unknown =
-        rows |> Enum.map(& &1.refusal) |> Enum.reject(&MapSet.member?(known, &1)) |> Enum.uniq()
+        core_rows
+        |> Enum.map(& &1.refusal)
+        |> Enum.reject(&MapSet.member?(known, &1))
+        |> Enum.uniq()
 
       assert unknown == [],
              """
              a fixture row naming no variant is a row no runtime can satisfy. \
              Remove it, or add the variant to #{@issues}:
              #{Enum.join(unknown, "\n")}
+             """
+
+      contract_names = contract_refusal_names()
+
+      unlisted =
+        shorthand_rows
+        |> Enum.map(& &1.refusal)
+        |> Enum.reject(&MapSet.member?(contract_names, &1))
+        |> Enum.uniq()
+
+      assert unlisted == [],
+             """
+             a short-form row is judged against #{@contract} §5, which lists \
+             every short-form refusal name. These rows name something it does not:
+             #{Enum.join(unlisted, "\n")}
              """
     end
 
@@ -218,6 +246,29 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     |> Enum.map(fn {path, _line, _number} -> path end)
     |> Enum.uniq()
     |> Enum.sort()
+  end
+
+  # A row whose surface is the short form. Its refusal is the contract's, raised
+  # before a declaration ever reaches the core, so the issue vocabulary has no
+  # variant for it and never should.
+  defp shorthand_row?(row), do: String.starts_with?(row.needs, "shorthand")
+
+  # The refusal names §5 lists, read off its table the way an author reads it:
+  # the first cell of each row, backticked.
+  defp contract_refusal_names do
+    section =
+      @contract
+      |> File.read!()
+      |> String.split("### 5.2 The five refusal names")
+      |> Enum.at(1)
+
+    assert section != nil,
+           "#{@contract} no longer carries the §5 refusal list the fixture rows are judged against"
+
+    ~r/^\| `([A-Za-z]+)` \|/m
+    |> Regex.scan(section)
+    |> Enum.map(fn [_, name] -> name end)
+    |> MapSet.new()
   end
 
   # The variant names, read from the enum the way the scatter map's own command

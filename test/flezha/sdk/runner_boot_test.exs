@@ -54,7 +54,7 @@ defmodule Flezha.SDK.RunnerBootTest do
   test "a runner boots and stays alive", %{ns: ns} do
     handle =
       Flezha.SDK.create_runner(ns, transport: :native)
-      |> Flezha.SDK.define_stream(BootOp)
+      |> Flezha.SDK.register_factory(BootOp)
       |> Flezha.SDK.start()
 
     assert %Flezha.SDK{server: server} = handle, "start failed: #{inspect(handle)}"

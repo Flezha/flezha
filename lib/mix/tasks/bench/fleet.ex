@@ -230,7 +230,7 @@ defmodule Mix.Tasks.Bench.Fleet do
         BenchFactories.all(),
         Flezha.SDK.create_runner(namespace, transport: :native),
         fn m, acc ->
-          Flezha.SDK.define_stream(acc, m)
+          Flezha.SDK.register_factory(acc, m)
         end
       )
       |> Flezha.SDK.start()

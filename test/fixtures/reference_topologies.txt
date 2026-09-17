@@ -81,6 +81,13 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #   class.<flag>[(<value>)]    persistent | effectively_once | checkpoint_ack |
 #                              checkpoint_every(n) | outputs_at_checkpoint(ms) |
 #                              correction_window(ms) | sync_durability | workflow
+#   shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)
+#                              one §5 short-form procedure declaration: the
+#                              identity, `stream` or `workflow`, the plugin
+#                              sink and the entry channel name, each `-` when
+#                              the row leaves it unwritten. The step declares
+#                              NO builder topology — it is the whole operative
+#   shorthand(...).noout       the same, on a procedure declaring no output
 #
 # procedure palette — the interpreter binds each role to one fixture procedure
 # of its own SDK:
@@ -107,6 +114,14 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #              and Java declare it on a workflow class only, so a stream class of
 #              theirs cannot spell it at all and the refusal cannot be reached
 #              from one. The row stays for the five builders that can
+#   shorthand  the §5 single-procedure short form. Every SDK carries it, so no
+#              manifest may lack this one
+#   shorthand_typed_output  a short form on a procedure whose output the SDK can
+#              see at declaration time. Rust, Java, Python (return hint), Node
+#              and PHP (reflected return type) can; Ruby and Elixir cannot
+#   shorthand_omittable_sink  a short-form spelling whose other keys can be
+#              written without the sink. Every SDK but Ruby, whose keys ride the
+#              `sink` call itself
 #   raw_class_flags  a tier key written onto a WORKFLOW class's record. KI-147's
 #              fix is why no builder can: each gates `effectively_once` and
 #              `correction_window_ms` behind the class kind, keeping the flag in
@@ -154,6 +169,15 @@ EffectivelyOnceOnWorkflow          | eo_workflow      | class.workflow; class.pe
 CorrectionWindowOnWorkflow         | correction_wf    | class.workflow; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | raw_class_flags
 SyncDurabilityOnStream             | sync_stream      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
 AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
+
+# The §5 short-form refusals. Their names are the authoring contract's, not
+# `flz_core`'s: the core never sees a short form, so these rows are exempt from
+# the issue-variant pairing and checked against §5's list instead.
+SinkWithoutId                      | shorthand_sink_without_id     | shorthand(-, stream, out, -)                                              | shorthand
+SinkWithoutKind                    | shorthand_sink_without_kind   | shorthand(plain, -, out, -)                                               | shorthand
+SinkWithoutOutput                  | shorthand_sink_without_output | shorthand(plain, stream, out, -).noout                                    | shorthand_typed_output
+ShorthandKeyWithoutSink            | shorthand_key_without_sink    | shorthand(plain, -, -, prices)                                            | shorthand_omittable_sink
+DuplicateFactoryId                 | shorthand_duplicate_id        | shorthand(plain, stream, out, -); shorthand(plain, workflow, twin_sink, -) | shorthand
 
 # The well-formed rows. `hybrid_channel` and `commit_block_chain` are the two
 # twins of the seven-column table above — cited, not re-spelled. Every other

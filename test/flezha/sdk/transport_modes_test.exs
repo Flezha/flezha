@@ -49,7 +49,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
     handle =
       Flezha.SDK.create_runner(ns, transport: :native)
-      |> Flezha.SDK.define_stream(ProbeOp)
+      |> Flezha.SDK.register_factory(ProbeOp)
       |> Flezha.SDK.start()
 
     assert %Flezha.SDK{} = handle, "SDK start failed: #{inspect(handle)}"
@@ -125,7 +125,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
     result =
       Flezha.SDK.create_runner(other, transport: :native)
-      |> Flezha.SDK.define_stream(ProbeOp)
+      |> Flezha.SDK.register_factory(ProbeOp)
       |> Flezha.SDK.start()
 
     assert {:error, {:already_running, ^other}} = result
@@ -211,7 +211,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
 
     handle =
       Flezha.SDK.create_runner(ns, transport: :uds)
-      |> Flezha.SDK.define_stream(ProbeOp)
+      |> Flezha.SDK.register_factory(ProbeOp)
       |> Flezha.SDK.start()
 
     assert %Flezha.SDK{} = handle, "SDK (uds) start failed: #{inspect(handle)}"
@@ -374,7 +374,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   defp start_runner(ns, streams) do
     handle =
       Enum.reduce(streams, Flezha.SDK.create_runner(ns, transport: :native), fn m, acc ->
-        Flezha.SDK.define_stream(acc, m)
+        Flezha.SDK.register_factory(acc, m)
       end)
       |> Flezha.SDK.start()
 
@@ -566,7 +566,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
     on_exit(fn -> Flezha.SDK.close(handle) end)
 
     # Post-start define → UpdateFactories → the controller learns the new factory.
-    handle2 = Flezha.SDK.define_stream(handle, OtherOp)
+    handle2 = Flezha.SDK.register_factory(handle, OtherOp)
     assert %Flezha.SDK{} = handle2
 
     assert NodeTestHelper.wait_until(
@@ -593,7 +593,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
     # `start_operative` returns after the SDK acknowledged `AddOperative`, so
     # the instance is live on the handle when the removal is refused.
     assert {:error, {:operative_type_in_use, "lr_echo", n}} =
-             Flezha.SDK.remove_stream(handle2, EchoOp)
+             Flezha.SDK.unregister_factory(handle2, EchoOp)
 
     assert n >= 1
   end
@@ -770,8 +770,8 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
 
     handle =
       Flezha.SDK.create_runner(ns, transport: :native)
-      |> Flezha.SDK.define_stream(RequesterOp)
-      |> Flezha.SDK.define_workflow(InboxWorkflow)
+      |> Flezha.SDK.register_factory(RequesterOp)
+      |> Flezha.SDK.register_factory(InboxWorkflow)
       |> Flezha.SDK.start()
 
     assert %Flezha.SDK{} = handle, "SDK start failed: #{inspect(handle)}"

@@ -187,7 +187,7 @@ The class you just ran carries no local-mode member. Hand the same type to a
 runner and it deploys unchanged:
 
 ```rust
-Flezha::create_runner("default")?.define_stream::<WordCount>()?.run()?;
+Flezha::create_runner("default")?.register_factory(WordCount)?.run()?;
 ```
 
 From there: [`docs/architecture/`](architecture/README.md) for the model,

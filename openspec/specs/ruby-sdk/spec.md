@@ -112,3 +112,25 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the Ruby interpreter reaches `merge_one_source` or `merge_same_twice`
 - **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
+### Requirement: The single-procedure short form is a class-body declaration
+A `Flezha::Procedure` subclass SHALL be able to declare `sink "name", kind:, input:, codec:` in its class body, `kind:` taking `:stream` or `:workflow` and `codec:` taking the vocabulary of the builder's `input(name, codec:)`. Such a class SHALL carry a generated operative of that kind whose factory id is the class's `procedure_name`: a stream, or a `once` workflow with every workflow setting at its default, wiring an entry channel named `input` (or the `input:` value) into the procedure and the procedure to the `sink` plugin channel, the entry decoded by `codec:` where one is written. With `sink`, `procedure_name` SHALL be written by the author; a class that would otherwise take its name from the class constant SHALL be refused. `Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `SinkWithoutId` (a sink with a derived name) or `SinkWithoutKind` (a sink with no `kind:`). The keys ride the `sink` call, so the Ruby spelling cannot omit the sink, owes no `ShorthandKeyWithoutSink`, and SHALL NOT list `shorthand_omittable_sink` in its manifest. The Ruby SDK cannot see a procedure's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output`. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+
+#### Scenario: A procedure class is a whole stream operative
+
+- **WHEN** `class Upcase < Flezha::Procedure` declares `procedure_name "upcase"` and `sink "out", kind: :stream, codec: :text` and the runner is given `register_factory(Upcase)`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and no `StreamOperative` subclass exists for it
+
+#### Scenario: A procedure class is a whole workflow operative
+
+- **WHEN** a class declares `procedure_name "place"` and `sink "placed", kind: :workflow, input: "order", codec: :text`, the runner is given `register_factory(Place)`, and an instance is started with init values
+- **THEN** `process` receives the start values as text, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A derived name is refused under a sink
+
+- **WHEN** a class declares `sink "out", kind: :stream` and no `procedure_name`
+- **THEN** `register_factory` raises `Flezha::DeclarationError` naming `SinkWithoutId`, and no controller connection is attempted
+
+#### Scenario: A sink without a kind is refused
+
+- **WHEN** a class declares `procedure_name "upcase"` and `sink "out"`
+- **THEN** `register_factory` raises naming `SinkWithoutKind`

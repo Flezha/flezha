@@ -58,7 +58,7 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 
 #### Scenario: Java test app uses the new Procedure / ProcedureCtx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `StreamOperative`, `Procedure`, `ProcedureCtx`, `ChannelBuilder`, and `FlezhaRunner.defineStream`
+- **THEN** zero matches SHALL be found — the test app's classes use only `StreamOperative`, `Procedure`, `ProcedureCtx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -394,4 +394,3 @@ not ask.
 - **GIVEN** a test excluded because it fails for a recorded reason
 - **WHEN** its exclusion is read
 - **THEN** it SHALL name that reason, and SHALL NOT be replaced by a configuration that passes
-

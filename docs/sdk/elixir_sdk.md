@@ -61,21 +61,114 @@ through a pipe.
 
 ```elixir
 Flezha.SDK.create_runner("my_namespace", transport: :native)
-|> Flezha.SDK.define_stream(MyOperative)
+|> Flezha.SDK.register_factory(MyOperative)
 |> Flezha.SDK.run()   # start/1 then await_termination/1
 
 # or under the host supervisor — same sequence, reconnects with the same stable id:
-children = [{Flezha.SDK, namespace: "my_namespace", streams: [MyOperative], transport: :native}]
+children = [{Flezha.SDK, namespace: "my_namespace", operatives: [MyOperative], transport: :native}]
 ```
 
 - `create_runner/2` returns a handle — no connection, no processes, no slot claim.
-- `define_stream/2` / `remove_stream/2` work before and after `start/1`; a post-start change
+- `register_factory/2` / `unregister_factory/2` work before and after `start/1`; a post-start change
   ships `UpdateFactories`; removing a type with live instances refuses
   `{:error, {:operative_type_in_use, factory_id, count}}`.
 - `start/1` claims the process-wide runner slot (loser: `{:error, {:already_running, ns}}`)
   and connects; `run/1` = `start/1` + `await_termination/1`; `close/1` disconnects.
 
-## Behaviours
+## Authoring
+
+Three `use` macros write the behaviours below. Each takes the scalar settings
+as options named after the callback they define, and **defines only the options
+written**, so every default stays exactly where it was — including the ones an
+environment knob decides.
+
+```elixir
+defmodule MyOperative do
+  use Flezha.SDK.StreamOperative, factory_id: "my_op"
+
+  @impl true
+  def channels(c), do: c |> input("in") |> into(MyProc) |> sink("out")
+end
+
+defmodule MyProc do
+  use Flezha.SDK.Procedure, name: "my_proc"
+
+  def run(input, state, ctx) do
+    emit(ctx, transform(input))
+    {:ok, state}
+  end
+end
+```
+
+Both operative macros import `Flezha.SDK.Channels`, so a whole pipe — a merge
+included — is written with no module prefix; the workflow macro also imports
+`Flezha.SDK.Workflow.Ctx`'s `emit/2`, `emit_on/3`, `complete/2` and
+`spawn_workflow/3,4` for a `run/2` body. `use Flezha.SDK.Procedure` imports
+`Flezha.SDK.Ctx`'s authoring functions — every one but `apply/3`, which would
+shadow `Kernel.apply/3` — and leaves `init_state/1` answering `nil` unless the
+module writes one, so a stateless procedure writes only `run/3`.
+
+An unknown option is a `CompileError` naming it, and so is a missing required
+one (`name` for a procedure, `factory_id` for an operative).
+
+> A procedure nested inside an operative module inherits that module's imports
+> lexically, so `use Flezha.SDK.Procedure` takes the builder's back — a nested
+> procedure's own `input/0` would otherwise clash with `Channels.input/2`. A
+> nested procedure must be written **before** the `channels/1` that names it,
+> which is how Elixir aliases resolve.
+
+### The short form
+
+A `sink` makes that one procedure module a whole operative of the written
+`kind`. Nothing else changes: it is registered as any operative is.
+
+```elixir
+defmodule Upcase do
+  use Flezha.SDK.Procedure, name: "upcase", kind: :stream, sink: "out"
+
+  def run(input, state, ctx) do
+    emit(ctx, String.upcase(input))
+    {:ok, state}
+  end
+end
+
+defmodule Place do
+  use Flezha.SDK.Procedure, name: "place", kind: :workflow, sink: "placed", input: "order"
+
+  def run(input, state, ctx) do
+    emit(ctx, input)
+    {:ok, state}
+  end
+end
+
+children = [{Flezha.SDK, namespace: "default", operatives: [Upcase, Place]}]
+```
+
+The generated operative is the one you would have written by hand with that
+single procedure: an entry channel named `"input"` — or the `input` option's
+value — the procedure, a plugin sink named by `sink`, a `factory_id/0` equal to
+`name`, and every other operative callback left undefined so its default
+applies. A workflow short form is a `once` workflow, seeded on its entry
+channel from `flz operative start --kind workflow --init-values`.
+
+Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+window. Elixir names no entry codec — binaries pass through and `input_with/3`
+takes a parser — so the short form takes no `codec` option.
+
+Three refusals are `CompileError`s whose message begins with its own name:
+`SinkWithoutId` (a `sink` with no `name`), `SinkWithoutKind` and
+`ShorthandKeyWithoutSink` (`kind` or `input` with no `sink`). This SDK cannot
+see a procedure's output type, so it owes no `SinkWithoutOutput` and its
+manifest does not list `shorthand_typed_output`.
+
+> A workflow short form started by a *spawn* does not see its payload yet —
+> `KB-381`. Start it with `--init-values` until that is fixed.
+
+### The behaviours beneath
+
+The plain `@behaviour` form keeps working unchanged, and is what the macros
+expand to:
 
 ```elixir
 defmodule MyOperative do
@@ -314,6 +407,56 @@ defmodule Counter do
   def run(n, s, ctx), do: {:ok, Flezha.SDK.Ctx.apply(ctx, s, {:delta, n})}
 end
 ```
+
+### The `state` block, and `defchange`
+
+`use Flezha.SDK.Procedure` makes a `state` block available, which writes that
+whole path for the field-granular half — §3's derivation, as Rust's
+`#[derive(State)]` and Java's `@State` write it:
+
+```elixir
+defmodule Position do
+  use Flezha.SDK.Procedure, name: "position"
+
+  state do
+    field :qty, :integer, default: 0
+    field :fill_ids, :list, default: []
+  end
+
+  defchange record_fill(state, qty, id) do
+    %{state | qty: state.qty + qty, fill_ids: state.fill_ids ++ [id]}
+  end
+
+  def run({:fill, qty, id}, state, ctx), do: {:ok, record_fill(state, ctx, qty, id)}
+  def run({:set, qty}, state, ctx), do: {:ok, set_qty(state, ctx, qty)}
+end
+```
+
+A `field` takes a name, a type (`:integer`, `:float`, `:string`, `:boolean`,
+`:list`, `:map`, `:term`) and a `default:`. The block generates `init_state/1`
+returning the map of defaults (overridable, for a state that depends on the
+entity key), `state_from_json/1` reading each field by its string key,
+`apply_change/2` clauses for `{:set, field, value}` on every field and
+`{:push, field, item}` on every `:list` field, and the recorders
+`set_<field>(state, ctx, value)` and `push_<field>(state, ctx, item)` — each
+journaling exactly one change through `Flezha.SDK.Ctx.apply/3`.
+
+`defchange` is the manual boundary: a mutation that is conditional, spans
+several fields, or is computed from the prior state is not one generated
+variant, so it is written once and generated into both halves — the
+`apply_change/2` clause and the recorder — which is what makes it **one**
+journal record rather than several.
+
+A module with a `state` block that also writes `apply_change/2` or
+`state_from_json/1` by hand fails to compile, naming both: the block owns them.
+
+Renaming or retyping a field is a non-additive state edit and takes a
+schema-version bump, exactly as [§3.0 of the authoring
+contract](authoring_contract.md) says for every SDK — the change terms are
+persisted, and a restore folds what was written.
+
+§3.1's keyed-map and deque modes are deferred for Elixir; the block carries the
+field and `:list` modes only.
 
 After a successful dispatch the Entity ships one `entity_state_change` frame per recorded
 change — the shared 16-byte header (`sdk_lang` 3, the SDK's version, the schema version, the

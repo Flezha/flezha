@@ -9,7 +9,7 @@ Defines the Java SDK for Flezha compute engines: the public authoring API and th
 The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperatives()` (a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
-- **WHEN** an SDK user calls `Flezha.createRunner("my_app").defineStream(MarketOperative.class).start()` with the controller running
+- **WHEN** an SDK user calls `Flezha.createRunner("my_app").registerFactory(MarketOperative.class).start()` with the controller running
 - **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same `FlezhaRunner`, and `getNamespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
@@ -17,7 +17,7 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
 #### Scenario: start() with zero defined operative types is legal
-- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.defineStream(...)`/`.defineWorkflow(...)` calls and no auto-wired classes on the classpath
+- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.registerFactory(...)` calls, whatever short-form classes are on the classpath
 - **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and operative types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder is not importable
@@ -322,7 +322,7 @@ The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: EventTimeFrom without an eventTime override fails registration
 
 - **WHEN** a Java Procedure declares `Clock = EventTimeFrom` but does not override `eventTime(Input)`
-- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` naming the Procedure and the missing `eventTime` override
+- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` naming the Procedure and the missing `eventTime` override
 
 #### Scenario: LogicalClock serves the durable change seq and re-arms on restore
 
@@ -332,7 +332,7 @@ The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: LogicalClock with NoChange fails registration
 
 - **WHEN** a Java Procedure declares `Clock = LogicalClock` and `Change = NoChange`
-- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` whose message carries the error name `UnservableClock`
+- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` whose message carries the error name `UnservableClock`
 
 ### Requirement: Operative declares persistenceEnabled default-method, frozen at instance start
 
@@ -718,56 +718,56 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 ### Requirement: Operative Type Declaration
 
-The Java SDK SHALL provide `FlezhaRunner.defineStream(Class<? extends StreamOperative>)` and `FlezhaRunner.defineWorkflow(Class<? extends WorkflowOperative>)` as chainable builder methods, callable **before and after** `.start()`/`.run()`. For each declared StreamOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Procedures' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `defineStream`/`defineWorkflow` and their `removeStream`/`removeWorkflow` inverses are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `defineStream`/`defineWorkflow`/`removeStream`/`removeWorkflow` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `removeStream`/`removeWorkflow` SHALL throw `IllegalArgumentException` naming the factory id when that id is not defined on this runner, and `OperativeTypeInUseException` — an `IllegalStateException` subclass — naming the factory id when the runner is started and live operative instances of it exist, leaving the type defined. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operative>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operative>)` as chainable builder methods, `registerFactory` reading the kind from the kind interface the class implements and refusing a class that implements both `StreamOperative` and `WorkflowOperative` with an `IllegalArgumentException` whose message begins `AmbiguousOperativeKind`, or neither with one beginning `UnknownOperativeKind`, callable **before and after** `.start()`/`.run()`. For each declared StreamOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Procedures' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `IllegalArgumentException` naming the factory id when that id is not defined on this runner, and `OperativeTypeInUseException` — an `IllegalStateException` subclass — naming the factory id when the runner is started and live operative instances of it exist, leaving the type defined. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
 
 Dynamic entity mode SHALL be supported: a Procedure reached by a consumer edge declaring `keyBy`, returning an empty list from `entityKeys()`, SHALL be declared successfully and create Entities lazily per key at dispatch time, per the `operative-state-persistence` dynamic-entity behaviour. Eviction SHALL be off by default (`entityIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Procedure reaper SHALL evict idle Entities destructively by shipping `delete_entity_state`, and a recreated Entity SHALL cold-start fresh rather than restore from disk.
 
 Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `StreamOperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `TopologyIssue` variant.
 
 #### Scenario: Declaring a stream operative class before start() succeeds
-- **WHEN** user code calls `Flezha.createRunner("my_app").defineStream(MarketOperative.class).start()`
+- **WHEN** user code calls `Flezha.createRunner("my_app").registerFactory(MarketOperative.class).start()`
 - **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `StreamOperativeInstance`
 
 #### Scenario: Declaring an operative type after start() is accepted
-- **WHEN** user code calls `.defineStream(...)` on a started `FlezhaRunner` already declaring `"market"`, for a class whose `factoryId()` returns `"orders"`
+- **WHEN** user code calls `.registerFactory(...)` on a started `FlezhaRunner` already declaring `"market"`, for a class whose `factoryId()` returns `"orders"`
 - **THEN** the call SHALL succeed and return the runner, the new class SHALL be declared to the core immediately, and the runner's declared set SHALL become the full set `{"market", "orders"}` the next connect/reconnect init frame carries
 
 #### Scenario: Duplicate factoryId across two stream operative classes is rejected
 - **WHEN** two distinct StreamOperative classes both return `"market"` from `factoryId()` and both are declared on the same builder
-- **THEN** the second `.defineStream(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
+- **THEN** the second `.registerFactory(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
 - **WHEN** an Operative wires `.into(OhlcProcedure.class)` onto `ParseProcedure`'s output stream but `ParseProcedure.outputType()` returns `Trade.class` while `OhlcProcedure.inputType()` returns `Candle.class`
-- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
+- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
 
 #### Scenario: Typed entry channel deserializes at the edge
 - **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseProcedure.class)` and a JSON-encoded Trade arrives
-- **THEN** `.defineStream(...)` SHALL succeed and `ParseProcedure.run` SHALL receive the Jackson-deserialized `Trade`, per the typed-entry-input contract of `sdk-graph-authoring`
+- **THEN** `.registerFactory(...)` SHALL succeed and `ParseProcedure.run` SHALL receive the Jackson-deserialized `Trade`, per the typed-entry-input contract of `sdk-graph-authoring`
 
 #### Scenario: Unreachable node fails declaration
 - **WHEN** an Operative's `channels(c)` wires a Procedure that is not reachable from the entry channel
-- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` naming the unreachable Procedure
+- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` naming the unreachable Procedure
 
 #### Scenario: Static-mode procedure without entitiesForOverridden is rejected
 - **WHEN** a Procedure returns a non-empty list from `entityKeys()` but its `entitiesForOverridden()` returns the default `false`
-- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` naming the Procedure and stating that static-mode procedures must override `entitiesFor` and `entitiesForOverridden`
+- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` naming the Procedure and stating that static-mode procedures must override `entitiesFor` and `entitiesForOverridden`
 
 #### Scenario: Dynamic-mode procedure declares and creates entities lazily
 - **WHEN** a Procedure returning an empty `entityKeys()` is wired through an edge declaring `keyBy`, and two inputs arrive whose key function returns `"BTC"` and `"ETH"`
-- **THEN** `.defineStream(...)` SHALL succeed, and the runtime SHALL lazily allocate exactly two Entities keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
+- **THEN** `.registerFactory(...)` SHALL succeed, and the runtime SHALL lazily allocate exactly two Entities keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
 
 #### Scenario: Declaring or removing a type on a closed runner is refused
 - **GIVEN** a `FlezhaRunner` that was started and then closed via `.close()`
-- **WHEN** code calls `.defineStream(...)`, `.defineWorkflow(...)`, `.removeStream(...)` or `.removeWorkflow(...)` on it
+- **WHEN** code calls `.registerFactory(...)` or `.unregisterFactory(...)` on it
 - **THEN** each call SHALL throw `IllegalStateException` naming the closed runner's namespace, no class SHALL be registered or unregistered in the runtime class registries, and no factory set SHALL be shipped to the runtime — the freed core context SHALL NOT be reached
 
 #### Scenario: Removing a type that is not defined is rejected
-- **WHEN** code calls `.removeStream(...)`/`.removeWorkflow(...)` for a class that was never defined on this runner, or that was already removed from it
+- **WHEN** code calls `.unregisterFactory(...)` for a class that was never defined on this runner, or that was already removed from it
 - **THEN** the call SHALL throw `IllegalArgumentException` naming the class's factory id, and the runner's declared set SHALL be unchanged
 
 #### Scenario: Removing a type with live instances is refused and keeps it defined
 - **GIVEN** a started runner declaring `"market"` with at least one live operative instance of that factory
-- **WHEN** code calls `.removeStream(MarketOperative.class)`
+- **WHEN** code calls `.unregisterFactory(MarketOperative.class)`
 - **THEN** the call SHALL throw `OperativeTypeInUseException` naming `"market"`, the type SHALL remain defined and registered, and no factory set SHALL be shipped
 
 ### Requirement: Runner process singleton guard
@@ -775,8 +775,8 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 The Java SDK SHALL allow at most one runner to be **started** per JVM process. `Flezha.createRunner(...)` SHALL NOT claim the singleton slot — any number of unstarted runners may exist. The slot SHALL be claimed by compare-and-set at `.start()`/`.run()`; if a prior runner's `.start()`/`.run()` has already succeeded in this process and not yet closed, the call SHALL throw `IllegalStateException` naming the namespace of the already-running runner, and SHALL NOT connect, mutate any shared registry, or spawn any background thread. Calling `.start()` twice on the same runner SHALL throw `IllegalStateException`.
 
 #### Scenario: Second start() in the same JVM is rejected
-- **GIVEN** a JVM process where `Flezha.createRunner("ns1").defineStream(A.class).start()` has already succeeded
-- **WHEN** code in the same process calls `Flezha.createRunner("ns2").defineStream(B.class).start()`
+- **GIVEN** a JVM process where `Flezha.createRunner("ns1").registerFactory(A.class).start()` has already succeeded
+- **WHEN** code in the same process calls `Flezha.createRunner("ns2").registerFactory(B.class).start()`
 - **THEN** the call SHALL throw `IllegalStateException` whose message names `"ns1"` as the already-running namespace
 - **AND** no connection SHALL be attempted for `"ns2"`, and the process's stable identity, entity-state sink, and credit window SHALL remain exclusively `"ns1"`'s
 
@@ -787,7 +787,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 #### Scenario: A runner may be started again after the first one closes
 - **GIVEN** a JVM process where a runner for `"ns1"` was started and then fully closed via `.close()`
-- **WHEN** code in the same process calls `Flezha.createRunner("ns2").defineStream(B.class).start()`
+- **WHEN** code in the same process calls `Flezha.createRunner("ns2").registerFactory(B.class).start()`
 - **THEN** the call SHALL succeed and `"ns2"` SHALL become the process's active runner
 
 #### Scenario: Concurrent start() calls — exactly one wins
@@ -821,7 +821,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 #### Scenario: try-with-resources still works for short-lived usage
 - **GIVEN** a test that needs a runner for the duration of one test method
-- **WHEN** the test writes `try (FlezhaRunner r = Flezha.createRunner("test").defineStream(A.class).start()) { ... }`
+- **WHEN** the test writes `try (FlezhaRunner r = Flezha.createRunner("test").registerFactory(A.class).start()) { ... }`
 - **THEN** the runner SHALL be started for the block and gracefully closed at the end of it, exactly as `AutoCloseable` usage requires
 
 ### Requirement: Flezha static accessor for the active runner
@@ -832,7 +832,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 - **GIVEN** a JVM process with no runner started yet
 - **WHEN** code calls `Flezha.currentRunner()`
 - **THEN** it SHALL return `Optional.empty()`
-- **AND** after `Flezha.createRunner("ns1").defineStream(A.class).start()` succeeds, `Flezha.currentRunner()` SHALL return `Optional.of(<that runner>)`
+- **AND** after `Flezha.createRunner("ns1").registerFactory(A.class).start()` succeeds, `Flezha.currentRunner()` SHALL return `Optional.of(<that runner>)`
 - **AND** after that runner's `.close()` completes, `Flezha.currentRunner()` SHALL return `Optional.empty()` again
 - **AND** a runner created via `Flezha.createRunner(...)` but never started SHALL NOT appear in `currentRunner()`
 
@@ -1125,4 +1125,3 @@ absent from.
   from `com.flezha.sdk.operative`, and the workflow supporting types
   (`WorkflowOperativeCtx`, `LoopMode`, `RollbackMode`, `WorkflowLoopBody` and the
   workflow exception types) SHALL resolve from the same package
-

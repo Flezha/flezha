@@ -20,7 +20,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Merge, Topology}
+  alias Flezha.SDK.{Channels, Ctx, Topology}
 
   defmodule EchoProc do
     @behaviour Flezha.SDK.Procedure
@@ -176,11 +176,11 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
       c
       |> Channels.merge()
-      |> Merge.from(ticks, &{:tick, &1})
-      |> Merge.from(quotes, &{:quote, &1})
-      |> Merge.from(fills, &{:fill, &1})
-      |> Merge.key_by(fn {_source, value} -> value |> String.split(":") |> hd() end)
-      |> Merge.into(KeyedProc)
+      |> Channels.from(ticks, &{:tick, &1})
+      |> Channels.from(quotes, &{:quote, &1})
+      |> Channels.from(fills, &{:fill, &1})
+      |> Channels.key_by(fn {_source, value} -> value |> String.split(":") |> hd() end)
+      |> Channels.into(KeyedProc)
       |> Channels.sink("merged")
     end
   end
@@ -190,7 +190,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     def channels(c) do
       ticks = Channels.input(c, "ticks")
-      c |> Channels.merge() |> Merge.from(ticks, & &1) |> Merge.into_named(KeyedProc, "m")
+      c |> Channels.merge() |> Channels.from(ticks, & &1) |> Channels.into_named(KeyedProc, "m")
     end
   end
 
@@ -202,9 +202,9 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
       c
       |> Channels.merge()
-      |> Merge.from(ticks, & &1)
-      |> Merge.from(ticks, & &1)
-      |> Merge.into(KeyedProc)
+      |> Channels.from(ticks, & &1)
+      |> Channels.from(ticks, & &1)
+      |> Channels.into(KeyedProc)
     end
   end
 
@@ -218,9 +218,9 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
       c
       |> Channels.merge()
-      |> Merge.from(ticks, & &1)
-      |> Merge.from(quotes, & &1)
-      |> Merge.into(KeyedProc)
+      |> Channels.from(ticks, & &1)
+      |> Channels.from(quotes, & &1)
+      |> Channels.into(KeyedProc)
     end
   end
 

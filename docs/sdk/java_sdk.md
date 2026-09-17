@@ -6,7 +6,7 @@ dispatch, overflow, the retry→park ladder, the partition guard, timers and the
 effectively-once tier are one implementation, not two.
 
 Authoring surface: `StreamOperative` / `WorkflowOperative` / `Procedure` with
-`ChannelBuilder`, plus the `@Procedure` / `@State` / `@StreamOperative`
+`ChannelBuilder`, plus the `@Procedure` / `@State`
 annotation sugar. See [`authoring_contract.md`](authoring_contract.md) for what
 each tier expands to and [`state_persistence.md`](state_persistence.md) for the
 `StateHandle` / Kryo side.
@@ -75,6 +75,60 @@ writing a second one. The sink is JVM-wide and survives `close()`,
 because a runner's most interesting diagnostics are the ones it writes while
 shutting down. A write that fails is swallowed, so a standard error closed
 during a drain cannot turn a clean drain into a crash.
+
+## The short form
+
+A `@Procedure` that declares a `sink` is a whole operative: one class, no
+hand-written `StreamOperative` beside it. `kind` says which kind the processor
+generates, and the generated class is what you register.
+
+```java
+@Procedure(id = "upcase", kind = OperativeKind.STREAM, sink = "out")
+public class Upcase {
+    public String run(String value) {
+        return value.toUpperCase();
+    }
+}
+
+@Procedure(id = "place", kind = OperativeKind.WORKFLOW, sink = "placed", input = "order")
+public class Place {
+    public String run(String order) {
+        return order;
+    }
+}
+
+Flezha.createRunner("default")
+        .registerFactory(UpcaseStreamOperative.class)
+        .registerFactory(PlaceWorkflowOperative.class)
+        .run();
+```
+
+The generated operative is the one you would have written by hand with that
+single procedure: an entry channel named `input` — or the `input` element's
+value — the procedure, a plugin sink named by `sink`, a `factoryId()` equal to
+`id`, and every other operative method at its interface default. A workflow
+short form is a `once` workflow, seeded on its entry channel from
+`flz operative start --kind workflow --init-values`.
+
+Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+window. Java names no entry codec — an entry decodes by its declared type — so
+the short form takes no `codec` element.
+
+With a `sink`, `id` must be written: the factory id is an address an operator
+types, and a class rename must not move it. The written `id` also names the
+procedure, so a Java procedure's state is saved under the same name its Rust
+twin uses. Four refusals fail compilation, each message beginning with its own
+name: `SinkWithoutId`, `SinkWithoutKind`, `SinkWithoutOutput` (a `void` `run`
+with no `emits`) and `ShorthandKeyWithoutSink` (`input` or `kind` with no
+`sink`).
+
+Nothing registers itself. There is no aggregator class and no `@StreamOperative`
+annotation: every operative a runner declares is one the application handed to
+`registerFactory`.
+
+> A workflow short form started by a *spawn* does not see its payload yet —
+> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## Scope
 

@@ -4,12 +4,12 @@
 TBD - created by archiving change add-php-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: PHP SDK entry point and runner lifecycle
-The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `defineStream()` / `defineWorkflow()` declaring operative classes, `removeType()` as their inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
+The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering an operative class of either kind (the kind is read from the class), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
 
 The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION)` → `flz_core_declare_class` per class → `flz_core_start(namespace)` → poll/complete → `flz_core_shutdown` → `flz_core_context_free`. Naming SHALL follow `docs/sdk/naming_conventions.md`, matching the Rust and Java surfaces.
 
 #### Scenario: A declared stream operative connects and is placed
-- **WHEN** a script calls `Flezha::createRunner('trading')->defineStream(OrderTotals::class)->run()` against a live controller
+- **WHEN** a script calls `Flezha::createRunner('trading')->registerFactory(OrderTotals::class)->run()` against a live controller
 - **THEN** the runner SHALL connect, `AddOperative` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared procedure
 
 #### Scenario: Zero declared operative types is legal
@@ -111,7 +111,7 @@ A declaration the core refuses SHALL surface the core's error naming the offendi
 
 #### Scenario: An unserviceable declaration is refused at declare time
 - **WHEN** a PHP class declares a field combination the host layer cannot serve
-- **THEN** `defineStream()` SHALL raise an error naming the offending field, before the runner starts
+- **THEN** `registerFactory()` SHALL raise an error naming the offending field, before the runner starts
 
 ### Requirement: The five command activation kinds
 The PHP SDK SHALL handle every command activation kind the core hands out: `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState` and `MigrationSerialize`.
@@ -266,3 +266,30 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the PHP interpreter reaches `merge_one_source` or `merge_same_twice`
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
+### Requirement: The single-procedure short form is four attribute arguments
+`#[Proc]` SHALL accept `kind` (`OperativeKind::Stream` or `OperativeKind::Workflow`, an enum in the `Flezha` namespace), `sink`, `input` and `codec` (a `ChannelCodec`) beside `name`. A procedure class carrying `name`, `kind` and `sink` SHALL carry a generated operative of that kind whose factory id is `name`: a stream, or a `once` workflow with every workflow setting at its default, wiring an entry channel named `input` (or the `input` argument's value) into the procedure and the procedure to the `sink` plugin channel, the entry decoded by `codec` where one is written. With `sink`, `name` SHALL be written; a class that would otherwise take its name from the class SHALL be refused. `Runner::registerFactory` SHALL accept such a class string and register the generated operative, raising `DeclarationException` at registration with the name in its refusals and at the start of its message: `SinkWithoutId` (a sink with no written name), `SinkWithoutKind` (a sink with no `kind`) and `ShorthandKeyWithoutSink` (`kind`, `input` or `codec` with no `sink`, naming the arguments). A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Procedure::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a procedure declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`, and SHALL list `shorthand_omittable_sink`.
+
+#### Scenario: A procedure class is a whole stream operative
+
+- **WHEN** a class is attributed `#[Proc(name: 'upcase', kind: OperativeKind::Stream, sink: 'out', codec: ChannelCodec::Text)]` and the runner is given `registerFactory(Upcase::class)`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and no `StreamOperative` subclass exists for it
+
+#### Scenario: A procedure class is a whole workflow operative
+
+- **WHEN** a class is attributed `#[Proc(name: 'place', kind: OperativeKind::Workflow, sink: 'placed', input: 'order', codec: ChannelCodec::Text)]`, the runner is given `registerFactory(Place::class)`, and an instance is started with init values
+- **THEN** `run` receives the start values as text, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A procedure cannot declare no output
+
+- **WHEN** a class extending `Flezha\Procedure` declares `public function run(mixed $input, Ctx $ctx): void`
+- **THEN** it SHALL fail to load, because `Procedure::run` is declared `: mixed` — so no PHP procedure can declare no output, and the SDK owes no `SinkWithoutOutput`
+
+#### Scenario: A derived name is refused under a sink
+
+- **WHEN** a class is attributed `#[Proc(kind: OperativeKind::Stream, sink: 'out')]` with no `name`
+- **THEN** `registerFactory` throws naming `SinkWithoutId`
+
+#### Scenario: A kind without a sink is refused
+
+- **WHEN** a class is attributed `#[Proc(name: 'upcase', kind: OperativeKind::Stream)]` with no `sink`
+- **THEN** `registerFactory` throws naming `ShorthandKeyWithoutSink` and `kind`

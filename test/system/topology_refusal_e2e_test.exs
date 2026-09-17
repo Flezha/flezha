@@ -56,6 +56,11 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
 
   @fixture "test/fixtures/reference_topologies.txt"
 
+  # How a row's refusal may be answered: driven at run time, or cited to the
+  # compile-fail test that pins the message where the runtime's compiler
+  # refuses it before a runner exists.
+  @answered ["refused", "cited"]
+
   # A row needing one of these is authorable in no builder: a fluent handle
   # cannot name a node nothing wired, and every SDK's `outputs_at_checkpoint`
   # takes the delay its flag needs. The fixture header states both; they are
@@ -106,7 +111,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
         report = conformance_report(@runtime)
         rows = ReferenceTopologies.refusal_rows()
 
-        for entry <- report["rows"], entry["outcome"] == "refused" do
+        for entry <- report["rows"], entry["outcome"] in @answered do
           row = Enum.find(rows, &(&1.topology == entry["topology"]))
 
           assert row.refusal != "ok",
@@ -120,11 +125,34 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
                  """
         end
 
-        refused = for e <- report["rows"], e["outcome"] == "refused", do: e["topology"]
+        # A refusal the runtime's compiler answers cannot be driven at run time,
+        # so the row is answered by citing the compile-fail test that pins the
+        # message. The citation is checked here rather than taken on trust.
+        for entry <- report["rows"], entry["outcome"] == "cited" do
+          cited = entry["citation"]
+
+          assert is_binary(cited) and cited != "",
+                 "#{@runtime} cited #{entry["topology"]} without naming the test that pins it"
+
+          assert File.exists?(cited),
+                 "#{@runtime} cites #{cited} for #{entry["topology"]}, which is not in the tree"
+
+          name = hd(entry["names"])
+
+          assert File.read!(cited) =~ name,
+                 """
+                 #{@runtime} cites #{cited} for #{entry["topology"]}, and that file does not \
+                 carry #{name}. A citation nothing checks is a refusal nobody holds.
+                 """
+        end
+
+        answered =
+          for e <- report["rows"], e["outcome"] in @answered, do: e["topology"]
+
         skipped = for e <- report["rows"], e["outcome"] == "skipped", do: e["topology"]
 
         for row <- rows, row.refusal != "ok", row.topology not in skipped do
-          assert row.topology in refused,
+          assert row.topology in answered,
                  "#{@runtime} accepted #{row.topology}, which every SDK must refuse " <>
                    "with #{row.refusal} — this is the KI-118 shape"
         end
@@ -190,9 +218,11 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
 
   # `dup_key_by` is refused by the core's check. `dup_node` is refused by the
   # four veneer builders themselves, and a Node graph built at module scope
-  # raises it while the module loads.
+  # raises it while the module loads. `shorthand_duplicate_id` is a runtime
+  # refusal in all seven, so that row boots for real everywhere too.
   describe "the boot drill" do
-    for runtime <- PortPilot.runtimes(), topology <- ~w(dup_key_by dup_node) do
+    for runtime <- PortPilot.runtimes(),
+        topology <- ~w(dup_key_by dup_node shorthand_duplicate_id) do
       @runtime runtime
       @topology topology
       @selected_only runtime != NodeTestHelper.runtime() and @interop_skip

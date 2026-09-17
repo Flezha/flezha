@@ -17,17 +17,19 @@ lifetime of something* is not "async": `start()` returns immediately after the
 connect handshake with a plain handle, so it is `start()`, never `runAsync()`
 or `startAsync()`.
 
-### 2. `define*` declares a type; `remove*` is its inverse; `register*` is not public vocabulary
+### 2. `registerFactory` declares a factory; `unregisterFactory` is its inverse
 
 Declaring an operative class tells the runtime what it *may spawn instances of
-later* (via `AddOperative`). That is a definition, not a registration of a
-live instance — so the runner methods are `defineStream(Class)` /
-`defineWorkflow(Class)` (Java), `define_stream::<R>()` /
-`define_workflow::<T>()` (Rust), legal before and after `start()`. The inverse
-of a definition is a removal: `removeStream` / `removeWorkflow` and
-`remove_stream` / `remove_workflow` — every `define*` gets a matching
-`remove*`, never an `undefine*` / `unregister*` / `drop*` synonym. `register*`
-survives only on internal registries, which do hold registrations.
+later* (via `AddOperative`). One method does it, whichever kind the operative
+is: `registerFactory(Class)` (Java, Node, PHP), `register_factory(operative)`
+(Rust, Python, Ruby, Elixir), legal before and after `start()`. Its one inverse
+is `unregisterFactory` / `unregister_factory`, taking exactly what the
+registration took — never an `undefine*` / `drop*` synonym.
+
+What is registered is a *factory*: the class the controller places by factory
+id. That is why the name says so, and why no call names the kind — an operative
+already declares its own, and a call that named it again could disagree with the
+declaration.
 
 ### 3. The lifecycle verb set is `start()` / `run()` / `awaitTermination()` / `close()`
 
@@ -37,12 +39,18 @@ the direct precedent. `run()` is pure sugar (`start()` then
 `awaitTermination()`), never an independent implementation, so the two can
 never drift.
 
-### 4. Two explicit per-kind methods beat one overloaded method
+### 4. A kind an operative already declares is never a second method
 
-Rust has no method overloading, and the two SDKs must keep matching shapes.
-When Java could overload (`define(Class)`) but Rust cannot, both SDKs get two
-explicit methods (`defineStream` / `defineWorkflow`). Cross-SDK symmetry
-outranks Java-side call-site brevity.
+Two per-kind methods were the earlier reading of this rule, and they were
+wrong: the kind is a fact of the operative, so a second method for it is a
+second place for one fact to be stated, and a call that can disagree with a
+declaration. One `registerFactory` reads the kind from what it is handed — a
+Rust trait impl, a Java interface, an exported callback — and refuses what it
+cannot read, by name.
+
+Where a language genuinely cannot express one method over both kinds, that is
+what earns a second one. Rust can: a sealed `Operative<K>` trait over the two
+kind markers, with `K` inferred from the value.
 
 ### 5. Accessors return `Optional`/`Option`, never throw for "nothing is there yet"
 
@@ -62,21 +70,24 @@ call (no "poisoned builder"):
 | Failure                         | Java                                      | Rust (`Err(FlezhaError::…)`)                 |
 | ------------------------------- | ----------------------------------------- | -------------------------------------------- |
 | invalid topology                | `StreamOperativeConfigurationException`, `WorkflowOperativeConfigurationException` | `InvalidTopology(TopologyBuildError)` |
-| duplicate `factory_id`          | `IllegalArgumentException` at the second `define*` | `DuplicateFactoryId { factory_id }`     |
+| duplicate `factory_id`          | `IllegalArgumentException` at the second `registerFactory` | `DuplicateFactoryId { factory_id }` |
 | runner lifecycle misuse         | `IllegalStateException`                   | `AlreadyRunning { namespace }`, `InvalidNamespace` |
 | connection failure at `start()` | a named exception (the native binding raises `FlezhaNativeException`) | `ConnectFailed(String)` |
 | removing a type with live instances | `OperativeTypeInUseException`         | `OperativeTypeInUse`                         |
 
 The two SDKs report the identical failure class with the same error name: what
-Java throws at `defineStream(...)`, Rust returns as `Err` from
-`define_stream::<R>()`.
+Java throws at `registerFactory(...)`, Rust returns as `Err` from
+`register_factory(R)`. The five short-form refusals
+(`docs/sdk/authoring_contract.md` §5.2) are named the same way in all seven
+SDKs, and the name appears verbatim in the error an author reads.
 
 ### 7. `create*` constructs an object the caller mutates; `new*` is not used
 
 The entry point is `Flezha.createRunner(ns)` / `Flezha::create_runner(ns)`,
 returning the concrete `FlezhaRunner` directly — Beam's `Pipeline.create()`
-precedent: one object carries declaration (`define*` / `remove*`) and
-lifecycle (`start` / `run` / `awaitTermination` / `close`). `new*` names are
+precedent: one object carries declaration (`registerFactory` /
+`unregisterFactory`) and lifecycle (`start` / `run` / `awaitTermination` /
+`close`). `new*` names are
 not used, and there is no builder type: a separate builder earns its keep only
 when construction is invalid until sealed, and a dynamic type set has no seal.
 

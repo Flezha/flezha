@@ -12,7 +12,7 @@ At most one **started** runner SHALL exist per process; the slot is claimed at `
 The runner SHALL report, in its startup line, the wheel build tier, the active executor and the pool sizing, so a benchmark or bug report is never ambiguous about the conditions it was produced under.
 
 #### Scenario: Successful connection on a created runner
-- **WHEN** a user calls `flezha.create_runner("my_app").define_stream(MarketOperative).start()` with the controller running
+- **WHEN** a user calls `flezha.create_runner("my_app").register_factory(MarketOperative).start()` with the controller running
 - **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same runner, and `runner.namespace` equals `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
@@ -20,7 +20,7 @@ The runner SHALL report, in its startup line, the wheel build tier, the active e
 - **THEN** the SDK SHALL retry the connect with exponential backoff and succeed once the controller becomes available, on the same ladder the other SDKs use
 
 #### Scenario: Zero declared operative types is legal
-- **WHEN** `start()` is called with no `define_stream` / `define_workflow` calls
+- **WHEN** `start()` is called with no `register_factory` calls
 - **THEN** the runner SHALL connect successfully with an empty factory id list, and types MAY be defined later on the live runner
 
 #### Scenario: Second start on the same runner is refused
@@ -45,7 +45,7 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 
 The Python SDK SHALL derive procedure input and output types from the type hints on the decorated handler's signature and SHALL use them to wire the operative graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs.
 
-A handler whose parameter or return annotation is missing, or whose annotated types cannot be connected into a valid graph, SHALL raise at the `define_stream` / `define_workflow` call site — before any input is served — with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable procedure, node identity collision, missing event-time extractor when an event-time clock is declared, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
+A handler whose parameter or return annotation is missing, or whose annotated types cannot be connected into a valid graph, SHALL raise at the `register_factory` call site — before any input is served — with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable procedure, node identity collision, missing event-time extractor when an event-time clock is declared, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
 
 #### Scenario: A wrong edge type is a type error before it is a runtime error
 - **WHEN** a user wires a handler returning `Invoice` into a handler accepting `Shipment` and runs a standard type checker
@@ -53,15 +53,15 @@ A handler whose parameter or return annotation is missing, or whose annotated ty
 
 #### Scenario: Mismatched types are refused at registration
 - **WHEN** the same graph is registered without a prior type-check pass
-- **THEN** `define_stream` SHALL raise a topology error naming both handlers and the incompatible types, and the runner SHALL NOT connect
+- **THEN** `register_factory` SHALL raise a topology error naming both handlers and the incompatible types, and the runner SHALL NOT connect
 
 #### Scenario: Missing annotation is refused at registration
 - **WHEN** a user declares `@flezha.procedure def handle(order): ...` with no parameter annotation
-- **THEN** `define_stream` SHALL raise an error naming the handler and the unannotated parameter
+- **THEN** `register_factory` SHALL raise an error naming the handler and the unannotated parameter
 
 #### Scenario: Refusal happens before any input is served
 - **WHEN** an operative graph contains a cycle
-- **THEN** the error SHALL be raised from the `define_stream` call site, and no entity, mailbox or connection SHALL have been created
+- **THEN** the error SHALL be raised from the `register_factory` call site, and no entity, mailbox or connection SHALL have been created
 
 ### Requirement: Durable State Mutation Is Rejected Outside the Change Mechanism
 
@@ -131,7 +131,7 @@ Change and state bytes produced by the Python SDK SHALL use a schema-aware, vers
 
 The SDK SHALL NOT use `pickle` for durable state or change bytes, on either the persistence or the wire path, because loading a pickle executes code and its payloads embed class paths that a refactor invalidates. A test SHALL assert no `pickle` use survives on those paths.
 
-Encoding SHALL be validated at registration: a `@flezha.state` class containing a field the codec cannot represent SHALL raise at the `define_stream` call site naming the class and field. Integer offsets, seqs and timestamps SHALL round-trip without narrowing, including values above 2^63.
+Encoding SHALL be validated at registration: a `@flezha.state` class containing a field the codec cannot represent SHALL raise at the `register_factory` call site naming the class and field. Integer offsets, seqs and timestamps SHALL round-trip without narrowing, including values above 2^63.
 
 #### Scenario: Added field remains loadable
 - **WHEN** state is persisted, a new field with a default is added to the `@flezha.state` class, and the Entity is restored
@@ -139,7 +139,7 @@ Encoding SHALL be validated at registration: a `@flezha.state` class containing 
 
 #### Scenario: Unrepresentable field is refused at registration
 - **WHEN** a `@flezha.state` class declares a field holding an open socket
-- **THEN** `define_stream` SHALL raise naming the class and the field
+- **THEN** `register_factory` SHALL raise naming the class and the field
 
 #### Scenario: Pickle cannot be reintroduced
 - **WHEN** the persistence and wire paths are inspected by the SDK's own test suite
@@ -147,12 +147,12 @@ Encoding SHALL be validated at registration: a `@flezha.state` class containing 
 
 ### Requirement: Dynamic Factory Declaration
 
-`define_stream` / `define_workflow` and their removal inverses SHALL be legal both before and after `start()`. The declared factory set SHALL be per-runner and SHALL start empty each generation. A post-start declaration SHALL reach the core immediately, so the set the reconnect init frame is serialized from at send time carries it; that frame is the resync of record. Removing a type with live instances SHALL raise; removing an undeclared type SHALL raise naming the id.
+`register_factory` and its inverse `unregister_factory` SHALL be legal both before and after `start()`, each taking an operative of either kind, the kind read from the operative. The declared factory set SHALL be per-runner and SHALL start empty each generation. A post-start declaration SHALL reach the core immediately, so the set the reconnect init frame is serialized from at send time carries it; that frame is the resync of record. Removing a type with live instances SHALL raise; removing an undeclared type SHALL raise naming the id.
 
 Shipping an `UpdateFactories` frame to a *live* controller is out of reach for a veneer host: the ABI exposes no entry point that emits one, and none that retracts a declaration, so only the in-process Rust host — which owns the runner channel directly — can notify a live controller of a post-start change. The Java SDK carries the identical gap. Closing it is a change to `sdk-core-abi`, owed to the follow-up `sdk-abi-factory-resync`; until it lands, a veneer host's post-start change reaches the controller at the next bind.
 
 #### Scenario: Post-start define reaches the core and the next bind
-- **WHEN** `define_stream` is called on a started runner
+- **WHEN** `register_factory` is called on a started runner
 - **THEN** the class SHALL be declared to the core immediately, SHALL appear in the runner's declared set, and SHALL NOT block on an acknowledgement
 
 #### Scenario: The live-controller resync is deferred by name
@@ -269,3 +269,35 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** `c.route_latest(config, trades, lambda t: t["symbol"])` is declared and `ProcedureTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
 - **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
 
+### Requirement: The single-procedure short form is four decorator keywords
+`flezha.procedure` SHALL accept `kind` (`"stream"` or `"workflow"`), `sink`, `input` and `codec` beside its existing declarations, on both the bare-decorator and the factory form. A procedure declared with `name`, `kind` and `sink` SHALL carry a generated `Operative` of that kind whose factory id is `name`: a stream operative, or a `once` workflow operative with every workflow setting at its default, wiring an entry channel named `input` (or the `input` keyword's value) into the procedure and the procedure to the `sink` plugin channel. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call. Declaring SHALL still perform no I/O. At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutId` for a `sink` with no written `name` (the SDK SHALL NOT derive it from `__name__`), `SinkWithoutKind` for a `sink` with no `kind`, `SinkWithoutOutput` for a `sink` on a procedure whose return annotation is absent or `None`, and `ShorthandKeyWithoutSink` for `kind`, `input` or `codec` with no `sink`, naming the keywords. `Runner.register_factory` SHALL accept a short-form procedure and register its operative, and `Runner.register_modules` SHALL register the operative a short-form procedure in the named module carries, alongside the module's `Operative`s. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+
+#### Scenario: A decorated function is a whole stream operative
+
+- **WHEN** a module declares `@flezha.procedure(name="upcase", kind="stream", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and the module declares no `stream_operative`
+
+#### Scenario: A decorated function is a whole workflow operative
+
+- **WHEN** a module declares `@flezha.procedure(name="place", kind="workflow", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, and an instance is started with init values
+- **THEN** the procedure receives the start values as text on `order`, its return value reaches `placed`, and the instance completes
+
+#### Scenario: register_modules collects a short form
+
+- **WHEN** a module declares a short-form procedure and the runner is given `register_modules("that.module")`
+- **THEN** the runner declares the short form's operative
+
+#### Scenario: A derived name is refused under a sink
+
+- **WHEN** a module declares `@flezha.procedure(kind="stream", sink="out") def upcase(s: str) -> str`
+- **THEN** importing it raises `DeclarationError` naming `SinkWithoutId`, and no socket is opened
+
+#### Scenario: A sink without a kind is refused
+
+- **WHEN** a module declares `@flezha.procedure(name="upcase", sink="out") def upcase(s: str) -> str`
+- **THEN** importing it raises `DeclarationError` naming `SinkWithoutKind`
+
+#### Scenario: The short form still composes as a procedure
+
+- **WHEN** a short-form procedure is named in another operative's `Channels` body
+- **THEN** it wires as any procedure does, and its own operative is declared only if the runner is also handed the procedure or its module

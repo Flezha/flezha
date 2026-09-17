@@ -1011,6 +1011,5 @@ substrings of. Registration SHALL be refused and the topology discarded.
 
 #### Scenario: Second sink call is rejected at registration (Java)
 - **WHEN** a Operative's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).sink("p1", f1).sink("p2", f2)`
-- **THEN** `FlezhaRunner.defineStream(R.class)` SHALL throw `StreamOperativeConfigurationException` whose message names `DuplicatePluginSink` and the channel `"foo"`
+- **THEN** `FlezhaRunner.registerFactory(R.class)` SHALL throw `StreamOperativeConfigurationException` whose message names `DuplicatePluginSink` and the channel `"foo"`
 - **AND** the registered topology SHALL be discarded
-

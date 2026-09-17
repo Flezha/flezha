@@ -19,7 +19,7 @@ Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge
 #### Scenario: Entry channel as a workflow merge source is refused
 
 - **WHEN** a workflow operative declares a merge whose sources include an entry channel
-- **THEN** `define_workflow` SHALL return a named definition-time error identifying the entry channel and the merged procedure, and SHALL NOT register the class
+- **THEN** `register_factory` / `registerFactory` SHALL return a named definition-time error identifying the entry channel and the merged procedure, and SHALL NOT register the class
 
 #### Scenario: A mapping that panics on a workflow chain does not strand the instance
 
@@ -65,7 +65,7 @@ A merge with fewer than two sources, duplicate sources, a source re-wiring a cha
 #### Scenario: Duplicate source rejected
 
 - **WHEN** a merge subscribes the same channel twice
-- **THEN** `define_stream`/`define_workflow` SHALL return a topology error naming the duplicated channel
+- **THEN** `register_factory` / `registerFactory` SHALL return a topology error naming the duplicated channel
 
 #### Scenario: A mapping is never dropped onto an already-wired edge
 
@@ -84,4 +84,3 @@ Value transforms (`map`, `filter`, `flat_map`) declared on a merge SHALL apply t
 
 - **WHEN** a source handle declares `.filter(...)` and is then passed to `merge().from(source, Map::new)`
 - **THEN** the predicate SHALL receive that source's own payload type and SHALL run before the source's mapping
-

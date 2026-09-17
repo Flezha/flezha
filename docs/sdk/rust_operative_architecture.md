@@ -34,7 +34,7 @@ underneath in [`poll_core.md`](poll_core.md) and
 
 - **Stream Operative class** — the type-level declaration (`StreamOperative`
   trait: `factory_id()` + `channels(&ChannelBuilder)`). Declared once per
-  runner via `FlezhaRunner::define_stream::<R>()`; `remove_stream::<R>()` is
+  runner via `FlezhaRunner::register_factory(R)`; `unregister_factory(R)` is
   its inverse. The topology is built and validated at the declaring call site
   and shared (`Arc<OperativeTopology>`) by every instance of the class.
 - **Operative instance** (`StreamInstance`) — the live object spawned on
@@ -84,7 +84,7 @@ impl flezha_runner::WorkflowOperative for Greet {
         Ok(())
     }
 }
-flezha_runner::Flezha::create_runner("my_app")?.define_workflow::<Greet>()?.run()?;
+flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
 ```
 
 `run` is scheduled once per started instance with `args` from `init_values`;
@@ -107,7 +107,7 @@ use flezha_runner::{
 ```
 
 `Flezha::create_runner(namespace)` returns the process's `FlezhaRunner`;
-`define_stream::<R>()` / `define_workflow::<T>()` declare classes on it;
+`register_factory(R)` / `register_factory(T)` declare classes on it;
 `start()` connects (retried with backoff until the controller is reachable)
 and `run()` is `start()` + `await_termination()`. The controller spawns
 instances later with `flz operative start`. `Flezha::current_runner()` reaches
@@ -160,27 +160,72 @@ fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
 
 fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
 
-// Linear pipeline ⇒ no `channels()` body and no `define_stream` (auto-registered).
+// A linear pipeline needs no `channels()` body. The macro begins with the type
+// it declares, which is what the author registers.
 flezha_runner::operative! {
+    pub struct Market;
     id: "market",
     pipeline: input::<String> -> Parse -> Ohlc -> plugin::<Vec<u8>>("ohlc_kafka")
 }
 ```
 
-A single-procedure `input → sink` operative adds `sink = "…"` to the attribute
-and needs neither `operative!` nor `define_stream`. Attribute opt-ins: `id`,
+A single-procedure `input → sink` operative adds `kind = "stream" | "workflow"`
+and `sink = "…"` to the attribute and needs no `operative!`: the generated
+procedure type itself implements the kind's operative trait, so
+`runner.register_factory(Ohlc)` declares it. Attribute opt-ins: `id`, `kind`,
 `sink`, `input`, `emits`, `keys` + `entities_for` (static mode), `key`,
 `idle_ttl` + `max_entities` (dynamic-mode knobs — the key itself is declared on
-the wiring with `.key_by(f)`), `capacity`, `on_full`, `clock`. Auto-registered
-classes are harvested into the runner's declared set by `FlezhaRunner::start()`
-(`register_inventory_operatives()` does the same without a runner). Fan-out
-and multi-input stay on an explicit `channels()` body.
+the wiring with `.key_by(f)`), `capacity`, `on_full`, `clock`. Nothing is
+harvested: every operative a runner declares is one the author registered.
+Fan-out and multi-input stay on an explicit `channels()` body.
 
 Both shorthands name their entry channel `input` unless the author says
 otherwise: `input = "prices"` on the attribute, `input::<String>("prices")` on
 the `operative!` pipeline head — the same position the `plugin` terminator
-takes its name in. `input` on a procedure with no `sink` is refused, because
-there is no generated operative for it to name a channel on.
+takes its name in.
+
+### The short form
+
+A `sink` on the attribute makes that one procedure a whole operative of the
+written `kind`, and the generated procedure type is what you register:
+
+```rust
+#[flezha_runner::procedure(id = "upcase", kind = "stream", sink = "out")]
+fn upcase(value: String) -> String {
+    value.to_uppercase()
+}
+
+#[flezha_runner::procedure(id = "place", kind = "workflow", sink = "placed", input = "order")]
+fn place(order: String) -> String {
+    order
+}
+
+Flezha::create_runner("default")?
+    .register_factory(Upcase)?
+    .register_factory(Place)?
+    .run()?;
+```
+
+The generated operative is the one you would have written by hand with that
+single procedure: an entry channel named `input` — or the `input` key's value —
+the procedure, a plugin sink named by `sink`, a factory id equal to `id`, and
+every class-level setting at its trait default. A workflow short form is a
+`once` workflow, seeded on its entry channel from
+`flz operative start --kind workflow --init-values`.
+
+Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+window. Rust names no entry codec — an entry decodes by its declared type — so
+the short form takes no `codec` key.
+
+Four refusals are compile errors whose message begins with its own name:
+`SinkWithoutId` (a `sink` with no `id`), `SinkWithoutKind`, `SinkWithoutOutput`
+(a unit return with no `emits`) and `ShorthandKeyWithoutSink` (`input` or
+`kind` with no `sink`). A `kind` outside `"stream"` and `"workflow"` names both
+values.
+
+> A workflow short form started by a *spawn* does not see its payload yet —
+> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## Escape hatch: the raw traits
 
@@ -228,7 +273,7 @@ impl StreamOperative for MarketOperative {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Flezha::create_runner("market_ns")?.define_stream::<MarketOperative>()?.run()?;
+    Flezha::create_runner("market_ns")?.register_factory(MarketOperative)?.run()?;
     Ok(())
 }
 ```
@@ -250,14 +295,15 @@ and the full trait. Other hooks: `from_config`, `on_timer`,
 The Java SDK is the same model: `Procedure<Input, State, Output, ChangeT,
 ClockT, ConfigT>` is a parameterized interface with `inputType()` /
 `outputType()` accessors, so bounds Rust checks at compile time become
-`StreamOperativeConfigurationException`s from `defineStream(...)`;
+`StreamOperativeConfigurationException`s from `registerFactory(...)`;
 `entitiesForOverridden()` replaces the `ENTITIES_FOR_OVERRIDDEN` const;
 dynamic mode is read off the wiring on both sides (the annotation processor
 refuses `@EntityKey`) with `entityIdleTtl()` as the only knob; zero-copy
 passes the value by reference, so the producer must treat an emitted value as
-immutable. `@Procedure` / `@State` / `@StreamOperative` / `@EntitiesFor`
-(`flezha-sdk-processor`) generate the impls plus a
-`GeneratedStreamOperatives.defineAll(FlezhaRunner)` aggregator. Persisted
+immutable. `@Procedure` / `@State` / `@EntitiesFor` (`flezha-sdk-processor`)
+generate the impls, and a `@Procedure` with a `sink` also generates the short
+form's `<Class>StreamOperative` or `<Class>WorkflowOperative`, which the
+application registers with `registerFactory`. Persisted
 Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
 `WorkflowOperative` emits `WorkflowCompleted` byte-identically to Rust.
 
@@ -379,7 +425,7 @@ impl Procedure for OhlcProc {
 }
 ```
 
-Resolution at `define_stream::<R>()`: the Procedure's value when
+Resolution at `register_factory(R)`: the Procedure's value when
 `MAILBOX_CAPACITY_OVERRIDDEN = true`, else `FLEZHA_MAILBOX_CAPACITY`, else
 1024. Capacity must be in `1..=1_048_576`; out-of-range values fail
 registration naming the Procedure. Static-mode Procedures allocate one
