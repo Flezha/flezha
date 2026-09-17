@@ -168,7 +168,7 @@ services:
           echo "[rust] waiting for controller control socket..."
           sleep 1
         done
-        exec cargo run --quiet --manifest-path=/flezha/test/apps/rust_runner/Cargo.toml -- "$$FLEZHA_DEMO_NAMESPACE"
+        exec cargo run --quiet --manifest-path=/flezha/sdk/rust/test_app/Cargo.toml -- "$$FLEZHA_DEMO_NAMESPACE"
     volumes:
       - socket_data:/socket_data
       - ../../:/flezha

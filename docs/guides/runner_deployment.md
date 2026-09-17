@@ -270,7 +270,7 @@ particular to that language is explained here; what the parts are for is
 ### Java
 
 The whole example:
-[`sdk/java/examples/echo`](https://github.com/flezha/flezha/tree/main/sdk/java/examples/echo).
+[`sdk/java/examples/echo`](https://github.com/flezha/flezha_java_sdk/tree/main/examples/echo).
 
 ```java
 // The procedure. The processing stage the graph routes each message into.
@@ -358,7 +358,7 @@ for the workflow kind.
 ### Rust
 
 The whole example:
-[`sdk/rust/examples/echo`](https://github.com/flezha/flezha/tree/main/sdk/rust/examples/echo).
+[`sdk/rust/examples/echo`](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/echo).
 
 ```rust
 // The procedure. The processing stage the graph routes each message into.
@@ -454,7 +454,7 @@ kind.
 ### Node
 
 The whole example:
-[`sdk/node/examples/echo`](https://github.com/flezha/flezha/tree/main/sdk/node/examples/echo).
+[`sdk/node/examples/echo`](https://github.com/flezha/flezha_node_sdk/tree/main/examples/echo).
 
 ```javascript
 // echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
@@ -526,7 +526,7 @@ workflow kind.
 ### Python
 
 The whole example:
-[`sdk/python/examples/echo`](https://github.com/flezha/flezha/tree/main/sdk/python/examples/echo).
+[`sdk/python/examples/echo`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo).
 
 ```python
 # echo_procedure.py: the procedure. The processing stage the graph routes each message into.
@@ -579,7 +579,7 @@ starts nothing: the controller decides when one runs.
 ### Ruby
 
 The whole example:
-[`sdk/ruby/examples/echo`](https://github.com/flezha/flezha/tree/main/sdk/ruby/examples/echo).
+[`sdk/ruby/examples/echo`](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/echo).
 
 ```ruby
 # echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
@@ -643,7 +643,7 @@ explicitly: nothing is autoloaded, and what runs is what you named.
 ### PHP
 
 The whole example:
-[`sdk/php/examples/echo`](https://github.com/flezha/flezha/tree/main/sdk/php/examples/echo).
+[`sdk/php/examples/echo`](https://github.com/flezha/flezha_php_sdk/tree/main/examples/echo).
 
 ```php
 // src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.
@@ -879,7 +879,7 @@ pip install -r requirements.txt && python3 runner.py
 ```
 
 The first argument is the namespace, `default` when omitted.
-[`examples/python/echo`](https://github.com/flezha/flezha/tree/main/examples/python/echo)
+[`sdk/python/examples/echo_deployment`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo_deployment)
 starts a controller and this runner together with Docker.
 
 ### Ruby

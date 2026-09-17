@@ -1,0 +1,35 @@
+# Every `static native` method of the Java SDK's `FlzCore`, in declaration
+# order, paired with the C ABI entry point it reaches: `<method>|<entry point>`.
+#
+# Java reaches the core through JNI, so its surface is two hand-written lists
+# that no compiler compares: the class's declarations and `jni_glue.rs`'s
+# exports. This file is the declared table both are held to: `flz_core_ffi`'s
+# `veneer_jni.rs` asserts `FlzCore.java` and the JNI exports against it, and the
+# Java SDK's `JniSurfaceTest` asserts the class declares exactly these methods,
+# which is the assertion its own repository can run.
+#
+# Adding a native method: add the row, the export in `jni_glue.rs` and the
+# declaration in `FlzCore.java`.
+schemaVersion|flz_core_schema_version
+contextNew|flz_core_context_new
+declareClass|flz_core_declare_class
+checkClass|flz_core_check_class
+start|flz_core_start
+localStart|flz_core_local_start
+localOnSink|flz_core_local_on_sink
+localFeed|flz_core_local_feed
+localNextOutput|flz_core_local_next_output
+localRunUntilIdle|flz_core_local_run_until_idle
+localStop|flz_core_local_stop
+poll|flz_core_poll
+complete|flz_core_complete
+waitStarvation|flz_core_wait_starvation
+abandon|flz_core_abandon
+workflowEmit|flz_core_workflow_emit
+workflowRecv|flz_core_workflow_recv
+workflowCancelled|flz_core_workflow_cancelled
+spawnWorkflow|flz_core_spawn_workflow
+adminCall|flz_core_admin_call
+monotonicNanos|flz_core_monotonic_nanos
+shutdown|flz_core_shutdown
+contextFree|flz_core_context_free

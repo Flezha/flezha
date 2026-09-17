@@ -92,7 +92,11 @@ jobs:
       FLEZHA_NODE_WORKERS: ${{ matrix.workers }}
       CONFORMANCE_OUT: conformance-${{ matrix.runtime }}-w${{ matrix.workers }}.json
     steps:
+      # Every runtime but Elixir is a submodule, pinned at the commit end to
+      # end runs against.
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - name: Set up Java
         if: matrix.runtime == 'java'
@@ -128,7 +132,7 @@ jobs:
         # binary into the same ./target dir the run command uses.
         run: |
           cargo build --quiet \
-            --manifest-path=test/apps/rust_runner/Cargo.toml \
+            --manifest-path=sdk/rust/test_app/Cargo.toml \
             --target-dir=./target
 
       - name: Pre-build the Java SDK and its test runner

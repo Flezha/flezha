@@ -28,11 +28,11 @@ besides `flz_core_ffi`, whose `jni_glue.rs` is its JNI binding.
 
 None of the five SHALL be tracked in git. The Maven `native-build` profile
 SHALL obtain each triple absent from
-`flezha-sdk-native/src/main/resources/native/` either by cross-building it with
-`cargo-zigbuild` (`scripts/build-native.sh --targets all`, which
-`scripts/build-dist.sh` drives) or by downloading and checksum-verifying the
-published release asset for the pinned version, and SHALL leave any binary
-already present on disk untouched.
+`flezha-sdk-native/src/main/resources/native/` by downloading and
+checksum-verifying the published release asset for the pinned version, and
+SHALL leave any binary already present on disk untouched, so a set cross-built
+in the core's tree (`scripts/build-native.sh --targets all`, which
+`scripts/build-dist.sh` drives) is packaged as it is.
 
 The `native-verify` profile SHALL assert the **host triple only** and SHALL NOT
 invoke any build or download step. Every test path — `mvn verify`,
@@ -41,19 +41,19 @@ SHALL therefore pass on a host-triple-only tree with no network access.
 
 #### Scenario: Fat jar contains the five core binaries
 - **WHEN** `mvn -P native-build package` completes successfully
-- **THEN** `unzip -l sdk/java/flezha-sdk/target/flezha-sdk-*.jar` SHALL list the five `native/<os>-<arch>/libflz_core_ffi.*` paths, and no other native library
+- **THEN** `unzip -l flezha-sdk/target/flezha-sdk-*.jar` in the Java SDK's tree SHALL list the five `native/<os>-<arch>/libflz_core_ffi.*` paths, and no other native library
 
 #### Scenario: Missing native target fails the packaging step
-- **WHEN** `mvn -P native-build` runs and a triple can be neither cross-built nor fetched for the pinned version
-- **THEN** the build SHALL fail with an enforcer error naming the missing triple and the refresh command
+- **WHEN** `mvn -P native-build` runs and a triple can be neither found on disk nor fetched for the pinned version
+- **THEN** the build SHALL fail naming the pinned tag and the core tree's cross-build command
 
 #### Scenario: native-verify asserts only the host triple
 - **GIVEN** a tree containing `native/<host-os>-<host-arch>/libflz_core_ffi.*` and none of the other four
-- **WHEN** `mvn -f sdk/java/pom.xml -P native-verify verify` is run
+- **WHEN** `mvn -P native-verify verify` is run in the Java SDK's tree
 - **THEN** the build SHALL succeed, and SHALL NOT download or build anything
 
 #### Scenario: No native binary is tracked in git
-- **WHEN** `git ls-files sdk/java/flezha-sdk-native/src/main/resources/native/` is run
+- **WHEN** `git ls-files flezha-sdk-native/src/main/resources/native/` is run in the Java SDK's repository
 - **THEN** it SHALL report no files
 
 ### Requirement: Runtime Native Library Loading
@@ -102,17 +102,22 @@ check, whose silent-continue posture is exactly how runtime skew hid).
 
 ### Requirement: CI Build and Publish Artifacts
 
-CI SHALL include a Java SDK workflow whose pull-request jobs (a) build the host triple only, (b) assemble the fat jar against it, (c) run Java unit tests, and (d) run the integration-test matrix from the `java-sdk-testing` spec. Pull-request jobs SHALL NOT cross-build any non-host triple and SHALL NOT install `zig` or `cargo-zigbuild`.
+The Java SDK's own repository SHALL run, on every pull request, its three tiers
+against a core release (the modules' suites with the spec-coverage gate, local
+mode, and the smoke tier against the fake controller) and its format check.
+This repository's Java SDK workflow SHALL run, on pull requests, the JNI surface
+assertion and the integration-test matrix from the `java-sdk-testing` spec
+against the pinned submodule. Pull-request jobs SHALL NOT cross-build any
+non-host triple and SHALL NOT install `zig` or `cargo-zigbuild`.
 
-A separate release job, triggered by a version tag and not by pull requests, SHALL cross-build all five triples, assemble both fat jars, and publish the five binaries, both jars, and a SHA-256 manifest as GitHub Release assets for that tag. Maven-registry publication remains out of scope.
+A separate release job in this repository, triggered by a version tag and not by
+pull requests, SHALL cross-build all five triples, assemble both fat jars, and
+publish the five binaries, both jars, and a SHA-256 manifest as GitHub Release
+assets for that tag. Maven-registry publication remains out of scope.
 
-#### Scenario: Pull request CI produces a downloadable jar
-- **WHEN** a pull request is opened that affects `sdk/java/**`, `flz_core/**`, `flz_core_ffi/**`, or `flz_transport/**`
-- **THEN** CI SHALL attach a host-triple `flezha-sdk-<version>.jar` as a workflow artifact on the PR, labelled as non-portable
-
-#### Scenario: Java-only changes reuse cached native binaries
-- **WHEN** a pull request touches only files under `sdk/java/` and none of the native crates
-- **THEN** CI SHALL reuse the cached host-triple binary from the most recent successful main-branch build instead of rebuilding it
+#### Scenario: The Java repository proves the SDK on every pull request
+- **WHEN** a pull request is opened in the Java SDK's repository
+- **THEN** its workflow SHALL run `scripts/ci.sh` against the pinned core release and SHALL fail when any tier fails
 
 #### Scenario: A release tag publishes the portable matrix
 - **WHEN** a version tag is pushed
@@ -156,4 +161,36 @@ run left in place.
 
 - **WHEN** the assembled fat jar is listed
 - **THEN** `META-INF/THIRD_PARTY_NOTICES.md` SHALL appear exactly once, and the five `native/<os>-<arch>/libflz_core_ffi.*` entries SHALL be the only native libraries present
+
+### Requirement: The Java tree builds and verifies from its own files
+
+The Java SDK SHALL build, verify and package from its own repository with no
+path outside it: the spec-coverage script bound to `verify`, the licence,
+notice and third-party files the shade plugin attaches, and the native
+profile's inputs SHALL all live in the Java tree. The `native-build` profile
+SHALL obtain absent triples by downloading and verifying the release assets
+for the pinned core tag, and SHALL refuse naming the core tree's cross-build
+command when no release matches; cross-building is the core tree's path and
+is reachable only through the submodule there.
+
+#### Scenario: A checkout of the Java tree alone verifies
+- **WHEN** `mvn verify` runs in the Java repository with the host triple staged and no core tree beside it
+- **THEN** it SHALL succeed, and the spec-coverage gate SHALL have run
+
+#### Scenario: No release for the pin refuses
+- **WHEN** `mvn -P native-build package` runs in the Java repository and no release matches the pinned tag
+- **THEN** it SHALL fail naming the tag and the core tree's cross-build command
+
+### Requirement: The JNI surface is a fixture both sides assert
+
+`test/fixtures/jni_surface.txt` SHALL list every `static native` method of
+`FlzCore.java` paired with the ABI entry point it reaches, and SHALL be the one
+declared table of the Java surface. The Rust test SHALL assert `FlzCore.java`'s
+declarations and `jni_glue.rs`'s exports against it, and a Java test SHALL
+assert the class's declarations against the same fixture, so the Java
+repository holds an assertion of its own.
+
+#### Scenario: A native method added without the fixture is red on both sides
+- **WHEN** a `static native` declaration is added to `FlzCore.java` and not to the fixture
+- **THEN** the Java test SHALL fail naming the method, and the Rust test SHALL fail if `jni_glue.rs` gained the export
 

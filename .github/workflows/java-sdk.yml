@@ -3,15 +3,15 @@ name: Java SDK
 on:
   pull_request:
     paths:
-      - "sdk/java/**"
+      - "sdk/java"
       - "flz_core/**"
       - "flz_core_ffi/**"
       - "flz_transport/**"
       - "protobufs/**"
+      - "test/fixtures/jni_surface.txt"
       - "lib/flezha/runner/fleet_manager.ex"
       - "lib/flezha/operative/overwatch.ex"
       - "lib/flezha/service/operative_manager.ex"
-      - "test/apps/java_runner/**"
       - "test/helpers/node_test_helper.ex"
       - "test/system/sdk_smoke_e2e_test.exs"
       - ".github/workflows/java-sdk.yml"
@@ -40,65 +40,28 @@ env:
 # for anyone assembling a portable jar.
 
 jobs:
-  # Java-side unit tests + JaCoCo coverage against a host-triple-only tree.
-  # `-P native-verify` asserts the host binary is staged and neither builds nor
-  # downloads anything, so this job's only native step is the one below.
-  java-unit-tests:
+  # The veneer is a feature of this repository's `flz_core_ffi`. Its JNI exports,
+  # its declared table, `test/fixtures/jni_surface.txt` and the submodule's
+  # `FlzCore.java` are held equal here; the Java repository holds the class
+  # against the same fixture. The Java suites, their coverage and the format
+  # check run in `flezha/flezha_java_sdk`, where the SDK is developed.
+  veneer:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set up Java
-        uses: ./.github/actions/setup-java
         with:
-          cache: maven
+          submodules: true
 
       - name: Install Rust
-        # No cargo cache: what this job reuses is the staged binary below,
-        # keyed on the crates that end up inside it.
         uses: ./.github/actions/setup-rust
-        with:
-          cache: "false"
-
-      - name: Cache the host-triple native binary
-        # Keyed on the host triple and on every crate that ends up inside
-        # libflz_core_ffi, so a pull request touching only sdk/java/ restores
-        # the binary the last main build produced instead of recompiling it.
-        id: native-cache
-        uses: actions/cache@v5
-        with:
-          path: sdk/java/flezha-sdk-native/src/main/resources/native
-          key: native-x86_64-unknown-linux-gnu-${{ hashFiles('Cargo.lock', 'flz_core/**', 'flz_core_ffi/**', 'flz_transport/**') }}
-          restore-keys: |
-            native-x86_64-unknown-linux-gnu-
-
-      - name: Build the host triple
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        run: scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
 
       - name: Assert the Java native surface against the declared table
-        # The other four host bindings declare their exported surface and a
-        # test asserts it; this is Java's. It reads FlzCore.java, so it runs
-        # here rather than in a Rust-only job, and it must run somewhere: a
-        # declaration nothing reads stops nothing.
         run: cargo test -p flz_core_ffi --features jni --test abi_scenario veneer_jni
 
-      - name: Verify (compile + unit + JaCoCo + fat jar) against the host triple
-        # `verify` runs through `package`, so the shaded jar uploaded below is
-        # this run's. Shading an already-shaded jar duplicates resources, so
-        # there is deliberately no second packaging step.
-        run: mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify
-
-      - uses: actions/upload-artifact@v4
-        with:
-          # Host triple only. A portable jar carries all five binaries and is
-          # published by `release-artifacts` on a version tag.
-          name: flezha-sdk-host-only-not-portable
-          path: sdk/java/flezha-sdk/target/flezha-sdk-*.jar
-
-  # Java <-> Elixir integration matrix. Runs in parallel with java-unit-tests;
-  # each builds its own host-triple binary, so neither blocks the other.
+  # Java <-> Elixir integration matrix: end to end, which is the half the Java
+  # repository cannot run. The submodule is what it runs the Java runtime from,
+  # at the commit this tree pins.
   mix-integration-matrix:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -158,7 +121,7 @@ jobs:
         # cargo-run command uses.
         run: |
           cargo build --quiet \
-            --manifest-path=test/apps/rust_runner/Cargo.toml \
+            --manifest-path=sdk/rust/test_app/Cargo.toml \
             --target-dir=./target
 
       - name: Build the host triple
@@ -193,9 +156,10 @@ jobs:
   #   the Node addon   its target is `x86_64-pc-windows-msvc`, the ABI the
   #                    published `@flezha/sdk-win32-x64-msvc` package declares,
   #                    and zig cannot produce the MSVC ABI
-  #   the abi3 wheel   maturin writes the module's export list from
+  #   the wheels       maturin writes the module's export list from
   #                    `module-name`, and the dotted `flezha.flz_core_ffi` it
-  #                    needs there does not link under the mingw linker
+  #                    needs there does not link under the mingw linker, for
+  #                    the abi3 tier and the free-threaded one alike
   #
   # Both are built here and handed to the staging job, which refuses a release
   # that is missing either of them by name.
@@ -204,11 +168,20 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - name: Install Rust
         uses: ./.github/actions/setup-rust
         with:
           cache: "false"
+
+      # The free-threaded interpreter first, so the default one set up after it
+      # is `python` while `python3.14t` stays on PATH for its wheel tier.
+      - name: Set up the free-threaded Python the release publishes a wheel for
+        uses: ./.github/actions/setup-python
+        with:
+          version: "3.14t"
 
       - name: Set up Python
         uses: ./.github/actions/setup-python
@@ -222,11 +195,13 @@ jobs:
           mkdir -p dist/node-addons/win32-x64-msvc
           cp target/release/flz_core_ffi.dll dist/node-addons/win32-x64-msvc/flz_core_ffi.node
 
-      - name: Build the abi3 wheel
+      - name: Build the abi3 and free-threaded wheels
         shell: bash
         run: |
           pip install --quiet maturin
-          cd sdk/python && maturin build --release --out ../../dist/wheels --features python-abi3
+          cd sdk/python
+          maturin build --release --out ../../dist/wheels --features python-abi3
+          maturin build --release --out ../../dist/wheels --interpreter python3.14t
 
       - uses: actions/upload-artifact@v4
         with:
@@ -246,7 +221,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The SDKs the release packages are submodules.
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       # First, before anything is built. Every entry in the publication
       # readiness record is a decision this release makes permanent, and on a
@@ -272,8 +250,23 @@ jobs:
       - name: Set up Node
         uses: ./.github/actions/setup-node
 
+      # The free-threaded interpreter first, so the default one set up after it
+      # is `python3` while `python3.14t` stays on PATH for its wheel tier.
+      - name: Set up the free-threaded Python the release publishes a wheel for
+        uses: ./.github/actions/setup-python
+        with:
+          version: "3.14t"
+
       - name: Set up Python
         uses: ./.github/actions/setup-python
+
+      # The platform gems are built in rb-sys-dock's images, one per platform,
+      # at the rb_sys version the gem itself requires.
+      - name: Set up Ruby and rb-sys-dock
+        uses: ./.github/actions/setup-ruby
+
+      - run: |
+          gem install --no-document rb_sys -v "$(ruby -e 'puts Gem::Specification.load("sdk/ruby/flezha.gemspec").dependencies.find { |d| d.name == "rb_sys" }.requirement')"
 
       - name: Install maturin
         run: |
@@ -286,7 +279,7 @@ jobs:
           name: windows-artefacts
           path: dist
 
-      - name: Build all five triples and both fat jars
+      - name: Build all five triples, the wheels, the gems and both fat jars
         # The same script that is run locally. It installs cargo-zigbuild and a
         # ziglang venv itself, so nothing here pins a second copy of that.
         run: scripts/build-dist.sh --host

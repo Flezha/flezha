@@ -44,21 +44,25 @@ fn crate_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
 
-/// The fixture's entries, comments and blanks dropped, as every SDK reads it.
-fn fixture_entry_points() -> Vec<String> {
-    let path = crate_path("../test/fixtures/abi_surface.txt");
+/// One fixture's entries, in file order, comments and blanks dropped, as every
+/// SDK reads it.
+pub fn fixture_lines(name: &str) -> Vec<String> {
+    let path = crate_path(&format!("../test/fixtures/{name}"));
     let text = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "{} is the surface every host binding declares against: {e}",
+            "{} is a surface a host binding declares against: {e}",
             path.display()
         )
     });
-    let mut names: Vec<String> = text
-        .lines()
+    text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(str::to_string)
-        .collect();
+        .collect()
+}
+
+fn fixture_entry_points() -> Vec<String> {
+    let mut names = fixture_lines("abi_surface.txt");
     names.sort();
     names
 }

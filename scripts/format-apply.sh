@@ -12,14 +12,10 @@
 # script are documented once, at the top of scripts/naming_gate.py, which is
 # the runner every gate in this repository answers to. `gate_run` and
 # `gate_report` below are that contract in shell, for the one caller that is
-# itself a driver of eight tools rather than a single check.
+# itself a driver of several tools rather than a single check.
 #
-# Rust, Elixir and Java use the toolchain on PATH. Each veneer's formatter is
-# that SDK's pinned development dependency: `npm ci` in sdk/node, the dev
-# group of sdk/python/pyproject.toml into sdk/python/.venv, the gemspec's
-# development dependency (`gem install`), `composer install` in sdk/php. A PHP
-# interpreter that lives in a container is reached through FLEZHA_PHP, e.g.
-#   FLEZHA_PHP="docker run --rm -u $(id -u):$(id -g) -v $PWD:/work -w /work flezha-php php"
+# Rust and Elixir use the toolchain on PATH. Every other SDK is developed in a
+# repository of its own and formatted by that repository's CI.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -54,9 +50,8 @@ trap 'rm -f "$gate_log"' EXIT
 #
 # `--nested` says the command answers on the same contract, so its status is read
 # as one of ours: 2 is a missing tool and 3 a tool that did not complete. It has
-# to be asked for, because a plain tool's 2 is not a gate's 2: ruff and rubocop
-# both use exit 2 for "the tool errored", which they declare with
-# `--finding status:1`.
+# to be asked for, because a plain tool's 2 is not a gate's 2: a formatter that
+# exits 2 for "the tool errored" declares its finding with `--finding status:1`.
 gate_run() {
   local label nested=0 skip=0 tool rc=0 finding= out
   while [[ $1 == --nested || $1 == --finding ]]; do
@@ -118,33 +113,18 @@ gate_report() {
 }
 
 # What each formatter does when it finds drift, as opposed to failing for its
-# own reasons. ruff and rubocop document 1 for the first and 2 for the
-# second; php-cs-fixer's status is a bit field where exactly 8 is "needs fixing"
-# and every other bit set is an error. rustfmt, mix and mvn return 1 either way,
+# own reasons. rustfmt and mix return 1 either way,
 # so the verdict each prints for drift, and for nothing else, decides. In write
 # mode a formatter has nothing to find: no rule is declared, and gate_run then
 # reads every non-zero status as the tool failing.
 declare -A drift=()
 if [[ "${1:-}" == "--check" ]]; then
-  rust=(-- --check) elixir=(--check-formatted) java=(spotless:check)
-  ruff=(--check) rubocop=() phpcs=(--dry-run)
+  rust=(-- --check) elixir=(--check-formatted)
   drift=([rust]='says:Diff in '
-    [elixir]='says:format failed due to --check-formatted'
-    [java]='says:files had format violations'
-    [ruff]=status:1 [rubocop]=status:1 [phpcs]=status:8)
+    [elixir]='says:format failed due to --check-formatted')
 else
-  rust=() elixir=() java=(spotless:apply)
-  ruff=() rubocop=(-a) phpcs=()
+  rust=() elixir=()
 fi
-
-phpcs_bin=sdk/php/vendor/bin/php-cs-fixer
-ruff_bin=sdk/python/.venv/bin/ruff
-[[ -x "$ruff_bin" ]] || ruff_bin=ruff
-# The formatter and the linter are the same binary over the same two trees, so
-# the trees and the install hint are named once and used by both calls.
-ruff_need="$ruff_bin":"install the dev group of sdk/python/pyproject.toml"
-ruff_paths=(sdk/python test/apps/python_runner)
-read -ra php <<< "${FLEZHA_PHP:-php}"
 
 # The nightly is pinned to the one .github/workflows/format.yml installs.
 # rustfmt.toml's `imports_granularity`, `group_imports` and `ignore` are
@@ -154,23 +134,5 @@ gate_run --finding "${drift[rust]:-}" "cargo fmt" cargo:"install Rust via rustup
   cargo +nightly-2026-05-07 fmt --all "${rust[@]}"
 gate_run --finding "${drift[elixir]:-}" "mix format" mix:"install Elixir" -- \
   mix format "${elixir[@]}"
-gate_run --finding "${drift[java]:-}" "mvn spotless" mvn:"install Maven and a JDK" -- \
-  mvn -q -f sdk/java/pom.xml -DskipTests "${java[@]}"
-gate_run --finding "${drift[ruff]:-}" "ruff format" "$ruff_need" -- \
-  "$ruff_bin" format "${ruff[@]}" "${ruff_paths[@]}"
-# The linter, in both modes and never with `--fix`: a format pass has to stay
-# reproducible by re-running the formatters, so this reports and rewrites
-# nothing. What it enforces is settled in ruff.toml — the rules refused there
-# carry their reason — and the enabled set is the pin's own default, so raising
-# ruff==… in sdk/python/pyproject.toml settles whatever the new version reports.
-gate_run --finding status:1 "ruff check" "$ruff_need" -- \
-  "$ruff_bin" check "${ruff_paths[@]}"
-gate_run --finding "${drift[rubocop]:-}" rubocop \
-  rubocop:"install the development dependency in sdk/ruby/flezha.gemspec" -- \
-  rubocop "${rubocop[@]}" sdk/ruby test/apps/ruby_runner
-gate_run --finding "${drift[phpcs]:-}" php-cs-fixer \
-  "${php[0]}":"install PHP or set FLEZHA_PHP" \
-  "$phpcs_bin":"run composer install in sdk/php" -- \
-  "${php[@]}" "$phpcs_bin" fix "${phpcs[@]}" --config .php-cs-fixer.dist.php
 
 gate_report "UNFORMATTED — run scripts/format-apply.sh:"

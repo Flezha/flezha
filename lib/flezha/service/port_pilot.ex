@@ -165,7 +165,7 @@ defmodule Flezha.Service.PortPilot do
     manifest = manifest(runtime)
     profile_key = Atom.to_string(profile)
     repo = File.cwd!()
-    app_dir = Path.join([repo, @apps_root, "#{runtime}_runner"])
+    app_dir = app_dir(runtime)
 
     socket_dir = absolute(Support.socket_dir())
 
@@ -200,9 +200,20 @@ defmodule Flezha.Service.PortPilot do
   @spec resolve_artifact(atom(), :test | :bench) ::
           {String.t(), :first | {:fallback, String.t()}}
   def resolve_artifact(runtime, profile) when profile in [:test, :bench] do
-    manifest = manifest(runtime)
-    app_dir = Path.join([File.cwd!(), @apps_root, "#{runtime}_runner"])
-    resolve_artifact(runtime, Atom.to_string(profile), app_dir, manifest)
+    resolve_artifact(runtime, Atom.to_string(profile), app_dir(runtime), manifest(runtime))
+  end
+
+  # An SDK developed in a repository of its own is a submodule here, and its
+  # test app directory a symlink into it. The launch line and the artifacts are
+  # resolved against where the app really is: cargo, for one, resolves a
+  # `path = ".."` dependency against the name it was given, not its target.
+  defp app_dir(runtime) do
+    dir = Path.join([File.cwd!(), @apps_root, "#{runtime}_runner"])
+
+    case File.read_link(dir) do
+      {:ok, target} -> Path.expand(target, Path.dirname(dir))
+      {:error, _not_a_link} -> dir
+    end
   end
 
   defp resolve_artifact(runtime, profile, app_dir, manifest) do

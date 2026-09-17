@@ -28,13 +28,6 @@ suffix="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFF
 echo "==> installing the $profile veneer as flezha/flz_core_ffi$suffix"
 cp "$root/target/$profile/libflz_core_ffi.so" "$sdk/src/flezha/flz_core_ffi$suffix"
 
-# The wheel embeds a compiled `flz_core_ffi`, so the notices for what that
-# library links have to travel inside it — a user who installs the wheel never
-# sees this repository.
-echo "==> staging the licence and third-party notices"
-cp "$root/LICENSES/Apache-2.0.txt" "$sdk/LICENSE"
-cp "$root/THIRD_PARTY_NOTICES.md" "$sdk/THIRD_PARTY_NOTICES.md"
-
 # A checkout-local interpreter, so the e2e app and the unit suite run against
 # this SDK's declared dependencies without installing anything system-wide —
 # the same posture `scripts/build-ruby-sdk.sh` takes with `gem install`, and

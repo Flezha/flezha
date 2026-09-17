@@ -150,7 +150,7 @@ defmodule FlezhaQuicTest do
     {:ok, current_path} = :file.get_cwd()
 
     command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
+      "cargo run --quiet --manifest-path=#{current_path}/sdk/rust/test_app/Cargo.toml " <>
         "--target-dir=./target -- #{refused_namespace}"
 
     {port, _command} =

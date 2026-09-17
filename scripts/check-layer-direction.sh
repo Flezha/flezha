@@ -42,9 +42,8 @@
 # `@doc`/`@moduledoc`/`@typedoc` heredocs are stripped before the scan.
 #
 # THE BASELINE, scripts/layer-direction-baseline.txt, lists what the tree held
-# when the gate landed. They are the debt, written down rather than absorbed —
-# the shape `scripts/java-spec-coverage-baseline.txt` already uses here. The
-# gate fails on:
+# when the gate landed. They are the debt, written down rather than absorbed.
+# The gate fails on:
 #
 #   * an edge or loose file not in the baseline — the new breach the rule is
 #     about, which is what makes the gate blocking on a tree that is red today;

@@ -120,7 +120,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # The extracted SDKs are submodules, and a citation into one resolves
+      # only when it is checked out.
       - uses: actions/checkout@v5
+        with:
+          submodules: true
       - name: Every naming, structure and weight gate
         run: python3 scripts/naming_gate.py --run @naming
 

@@ -23,6 +23,7 @@
 # to resolve it through the contract root.
 test/fixtures/contract.txt|This list. Vendored with the set so a consumer can see what it got and why.
 test/fixtures/abi_surface.txt|Every `extern "C"` entry point the C ABI exports. PHP's `AbiSurfaceTest` and Node's `native.test.mjs` assert their declared surface against it.
+test/fixtures/jni_surface.txt|Every `static native` method of the Java SDK's `FlzCore` and the entry point it reaches. Java's `JniSurfaceTest` asserts the class against it.
 test/fixtures/channel_codecs.txt|One payload rule per channel codec. Every SDK whose channels carry no type asserts its coder against it.
 test/fixtures/durable_frame.txt|The on-disk record frame, byte for byte. The controller's writer and the core's reader are held to it.
 test/fixtures/host_class_decl_keys.txt|Every key of the `HostClassDecl` JSON. Six builders assert they spell exactly these.
@@ -31,6 +32,7 @@ test/fixtures/layout_rows.txt|Where the product puts its files and what `flz res
 test/fixtures/local_mode_word_count.txt|The local-mode example's declared graph and its expected output, run by every SDK's local-mode test.
 test/fixtures/reference_topologies.txt|The reference channel topology for the shared fixture classes, and the refusals every authoring layer owes.
 test/fixtures/runner_connect_env.txt|The environment contract every SDK's connect path reads, and the socket-directory ladder in the order it is walked.
+openspec/specs/java-sdk/spec.md|The Java SDK's scenarios. The Java repository's spec-coverage gate holds its test names against them.
 protobufs/runner_commands.proto|The controller-runner command envelope. An SDK that encodes a command of its own generates from this file.
 flz_core/src/schema.rs|The activation and result wire shapes, and the hex vectors PHP's `SchemaFixtureTest` decodes. Read as data, never compiled by an SDK.
 flz_core_ffi/src/veneer/shape.rs|The veneer's record key tables. Node's `native-types.test.mjs` holds its TypeScript interfaces equal to them.

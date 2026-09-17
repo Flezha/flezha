@@ -55,7 +55,7 @@ Before building anything, bring up a controller and a runner that is already
 offering an operative, and send a message through it:
 
 ```sh
-cd examples/python/echo
+cd sdk/python/examples/echo_deployment
 docker compose up -d --wait
 docker compose exec controller /flezha/bin/flz operative start my_echo echo
 docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
@@ -66,7 +66,7 @@ Delivered to 'my_echo'.
 out	echo: hello world
 ```
 
-[`examples/python/echo`](../../examples/python/echo) is that deployment, and it
+[`sdk/python/examples/echo_deployment`](../../sdk/python/examples/echo_deployment) is that deployment, and it
 runs the same `echo` the guides below build by hand. Seeing the pieces move
 first is worth it: the rest of Part 1 is then about what each piece is, rather
 than about getting anything to start at all.

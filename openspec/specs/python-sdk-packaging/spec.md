@@ -73,3 +73,18 @@ An exception raised by a Python handler SHALL be surfaced to the engine as a pro
 - **WHEN** a topology build fails inside the engine
 - **THEN** the Python-side exception SHALL carry the engine's specific issue, not a generic failure
 
+### Requirement: The wheels are built from the wrapper crate
+
+maturin SHALL build both wheel tiers from the wrapper crate in the Python
+tree, whose one dependency is `flz_core_ffi` at the pinned core tag with the
+`python-extension` feature and, for the compatibility tier, `python-abi3`.
+`pyproject.toml` SHALL name no path outside the Python tree.
+
+#### Scenario: A wheel builds from the Python tree alone
+- **WHEN** `maturin build --release` runs in the Python repository with no core tree beside it
+- **THEN** it SHALL fetch the pinned tag and produce a wheel whose module exports `PyInit_flz_core_ffi`
+
+#### Scenario: Both tiers ship
+- **WHEN** a release completes
+- **THEN** the assets SHALL include one `abi3` wheel per triple and one free-threaded wheel per triple per supported interpreter
+

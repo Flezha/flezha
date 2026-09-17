@@ -507,7 +507,7 @@ fn park_unresolved_entry(
     let instance_id = instance.instance_id.to_string();
     let requested = requested.to_string();
     let payload = payload.to_vec();
-    crate::retry::spawn_park_thread("flezha-unresolved-entry-park", move || {
+    crate::retry::spawn_park_thread(instance, "flezha-unresolved-entry-park", move || {
         crate::retry::run_retry_park_ladder(
             &format!("entry channel `{requested}`"),
             // The budget of one, and the identity slot a frame-controlled name

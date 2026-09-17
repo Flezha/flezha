@@ -85,13 +85,6 @@ echo "==> installing the $profile veneer as flz_core_ffi.$dlext"
 mkdir -p "$sdk/lib/flezha"
 cp "$root/target/$profile/libflz_core_ffi.$soext" "$sdk/lib/flezha/flz_core_ffi.$dlext"
 
-# The gem embeds a compiled `flz_core_ffi`, so the notices for what that
-# library links have to travel inside it — a user who installs the platform gem
-# never sees this repository.
-echo "==> staging the licence and third-party notices"
-cp "$root/LICENSES/Apache-2.0.txt" "$sdk/LICENSE"
-cp "$root/THIRD_PARTY_NOTICES.md" "$sdk/THIRD_PARTY_NOTICES.md"
-
 echo "==> installing gem dependencies"
 (cd "$sdk" && gem install --conservative --no-document msgpack >/dev/null)
 

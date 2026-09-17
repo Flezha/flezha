@@ -19,7 +19,7 @@ use flz_core::local::{self, LocalRun, SinkOutput};
 use flz_core::poll_core::{self, Polled};
 use flz_core::schema::{
     Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, PrepareAnswer,
-    TimerKind, TimerOp, Verdict, WorkItem,
+    TimerKind, TimerOp, Verdict, WorkError, WorkItem,
 };
 use flz_transport::transport::FlezhaStream;
 
@@ -74,6 +74,15 @@ impl Host {
     fn spawn_effects(
         answer: impl Fn(&Activation, &WorkItem) -> ItemEffect + Send + 'static,
     ) -> Host {
+        Host::spawn_keying(prepared, answer)
+    }
+
+    /// [`Host::spawn_effects`] with each payload's key crossing answered by
+    /// `keying`, for a test about the crossing rather than the work.
+    fn spawn_keying(
+        keying: impl Fn(&[u8], bool) -> Result<PrepareAnswer, WorkError> + Send + 'static,
+        answer: impl Fn(&Activation, &WorkItem) -> ItemEffect + Send + 'static,
+    ) -> Host {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let thread = std::thread::spawn(move || {
@@ -91,24 +100,12 @@ impl Host {
                             .collect(),
                     ),
                     // A keyed or event-time class asks the host for each entry
-                    // payload's key and time before the payload is
-                    // dispatched. The key is its first byte, which is this
-                    // suite's own convention and the one its classes declare.
+                    // payload's key and time before the payload is dispatched.
                     ActivationKind::KeyRequest(request) => ActivationOutcome::Prepared(
                         request
                             .payloads
                             .iter()
-                            .map(|payload| {
-                                Ok(PrepareAnswer {
-                                    keys: request
-                                        .want_keys
-                                        .then(|| {
-                                            vec![String::from_utf8_lossy(&payload[..1]).to_string()]
-                                        })
-                                        .unwrap_or_default(),
-                                    event_time: event_time_in(payload),
-                                })
-                            })
+                            .map(|payload| keying(payload, request.want_keys))
                             .collect(),
                     ),
                     other => panic!("local mode hands out work and key requests, not {other:?}"),
@@ -138,6 +135,20 @@ impl Drop for Host {
             let _ = thread.join();
         }
     }
+}
+
+/// A crossing's answer for one payload: the key is its first byte, which is
+/// this suite's own convention and the one its classes declare.
+fn prepared(payload: &[u8], want_keys: bool) -> Result<PrepareAnswer, WorkError> {
+    let keys = if want_keys {
+        vec![String::from_utf8_lossy(&payload[..1]).to_string()]
+    } else {
+        Vec::new()
+    };
+    Ok(PrepareAnswer {
+        keys,
+        event_time: event_time_in(payload),
+    })
 }
 
 /// The event time a payload of this suite's carries, spelled `<word>@<ms>`.
@@ -593,36 +604,91 @@ const KEYED_ENTRY: &str = r#"{
     "procedures": [{"name": "relay", "entity_mode": "dynamic"}]
 }"#;
 
-#[test]
-fn a_keyed_entry_class_crosses_for_every_key_and_loses_nothing() {
-    let _serialized = one_run();
-    declare(KEYED_ENTRY);
-    // The key is the payload's first byte, answered at the crossing; the
-    // procedure echoes what reaches it.
-    let _host = Host::spawn_effects(|_activation, item| match item {
+/// `in → relay → out`, keyed on the way in, retried on a failed crossing.
+const KEYED_ENTRY_RETRIED: &str = r#"{
+    "factory_id": "local_keyed_entry_retried", "sdk_lang": 1, "sdk_version": "0.1.0",
+    "channels": [{"name": "in",  "kind": "entry", "retry_max": 3, "retry_backoff_ms": 40,
+                                 "chains": [[{"link": "into", "procedure": 0}]]},
+                 {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
+                                 "chains": [[{"link": "sink", "name": "out"}]]}],
+    "procedures": [{"name": "relay", "entity_mode": "dynamic"}]
+}"#;
+
+/// The procedure of both keyed classes: it releases what reaches it, under
+/// the key it was dispatched with.
+fn echo_keyed(_activation: &Activation, item: &WorkItem) -> ItemEffect {
+    match item {
         WorkItem::Input(input) => ok_effect(vec![sink_output(
             "out",
             &String::from_utf8_lossy(&input.payload[..1]),
             &input.payload,
         )]),
         WorkItem::Timer(_) => ok_effect(Vec::new()),
-    });
-    let run = LocalRun::start("local_keyed_entry", "keyed-1").expect("the run starts");
+    }
+}
+
+/// Feed `a:1`, `b:1`, `a:2`, settle, and return what was released, sorted.
+fn keyed_run(factory_id: &str, operative_id: &str) -> Vec<String> {
+    let run = LocalRun::start(factory_id, operative_id).expect("the run starts");
     let (seen, callback) = recorder();
     run.on_sink("out", callback).expect("`out` is declared");
-
     for payload in ["a:1", "b:1", "a:2"] {
         run.feed("in", payload.as_bytes().to_vec())
             .expect("accepted");
     }
     run.run_until_idle(Duration::from_secs(10))
         .expect("the graph settles");
-
-    // Every payload crosses to the host for its key before it is dispatched,
-    // and the crossing is an activation like any other, so settling waits for
-    // it. What this pins is the whole path: feed, cross, answer, dispatch,
-    // release, with no value dropped between the steps.
     let mut released = payloads(&seen);
     released.sort();
-    assert_eq!(released, vec!["a:1", "a:2", "b:1"]);
+    released
+}
+
+#[test]
+fn a_keyed_entry_class_crosses_for_every_key_and_loses_nothing() {
+    let _serialized = one_run();
+    declare(KEYED_ENTRY);
+    // Every payload crosses to the host for its key before it is dispatched,
+    // and the key is answered slowly, as a host with busy threads answers it:
+    // settling waits for a crossing still at the host, whose payload is in no
+    // mailbox yet. What this pins is the whole path: feed, cross, answer,
+    // dispatch, release, with no value dropped between the steps.
+    let _host = Host::spawn_keying(
+        |payload, want_keys| {
+            std::thread::sleep(Duration::from_millis(50));
+            prepared(payload, want_keys)
+        },
+        echo_keyed,
+    );
+
+    assert_eq!(
+        keyed_run("local_keyed_entry", "keyed-1"),
+        vec!["a:1", "a:2", "b:1"]
+    );
+}
+
+#[test]
+fn a_crossing_on_its_retry_ladder_is_still_waited_for() {
+    let _serialized = one_run();
+    declare(KEYED_ENTRY_RETRIED);
+    // The first key asked for fails, so its payload leaves the crossing for
+    // the channel's retry ladder, where it is in no queue and no mailbox
+    // until a re-attempt is answered.
+    let failed_once = AtomicBool::new(false);
+    let _host = Host::spawn_keying(
+        move |payload, want_keys| {
+            if !failed_once.swap(true, Ordering::Relaxed) {
+                return Err(WorkError {
+                    message: "the key service is not up yet".to_string(),
+                    non_retryable: false,
+                });
+            }
+            prepared(payload, want_keys)
+        },
+        echo_keyed,
+    );
+
+    assert_eq!(
+        keyed_run("local_keyed_entry_retried", "keyed-retried-1"),
+        vec!["a:1", "a:2", "b:1"]
+    );
 }

@@ -12,7 +12,11 @@
 #   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
 #      package's own table declares -> dist/node-addons/<suffix>/, packed into
 #      the per-platform packages at dist/node-packages/
-#   1d. abi3 wheels (feature "python-abi3") for all 5 platforms -> dist/wheels/
+#   1d. abi3 wheels (feature "python-abi3") for all 5 platforms, and one
+#      free-threaded wheel per platform per supported free-threaded
+#      interpreter -> dist/wheels/
+#   1e. precompiled Ruby platform gems, one per platform, carrying one library
+#      per supported Ruby minor -> dist/ruby-gems/
 #   2. The same five libraries staged for the PHP package ->
 #      sdk/php/lib/<sdk-dir>/libflz_core_ffi.<ext>
 #   3. SDK fat jar ->
@@ -36,13 +40,15 @@
 #             Do not build. Copy the artefacts already on disk into
 #             <dir> under their published asset names and write a SHA-256
 #             manifest beside them. This is what the release job uploads,
-#             and the names are the ones `scripts/build-native.sh
-#             --fetch-missing` asks for.
+#             and the names are the ones the SDK repositories fetch.
 #
 # Host-mode requirements that this script will NOT auto-install:
 #   - Rust stable (rustup), Maven 3.8+, JDK 21, python3 + python3-venv
 #   - Node 20+, and maturin in sdk/python/.venv (scripts/build-python-sdk.sh
 #     creates the venv; then `.venv/bin/pip install maturin`)
+#   - each free-threaded interpreter FREE_THREADED_PYTHONS names, on PATH
+#     (`python3.14t`)
+#   - docker, and `rb-sys-dock` from the rb_sys gem the Ruby SDK pins
 # Docker-mode requirements:
 #   - docker (CLI access; group membership or sudo set up by the caller)
 #
@@ -129,8 +135,24 @@ TOOLS_OUT="${REPO_ROOT}/dist/tools"
 NODE_ADDONS_OUT="${REPO_ROOT}/dist/node-addons"
 NODE_PACKAGES_OUT="${REPO_ROOT}/dist/node-packages"
 NODE_PLATFORM_TABLE="${REPO_ROOT}/sdk/node/dist/esm/platforms.js"
-# The `abi3` wheels, one per platform.
+# The wheels: one `abi3` wheel per platform, and one per platform per
+# free-threaded interpreter. PyO3 builds no free-threaded extension below 3.14.
 WHEELS_OUT="${REPO_ROOT}/dist/wheels"
+FREE_THREADED_PYTHONS=("3.14t")
+# Each wheel tier as `<the tag in its file name>|<what maturin is asked for>`:
+# the abi3 tier, then one per free-threaded interpreter, because `abi3` has no
+# free-threaded form. The build and the staging read the same rows.
+wheel_tiers() {
+  local v
+  echo "abi3|--features python-abi3"
+  for v in "${FREE_THREADED_PYTHONS[@]}"; do
+    echo "cp${v//[.t]/}-cp${v//[.t]/}t|--interpreter python${v}"
+  done
+}
+# The precompiled Ruby gems, and the Ruby minors each one carries a library for.
+RUBY_GEMS_OUT="${REPO_ROOT}/dist/ruby-gems"
+RUBY_GEM_MINORS="3.3,3.4"
+RELEASE_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "${REPO_ROOT}/Cargo.toml")"
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
 TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
 
@@ -186,7 +208,6 @@ if [[ "${MODE}" == "stage-release" ]]; then
 
   missing=()
   assets=()
-  RELEASE_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "${REPO_ROOT}/Cargo.toml")"
   stage_asset() {
     local src="$1" name="$2"
     if [[ ! -f "${src}" ]]; then missing+=("${src}"); return; fi
@@ -210,24 +231,24 @@ if [[ "${MODE}" == "stage-release" ]]; then
     done < <(node_platforms)
   }
 
-  # One wheel per platform. The file name carries a platform tag this script
-  # cannot predict (`manylinux_2_34_x86_64`, `macosx_11_0_arm64`), so the count
-  # is what is checked: a release that shipped four of five would leave one
-  # platform on the source distribution and a Rust toolchain. No wheel at all
-  # is a build that did not run, not an empty release.
+  # One wheel per platform per tier. The file name carries a platform tag this
+  # script cannot predict (`manylinux_2_34_x86_64`, `macosx_11_0_arm64`), so the
+  # count per tier is what is checked: a release that shipped four of five would
+  # leave one platform on the source distribution and a Rust toolchain. No wheel
+  # of a tier is a build that did not run, not an empty release.
   stage_wheels() {
-    local wheels=()
+    local tag wheels=()
     shopt -s nullglob
-    wheels=("${WHEELS_OUT}"/*.whl)
+    while IFS='|' read -r tag _; do
+      wheels=("${WHEELS_OUT}"/flezha-"${RELEASE_VERSION}"-*"${tag}"-*.whl)
+      if (( ${#wheels[@]} != ${#ALL_TRIPLES[@]} )); then
+        missing+=("${#wheels[@]} of ${#ALL_TRIPLES[@]} ${tag} wheels in ${WHEELS_OUT}")
+      fi
+      for src in "${wheels[@]}"; do
+        stage_asset "${src}" "$(basename "${src}")"
+      done
+    done < <(wheel_tiers)
     shopt -u nullglob
-    if (( ${#wheels[@]} == 0 )); then
-      missing+=("${WHEELS_OUT}/*.whl (an abi3 wheel)")
-    elif (( ${#wheels[@]} != ${#ALL_TRIPLES[@]} )); then
-      missing+=("${#wheels[@]} of ${#ALL_TRIPLES[@]} abi3 wheels in ${WHEELS_OUT}")
-    fi
-    for src in "${wheels[@]}"; do
-      stage_asset "${src}" "$(basename "${src}")"
-    done
   }
 
   # The contract set as one archive: every member `test/fixtures/contract.txt`
@@ -267,6 +288,8 @@ if [[ "${MODE}" == "stage-release" ]]; then
                 "$(release_asset_name "${dir}" "${ext}")"
     stage_asset "${TOOLS_OUT}/${dir}/flz-fake-controller${bin_ext}" \
                 "$(release_binary_name "${dir}" "${bin_ext}")"
+    gem="flezha-${RELEASE_VERSION}-${TRIPLE_TO_GEM_PLATFORM[${t}]}.gem"
+    stage_asset "${RUBY_GEMS_OUT}/${gem}" "${gem}"
   done
   stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
   stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
@@ -403,8 +426,8 @@ done
 # ---------------------------------------------------------------------------
 step "building the Node addons"
 require_cmd node "install Node 20+"
-# What this host cannot produce, collected across the Node and Python arms and
-# reported once. A release takes each from the job that runs on the right host.
+# What this host cannot produce, collected across the Node, Python and Ruby arms
+# and reported once. A release takes each from the job that runs on the right host.
 UNBUILDABLE=()
 
 ( cd "${REPO_ROOT}/sdk/node" && npm ci --no-audit --no-fund --silent && node scripts/build.mjs )
@@ -456,22 +479,63 @@ done
 #     day-to-day loop does not: `scripts/build-python-sdk.sh` builds the
 #     feature from the workspace and copies the library into the package.
 # ---------------------------------------------------------------------------
-step "building the abi3 wheels"
+step "building the wheels"
 MATURIN="${REPO_ROOT}/sdk/python/.venv/bin/maturin"
 if [[ ! -x "${MATURIN}" ]]; then
   red "maturin is not installed at ${MATURIN}"
   red "  scripts/build-python-sdk.sh creates the venv; then: .venv/bin/pip install maturin"
   exit 1
 fi
+for v in "${FREE_THREADED_PYTHONS[@]}"; do
+  require_cmd "python${v}" "install the free-threaded CPython ${v%t} build"
+done
 mkdir -p "${WHEELS_OUT}"
 for t in "${ALL_TRIPLES[@]}"; do
+  cross=()
+  [[ "${t}" == "${HOST_TRIPLE}" ]] || cross=(--zig)
+  while IFS='|' read -r tag args; do
+    echo
+    bold "── building the ${t} ${tag} wheel"
+    read -ra tier_args <<< "${args}"
+    if ! ( cd "${REPO_ROOT}/sdk/python" &&
+           "${MATURIN}" build --release --target "${t}" --out "${WHEELS_OUT}" "${cross[@]}" "${tier_args[@]}" ); then
+      red "  cannot build the ${t} ${tag} wheel on this host"
+      UNBUILDABLE+=("the ${t} ${tag} wheel")
+    fi
+  done < <(wheel_tiers)
+done
+
+# ---------------------------------------------------------------------------
+# 4e. The precompiled Ruby gems.
+#
+#     A gem links the Ruby it loads into, so one gem per platform carries one
+#     library per supported minor, built inside rb-sys-dock's image for that
+#     platform against the gem's wrapper crate. The wrapper takes the core at
+#     its git tag, so like the wheels this step builds from exactly what the tag
+#     holds, and it reaches the network.
+#
+#     The gem is built from an export of the submodule's pinned commit rather
+#     than from the checkout: rb-sys-dock mounts the gem's directory alone, and a
+#     submodule's `.git` names a directory outside it, so git fails in the
+#     container. The export is also what keeps local edits out of a release.
+# ---------------------------------------------------------------------------
+step "building the Ruby platform gems"
+require_cmd docker "install Docker"
+require_cmd rb-sys-dock "gem install rb_sys at the version sdk/ruby/flezha.gemspec pins"
+RUBY_GEM_SOURCE="${REPO_ROOT}/dist/ruby-gem-source"
+rm -rf "${RUBY_GEM_SOURCE}"
+mkdir -p "${RUBY_GEM_SOURCE}" "${RUBY_GEMS_OUT}"
+git -C "${REPO_ROOT}/sdk/ruby" archive HEAD | tar -x -C "${RUBY_GEM_SOURCE}"
+for t in "${ALL_TRIPLES[@]}"; do
+  platform="${TRIPLE_TO_GEM_PLATFORM[${t}]}"
   echo
-  bold "── building the ${t} wheel"
-  wheel_args=(--release --target "${t}" --out "${WHEELS_OUT}" --features python-abi3)
-  [[ "${t}" == "${HOST_TRIPLE}" ]] || wheel_args+=(--zig)
-  if ! ( cd "${REPO_ROOT}/sdk/python" && "${MATURIN}" build "${wheel_args[@]}" ); then
-    red "  cannot build the ${t} wheel on this host"
-    UNBUILDABLE+=("the ${t} wheel")
+  bold "── building the ${platform} gem"
+  if ( cd "${RUBY_GEM_SOURCE}" &&
+       rb-sys-dock --platform "${platform}" --ruby-versions "${RUBY_GEM_MINORS}" --build ); then
+    cp -f "${RUBY_GEM_SOURCE}/pkg/flezha-${RELEASE_VERSION}-${platform}.gem" "${RUBY_GEMS_OUT}/"
+  else
+    red "  cannot build the ${platform} gem on this host"
+    UNBUILDABLE+=("the ${platform} gem")
   fi
 done
 

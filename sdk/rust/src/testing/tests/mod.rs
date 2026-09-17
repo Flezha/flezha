@@ -1,1 +1,0 @@
-mod harness_smoke;

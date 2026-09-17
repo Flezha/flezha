@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Changed: every SDK but Elixir lives in its own repository
+
+The PHP, Java, Python, Ruby and Rust SDKs follow Node out of this repository:
+[`flezha_php_sdk`](https://github.com/flezha/flezha_php_sdk),
+[`flezha_java_sdk`](https://github.com/flezha/flezha_java_sdk),
+[`flezha_python_sdk`](https://github.com/flezha/flezha_python_sdk),
+[`flezha_ruby_sdk`](https://github.com/flezha/flezha_ruby_sdk) and
+[`flezha_rust_sdk`](https://github.com/flezha/flezha_rust_sdk). Each is a git
+submodule at `sdk/<lang>`, pinned to a commit, with `test/apps/<lang>_runner` a
+symlink to its test app, and the Python and Ruby examples moved with their SDK.
+Clone with `--recurse-submodules`, or run `git submodule update --init` in an
+existing checkout: the cargo workspace lists the Rust SDK's crates, so no cargo
+command works here without it. The Rust SDK depends on `flz_core` and
+`flz_transport` at a git tag, and this workspace patches that source back to
+its own crates. Every end-to-end scenario still runs here.
+
+### Added: free-threaded wheels and precompiled Ruby gems
+
+A release now also publishes one free-threaded Python wheel per platform for
+CPython 3.14t, and one precompiled Ruby gem per platform carrying a library for
+each supported Ruby minor, so installing the Ruby SDK needs neither cargo nor
+git. The source gem remains the fallback and says so when either is missing.
+
+### Fixed: a keyed local run no longer finishes before its keys are answered
+
+`run_until_idle` could return while an input was still with the host for its
+key, and closing the run then dropped it. It now waits for every key request,
+including one being retried.
+
 ### Changed: the Node SDK lives in its own repository
 
 `@flezha/sdk` is developed in

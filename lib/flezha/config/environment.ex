@@ -285,7 +285,7 @@ defmodule Flezha.Config.Environment do
     {:ok, cwd} = :file.get_cwd()
 
     command =
-      "cargo run --quiet --manifest-path=#{cwd}/test/apps/rust_runner/Cargo.toml " <>
+      "cargo run --quiet --manifest-path=#{cwd}/sdk/rust/test_app/Cargo.toml " <>
         "--target-dir=./target"
 
     [command, command]

@@ -1,0 +1,43 @@
+name: Run an SDK's smoke tier end to end
+description: >
+  The half of an extracted SDK's testing its own repository cannot run: the
+  shared smoke tier against the controller, with the SDK taken from its
+  submodule at the commit this tree pins. The job checks out with submodules
+  and sets up the SDK's own language first.
+
+inputs:
+  runtime:
+    description: The `FLEZHA_E2E_RUNTIME` the smoke tier runs against.
+    required: true
+  build:
+    description: The command that builds the SDK and its test app in this tree.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Erlang and Elixir
+      uses: ./.github/actions/setup-beam
+
+    - name: Install Rust
+      uses: ./.github/actions/setup-rust
+
+    - name: Build the SDK
+      shell: bash
+      run: ${{ inputs.build }}
+
+    - name: Build the reference runner the suite boots against
+      shell: bash
+      run: |
+        cargo build --quiet \
+          --manifest-path=sdk/rust/test_app/Cargo.toml \
+          --target-dir=./target
+
+    - name: Run the shared smoke tier
+      shell: bash
+      env:
+        FLEZHA_E2E_RUNTIME: ${{ inputs.runtime }}
+      run: |
+        mix test --include sdk_smoke \
+          --formatter FlezhaTest.Helper.TimingFormatter \
+          --formatter ExUnit.CLIFormatter

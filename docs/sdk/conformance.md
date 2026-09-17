@@ -274,15 +274,20 @@ published for every supported triple beside the native libraries, with its
 checksum in the same manifest.
 
 ```
-flz-fake-controller --socket-dir <dir> --factory <id> [--operative <id>]
-                    [--transport uds] [--channel <name>] [--inputs <file>]
+flz-fake-controller --factory <id> [--operative <id>] [--transport uds]
+                    [--channel <name>] [--inputs <file>] [--input <payload>]...
                     [--runner-id <id>] [--expect-outputs <n>] [--timeout-ms <ms>]
+                    [--socket-dir <dir>] [-- <runner command>]
 ```
 
-It binds the control socket and the two data sockets in `--socket-dir`, waits
-for a runner to connect and declare `--factory`, walks the handshake, starts
-the class, feeds one input per line of `--inputs`, counts `--expect-outputs`
-frames back, and then disconnects and waits for the runner to go. It prints
+Given the runner command after `--`, it launches the runner against a socket
+directory of its own, holds the runner's standard input open for the run, and
+prints the runner's output when the run fails; without one, the runner is
+started by hand against `--socket-dir`. It binds the control socket and the two
+data sockets, waits for a runner to connect and declare `--factory`, walks the
+handshake, starts the class, feeds each line of `--inputs` and then each
+`--input`, counts `--expect-outputs` frames back, and then disconnects and waits
+for the runner to go. It prints
 each frame as it awaits it and exits non-zero naming the first that is wrong or
 late, so a failing tier says which end stopped. The tier's verdict is this
 binary's exit code, never the runner's: a terminal disconnect ends a runner
@@ -297,12 +302,13 @@ An SDK that has moved to its own repository is present here as a git submodule
 at `sdk/<lang>`, pinned to a commit, with `test/apps/<lang>_runner` a symlink to
 the test app inside it. Nothing in the harness learns about repositories: the
 gate globs the same paths, the build scripts `cd` into the same directories,
-and `PortPilot` reads the manifest where it always was. An uninitialised
-submodule fails the gate on the missing manifest, as any absent test app would.
+and `PortPilot` reads the manifest where it always was, launching the app from
+the directory the symlink points at. An uninitialised submodule fails the gate
+on the missing manifest, as any absent test app would.
 
-The one thing that does change is the static gates that walk `git ls-files`,
-which does not enter a submodule. Those that apply to an extracted SDK's source
-run in its own repository's CI instead.
+The static gates that walk `git ls-files`, which does not enter a submodule,
+read what each submodule carries as well, so they judge an extracted SDK's
+source here too.
 
 ## The report
 
@@ -483,9 +489,9 @@ gate already checks. And its own suite carries the three tiers described under
 "An SDK repository's own tiers", which is what makes a change to it provable
 before this tree bumps the pin.
 
-The manifest's `build` line names the command that builds the runner in the
-repository the manifest lives in. `PortPilot` quotes it when an artifact is
-missing and never runs it.
+The manifest's `build` line names the command that builds the runner in this
+tree, because this tree is where it is read: `PortPilot` quotes it when an
+artifact is missing, and `mix bench` runs the bench line from the root.
 
 ### The refusal table
 

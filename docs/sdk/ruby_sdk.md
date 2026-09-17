@@ -181,7 +181,7 @@ thread executor a booted runner brings, so the procedures run on its workers
 while the caller waits in `run_until_idle`; `close` stops those workers on the
 executor's own flag rather than by shutting the core, so a process may start
 another local run afterwards. Worked example:
-[`examples/ruby/local_word_count.rb`](../../examples/ruby/local_word_count.rb).
+[`sdk/ruby/examples/local_word_count.rb`](../../sdk/ruby/examples/local_word_count.rb).
 
 **State is held in memory and nothing is durable** — no write-ahead log, no
 snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,

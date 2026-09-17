@@ -357,7 +357,7 @@ with LocalOperative.start(word_count) as run:
 procedure's name unless the declaration named it. The run brings the same
 executor a started runner brings, so the procedures run on its worker threads
 while the caller waits in `run_until_idle`. Worked example:
-[`examples/python/local_word_count.py`](../../examples/python/local_word_count.py).
+[`sdk/python/examples/local_word_count.py`](../../sdk/python/examples/local_word_count.py).
 
 **State is held in memory and nothing is durable** — no write-ahead log, no
 snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,

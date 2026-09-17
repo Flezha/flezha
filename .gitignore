@@ -61,25 +61,12 @@ __pycache__/
 # Ad-hoc local test scripts (e.g. test-recovery-start.sh/stop.sh).
 /scripts/temp/
 
-# Maven build output, and the native libraries and fat jars staged beside it.
-# The Java compute-engine test fixture used to commit `target/` (compiled
-# .class files + the shaded jar) so contributors could run `mix test` without
-# `mvn` — but every rebuild produced a 5.8 MB binary diff and Maven internal
-# scratch (`maven-status/`, `maven-archiver/`) leaked in. The five
-# `libflz_core_ffi` binaries and the two fat jars were committed for the same
-# reason and cost the same way, but 300× over: 1.7 GB of history across 163
-# blobs, because flz_core_ffi sits underneath all seven and any kernel change
-# invalidates them together. Building is now a documented prerequisite for all
-# of them — see README "Building". `scripts/build-native.sh` produces the host
-# triple every test path needs, and a release publishes all five;
-# `scripts/check-build-artifacts.sh` holds the line.
+# Build output. The Java compute-engine test fixture used to commit `target/`,
+# and every rebuild produced a binary diff; committed native libraries and fat
+# jars once cost 1.7 GB of history. `scripts/check-build-artifacts.sh` holds the
+# line. The Java SDK's libraries and jars are ignored in its own repository.
 test/apps/java_compute_engine/target/
-test/apps/java_runner/target/
-sdk/java/**/target/
 examples/**/target/
-sdk/java/flezha-sdk-native/src/main/resources/native/
-sdk/java/flezha-sdk/dist/
-test/apps/java_runner/dist/
 # The release staging root: the fake controller, the addons and the wheels the
 # five-triple build produces. Build output, never tracked.
 /dist/

@@ -6,7 +6,7 @@ sugared declaration — `#[flezha::procedure]` / `#[derive(flezha::State)]` /
 `flezha::operative!` in Rust, `@Procedure` / `@State` / `@StreamOperative` in
 Java — maps onto the `StreamOperative` / `Procedure` / `Change` / `Channel`
 trait (interface) surface. The sugar is **pure expansion**: a macro (Rust,
-`flezha-macros/`) or an annotation processor (Java, `sdk/java/flezha-sdk-processor/`)
+`sdk/rust/macros/`) or an annotation processor (Java, `sdk/java/flezha-sdk-processor/`)
 generates exactly the impls a user would write by hand, against the unchanged
 runtime. There is no parallel runtime path, no new protobuf message and no
 WAL-format change.

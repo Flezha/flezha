@@ -1,15 +1,25 @@
 [workspace]
+# The Rust SDK, its macros and the reference runner are the `sdk/rust`
+# submodule's crates, named by their real paths: cargo resolves a manifest
+# reached through the `test/apps/rust_runner` symlink against the link's name.
 members = [
     "flz_core",
     "flz_core_ffi",
     "flz_transport",
     "flz_nif",
-    "flezha-macros",
-    "sdk/rust",
     "cli",
-    "test/apps/rust_runner",
+    "sdk/rust",
+    "sdk/rust/macros",
+    "sdk/rust/test_app",
 ]
 resolver = "2"
+
+# The Rust SDK takes the core from its git tag, which is what its own repository
+# builds against. Here the same source resolves to the crates in this tree, so a
+# core change is seen by the SDK at once and nothing is fetched.
+[patch."https://github.com/flezha/flezha"]
+flz_core = { path = "flz_core" }
+flz_transport = { path = "flz_transport" }
 
 [workspace.package]
 version = "0.1.0"

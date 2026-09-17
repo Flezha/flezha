@@ -69,12 +69,15 @@ against a host-triple-only tree, with no network access.
 
 A tag matching the release pattern SHALL trigger a CI job that cross-builds
 `flz_core_ffi` for all five supported triples with the `jni` feature and again
-with the `napi` feature, builds the `abi3` wheels for the five triples, builds
-the fake controller binary for the five triples, assembles the SDK and
-test-runner fat jars, stages the fixture archive, and attaches all of them and
-a SHA-256 manifest covering all of them to the GitHub Release for that tag.
-The `napi` binaries SHALL be staged under the per-platform package layout the
-Node SDK's `package.json` declares.
+with the `napi` feature, builds the `abi3` wheels and the free-threaded wheels
+for the five triples, builds a precompiled Ruby gem for each of the five
+triples carrying one library per supported Ruby minor, builds the fake
+controller binary for the five triples, assembles the SDK and test-runner fat
+jars, stages the fixture archive, and attaches all of them and a SHA-256
+manifest covering all of them to the GitHub Release for that tag. The `napi`
+binaries SHALL be staged under the per-platform package layout the Node SDK's
+`package.json` declares. Staging SHALL refuse a set missing any of them, naming
+what is missing.
 
 Pull-request CI SHALL NOT cross-compile any non-host triple. The five-triple
 matrix SHALL run on release tags only.
@@ -82,7 +85,7 @@ matrix SHALL run on release tags only.
 #### Scenario: A release tag publishes the full matrix
 
 - **WHEN** a release tag is pushed and its workflow completes
-- **THEN** the GitHub Release SHALL carry five `jni` `libflz_core_ffi.*` assets, five `napi` addons, five `abi3` wheels, five fake controller binaries, `flezha-sdk.jar`, `java_runner.jar`, the fixture archive, and a checksum manifest covering all of them
+- **THEN** the GitHub Release SHALL carry five `jni` `libflz_core_ffi.*` assets, five `napi` addons, five `abi3` wheels, five free-threaded wheels per supported free-threaded interpreter, five precompiled Ruby gems, five fake controller binaries, `flezha-sdk.jar`, `java_runner.jar`, the fixture archive, and a checksum manifest covering all of them
 
 #### Scenario: Pull-request CI does not cross-compile
 
@@ -90,10 +93,11 @@ matrix SHALL run on release tags only.
 - **WHEN** the pull-request-triggered jobs are inspected
 - **THEN** none SHALL install or invoke `zig`, `cargo-zigbuild`, or `ziglang`
 
-#### Scenario: A veneer that links its host is not in the bundle
+#### Scenario: An incomplete release refuses to stage
 
-- **WHEN** the release assets are inspected for a Ruby extension
-- **THEN** none SHALL be present, because the extension links the host Ruby and is built at install from the wrapper crate
+- **GIVEN** a build output missing a free-threaded wheel or a Ruby platform gem
+- **WHEN** `scripts/build-dist.sh --stage-release <dir>` runs
+- **THEN** it SHALL fail naming the missing gem or the wheel count of that tier, and SHALL write no manifest
 
 ### Requirement: Portable packaging SHALL fetch and verify published assets
 
@@ -187,4 +191,28 @@ Switching the dependency to a registry SHALL be a change to that one line.
 
 - **WHEN** `scripts/build-node-sdk.sh` runs in this tree
 - **THEN** it SHALL build from the workspace and fetch nothing
+
+### Requirement: The Rust SDK depends on the core by git tag and the workspace patches it back
+
+The Rust SDK, its macros crate and the reference runner SHALL be three crates
+in the Rust SDK's repository, with no cargo workspace of their own, whose
+dependencies on `flz_core` and `flz_transport` are git dependencies on this
+repository at a tag. This repository's root workspace SHALL list the three as
+members by their paths inside the `sdk/rust` submodule, and SHALL carry a
+`[patch]` mapping that git source to the path crates, so a build in this tree
+fetches nothing and builds the submodule against the tree. Every command that
+names the reference runner's manifest SHALL name its real path, because cargo
+refuses a manifest reached through the `test/apps/rust_runner` symlink.
+
+#### Scenario: The Rust tree builds alone
+- **WHEN** each crate's tests run in the Rust SDK repository with no core tree beside it
+- **THEN** they SHALL fetch the pinned tag and pass
+
+#### Scenario: This tree builds the submodule against itself
+- **WHEN** `cargo build --workspace` runs here with the network unavailable
+- **THEN** it SHALL succeed, resolving `flz_core` and `flz_transport` to the path crates through the patch
+
+#### Scenario: The suite still boots the reference runner
+- **WHEN** plain `mix test` runs here
+- **THEN** it SHALL launch two reference runners from `test/apps/rust_runner` through the symlink and they SHALL connect within the boot window
 

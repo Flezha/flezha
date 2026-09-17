@@ -11,13 +11,12 @@ name: Bench Regression Gate
 on:
   pull_request:
     paths:
-      - "sdk/rust/**"
+      - "sdk/rust"
       - "flz_transport/**"
       - "flz_nif/**"
       - "lib/flezha/**"
       - "lib/mix/tasks/bench**"
       - "protobufs/**"
-      - "test/apps/rust_runner/**"
       - ".github/workflows/bench.yml"
   workflow_dispatch:
 
@@ -31,6 +30,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - name: Set up Erlang + Elixir
         uses: ./.github/actions/setup-beam
@@ -86,6 +87,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - name: Set up Erlang + Elixir
         uses: ./.github/actions/setup-beam

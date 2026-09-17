@@ -573,7 +573,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | `StreamOperative` trait; `Procedure`, `ProcedureCtx`, `ProcedureError`, `SimpleProcedure` | `sdk/rust/src/operative/mod.rs`; `sdk/rust/src/procedure/{mod,ctx,error,simple}.rs` |
 | `ChannelBuilder`, `Stream<T>`, `TopologyIssue`, `Channel<T>` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/operative/builder.rs` |
-| Authoring macros | `flezha-macros/src/{procedure,state,operative}.rs` |
+| Authoring macros | `sdk/rust/macros/src/{procedure,state,operative}.rs` |
 | Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/operative/dispatcher.rs`, `poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
 | `StreamInstance`, `KeyGroupRange`; `OperativeTopology`, `EntityMode`; registries | `flz_core/src/operative/{instance,topology,registry}.rs` |

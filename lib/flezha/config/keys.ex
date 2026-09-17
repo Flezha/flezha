@@ -612,7 +612,7 @@ defmodule Flezha.Config.Keys do
     {:rust_profile, :string, nil, runtimes: [:build], env: "FLEZHA_RUST_PROFILE"},
     {:image, :string, nil, runtimes: [:build], env: "FLEZHA_IMAGE"},
     {:rebuild_image, :bool, false, runtimes: [:build], env: "FLEZHA_REBUILD_IMAGE"},
-    {:release_base_url, :string, nil, runtimes: [:build], env: "FLEZHA_RELEASE_BASE_URL"},
+    {:release_base_url, :string, nil, runtimes: [:php], env: "FLEZHA_RELEASE_BASE_URL"},
     {:sha, :string, nil, runtimes: [:build], env: "FLEZHA_SHA"},
     {:ui_path, :path, nil, runtimes: [:build], env: "FLEZHA_UI_PATH"},
 

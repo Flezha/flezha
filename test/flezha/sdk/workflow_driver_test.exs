@@ -459,7 +459,9 @@ defmodule Flezha.SDK.Workflow.DriverTest do
   end
 
   test "a per-input loop parks after its idle window with nothing to consume" do
-    driver = start_loop(ChatLoop, park_idle_ms: 0)
+    # Not `start_loop/2`: with no idle window the loop can park before a state
+    # read is answered.
+    driver = start_driver(ChatLoop, operative_id: "wf-chat", args: "hello", park_idle_ms: 0)
     ref = Process.monitor(driver)
     assert_receive {:DOWN, ^ref, :process, ^driver, reason}, 5_000
     assert reason in [:normal, :noproc]

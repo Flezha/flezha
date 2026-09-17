@@ -25,6 +25,8 @@ jobs:
         transport: [uds, quic]
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
       - uses: ./.github/actions/setup-rust
       - uses: ./.github/actions/setup-beam
       - uses: ./.github/actions/setup-java
@@ -64,6 +66,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
       - uses: ./.github/actions/setup-rust
       - name: Criterion dispatch bench (regression group only)
         # The entity_stress group can deadlock when worker count is

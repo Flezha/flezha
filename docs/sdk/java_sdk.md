@@ -121,9 +121,10 @@ FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke       # the shared smoke ti
 FLEZHA_E2E_RUNTIME=java mix test --include system          # the full suite
 ```
 
-`.github/workflows/java-sdk.yml` runs the first two on every pull request that
-touches the SDK, the kernel, the transport or the test app; the nightly matrix
-runs the third.
+The Java SDK's own repository runs the first on every pull request, and this
+repository's `.github/workflows/java-sdk.yml` runs the second on every pull
+request that touches the SDK pin, the kernel or the transport; the nightly
+matrix runs the third.
 
 ## See also
 

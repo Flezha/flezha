@@ -22,9 +22,8 @@ on:
       - "flz_core/**"
       - "flz_transport/**"
       - "flz_nif/**"
-      - "sdk/rust/**"
+      - "sdk/rust"
       - "cli/**"
-      - "test/apps/rust_runner/**"
       - "test/apps/testnet"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
@@ -40,9 +39,8 @@ on:
       - "flz_core/**"
       - "flz_transport/**"
       - "flz_nif/**"
-      - "sdk/rust/**"
+      - "sdk/rust"
       - "cli/**"
-      - "test/apps/rust_runner/**"
       - "test/apps/testnet"
       - "test/apps/testnet/**"
       - ".github/workflows/elixir.yml"
@@ -96,7 +94,7 @@ jobs:
         # cargo-run command uses.
         run: |
           cargo build --quiet \
-            --manifest-path=test/apps/rust_runner/Cargo.toml \
+            --manifest-path=sdk/rust/test_app/Cargo.toml \
             --target-dir=./target
 
       - name: Generate the QUIC development certificates

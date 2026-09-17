@@ -8,13 +8,15 @@ name: Format
 # `scripts/format-apply.sh`.
 #
 # CI keeps no list of its own, of formatters or of checks. Two lists drift: for
-# a long time this workflow ran spotless and nothing else, so prettier, ruff,
-# rubocop and php-cs-fixer had never executed in CI at all while a second local
-# script claimed to cover them.
+# a long time this workflow ran one formatter and nothing else, while a second
+# local script claimed to cover the rest.
+#
+# Every SDK but Elixir is developed in a repository of its own and formatted by
+# that repository's CI, so the formatters here are Rust's and Elixir's.
 
 on:
-  # An ignore-list, not an allow-list. The gate covers seven languages across
-  # the whole tree, and an allow-list that forgets one of them is a gate that
+  # An ignore-list, not an allow-list. The gate covers the whole tree, and an
+  # allow-list that forgets a language is a gate that
   # silently stops covering it. Prose is the only thing exempt.
   pull_request:
     paths-ignore:
@@ -35,6 +37,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       # Nightly rustfmt is required because rustfmt.toml uses
       # `imports_granularity`, `group_imports`, and `ignore` — all
@@ -51,50 +55,8 @@ jobs:
       - name: Set up Erlang + Elixir
         uses: ./.github/actions/setup-beam
 
-      - name: Set up Java
-        uses: ./.github/actions/setup-java
-        with:
-          cache: maven
-
-      - name: Set up Node
-        uses: ./.github/actions/setup-node
-
       - name: Set up Python
         uses: ./.github/actions/setup-python
-
-      - name: Set up Ruby
-        uses: ./.github/actions/setup-ruby
-
-      - name: Set up PHP
-        uses: ./.github/actions/setup-php
-
-      # Each veneer formatter is that SDK's own pinned development dependency,
-      # and every version comes out of the SDK's manifest rather than being
-      # written a second time here. None of these builds the native library:
-      # the formatters are pure tooling.
-      #
-      # `continue-on-error` on all three for the same reason the script collects
-      # instead of aborting: an install that fails must cost one language, not
-      # the whole report. The check step below still fails the job, and it says
-      # which formatter it could not find and that the others are clean.
-      #
-      # No prettier here. Node source is developed in `flezha/flezha_node_sdk`
-      # and formatted by that repository's own CI, which is where an extracted
-      # SDK's gates run.
-      - name: Install ruff (sdk/python)
-        continue-on-error: true
-        run: pip install "ruff==$(scripts/manifest_pin.sh sdk/python/pyproject.toml ruff)"
-
-      - name: Install rubocop (sdk/ruby)
-        continue-on-error: true
-        run: |
-          gem install --no-document rubocop \
-            -v "$(scripts/manifest_pin.sh sdk/ruby/flezha.gemspec rubocop)"
-
-      - name: Install php-cs-fixer (sdk/php)
-        continue-on-error: true
-        working-directory: sdk/php
-        run: composer install --no-interaction --no-progress
 
       - name: Install reuse
         run: pip install reuse
@@ -105,8 +67,8 @@ jobs:
           tool: cargo-about
 
       # One step, and CI keeps no list of its own. The three checks are rows in
-      # the gate runner: the formatter driver (which covers Rust, Elixir, Java,
-      # Node, Python, Ruby and PHP and prints a `==>` line per language), the
+      # the gate runner: the formatter driver (which prints a `==>` line per
+      # language), the
       # per-path licence lint, and the freshness diff of the generated notices.
       # If an install step above ever stops working, the runner names the tool
       # it could not find, still reports every other check, and ends non-zero

@@ -117,7 +117,8 @@ pub struct EntryParseLadder {
 }
 
 pub fn spawn_entry_parse_ladder(ladder: EntryParseLadder) {
-    spawn_park_thread("flezha-entry-parse-park", move || {
+    let instance = Arc::clone(&ladder.instance);
+    spawn_park_thread(&instance, "flezha-entry-parse-park", move || {
         run_entry_parse_ladder(ladder)
     });
 }
@@ -238,18 +239,44 @@ pub(crate) fn spawn_edge_ladder(
         consumed_offset,
         replay,
     };
-    spawn_park_thread("flezha-edge-transform-park", move || {
+    spawn_park_thread(instance, "flezha-edge-transform-park", move || {
         run_edge_ladder(ladder)
     });
 }
 
-/// A ladder off the routing thread; a failure to spawn is reported.
-pub(crate) fn spawn_park_thread(name: &str, run: impl FnOnce() + Send + 'static) {
+/// A ladder off the routing thread; a failure to spawn is reported. The ladder
+/// counts as running for `instance` until its closure is dropped, whether it
+/// ran or its thread never started.
+pub(crate) fn spawn_park_thread(
+    instance: &Arc<StreamInstance>,
+    name: &str,
+    run: impl FnOnce() + Send + 'static,
+) {
+    let running = LadderRunning::hold(instance);
     let spawned = std::thread::Builder::new()
         .name(name.to_string())
-        .spawn(run);
+        .spawn(move || {
+            let _running = running;
+            run()
+        });
     if let Err(e) = spawned {
         eprintln!("[flezha] failed to spawn {name} thread: {e}");
+    }
+}
+
+/// One count in an instance's running ladders, given back on drop.
+struct LadderRunning(Arc<StreamInstance>);
+
+impl LadderRunning {
+    fn hold(instance: &Arc<StreamInstance>) -> LadderRunning {
+        instance.ladders.fetch_add(1, Ordering::AcqRel);
+        LadderRunning(Arc::clone(instance))
+    }
+}
+
+impl Drop for LadderRunning {
+    fn drop(&mut self) {
+        self.0.ladders.fetch_sub(1, Ordering::AcqRel);
     }
 }
 

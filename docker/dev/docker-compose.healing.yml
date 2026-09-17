@@ -68,7 +68,7 @@ services:
         ns="$$FLEZHA_DEMO_NAMESPACE"
         : "$${ns:=default}"
         echo "[rust] starting compute engine for namespace=$$ns"
-        exec cargo run --quiet --manifest-path=/flezha/test/apps/rust_runner/Cargo.toml --target-dir=/flezha/target -- "$$ns"
+        exec cargo run --quiet --manifest-path=/flezha/sdk/rust/test_app/Cargo.toml --target-dir=/flezha/target -- "$$ns"
     environment:
       FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
       FLEZHA_HARNESS_PATHS: /flezha/target /flezha/app_data

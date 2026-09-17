@@ -1,13 +1,26 @@
 //! The Java SDK's native surface, asserted rather than reviewed.
 //!
 //! Java reaches the core through JNI rather than through the C ABI directly,
-//! so its surface is two hand-written lists — `FlzCore.java`'s `static native`
-//! declarations and `jni_glue.rs`'s `Java_com_flezha…` exports — that were
-//! compared by nobody. Every other binding declares its surface as a table
-//! with a test behind it; this is Java's, and it reads the Java source because
-//! the Java half is the half a Rust build cannot see.
+//! so its surface is two hand-written lists, `FlzCore.java`'s `static native`
+//! declarations and `jni_glue.rs`'s `Java_com_flezha…` exports. The declared
+//! table is `test/fixtures/jni_surface.txt`, `<method>|<entry point>` in
+//! declaration order: this test holds both lists to it, and the Java SDK's own
+//! suite holds the class to it where no Rust build can run.
 
-use flz_core_ffi::jni_glue::NATIVE_SURFACE;
+use crate::surface::fixture_lines;
+
+/// The declared surface, `(java_name, abi_entry_point)` in declaration order.
+fn native_surface() -> Vec<(String, String)> {
+    fixture_lines("jni_surface.txt")
+        .iter()
+        .map(|row| {
+            let (name, abi) = row.split_once('|').unwrap_or_else(|| {
+                panic!("jni_surface.txt row `{row}` is not `method|entry point`")
+            });
+            (name.to_string(), abi.to_string())
+        })
+        .collect()
+}
 
 /// `FlzCore.java`, read from the repository the crate sits in.
 fn flz_core_java() -> String {
@@ -53,11 +66,12 @@ fn exported_symbols() -> Vec<String> {
 }
 
 /// The three lists agree in both directions: the Java declarations, the JNI
-/// exports, and the declared table. A symbol added on one side and not the
+/// exports and the declared table. A symbol added on one side and not the
 /// others fails here rather than at the first call.
 #[test]
 fn the_java_native_surface_is_the_declared_one() {
-    let declared: Vec<&str> = NATIVE_SURFACE.iter().map(|(name, _)| *name).collect();
+    let surface = native_surface();
+    let declared: Vec<&str> = surface.iter().map(|(name, _)| name.as_str()).collect();
     let java = declared_natives(&flz_core_java());
 
     assert_eq!(
@@ -78,14 +92,15 @@ fn the_java_native_surface_is_the_declared_one() {
 /// binding adds no ABI surface of its own.
 #[test]
 fn every_java_export_reaches_one_c_entry_point() {
+    let surface = native_surface();
     let mut seen: Vec<&str> = Vec::new();
-    for (name, abi) in NATIVE_SURFACE {
+    for (name, abi) in &surface {
         assert!(
             abi.starts_with("flz_core_"),
             "{name} names {abi}, which is not a C ABI entry point"
         );
         assert!(
-            !seen.contains(abi),
+            !seen.contains(&abi.as_str()),
             "{abi} is reached by two Java exports; one export, one entry point"
         );
         seen.push(abi);
@@ -96,7 +111,7 @@ fn every_java_export_reaches_one_c_entry_point() {
     // other leaves the SDK's own front door unreachable.
     for required in ["declareClass", "checkClass"] {
         assert!(
-            NATIVE_SURFACE.iter().any(|(name, _)| *name == required),
+            surface.iter().any(|(name, _)| name == required),
             "the surface table names no {required}"
         );
     }
@@ -107,10 +122,10 @@ fn every_java_export_reaches_one_c_entry_point() {
 /// surface unnoticed.
 #[test]
 fn the_blocking_entry_points_are_the_declared_ones() {
-    let blocking: Vec<&str> = NATIVE_SURFACE
-        .iter()
-        .filter(|(_, abi)| flz_core_ffi::veneer::BLOCKING_ENTRY_POINTS.contains(abi))
-        .map(|(name, _)| *name)
+    let blocking: Vec<String> = native_surface()
+        .into_iter()
+        .filter(|(_, abi)| flz_core_ffi::veneer::BLOCKING_ENTRY_POINTS.contains(&abi.as_str()))
+        .map(|(name, _)| name)
         .collect();
 
     assert_eq!(

@@ -3,5 +3,25 @@
 	url = https://github.com/flezha/flezha_testnet.git
 [submodule "sdk/node"]
 	path = sdk/node
-	url = git@github.com:flezha/flezha_node_sdk.git
+	url = https://github.com/flezha/flezha_node_sdk.git
+	branch = main
+[submodule "sdk/php"]
+	path = sdk/php
+	url = https://github.com/flezha/flezha_php_sdk.git
+	branch = main
+[submodule "sdk/java"]
+	path = sdk/java
+	url = https://github.com/flezha/flezha_java_sdk.git
+	branch = main
+[submodule "sdk/python"]
+	path = sdk/python
+	url = https://github.com/flezha/flezha_python_sdk.git
+	branch = main
+[submodule "sdk/ruby"]
+	path = sdk/ruby
+	url = https://github.com/flezha/flezha_ruby_sdk.git
+	branch = main
+[submodule "sdk/rust"]
+	path = sdk/rust
+	url = https://github.com/flezha/flezha_rust_sdk.git
 	branch = main

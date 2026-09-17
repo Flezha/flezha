@@ -1,24 +1,33 @@
 name: Ruby SDK
 
+# What this repository still owns for Ruby. The gem's own suite on every
+# supported Ruby, its source gem and the precompiled platform gems' recipe live
+# in `flezha/flezha_ruby_sdk` now, where the gem is developed; `sdk/ruby` here is
+# that repository as a submodule, pinned to a commit. What cannot move is on
+# this side of the pin: the veneer is a feature of this repository's own crate,
+# and end to end needs the controller. The platform gems a release publishes are
+# built by the release job in `java-sdk.yml`.
+#
+# A change to the gem reaches these jobs when the pin is bumped, which is the
+# change that brings it into end to end at all.
+
 on:
   pull_request:
     paths:
-      - "sdk/ruby/**"
+      - "sdk/ruby"
       - "flz_core/**"
       - "flz_core_ffi/**"
       - "flz_transport/**"
-      - "test/apps/ruby_runner/**"
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-ruby-sdk.sh"
       - ".github/workflows/ruby-sdk.yml"
   push:
     branches: [main]
     paths:
-      - "sdk/ruby/**"
+      - "sdk/ruby"
       - "flz_core/**"
       - "flz_core_ffi/**"
       - "flz_transport/**"
-      - "test/apps/ruby_runner/**"
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-ruby-sdk.sh"
       - ".github/workflows/ruby-sdk.yml"
@@ -27,63 +36,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The gem's own suite, on every supported Ruby. Everything here runs against
-  # a freshly built veneer, so a veneer change and a gem change fail together
-  # rather than one of them passing against a stale library.
-  gem:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Both ends of the support window. 3.3 is the floor `Process.warmup`
-        # sets; the newest release is what most users will be on.
-        ruby: ["3.3", "3.4"]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Ruby ${{ matrix.ruby }}
-        uses: ./.github/actions/setup-ruby
-        with:
-          version: ${{ matrix.ruby }}
-
-      - name: Install Rust
-        uses: ./.github/actions/setup-rust
-
-      # rb-sys runs bindgen over `ruby.h`, and bindgen needs clang's own
-      # builtin headers (`stdarg.h`, `stddef.h`). libclang alone is not enough:
-      # without this the build fails inside cargo with "'stdarg.h' file not
-      # found", which reads like a broken Ruby install and is not one.
-      - name: Install libclang and its builtin headers
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
-
-      - name: Build the veneer and install it where the gem loads it from
-        run: scripts/build-ruby-sdk.sh
-
-      - name: Install the gem's dependencies
-        # The test toolchain at the versions the gemspec pins, the way format.yml
-        # installs rubocop. Unpinned, `gem install minitest` resolves 6.x, which
-        # ships no `minitest/mock` and so no `Object#stub`.
-        run: |
-          pin() { scripts/manifest_pin.sh sdk/ruby/flezha.gemspec "$1"; }
-          gem install --no-document msgpack
-          gem install --no-document async -v "$(pin async)"
-          gem install --no-document rake -v "$(pin rake)"
-          gem install --no-document minitest -v "$(pin minitest)"
-          gem install --no-document simplecov -v "$(pin simplecov)"
-
-      # The concurrency requirements are behaviour here, not prose: pool growth
-      # under blocked handlers, retirement afterwards, the GVL released around
-      # a blocking core call, a refused post-fork call, and identical ordering
-      # under both executors.
-      # Measured, not only run — `COVERAGE=1` reports and arms no floor.
-      - name: Unit tests
-        working-directory: sdk/ruby
-        run: COVERAGE=1 rake test
-
-      - name: The gem builds
-        working-directory: sdk/ruby
-        run: gem build flezha.gemspec
-
   # The veneer, from the Rust side. `--features ruby` must stay additive: the
   # crate's other artifacts and the Java and Node veneers are built from the
   # same source.
@@ -91,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-ruby
 
@@ -119,56 +73,24 @@ jobs:
         # feature, so the script is the one place that spells it.
         run: scripts/check-feature-symbols.sh target/debug/libflz_core_ffi.so ruby
 
-  # The precompiled platform gems. Cross-built rather than one runner per
-  # platform, and this is what the end-to-end arm installs — a gem that only CI
-  # can build is a gem nobody has installed.
-  cross-build:
+  # End to end, which is the half the gem's repository cannot run: it needs the
+  # controller. The submodule is what this job runs the Ruby runtime from, at the
+  # commit this tree pins.
+  smoke:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - x86_64-linux
-          - x86_64-linux-musl
-          - aarch64-linux
-          - arm64-darwin
-          - x86_64-darwin
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-ruby
 
-      - uses: oxidize-rb/actions/cross-gem@v1
-        id: cross-gem
-        with:
-          platform: ${{ matrix.platform }}
-          ruby-versions: "3.3,3.4"
-          working-directory: sdk/ruby
+      # rb-sys runs bindgen over `ruby.h`, and bindgen needs clang's own
+      # builtin headers.
+      - name: Install libclang and its builtin headers
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
-      - uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/sdk-smoke
         with:
-          name: flezha-${{ matrix.platform }}
-          path: ${{ steps.cross-gem.outputs.gem-path }}
-
-  # Installing the cross-built gem where no Rust toolchain exists. This is the
-  # requirement's whole point: an SDK that makes a Ruby team install Rust to
-  # evaluate it does not get evaluated.
-  install-without-rust:
-    runs-on: ubuntu-latest
-    needs: cross-build
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: flezha-x86_64-linux
-          path: pkg
-
-      - name: Install and load it in an image with no Rust
-        run: |
-          set -euo pipefail
-          docker run --rm -v "$PWD/pkg:/pkg" ruby:3.4-slim bash -lc '
-            ! command -v cargo || { echo "this image has a Rust toolchain; the test is void"; exit 1; }
-            gem install /pkg/*.gem --no-document
-            ruby -e "require \"flezha\"; Flezha::Core.load_extension; \
-                     abort(\"schema mismatch\") unless Flezha::Native.schema_version == Flezha::ACTIVATION_SCHEMA_VERSION; \
-                     puts \"the platform gem installs and loads with no Rust toolchain\""
-          '
+          runtime: ruby
+          build: scripts/build-ruby-sdk.sh

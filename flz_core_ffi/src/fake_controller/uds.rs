@@ -323,10 +323,7 @@ impl Scenario {
         controller.try_command(
             "ConnectSocket",
             "smoke-connect",
-            pb::command_request::Command::ConnectSocket(pb::ConnectSocket {
-                sockets_count: 1,
-                ..Default::default()
-            }),
+            pb::command_request::Command::ConnectSocket(pb::ConnectSocket { sockets_count: 1 }),
         )
     }
 

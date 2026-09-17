@@ -41,11 +41,6 @@ scripts
 !docker/prod/agent-entrypoint.sh
 !docker/prod/controller-entrypoint.sh
 
-# Re-include the echo example's runner source. `COPY` in
-# examples/python/echo/Dockerfile reads it from a context rooted here, because
-# that image also builds the Python wheel from this checkout's Rust sources.
-!examples/python/echo
-
 # Java SDK is a separate deliverable — not needed for the agent build.
 sdk/java
 
@@ -55,11 +50,11 @@ sdk/java
 # checkout's, whatever the broader rules above happen to cover.
 sdk/java/flezha-sdk-native/src/main/resources/native
 sdk/java/flezha-sdk/dist
-test/apps/java_runner/dist
+sdk/java/test_app/dist
 
 # The same library, built for the other veneers, and the package trees around
-# it. `sdk/rust` is the only Cargo workspace member under sdk/, so nothing here
-# is read by the Rust build stage.
+# it. `sdk/rust` holds the only Cargo workspace members under sdk/, so nothing
+# here is read by the Rust build stage.
 sdk/node/native
 sdk/php/lib
 sdk/php/vendor
@@ -73,18 +68,18 @@ sdk/ruby/pkg
 # logs, and one of them is 70 MB.
 bench/*/reports
 
-# Test tree — kept out of the prod context except for cargo workspace
-# members (whose Cargo.toml is read during metadata resolution even when
-# only -p flz_nif -p flz is built) and the testnet TS app (consumed by
-# docker/dev/Dockerfile.runtime to bake the WS server into :latest-dev).
+# Test tree — kept out of the prod context except for the testnet TS app
+# (consumed by docker/dev/Dockerfile.runtime to bake the WS server into
+# :latest-dev). The reference runner is a cargo workspace member whose
+# Cargo.toml is read during metadata resolution even when only -p flz_nif -p flz
+# is built, and it lives in `sdk/rust/test_app`.
 test/*
 !test/apps
 test/apps/*
-!test/apps/rust_runner
-!test/apps/ruby_runner
 !test/apps/testnet
-test/apps/rust_runner/target
-test/apps/rust_runner/dist
+sdk/rust/test_app/target
+sdk/rust/target
+sdk/rust/macros/target
 test/apps/testnet/node_modules
 test/apps/testnet/dist
 test/apps/testnet/dist-test

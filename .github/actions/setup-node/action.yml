@@ -4,11 +4,9 @@ description: >
   npm ci over one directory and the node_modules cache for it.
 
 # The manifest's single-version pin is 22. `sdk/node/package.json` declares the
-# floor as `>=20.0.0` and node-sdk.yml runs the package suite on 20 and 24 on
-# every change to the SDK, so a job that needs one Node rather than a Node
-# matrix sits inside a window that is proved at both ends. 22 is inside that
-# window; 24 is its upper edge and is proved by the matrix arm rather than by
-# being the version every unrelated job happens to install.
+# floor as `>=20.0.0`, and the Node SDK's own repository runs the package suite
+# on 20 and 24, so a job that needs one Node rather than a Node matrix sits
+# inside a window that is proved at both ends.
 #
 # A matrix arm overrides the pin with `version:` and stays a fan-out: the
 # manifest fixes the jobs that name one version, which is the only place two

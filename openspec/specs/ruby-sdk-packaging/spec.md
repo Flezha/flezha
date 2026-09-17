@@ -75,3 +75,24 @@ The gem SHALL carry the SDK-side licence the other SDKs carry, SHALL be recorded
 - **WHEN** the licensing manifest and the built gem are inspected
 - **THEN** the gem SHALL be recorded SDK-side, and the notices for the embedded native library SHALL travel inside the gem
 
+### Requirement: The source gem builds from the wrapper crate at the pinned core tag
+
+The gem's `extconf.rb` SHALL build the wrapper crate in the gem's `ext/`
+directory, whose one dependency is `flz_core_ffi` at the pinned core tag with
+the `ruby` feature, after trying the precompiled library first. It SHALL name
+no path outside the gem. When neither the precompiled library nor `cargo` and
+`git` are available it SHALL refuse naming both and the precompiled gem as
+the alternative. The precompiled platform gems the packaging requirement
+already mandates SHALL be produced by the core release job for every
+supported triple and Ruby minor.
+
+#### Scenario: A source install with a toolchain builds
+- **GIVEN** cargo and git on the host and no precompiled library
+- **WHEN** the source gem installs
+- **THEN** `extconf.rb` SHALL build the wrapper at the pinned tag and the runner SHALL start
+
+#### Scenario: A source install without a toolchain refuses usefully
+- **GIVEN** no cargo on the host and no precompiled library
+- **WHEN** the source gem installs
+- **THEN** it SHALL refuse naming cargo, git and the precompiled gem for the platform
+

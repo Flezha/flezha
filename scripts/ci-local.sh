@@ -15,9 +15,9 @@
 #           flz_transport, flz_nif, flz (the CLI) and flezha_runner crates,
 #           mix test --warnings-as-errors, and the uncaptured-error-log gate
 #           (matches elixir.yml)
-#   java    mvn verify with -P coverage,native-verify on the SDK reactor,
-#           then the shared smoke tier under FLEZHA_E2E_RUNTIME=java
-#           (matches java-sdk.yml's two jobs)
+#   java    the JNI surface assertion, then the shared smoke tier under
+#           FLEZHA_E2E_RUNTIME=java (matches java-sdk.yml's two jobs; the SDK's
+#           own suites run in its repository)
 #
 # No build artifact is tracked in git, so the `java` section builds what it
 # needs: the HOST triple's libflz_core_ffi and the two jars, exactly as the
@@ -117,7 +117,7 @@ run_elixir() {
 # java  —  matches java-sdk.yml.
 # ---------------------------------------------------------------------------
 run_java() {
-  section "java  —  Java unit tests + Java SDK integration matrix"
+  section "java  —  the JNI surface + Java SDK integration matrix"
   require_cmd mvn "install Maven 3.8+"
   require_cmd java "install JDK 21"
   require_cmd mix "install Elixir 1.17+"
@@ -129,9 +129,9 @@ run_java() {
   bold ">>> scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native"
   scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
 
-  # Mirrors java-sdk.yml `java-unit-tests` job.
-  bold ">>> mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify"
-  mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify
+  # Mirrors java-sdk.yml `veneer` job.
+  bold ">>> cargo test -p flz_core_ffi --features jni --test abi_scenario veneer_jni"
+  cargo test -p flz_core_ffi --features jni --test abi_scenario veneer_jni
 
   # The remaining steps mirror java-sdk.yml `mix-integration-matrix`.
   # Flezha.Testnet is a child of Flezha.Application in :test env and runs
@@ -157,7 +157,7 @@ run_java() {
   # Pre-build the binary so the cargo run is a cache hit.
   bold ">>> cargo build rust_runner (warms ./target/debug)"
   cargo build --quiet \
-    --manifest-path=test/apps/rust_runner/Cargo.toml \
+    --manifest-path=sdk/rust/test_app/Cargo.toml \
     --target-dir=./target
 
   bold ">>> FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke"

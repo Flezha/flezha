@@ -25,10 +25,9 @@ error the gate exists to catch.
 reference outside an allowed set, not a spelling.
 
 A third kind of gate judges a whole tree against a recorded list rather than a
-line against a pattern — `check-java-spec-coverage.sh` and
-`check-layer-direction.sh`. They do not share the walk, because their finding
-is a set difference and not a line, but they share the list format and the rule
-that goes with it: `load_baseline`.
+line against a pattern: `check-layer-direction.sh`. It does not share the walk,
+because its finding is a set difference and not a line, but it shares the list
+format and the rule that goes with it: `load_baseline`.
 """
 
 import os
@@ -100,15 +99,23 @@ def load_baseline(path):
         }
 
 
-def tracked_files(pathspec=()):
+def tracked_files(pathspec=(), carried=False):
     """Every path `git ls-files` reports, so a gate and its source index read
     the same tree. Untracked and ignored files — build output, and the working
     documents the repository deliberately keeps out — are absent by
-    construction rather than by exclusion."""
+    construction rather than by exclusion.
+
+    `carried` adds what the extracted SDKs' submodules carry and the names
+    reached through a tracked symlink (`carried_files`), under the same
+    pathspec prefixes."""
     listing = subprocess.run(
         ["git", "ls-files", "-z", *pathspec], capture_output=True, check=True
     ).stdout.decode()
-    return [rel for rel in listing.split("\0") if rel]
+    files = [rel for rel in listing.split("\0") if rel]
+    if carried:
+        files += [rel for rel in carried_files()
+                  if not pathspec or any(rel.startswith(spec) for spec in pathspec)]
+    return files
 
 
 def carried_files():
@@ -264,14 +271,22 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
     and a block left open at end of file fails.
 
     `source` picks the listing: `"tracked"` reads `git ls-files` (the default,
-    and what every naming gate wants), `"disk"` reads `roots` as they are on
-    disk so an unstaged file is still judged. Returns an exit code.
+    and what every naming gate wants) together with what the extracted SDKs'
+    submodules carry, `"disk"` reads `roots` as they are on disk so an unstaged
+    file is still judged. Returns an exit code.
     """
     begin, end = (f"{record_tag}:begin", f"{record_tag}:end") if record_tag else (None, None)
     failures = []
     unclosed = []
-    listing = disk_files(roots) if source == "disk" else tracked_files(pathspec)
+    listing = disk_files(roots) if source == "disk" else tracked_files(pathspec, carried=True)
+    # A file reached through a tracked symlink is the file its submodule
+    # carries; judged once, under the name met first.
+    seen = set()
     for rel in listing:
+        real = os.path.realpath(rel)
+        if real in seen:
+            continue
+        seen.add(real)
         if rel in self_files or "/dist/" in rel:
             continue
         if path_filter and not path_filter(rel):
@@ -407,10 +422,6 @@ GATES = (
               # its status out of diff's, whose 1 is the only finding here.
               'cargo about generate about.hbs -o "$g" || exit 255; '
               'diff -u THIRD_PARTY_NOTICES.md "$g"']},
-    # Bound to `mvn -f sdk/java verify`, so it runs in the Java inner loop
-    # rather than in the naming job.
-    {"id": "java-spec-coverage", "group": "java",
-     "argv": ["scripts/check-java-spec-coverage.sh"]},
 )
 
 # `scripts/check-feature-symbols.sh` is deliberately not a row. It is not a gate
@@ -649,7 +660,7 @@ def _registry_self_test():
         elif target and head != "python3" and not os.access(target, os.X_OK):
             problems.append(f"  {gate_id}: {target} is not executable")
 
-    for spec in ("all", "@naming", "@format", "@history", "@java", "@release"):
+    for spec in ("all", "@naming", "@format", "@history", "@release"):
         try:
             if not select(spec):
                 problems.append(f"  {spec}: selects no gate")

@@ -36,6 +36,7 @@ use crate::operative::registry::OperativeRegistry;
 use crate::operative::topology::ChannelLookup;
 use crate::poll_core::PollCore;
 use crate::routing::OperativeDispatchHandle;
+use crate::util::LockRecover;
 
 /// What every local run states before it does any work. Emitted by the core,
 /// so a host SDK cannot ship a local mode that looks durable.
@@ -205,13 +206,16 @@ impl LocalRun {
 
     /// An armed processing-time timer counts as work: it is due to become a
     /// firing on the wake list the core already holds, and a run that called
-    /// itself settled before it fired would drop it. A payload staged for a
-    /// prepare crossing needs nothing here: the crossing is handed out as an
-    /// activation, so it is already outstanding.
+    /// itself settled before it fired would drop it. So does an entry payload
+    /// still crossing to the host for its key or time (a direct activation,
+    /// which the outstanding count does not include) and a payload on a retry
+    /// ladder: until either is done the payload is in no mailbox.
     fn working(&self, core: &PollCore) -> bool {
         core.outstanding_count() > 0
             || core.pending_push_count() > 0
             || core.timers_armed() > 0
+            || self.instance.ladders_running()
+            || self.instance.host_prepare.lock_recover().in_flight()
             || self
                 .instance
                 .all_slots()

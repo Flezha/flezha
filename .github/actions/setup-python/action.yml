@@ -3,12 +3,11 @@ description: >
   CPython at the version .github/toolchains.json names.
 
 # The manifest's single-version pin is 3.11. `sdk/python/pyproject.toml`
-# declares `requires-python = ">=3.11"`, and python-sdk.yml runs the package
-# suite across 3.11, 3.14 and the free-threaded 3.14t, so a job that needs one
+# declares `requires-python = ">=3.11"`, and the Python SDK's own repository runs
+# the package suite across its supported interpreters, so a job that needs one
 # interpreter rather than an interpreter matrix runs on the declared floor —
-# the version the SDK promises to work on, and the one arm every wheel tier is
-# built against. A single-version job on an interpreter no matrix covers is a
-# version nothing else in CI proves.
+# the version the SDK promises to work on, and the one the abi3 wheel tier is
+# built against.
 #
 # A matrix arm overrides the pin with `version:` and stays a fan-out.
 

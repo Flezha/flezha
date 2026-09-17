@@ -35,14 +35,6 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
 import naming_gate
 
-# Whole directories that hold nothing but build output.
-ARTIFACT_DIRS = (
-    ("sdk/java/flezha-sdk-native/src/main/resources/native/",
-     "sdk/java/flezha-sdk-native/src/main/resources/native/"),
-    ("sdk/java/flezha-sdk/dist/", "sdk/java/flezha-sdk/dist/"),
-    ("test/apps/java_runner/dist/", "test/apps/java_runner/dist/"),
-)
-
 # Compiled output wherever it lands. `.pyc` is here because a runner launch
 # rewrites it, so a tracked one is a diff on every run.
 ARTIFACT_EXT = {
@@ -64,21 +56,16 @@ def tracked_check():
     for rel in naming_gate.tracked_files():
         if rel in EXEMPT:
             continue
-        for prefix, ignore_entry in ARTIFACT_DIRS:
-            if rel.startswith(prefix):
-                failures.append((rel, ignore_entry))
-                break
-        else:
-            if os.path.splitext(rel)[1] in ARTIFACT_EXT:
-                failures.append((rel, rel))
+        if os.path.splitext(rel)[1] in ARTIFACT_EXT:
+            failures.append(rel)
 
     if not failures:
         print("no build artefacts tracked")
         return 0
 
     print("Build artefacts are tracked in git:\n", file=sys.stderr)
-    for rel, ignore_entry in failures:
-        print(f"  {rel}\n      .gitignore should carry: {ignore_entry}", file=sys.stderr)
+    for rel in failures:
+        print(f"  {rel}\n      .gitignore should carry: {rel}", file=sys.stderr)
     print(
         f"\n{len(failures)} tracked artefact(s). Compiled output is produced by "
         "`scripts/build-native.sh` and `scripts/build-dist.sh`; a release "

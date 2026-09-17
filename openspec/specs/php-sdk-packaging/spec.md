@@ -91,3 +91,18 @@ This obtain-one shape is the split that bundling every triple is recorded as owi
 - **WHEN** installation meets a platform no release publishes a binary for, or a fetch of a published binary that fails
 - **THEN** the first SHALL direct the operator to build the binary for that platform and the second to retry or fetch by hand, in messages that do not share wording
 
+### Requirement: The package is developed and tested from its own tree
+
+The PHP SDK SHALL be developed in a repository whose root is the Composer
+package, with its test app beside it, and its suite SHALL run there without a
+core tree: every test that reads a shared artefact SHALL read the vendored
+fixture set, and no test SHALL skip for the absence of this repository.
+
+#### Scenario: The suite runs from the PHP tree alone
+- **WHEN** the PHP suite runs in the PHP repository with `contract/` present and no core tree
+- **THEN** every test SHALL run and none SHALL be skipped for a missing repository file
+
+#### Scenario: Packagist serves the package root
+- **WHEN** the repository is registered on Packagist
+- **THEN** `composer.json` SHALL be at the repository root and the package SHALL install from a tag
+

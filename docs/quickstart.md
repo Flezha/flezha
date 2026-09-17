@@ -39,8 +39,8 @@ and a section in its own SDK page:
 | SDK | Entry point | Worked example |
 | --- | --- | --- |
 | Node | `LocalOperative.start` | [`examples/node/local_word_count.mjs`](../examples/node/local_word_count.mjs) |
-| Python | `LocalOperative.start` | [`examples/python/local_word_count.py`](../examples/python/local_word_count.py) |
-| Ruby | `Flezha::LocalOperative.start` | [`examples/ruby/local_word_count.rb`](../examples/ruby/local_word_count.rb) |
+| Python | `LocalOperative.start` | [`sdk/python/examples/local_word_count.py`](../sdk/python/examples/local_word_count.py) |
+| Ruby | `Flezha::LocalOperative.start` | [`sdk/ruby/examples/local_word_count.rb`](../sdk/ruby/examples/local_word_count.rb) |
 | PHP | `LocalOperative::start` | [`sdk/php/examples/E07_LocalMode.php`](../sdk/php/examples/E07_LocalMode.php) |
 
 ## Rust

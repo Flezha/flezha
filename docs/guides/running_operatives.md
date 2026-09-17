@@ -205,7 +205,7 @@ admin calls go between them: nothing extra keeps the process alive, the wait
 does, exactly as before.
 
 The echo example carries these lines commented out in its `Main`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/java/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha_java_sdk/tree/main/examples/echo).
 
 ### Rust
 
@@ -226,7 +226,7 @@ the controller's own result as a `serde_json::Value`, and a refusal as an
 `AdminError`.
 
 The echo example carries the calls commented out in its `main.rs`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/rust/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/echo).
 
 ### Node
 
@@ -245,7 +245,7 @@ it and the process keeps serving without a wait of its own. Each call is a promi
 of the controller's result.
 
 The echo example carries the calls commented out in its `runner.mjs`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/node/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha_node_sdk/tree/main/examples/echo).
 
 ### Python
 
@@ -266,7 +266,7 @@ runner.await_termination()
 for the controller's answer.
 
 The echo example carries the calls commented out in its `runner.py`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/python/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo).
 
 ### Ruby
 
@@ -287,7 +287,7 @@ runner.await_termination
 already has.
 
 The echo example carries the calls commented out in its `runner.rb`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/ruby/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/echo).
 
 ### PHP
 
@@ -309,7 +309,7 @@ answered at once, but PHP has no threads: a message they send is processed once
 `awaitTermination()` starts serving.
 
 The echo example carries the calls commented out in its `runner.php`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/sdk/php/examples/echo).
+[ready to uncomment](https://github.com/flezha/flezha_php_sdk/tree/main/examples/echo).
 
 ### Elixir
 

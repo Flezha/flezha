@@ -3,7 +3,7 @@
 //! controller's placement mirrors bit for bit.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
@@ -99,11 +99,19 @@ pub struct StreamInstance {
     background_handles: Mutex<Vec<JoinHandle<()>>>,
     /// The host prepare crossing's staging; a typed class never touches it.
     pub host_prepare: Mutex<crate::host::HostPrepareState>,
+    /// Retry ladders still running for this instance, each holding a payload
+    /// on its own thread rather than in any mailbox.
+    pub(crate) ladders: AtomicUsize,
     /// Resolved once at start from the class const and the runner override.
     persistence_enabled: bool,
 }
 
 impl StreamInstance {
+    /// Whether a retry ladder still holds a payload of this instance.
+    pub fn ladders_running(&self) -> bool {
+        self.ladders.load(Ordering::Acquire) > 0
+    }
+
     /// No persistence override, unpartitioned.
     pub fn new(topology: Arc<OperativeTopology>, instance_id: Arc<str>) -> Arc<Self> {
         Self::with_options(topology, instance_id, None, KeyGroupRange::UNPARTITIONED)
@@ -147,6 +155,7 @@ impl StreamInstance {
 
             StreamInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
+                ladders: AtomicUsize::new(0),
                 topology,
                 instance_id,
                 partition,

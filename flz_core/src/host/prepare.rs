@@ -27,6 +27,17 @@ pub struct HostPrepareState {
     pending_replay_end: bool,
 }
 
+impl HostPrepareState {
+    /// Whether an entry is queued for a crossing or at the host in one. Neither
+    /// is in a mailbox or among the poll core's outstanding activations. A
+    /// crossing that failed is on a retry ladder, which the instance counts.
+    pub fn in_flight(&self) -> bool {
+        self.queues
+            .values()
+            .any(|queue| queue.inflight || !queue.queued.is_empty())
+    }
+}
+
 #[derive(Default)]
 struct HostPrepareQueue {
     queued: VecDeque<StagedEntry>,
@@ -279,7 +290,8 @@ fn spawn_prepare_ladder(
     entry: StagedEntry,
     first_error: schema::WorkError,
 ) {
-    crate::retry::spawn_park_thread("flezha-prepare-park", move || {
+    let ladder_instance = Arc::clone(&instance);
+    crate::retry::spawn_park_thread(&ladder_instance, "flezha-prepare-park", move || {
         let channel = instance
             .topology
             .channel(channel_id)
