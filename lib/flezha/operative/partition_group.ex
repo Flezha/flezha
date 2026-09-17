@@ -59,13 +59,31 @@ defmodule Flezha.Operative.PartitionGroup do
   opts (`SpecDecoder.decode/4`), so each member's source knows
   which share of the stream is its own.
 
+  A builder without an id is given a generated base, trimmed so its largest
+  member id fits, and always starts a fresh group: a base that names a live
+  group or singleton is drawn again rather than converged or refused.
+
   Returns `{:ok, %{group:, members:, warnings:}}`; `warnings` carries advice
   the start proceeded despite (fewer runners than partitions). A converge
   additionally carries `already_running:` — the member ids it left untouched.
   """
   @spec start(String.t(), Flezha.Operative.Builder.t(), pos_integer(), binary()) ::
           {:ok, map()} | {:error, term()}
-  def start(namespace, operative, partitions, plugins_json \\ "[]") do
+  def start(namespace, operative, partitions, plugins_json \\ "[]")
+
+  def start(namespace, %{id: nil} = operative, partitions, plugins_json) do
+    reserve = byte_size(Partition.member_suffix(max(partitions - 1, 0)))
+
+    start_fresh = fn base ->
+      if members(namespace, base) == [] and Validator.operative_unique(namespace, base) == :ok,
+        do: start(namespace, %{operative | id: base}, partitions, plugins_json),
+        else: {:error, :id_taken}
+    end
+
+    OperativeManager.with_generated_id(operative.factory_id, start_fresh, reserve: reserve)
+  end
+
+  def start(namespace, operative, partitions, plugins_json) do
     plugins = fn member_id, partition_opts ->
       SpecDecoder.decode(plugins_json, namespace, member_id, partition_opts)
     end

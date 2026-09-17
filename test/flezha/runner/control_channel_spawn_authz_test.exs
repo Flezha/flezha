@@ -100,11 +100,46 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "spawned", error: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "spawned", error: "", instance_id: answered}} =
+             await_response()
+
     assert [%{id: id}] = FakeStartRegistry.started()
     assert id == ctx.instance_id
+    assert answered == ctx.instance_id
 
     assert_start_recorded(boundary, ctx.instance_id)
+  end
+
+  test "a spawn without an id is recorded under the id it was answered with", ctx do
+    :ok = RoleStore.bind(@principal, @ns, :spawner)
+    boundary = System.monotonic_time(:microsecond)
+
+    request_spawn(%{ctx | instance_id: ""})
+
+    assert {"ref-spawn", %{outcome: "spawned", error: "", instance_id: generated}} =
+             await_response()
+
+    assert generated =~ ~r/\Aworker-[a-z2-7]{16}\z/
+    assert [%{id: ^generated}] = FakeStartRegistry.started()
+    assert_start_recorded(boundary, generated)
+  end
+
+  test "a spawn without an id refused by its act is recorded with no id", ctx do
+    :ok = RoleStore.bind(@principal, @ns, :spawner)
+
+    stub(Flezha.AuthZ.Quotas, :check_allocation, fn _ns, key, _n ->
+      {:error, {:quota_exceeded, key, %{limit: 0}}}
+    end)
+
+    boundary = System.monotonic_time(:microsecond)
+
+    request_spawn(%{ctx | instance_id: ""})
+
+    assert {"ref-spawn", %{outcome: "refused", instance_id: ""}} = await_response()
+
+    record = NodeTestHelper.wait_until(fn -> audit_record(:start, boundary) end, 2_000, 25)
+    assert record.metadata.outcome == :error
+    assert record.metadata.operative == nil
   end
 
   test "an identity that may not send is refused a delivery to a running instance", ctx do

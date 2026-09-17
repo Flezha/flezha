@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Changed: an operative starts without a name, and every start answers its id
+
+The id is optional at every start. `flz operative start <factory>` takes the id as
+`--id` / `-i`, the consumer surface's `Operative.start` takes a spec with no `id`, a procedure's
+spawn takes none, and a partitioned start generates its group base. The controller then
+generates `<factory>-<16 characters>`, trimmed to the 32-byte limit, checks it with the same
+atomic claim a named start uses, counts a leftover state folder as taken, and draws again at
+most three times. A start without an id that is retried after a lost answer starts a second
+operative, and a spawn without an id always starts a new instance; pass an id when that
+matters.
+
+Every start and spawn answers `{id, outcome}`. A start answers `started` or `already_running`
+and no longer carries `operative_id`, `runner_id`, `node` or `pid`; a spawn answers `spawned`,
+`delivered` or `skipped_on_replay`. `SpawnWorkflowResponse` gains `instance_id`. The audit
+record of a start names the id it ran under.
+
+The SDK calls take the factory first and the id as an optional named argument:
+`OperativeSpec::new("echo").id(..)` and `ctx.spawn_workflow_with(.., SpawnOptions::id(..))` in
+Rust, `OperativeSpec.of("echo").id(..)` and `SpawnOptions.id(..)` in Java, keyword options in
+Elixir, keyword arguments in Python and Ruby, named arguments in PHP and an options object in
+Node. A spawn now returns a handle at once in all seven SDKs: Python, Ruby and PHP no longer
+wait for the controller or raise its refusal into the procedure, Node's `spawnWorkflow` is no
+longer `async`, and a refusal is read from the handle (`wait` / `await` and `try_result` /
+`tryResult`). The C ABI replaces `flz_core_spawn_workflow` with `flz_core_spawn_request` and
+`flz_core_spawn_result`, and the spawn handle lives once in `flz_core`.
+
+The CLI spellings change: `flz operative start <operative_id> <factory_id>` becomes
+`flz operative start <factory_id> [--id <id>]`, which prints `Started <id>` (or
+`{"id":..,"outcome":..}` with `--json`) instead of `Starting operative...`; `--init_values` and
+`-iv` become `--init-values` on `operative start` and `schedule add`; `-si` and the `-i` of
+`operative rewind --to-iteration` go. Both verbs refuse an option they do not read.
+
 ### Added: `merge`, the latest-document router and `flat_map` in every SDK
 
 Node, Python, Ruby, PHP and Elixir can now merge several channels into one procedure, as

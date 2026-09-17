@@ -122,19 +122,24 @@ defmodule Flezha.Service.Operative do
   # ---------- Mutations ----------
 
   @doc """
-  Start `operative` in `namespace`.
+  Start `operative` in `namespace`, answering the id it runs under and whether
+  this call started it (`:started`) or found a live instance already holding
+  the id it named (`:already_running`).
 
   `operative` is a `Flezha.Operative.Builder` or the named fields to build one
   from, so a consumer that reached the controller over a wire never has to put
   a struct on it. The same affordance `Flezha.Service.PluginManager.enable/3`
-  gives for a plugin.
+  gives for a plugin. A spec without an id is given a generated one.
   """
-  @spec start(String.t(), Builder.t() | keyword(), caller_context()) :: term() | {:error, term()}
+  @spec start(String.t(), Builder.t() | keyword(), caller_context()) ::
+          {:ok, %{id: String.t(), outcome: :started | :already_running}} | {:error, term()}
   verb start(namespace, operative, caller_context),
     verb: :operative_start,
-    target: &operative_target/1 do
+    target: &OperativeManager.start_target/2 do
     with {:ok, spec} <- Builder.build(operative) do
-      OperativeManager.start_operative(namespace, spec)
+      namespace
+      |> OperativeManager.start_operative(spec)
+      |> OperativeManager.start_answer(spec.id)
     end
   end
 
@@ -166,11 +171,4 @@ defmodule Flezha.Service.Operative do
 
   defp channel_metadata(channel) when channel in [nil, ""], do: %{}
   defp channel_metadata(channel), do: %{"channel" => channel}
-
-  defp operative_target([_namespace, %{id: id} | _]), do: %{operative: id}
-
-  defp operative_target([_namespace, fields | _]) when is_list(fields),
-    do: %{operative: to_string(Keyword.get(fields, :id, ""))}
-
-  defp operative_target([_namespace, operative | _]), do: %{operative: inspect(operative)}
 end

@@ -67,7 +67,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   traffic, never as a remembered-set fan-out.
 - **Partition** — one member of a partitioned stream operative: an ordinary instance `<id>#pK`
   with its own Overwatch, registry row, binding, input log, state tree, plugins and DLQ identity.
-  `flz operative start <id> <factory> --partitions N` starts N; `flz operative scale <group> M`
+  `flz operative start <factory> --id <id> --partitions N` starts N; `flz operative scale <group> M`
   rescales. See [`sdk/partitioned_operatives.md`](sdk/partitioned_operatives.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
   (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on

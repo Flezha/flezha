@@ -36,7 +36,10 @@ defmodule Flezha.AuthZ.Verb do
   fetch runs only for a bound caller whose role grants the action, so a refusal
   says nothing about whether the row exists. `as:` names the fetched row inside
   a body, `call:` names the whole call. `target:` overrides the row's audit
-  labels with a function of the argument list.
+  labels with a function of the argument list, or of the argument list and the
+  act's answer, for an act whose answer names what it acted on. A wire verb's
+  argument list for a target ends with its options list, without the
+  credential, because that is where its optional arguments ride.
   """
 
   alias Flezha.AuthZ
@@ -68,7 +71,9 @@ defmodule Flezha.AuthZ.Verb do
   @doc """
   Apply the row `verb` to `caller_context` for the positional `args`, then run
   `effect`. Options: `:row` (the fetch a `{:row, _}` scope reads), `:target`
-  (a function of `args` answering the audit's target fields), `:wire_opts`
+  (a function of `args`, or of `args` and the answer, answering the audit's
+  target fields; the answer is `nil` for an act audited before it runs or one
+  that raised), `:wire_opts`
   (the wire's trailing options, handed to the body on the call).
 
   Answers `{:error, {:forbidden, reason}}` on a refusal and never exits; a
@@ -87,7 +92,8 @@ defmodule Flezha.AuthZ.Verb do
   @spec invoke(atom(), [term()], keyword(), effect(), keyword()) :: term()
   def invoke(verb, args, wire_opts, effect, binding) do
     caller_context = Keyword.fetch!(binding, :identity).(wire_opts)
-    run_opts = [row: binding[:row], target: binding[:target], wire_opts: wire_opts]
+    target = wire_target(binding[:target], Keyword.delete(wire_opts, :token))
+    run_opts = [row: binding[:row], target: target, wire_opts: wire_opts]
 
     case run(verb, caller_context, args, effect, run_opts) do
       {:error, {:forbidden, reason}} ->
@@ -97,6 +103,11 @@ defmodule Flezha.AuthZ.Verb do
         other
     end
   end
+
+  defp wire_target(target, options) when is_function(target, 2),
+    do: fn args, answer -> target.(args ++ [options], answer) end
+
+  defp wire_target(target, _options), do: target
 
   @doc """
   The bindings a surface module declared: `{function, arity, verb, opts}`.
@@ -173,7 +184,7 @@ defmodule Flezha.AuthZ.Verb do
   defp audited(%{audit: :none}, call, _args, _opts, effect), do: effect.(call)
 
   defp audited(%{audit: {:before, source}} = row, call, args, opts, effect) do
-    emit(row, source, call, target(row, args, opts), %{})
+    emit(row, source, call, target(row, args, opts, nil), %{})
     effect.(call)
   end
 
@@ -181,7 +192,7 @@ defmodule Flezha.AuthZ.Verb do
   # record, and an exit or raise is re-raised once it is written.
   defp audited(%{audit: {:after, source}} = row, call, args, opts, effect) do
     {outcome, result} = observe(effect, call)
-    emit(row, source, call, target(row, args, opts), %{outcome: outcome})
+    emit(row, source, call, target(row, args, opts, answer(result)), %{outcome: outcome})
     settle(result)
   end
 
@@ -195,6 +206,9 @@ defmodule Flezha.AuthZ.Verb do
   defp outcome_of({:error, _reason}), do: :error
   defp outcome_of(:error), do: :error
   defp outcome_of(_result), do: :ok
+
+  defp answer({:value, result}), do: result
+  defp answer({:caught, _kind, _reason, _stacktrace}), do: nil
 
   defp settle({:value, result}), do: result
   defp settle({:caught, kind, reason, stacktrace}), do: :erlang.raise(kind, reason, stacktrace)
@@ -246,10 +260,13 @@ defmodule Flezha.AuthZ.Verb do
     action |> Atom.to_string() |> String.split(".") |> List.last() |> String.to_atom()
   end
 
-  defp target(row, args, opts) do
+  defp target(row, args, opts, answer) do
     case Keyword.get(opts, :target) do
       fun when is_function(fun, 1) ->
         fun.(args)
+
+      fun when is_function(fun, 2) ->
+        fun.(args, answer)
 
       nil ->
         row.target

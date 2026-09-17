@@ -10,10 +10,13 @@ defmodule Flezha.Service.OperativeManagerRoutingTest do
   # async: false: the live controller and its fleet; a peer BEAM.
 
   use ExUnit.Case, async: false
+  use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Cluster.Directory
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperativeManager.Placement
 
   @scope :flz_directory
 
@@ -71,10 +74,33 @@ defmodule Flezha.Service.OperativeManagerRoutingTest do
              OperativeManager.start_operative(ns, builder("op4", "selfy"))
   end
 
+  test "a start without an id is forwarded under the id this node drew" do
+    ns = unique_ns()
+    test_pid = self()
+    set_mimic_global_until_exit()
+    # The directory names a capable peer and the pick lands on this node, so the
+    # real forward runs and its verdict is the executing node's.
+    stub(Directory, :factory_nodes, fn _ns, _factory -> [:"capable-peer@127.0.0.1"] end)
+    stub(Placement, :pick_runner, fn _nodes, _id -> node() end)
+
+    mint = fn factory ->
+      send(test_pid, :drew)
+      factory <> "-origin"
+    end
+
+    assert {:error, %{operative_id: "facx-origin", node: executing, reason: reason}} =
+             OperativeManager.start_operative(ns, builder(nil, "facx"), mint: mint)
+
+    assert executing == node()
+    assert reason == "no runners in namespace #{ns}"
+    assert_received :drew
+    refute_received :drew
+  end
+
   test "spawn_or_deliver with no capable node anywhere answers factory_unknown" do
     ns = unique_ns()
 
-    assert :factory_unknown =
+    assert {:factory_unknown, "i1"} =
              OperativeManager.spawn_or_deliver(ns, "i1", "facx", "p", :deliver, caller(ns))
   end
 
@@ -84,7 +110,7 @@ defmodule Flezha.Service.OperativeManagerRoutingTest do
     # must not forward onto its own node.
     join(Directory.factory_group(ns, "facy"))
 
-    assert :factory_unknown =
+    assert {:factory_unknown, "i2"} =
              OperativeManager.spawn_or_deliver(ns, "i2", "facy", "p", :deliver, caller(ns))
   end
 

@@ -47,12 +47,17 @@ pub use flz_transport::env::{
     env_bool, env_dir, env_ms, env_parse, env_parse_positive, env_raw, env_string,
 };
 
-/// For uniqueness only, never for ordering.
+/// For uniqueness only, never for ordering. The clock alone repeats for two
+/// threads reading it in the same nanosecond, so a process-wide count fills
+/// the low bits.
 pub fn nonce_suffix() -> u128 {
-    std::time::SystemTime::now()
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let count = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    (nanos << 32) | u128::from(count)
 }
 
 pub fn read_u32_be(buf: &[u8], off: usize) -> u32 {

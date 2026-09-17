@@ -18,7 +18,7 @@ use flz_core::schema;
 
 use crate::{
     FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
-    FLZ_STARVATION_OBSERVED,
+    FLZ_SPAWN_FAILED, FLZ_SPAWN_PENDING, FLZ_STARVATION_OBSERVED,
 };
 
 /// The entry points that can park the calling thread. A host whose unit of
@@ -29,7 +29,9 @@ pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
     "flz_core_wait_starvation",
     "flz_core_complete",
     "flz_core_workflow_recv",
-    "flz_core_spawn_workflow",
+    // With a nonzero timeout. A read with a timeout of 0 never waits, so a
+    // host may make that one on any thread.
+    "flz_core_spawn_result",
     "flz_core_admin_call",
     // A local run parks the caller in all three: `feed` while the consumer's
     // mailbox is full, and the other two by their own budget. The host's poll
@@ -146,11 +148,11 @@ pub fn c_string(what: &str, value: &str) -> Result<CString, Refusal> {
 /// Run one entry point that hands out a buffer, and read what it handed out.
 ///
 /// `hands_out` is every status that means a buffer was produced —
-/// [`FLZ_POLL_ACTIVATION`] for poll and the workflow receive, [`FLZ_OK`] for
-/// spawn, both of [`FLZ_OK`] and [`FLZ_ERR`] for the topology check, whose
-/// answer is a verdict either way; every other status leaves the out pointers
-/// untouched. `read` runs over the borrowed slice BEFORE `flz_core_buf_free`,
-/// so no caller copies first.
+/// [`FLZ_POLL_ACTIVATION`] for poll and the workflow receive, [`FLZ_OK`] and
+/// [`FLZ_SPAWN_FAILED`] for the spawn result, both of [`FLZ_OK`] and
+/// [`FLZ_ERR`] for the topology check, whose answer is a verdict either way;
+/// every other status leaves the out pointers untouched. `read` runs over the
+/// borrowed slice BEFORE `flz_core_buf_free`, so no caller copies first.
 pub fn with_buffer<T>(
     hands_out: &[i32],
     call: impl FnOnce(*mut *mut u8, *mut usize) -> i32,
@@ -348,32 +350,50 @@ pub fn workflow_cancelled(ctx: CtxPtr, instance: &CStr) -> bool {
     unsafe { crate::flz_core_workflow_cancelled(ctx.get(), instance.as_ptr()) != 0 }
 }
 
-/// Spawn-or-deliver a workflow instance; the controller's outcome string.
-pub fn spawn_workflow(
+/// Request a spawn from the live activation `token`; the handle number, at
+/// once. An empty `id` asks the controller to generate one.
+pub fn spawn_request(
     ctx: CtxPtr,
-    instance: &CStr,
+    token: u64,
     factory: &CStr,
+    id: &CStr,
     payload: &[u8],
     if_running: &CStr,
-) -> Result<String, Refusal> {
-    let (status, outcome) = with_buffer(
-        &[FLZ_OK],
+    replay: bool,
+) -> Result<u64, Refusal> {
+    let mut handle = 0;
+    let status = unsafe {
+        crate::flz_core_spawn_request(
+            ctx.get(),
+            token,
+            factory.as_ptr(),
+            id.as_ptr(),
+            payload.as_ptr(),
+            payload.len(),
+            if_running.as_ptr(),
+            i32::from(replay),
+            &mut handle,
+        )
+    };
+    verdict(ctx, status).map(|()| handle)
+}
+
+/// Read a spawn handle, waiting up to `timeout_ms`: `None` while pending,
+/// otherwise the answer as JSON, carrying `outcome` when it resolved and
+/// `error` when it failed. A released handle is a refusal.
+pub fn spawn_result(ctx: CtxPtr, handle: u64, timeout_ms: u64) -> Result<Option<String>, Refusal> {
+    let (status, answer) = with_buffer(
+        &[FLZ_OK, FLZ_SPAWN_FAILED],
         |out, out_len| unsafe {
-            crate::flz_core_spawn_workflow(
-                ctx.get(),
-                instance.as_ptr(),
-                factory.as_ptr(),
-                payload.as_ptr(),
-                payload.len(),
-                if_running.as_ptr(),
-                out,
-                out_len,
-            )
+            crate::flz_core_spawn_result(ctx.get(), handle, timeout_ms, out, out_len)
         },
         |bytes| String::from_utf8_lossy(bytes).into_owned(),
     );
-    verdict(ctx, status)?;
-    Ok(outcome.unwrap_or_default())
+    match status {
+        FLZ_OK | FLZ_SPAWN_FAILED => Ok(answer),
+        FLZ_SPAWN_PENDING => Ok(None),
+        _ => Err(core(ctx)),
+    }
 }
 
 /// Administer the namespace this connection proved: the published function's

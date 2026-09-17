@@ -48,16 +48,26 @@ Starting it is a separate step, and it is the one that creates a running
 instance.
 
 ```bash
-flz operative start my_echo echo
+flz operative start echo --id my_echo
 ```
 
-The command takes two ids, and they are not the same kind of thing.
+```
+Started my_echo
+```
 
-**`my_echo` is the operative id.** You choose it when you start the operative,
-and it identifies this one operative for as long as it exists. It is unique
-within its namespace, and every later command finds the operative by it:
+The command names two ids, and they are not the same kind of thing.
+
+**`my_echo` is the operative id.** You choose it with `--id` when you start the
+operative, and it identifies this one operative for as long as it exists. It is
+unique within its namespace, and every later command finds the operative by it:
 sending it a message, listening to it, stopping it, or attaching a plugin to it
-with `--operative_id`.
+with `--operative_id`. Leave `--id` out and the controller generates one from
+the factory id, such as `echo-k7m2qzxw4pd3fn2a`, and prints it.
+
+A start without `--id` that is run again because its answer was lost starts a
+second operative, and a second stream runs until it is stopped. Pass `--id` when
+a start may be retried: a start of an id that is already running changes nothing
+and prints `my_echo is already running, left untouched`.
 
 **`echo` is the factory id.** Every operative class declares exactly one, and
 `factoryId()` returns it in your code. A runner offers its classes to the
@@ -66,8 +76,8 @@ it to find a runner that can run the class. It is recorded in the controller's
 registry and in durable state, so changing it later declares a new class rather
 than renaming the old one.
 
-One factory id can back many operatives: `flz operative start eu_echo echo` and
-`flz operative start us_echo echo` would be two independent operatives of the
+One factory id can back many operatives: `flz operative start echo --id eu_echo` and
+`flz operative start echo --id us_echo` would be two independent operatives of the
 same class, each with its own state. Everything after this uses the operative
 id.
 
@@ -170,7 +180,7 @@ controller restart `my_echo` comes back on its own. Running `start` again is
 not how you bring it back.
 
 **Running `start` again on a live id changes nothing, quietly.** It reports
-that the existing instance was left untouched and that the options were not
+that the existing instance was left untouched, and the options are not
 compared. So editing the command to add `--partitions 3` and re-running it
 looks like it worked and did nothing at all. Stop the instance first, then
 start it with the options you want.
@@ -192,7 +202,7 @@ FlezhaRunner runner = Flezha.createRunner("default")
         .start();
 
 Admin admin = runner.admin();
-admin.startOperative(OperativeSpec.of("my_echo", "echo"));
+admin.startOperative(OperativeSpec.of("echo").id("my_echo"));
 admin.send("my_echo", "hello", "in");
 admin.stopOperative("my_echo");
 
@@ -214,7 +224,7 @@ let runner = Flezha::create_runner("default")?;
 runner.define_stream::<EchoOperative>()?.start()?;
 
 let admin = runner.admin();
-admin.start_operative(&OperativeSpec::new("my_echo", "echo"))?;
+admin.start_operative(&OperativeSpec::new("echo").id("my_echo"))?;
 admin.send("my_echo", "hello", "in")?;
 admin.stop_operative("my_echo")?;
 
@@ -235,7 +245,7 @@ const runner = createRunner('default').defineStream('./echo_operative.mjs');
 await runner.run();
 
 const admin = runner.admin();
-await admin.startOperative({ id: 'my_echo', factory_id: 'echo' });
+await admin.startOperative('echo', { id: 'my_echo' });
 await admin.send('my_echo', 'hello', 'in');
 await admin.stopOperative('my_echo');
 ```
@@ -255,7 +265,7 @@ runner.define_stream(echo_operative)
 runner.start()
 
 admin = runner.admin()
-admin.start_operative("my_echo", "echo")
+admin.start_operative("echo", id="my_echo")
 admin.send("my_echo", "hello", "in")
 admin.stop_operative("my_echo")
 
@@ -275,7 +285,7 @@ runner = Flezha.create_runner("default").define_stream(EchoOperative)
 runner.boot
 
 admin = runner.admin
-admin.start_operative("my_echo", "echo")
+admin.start_operative("echo", id: "my_echo")
 admin.send_to("my_echo", "hello", channel: "in")
 admin.stop_operative("my_echo")
 
@@ -297,7 +307,7 @@ $runner = Flezha::createRunner('default')
     ->start();
 
 $admin = $runner->admin();
-$admin->startOperative('my_echo', 'echo');
+$admin->startOperative('echo', id: 'my_echo');
 $admin->send('my_echo', 'hello', 'in');
 $admin->stopOperative('my_echo');
 
@@ -320,7 +330,7 @@ children = [{Flezha.SDK, namespace: "default", streams: [Echo.Operative], transp
 alias Flezha.SDK.Admin
 runner = Flezha.SDK.RunnerServer
 
-{:ok, _} = Admin.start_operative(runner, "my_echo", "echo")
+{:ok, _} = Admin.start_operative(runner, "echo", id: "my_echo")
 {:ok, _} = Admin.send_to(runner, "my_echo", "hello", "in")
 {:ok, _} = Admin.stop_operative(runner, "my_echo")
 ```

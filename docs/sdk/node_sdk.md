@@ -172,8 +172,10 @@ nothing could free it — a wedged **process**, not a wedged worker.
 So no blocking core call is reachable synchronously from JavaScript. `poll` is
 not exported to JavaScript at all; it is driven from the SDK's own native
 threads, never the runtime's shared I/O threadpool. `complete`,
-`workflowRecv`, `spawnWorkflow` and `start` return promises whose blocking work
-runs on native threads the binding owns. A test over the addon's exported
+`workflowRecv`, `spawnWait` and `start` return promises whose blocking work
+runs on native threads the binding owns; `spawnRequest` and `spawnTryResult`
+never wait, so `ctx.spawnWorkflow` returns its handle synchronously and only
+the handle's `wait()` is a promise. A test over the addon's exported
 surface asserts this rather than leaving it to review.
 
 ## Determinism

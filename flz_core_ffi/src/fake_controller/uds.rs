@@ -197,6 +197,33 @@ impl Controller {
         self.try_await_success(&format!("the {name} reply"), reference_id)
     }
 
+    /// Answer a spawn request the way the controller does: `spawned` under the
+    /// request's own id, or under a generated `<factory>-<suffix>` when it
+    /// carried none, or refused with `refusal`. Answers the id it named.
+    pub fn try_answer_spawn(
+        &self,
+        reference_id: &str,
+        request: &pb::SpawnWorkflowRequest,
+        refusal: Option<&str>,
+    ) -> std::io::Result<String> {
+        let (outcome, error, id) = match refusal {
+            Some(reason) => ("refused", reason.to_string(), request.instance_id.clone()),
+            None if request.instance_id.is_empty() => {
+                ("spawned", String::new(), generated_id(&request.factory_id))
+            }
+            None => ("spawned", String::new(), request.instance_id.clone()),
+        };
+        self.try_send(
+            reference_id,
+            pb::command_request::Command::SpawnWorkflowResponse(pb::SpawnWorkflowResponse {
+                outcome: outcome.to_string(),
+                error,
+                instance_id: id.clone(),
+            }),
+        )?;
+        Ok(id)
+    }
+
     /// Wait for a SUCCESSFUL command reply carrying `reference_id`. A refusal
     /// carries the runner's own errors, which is the whole of what an SDK
     /// author needs to see.
@@ -221,18 +248,47 @@ pub fn shutdown_notification(
     message: &[u8],
     operative: &str,
 ) -> Option<(String, Vec<u8>)> {
+    match command_in(payload_id, message)? {
+        (reference_id, pb::command_request::Command::RunnerShutdownNotification(n))
+            if n.operative_id == operative =>
+        {
+            Some((reference_id, n.serialized_state))
+        }
+        _ => None,
+    }
+}
+
+/// The `SpawnWorkflowRequest` in a captured frame, with its reference id.
+pub fn spawn_request(
+    payload_id: &str,
+    message: &[u8],
+) -> Option<(String, pb::SpawnWorkflowRequest)> {
+    match command_in(payload_id, message)? {
+        (reference_id, pb::command_request::Command::SpawnWorkflowRequest(request)) => {
+            Some((reference_id, request))
+        }
+        _ => None,
+    }
+}
+
+/// The command a runner→controller frame carries, with its reference id.
+fn command_in(payload_id: &str, message: &[u8]) -> Option<(String, pb::command_request::Command)> {
     if payload_id != COMMAND_PAYLOAD_ID {
         return None;
     }
     let request = pb::CommandRequest::decode(message).ok()?;
-    match request.command {
-        Some(pb::command_request::Command::RunnerShutdownNotification(n))
-            if n.operative_id == operative =>
-        {
-            Some((request.reference_id, n.serialized_state))
-        }
-        _ => None,
-    }
+    Some((request.reference_id, request.command?))
+}
+
+/// An id shaped like the ones the controller generates: the factory, a dash
+/// and 16 lowercase base32 characters. Distinct per call, not random.
+fn generated_id(factory_id: &str) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let seed = flz_core::util::nonce_suffix();
+    let suffix: String = (0..16)
+        .map(|i| char::from(ALPHABET[((seed >> (5 * i)) & 31) as usize]))
+        .collect();
+    format!("{factory_id}-{suffix}")
 }
 
 /// What the runner has sent so far, for a refusal to name.

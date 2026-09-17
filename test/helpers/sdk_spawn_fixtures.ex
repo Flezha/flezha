@@ -15,13 +15,13 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
     def init_state(_), do: nil
 
     def run("unread:" <> instance_id, state, ctx) do
-      Ctx.spawn_workflow(ctx, instance_id, "worker", "payload", :deliver)
+      Ctx.spawn_workflow(ctx, "worker", "payload", id: instance_id)
       Ctx.emit(ctx, "sent")
       {:ok, state}
     end
 
     def run(instance_id, state, ctx) do
-      handle = Ctx.spawn_workflow(ctx, instance_id, "worker", "payload", :deliver)
+      handle = Ctx.spawn_workflow(ctx, "worker", "payload", id: instance_id)
       Ctx.emit(ctx, inspect(Spawn.await(handle, 5_000)))
       {:ok, state}
     end

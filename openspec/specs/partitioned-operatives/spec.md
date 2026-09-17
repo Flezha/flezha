@@ -10,33 +10,48 @@ keyless class is refused, and coverage gaps surface as warnings rather than as
 quietly missing data.
 ## Requirements
 ### Requirement: A partitioned start SHALL materialize N ordinary operative instances
-`flz operative start <id> --partitions N` (N ≥ 2, stream kind only) SHALL start N ordinary operative instances named `<id>#p0` … `<id>#p{N-1}`, each a full operative — own Overwatch, own ProcessHub child and registry row, own runner binding, own input log, own state tree, own plugins, own DLQ identity. Each member's durable cspec opts SHALL carry `group` (the base id), `partition`, `partitions`, and its owned key-group range. There SHALL be no stored group record: every group-level view SHALL be derived from member rows at read time. `partitions: 1` (the default) SHALL be byte-identical to an unpartitioned start.
+
+`flz operative start <factory> --id <id> --partitions N` (N ≥ 2, stream kind only) SHALL start N ordinary operative instances named `<id>#p0` … `<id>#p{N-1}`, each a full operative: own Overwatch, own ProcessHub child and registry row, own runner binding, own input log, own state tree, own plugins, own DLQ identity. Each member's durable cspec opts SHALL carry `group` (the base id), `partition`, `partitions`, and its owned key-group range. There SHALL be no stored group record: every group-level view SHALL be derived from member rows at read time. `partitions: 1` (the default) SHALL be byte-identical to an unpartitioned start.
+
+A partitioned start with no `--id` SHALL generate the base id, trimming the factory prefix so that the largest member id, `<base>#p{N-1}`, still fits the operative id limit, and SHALL report that base as the started id. A generated base is never refused on the id budget.
 
 #### Scenario: Start creates self-describing members
-- **WHEN** `flz operative start ohlc <factory> --partitions 3` succeeds
+
+- **WHEN** `flz operative start <factory> --id ohlc --partitions 3` succeeds
 - **THEN** registry rows `ohlc#p0`, `ohlc#p1`, `ohlc#p2` exist, each with cspec opts `group: "ohlc"`, its `partition`, `partitions: 3`, and a key-group range, and each member is bound and running as an ordinary operative
 
+#### Scenario: A partitioned start without an id generates a base that fits
+
+- **WHEN** `flz operative start <factory> --partitions 12` succeeds with no `--id`, for a factory id long enough that its untrimmed prefix would not fit
+- **THEN** a generated base is reported as the started id, members `<base>#p0` … `<base>#p11` exist, and `<base>#p11` is within the operative id limit
+
 #### Scenario: Default is unchanged
+
 - **WHEN** an operative is started without `--partitions` (or with `--partitions 1`)
-- **THEN** exactly one instance starts with no partition opts and behavior is identical to before this change
+- **THEN** exactly one instance starts with no partition opts and behavior is identical to an unpartitioned start
 
 #### Scenario: Workflow kind is refused
+
 - **WHEN** `--partitions 2` is given with `--kind workflow`
 - **THEN** the start is refused with an error naming that partitions apply to stream operatives only, and nothing is started
 
 #### Scenario: Id budget is checked before any member starts
-- **WHEN** `byte_size(base_id) + byte_size("#p" <> Integer.to_string(N-1))` exceeds 32 bytes
+
+- **WHEN** a caller-given `base_id` makes `byte_size(base_id) + byte_size("#p" <> Integer.to_string(N-1))` exceed 32 bytes
 - **THEN** the start is refused up front naming the 32-byte limit and the maximum base length for this N, and no member is started
 
 #### Scenario: Quota is preflighted for N units
+
 - **WHEN** the namespace's `max_operatives` quota cannot admit N more operatives
 - **THEN** the group start is refused before the first member starts
 
 #### Scenario: A mid-group member failure does not leave a silent half-group
+
 - **WHEN** member k of N fails to start
 - **THEN** already-started members are stopped (best effort) and the returned error names the failed member and its reason
 
 #### Scenario: More partitions than runners warns loudly but proceeds
+
 - **WHEN** `--partitions N` exceeds the namespace's active runner count
 - **THEN** the start proceeds and the CLI emits a loud warning naming both counts and how many members will share machines
 
@@ -154,17 +169,24 @@ A partition, being one ordinary operative instance, SHALL keep its whole durable
 
 ### Requirement: A partitioned start over an existing group SHALL converge to N by starting only the missing members
 
-When `flz operative start <id> --partitions N` targets an id whose group already has live members, the start SHALL converge instead of refusing: it SHALL start only the members whose indices are absent, iff every surviving member's cspec-declared identity matches the request — declared `partitions` equals N AND the stored range equals the recomputed `Partition.ranges(N)` slice for that member's index. On any mismatch the command SHALL refuse before starting anything, naming the mismatching member, its declared partition count, and `flz operative scale` as the remedy — converge SHALL never change N, because changing N moves Entity state and start never does. A newly-started missing member SHALL receive the fan-out of the supplied `--plugins` config exactly as a fresh group start would; surviving members and their live plugin sets SHALL NOT be touched. A missing member racing into existence mid-run (concurrent converge, reconcile, or Convergence bind) SHALL be treated as already present, not as a failure. The command SHALL report started and already-running member ids distinctly; a fully-present group SHALL degenerate to the single-start no-op (exit 0, nothing started). Quota SHALL be preflighted on the missing count only. A fresh start (no live members) SHALL behave byte-identically to before this change, including the all-or-nothing rollback — which in every mode stops only members the current run started.
+When `flz operative start <factory> --id <id> --partitions N` targets an id whose group already has live members, the start SHALL converge instead of refusing: it SHALL start only the members whose indices are absent, iff every surviving member's cspec-declared identity matches the request: declared `partitions` equals N AND the stored range equals the recomputed `Partition.ranges(N)` slice for that member's index. On any mismatch the command SHALL refuse before starting anything, naming the mismatching member, its declared partition count, and `flz operative scale` as the remedy. Converge SHALL never change N, because changing N moves Entity state and start never does. A newly-started missing member SHALL receive the fan-out of the supplied `--plugins` config exactly as a fresh group start would; surviving members and their live plugin sets SHALL NOT be touched. A missing member racing into existence mid-run (concurrent converge, reconcile, or Convergence bind) SHALL be treated as already present, not as a failure. The command SHALL report started and already-running member ids distinctly; a fully-present group SHALL degenerate to the single-start no-op (exit 0, nothing started). Quota SHALL be preflighted on the missing count only. A fresh start (no live members) SHALL behave byte-identically to a start of a group that never existed, including the all-or-nothing rollback, which in every mode stops only members the current run started.
+
+Converging needs the group's id. A partitioned start with no `--id` generates a base that names no existing group, so it SHALL always materialize a fresh group and SHALL never converge one.
 
 #### Scenario: An under-membered group is healed by re-running the start
 
-- **WHEN** a 3-member group has live members `demo#p0` and `demo#p1` (declared `partitions: 3`) and `flz operative start demo --partitions 3` is re-run
+- **WHEN** a 3-member group has live members `demo#p0` and `demo#p1` (declared `partitions: 3`) and `flz operative start <factory> --id demo --partitions 3` is re-run
 - **THEN** only `demo#p2` is started, it restores its Entity state from its on-disk WAL at bind, the two survivors observe no stop or rebind, and the command exits 0 reporting one started and two already-running members
 
 #### Scenario: A fully-present group re-run is a quiet no-op
 
 - **WHEN** all N members are live and the same start is re-run
 - **THEN** the command exits 0, nothing is started or stopped, and the output states the group is already running at N
+
+#### Scenario: A start without an id never converges an existing group
+
+- **WHEN** a 3-member group `demo` is live and `flz operative start <factory> --partitions 3` is run with no `--id`
+- **THEN** a new group under a generated base is started, and no member of `demo` is started, stopped or rebound
 
 #### Scenario: An N mismatch refuses toward scale
 
@@ -178,15 +200,15 @@ When `flz operative start <id> --partitions N` targets an id whose group already
 
 ### Requirement: Group-base and singleton id collisions SHALL be refused in both directions
 
-A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it — the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, procedure-requested spawns, routed starts) is covered.
+A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, procedure-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused.
 
 #### Scenario: A plain start of a group base is refused
 
-- **WHEN** group `demo` has live members and `flz operative start demo` is issued without `--partitions`
+- **WHEN** group `demo` has live members and `flz operative start <factory> --id demo` is issued without `--partitions`
 - **THEN** the start is refused naming the existing group and `--partitions`, and no singleton is started
 
 #### Scenario: A partitioned start over a live singleton is refused
 
-- **WHEN** a live unpartitioned operative holds `demo` and `flz operative start demo --partitions 3` is issued
+- **WHEN** a live unpartitioned operative holds `demo` and `flz operative start <factory> --id demo --partitions 3` is issued
 - **THEN** the start is refused before any member starts
 

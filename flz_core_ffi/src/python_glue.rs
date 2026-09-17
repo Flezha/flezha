@@ -582,22 +582,40 @@ impl Core {
         Ok(veneer::workflow_cancelled(ctx, &instance))
     }
 
-    /// Spawn-or-deliver a workflow instance; answers the controller's outcome
-    /// string. Blocking: the ABI call waits up to thirty seconds.
-    fn spawn_workflow(
+    /// Request a spawn from the live activation `token`; answers the handle
+    /// number at once. An empty `id` asks the controller to generate one.
+    /// Never waits, so it holds the GIL.
+    fn spawn_request(
         &self,
-        py: Python<'_>,
-        instance_id: &str,
+        token: u64,
         factory_id: &str,
+        id: &str,
         payload: &[u8],
         if_running: &str,
-    ) -> PyResult<String> {
+        replay: bool,
+    ) -> PyResult<u64> {
         let ctx = self.ptr()?;
-        let instance = veneer::c_string("instance id", instance_id)?;
         let factory = veneer::c_string("factory id", factory_id)?;
+        let id = veneer::c_string("id", id)?;
         let mode = veneer::c_string("if_running", if_running)?;
-        let payload = payload.to_vec();
-        Ok(py.detach(move || veneer::spawn_workflow(ctx, &instance, &factory, &payload, &mode))?)
+        Ok(veneer::spawn_request(
+            ctx, token, &factory, &id, payload, &mode, replay,
+        )?)
+    }
+
+    /// Read a spawn handle: `None` while pending, otherwise its answer as JSON.
+    /// A nonzero timeout waits with the GIL released.
+    fn spawn_result(
+        &self,
+        py: Python<'_>,
+        handle: u64,
+        timeout_ms: u64,
+    ) -> PyResult<Option<String>> {
+        let ctx = self.ptr()?;
+        if timeout_ms == 0 {
+            return Ok(veneer::spawn_result(ctx, handle, 0)?);
+        }
+        Ok(py.detach(move || veneer::spawn_result(ctx, handle, timeout_ms))?)
     }
 
     /// Administer the namespace this connection proved; answers the published
@@ -691,7 +709,8 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.workflow_emit", "flz_core_workflow_emit"),
     ("Core.workflow_recv", "flz_core_workflow_recv"),
     ("Core.workflow_cancelled", "flz_core_workflow_cancelled"),
-    ("Core.spawn_workflow", "flz_core_spawn_workflow"),
+    ("Core.spawn_request", "flz_core_spawn_request"),
+    ("Core.spawn_result", "flz_core_spawn_result"),
     ("Core.admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("Core.last_error", "flz_core_last_error"),

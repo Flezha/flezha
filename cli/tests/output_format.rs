@@ -336,7 +336,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (&["token", "list", "--token"], Refused("--token requires a value")),
     (
-        &["operative", "start", "op", "fac", "--kind"],
+        &["operative", "start", "fac", "--kind"],
         Refused("--kind requires a value"),
     ),
     (
@@ -362,9 +362,9 @@ const CASES: &[(&[&str], Want)] = &[
     // A value the operator wrote and left empty IS a value: it is not refused,
     // and `json`'s own rule for an empty value still answers `{}`.
     (
-        &["operative", "start", "op", "fac", "-iv", ""],
+        &["operative", "start", "fac", "--init-values", ""],
         Rpc(
-            "Flezha.Service.CliManager.operative_start(\"\", \"op\", \"fac\", \"{}\", \"{}\", [])",
+            "Flezha.Service.CliManager.operative_start(\"\", \"fac\", \"{}\", \"text\", \"{}\", [])",
         ),
     ),
     // A NUMBER the reader cannot parse is the same request as one nobody
@@ -422,30 +422,24 @@ const CASES: &[(&[&str], Want)] = &[
         &[
             "operative",
             "start",
-            "op",
             "fac",
+            "--id",
+            "op",
             "--snapshot-interval",
             "5",
             "--partitions",
             "4",
         ],
         Rpc(
-            r#"Flezha.Service.CliManager.operative_start("", "op", "fac", "{}", "{\"snapshot_interval\": \"5\", \"partitions\": \"4\"}", [])"#,
+            r#"Flezha.Service.CliManager.operative_start("", "fac", "{}", "text", "{\"snapshot_interval\": \"5\", \"partitions\": \"4\"}", [id: "op"])"#,
         ),
     ),
     (
-        &["operative", "start", "op", "fac", "--partitions", "abc"],
+        &["operative", "start", "fac", "--partitions", "abc"],
         Refused("invalid --partitions value 'abc'"),
     ),
     (
-        &[
-            "operative",
-            "start",
-            "op",
-            "fac",
-            "--snapshot-interval",
-            "abc",
-        ],
+        &["operative", "start", "fac", "--snapshot-interval", "abc"],
         Refused("invalid --snapshot-interval value 'abc'"),
     ),
     (
@@ -537,13 +531,48 @@ const CASES: &[(&[&str], Want)] = &[
         &["reset", "--dry-run", "--probe-timeout-ms", "abc", NO_ROOT],
         Refused("invalid --probe-timeout-ms value 'abc'"),
     ),
-    // `flz operative start` carries `--plugins` and `--kind` in the options
-    // list, and only when written; the two verbs whose credential once rode a
-    // JSON document or nowhere at all now end with the same list as every
-    // other.
+    // `flz operative start` carries `--id`, `--plugins` and `--kind` in the
+    // options list, and only when written; the two verbs whose credential once
+    // rode a JSON document or nowhere at all now end with the same list as
+    // every other.
     (
-        &["operative", "start", "op", "fac", "--kind", "workflow", "--plugins", "[]"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "op", "fac", "{}", "{}", [plugins: "[]", kind: "workflow"])"#),
+        &["operative", "start", "fac", "--id", "op", "--kind", "workflow", "--plugins", "[]"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "fac", "{}", "text", "{}", [id: "op", plugins: "[]", kind: "workflow"])"#),
+    ),
+    // A start without an id carries no id at all: the controller generates it.
+    (
+        &["operative", "start", "echo"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "text", "{}", [])"#),
+    ),
+    (
+        &["operative", "start", "echo", "-i", "my_echo"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "text", "{}", [id: "my_echo"])"#),
+    ),
+    (
+        &["operative", "start", "echo", "-o", "json"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "json", "{}", [])"#),
+    ),
+    (
+        &["operative", "start", "echo", "--json", "--init-values", r#"{"a":1}"#],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{\"a\":1}", "json", "{}", [])"#),
+    ),
+    (
+        &["operative", "start", "my_echo", "echo"],
+        Refused("unknown argument 'echo'"),
+    ),
+    // The spellings the rule retired are refused, not dropped: a start that
+    // ignored them would run without the values the operator wrote.
+    (
+        &["operative", "start", "echo", "-iv", r#"{"a":1}"#],
+        Refused("unknown argument '-iv'"),
+    ),
+    (
+        &["operative", "start", "echo", "--init_values", r#"{"a":1}"#],
+        Refused("unknown argument '--init_values'"),
+    ),
+    (
+        &["schedule", "add", "d", "--cron", "* * * * *", "--tz", "Etc/UTC", "--factory", "f", "-iv", "{}"],
+        Refused("unknown argument '-iv'"),
     ),
     (
         &["plugin", "upgrade", "p", "/x.fpz", "--token", "t"],
@@ -580,7 +609,7 @@ const CASES: &[(&[&str], Want)] = &[
             "Etc/UTC",
             "--factory",
             "f",
-            "-iv",
+            "--init-values",
             r#"{"a":"x\"y"}"#,
         ],
         Rpc(
@@ -592,7 +621,7 @@ const CASES: &[(&[&str], Want)] = &[
         Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f"])"#),
     ),
     (
-        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "-iv", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
+        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
         Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", kind: "workflow", plugins: "[{\"hooks\":[\"on_output\"],\"id\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
     ),
 ];
@@ -629,7 +658,7 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["observe", "tail", "beam_vm"],
     &["observe", "enable", "s"],
     &["observe", "disable", "s"],
-    &["operative", "start", "op", "fac"],
+    &["operative", "start", "fac"],
     &["operative", "scale", "g", "2"],
     &["operative", "stop", "op"],
     &["operative", "state", "op"],
@@ -688,8 +717,9 @@ const TOKEN_BEARERS: &[&[&str]] = &[
 const REPEATED: &[&str] = &[
     "operative",
     "start",
-    "op",
     "fac",
+    "--id",
+    "op",
     "--snapshot-interval",
     "5",
     "--partitions",

@@ -497,24 +497,42 @@ pub fn workflow_cancelled(instance_id: String) -> Result<bool> {
     Ok(veneer::workflow_cancelled(ctx, &instance))
 }
 
-/// Spawn-or-deliver a workflow instance; resolves with the controller's
-/// outcome string. Asynchronous: the ABI call waits up to thirty seconds.
-#[napi(ts_return_type = "Promise<string>")]
-pub fn spawn_workflow<'a>(
-    env: &'a Env,
-    instance_id: String,
+/// Request a spawn from the live activation `token`; answers the handle number
+/// at once. An empty `id` asks the controller to generate one. Synchronous:
+/// the request never waits.
+#[napi]
+pub fn spawn_request(
+    token: BigInt,
     factory_id: String,
+    id: String,
     payload: Buffer,
     if_running: String,
-) -> Result<Object<'a>> {
-    let instance = veneer::c_string("instance id", &instance_id)?;
+    replay: bool,
+) -> Result<BigInt> {
+    let ctx = context()?;
+    let token = from_big("token", &token)?;
     let factory = veneer::c_string("factory id", &factory_id)?;
+    let id = veneer::c_string("id", &id)?;
     let mode = veneer::c_string("ifRunning", &if_running)?;
-    let payload = payload.to_vec();
+    let handle = veneer::spawn_request(ctx, token, &factory, &id, &payload, &mode, replay)?;
+    Ok(BigInt::from(handle))
+}
+
+/// A spawn handle's answer as JSON if it has arrived, or `null`. Synchronous:
+/// the read it makes has a timeout of zero, which never waits.
+#[napi]
+pub fn spawn_try_result(handle: BigInt) -> Result<Option<String>> {
+    let handle = from_big("handle", &handle)?;
+    Ok(veneer::spawn_result(context()?, handle, 0)?)
+}
+
+/// Wait up to `timeoutMs` for a spawn handle's answer: its JSON, or `null` if
+/// it is still pending. Asynchronous: the read parks for the whole timeout.
+#[napi(ts_return_type = "Promise<string | null>")]
+pub fn spawn_wait<'a>(env: &'a Env, handle: BigInt, timeout_ms: u32) -> Result<Object<'a>> {
+    let handle = from_big("handle", &handle)?;
     off_loop(env, context()?, move |ctx| {
-        Ok(veneer::spawn_workflow(
-            ctx, &instance, &factory, &payload, &mode,
-        )?)
+        Ok(veneer::spawn_result(ctx, handle, u64::from(timeout_ms))?)
     })
 }
 
@@ -562,7 +580,7 @@ pub struct JsNativeExport {
     /// The C ABI entry point it reaches, or `null` for host bookkeeping that
     /// reaches none.
     pub abi: Option<String>,
-    /// Whether that entry point can block. Every one of these is a promise.
+    /// Whether calling this export can block. Every one of these is a promise.
     pub blocking: bool,
 }
 
@@ -612,7 +630,10 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("workflowEmit", "flz_core_workflow_emit"),
         veneer("workflowRecv", "flz_core_workflow_recv"),
         veneer("workflowCancelled", "flz_core_workflow_cancelled"),
-        veneer("spawnWorkflow", "flz_core_spawn_workflow"),
+        veneer("spawnRequest", "flz_core_spawn_request"),
+        // A read that always passes a timeout of zero never waits.
+        host("spawnTryResult", Some("flz_core_spawn_result"), false),
+        veneer("spawnWait", "flz_core_spawn_result"),
         veneer("adminCall", "flz_core_admin_call"),
         veneer("monotonicNanos", "flz_core_monotonic_nanos"),
         veneer("lastError", "flz_core_last_error"),

@@ -927,17 +927,22 @@ If the Elixir SDK discards no queued input on restore, it SHALL still declare th
 
 The Elixir SDK SHALL let a procedure request spawn-or-deliver of a workflow instance in its
 own namespace with one call, under the contract the other SDKs implement
-(`docs/sdk/procedure_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_workflow/5`, and the same call
-on `Flezha.SDK.Workflow.Ctx` for a run-sugar body, SHALL take an instance id, a workflow
-factory id, a binary payload and `:deliver` or `:error`, send `SpawnWorkflowRequest` on the
-runner's control plane, and return a handle without waiting for the controller.
+(`docs/sdk/procedure_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_workflow/4`, and the same call
+on `Flezha.SDK.Workflow.Ctx` for a run-sugar body, SHALL take a workflow factory id, a binary
+payload and a keyword list of options defaulting to `[]`, whose keys are `id:` (an instance id)
+and `if_running:` (`:deliver` or `:error`, `:deliver` when an `id:` is given without it). The call
+SHALL send `SpawnWorkflowRequest` on the runner's control plane, with an empty instance id when no
+`id:` was given, and return a handle without waiting for the controller. An `if_running:` given
+without an `id:` SHALL raise `ArgumentError` at the call and send nothing.
 
 The handle SHALL resolve, through `Flezha.SDK.Spawn.await/2` or `Flezha.SDK.Spawn.try_result/1`,
-to `{:ok, :spawned | :delivered | :skipped_on_replay}` or to
+to `{:ok, %{id: id, outcome: :spawned | :delivered | :skipped_on_replay}}`, where `id` is the
+instance id the request resolved to (the caller's, or the one the controller generated), or to
 `{:error, {:already_running, instance_id} | {:factory_unknown, factory_id} | {:refused, reason} | :timeout | :unavailable}`.
 A refusal SHALL NOT fault the invocation, its emits or its records. A failure no caller read
 SHALL be logged once as a warning. An invocation of a replayed input SHALL resolve
-`:skipped_on_replay` and send nothing. A context with no runner, or a runner with no control
+`{:ok, %{id: id, outcome: :skipped_on_replay}}` with the caller's id, or `""` when no `id:` was
+given, and send nothing. A context with no runner, or a runner with no control
 plane, SHALL resolve `:unavailable` at once and send nothing. A request the controller never
 answers SHALL resolve `:timeout` after the runner's reply deadline, and the runner SHALL keep
 no waiter for it afterwards. The handle SHALL be read inside the invocation that made it; the
@@ -946,15 +951,29 @@ reaches such a caller. The request SHALL be written as a `:control` frame.
 
 #### Scenario: A free id spawns and a taken id delivers
 
-- **WHEN** an Elixir stream procedure calls `spawn_workflow` twice with one instance id and
-  `:deliver`, and a connected runner offers the workflow factory
-- **THEN** the first handle resolves `{:ok, :spawned}`, the second `{:ok, :delivered}`, and the
-  workflow instance receives both payloads as inputs
+- **WHEN** an Elixir stream procedure calls `spawn_workflow(ctx, factory_id, payload, id: "w1")`
+  twice, and a connected runner offers the workflow factory
+- **THEN** the first handle resolves `{:ok, %{id: "w1", outcome: :spawned}}`, the second
+  `{:ok, %{id: "w1", outcome: :delivered}}`, and the workflow instance receives both payloads as
+  inputs
+
+#### Scenario: A call without an id spawns under a generated id
+
+- **WHEN** a procedure calls `spawn_workflow(ctx, "worker", payload)` with no options
+- **THEN** the request carries an empty instance id, and the handle resolves
+  `{:ok, %{id: id, outcome: :spawned}}` where `id` begins `worker-` and names the running instance
 
 #### Scenario: The error policy refuses a running id
 
-- **WHEN** a procedure calls `spawn_workflow` with `:error` for an instance id that is running
+- **WHEN** a procedure calls `spawn_workflow` with `id: instance_id, if_running: :error` for an
+  instance id that is running
 - **THEN** the handle resolves `{:error, {:already_running, instance_id}}`
+
+#### Scenario: if_running without an id raises at the call
+
+- **WHEN** a procedure calls `spawn_workflow(ctx, "worker", payload, if_running: :error)`
+- **THEN** the call raises `ArgumentError` naming `if_running` and `id`, and no
+  `SpawnWorkflowRequest` leaves the runner
 
 #### Scenario: The call returns before the controller answers
 
@@ -971,14 +990,15 @@ reaches such a caller. The request SHALL be written as a `:control` frame.
 #### Scenario: An unread failure is logged once
 
 - **WHEN** a spawn fails and no caller reads its handle
-- **THEN** exactly one warning names the instance id, the factory id and the reason
+- **THEN** exactly one warning names the instance id (empty when none was given), the factory id
+  and the reason
 
 #### Scenario: A replayed input issues nothing
 
 - **WHEN** a correction-declaring class re-runs a replayed slice and its procedure calls
-  `spawn_workflow`
-- **THEN** the handle resolves `{:ok, :skipped_on_replay}` and no `SpawnWorkflowRequest` leaves
-  the runner
+  `spawn_workflow` with no `id:`
+- **THEN** the handle resolves `{:ok, %{id: "", outcome: :skipped_on_replay}}` and no
+  `SpawnWorkflowRequest` leaves the runner
 
 #### Scenario: A context with no runner is unavailable
 

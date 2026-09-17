@@ -16,6 +16,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
+  alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.PartitionGroup
@@ -288,6 +289,37 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       assert {:error, message} = PartitionGroup.start(@namespace, builder("solo"), 2)
       assert message =~ "already running as an unpartitioned operative"
       assert started_members() == []
+    end
+  end
+
+  describe "a partitioned start without an id" do
+    test "generates a base that leaves room for its largest member" do
+      factory = "orders_enrichment_pipeline_v2x"
+      assert byte_size(factory) == 30
+      ClassRegistry.put_keyless(factory, false)
+
+      assert {:ok, result} =
+               PartitionGroup.start(@namespace, %Builder{id: nil, factory_id: factory}, 16)
+
+      assert String.starts_with?(result.group, binary_part(factory, 0, 11))
+      assert length(result.members) == 16
+
+      for member <- result.members do
+        assert Identificator.validate(:operative, member) == :ok, member
+      end
+    end
+
+    test "never converges a live group, and starts a fresh one beside it" do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder("demo"), 3)
+      demo = PartitionGroup.members(@namespace, "demo")
+      _ = started_members()
+
+      assert {:ok, %{group: base, members: members}} =
+               PartitionGroup.start(@namespace, builder(nil), 3)
+
+      refute base == "demo"
+      assert length(members) == 3
+      assert PartitionGroup.members(@namespace, "demo") == demo
     end
   end
 

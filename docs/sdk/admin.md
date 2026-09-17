@@ -34,7 +34,7 @@ other verbs in the table below.
 
 | What | Verb on the wire | Arguments after the namespace |
 |---|---|---|
-| Start an operative | `Operative.start` | the spec `flz operative start` takes: `id`, `factory_id`, and optionally `kind`, `init_values`, `opts` |
+| Start an operative | `Operative.start` | the spec `flz operative start` takes: `factory_id`, and optionally `id`, `kind`, `init_values`, `opts`; answers `{"id": ..., "outcome": "started" \| "already_running"}` |
 | Stop an operative | `Operative.stop` | `operative_id` |
 | Send to an operative | `Operative.send` | `operative_id`, `message`, `channel` (`""` for none) |
 | Enable a plugin | `PluginManager.enable` | `plugin_id`, the fields `flz plugin enable` takes |
@@ -47,13 +47,22 @@ Each SDK spells these as typed methods on its own admin handle:
 
 | SDK | Reached as | A start reads |
 |---|---|---|
-| Rust | `runner.admin()` | `admin.start_operative(&OperativeSpec::new("orders", "order_worker"))` |
-| Java | `runner.admin()` | `admin.startOperative(OperativeSpec.of("orders", "order_worker"))` |
-| Node | `runner.admin()` | `await admin.startOperative({ id: 'orders', factory_id: 'order_worker' })` |
-| Python | `runner.admin()` | `admin.start_operative("orders", "order_worker")` |
-| Ruby | `runner.admin` | `admin.start_operative("orders", "order_worker")` |
-| PHP | `$runner->admin()` | `$admin->startOperative('orders', 'order_worker')` |
-| Elixir | `Flezha.SDK.Admin` | `Admin.start_operative(runner, "orders", "order_worker")` |
+| Rust | `runner.admin()` | `admin.start_operative(&OperativeSpec::new("order_worker").id("orders"))` |
+| Java | `runner.admin()` | `admin.startOperative(OperativeSpec.of("order_worker").id("orders"))` |
+| Node | `runner.admin()` | `await admin.startOperative('order_worker', { id: 'orders' })` |
+| Python | `runner.admin()` | `admin.start_operative("order_worker", id="orders")` |
+| Ruby | `runner.admin` | `admin.start_operative("order_worker", id: "orders")` |
+| PHP | `$runner->admin()` | `$admin->startOperative('order_worker', id: 'orders')` |
+| Elixir | `Flezha.SDK.Admin` | `Admin.start_operative(runner, "order_worker", id: "orders")` |
+
+The id is optional in every SDK: leave it out and the controller generates one from the factory
+id, such as `order_worker-k7m2qzxw4pd3fn2a`. Every start answers the same two fields, `id` (the
+id the operative runs under, given or generated) and `outcome` (`started`, or `already_running`
+when a live instance already holds an id you gave), and nothing else; where it runs is
+`flz operative info`'s to say.
+
+A start without an id that is retried after its answer was lost starts a second operative, and
+a second stream runs until it is stopped. Pass an id when a start may be retried.
 
 Every handle also carries a generic `call(verb, args)` for a published function
 the typed surface has not grown a method for. What succeeds follows from the

@@ -179,6 +179,14 @@ pub fn drop_pending_ack(reference_id: &str) {
     pending_acks_map().lock().unwrap().remove(reference_id);
 }
 
+#[cfg(test)]
+pub(crate) fn has_pending_ack(reference_id: &str) -> bool {
+    pending_acks_map()
+        .lock()
+        .unwrap()
+        .contains_key(reference_id)
+}
+
 /// How long a caller waits for the controller's reply to a request [`ask`]
 /// shipped. Generous: the controller may have to start an operative, which
 /// waits for a runner advertising the factory.
@@ -340,7 +348,7 @@ pub fn watch_stdin_eof(grace_ms: u32) {
 /// thread that then has to end the process is writing to a pipe with no reader.
 /// `eprintln!` panics on that EPIPE, and a panicked watcher leaves the runner
 /// alive for ever — which is the outcome the watch exists to prevent.
-fn say(line: &str) {
+pub(crate) fn say(line: &str) {
     use std::io::Write;
     let _ = writeln!(std::io::stderr(), "{line}");
 }

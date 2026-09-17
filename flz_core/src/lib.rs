@@ -58,6 +58,7 @@ pub mod runner;
 pub mod schema;
 #[doc(hidden)]
 pub mod shutdown;
+pub mod spawn;
 #[doc(hidden)]
 pub mod state_sink;
 #[cfg(any(test, feature = "bench-internals"))]

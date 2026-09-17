@@ -21,6 +21,12 @@ pub enum Error {
     Utf8(&'static str),
     #[error("spawn arguments are not valid UTF-8")]
     SpawnArgsUtf8,
+    #[error("if_running must be `deliver` or `error`, not `{0}`")]
+    SpawnIfRunning(String),
+    /// A spawn handle read after it resolved, or after the activation that
+    /// made it completed.
+    #[error("spawn handle {0} was released")]
+    SpawnReleased(u64),
     #[error("context already started")]
     AlreadyStarted,
     /// A local-mode call on a context that holds no local run.
@@ -28,13 +34,6 @@ pub enum Error {
     NoLocalRun,
     #[error("controller connect not confirmed within 10s")]
     ConnectUnconfirmed,
-    #[error("no control plane: spawn request could not be routed")]
-    NoControlPlane,
-    /// The controller's refusal of a spawn, verbatim.
-    #[error("{0}")]
-    SpawnRefused(String),
-    #[error("spawn request not answered within 30s")]
-    SpawnUnanswered,
     /// An administration call's refusal, rendered exactly as the kernel
     /// renders it: the controller's own words for a policy refusal, or the
     /// kernel's for a call that reached nothing.
@@ -81,22 +80,18 @@ mod tests {
                 Error::SpawnArgsUtf8,
                 "spawn arguments are not valid UTF-8".into(),
             ),
+            (
+                Error::SpawnIfRunning("later".into()),
+                "if_running must be `deliver` or `error`, not `later`".into(),
+            ),
+            (
+                Error::SpawnReleased(3),
+                "spawn handle 3 was released".into(),
+            ),
             (Error::AlreadyStarted, "context already started".into()),
             (
                 Error::ConnectUnconfirmed,
                 "controller connect not confirmed within 10s".into(),
-            ),
-            (
-                Error::NoControlPlane,
-                "no control plane: spawn request could not be routed".into(),
-            ),
-            (
-                Error::SpawnRefused("already_running".into()),
-                "already_running".into(),
-            ),
-            (
-                Error::SpawnUnanswered,
-                "spawn request not answered within 30s".into(),
             ),
             (
                 Error::from(flz_core::admin::AdminError::Refused(

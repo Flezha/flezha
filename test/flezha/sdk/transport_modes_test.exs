@@ -241,6 +241,34 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     assert {:ok, []} = Flezha.SDK.Admin.list_operatives(handle)
   end
 
+  test "a standalone UDS runner starts an operative with and without an id, answered by id and outcome",
+       %{ns: ns, handle: handle} do
+    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
+           "runner never connected over UDS"
+
+    factory = ProbeOp.factory_id()
+    named = "socket_admin_#{System.unique_integer([:positive])}"
+
+    assert {:ok, %{id: generated, outcome: :started} = unnamed} =
+             Flezha.SDK.Admin.start_operative(handle, factory)
+
+    assert Map.keys(unnamed) |> Enum.sort() == [:id, :outcome]
+    assert generated =~ ~r/\Asdk_socket_\w*-[a-z2-7]{16}\z/
+
+    assert {:ok, %{id: ^named, outcome: :started}} =
+             Flezha.SDK.Admin.start_operative(handle, factory, id: named)
+
+    assert {:ok, %{id: ^named, outcome: :already_running}} =
+             Flezha.SDK.Admin.start_operative(handle, factory, id: named)
+
+    assert {:ok, ids} = Flezha.SDK.Admin.list_operatives(handle)
+    assert generated in ids
+    assert named in ids
+
+    assert {:error, reason} = Flezha.SDK.Admin.start_operative(handle, "no_such_factory")
+    assert is_binary(reason)
+  end
+
   test "a standalone UDS runner connects, places, and dispatches io_in to run/3", %{ns: ns} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
            "runner never connected over UDS"
@@ -673,7 +701,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
   @probe :sdk_spawn_probe
 
   # One spawn per `<instance id>:<policy>:<payload>` input, read inside the
-  # invocation that made it.
+  # invocation that made it. An empty instance id spawns without one.
   defmodule Requester do
     @behaviour Flezha.SDK.Procedure
     def name, do: "requester"
@@ -681,8 +709,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
 
     def run(input, s, ctx) do
       [instance_id, policy, payload] = String.split(input, ":", parts: 3)
-      if_running = if policy == "error", do: :error, else: :deliver
-      handle = Ctx.spawn_workflow(ctx, instance_id, "sdk_spawned_inbox", payload, if_running)
+      handle = Ctx.spawn_workflow(ctx, "sdk_spawned_inbox", payload, options(instance_id, policy))
       result = Spawn.await(handle)
 
       case Process.whereis(:sdk_spawn_probe) do
@@ -692,6 +719,10 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
 
       {:ok, s}
     end
+
+    defp options("", _policy), do: []
+    defp options(instance_id, "error"), do: [id: instance_id, if_running: :error]
+    defp options(instance_id, _policy), do: [id: instance_id]
   end
 
   defmodule RequesterOp do
@@ -758,7 +789,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
     {:ok, ns: ns}
   end
 
-  test "a procedure spawns a workflow instance, delivers to it, and is refused under the error policy",
+  test "a procedure spawns a workflow instance, delivers to it, is refused under the error policy, and spawns another without an id",
        %{ns: ns} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
 
@@ -782,13 +813,18 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
     end
 
     request.("deliver", "p1")
-    assert_receive {:spawn_result, "p1", {:ok, :spawned}}, 20_000
+    assert_receive {:spawn_result, "p1", {:ok, %{id: ^instance, outcome: :spawned}}}, 20_000
     request.("deliver", "p2")
-    assert_receive {:spawn_result, "p2", {:ok, :delivered}}, 20_000
+    assert_receive {:spawn_result, "p2", {:ok, %{id: ^instance, outcome: :delivered}}}, 20_000
     request.("error", "p3")
     assert_receive {:spawn_result, "p3", {:error, {:already_running, ^instance}}}, 20_000
 
+    OperativeManager.send_io(requester, ns, "::p4", %{"channel" => "in", "input_type" => "2"})
+    assert_receive {:spawn_result, "p4", {:ok, %{id: generated, outcome: :spawned}}}, 20_000
+    assert generated =~ ~r/\Asdk_spawned_\w*-[a-z2-7]{16}\z/
+
     assert_receive {:workflow_received, "p1"}, 20_000
     assert_receive {:workflow_received, "p2"}, 20_000
+    assert_receive {:workflow_received, "p4"}, 20_000
   end
 end

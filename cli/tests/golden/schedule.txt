@@ -5,7 +5,7 @@ USAGE:
 
 SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
-        [--namespace <ns>] [--init_values <json>] [--plugins <json>] [--kind workflow]
+        [--namespace <ns>] [--init-values <json>] [--plugins <json>] [--kind workflow]
                  Add a durable schedule (workflow operatives only).
                  --plugins takes the same array as `operative start --plugins`;
                  each firing prefixes the plugin ids with its instance id.

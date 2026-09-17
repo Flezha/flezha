@@ -147,9 +147,10 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::SpawnWorkflowRequest(_))
         | Some(Command::AdminRequest(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
-        Some(Command::SpawnWorkflowResponse(reply)) => {
-            CommandActionType::AckSignal(ack_result(reply.outcome, reply.error))
-        }
+        Some(Command::SpawnWorkflowResponse(reply)) => CommandActionType::AckSignal(ack_result(
+            crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
+            reply.error,
+        )),
         Some(Command::AdminResponse(reply)) => {
             CommandActionType::AckSignal(ack_result(reply.result, reply.error))
         }
@@ -356,14 +357,15 @@ mod tests {
     }
 
     #[test]
-    fn a_spawn_reply_wakes_the_requesters_handle_with_its_outcome() {
-        let reply = |outcome: &str, error: &str| {
+    fn a_spawn_reply_wakes_the_requesters_handle_with_its_outcome_and_id() {
+        let reply = |outcome: &str, error: &str, instance_id: &str| {
             let bytes = CommandRequest {
                 reference_id: "ref-spawn".to_string(),
                 command: Some(Command::SpawnWorkflowResponse(
                     crate::pb::SpawnWorkflowResponse {
                         outcome: outcome.to_string(),
                         error: error.to_string(),
+                        instance_id: instance_id.to_string(),
                     },
                 )),
             }
@@ -378,9 +380,18 @@ mod tests {
             }
         };
 
-        assert_eq!(reply("spawned", ""), Ok("spawned".to_string()));
-        assert_eq!(reply("delivered", ""), Ok("delivered".to_string()));
-        assert_eq!(reply("refused", "quota"), Err("quota".to_string()));
+        assert_eq!(
+            reply("spawned", "", "worker-k7m2qzxw4pd3fn2a"),
+            Ok(crate::spawn::encode_ack(
+                "spawned",
+                "worker-k7m2qzxw4pd3fn2a"
+            ))
+        );
+        assert_eq!(
+            reply("delivered", "", "w1"),
+            Ok(crate::spawn::encode_ack("delivered", "w1"))
+        );
+        assert_eq!(reply("refused", "quota", ""), Err("quota".to_string()));
     }
 
     /// Every command runs on the coordinator thread, which owns the control

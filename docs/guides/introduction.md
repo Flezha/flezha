@@ -57,7 +57,7 @@ offering an operative, and send a message through it:
 ```sh
 cd sdk/python/examples/echo_deployment
 docker compose up -d --wait
-docker compose exec controller /flezha/bin/flz operative start my_echo echo
+docker compose exec controller /flezha/bin/flz operative start echo --id my_echo
 docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
 ```
 

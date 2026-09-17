@@ -15,6 +15,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   import Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Observability.RingBufferSink
+  alias Flezha.Observability.TestSinks
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Service.CliManager
@@ -124,26 +126,71 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   end
 
   describe "operative start rendering" do
+    defp start(format, opts_json \\ "{}", opts),
+      do: CliManager.operative_start("default", "candles", "{}", format, opts_json, opts)
+
+    defp started_as(test_pid) do
+      stub(OperativeManager, :start_operative, fn _ns, op, opts ->
+        send(test_pid, {:started, op, opts})
+        {:ok, %{operative_id: op.id, runner_id: "r1", node: node(), pid: self()}}
+      end)
+    end
+
+    test "a start names the id it runs under" do
+      started_as(self())
+
+      assert capture_io(fn -> start("text", id: "demo") end) == "Started demo\n"
+      assert_received {:started, %{id: "demo"}, []}
+    end
+
+    test "a start without an id prints the id the controller generated" do
+      started_as(self())
+
+      out = capture_io(fn -> start("text", []) end)
+
+      assert [_, generated] = Regex.run(~r/\AStarted (candles-[a-z2-7]{16})\n\z/, out)
+      assert_received {:started, %{id: ^generated}, [generated: true]}
+    end
+
+    test "JSON output is the one object carrying the id and the outcome" do
+      started_as(self())
+
+      assert capture_io(fn -> start("json", id: "demo") end) ==
+               ~s({"id":"demo","outcome":"started"}\n)
+    end
+
     test "a live duplicate start reports a no-op instead of erroring" do
-      stub(OperativeManager, :start_operative, fn _ns, _op -> :duplicate end)
+      stub(OperativeManager, :start_operative, fn _ns, _op, _opts -> :duplicate end)
 
-      out =
-        capture_io(fn -> CliManager.operative_start("default", "demo", "candles", "{}", "{}") end)
+      assert capture_io(fn -> start("text", id: "demo") end) ==
+               "demo is already running, left untouched\n"
 
-      assert out =~ "Operative demo is already running"
-      assert out =~ "left untouched"
-      assert out =~ "options were not compared"
+      assert capture_io(fn -> start("json", id: "demo") end) ==
+               ~s({"id":"demo","outcome":"already_running"}\n)
+    end
+
+    test "the start's audit record names the id it ran under" do
+      started_as(self())
+      boundary = System.monotonic_time(:microsecond)
+
+      out = capture_io(fn -> start("text", []) end)
+      "Started " <> generated = String.trim(out)
+
+      TestSinks.settle(RingBufferSink)
+
+      assert Enum.any?(RingBufferSink.query(:operative_service, boundary), fn signal ->
+               signal.name == :start and signal.metadata[:operative] == generated
+             end)
     end
 
     test "a stale-row refusal still exits as an error" do
-      stub(OperativeManager, :start_operative, fn _ns, _op ->
+      stub(OperativeManager, :start_operative, fn _ns, _op, _opts ->
         {:error, %{operative_id: "demo", node: node(), reason: "operative id already in use"}}
       end)
 
       out =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.operative_start("default", "demo", "candles", "{}", "{}")) ==
-                   {:shutdown, 1}
+          assert catch_exit(start("text", id: "demo")) == {:shutdown, 1}
         end)
 
       assert out =~ "starting operative"
@@ -161,10 +208,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out =
-        capture_io(fn ->
-          CliManager.operative_start("default", "ohlc", "candles", "{}", ~s({"partitions": 3}))
-        end)
+      out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
 
       assert out =~ "converged: started 1 missing member(s), 2 already running"
       assert out =~ "started ohlc#p2"
@@ -182,10 +226,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out =
-        capture_io(fn ->
-          CliManager.operative_start("default", "ohlc", "candles", "{}", ~s({"partitions": 3}))
-        end)
+      out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
 
       assert out =~ "already running with 3 partitions"
       assert out =~ "left untouched"
@@ -196,13 +237,30 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         {:ok, %{group: "ohlc", members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"], warnings: []}}
       end)
 
-      out =
-        capture_io(fn ->
-          CliManager.operative_start("default", "ohlc", "candles", "{}", ~s({"partitions": 3}))
-        end)
+      out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
 
       assert out =~ "Operative ohlc started with 3 partitions:"
       assert out =~ "  ohlc#p0"
+    end
+
+    test "a group started without an id names the base it generated" do
+      stub(PartitionGroup, :start, fn _ns, %{id: nil}, 3, _json ->
+        {:ok,
+         %{
+           group: "candles-k7m2qzxw4pd3fn2a",
+           members: Enum.map(0..2, &Partition.member_id("candles-k7m2qzxw4pd3fn2a", &1)),
+           warnings: ["w"]
+         }}
+      end)
+
+      out = capture_io(fn -> start("text", ~s({"partitions": 3}), []) end)
+      assert out =~ "Operative candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
+
+      {json, warnings} =
+        with_io(:stderr, fn -> capture_io(fn -> start("json", ~s({"partitions": 3}), []) end) end)
+
+      assert json == ~s({"id":"candles-k7m2qzxw4pd3fn2a","outcome":"started"}\n)
+      assert warnings == "WARNING: w\n"
     end
   end
 

@@ -68,9 +68,10 @@ core SHALL NOT require thread affinity from the host.
 
 The converse binds the host. A host whose unit of concurrency cannot migrate between threads, such
 as an event loop, SHALL keep every blocking ABI entry point off that thread. The blocking entry
-points are the poll, the starvation wait, the completion, the workflow receive, the workflow spawn
-and the runner start, and such a host SHALL reach them only from threads whose blocking cannot stall
-its dispatch.
+points are the poll, the starvation wait, the completion, the workflow receive, the spawn result
+read with a nonzero timeout, and the runner start, and such a host SHALL reach them only from threads
+whose blocking cannot stall its dispatch. The spawn request, and the spawn result read with a timeout
+of zero, never wait and MAY be called from any thread.
 
 The completion is what makes this a correctness rule rather than a latency one: under the default
 overflow policy it waits until the consumer's mailbox drains, and the consumer drains only when its
@@ -85,6 +86,10 @@ unreachable over the ABI.
 #### Scenario: The rule is recorded for the next binding
 - **WHEN** a new host binding is designed whose concurrency primitive is bound to one thread
 - **THEN** the ABI documentation SHALL state this constraint and name the completion entry point as the reason
+
+#### Scenario: A spawn request never blocks its caller
+- **WHEN** a host calls `flz_core_spawn_request` from an event-loop thread while the controller is slow to answer
+- **THEN** the call SHALL return a handle without waiting, and only a `flz_core_spawn_result` read with a nonzero timeout SHALL wait
 
 ### Requirement: The C ABI cannot lag the crate API
 
@@ -363,4 +368,43 @@ crate's source.
 #### Scenario: A host declaration reads the file, not the source
 - **WHEN** the PHP surface test runs from a tree that carries the fixtures and no Rust source
 - **THEN** it SHALL run and pass against the file rather than skip
+
+### Requirement: A spawn is a request and a result read through a handle
+
+The C ABI SHALL expose a procedure's spawn as two entry points and SHALL NOT expose a blocking
+spawn-and-wait entry (`flz_core_spawn_workflow` is removed):
+
+- `flz_core_spawn_request(ctx, factory_id, id, payload, if_running, handle_out)` SHALL send the
+  request and return a handle number without waiting for the controller. An empty `id` SHALL ask the
+  controller to generate one. A replayed invocation SHALL send nothing and SHALL return a handle
+  already resolved to `skipped_on_replay`, carrying the given id or an empty id.
+- `flz_core_spawn_result(ctx, handle, timeout_ms, out)` SHALL answer pending, or the resolved result
+  carrying the instance id the request resolved to and the outcome (`spawned`, `delivered` or
+  `skipped_on_replay`), or the failure (`already_running`, `factory_unknown`, `refused` with its
+  reason, `timeout`, `unavailable`) the way every other entry reports a failure. A timeout of zero
+  SHALL never wait, including while another thread's read of the same handle is waiting. A handle
+  read to resolution SHALL answer every later read the same while its activation is outstanding.
+
+The spawn handle, its outcome mapping and the reaper that logs an unread failure SHALL be one
+implementation in `flz_core`, which the Rust SDK uses directly and every veneer reaches through
+these two entries, so no host keeps an answer of its own. Every handle SHALL be released when the
+activation that made it is completed or abandoned: a failure no read collected SHALL be logged once,
+by the reaper for a handle still pending, and a later read of it SHALL answer that the handle was
+released rather than wait.
+
+#### Scenario: A request returns before the answer
+- **WHEN** a host calls `flz_core_spawn_request` for factory `worker` with an empty id and the controller has not answered
+- **THEN** the call SHALL return a handle, and `flz_core_spawn_result` with a timeout of zero SHALL answer pending
+
+#### Scenario: A resolved read carries the generated id
+- **WHEN** the controller answers that request with `spawned` under a generated id
+- **THEN** `flz_core_spawn_result` SHALL answer that id and the outcome `spawned`, and a further read of the same handle SHALL answer the same until its activation completes, after which it SHALL answer that it was released
+
+#### Scenario: A failure nobody read is logged once
+- **WHEN** a handle's request is refused and the host completes the activation without reading the handle
+- **THEN** the reaper SHALL log the refusal once, naming the instance id (empty when none was given), the factory id and the reason, and a later `flz_core_spawn_result` on that handle SHALL answer that it was released
+
+#### Scenario: The blocking spawn entry is gone
+- **WHEN** the ABI surface fixture is compared with the exported symbols
+- **THEN** it SHALL list `flz_core_spawn_request` and `flz_core_spawn_result` and SHALL NOT list `flz_core_spawn_workflow`
 

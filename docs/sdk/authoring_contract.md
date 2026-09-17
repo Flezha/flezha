@@ -382,7 +382,7 @@ Three rules make the callback part of the determinism contract:
    which is what makes a replayed invocation register the same absolute
    timestamp the live one did.
 3. **A registration made during a replay IS registered.** `ctx.spawn_workflow`
-   answers `SkippedOnReplay` because it is an external side effect that must
+   answers the outcome `skipped_on_replay` because it is an external side effect that must
    not happen twice; a timer is internal state, and skipping it on replay
    would rebuild a pending set the live run never had.
 

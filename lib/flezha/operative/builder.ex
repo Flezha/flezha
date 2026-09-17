@@ -18,13 +18,13 @@ defmodule Flezha.Operative.Builder do
   @declared [:id, :factory_id, :kind, :init_values, :opts]
 
   @type t() :: %__MODULE__{
-          id: String.t(),
+          id: String.t() | nil,
           factory_id: String.t(),
           kind: atom(),
           init_values: map(),
           opts: Keyword.t()
         }
-  @enforce_keys [:id, :factory_id]
+  @enforce_keys [:factory_id]
   defstruct [:id, :factory_id, kind: :stream, init_values: %{}, opts: []]
 
   @doc """
@@ -33,8 +33,9 @@ defmodule Flezha.Operative.Builder do
 
   `:kind` may be written as text, and `:opts` as a map keyed by text: both are
   what a JSON document carries. A field this struct does not declare, a kind
-  this controller does not know, or a missing `:id` / `:factory_id` is refused
-  rather than guessed. A spec that is already built passes through.
+  this controller does not know, or a missing `:factory_id` is refused rather
+  than guessed. A missing `:id` is not: the start authority generates one. A
+  spec that is already built passes through.
   """
   @spec build(t() | keyword() | map()) :: {:ok, t()} | {:error, term()}
   def build(%__MODULE__{} = spec), do: {:ok, spec}
@@ -51,7 +52,7 @@ defmodule Flezha.Operative.Builder do
   end
 
   defp required(fields) do
-    case Enum.reject([:id, :factory_id], &Keyword.has_key?(fields, &1)) do
+    case Enum.reject([:factory_id], &Keyword.has_key?(fields, &1)) do
       [] -> :ok
       missing -> {:error, {:missing_fields, missing}}
     end

@@ -45,7 +45,7 @@ fn the_native_surface_is_the_declared_one() {
             "wait_starvation",
             "complete",
             "workflow_recv",
-            "spawn_workflow",
+            "spawn_result",
             "admin_call"
         ]
     );

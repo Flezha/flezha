@@ -11,6 +11,7 @@ defmodule Flezha.Service.OperativeManager.Admission do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Validator
   alias Flezha.Shutdown
+  alias Flezha.State.Paths
 
   def cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id) do
     factory_refusal(
@@ -48,6 +49,22 @@ defmodule Flezha.Service.OperativeManager.Admission do
       _ ->
         absent
     end
+  end
+
+  @doc """
+  Whether a `generated?` id names nothing yet: no partition group and no state
+  directory in the namespace. A finished workflow keeps its directory for its
+  retention window, and a start over it would read the old journal as its own.
+  A caller's own id passes, because its directory is the ordinary restore.
+  """
+  @spec check_generated_id_free(String.t(), String.t(), boolean()) :: :ok | {:error, :id_taken}
+  def check_generated_id_free(_namespace, _operative_id, false), do: :ok
+
+  def check_generated_id_free(namespace, operative_id, true) do
+    if PartitionGroup.members(namespace, operative_id) == [] and
+         not Paths.class_on_disk?(operative_id, namespace),
+       do: :ok,
+       else: {:error, :id_taken}
   end
 
   # A group's base id is never claimed — only member ids are — so without this

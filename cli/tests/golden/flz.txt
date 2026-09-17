@@ -30,7 +30,7 @@ Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start
-    flz operative start my_operative my_factory --namespace prod
+    flz operative start my_factory --id my_operative --namespace prod
     flz plugin install /path/to/my_plugin-1.0.0.fpz
     flz plugin list --installed
     flz plugin enable kafka_producer provider1 Xhosts=localhost:9092

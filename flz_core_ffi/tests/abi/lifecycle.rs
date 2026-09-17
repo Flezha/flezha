@@ -109,7 +109,7 @@ fn a_mismatched_schema_is_refused() {
 }
 
 /// The socket directory, and the environment the context reads at `start`.
-fn socket_dir() -> std::path::PathBuf {
+pub(crate) fn socket_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("flz-abi-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("FLEZHA_SOCKET_FILES_PATH", &dir);
@@ -121,7 +121,7 @@ fn socket_dir() -> std::path::PathBuf {
 
 /// Declare the pass-through class, connect, and add the operative through the
 /// real control path.
-fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller) {
+pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_probe",
         "sdk_lang": 1,"sdk_version":"0.1.0",
@@ -159,7 +159,7 @@ fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller) {
 
 /// Route two entry payloads into the instance the runner built, and take the
 /// batch the ABI hands out.
-fn routes_two_entry_payloads(
+pub(crate) fn routes_two_entry_payloads(
     ctx: *mut FlzContext,
     stream: &Arc<FlezhaStream>,
 ) -> schema::Activation {

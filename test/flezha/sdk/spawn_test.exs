@@ -2,9 +2,9 @@ defmodule Flezha.SDK.SpawnTest do
   @moduledoc """
   Procedure-requested spawn in the SDK's own core, mirroring the reference's
   matrix in `sdk/rust/src/procedure/tests/spawn.rs`: the outcome mapping, the
-  handle's two reads, the replay skip, the answers with no runner and with no
-  control plane, and the runner server's waiter: its deadline, its claim and
-  the one warning a failure nobody read gets.
+  call's options, the handle's two reads, the replay skip, the answers with no
+  runner and with no control plane, and the runner server's waiter: its
+  deadline, its claim and the one warning a failure nobody read gets.
 
   The stand-in runner is this test process. A request reaches it as the cast
   the runner server reads, and the server's own callbacks are handed that cast,
@@ -20,9 +20,9 @@ defmodule Flezha.SDK.SpawnTest do
   alias FlezhaTest.Helper.SdkSpawnFixtures.{Spawner, SpawnerOp}
 
   # A request made with this process as its runner, and the cast it sent.
-  defp requested(instance_id \\ "w1", if_running \\ :deliver) do
-    handle = Spawn.request(self(), false, instance_id, "worker", "payload", if_running)
-    assert_receive {:"$gen_cast", {:spawn, _caller, %Spawn{}, "payload", ^if_running} = cast}
+  defp requested(opts \\ [id: "w1"]) do
+    handle = Spawn.request(self(), false, "worker", "payload", opts)
+    assert_receive {:"$gen_cast", {:spawn, _caller, %Spawn{}, "payload", _policy} = cast}
     {handle, cast}
   end
 
@@ -30,7 +30,7 @@ defmodule Flezha.SDK.SpawnTest do
   # mapping is read without the unread warning.
   defp resolve(outcome, error \\ "") do
     {handle, {:spawn, caller, spawn, _payload, _policy}} = requested()
-    Spawn.answer(caller, %{spawn | claimed?: true}, outcome, error)
+    Spawn.answer(caller, %{spawn | claimed?: true}, {outcome, "w1"}, error)
     Spawn.await(handle, 1_000)
   end
 
@@ -41,21 +41,36 @@ defmodule Flezha.SDK.SpawnTest do
   end
 
   # The controller's answer to `reference_id`, as the control stream delivers it.
-  defp answered(reference_id, outcome, error) do
-    response = %RunnerCommands.SpawnWorkflowResponse{outcome: outcome, error: error}
+  defp answered(reference_id, outcome, error, instance_id) do
+    response = %RunnerCommands.SpawnWorkflowResponse{
+      outcome: outcome,
+      error: error,
+      instance_id: instance_id
+    }
+
     bin = Codec.encode_request(reference_id, {:spawn_workflow_response, response})
     {:flz_data, "control", "control_command", bin, %{}}
   end
 
   defp warnings_naming(log, instance_id) do
-    marker = "spawn_workflow(#{instance_id}, worker) failed"
+    marker = "spawn_workflow(factory `worker`, id `#{instance_id}`) failed"
     length(String.split(log, marker)) - 1
   end
 
   describe "what a controller answer resolves to" do
-    test "a spawn and a delivery are distinguishable outcomes" do
-      assert resolve("spawned") == {:ok, :spawned}
-      assert resolve("delivered") == {:ok, :delivered}
+    test "a spawn and a delivery are distinguishable outcomes carrying the id" do
+      assert resolve("spawned") == {:ok, %{id: "w1", outcome: :spawned}}
+      assert resolve("delivered") == {:ok, %{id: "w1", outcome: :delivered}}
+    end
+
+    test "a spawn without an id resolves the id the controller generated" do
+      {handle, {:spawn, caller, spawn, _payload, :deliver}} = requested([])
+      assert spawn.instance_id == ""
+
+      Spawn.answer(caller, %{spawn | claimed?: true}, {"spawned", "worker-k7m2qzxw4pd3fn2a"}, "")
+
+      assert Spawn.await(handle, 1_000) ==
+               {:ok, %{id: "worker-k7m2qzxw4pd3fn2a", outcome: :spawned}}
     end
 
     test "the error policy and an unknown factory resolve errors naming the ids" do
@@ -77,8 +92,8 @@ defmodule Flezha.SDK.SpawnTest do
       {handle, {:spawn, caller, spawn, _payload, _policy}} = requested()
       assert Spawn.try_result(handle) == :pending
 
-      Spawn.answer(caller, %{spawn | claimed?: true}, "spawned", "")
-      assert Spawn.try_result(handle) == {:ok, :spawned}
+      Spawn.answer(caller, %{spawn | claimed?: true}, {"spawned", "w1"}, "")
+      assert Spawn.try_result(handle) == {:ok, %{id: "w1", outcome: :spawned}}
     end
 
     test "a reply that never arrives times out rather than hanging" do
@@ -99,25 +114,34 @@ defmodule Flezha.SDK.SpawnTest do
 
   describe "the context a procedure is handed" do
     test "with no runner the request resolves unavailable at once and sends nothing" do
-      handle =
-        Spawner |> Ctx.new(nil, 0) |> Ctx.spawn_workflow("w1", "worker", "payload", :deliver)
+      ctx = Ctx.new(Spawner, nil, 0)
 
-      assert Spawn.try_result(handle) == {:error, :unavailable}
+      assert Spawn.try_result(Ctx.spawn_workflow(ctx, "worker", "payload", id: "w1")) ==
+               {:error, :unavailable}
+
+      assert Spawn.try_result(Ctx.spawn_workflow(ctx, "worker", "payload")) ==
+               {:error, :unavailable}
+
       refute_received {:"$gen_cast", _}
     end
 
-    test "a replayed invocation issues no request" do
+    test "a replayed invocation issues no request, and answers the given id or none" do
       ctx = Ctx.new(Spawner, nil, 0, runner: self(), replay: true)
-      handle = Ctx.spawn_workflow(ctx, "w1", "worker", "payload", :deliver)
 
-      assert Spawn.await(handle, 1_000) == {:ok, :skipped_on_replay}
+      named = Ctx.spawn_workflow(ctx, "worker", "payload", id: "w1")
+      assert Spawn.await(named, 1_000) == {:ok, %{id: "w1", outcome: :skipped_on_replay}}
+
+      unnamed = Ctx.spawn_workflow(ctx, "worker", "payload")
+      assert Spawn.await(unnamed, 1_000) == {:ok, %{id: "", outcome: :skipped_on_replay}}
+
       refute_received {:"$gen_cast", _}
     end
 
-    test "a live invocation casts the request with its policy" do
+    test "a live invocation casts the request with its policy, deliver when only an id is given" do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
-      _handle = Ctx.spawn_workflow(ctx, "w1", "worker", "payload", :error)
       caller = self()
+
+      _handle = Ctx.spawn_workflow(ctx, "worker", "payload", id: "w1", if_running: :error)
 
       assert_received {:"$gen_cast",
                        {:spawn, ^caller,
@@ -126,12 +150,38 @@ defmodule Flezha.SDK.SpawnTest do
                           factory_id: "worker",
                           reference_id: "spawn-workflow-w1-" <> _
                         }, "payload", :error}}
+
+      _handle = Ctx.spawn_workflow(ctx, "worker", "payload", id: "w2")
+      assert_received {:"$gen_cast", {:spawn, ^caller, %Spawn{instance_id: "w2"}, _, :deliver}}
+    end
+
+    test "if_running without an id raises naming both, and sends nothing" do
+      ctx = Ctx.new(Spawner, nil, 0, runner: self())
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Ctx.spawn_workflow(ctx, "worker", "payload", if_running: :error)
+        end
+
+      assert error.message =~ "`if_running`"
+      assert error.message =~ "`id`"
+      refute_received {:"$gen_cast", _}
+    end
+
+    test "a malformed option raises at the call, and sends nothing" do
+      ctx = Ctx.new(Spawner, nil, 0, runner: self())
+
+      for opts <- [[instance: "w1"], [id: ""], [id: :w1], [id: "w1", if_running: :replace]] do
+        assert_raise ArgumentError, fn -> Ctx.spawn_workflow(ctx, "worker", "payload", opts) end
+      end
+
+      refute_received {:"$gen_cast", _}
     end
   end
 
   describe "the runner server's waiter" do
     test "with no control plane the request resolves unavailable at once and keeps no waiter" do
-      {handle, cast} = requested("w-down")
+      {handle, cast} = requested(id: "w-down")
 
       log =
         AuthTestHelper.capture_log_at(:warning, fn ->
@@ -146,7 +196,9 @@ defmodule Flezha.SDK.SpawnTest do
     end
 
     test "a written request waits under its reference id until the controller's answer settles it" do
-      {handle, {:spawn, _caller, spawn, _payload, _policy} = cast} = requested("w1", :error)
+      {handle, {:spawn, _caller, spawn, _payload, _policy} = cast} =
+        requested(id: "w1", if_running: :error)
+
       id = spawn.reference_id
 
       assert {:noreply, s} = RunnerServer.handle_cast(cast, connected())
@@ -160,17 +212,47 @@ defmodule Flezha.SDK.SpawnTest do
       assert %{instance_id: "w1", factory_id: "worker", payload: "payload", if_running: "error"} =
                request
 
-      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "delivered", ""), s)
+      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "delivered", "", "w1"), s)
       assert s.waiters == %{}
-      assert Spawn.await(handle, 1_000) == {:ok, :delivered}
+      assert Spawn.await(handle, 1_000) == {:ok, %{id: "w1", outcome: :delivered}}
 
       # The deadline and a late claim find nothing left to settle.
       assert {:noreply, ^s} = RunnerServer.handle_info({:spawn_deadline, id}, s)
       assert {:noreply, ^s} = RunnerServer.handle_cast({:claim_spawn, id}, s)
     end
 
+    test "a request without an id is written with an empty id and resolves the one the controller answered" do
+      {handle, {:spawn, _caller, spawn, _payload, _policy} = cast} = requested([])
+      id = spawn.reference_id
+
+      assert {:noreply, s} = RunnerServer.handle_cast(cast, connected())
+      assert_receive {:flz_data, _stream, "control_command", bin, _meta}
+
+      assert {:ok, %{reference_id: ^id, command: {:spawn_workflow_request, request}}} =
+               Codec.decode_command(bin)
+
+      assert %{instance_id: "", factory_id: "worker", if_running: "deliver"} = request
+
+      generated = "worker-k7m2qzxw4pd3fn2a"
+      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "spawned", "", generated), s)
+      assert s.waiters == %{}
+      assert Spawn.await(handle, 1_000) == {:ok, %{id: generated, outcome: :spawned}}
+    end
+
+    test "an unread failure of a request without an id is logged once naming an empty id" do
+      {handle, cast} = requested([])
+
+      log =
+        AuthTestHelper.capture_log_at(:warning, fn ->
+          RunnerServer.handle_cast(cast, %RunnerServer.State{})
+        end)
+
+      assert Spawn.try_result(handle) == {:error, :unavailable}
+      assert warnings_naming(log, "") == 1
+    end
+
     test "an unanswered request settles timeout at its deadline, leaves the table, and is logged once" do
-      {handle, {:spawn, caller, spawn, payload, policy}} = requested("w-unanswered")
+      {handle, {:spawn, caller, spawn, payload, policy}} = requested(id: "w-unanswered")
       id = spawn.reference_id
       due = %{spawn | deadline: System.monotonic_time(:millisecond)}
 
@@ -190,7 +272,7 @@ defmodule Flezha.SDK.SpawnTest do
     end
 
     test "a failure whose handle was read before the answer is not logged" do
-      {handle, {:spawn, _caller, spawn, _payload, _policy} = cast} = requested("w-claimed")
+      {handle, {:spawn, _caller, spawn, _payload, _policy} = cast} = requested(id: "w-claimed")
       id = spawn.reference_id
       assert {:noreply, s} = RunnerServer.handle_cast(cast, connected())
 
@@ -200,7 +282,7 @@ defmodule Flezha.SDK.SpawnTest do
 
       log =
         AuthTestHelper.capture_log_at(:warning, fn ->
-          RunnerServer.handle_info(answered(id, "refused", "quota_exceeded"), s)
+          RunnerServer.handle_info(answered(id, "refused", "quota_exceeded", "w-claimed"), s)
         end)
 
       assert Spawn.await(handle, 1_000) == {:error, {:refused, "quota_exceeded"}}
@@ -216,7 +298,7 @@ defmodule Flezha.SDK.SpawnTest do
       assert_receive {:"$gen_cast", {:spawn, caller, %Spawn{} = spawn, "payload", :deliver}},
                      2_000
 
-      Spawn.answer(caller, %{spawn | claimed?: true}, "refused", "quota_exceeded")
+      Spawn.answer(caller, %{spawn | claimed?: true}, {"refused", "w-refused"}, "quota_exceeded")
 
       assert [{"op-1", payload, _meta}] = frames(1)
       assert payload == inspect({:error, {:refused, "quota_exceeded"}})
@@ -239,7 +321,10 @@ defmodule Flezha.SDK.SpawnTest do
 
       log =
         AuthTestHelper.capture_log_at(:warning, fn ->
-          RunnerServer.handle_info(answered(spawn.reference_id, "factory_unknown", ""), s)
+          RunnerServer.handle_info(
+            answered(spawn.reference_id, "factory_unknown", "", "w-unread"),
+            s
+          )
         end)
 
       assert warnings_naming(log, "w-unread") == 1

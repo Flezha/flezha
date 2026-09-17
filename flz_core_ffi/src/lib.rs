@@ -50,8 +50,8 @@ pub mod ruby_glue;
 pub mod veneer;
 
 use std::ffi::{c_char, CStr, CString};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, TryLockError};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -59,6 +59,7 @@ pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::schema;
+use flz_core::spawn::{IfRunning, SpawnHandle, SpawnOptions};
 /// The local-mode entry points, exported from the crate root like every other
 /// C symbol: the module is a source-file split, not an ABI boundary.
 pub use local::*;
@@ -75,10 +76,21 @@ pub const FLZ_POLL_SHUTTING_DOWN: i32 = 2;
 pub const FLZ_ERR: i32 = -1;
 /// Success for non-poll calls.
 pub const FLZ_OK: i32 = 0;
+/// A spawn result read found no answer yet; the out buffer is untouched.
+pub const FLZ_SPAWN_PENDING: i32 = 1;
+/// A spawn resolved to a failure; the out buffer holds it as JSON.
+pub const FLZ_SPAWN_FAILED: i32 = 2;
+
+/// A polled activation the host has not answered, with the spawn handles its
+/// procedures made: they live exactly as long as it does.
+struct Outstanding {
+    activation: EngineActivation,
+    spawns: Vec<u64>,
+}
 
 /// Opaque context handle.
 pub struct FlzContext {
-    outstanding: DashMap<u64, EngineActivation>,
+    outstanding: DashMap<u64, Outstanding>,
     last_error: Mutex<Option<CString>>,
     started: AtomicBool,
     declared: Arc<RwLock<Vec<String>>>,
@@ -89,6 +101,9 @@ pub struct FlzContext {
     /// The host's end of that channel, held apart from the run so a thread
     /// parked in [`flz_core_local_next_output`] holds nothing `feed` needs.
     local_outputs: Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    /// The spawn handles of every outstanding activation, by number.
+    spawns: DashMap<u64, Arc<Mutex<SpawnHandle>>>,
+    last_spawn: AtomicU64,
 }
 
 /// Where a registered sink's releases go: the host takes them back through
@@ -133,15 +148,22 @@ impl FlzContext {
         FLZ_ERR
     }
 
-    /// Take a polled activation by token. `Err` carries the status the entry
-    /// point returns, with the reason already recorded for `last_error` — an
-    /// unknown token means the veneer answered twice, or answered one it never
-    /// held, and either is a defect to surface rather than a no-op.
+    /// Take a polled activation by token, releasing the spawn handles it
+    /// made. `Err` carries the status the entry point returns, with the reason
+    /// already recorded for `last_error` — an unknown token means the veneer
+    /// answered twice, or answered one it never held, and either is a defect
+    /// to surface rather than a no-op.
     fn take_outstanding(&self, token: u64) -> Result<EngineActivation, i32> {
-        self.outstanding
+        let (_, outstanding) = self
+            .outstanding
             .remove(&token)
-            .map(|(_, act)| act)
-            .ok_or_else(|| self.fail(Error::UnknownToken(token)))
+            .ok_or_else(|| self.fail(Error::UnknownToken(token)))?;
+        // Dropping a handle reports a failure nobody read, or hands a pending
+        // one to the reaper; a later read of its number answers released.
+        for handle in outstanding.spawns {
+            self.spawns.remove(&handle);
+        }
+        Ok(outstanding.activation)
     }
 
     /// This context's local run and its release channel, cloned out of the
@@ -154,39 +176,6 @@ impl FlzContext {
             .as_ref()
             .map(|session| (Arc::clone(&session.run), session.releases.clone()))
             .ok_or(Error::NoLocalRun)
-    }
-
-    /// Spawn-or-deliver a workflow instance and wait for the controller's
-    /// outcome (`spawned | delivered | already_running | ...`).
-    fn spawn(
-        instance_id: &str,
-        factory_id: &str,
-        payload: Vec<u8>,
-        if_running: &str,
-    ) -> Result<String, Error> {
-        let reference_id = format!(
-            "spawn-workflow-{}-{}",
-            instance_id,
-            flz_core::util::nonce_suffix()
-        );
-        let command = flz_core::pb::command_request::Command::SpawnWorkflowRequest(
-            flz_core::pb::SpawnWorkflowRequest {
-                instance_id: instance_id.to_string(),
-                factory_id: factory_id.to_string(),
-                payload,
-                if_running: if_running.to_string(),
-            },
-        );
-        let rx = flz_core::shutdown::ask(reference_id.clone(), command)
-            .map_err(|_| Error::NoControlPlane)?;
-        match rx.recv_timeout(flz_core::shutdown::REPLY_TIMEOUT) {
-            Ok(Ok(outcome)) => Ok(outcome),
-            Ok(Err(refusal)) => Err(Error::SpawnRefused(refusal)),
-            Err(_) => {
-                flz_core::shutdown::drop_pending_ack(&reference_id);
-                Err(Error::SpawnUnanswered)
-            }
-        }
     }
 }
 
@@ -216,6 +205,8 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
         declared: Arc::new(RwLock::new(Vec::new())),
         local: Mutex::new(None),
         local_outputs: Mutex::new(None),
+        spawns: DashMap::new(),
+        last_spawn: AtomicU64::new(0),
     }))
 }
 
@@ -396,7 +387,12 @@ pub unsafe extern "C" fn flz_core_poll(
         Polled::ShuttingDown => FLZ_POLL_SHUTTING_DOWN,
         Polled::Activation(act) => {
             let encoded = schema::encode_activation(&flz_core::host::to_schema(&act));
-            ctx.outstanding.insert(act.token, act);
+            let outstanding = Outstanding {
+                activation: act,
+                spawns: Vec::new(),
+            };
+            ctx.outstanding
+                .insert(outstanding.activation.token, outstanding);
             hand_out(encoded, buf_out, len_out);
             FLZ_POLL_ACTIVATION
         }
@@ -614,43 +610,124 @@ pub unsafe extern "C" fn flz_core_workflow_cancelled(
     i32::from(flz_core::host::workflow_session_cancelled(instance_id))
 }
 
-/// Spawn-or-deliver a workflow instance from a live host procedure — the ABI
-/// form of `ctx.spawn_workflow`. `if_running` is the wire string
-/// (`"deliver"` | `"error"`). Blocks for the controller's outcome (one of
-/// `spawned | delivered | already_running | ...`), returned in
-/// `outcome_out`/`outcome_len_out` (free with [`flz_core_buf_free`]).
+/// Ask for a workflow instance from the live activation `token`: start
+/// `factory_id` under `id`, or under an id the controller generates when `id`
+/// is empty. `if_running` (`"deliver"`, the default when empty, or `"error"`)
+/// applies only to an id that is already running. A nonzero `replay` sends
+/// nothing and resolves the handle to `skipped_on_replay` at once.
+///
+/// Never waits: `*handle_out` names the answer for [`flz_core_spawn_result`].
+/// A refusal reaches only that read. [`FLZ_ERR`] means an unreadable argument
+/// or a token that is not outstanding.
 ///
 /// # Safety
-/// `ctx` must be live; strings NUL-terminated; buffers readable/writable.
+/// `ctx` must be live; strings NUL-terminated; `payload`/`payload_len`
+/// readable; `handle_out` writable.
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_spawn_workflow(
+pub unsafe extern "C" fn flz_core_spawn_request(
     ctx: *mut FlzContext,
-    instance_id: *const c_char,
+    token: u64,
     factory_id: *const c_char,
+    id: *const c_char,
     payload: *const u8,
     payload_len: usize,
     if_running: *const c_char,
-    outcome_out: *mut *mut u8,
-    outcome_len_out: *mut usize,
+    replay: i32,
+    handle_out: *mut u64,
 ) -> i32 {
-    let Some(ctx) = ctx.as_mut() else {
+    let Some(ctx) = ctx.as_ref() else {
         return FLZ_ERR;
     };
-    let (Ok(instance_id), Ok(factory_id), Ok(if_running)) = (
-        CStr::from_ptr(instance_id).to_str(),
+    let (Ok(factory_id), Ok(id), Ok(if_running)) = (
         CStr::from_ptr(factory_id).to_str(),
+        CStr::from_ptr(id).to_str(),
         CStr::from_ptr(if_running).to_str(),
     ) else {
         return ctx.fail(Error::SpawnArgsUtf8);
     };
-    let payload = std::slice::from_raw_parts(payload, payload_len).to_vec();
-    match FlzContext::spawn(instance_id, factory_id, payload, if_running) {
-        Ok(outcome) => {
-            hand_out(outcome.into_bytes(), outcome_out, outcome_len_out);
-            FLZ_OK
-        }
-        Err(e) => ctx.fail(e),
+    let Some(if_running) = IfRunning::from_wire(if_running) else {
+        return ctx.fail(Error::SpawnIfRunning(if_running.to_string()));
+    };
+    // Held until the handle is recorded, so the activation cannot complete in
+    // between and leave the handle unreleased.
+    let Some(mut outstanding) = ctx.outstanding.get_mut(&token) else {
+        return ctx.fail(Error::UnknownToken(token));
+    };
+    let payload = if payload_len == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(payload, payload_len).to_vec()
+    };
+    let options = (!id.is_empty()).then(|| SpawnOptions::id(id).if_running(if_running));
+    let spawn = flz_core::spawn::request(factory_id.to_string(), payload, options, replay != 0);
+    let handle = ctx.last_spawn.fetch_add(1, Ordering::Relaxed) + 1;
+    ctx.spawns.insert(handle, Arc::new(Mutex::new(spawn)));
+    outstanding.spawns.push(handle);
+    *handle_out = handle;
+    FLZ_OK
+}
+
+/// Read a spawn handle, waiting up to `timeout_ms` for the controller's answer;
+/// a timeout of 0 never waits. [`FLZ_OK`]: `out` holds
+/// `{"id","outcome"}`, the id the request resolved to and one of `spawned`,
+/// `delivered`, `skipped_on_replay`. [`FLZ_SPAWN_FAILED`]: `out` holds
+/// `{"id","error","message"}`, `error` one of `already_running`,
+/// `factory_unknown`, `refused`, `timeout`, `unavailable`. A resolved handle
+/// answers every later read the same. [`FLZ_SPAWN_PENDING`]: no answer yet,
+/// `out` untouched. [`FLZ_ERR`]: the handle was released, because the
+/// activation that made it was completed or abandoned. Free `out` with
+/// [`flz_core_buf_free`].
+///
+/// A failure rides the buffer rather than [`flz_core_last_error`] because a
+/// host raises one error per kind, and the last-error slot is shared by every
+/// thread on the context.
+///
+/// # Safety
+/// `ctx` must be live; `out`/`out_len` must be valid writable pointers.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_spawn_result(
+    ctx: *mut FlzContext,
+    handle: u64,
+    timeout_ms: u64,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_ref() else {
+        return FLZ_ERR;
+    };
+    let Some(spawn) = ctx.spawns.get(&handle).map(|entry| Arc::clone(&entry)) else {
+        return ctx.fail(Error::SpawnReleased(handle));
+    };
+    let mut held = match (timeout_ms, spawn.try_lock()) {
+        (_, Ok(held)) => held,
+        (_, Err(TryLockError::Poisoned(p))) => p.into_inner(),
+        // Another thread's waiting read holds the handle, so no answer is in.
+        (0, Err(TryLockError::WouldBlock)) => return FLZ_SPAWN_PENDING,
+        (_, Err(TryLockError::WouldBlock)) => spawn.lock().unwrap_or_else(|p| p.into_inner()),
+    };
+    // A reader that waited for the lock may find the handle already released.
+    if !ctx.spawns.contains_key(&handle) {
+        return ctx.fail(Error::SpawnReleased(handle));
     }
+    let Some(answer) = held.wait_timeout(Duration::from_millis(timeout_ms)) else {
+        return FLZ_SPAWN_PENDING;
+    };
+    let (status, json) = match answer {
+        Ok(result) => (
+            FLZ_OK,
+            serde_json::json!({"id": result.id, "outcome": result.outcome.as_wire()}),
+        ),
+        Err(error) => (
+            FLZ_SPAWN_FAILED,
+            serde_json::json!({
+                "id": held.id(),
+                "error": error.as_wire(),
+                "message": error.to_string(),
+            }),
+        ),
+    };
+    hand_out(serde_json::to_vec(&json).unwrap_or_default(), out, out_len);
+    status
 }
 
 /// Administer the namespace this runner's connection proved: one entry for the

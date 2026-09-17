@@ -82,8 +82,10 @@ impl Verb {
     }
 
     /// Refuse a word this row does not declare: an option it does not read, or
-    /// a plain word no positional takes. Three verbs do: two block the operator
-    /// for as long as their options say, and one deletes state.
+    /// a plain word no positional takes. Five verbs do: two block the operator
+    /// for as long as their options say, one deletes state, and two start
+    /// operatives, which a misspelled option would start without the setting
+    /// it meant.
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
         self
@@ -267,6 +269,52 @@ mod tests {
             Kind::Choice { words, .. } => words[words.len() - 1],
             _ => "a\"b\\c\u{00e4}",
         }
+    }
+
+    /// fails when: an option is spelled with an underscore or anything but
+    /// dashed lowercase words, or carries a short spelling that is not one dash
+    /// and one letter. `-si` reads as `-s -i`, and one `--init_values` among
+    /// dashed options is the spelling an operator has to remember as the
+    /// exception.
+    #[test]
+    fn every_option_is_kebab_case_with_at_most_a_one_letter_short_spelling() {
+        fn kebab(long: &str) -> bool {
+            long.strip_prefix("--").is_some_and(|words| {
+                words.split('-').all(|word| {
+                    !word.is_empty()
+                        && word
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                })
+            })
+        }
+
+        fn one_letter(short: &str) -> bool {
+            let mut chars = short.chars();
+            chars.next() == Some('-')
+                && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                && chars.next().is_none()
+        }
+
+        let universal = crate::args::UNIVERSAL.iter().map(|spec| ("flz", "*", spec));
+        let declared = leaves()
+            .into_iter()
+            .flat_map(|(path, verb)| verb.options.iter().map(move |spec| (path, verb.name, spec)));
+
+        let wrong: Vec<String> = universal
+            .chain(declared)
+            .filter(|(_, _, spec)| {
+                !kebab(spec.long) || (spec.short != spec.long && !one_letter(spec.short))
+            })
+            .map(|(path, verb, spec)| format!("{} {}: {} {}", path, verb, spec.long, spec.short))
+            .collect();
+
+        assert!(
+            wrong.is_empty(),
+            "{} options are spelled outside the rule:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
     }
 
     /// fails when: a verb reads an option by position rather than by name, or

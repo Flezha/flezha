@@ -75,6 +75,61 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
            "task was never deregistered after completion"
   end
 
+  # A procedure spawns the `stateless_loop_workflow` loop once with no id and
+  # once with its input as the id, then prints each handle's result as
+  # `spawn_result <unnamed|named> <id> <outcome>`. The runner's stdout is the
+  # only place those results are observable, so the scenario owns its runner.
+  test "a procedure's spawn without an id gets a new generated id; one with an id spawns, then delivers" do
+    namespace = "spawn_ids_e2e"
+    {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
+
+    on_exit(fn ->
+      try do
+        OperativeManager.stop_all_operatives(namespace)
+        FleetManager.stop_namespace(namespace)
+      catch
+        _, _ -> :ok
+      end
+
+      ensure_port_dead(port)
+    end)
+
+    requester = "spawn_requester_#{System.unique_integer([:positive])}"
+    named = "spawn-named-#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             OperativeManager.start_operative(namespace, %Builder{
+               id: requester,
+               factory_id: "spawn_requester",
+               kind: :stream
+             })
+
+    for _ <- 1..2 do
+      assert :ok = OperativeManager.send_io_confirming(requester, namespace, named, %{})
+    end
+
+    seen = NodeTestHelper.read_port(port, &(length(spawn_results(&1)) >= 4), 60_000)
+    results = spawn_results(seen)
+    assert length(results) >= 4, "the runner printed fewer than 4 spawn results:\n#{seen}"
+
+    assert [{first, "spawned"}, {second, "spawned"}] =
+             for({"unnamed", id, outcome} <- results, do: {id, outcome})
+
+    # `stateless_loop_workflow` is trimmed to fit the id limit beside the suffix.
+    assert first =~ ~r/\Astateless_loop-[a-z2-7]{16}\z/
+    assert second =~ ~r/\Astateless_loop-[a-z2-7]{16}\z/
+    refute first == second
+
+    assert for({"named", id, outcome} <- results, do: {id, outcome}) ==
+             [{named, "spawned"}, {named, "delivered"}]
+  end
+
+  defp spawn_results(seen) do
+    for [_line, label, id, outcome] <-
+          Regex.scan(~r/^spawn_result (unnamed|named) (\S+) (.+)$/m, seen),
+        do: {label, id, String.trim(outcome)}
+  end
+
   defp registered?(operative_id) do
     match?({:ok, pid} when is_pid(pid), HubManager.get_pid(@namespace, operative_id))
   end

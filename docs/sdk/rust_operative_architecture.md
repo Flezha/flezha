@@ -68,7 +68,7 @@ of probing the compute unit — `flz state get` on a workflow operative answers
 
 ### The `:workflow` kind
 
-A workflow operative is a run-once job: `flz operative start <id> <factory>
+A workflow operative is a run-once job: `flz operative start <factory> [--id <id>]
 --kind workflow` sets the optional `kind` on `AddOperative` (empty ⇒
 `:stream`). The SDK keeps one sealed registry of live units (`Operative::Stream`
 | `Operative::Workflow`) resolved once per frame at the dispatch boundary. The

@@ -26,17 +26,20 @@ defmodule Flezha.Identificator do
           | {:too_long, kind(), pos_integer()}
           | {:malformed, kind()}
 
-  # The width `mint/2` spends on the random field: six bytes of strong
-  # randomness as lowercase hex. Fixed, so a minted id's length is decided by
-  # its kind's row and never by the draw.
-  @mint_suffix_bytes 12
+  # The separator and width of each field `mint/3` can append, so a minted id's
+  # length is decided by its kind's row and never by the draw. `:hex` is six
+  # strong random bytes. `:time` is a 45-bit millisecond time and 35 strong
+  # random bits in lowercase base32: an id never recurs once its millisecond
+  # has passed, and two nodes minting in the same millisecond still differ.
+  @suffixes %{hex: {"_", 12}, time: {"-", 16}}
 
   # `<name>@<slot>` is one operative id, and the slot is an ISO-8601 instant,
   # so a schedule name may spend only what the slot leaves.
   @schedule_slot_bytes byte_size("@2026-01-01T00:00:00Z")
 
   # One row per kind of identifier: `{min, max, regex}` in bytes, `nil` for a
-  # rule the kind does not carry. Every limit in this tree is a row here —
+  # rule the kind does not carry, and the `suffix` shape `mint/3` appends when
+  # it is not `:hex`. Every limit in this tree is a row here —
   # before, the same question was answered by an attribute in a fifth file, an
   # inline `byte_size(...) >= 8` and a truncation in Rust that the minting side
   # never read.
@@ -48,7 +51,7 @@ defmodule Flezha.Identificator do
   # is pinned to it by test rather than read from it: this module names nothing
   # above its own layer.
   @kinds %{
-    operative: %{min: 1, max: @operative_id_max_bytes, regex: nil},
+    operative: %{min: 1, max: @operative_id_max_bytes, regex: nil, suffix: :time},
     runner: %{min: 1, max: @stream_socket_id_max_bytes, regex: nil},
     namespace: %{min: 1, max: 63, regex: ~r/\A[a-z][a-z0-9_-]{0,62}\z/},
     plugin: %{min: 1, max: 64, regex: ~r/^[a-z0-9][a-z0-9_]*$/},
@@ -66,7 +69,12 @@ defmodule Flezha.Identificator do
   def kinds(), do: Map.keys(@kinds)
 
   @doc "The rule `kind` carries: `min` and `max` bytes, and its regex or `nil`."
-  @spec rule(kind()) :: %{min: pos_integer(), max: pos_integer(), regex: Regex.t() | nil}
+  @spec rule(kind()) :: %{
+          required(:min) => pos_integer(),
+          required(:max) => pos_integer(),
+          required(:regex) => Regex.t() | nil,
+          optional(:suffix) => :time
+        }
   def rule(kind), do: Map.fetch!(@kinds, kind)
 
   @doc "The byte ceiling `kind` allows. What a caller budgets a suffix against."
@@ -96,19 +104,26 @@ defmodule Flezha.Identificator do
   @doc """
   Mint an identifier of `kind` under `prefix`, bounded by the kind's own rule.
 
-  The prefix is trimmed to whatever the rule leaves after the random field, so
+  The prefix is trimmed to whatever the rule leaves after the suffix, so
   what is minted always passes `validate/2` — a mint that could exceed its own
   limit is a name the rest of the system renames behind the minter's back.
-  Retries on a name the registry already holds.
-  """
-  @spec mint(kind(), binary()) :: binary()
-  def mint(kind, prefix) when is_binary(prefix) do
-    id = trim(prefix, limit(kind) - @mint_suffix_bytes - 1) <> "_" <> mint_suffix()
+  `reserve:` holds back bytes a caller appends afterwards, such as a partition
+  member's `#p15`.
 
-    case Registry.lookup(__MODULE__, id) do
-      [] -> id
-      _ -> mint(kind, prefix)
-    end
+  A `:hex` id is drawn again when the registry already holds it. A `:time` id
+  names an operative, which this registry never holds; the start that claims
+  it is its only check.
+  """
+  @spec mint(kind(), binary(), keyword()) :: binary()
+  def mint(kind, prefix, opts \\ []) when is_binary(prefix) do
+    shape = Map.get(rule(kind), :suffix, :hex)
+    {separator, width} = Map.fetch!(@suffixes, shape)
+    budget = limit(kind) - width - byte_size(separator) - Keyword.get(opts, :reserve, 0)
+    id = trim(prefix, budget) <> separator <> mint_suffix(shape)
+
+    if shape == :hex and Registry.lookup(__MODULE__, id) != [],
+      do: mint(kind, prefix, opts),
+      else: id
   end
 
   # The prefix, cut to `budget` bytes, without the separator the cut may land
@@ -117,15 +132,28 @@ defmodule Flezha.Identificator do
   defp trim(prefix, budget) when budget > 0 do
     prefix
     |> binary_part(0, min(byte_size(prefix), budget))
+    |> whole_characters()
     |> String.replace(~r/[_-]+$/, "")
   end
 
   defp trim(_prefix, _budget), do: ""
 
-  defp mint_suffix() do
-    div(@mint_suffix_bytes, 2)
+  # A cut inside a multi-byte character would mint an id no JSON answer can carry.
+  defp whole_characters(cut) do
+    if String.valid?(cut),
+      do: cut,
+      else: whole_characters(binary_part(cut, 0, byte_size(cut) - 1))
+  end
+
+  defp mint_suffix(:hex) do
+    6
     |> :crypto.strong_rand_bytes()
     |> Base.encode16(case: :lower)
+  end
+
+  defp mint_suffix(:time) do
+    <<random::35, _::5>> = :crypto.strong_rand_bytes(5)
+    Base.encode32(<<System.os_time(:millisecond)::45, random::35>>, case: :lower, padding: false)
   end
 
   def child_spec(opts) do

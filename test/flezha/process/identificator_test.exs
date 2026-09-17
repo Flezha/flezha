@@ -62,7 +62,7 @@ defmodule FlezhaTest.Process.IdentificatorTest do
     end
   end
 
-  describe "mint/2" do
+  describe "mint/3" do
     test "what it mints always passes the same table that validates it" do
       for kind <- [:runner, :operative] do
         for namespace <- ["a", "default", "colocation_ns", String.duplicate("z", 80)] do
@@ -86,6 +86,47 @@ defmodule FlezhaTest.Process.IdentificatorTest do
 
     test "distinct draws, and the registry retry still holds" do
       ids = for _ <- 1..2_000, do: Identificator.mint(:runner, "default")
+      assert length(Enum.uniq(ids)) == length(ids)
+    end
+  end
+
+  describe "a generated operative id" do
+    test "a short factory id is kept whole, followed by a time-and-random suffix" do
+      id = Identificator.mint(:operative, "echo")
+
+      assert id =~ ~r/\Aecho-[a-z2-7]{16}\z/
+      assert byte_size(id) == 21
+    end
+
+    test "a long factory id is trimmed to fit, keeping its first bytes" do
+      factory = "orders_enrichment_pipeline_v2x"
+      assert byte_size(factory) == 30
+
+      id = Identificator.mint(:operative, factory)
+
+      assert Identificator.validate(:operative, id) == :ok
+      assert String.starts_with?(id, binary_part(factory, 0, 15))
+      assert id =~ ~r/-[a-z2-7]{16}\z/
+    end
+
+    test "a reserve leaves room for the largest partition member suffix" do
+      base = Identificator.mint(:operative, String.duplicate("f", 30), reserve: byte_size("#p15"))
+
+      for member <- 0..15 do
+        assert Identificator.validate(:operative, base <> "#p#{member}") == :ok
+      end
+    end
+
+    test "a cut never splits a multi-byte character" do
+      # Byte 15, where the cut falls, is the first half of `é`.
+      id = Identificator.mint(:operative, "abcdefghijklmné_sur_mesure")
+
+      assert String.valid?(id)
+      assert id =~ ~r/\Aabcdefghijklmn-[a-z2-7]{16}\z/
+    end
+
+    test "ids minted in a tight loop never repeat" do
+      ids = for _ <- 1..20_000, do: Identificator.mint(:operative, "echo")
       assert length(Enum.uniq(ids)) == length(ids)
     end
   end

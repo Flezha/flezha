@@ -318,7 +318,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     namespace = state.namespace
 
     answer_off_process(reference_id, fn ->
-      outcome =
+      judged =
         once_admitted(state, fn ->
           OperativeManager.spawn_or_deliver(
             namespace,
@@ -330,6 +330,14 @@ defmodule Flezha.Runner.ControlChannel.Requests do
           )
         end)
 
+      # A session refused before it was admitted judged nothing, so it answers
+      # the id the request carried.
+      {outcome, resolved_id} =
+        case judged do
+          {:refused, _reason} -> {judged, instance_id}
+          {_outcome, _resolved_id} = answered -> answered
+        end
+
       {name, error} = spawn_reply(outcome)
 
       :telemetry.execute(
@@ -337,15 +345,18 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         %{count: 1},
         %{
           namespace: namespace,
-          instance_id: instance_id,
+          instance_id: resolved_id,
           factory_id: factory_id,
           outcome: name
         }
       )
 
       {{:spawn_workflow_response,
-        %RunnerCommands.SpawnWorkflowResponse{outcome: Atom.to_string(name), error: error}},
-       "spawn-workflow response #{name}"}
+        %RunnerCommands.SpawnWorkflowResponse{
+          outcome: Atom.to_string(name),
+          error: error,
+          instance_id: resolved_id
+        }}, "spawn-workflow response #{name}"}
     end)
   end
 

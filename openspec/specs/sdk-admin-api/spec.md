@@ -5,13 +5,19 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a procedure context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operative, enabling and disabling a plugin, and reading operatives, plugins and entity state. It SHALL require no procedure to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented.
+The SDK SHALL offer, on the runner object rather than on a procedure context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operative, enabling and disabling a plugin, and reading operatives, plugins and entity state. It SHALL require no procedure to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operative start` takes: the factory, and an id only when the application chooses one.
 
 #### Scenario: An application starts an operative it implements
 
 - **WHEN** application code on a connected runner asks to start an operative,
   giving the same specification `flz operative start` takes
 - **THEN** the operative SHALL start in the namespace the connection proved
+
+#### Scenario: An application starts an operative without naming it
+
+- **WHEN** application code asks to start an operative giving only its factory
+- **THEN** the operative SHALL start in the namespace the connection proved under a
+  generated id
 
 #### Scenario: The call needs no procedure
 
@@ -117,4 +123,43 @@ Every SDK SHALL expose the surface, and the hosts that share `flz_core` SHALL re
 - **WHEN** the conformance suite enumerates each SDK's administration surface
 - **THEN** it SHALL match the declared set, and any deferral SHALL be named with
   the change that owes it
+
+### Requirement: Starting from application code SHALL answer the id and the outcome
+
+Every SDK's start call SHALL take the factory first and the id as an optional named argument, in
+the form its language has: `OperativeSpec::new(factory).id(..)` in Rust,
+`OperativeSpec.of(factory).id(..)` in Java, a keyword list in Elixir, keyword arguments in Python
+and Ruby, named arguments in PHP and an options object in Node. A successful start SHALL answer one
+result carrying two fields, the same in every SDK: `id`, the id the operative runs under whether
+the application gave it or the controller generated it, and `outcome`, one of `started` and
+`already_running`. `already_running` SHALL be answered only for an id the application gave, when a
+live instance already holds it. The answer SHALL carry nothing else; where an operative runs is read
+through `flz operative info` or the read surface. A refused start SHALL be reported as each SDK
+reports a refused call today.
+
+#### Scenario: A start without an id answers the generated id
+
+- **WHEN** application code starts factory `echo` with no id
+- **THEN** the call SHALL answer `id` set to the generated id and `outcome` set to `started`, and
+  that id SHALL be the one `flz operative list` shows and a stop through the same surface accepts
+
+#### Scenario: A start of a running id answers already running
+
+- **WHEN** application code starts factory `echo` with id `my_echo` while a live instance holds
+  `my_echo`
+- **THEN** the call SHALL succeed answering `id` set to `my_echo` and `outcome` set to
+  `already_running`, and the running instance SHALL observe no stop, restart or rebind
+
+#### Scenario: The answer has one shape in every SDK
+
+- **WHEN** each SDK's own suite starts an operative with and without an id through its wrapper
+- **THEN** every SDK SHALL expose the same two fields, `id` and `outcome`, with the same outcome
+  words, and no `node`, `runner_id` or `pid`
+
+#### Scenario: A refused start is reported as before
+
+- **WHEN** application code asks to start an operative that would exceed the namespace's
+  `max_operatives`
+- **THEN** the call SHALL be refused with the quota reason, reported as that SDK reports any
+  refused administration call
 

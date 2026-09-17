@@ -5,7 +5,7 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 ## Requirements
 ### Requirement: The controller SHALL maintain a durable registry of cron schedules for workflow spawns
 
-`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init_values json] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: workflow` SHALL be schedulable; scheduling a stream factory SHALL be rejected at `add`. Cron syntax, timezone, kind, and the plugin spec SHALL be validated at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
+`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: workflow` SHALL be schedulable; scheduling a stream factory SHALL be rejected at `add`. Cron syntax, timezone, kind, and the plugin spec SHALL be validated at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
 
 #### Scenario: Schedule survives restart
 
@@ -141,16 +141,17 @@ works on a node whose schedule hub is down.
 ### Requirement: The schedule verbs SHALL carry their optional flags as one options document
 
 A schedule verb's optional flags SHALL travel to the controller as one options
-document — the namespace, the initial values, the kind, the plugin spec and the
-caller's credential — the keyword list every other gated schedule verb already
+document (the namespace, the initial values, the kind, the plugin spec and the
+caller's credential), the keyword list every other gated schedule verb already
 carries its credential in, rather than as positional arguments with defaults.
-The operator-facing flags do not change; what changes is the request the CLI
-builds. A value that must reach the controller as text, such as the plugin spec
-the decoder reads verbatim, SHALL be carried as text whatever it parses as.
+This rule governs the request the CLI builds, not the spelling of the
+operator-facing flags. A value that must reach the controller as text, such as
+the plugin spec the decoder reads verbatim, SHALL be carried as text whatever it
+parses as.
 
 #### Scenario: An optional flag is absent
 
-- **WHEN** `flz schedule add` is issued without `--namespace`, `--init_values`,
+- **WHEN** `flz schedule add` is issued without `--namespace`, `--init-values`,
   `--plugins` or `--kind`
 - **THEN** the controller SHALL apply the same defaults it applies today, and the
   request SHALL carry no positional placeholder for the absent flag

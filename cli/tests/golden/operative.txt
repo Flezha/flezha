@@ -17,7 +17,7 @@ COMMANDS:
     help        Show this help message
 
 EXAMPLES:
-    flz operative start ohlc candles --partitions 3
+    flz operative start candles --id ohlc --partitions 3
     flz operative scale ohlc 5
     flz operative send orchestrator --text '{"task":"refactor"}'
     flz operative send my_echo --text 'hello world' --await 2000

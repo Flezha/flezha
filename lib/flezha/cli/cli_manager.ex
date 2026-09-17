@@ -136,15 +136,9 @@ defmodule Flezha.Service.CliManager do
   verb operative_send(namespace, operative_id, message, channel, opts \\ []),
     to: Cli.Operative
 
-  verb operative_start(
-         namespace,
-         operative_id,
-         factory_id,
-         init_values,
-         opts_json \\ "{}",
-         opts \\ []
-       ),
-       to: Cli.Operative
+  verb operative_start(namespace, factory_id, init_values, format, opts_json \\ "{}", opts \\ []),
+    to: Cli.Operative,
+    target: &Flezha.Service.OperativeManager.start_target/2
 
   verb operative_stop(namespace, operative_id, opts \\ []), to: Cli.Operative
   verb plugin_help(provider_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info

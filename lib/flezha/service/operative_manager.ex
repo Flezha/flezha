@@ -6,6 +6,7 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.AuthZ.{Quotas, Verb}
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
+  alias Flezha.Identificator
   alias Flezha.Operative.Builder, as: OperativeBuilder
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Runner.ControlUnit
@@ -24,6 +25,9 @@ defmodule Flezha.Service.OperativeManager do
   defdelegate pick_runner(arg1, arg2), to: Placement
   defdelegate redeclare_plugins(arg1, arg2), to: Init
   defdelegate runner_registered?(arg1), to: Placement
+
+  # How many ids a start without one draws before it is refused.
+  @id_draws 3
 
   def operative_registry(namespace) do
     case HubManager.get_registry(namespace) do
@@ -122,16 +126,69 @@ defmodule Flezha.Service.OperativeManager do
   here. A start that loses the claim answers `:duplicate` and leaves the
   winner strictly alone; it is never reported as a failed start, because the
   failure path stops the child it names.
+
+  A start whose builder carries no id is given one here, before it is placed or
+  forwarded, so every node it touches acts on the same id. A generated id that
+  meets a start meaning the id is taken is drawn again (`with_generated_id/3`);
+  a caller's own id never is. `generated: true` marks an id a caller drew
+  through `with_generated_id/3` itself, so it gets the checks only a generated
+  id gets. `:mint` replaces the generator, for a test that forces a clash.
   """
   @spec start_operative(String.t(), OperativeBuilder.t(), keyword()) ::
           {:ok, map()} | :duplicate | {:error, term()}
-  def start_operative(namespace, operative, opts \\ []) do
+  def start_operative(namespace, operative, opts \\ [])
+
+  def start_operative(namespace, %{id: nil} = operative, opts) do
+    {draw_opts, opts} = Keyword.split(opts, [:mint])
+    opts = Keyword.put(opts, :generated, true)
+    start = &start_operative(namespace, %{operative | id: &1}, opts)
+
+    with_generated_id(operative.factory_id, start, draw_opts)
+  end
+
+  def start_operative(namespace, operative, opts) do
     if Keyword.get(opts, :routed, false) or locally_startable?(namespace, operative.factory_id) do
-      do_start_operative(namespace, operative)
+      do_start_operative(namespace, operative, Keyword.get(opts, :generated, false))
     else
-      route_start(namespace, operative)
+      route_start(namespace, operative, opts)
     end
   end
+
+  @doc """
+  Run `attempt` with an id generated for `factory_id`, drawing again while its
+  verdict means the id was taken, at most `#{@id_draws}` draws, then refuse.
+  Every start that generates an id goes through here. `reserve:` holds back
+  bytes for a suffix the caller appends; `mint:` replaces the generator.
+  """
+  @spec with_generated_id(String.t(), (String.t() -> verdict), keyword()) ::
+          verdict | {:error, String.t()}
+        when verdict: term()
+  def with_generated_id(factory_id, attempt, opts \\ []) do
+    reserve = Keyword.get(opts, :reserve, 0)
+    mint = Keyword.get(opts, :mint, &Identificator.mint(:operative, &1, reserve: reserve))
+
+    draw_id(factory_id, mint, attempt, @id_draws)
+  end
+
+  defp draw_id(factory_id, _mint, _attempt, 0),
+    do: {:error, "no free operative id was found for factory #{factory_id} in #{@id_draws} draws"}
+
+  defp draw_id(factory_id, mint, attempt, draws) do
+    verdict = attempt.(mint.(factory_id))
+
+    if id_taken?(verdict),
+      do: draw_id(factory_id, mint, attempt, draws - 1),
+      else: verdict
+  end
+
+  # The verdicts that mean the id, not the start, was refused: a live or stale
+  # claim, another namespace's claim on its state, or a group or leftover
+  # state the id already names.
+  defp id_taken?(:duplicate), do: true
+  defp id_taken?({:error, :id_taken}), do: true
+  defp id_taken?({:error, {:namespace_conflict, _class, _owner}}), do: true
+  defp id_taken?({:error, %{reason: reason}}) when is_binary(reason), do: Init.claim_loss?(reason)
+  defp id_taken?(_verdict), do: false
 
   defp locally_startable?(namespace, factory_id) do
     HubManager.hub_alive?(namespace) and local_runners?(namespace, factory_id)
@@ -149,7 +206,7 @@ defmodule Flezha.Service.OperativeManager do
   defp capable_nodes(namespace, _factory_id),
     do: List.delete(Directory.runner_nodes(namespace), node())
 
-  defp route_start(namespace, operative) do
+  defp route_start(namespace, operative, opts) do
     case capable_nodes(namespace, operative.factory_id) do
       [] ->
         {:error,
@@ -165,14 +222,15 @@ defmodule Flezha.Service.OperativeManager do
         route_call(
           target,
           :start_operative,
-          [namespace, operative, [routed: true]],
+          [namespace, operative, [routed: true, generated: Keyword.get(opts, :generated, false)]],
           &{:error, %{operative_id: operative.id, node: target, reason: &1}}
         )
     end
   end
 
-  defp do_start_operative(namespace, operative) do
+  defp do_start_operative(namespace, operative, generated?) do
     with :ok <- Admission.check_not_shutting_down(namespace),
+         :ok <- Admission.check_generated_id_free(namespace, operative.id, generated?),
          :ok <- Admission.validate_operative(namespace, operative),
          :ok <- Admission.refuse_group_base_claim(namespace, operative),
          :ok <- Admission.validate_factory(namespace, operative.factory_id),
@@ -418,14 +476,15 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @doc """
-  Start a workflow instance of `factory_id` under `instance_id`, answering
-  `:duplicate` when that id is already claimed.
+  Start a workflow instance of `factory_id` under `instance_id`, or under a
+  generated id when it is `nil`, answering `:duplicate` when a given id is
+  already claimed.
 
   Shared by every in-cluster spawner — a schedule's slot firing and a
   procedure's `spawn_or_deliver/6`. The duplicate verdict itself is minted by
   `start_operative/3`, the one start-authority seam.
   """
-  @spec start_workflow(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
+  @spec start_workflow(String.t(), String.t() | nil, String.t(), map(), Keyword.t()) ::
           {:ok, map()} | :duplicate | {:error, term()}
   def start_workflow(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
     start_operative(namespace, %OperativeBuilder{
@@ -437,16 +496,48 @@ defmodule Flezha.Service.OperativeManager do
     })
   end
 
+  @doc """
+  A start verdict as a published door answers it: the id the operative runs
+  under, and whether this start began it or found a live instance holding
+  `requested_id`. The manager keeps answering `:duplicate`, which the spawn
+  race and partition convergence match on.
+  """
+  @spec start_answer({:ok, map()} | :duplicate | {:error, term()}, String.t() | nil) ::
+          {:ok, %{id: String.t(), outcome: :started | :already_running}} | {:error, term()}
+  def start_answer({:ok, %{operative_id: id}}, _requested_id),
+    do: {:ok, %{id: id, outcome: :started}}
+
+  def start_answer(:duplicate, requested_id),
+    do: {:ok, %{id: requested_id, outcome: :already_running}}
+
+  def start_answer({:error, _reason} = refusal, _requested_id), do: refusal
+
+  @doc """
+  The audit target of an `operative_start` act: the id its answer names, else
+  the id its last argument asked for (a spec, its named fields, a bare id, or
+  a wire verb's options), which for a start refused before an id was
+  generated is none.
+  """
+  @spec start_target([term()], term()) :: %{operative: String.t() | nil}
+  def start_target(_args, {:ok, %{id: id}}), do: %{operative: id}
+  def start_target(args, _answer), do: %{operative: requested_id(List.last(args))}
+
+  defp requested_id(%{id: id}), do: id
+  defp requested_id(fields) when is_list(fields), do: Keyword.get(fields, :id)
+  defp requested_id(id) when is_binary(id) or is_nil(id), do: id
+
   @typedoc """
   How a procedure-requested spawn resolved. `:spawned` and `:delivered` are
-  the two success shapes; the rest report why nothing was spawned.
+  the two success shapes; the rest report why nothing was spawned. It is
+  answered beside the id the request resolved to.
   """
   @type spawn_outcome ::
           :spawned | :delivered | :already_running | :factory_unknown | {:refused, String.t()}
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace`, the controller half of a
-  procedure's `ctx.spawn_workflow`, for the identity `caller_context` names.
+  procedure's `ctx.spawn_workflow`, for the identity `caller_context` names,
+  answering the outcome and the id the request resolved to.
 
   A free id spawns a workflow instance of `factory_id` carrying `payload` as its
   first input (`:seed_input`, ingested inside the instance's bind continue, so
@@ -455,6 +546,10 @@ defmodule Flezha.Service.OperativeManager do
   Concurrent requests for one id race-resolve at the registry: whoever loses the
   uniqueness check converts to the same delivery a later request would get, so
   exactly one instance exists and every payload lands exactly once.
+
+  An empty `instance_id` asks for a generated one: it names no running instance,
+  so nothing is looked up, `if_running` has no meaning, and every such request
+  spawns its own instance. A refusal answers the id the request carried.
 
   Each act is judged on this node as the act it is: a start against the
   `operative_start` row, which records it, and a delivery against `spawn_deliver`,
@@ -472,15 +567,15 @@ defmodule Flezha.Service.OperativeManager do
           :deliver | :error,
           Flezha.AuthZ.caller_context()
         ) ::
-          spawn_outcome()
+          {spawn_outcome(), String.t()}
   def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running, caller_context) do
     cond do
-      exist?(namespace, instance_id) ->
+      instance_id != "" and exist?(namespace, instance_id) ->
         resolve_running(namespace, instance_id, payload, if_running, caller_context)
 
       FleetManager.runners_for_factory(namespace, factory_id) == [] and
           capable_nodes(namespace, factory_id) == [] ->
-        :factory_unknown
+        {:factory_unknown, instance_id}
 
       true ->
         spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context)
@@ -488,21 +583,28 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context) do
+    requested = if instance_id == "", do: nil, else: instance_id
+
     start = fn _call ->
-      start_workflow(namespace, instance_id, factory_id, %{}, seed_input: payload)
+      namespace
+      |> start_workflow(requested, factory_id, %{}, seed_input: payload)
+      |> start_answer(requested)
     end
 
-    case Verb.run(:operative_start, caller_context, [namespace, instance_id], start) do
-      {:ok, _} ->
-        :spawned
+    case Verb.run(:operative_start, caller_context, [namespace, requested], start,
+           target: &start_target/2
+         ) do
+      {:ok, %{id: id, outcome: :started}} ->
+        {:spawned, id}
 
       # Lost the id race: the winner spawned it, so this request becomes the
-      # delivery a request arriving a moment later would have made.
-      :duplicate ->
-        resolve_running(namespace, instance_id, payload, if_running, caller_context)
+      # delivery a request arriving a moment later would have made. A generated
+      # id never gets here, because a claim it loses draws another.
+      {:ok, %{id: id, outcome: :already_running}} ->
+        resolve_running(namespace, id, payload, if_running, caller_context)
 
       {:error, reason} ->
-        refused_start(reason, namespace, factory_id)
+        {refused_start(reason, namespace, factory_id), instance_id}
     end
   end
 
@@ -519,15 +621,15 @@ defmodule Flezha.Service.OperativeManager do
 
   defp refused_start(reason, _namespace, _factory_id), do: {:refused, inspect(reason)}
 
-  defp resolve_running(_namespace, _instance_id, _payload, :error, _caller_context),
-    do: :already_running
+  defp resolve_running(_namespace, instance_id, _payload, :error, _caller_context),
+    do: {:already_running, instance_id}
 
   defp resolve_running(namespace, instance_id, payload, :deliver, caller_context) do
     deliver = fn _call -> send_io_confirming(instance_id, namespace, payload, %{}) end
 
     case Verb.run(:spawn_deliver, caller_context, [namespace, instance_id], deliver) do
-      {:error, reason} -> {:refused, inspect(reason)}
-      _delivered_or_absorbed -> :delivered
+      {:error, reason} -> {{:refused, inspect(reason)}, instance_id}
+      _delivered_or_absorbed -> {:delivered, instance_id}
     end
   end
 

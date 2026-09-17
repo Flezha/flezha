@@ -25,7 +25,7 @@ fn the_native_surface_is_the_declared_one() {
             "localRunUntilIdle",
             "complete",
             "workflowRecv",
-            "spawnWorkflow",
+            "spawnWait",
             "adminCall",
             "stopHost"
         ]

@@ -536,23 +536,40 @@ fn workflow_cancelled(instance_id: String) -> Result<bool, Error> {
     Ok(veneer::workflow_cancelled(ctx, &instance))
 }
 
-/// Spawn-or-deliver a workflow instance; answers the controller's outcome
-/// string. Blocking: the ABI call waits up to thirty seconds.
-fn spawn_workflow(
-    instance_id: String,
+/// Request a spawn from the live activation `token`; answers the handle number
+/// at once. An empty `id` asks the controller to generate one. Never waits, so
+/// it holds the GVL.
+fn spawn_request(
+    token: u64,
     factory_id: String,
+    id: String,
     payload: RString,
     if_running: String,
-) -> Result<String, Error> {
+    replay: bool,
+) -> Result<u64, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let refused = |r| raise(&ruby, r);
-    let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
     let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
+    let id = veneer::c_string("id", &id).map_err(refused)?;
     let mode = veneer::c_string("if_running", &if_running).map_err(refused)?;
-    let payload = unsafe { payload.as_slice() }.to_vec();
-    without_gvl(move || veneer::spawn_workflow(ctx, &instance, &factory, &payload, &mode))
-        .map_err(refused)
+    // SAFETY: the GVL is held for the whole call, so nothing can move or free
+    // the string's bytes while the core copies them.
+    let payload = unsafe { payload.as_slice() };
+    veneer::spawn_request(ctx, token, &factory, &id, payload, &mode, replay).map_err(refused)
+}
+
+/// Read a spawn handle: `nil` while pending, otherwise its answer as JSON. A
+/// nonzero timeout waits with the GVL released.
+fn spawn_result(handle: u64, timeout_ms: u64) -> Result<Option<String>, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let answer = if timeout_ms == 0 {
+        veneer::spawn_result(ctx, handle, 0)
+    } else {
+        without_gvl(move || veneer::spawn_result(ctx, handle, timeout_ms))
+    };
+    answer.map_err(|r| raise(&ruby, r))
 }
 
 /// Administer the namespace this connection proved; answers the published
@@ -630,7 +647,8 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("workflow_emit", "flz_core_workflow_emit"),
     ("workflow_recv", "flz_core_workflow_recv"),
     ("workflow_cancelled", "flz_core_workflow_cancelled"),
-    ("spawn_workflow", "flz_core_spawn_workflow"),
+    ("spawn_request", "flz_core_spawn_request"),
+    ("spawn_result", "flz_core_spawn_result"),
     ("admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("last_error", "flz_core_last_error"),
@@ -675,7 +693,8 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("workflow_emit", function!(workflow_emit, 2))?;
     native.define_module_function("workflow_recv", function!(workflow_recv, 2))?;
     native.define_module_function("workflow_cancelled", function!(workflow_cancelled, 1))?;
-    native.define_module_function("spawn_workflow", function!(spawn_workflow, 4))?;
+    native.define_module_function("spawn_request", function!(spawn_request, 6))?;
+    native.define_module_function("spawn_result", function!(spawn_result, 2))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;

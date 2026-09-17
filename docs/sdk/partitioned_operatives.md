@@ -9,7 +9,7 @@ This page is the contract: the one rule an author must keep, how sources and for
 the operator surface, converge and rescale semantics, sizing, and the named limits.
 
 ```bash
-flz operative start ohlc candles --partitions 3
+flz operative start candles --id ohlc --partitions 3
 ```
 
 `--partitions 1` (the default) is an unpartitioned start. `N` must be between 2 and 256;
@@ -116,13 +116,13 @@ reads from the member owning the key; a procedure-level read fans out and merges
 
 ## Re-running the start: converge
 
-`flz operative start <id> --partitions N` against a group with live members **converges**: it
+`flz operative start <factory> --id <id> --partitions N` against a group with live members **converges**: it
 starts only the members whose indices are missing and leaves every survivor untouched. A
 restarted member restores its Entity state from its WAL at bind, so the cold-start command is
 also the heal for an under-membered group.
 
 ```text
-$ flz operative start ohlc candles --partitions 3
+$ flz operative start candles --id ohlc --partitions 3
 Operative ohlc converged: started 1 missing member(s), 2 already running:
   started ohlc#p2
   already running ohlc#p0

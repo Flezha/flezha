@@ -68,6 +68,8 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
   describe "an application administers the namespace its connection proved" do
     test "it starts an operative, sees it running, feeds it and stops it", %{secrets: secrets} do
       script = [
+        call("Operative.start", [%{factory_id: "do_nothing"}]),
+        call("Operative.start", [%{id: "app_started", factory_id: "do_nothing"}]),
         call("Operative.start", [%{id: "app_started", factory_id: "do_nothing"}]),
         call("Operative.list_operatives", []),
         call("Operative.send", ["app_started", "from-the-application", ""]),
@@ -76,12 +78,21 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
 
       {port, _runner_id} = drill(@ns, script, secrets)
 
-      answers = answers(port, 4)
+      answers = answers(port, 6)
 
-      assert [start, list, send, stop] = answers
-      assert {"Operative.start", "ok", _started} = start
+      assert [unnamed, named, again, list, send, stop] = answers
+      assert {"Operative.start", "ok", unnamed} = unnamed
+      assert %{"id" => generated, "outcome" => "started"} = Jason.decode!(unnamed)
+      assert generated =~ ~r/\Ado_nothing-[a-z2-7]{16}\z/
+
+      assert {"Operative.start", "ok", named} = named
+      assert Jason.decode!(named) == %{"id" => "app_started", "outcome" => "started"}
+      assert {"Operative.start", "ok", again} = again
+      assert Jason.decode!(again) == %{"id" => "app_started", "outcome" => "already_running"}
+
       assert {"Operative.list_operatives", "ok", running} = list
       assert "app_started" in Jason.decode!(running)
+      assert generated in Jason.decode!(running)
       assert {"Operative.send", "ok", _delivered} = send
       assert {"Operative.stop", "ok", _stopped} = stop
 

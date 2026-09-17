@@ -257,15 +257,15 @@ _build/dev/rel/flezha/bin/flz controller stop
 
 ### Starting an operative.
 ```bash
-_build/dev/rel/flezha/bin/flz operative start my_operative do_nothing
+_build/dev/rel/flezha/bin/flz operative start do_nothing --id my_operative
 ```
 
-`--init_values` seeds Procedure state at start. Its top level is a map of
+`--init-values` seeds Procedure state at start. Its top level is a map of
 **Procedure name** to that Procedure's starting state, so one operative seeds
 several Procedures from one document:
 
 ```bash
-_build/dev/rel/flezha/bin/flz operative start my_operative compare_filter --init_values='{
+_build/dev/rel/flezha/bin/flz operative start compare_filter --id my_operative --init-values='{
   "compare_filter_procedure": {"comparable": "hello world", "inverted": false}
 }'
 ```

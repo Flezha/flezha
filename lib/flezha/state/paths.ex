@@ -260,7 +260,14 @@ defmodule Flezha.State.Paths do
   # The disk knows: the layout is `<root>/<namespace>/<class>/`, so the
   # namespace directory containing the class dir IS the owner.
   defp disk_namespace(operative_class) do
-    Enum.find(namespaces(), &File.dir?(Path.join(namespace_dir(&1), operative_class)))
+    Enum.find(namespaces(), &class_on_disk?(operative_class, &1))
+  end
+
+  @doc "Whether `operative_class` has a state directory under `namespace` on this node."
+  @spec class_on_disk?(binary(), binary()) :: boolean()
+  def class_on_disk?(operative_class, namespace)
+      when is_binary(operative_class) and is_binary(namespace) do
+    File.dir?(Path.join(namespace_dir(namespace), operative_class))
   end
 
   defp adopt_from_system(operative_class, namespace) do

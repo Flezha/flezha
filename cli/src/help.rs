@@ -237,7 +237,7 @@ Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start
-    flz operative start my_operative my_factory --namespace prod
+    flz operative start my_factory --id my_operative --namespace prod
     flz plugin install /path/to/my_plugin-1.0.0.fpz
     flz plugin list --installed
     flz plugin enable kafka_producer provider1 Xhosts=localhost:9092
@@ -301,23 +301,36 @@ COMMANDS:
 pub(crate) const OPERATIVE_START: Help = r#"flz operative start - Start an operative
 
 USAGE:
-    flz operative start <operative_id> <factory_id> [OPTIONS]
+    flz operative start <factory_id> [OPTIONS]
 
 OPTIONS:
+    --id <id>, -i <id>          Id to start under (default: generated)
     --namespace <ns>            Namespace to start in (default: default)
     --kind <stream|workflow>    Operative kind (default: stream)
-    --init_values <json>        Seed state at start; -iv is the short form
+    --init-values <json>        Seed state at start
     --plugins <json-array>      Plugin specs attached at start
     --partitions <N>            Start N partition members as one group
-    --snapshot-interval <N>     Changes between snapshots; -si is the short form
+    --snapshot-interval <N>     Changes between snapshots
+    --output <text|json>        Output format (default: text)
+    --json                      The same as --output json
+
+ID:
+    Without --id the controller generates one, <factory>-<16 characters>, and
+    prints it: Started echo-k7m2qzxw4pd3fn2a. With --output json the answer is
+    {"id": ..., "outcome": "started" | "already_running"}.
+
+    A start without --id that is run again after its answer was lost starts a
+    second operative, and a second stream runs until it is stopped. Pass --id
+    when the start may be retried: a start of an id that is already running
+    prints "<id> is already running, left untouched" and starts nothing.
 
 INIT VALUES:
     A stream operative's document is keyed by Procedure name, one entry per
     Procedure to seed. Name only what you want seeded; a Procedure you leave
     out keeps the state its class builds.
 
-        -iv '{"compare_filter_procedure": {"comparable": "hi"}}'
-        -iv '{"ohlc": {"1m": {"high": 0}}}'      one state per declared key
+        --init-values '{"compare_filter_procedure": {"comparable": "hi"}}'
+        --init-values '{"ohlc": {"1m": {"high": 0}}}'   one state per declared key
 
     A name the class does not carry is ignored, not refused: the runner logs
     it and the start still succeeds, so check the spelling. A workflow
@@ -325,9 +338,10 @@ INIT VALUES:
     applying it as state.
 
 EXAMPLES:
-    flz operative start my_operative do_nothing
-    flz operative start ohlc candles --partitions 3
-    flz operative start orders order_aggregator --namespace prod"#;
+    flz operative start do_nothing
+    flz operative start do_nothing --id my_operative
+    flz operative start candles --id ohlc --partitions 3
+    flz operative start order_aggregator -i orders --namespace prod -o json"#;
 
 pub(crate) const OPERATIVE_LISTEN: Help = r#"flz operative listen - Print the frames an operative emits or ingests
 
@@ -375,7 +389,7 @@ COMMANDS:
     help        Show this help message
 
 EXAMPLES:
-    flz operative start ohlc candles --partitions 3
+    flz operative start candles --id ohlc --partitions 3
     flz operative scale ohlc 5
     flz operative send orchestrator --text '{"task":"refactor"}'
     flz operative send my_echo --text 'hello world' --await 2000
@@ -548,7 +562,7 @@ USAGE:
 
 SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
-        [--namespace <ns>] [--init_values <json>] [--plugins <json>] [--kind workflow]
+        [--namespace <ns>] [--init-values <json>] [--plugins <json>] [--kind workflow]
                  Add a durable schedule (workflow operatives only).
                  --plugins takes the same array as `operative start --plugins`;
                  each firing prefixes the plugin ids with its instance id.

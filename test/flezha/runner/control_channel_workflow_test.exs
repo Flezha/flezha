@@ -291,7 +291,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
 
     expect(OperativeManager, :spawn_or_deliver, fn ns, id, factory, payload, if_running, caller ->
       send(test_pid, {:resolved, ns, id, factory, payload, if_running, caller})
-      :spawned
+      {:spawned, id}
     end)
 
     send_request(channel,
@@ -304,23 +304,35 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
     assert_receive {:resolved, @namespace, "w1", "worker", "p1", :deliver, caller}
     # The identity is the connection's, never anything the frame said.
     assert %{source: :sdk, namespace: @namespace, principal: "runner@" <> @namespace} = caller
-    assert {"ref-spawn", %{outcome: "spawned", error: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "spawned", error: "", instance_id: "w1"}} = await_response()
+  end
+
+  test "a request without an id answers the id the controller generated", %{channel: channel} do
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, "", _factory, _payload, _policy, _ ->
+      {:spawned, "worker-k7m2qzxw4pd3fn2a"}
+    end)
+
+    send_request(channel, instance_id: "", factory_id: "worker")
+
+    assert {"ref-spawn", %{outcome: "spawned", instance_id: "worker-k7m2qzxw4pd3fn2a"}} =
+             await_response()
   end
 
   test "the error policy is carried through verbatim", %{channel: channel} do
-    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, :error, _ ->
-      :already_running
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, id, _factory, _payload, :error, _ ->
+      {:already_running, id}
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker", if_running: "error")
 
-    assert {"ref-spawn", %{outcome: "already_running", error: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "already_running", error: "", instance_id: "w1"}} =
+             await_response()
   end
 
   test "an unset policy reads as deliver rather than refusing the payload", %{channel: channel} do
     expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, if_running, _ ->
       assert if_running == :deliver
-      :delivered
+      {:delivered, "w1"}
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker")
@@ -329,8 +341,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   end
 
   test "a refusal ships its reason so the requester can log something useful", %{channel: channel} do
-    expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy, _ ->
-      {:refused, "quota_exceeded"}
+    expect(OperativeManager, :spawn_or_deliver, fn _ns, id, _factory, _payload, _policy, _ ->
+      {{:refused, "quota_exceeded"}, id}
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker")
@@ -344,7 +356,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
     expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy, _ ->
       send(parent, {:resolving, self()})
       NodeTestHelper.park()
-      :spawned
+      {:spawned, "w1"}
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker")

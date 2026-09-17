@@ -21,6 +21,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.OperativeManager.Placement
   alias Flezha.Service.Validator
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
 
@@ -44,7 +45,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   end
 
   test "a free id spawns, carrying the payload as the instance's seed input" do
-    assert :spawned =
+    assert {:spawned, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
     assert [operative] = FakeStartRegistry.started()
@@ -54,20 +55,20 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   end
 
   test "a taken id receives the payload as one more input", %{registry: registry} do
-    assert :spawned =
+    assert {:spawned, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
-    assert :delivered =
+    assert {:delivered, "w1"} =
              spawn_or_deliver(@factory, "p2", :deliver)
 
     assert Instance.ingested(instance_pid(registry, "w1")) == ["p2"]
   end
 
   test "the error policy reports instead of delivering", %{registry: registry} do
-    assert :spawned =
+    assert {:spawned, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
-    assert :already_running =
+    assert {:already_running, "w1"} =
              spawn_or_deliver(@factory, "p2", :error)
 
     assert Instance.ingested(instance_pid(registry, "w1")) == []
@@ -87,8 +88,8 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
       )
       |> Enum.map(fn {:ok, outcome} -> outcome end)
 
-    assert Enum.count(outcomes, &(&1 == :spawned)) == 1
-    assert Enum.count(outcomes, &(&1 == :delivered)) == 7
+    assert Enum.count(outcomes, &(&1 == {:spawned, "w1"})) == 1
+    assert Enum.count(outcomes, &(&1 == {:delivered, "w1"})) == 7
 
     delivered = Instance.ingested(instance_pid(registry, "w1"))
     assert length(delivered) == 7
@@ -98,14 +99,14 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   test "an id freed by teardown spawns a fresh instance rather than delivering", %{
     registry: registry
   } do
-    assert :spawned =
+    assert {:spawned, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
     first = instance_pid(registry, "w1")
 
     :ets.delete(registry, "w1")
 
-    assert :spawned =
+    assert {:spawned, "w1"} =
              spawn_or_deliver(@factory, "p2", :deliver)
 
     refute instance_pid(registry, "w1") == first
@@ -114,7 +115,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   test "a factory no connected runner registers is reported, not spawned" do
     stub(FleetManager, :runners_for_factory, fn _ns, _factory -> [] end)
 
-    assert :factory_unknown =
+    assert {:factory_unknown, "w1"} =
              spawn_or_deliver("nobody", "p1", :deliver)
   end
 
@@ -126,7 +127,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
     stub(Directory, :factory_nodes, fn _ns, _factory -> [:"stale-peer@127.0.0.1"] end)
     stub(Placement, :pick_runner, fn _nodes, _id -> node() end)
 
-    assert :factory_unknown = spawn_or_deliver(@factory, "p1", :deliver)
+    assert {:factory_unknown, "w1"} = spawn_or_deliver(@factory, "p1", :deliver)
     assert FakeStartRegistry.started() == []
   end
 
@@ -135,15 +136,77 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
       {:error, {:quota_exceeded, key, %{limit: 1}}}
     end)
 
-    assert {:refused, reason} =
+    assert {{:refused, reason}, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
     assert reason =~ "quota_exceeded"
   end
 
+  describe "a request without an id" do
+    test "spawns under a generated id and ignores the error policy", %{registry: registry} do
+      assert {:spawned, first} =
+               OperativeManager.spawn_or_deliver(@namespace, "", @factory, "p1", :error, @caller)
+
+      assert {:spawned, second} =
+               OperativeManager.spawn_or_deliver(@namespace, "", @factory, "p2", :error, @caller)
+
+      assert first =~ ~r/\Aworker-[a-z2-7]{16}\z/
+      assert second =~ ~r/\Aworker-[a-z2-7]{16}\z/
+      refute first == second
+
+      assert [%{id: ^first} = a, %{id: ^second} = b] = FakeStartRegistry.started()
+      assert Keyword.get(a.opts, :seed_input) == "p1"
+      assert Keyword.get(b.opts, :seed_input) == "p2"
+      assert Instance.ingested(instance_pid(registry, first)) == []
+    end
+
+    test "is never merged with a concurrent request that carries none" do
+      outcomes =
+        1..8
+        |> Task.async_stream(
+          fn n ->
+            OperativeManager.spawn_or_deliver(
+              @namespace,
+              "",
+              @factory,
+              "p#{n}",
+              :deliver,
+              @caller
+            )
+          end,
+          max_concurrency: 8,
+          timeout: 10_000
+        )
+        |> Enum.map(fn {:ok, {:spawned, id}} -> id end)
+
+      assert length(Enum.uniq(outcomes)) == 8
+    end
+
+    test "a factory nobody registers answers the empty id it carried" do
+      stub(FleetManager, :runners_for_factory, fn _ns, _factory -> [] end)
+
+      assert {:factory_unknown, ""} =
+               OperativeManager.spawn_or_deliver(
+                 @namespace,
+                 "",
+                 "nobody",
+                 "p1",
+                 :deliver,
+                 @caller
+               )
+    end
+  end
+
   describe "start authority — the one id claim (D6)" do
     defp builder(id) do
       %Flezha.Operative.Builder{id: id, factory_id: @factory, kind: :stream, init_values: %{}}
+    end
+
+    test "a named start is never redrawn and never asks the generator" do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("r1"))
+      mint = fn _factory -> flunk("a named start drew an id") end
+
+      assert :duplicate = OperativeManager.start_operative(@namespace, builder("r1"), mint: mint)
     end
 
     test "a start that loses the claim concedes; the winner is left strictly alone", %{
@@ -196,6 +259,110 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
 
       assert Enum.count(outcomes, &match?({:ok, _}, &1)) == 1
       assert Enum.count(outcomes, &(&1 == :duplicate)) == 7
+    end
+  end
+
+  describe "a start without an id" do
+    # A generator that answers `ids` in order, then fails the test if drawn again.
+    defp minting(ids) do
+      {:ok, agent} = Agent.start_link(fn -> ids end)
+
+      fn _factory ->
+        Agent.get_and_update(agent, fn
+          [id | rest] -> {id, rest}
+          [] -> flunk("drew more ids than the test offered")
+        end)
+      end
+    end
+
+    defp unnamed, do: builder(nil)
+
+    test "starts under a generated id and answers it" do
+      assert {:ok, %{operative_id: id}} = OperativeManager.start_operative(@namespace, unnamed())
+
+      assert id =~ ~r/\Aworker-[a-z2-7]{16}\z/
+      assert [%{id: ^id}] = FakeStartRegistry.started()
+    end
+
+    test "a generated id a live operative holds is drawn again", %{registry: registry} do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("worker-live"))
+      winner = instance_pid(registry, "worker-live")
+      _ = FakeStartRegistry.started()
+      reject(&ProcessHub.stop_children/3)
+
+      assert {:ok, %{operative_id: "worker-free"}} =
+               OperativeManager.start_operative(@namespace, unnamed(),
+                 mint: minting(["worker-live", "worker-free"])
+               )
+
+      assert instance_pid(registry, "worker-live") == winner
+      assert Process.alive?(winner)
+    end
+
+    test "a generated id with a stale registry row is drawn again" do
+      stub(ProcessHub, :child_lookup, fn _hub, id ->
+        if id == "worker-ghost", do: {id, [{node(), self()}]}, else: nil
+      end)
+
+      assert {:ok, %{operative_id: "worker-free"}} =
+               OperativeManager.start_operative(@namespace, unnamed(),
+                 mint: minting(["worker-ghost", "worker-free"])
+               )
+    end
+
+    test "a generated id whose state folder is still on disk is drawn again" do
+      left = Path.join(Paths.namespace_dir(@namespace), "worker-left")
+      File.mkdir_p!(Path.join(left, "journal"))
+      on_exit(fn -> File.rm_rf!(Paths.namespace_dir(@namespace)) end)
+
+      assert {:ok, %{operative_id: "worker-free"}} =
+               OperativeManager.start_operative(@namespace, unnamed(),
+                 mint: minting(["worker-left", "worker-free"])
+               )
+
+      assert File.dir?(Path.join(left, "journal"))
+    end
+
+    test "a named start over its own state folder is the ordinary restore" do
+      File.mkdir_p!(Path.join(Paths.namespace_dir(@namespace), "restored"))
+      on_exit(fn -> File.rm_rf!(Paths.namespace_dir(@namespace)) end)
+
+      assert {:ok, %{operative_id: "restored"}} =
+               OperativeManager.start_operative(@namespace, builder("restored"))
+    end
+
+    test "a start whose every draw is taken is refused naming the exhaustion" do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("worker-live"))
+
+      assert {:error, reason} =
+               OperativeManager.start_operative(@namespace, unnamed(),
+                 mint: minting(["worker-live", "worker-live", "worker-live"])
+               )
+
+      assert reason == "no free operative id was found for factory worker in 3 draws"
+    end
+
+    test "a refusal that is not about the id is answered, not redrawn" do
+      stub(Quotas, :check_allocation, fn _ns, key, _n ->
+        {:error, {:quota_exceeded, key, %{limit: 1}}}
+      end)
+
+      assert {:error, {:quota_exceeded, :max_operatives, _}} =
+               OperativeManager.start_operative(@namespace, unnamed(),
+                 mint: minting(["worker-a"])
+               )
+    end
+
+    test "the published door answers the id and the outcome" do
+      assert {:ok, %{id: "named", outcome: :started}} =
+               @namespace
+               |> OperativeManager.start_operative(builder("named"))
+               |> OperativeManager.start_answer("named")
+
+      assert {:ok, %{id: "named", outcome: :already_running}} =
+               @namespace
+               |> OperativeManager.start_operative(builder("named"))
+               |> OperativeManager.start_answer("named")
     end
   end
 end

@@ -7,16 +7,19 @@ TBD - created by archiving change node-sdk. Update Purpose after archive.
 
 The SDK SHALL NOT expose any blocking core entry point as a synchronous call from JavaScript.
 `flz_core_poll` SHALL NOT be exported to JavaScript at all. `flz_core_complete`,
-`flz_core_workflow_recv`, `flz_core_spawn_workflow` and `flz_core_start` SHALL be reachable only as
-asynchronous operations whose blocking work executes on a thread that is not an event-loop thread.
+`flz_core_workflow_recv`, `flz_core_spawn_result` read with a nonzero timeout, and `flz_core_start`
+SHALL be reachable only as asynchronous operations whose blocking work executes on a thread that is
+not an event-loop thread.
 
 This requirement exists to close a process-wide deadlock. Under the default `DropNothing` overflow
 policy a completion's routing push waits until the consumer's mailbox drains, and the consumer
 drains only when its handler runs. If the waiting thread is the event loop, the loop is the only
 thread that could run that handler, and no other thread can free it.
 
-Non-blocking entry points — abandon, buffer free, monotonic clock and last-error — MAY be
-synchronous.
+Non-blocking entry points (abandon, buffer free, monotonic clock, last-error, `flz_core_spawn_request`,
+and `flz_core_spawn_result` read with a timeout of zero) MAY be synchronous. `ctx.spawnWorkflow` SHALL
+therefore return its handle synchronously, the handle's `tryResult()` SHALL be synchronous, and only
+its `wait()` SHALL be asynchronous.
 
 #### Scenario: A blocking entry point cannot be called from the event loop
 - **WHEN** the veneer's exported surface is enumerated in a test
@@ -28,6 +31,13 @@ synchronous.
   consumer's handler runnable only on an event loop
 - **THEN** the completion SHALL wait off-loop, the consumer's activation SHALL be dispatched and
   drained, and the completion SHALL then return
+
+#### Scenario: Spawn returns on the event loop and waits off it
+- **WHEN** a procedure calls `ctx.spawnWorkflow('worker', payload)` on an event loop and then
+  awaits `handle.wait()` while the controller is slow to answer
+- **THEN** the spawn call SHALL return the handle without blocking the loop, `tryResult()` SHALL
+  answer pending without blocking the loop, and the waiting read SHALL run on a thread that is not
+  an event-loop thread
 
 ### Requirement: Fetch Threads Are the SDK's Own and Never the Runtime's Shared Pool
 

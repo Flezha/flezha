@@ -719,7 +719,9 @@ pub struct WorkflowStop {
 }
 /// SDK -> Controller. A procedure asked for a workflow instance
 /// (`ctx.spawn_workflow`): spawn `factory_id` under `instance_id` if that id is
-/// free, otherwise apply `if_running`. The namespace is NOT carried — the
+/// free, otherwise apply `if_running`. An empty `instance_id` asks the
+/// Controller to generate one and always spawns, so `if_running` is ignored for
+/// it. The namespace is NOT carried — the
 /// Controller takes it from the control channel the request arrived on, which
 /// is what makes cross-namespace spawning impossible by construction rather
 /// than by validation. `payload` becomes the instance's first inbox frame on a
@@ -743,7 +745,9 @@ pub struct SpawnWorkflowRequest {
 /// request's reference_id so the SDK wakes the requester's result handle.
 /// `outcome` is one of `spawned | delivered | already_running |
 /// factory_unknown | refused`; `error` details a `refused` (quota, shutdown,
-/// start failure) and is empty otherwise. The reply never faults the
+/// start failure) and is empty otherwise. `instance_id` is the id the request
+/// resolved to: the requester's own, or the generated one for a request that
+/// carried none (empty when nothing was started). The reply never faults the
 /// requesting procedure — it only resolves its handle.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnWorkflowResponse {
@@ -751,6 +755,8 @@ pub struct SpawnWorkflowResponse {
     pub outcome: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub instance_id: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. Ordinary application code administering the namespace its
 /// connection proved: one frame for every verb, because the verb is data.

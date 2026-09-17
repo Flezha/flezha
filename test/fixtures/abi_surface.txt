@@ -32,7 +32,8 @@ flz_core_poll
 flz_core_schema_version
 flz_core_set_log_callback
 flz_core_shutdown
-flz_core_spawn_workflow
+flz_core_spawn_request
+flz_core_spawn_result
 flz_core_start
 flz_core_wait_starvation
 flz_core_watch_stdin_eof

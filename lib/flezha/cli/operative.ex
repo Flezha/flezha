@@ -18,49 +18,35 @@ defmodule Flezha.Service.Cli.Operative do
   alias Flezha.Service.Workflow
 
   @doc """
-  Starts an operative. The call's options carry `plugins` (a JSON array, `[]`
-  when absent) and `kind` (`stream` when absent).
+  Starts an operative and prints the id it runs under. The call's options carry
+  `id` (generated when absent), `plugins` (a JSON array, `[]` when absent) and
+  `kind` (`stream` when absent). Answers `{:ok, %{id:, outcome:}}`, which the
+  start's audit record reads.
   """
-  def operative_start(namespace, operative_id, factory_id, init_values, opts_json, %{opts: opts}) do
+  def operative_start(namespace, factory_id, init_values, format, opts_json, %{opts: opts}) do
+    format = Context.atom!(format, [:text, :json], "format")
+
     opts_kw =
       Context.json!(opts_json, "--partitions/--snapshot-interval")
       |> Context.atom_converter()
       |> Keyword.new()
 
     {partitions, opts_kw} = pop_partitions(opts_kw)
+
+    operative = %Flezha.Operative.Builder{
+      id: Keyword.get(opts, :id),
+      factory_id: factory_id,
+      kind: parse_kind(Keyword.get(opts, :kind, "stream")),
+      init_values: Context.json!(init_values, "--init-values"),
+      opts: opts_kw
+    }
+
     plugins_json = Keyword.get(opts, :plugins, "[]")
-    kind = Keyword.get(opts, :kind, "stream")
+    namespace = Namespace.or_default(namespace)
 
-    if partitions >= 2 do
-      start_partitioned(
-        namespace,
-        operative_id,
-        factory_id,
-        init_values,
-        opts_kw,
-        kind,
-        partitions,
-        plugins_json
-      )
-    else
-      case SpecDecoder.decode(plugins_json, Namespace.or_default(namespace), operative_id) do
-        {:ok, []} ->
-          start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind)
-
-        {:ok, plugins} ->
-          start_operative(
-            namespace,
-            operative_id,
-            factory_id,
-            init_values,
-            Keyword.put(opts_kw, :plugins, plugins),
-            kind
-          )
-
-        {:error, reason} ->
-          Context.fail!("starting operative: #{Context.format_reason(reason)}")
-      end
-    end
+    if partitions >= 2,
+      do: start_partitioned(namespace, operative, partitions, plugins_json, format),
+      else: start_operative(namespace, operative, plugins_json, format)
   end
 
   # `--partitions` arrives as a decimal string like every CLI opt. Absent or
@@ -82,33 +68,23 @@ defmodule Flezha.Service.Cli.Operative do
     end
   end
 
-  defp start_partitioned(
-         namespace,
-         operative_id,
-         factory_id,
-         init_values,
-         opts_kw,
-         kind,
-         partitions,
-         plugins_json
-       ) do
-    operative = %Flezha.Operative.Builder{
-      id: operative_id,
-      factory_id: factory_id,
-      kind: parse_kind(kind),
-      init_values: Context.json!(init_values, "--init_values"),
-      opts: opts_kw
-    }
+  # JSON output is the one object `start` answers, so a warning goes to the
+  # operator's stderr rather than ahead of it.
+  defp start_partitioned(namespace, operative, partitions, plugins_json, format) do
+    case PartitionGroup.start(namespace, operative, partitions, plugins_json) do
+      {:ok, %{group: group, members: members, warnings: warnings} = result} ->
+        outcome = if members == [], do: :already_running, else: :started
+        answer = {:ok, %{id: group, outcome: outcome}}
 
-    case PartitionGroup.start(
-           Namespace.or_default(namespace),
-           operative,
-           partitions,
-           plugins_json
-         ) do
-      {:ok, %{members: members, warnings: warnings} = result} ->
-        Enum.each(warnings, &IO.puts("WARNING: #{&1}"))
-        report_group_start(operative_id, members, Map.get(result, :already_running, []))
+        if format == :json do
+          notify = Context.notifier()
+          Enum.each(warnings, &notify.("WARNING: #{&1}"))
+          render_start(answer, :json)
+        else
+          Enum.each(warnings, &IO.puts("WARNING: #{&1}"))
+          report_group_start(group, members, Map.get(result, :already_running, []))
+          answer
+        end
 
       {:error, reason} ->
         Context.fail!("starting operative: #{Context.format_reason(reason)}")
@@ -137,31 +113,52 @@ defmodule Flezha.Service.Cli.Operative do
     Enum.each(already, &IO.puts("  already running #{&1}"))
   end
 
-  defp start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind) do
-    operative = %Flezha.Operative.Builder{
-      id: operative_id,
-      factory_id: factory_id,
-      kind: parse_kind(kind),
-      init_values: Context.json!(init_values, "--init_values"),
-      opts: opts_kw
-    }
+  defp start_operative(namespace, %{id: nil} = operative, plugins_json, format) do
+    start = &start_with_plugins(namespace, %{operative | id: &1}, plugins_json, generated: true)
 
-    case OperativeManager.start_operative(Namespace.or_default(namespace), operative) do
-      {:ok, _} ->
-        IO.puts("Operative has been started")
+    operative.factory_id
+    |> OperativeManager.with_generated_id(start)
+    |> OperativeManager.start_answer(nil)
+    |> render_start(format)
+  end
 
-      # A live instance holds the id: the re-run is a no-op, not a failure.
-      # A claim refused with no live winner stays in the error clause below.
-      :duplicate ->
-        IO.puts(
-          "Operative #{operative.id} is already running; the existing instance was left " <>
-            "untouched (options were not compared — see `flz operative info #{operative.id}`)."
-        )
+  defp start_operative(namespace, operative, plugins_json, format) do
+    namespace
+    |> start_with_plugins(operative, plugins_json, [])
+    |> OperativeManager.start_answer(operative.id)
+    |> render_start(format)
+  end
 
-      {:error, reason} ->
-        Context.fail!("starting operative: #{Context.format_reason(reason)}")
+  # A plugin spec names the operative it attaches to, so it is decoded under
+  # the id the start runs under, which for a generated id is each one drawn.
+  defp start_with_plugins(namespace, operative, plugins_json, opts) do
+    with {:ok, plugins} <- SpecDecoder.decode(plugins_json, namespace, operative.id) do
+      opts_kw =
+        if plugins == [], do: operative.opts, else: Keyword.put(operative.opts, :plugins, plugins)
+
+      OperativeManager.start_operative(namespace, %{operative | opts: opts_kw}, opts)
     end
   end
+
+  # A live instance holding a named id is a successful no-op; a claim refused
+  # with no live winner is the error clause.
+  defp render_start({:ok, %{id: id, outcome: outcome}} = answer, :json) do
+    IO.puts(Jason.encode!(%{id: id, outcome: outcome}))
+    answer
+  end
+
+  defp render_start({:ok, %{id: id, outcome: :started}} = answer, :text) do
+    IO.puts("Started #{id}")
+    answer
+  end
+
+  defp render_start({:ok, %{id: id, outcome: :already_running}} = answer, :text) do
+    IO.puts("#{id} is already running, left untouched")
+    answer
+  end
+
+  defp render_start({:error, reason}, _format),
+    do: Context.fail!("starting operative: #{Context.format_reason(reason)}")
 
   # Resolve the wire kind string to its atom without minting atoms from
   # untrusted input: only already-known kinds convert; anything else stays a

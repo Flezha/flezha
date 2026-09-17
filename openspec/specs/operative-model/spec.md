@@ -136,37 +136,56 @@ A request for an operative's per-Entity state SHALL succeed only when the operat
 
 ### Requirement: Unified `flz operative` CLI verb
 
-The CLI SHALL expose a single `flz operative` verb tree for lifecycle management of every operative kind: `flz operative start --kind <stream|workflow>`, `flz operative stop`, `flz operative list`, and `flz operative info`. `--kind` SHALL default to `stream`. There SHALL be no `flz relay` verb, and `--kind unbounded` / `--kind bounded` SHALL NOT be accepted.
+The CLI SHALL expose a single `flz operative` verb tree for lifecycle management of every operative kind: `flz operative start <factory> [--id|-i <id>] [--kind <stream|workflow>]`, `flz operative stop`, `flz operative list`, and `flz operative info`. `--kind` SHALL default to `stream`. The factory SHALL be the start verb's only positional argument, and the id SHALL be an option: a start with no `--id` SHALL be given a generated id. A successful start SHALL print `Started <id>`, naming the id it started under whether the operator wrote it or the controller generated it, and SHALL print no progress line before it. With `--output json` (`-o json`) or `--json` it SHALL print one JSON object `{"id": <id>, "outcome": <outcome>}` and nothing else, the way `flz operative list` and `flz operative info` render JSON. There SHALL be no `flz relay` verb, and `--kind unbounded` / `--kind bounded` SHALL NOT be accepted.
 
 #### Scenario: Start a stream operative by default
 
-- **WHEN** the operator runs `flz operative start <class>` without `--kind`
+- **WHEN** the operator runs `flz operative start <factory>` without `--kind`
 - **THEN** a stream operative SHALL be started
 
 #### Scenario: Start a workflow operative
 
-- **WHEN** the operator runs `flz operative start <class> --kind workflow`
+- **WHEN** the operator runs `flz operative start <factory> --kind workflow`
 - **THEN** a workflow operative SHALL be started
+
+#### Scenario: A start without an id prints the generated id
+
+- **WHEN** the operator runs `flz operative start echo` and the start succeeds
+- **THEN** the command SHALL exit 0 and print `Started <id>`, where `<id>` is the generated id `flz operative list` shows and `flz operative stop` accepts
+
+#### Scenario: A start with an id uses it
+
+- **WHEN** the operator runs `flz operative start echo -i my_echo` and the start succeeds
+- **THEN** an operative with id `my_echo` SHALL run and the command SHALL print `Started my_echo`, identically to `--id my_echo`
+
+#### Scenario: JSON output carries the id and the outcome
+
+- **WHEN** the operator runs `flz operative start echo -o json` and the start succeeds
+- **THEN** standard output SHALL be exactly one JSON object with `id` set to the started id and `outcome` set to `started`, and no other line
 
 #### Scenario: A retired kind argument is rejected
 
-- **WHEN** the operator runs `flz operative start <class> --kind bounded`
+- **WHEN** the operator runs `flz operative start <factory> --kind bounded`
 - **THEN** the CLI SHALL reject it as an invalid kind and SHALL NOT start an operative
 
 #### Scenario: The legacy verb is gone
 
 - **WHEN** the operator runs `flz relay start`
 - **THEN** the CLI SHALL reject it as an unknown command
-<!-- kind-naming-record:end -->
 
 ### Requirement: Operative start requests SHALL be location-transparent across controller nodes
 
-A workflow operative start request (`flz operative start`/`add`, a schedule fire, or a procedure-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node — a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
+A workflow operative start request (`flz operative start`/`add`, a schedule fire, or a procedure-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A request that carries no id SHALL be given its generated id on the receiving node before capable nodes are resolved, so the forwarded call carries that id and the executing node generates none of its own. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node: a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
 
 #### Scenario: CLI start against a runner-less controller node
 
 - **WHEN** `flz operative start` is issued against a controller node holding no runner for the target namespace while a peer node holds a connected runner advertising the factory
-- **THEN** the operative SHALL be started on the capable peer and the command SHALL report success naming that placement
+- **THEN** the operative SHALL be started on the capable peer and the command SHALL report success naming the started id
+
+#### Scenario: A routed start without an id keeps the origin's id
+
+- **WHEN** a start with no id is issued against a controller node holding no runner for the target namespace while a peer node holds a capable runner
+- **THEN** the operative SHALL run on the peer under the id the receiving node generated, and that id SHALL be the one reported to the caller
 
 #### Scenario: Honest cluster-wide refusal
 
@@ -233,12 +252,17 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 ### Requirement: A duplicate start against a live winner SHALL be a successful no-op
 
-`flz operative start` (and the manager call it wraps) losing the duplicate-id claim to a **live** instance SHALL report success: exit code 0, with output stating the operative is already running and that the existing instance was left untouched — no comparison of factory, init values, or opts is performed and none SHALL be implied. A claim refused with **no live winner** behind it (a stale registry row) SHALL remain a non-zero error naming the id, so a wedged id is never silently accepted. This is the CLI-facing rendering of the concession semantics `convergence-self-healing` already requires of every starter; the underlying `:duplicate` verdict and its live-winner verification are unchanged.
+`flz operative start` (and the manager call it wraps) losing the duplicate-id claim to a **live** instance SHALL report success: exit code 0, with output `<id> is already running, left untouched`, or with `--output json` / `--json` the object `{"id": <id>, "outcome": "already_running"}`. No comparison of factory, init values, or opts is performed and none SHALL be implied. Only a start that names its own id can reach this outcome: a generated id that loses the claim is drawn again rather than reported as already running. A claim refused with **no live winner** behind it (a stale registry row) SHALL remain a non-zero error naming the id, so a wedged id is never silently accepted. This is the CLI-facing rendering of the concession semantics `convergence-self-healing` already requires of every starter; the underlying `:duplicate` verdict and its live-winner verification are unchanged.
 
 #### Scenario: Re-running a cold-start script is quiet
 
-- **WHEN** `flz operative start demo --factory f` is issued while a live instance already holds `demo`
-- **THEN** the command exits 0, prints that `demo` is already running and was left untouched, and the running instance observes no stop, restart, or rebind
+- **WHEN** `flz operative start f --id demo` is issued while a live instance already holds `demo`
+- **THEN** the command exits 0, prints `demo is already running, left untouched`, and the running instance observes no stop, restart, or rebind
+
+#### Scenario: JSON output names the outcome
+
+- **WHEN** `flz operative start f --id demo -o json` is issued while a live instance already holds `demo`
+- **THEN** the command exits 0 and prints exactly one JSON object with `id` set to `demo` and `outcome` set to `already_running`
 
 #### Scenario: A stale registry row still fails loudly
 

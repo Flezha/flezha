@@ -123,9 +123,12 @@ invocation; the scheduled timestamp inside `on_timer/4`), `entity_key/1`, and th
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
 `{:ok, at}`, the absolute timestamp a cancel takes, or
 `{:error, {:event_time_timer_without_event_time_clock, procedure, clock}}` /
-`{:error, {:timer_cap_exceeded, procedure, max}}`. `spawn_workflow/5` requests spawn-or-deliver
-of a workflow instance and answers a `Flezha.SDK.Spawn` handle at once; the contract is
-`docs/sdk/procedure_requested_spawn.md`.
+`{:error, {:timer_cap_exceeded, procedure, max}}`. `spawn_workflow(ctx, factory_id, payload, opts)`
+requests spawn-or-deliver of a workflow instance, `id:` and `if_running:` optional, and answers a
+`Flezha.SDK.Spawn` handle at once that resolves to `{:ok, %{id: id, outcome: outcome}}`; the
+contract is `docs/sdk/procedure_requested_spawn.md`. A spawn without `id:` always starts a new
+instance, starts a second one when reissued after a lost answer, and answers an empty id when
+skipped on replay; pass `id:` when that matters.
 
 ## Graph builder (v1 subset)
 

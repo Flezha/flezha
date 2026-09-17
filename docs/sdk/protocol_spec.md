@@ -808,7 +808,9 @@ workflow instance (`ctx.spawn_workflow` / `ctx.spawnWorkflow`). The controller
 spawns `factory_id` under `instance_id` when free, with `payload` as the first
 inbox entry (empty = spawn only); otherwise `if_running` applies: `"deliver"`
 (default; any unrecognised value reads as deliver) appends `payload` to the
-running instance's inbox, `"error"` refuses.
+running instance's inbox, `"error"` refuses. An empty `instance_id` asks the
+controller to generate one; such a request always spawns and `if_running` is
+ignored.
 
 **The namespace is not carried**: the controller takes it from the control
 channel the request arrived on, which makes cross-namespace spawning impossible
@@ -825,10 +827,11 @@ delivery answers `refused`. See
 
 ### SpawnWorkflowResponse
 
-`SpawnWorkflowResponse { outcome, error }` returns controller → runner under
-the request's `reference_id`; `outcome` ∈ `spawned`, `delivered`,
-`already_running`, `factory_unknown`, `refused`, and `error` details a
-`refused`. It resolves the requester's result handle and never faults the
+`SpawnWorkflowResponse { outcome, error, instance_id }` returns controller →
+runner under the request's `reference_id`; `outcome` ∈ `spawned`, `delivered`,
+`already_running`, `factory_unknown`, `refused`, `error` details a `refused`,
+and `instance_id` is the id the request resolved to: the requester's own, or
+the generated one (empty when a request that carried none started nothing). It resolves the requester's result handle and never faults the
 requesting procedure (an unobserved handle logs the failure once); against an
 older controller the request is ignored and the requester times out.
 

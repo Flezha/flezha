@@ -31,7 +31,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     defdelegate event_time_of(input), to: CorrectionProc
 
     def run(input, s, ctx) do
-      handle = Ctx.spawn_workflow(ctx, "w-" <> input, "worker", input, :deliver)
+      handle = Ctx.spawn_workflow(ctx, "worker", input, id: "w-" <> input)
       Ctx.emit_keyed(ctx, "fold", inspect(Spawn.try_result(handle)))
       {:ok, Ctx.apply(ctx, s, Ctx.now(ctx))}
     end
@@ -295,7 +295,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       replay(op, "100:a", 5)
       end_slice(op)
       assert [replayed] = frames(1)
-      assert outputs(replayed) == [inspect({:ok, :skipped_on_replay})]
+      assert outputs(replayed) == [inspect({:ok, %{id: "w-100:a", outcome: :skipped_on_replay}})]
       refute_received {:"$gen_cast", {:spawn, _, _, _, _}}
     end
   end

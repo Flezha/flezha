@@ -41,7 +41,7 @@ defmodule Flezha.Service.Cli.Schedule do
     factory_id = Keyword.get(opts, :factory, "")
     plugins_json = Keyword.get(opts, :plugins, "")
 
-    init_map = Context.json!(Keyword.get(opts, :init_values, ""), "--init_values")
+    init_map = Context.json!(Keyword.get(opts, :init_values, ""), "--init-values")
 
     with :ok <- schedule_workflow_only(Keyword.get(opts, :kind, "workflow")),
          :ok <- schedule_check_plugins(plugins_json, ns, name),

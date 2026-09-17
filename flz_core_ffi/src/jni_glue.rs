@@ -10,7 +10,7 @@
 use std::ffi::CString;
 
 use jni::objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue};
-use jni::sys::{jboolean, jbyteArray, jint, jlong};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use jni::JNIEnv;
 
 use crate::veneer::{self, with_buffer, CtxPtr, Refusal};
@@ -433,47 +433,76 @@ type SpawnArgs = (CString, CString, Vec<u8>, CString);
 
 fn spawn_args(
     env: &mut JNIEnv,
-    instance_id: &JString,
     factory_id: &JString,
+    id: &JString,
     payload: &JByteArray,
     if_running: &JString,
 ) -> Result<SpawnArgs, Refusal> {
     let unreadable = |_| Refusal::Shape("spawn arguments unreadable".to_string());
-    let instance = c_string(env, "instance id", instance_id).map_err(unreadable)?;
     let factory = c_string(env, "factory id", factory_id).map_err(unreadable)?;
+    let id = c_string(env, "id", id).map_err(unreadable)?;
     let mode = c_string(env, "if_running", if_running).map_err(unreadable)?;
     let bytes = bytes_of(env, "payload bytes", payload)?;
-    Ok((instance, factory, bytes, mode))
+    Ok((factory, id, bytes, mode))
 }
 
-/// Spawn-or-deliver a workflow instance; returns the controller's outcome
-/// string. Throws on refusal / no control plane / timeout.
-#[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnWorkflow<'l>(
-    mut env: JNIEnv<'l>,
-    _class: JClass,
-    ctx: jlong,
-    instance_id: JString,
-    factory_id: JString,
-    payload: JByteArray,
-    if_running: JString,
-) -> jni::sys::jstring {
-    let ctx = ctx_of(ctx);
-    let outcome = spawn_args(&mut env, &instance_id, &factory_id, &payload, &if_running).and_then(
-        |(instance, factory, bytes, mode)| {
-            veneer::spawn_workflow(ctx, &instance, &factory, &bytes, &mode)
-        },
-    );
-    match outcome {
-        Ok(outcome) => match env.new_string(outcome) {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
+/// A string answer as a Java `String`, `null` for none; a refusal is thrown
+/// and answers `null`.
+fn string_or_throw(env: &mut JNIEnv, answer: Result<Option<String>, Refusal>) -> jstring {
+    match answer {
+        Ok(Some(text)) => env
+            .new_string(text)
+            .map_or(std::ptr::null_mut(), JString::into_raw),
+        Ok(None) => std::ptr::null_mut(),
         Err(refusal) => {
-            throw(&mut env, &refusal);
+            throw(env, &refusal);
             std::ptr::null_mut()
         }
     }
+}
+
+/// Request a spawn from the live activation `token`; returns the handle number
+/// at once. An empty `id` asks the controller to generate one. Throws only for
+/// an unreadable argument or a token that is not outstanding.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnRequest<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    token: jlong,
+    factory_id: JString,
+    id: JString,
+    payload: JByteArray,
+    if_running: JString,
+    replay: jboolean,
+) -> jlong {
+    let ctx = ctx_of(ctx);
+    let handle = spawn_args(&mut env, &factory_id, &id, &payload, &if_running).and_then(
+        |(factory, id, bytes, mode)| {
+            veneer::spawn_request(ctx, token as u64, &factory, &id, &bytes, &mode, replay != 0)
+        },
+    );
+    match handle {
+        Ok(handle) => handle as jlong,
+        Err(refusal) => {
+            throw(&mut env, &refusal);
+            0
+        }
+    }
+}
+
+/// Read a spawn handle, waiting up to `timeoutMs`: `null` while pending,
+/// otherwise its answer as JSON. Throws for a released handle.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnResult<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    handle: jlong,
+    timeout_ms: jlong,
+) -> jstring {
+    let answer = veneer::spawn_result(ctx_of(ctx), handle as u64, timeout_ms.max(0) as u64);
+    string_or_throw(&mut env, answer)
 }
 
 /// Administer the namespace this connection proved: the published function's
@@ -486,21 +515,12 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_adminCall<'l>(
     ctx: jlong,
     verb: JString,
     args: JString,
-) -> jni::sys::jstring {
+) -> jstring {
     let ctx = ctx_of(ctx);
     let result = c_string(&mut env, "verb", &verb)
         .and_then(|verb| c_string(&mut env, "args", &args).map(|args| (verb, args)))
         .and_then(|(verb, args)| veneer::admin_call(ctx, &verb, &args));
-    match result {
-        Ok(json) => match env.new_string(json) {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(refusal) => {
-            throw(&mut env, &refusal);
-            std::ptr::null_mut()
-        }
-    }
+    string_or_throw(&mut env, result.map(Some))
 }
 
 /// The core's monotonic clock in nanoseconds.

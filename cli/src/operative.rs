@@ -1,5 +1,5 @@
 use crate::args::{
-    self, OptSpec, Positional, Reading, DURATION_MS, JSON_SWITCH, NAMESPACE, OUTPUT,
+    self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, JSON_SWITCH, NAMESPACE, OUTPUT,
 };
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
@@ -8,15 +8,16 @@ use crate::settings::serialize_flags;
 
 const OPERATIVE_ID: &[Positional] = &[Positional::required("<operative_id>")];
 
+const ID: OptSpec = OptSpec::text("--id", "-i", "<id>");
 const KIND: OptSpec = OptSpec::text("--kind", "--kind", "<stream|workflow>");
-const INIT_VALUES: OptSpec = OptSpec::text("--init_values", "-iv", "<json>");
 const PLUGINS: OptSpec = OptSpec::text("--plugins", "--plugins", "<json-array>");
 const PARTITIONS: OptSpec = OptSpec::number("--partitions", "--partitions", "<N>");
-const SNAPSHOT_INTERVAL: OptSpec = OptSpec::number("--snapshot-interval", "-si", "<N>");
+const SNAPSHOT_INTERVAL: OptSpec =
+    OptSpec::number("--snapshot-interval", "--snapshot-interval", "<N>");
 const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<ms>");
 const PAYLOAD: OptSpec = OptSpec::text("--text", "-t", "<payload>").required();
 const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
-const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "-i", "<N>").required();
+const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration", "<N>").required();
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
 const INPUT: OptSpec = OptSpec::switch("--input", "--input");
 const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
@@ -26,18 +27,19 @@ pub(crate) const TABLE: Command = Command {
     help: help::OPERATIVE,
     verbs: &[
         Verb::new("start", handle_start)
-            .taking(&[
-                Positional::required("<operative_id>"),
-                Positional::required("<factory_id>"),
-            ])
+            .taking(&[Positional::required("<factory_id>")])
             .reading(&[
+                ID,
                 KIND,
                 NAMESPACE,
                 INIT_VALUES,
                 PLUGINS,
                 PARTITIONS,
                 SNAPSHOT_INTERVAL,
+                OUTPUT,
+                JSON_SWITCH,
             ])
+            .strict()
             .screen(help::OPERATIVE_START),
         Verb::new("scale", handle_scale)
             .taking(&[
@@ -97,12 +99,15 @@ fn start_opts(read: &Reading) -> String {
     serialize_flags(&opts)
 }
 
-/// `--plugins` and `--kind` ride the options list, and only when written: an
-/// absent flag is absent from the request and the controller applies its
-/// default.
+/// `--id`, `--plugins` and `--kind` ride the options list, and only when
+/// written: an absent flag is absent from the request and the controller
+/// applies its default, which for the id is one it generates.
 fn handle_start(read: &Reading) {
     let mut opts: Vec<Opt> = Vec::new();
 
+    if let Some(id) = read.opt(ID.long) {
+        opts.push(("id", text(id)));
+    }
     if let Some(plugins) = read.opt(PLUGINS.long) {
         opts.push(("plugins", text(&plugins_json_or_refuse(plugins))));
     }
@@ -110,15 +115,13 @@ fn handle_start(read: &Reading) {
         opts.push(("kind", text(kind)));
     }
 
-    println!("Starting operative...");
-
     rpc::run(
         "operative_start",
         &[
             text(read.namespace()),
-            text(read.pos("<operative_id>")),
             text(read.pos("<factory_id>")),
             text(read.json(INIT_VALUES.long)),
+            text(read.output_format()),
             text(&start_opts(read)),
         ],
         &opts,

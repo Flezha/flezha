@@ -1,4 +1,4 @@
-use crate::args::{OptSpec, Positional, Reading, NAMESPACE};
+use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::operative::plugins_json_or_refuse;
@@ -7,7 +7,6 @@ use crate::rpc::{self, text, Opt};
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
 const TZ: OptSpec = OptSpec::text("--tz", "--tz", "<iana>").required();
 const FACTORY: OptSpec = OptSpec::text("--factory", "--factory", "<factory_id>").required();
-const INIT_VALUES: OptSpec = OptSpec::text("--init_values", "-iv", "<json>");
 const KIND: OptSpec = OptSpec::text("--kind", "--kind", "<stream|workflow>");
 const PLUGINS: OptSpec = OptSpec::text("--plugins", "-p", "<json>");
 
@@ -17,15 +16,10 @@ pub(crate) const TABLE: Command = Command {
     path: "flz schedule",
     help: help::SCHEDULE,
     verbs: &[
-        Verb::new("add", handle_add).taking(NAME).reading(&[
-            CRON,
-            TZ,
-            FACTORY,
-            NAMESPACE,
-            INIT_VALUES,
-            KIND,
-            PLUGINS,
-        ]),
+        Verb::new("add", handle_add)
+            .taking(NAME)
+            .reading(&[CRON, TZ, FACTORY, NAMESPACE, INIT_VALUES, KIND, PLUGINS])
+            .strict(),
         Verb::new("list", |read| {
             rpc::run("schedule_list", &[], &[], read.token(), rpc::PROPAGATE)
         }),

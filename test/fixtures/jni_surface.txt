@@ -28,7 +28,8 @@ abandon|flz_core_abandon
 workflowEmit|flz_core_workflow_emit
 workflowRecv|flz_core_workflow_recv
 workflowCancelled|flz_core_workflow_cancelled
-spawnWorkflow|flz_core_spawn_workflow
+spawnRequest|flz_core_spawn_request
+spawnResult|flz_core_spawn_result
 adminCall|flz_core_admin_call
 monotonicNanos|flz_core_monotonic_nanos
 shutdown|flz_core_shutdown

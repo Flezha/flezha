@@ -250,6 +250,9 @@ pub(crate) const UNIVERSAL: &[OptSpec] = &[
 
 /// The options more than one verb shares, spelled once each.
 pub(crate) const NAMESPACE: OptSpec = OptSpec::text("--namespace", "-n", "<namespace>");
+/// The document an operative starts from, on a start and on every firing of a
+/// schedule.
+pub(crate) const INIT_VALUES: OptSpec = OptSpec::text("--init-values", "--init-values", "<json>");
 pub(crate) const OUTPUT: OptSpec =
     OptSpec::choice("--output", "-o", "output format", &["text", "json"]);
 /// The switch spelling of `--output json`. `Reading::output_format` is where

@@ -342,7 +342,8 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_schema_version`, `flz_core_context_new`, `flz_core_init_error`, `flz_core_last_error` | Version negotiation and error text |
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
 | `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
-| `flz_core_workflow_emit`, `flz_core_workflow_recv`, `flz_core_workflow_cancelled`, `flz_core_spawn_workflow` | Workflow session calls and procedure-requested spawn |
+| `flz_core_workflow_emit`, `flz_core_workflow_recv`, `flz_core_workflow_cancelled` | Workflow session calls |
+| `flz_core_spawn_request`, `flz_core_spawn_result` | Procedure-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
 | `flz_core_set_log_callback` | The one host callback the core ever invokes |
 
@@ -354,8 +355,9 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   different one than the thread that polled. No affinity.
 - **A host whose unit of concurrency is bound to one thread must keep every
   blocking entry point off that thread.** The blocking ones are the poll, the
-  starvation wait, the completion, the workflow receive, the workflow spawn and
-  the runner start. An event loop is the case this rule exists for, and
+  starvation wait, the completion, the workflow receive, the spawn result read
+  with a nonzero timeout and the runner start. The spawn request, and the spawn
+  result read with a timeout of zero, never wait. An event loop is the case this rule exists for, and
   `flz_core_complete` is what makes it a correctness rule rather than a latency
   one: under the default overflow policy it parks until the consumer's mailbox
   drains, and the consumer drains only when its handler runs. A host that parks
@@ -454,7 +456,7 @@ The Java SDK is a poll host over `flz_core`: its runtime binds to
 class — `schemaVersion()`, `contextNew(shimSchemaVersion)`,
 `declareClass(ctx, json)`, `start(ctx, namespace)`, `poll(ctx, timeoutMs)`,
 `complete(ctx, result)`, `workflowEmit` / `workflowRecv` / `workflowCancelled`,
-`spawnWorkflow`, `monotonicNanos()`, `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
+`spawnRequest` / `spawnResult`, `monotonicNanos()`, `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
 `poll → decode Activation → hand off → poll`; the kernel (transport, ordering,
 durability, retries, timers, credit, routing, the workflow driver, reconnect)
 lives entirely in the core.
@@ -472,7 +474,7 @@ refuses a shim/core version mismatch before any controller connection.
 **Buffer ownership at the JNI boundary.**
 
 1. Every `byte[]` the binding returns (a polled activation, an inbox payload, a
-   spawn outcome) is copied from the core's buffer into a fresh Java array, and
+   spawn result) is copied from the core's buffer into a fresh Java array, and
    the native buffer is freed through `flz_core_buf_free` before the JNI method
    returns. No native buffer escapes.
 2. Java-owned arrays handed into native methods (`declareClass`, `complete`,

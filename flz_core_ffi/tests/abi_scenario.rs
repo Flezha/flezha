@@ -4,7 +4,8 @@
 //! `lifecycle` drives the capabilities and `shutdown` ends the runner;
 //! `harness` is the fake controller and the poll/complete pair they drive
 //! them with; `shape` proves the mapping every binding shares, once, against
-//! a recording pair; `admin` holds the administration surface to one entry.
+//! a recording pair; `admin` holds the administration surface to one entry;
+//! `spawn` drives a procedure's spawn in a process of its own.
 //!
 //! Each veneer arm hangs off that same shape and proves only what its own
 //! language contributes — how it builds and reads a value — so a veneer is
@@ -24,6 +25,8 @@ mod lifecycle;
 mod shape;
 #[path = "abi/shutdown.rs"]
 mod shutdown;
+#[path = "abi/spawn.rs"]
+mod spawn;
 #[path = "abi/surface.rs"]
 mod surface;
 
