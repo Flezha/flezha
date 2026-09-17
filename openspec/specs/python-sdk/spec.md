@@ -244,3 +244,28 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the Python interpreter authors an `ok` row
 - **THEN** the derived declaration equals the row's lines
 
+#### Scenario: A merge row runs through the SDK's own merge handle
+
+- **WHEN** the Python interpreter reaches `merge_one_source` or `merge_same_twice`
+- **THEN** it authors the row with `c.merge().from_(...)…into(...)` rather than skipping it, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
+
+### Requirement: The Channels builder carries merge, the latest-document router and flat_map
+
+`Channels.merge()` SHALL return a merge handle with `from_(source, map)` (`from` being a keyword), `key_by(key)`, `into(procedure)` and `into(procedure, name)`, with the `multi-input-procedures` semantics: a source is an entry edge or an inter-procedure edge declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged procedure's own output edge. The builder SHALL record each source as a chain closed by the core's `merge` link under one group per merge and SHALL take the merge refusals from the reference check. `Channels.route_latest(documents, traffic, key_fn)` and `route_latest_named(documents, traffic, key_fn, name)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-entity procedure with journaled `{document, version, delivered}` state. `Edge.flat_map(fn)` SHALL exist beside `map` and `filter`: the callable answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, the chain is applied as a list so `filter` and `flat_map` are one mechanism, and the record carries the same `transform` link as `map`.
+
+#### Scenario: Two channels merge into one procedure
+- **WHEN** an operative declares `c.merge().from_(ticks, tick_input).from_(quotes, quote_input).key_by(lambda v: v["symbol"]).into(detector)`
+- **THEN** registration SHALL succeed with one detector node fed by two consumer edges, each applying its own mapping, and a value from either entry SHALL reach the handler as the mapped value keyed by `symbol`
+
+#### Scenario: A duplicated source is refused by the reference name
+- **WHEN** a merge declares the same edge twice
+- **THEN** registration SHALL refuse with `DuplicateMergeSource` naming the channel, and a merge with one source SHALL refuse with `MergeTooFewSources`
+
+#### Scenario: One input becomes three deliveries
+- **WHEN** an edge declares `.flat_map(lambda line: [part for part in line.split(",") if part])` into a procedure and the dispatcher is handed `a,b,c`
+- **THEN** the handler SHALL run three times, once per element, under one consumed offset, and a line the callable answers `[]` for SHALL run it zero times
+
+#### Scenario: The router delivers on a key's own traffic
+- **WHEN** `c.route_latest(config, trades, lambda t: t["symbol"])` is declared and `ProcedureTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
+- **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
+

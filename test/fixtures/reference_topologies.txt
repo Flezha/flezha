@@ -65,6 +65,8 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #   <x>.into(<proc>)           wire x into a procedure; the result is that
 #                              procedure's output channel, addressed by its role
 #   <x>.map.into(<proc>)       a transform link before the terminator
+#   <x>.filter.into(<proc>)    the same link, declared with the SDK's filter
+#   <x>.flat_map.into(<proc>)  the same link, declared with the SDK's flat_map
 #   <x>.key.into(<proc>)       a key link before the terminator
 #   <x>.map                    a chain nothing closes
 #   <x>.sink(<name>)           terminate x on the plugin layer, naming it
@@ -94,7 +96,7 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 # `needs` is `-`, or the surface the row needs. An SDK whose manifest or
 # documented subset lacks that surface skips the row BY NAME and the seam test
 # counts the skip against the declared surface. The surfaces named here:
-#   merge      a merge terminator (the Elixir v1 subset has none)
+#   merge      a merge terminator
 #   branch     the branch sugar (the Elixir v1 subset has none)
 #   workflow   a workflow class kind
 #   detached   a procedure no entry can reach — unauthorable in a fluent
@@ -157,6 +159,8 @@ AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.
 # twins of the seven-column table above — cited, not re-spelled. Every other
 # `ok` row's derived lines follow it there under its own topology id.
 ok                                 | fan_in_noop      | entry(in); in.into(plain); in.into(plain)                                             | -
+ok                                 | filter_then_into | entry(in); in.filter.into(plain)                                                      | -
+ok                                 | flat_map_then_into | entry(in); in.flat_map.into(plain)                                                  | -
 ok                                 | named_sink       | entry(in); in.into(plain); plain.named(renamed); plain.sink                            | -
 ok                                 | sink_names_channel | entry(in); in.into(plain); plain.sink(items_output)                                  | -
 ok                                 | checkpoint_ack   | class.persistent; class.effectively_once; class.checkpoint_ack; entry(in); in.into(plain) | -
@@ -168,6 +172,8 @@ ok                                 | commit_block_chain | cited above           
 # The derived declarations of the `ok` rows above, in the same seven columns as
 # the two twins: topology | index | name | kind | producer | consumers | sink
 fan_in_noop | 0 | in | entry | - | 0 | -
+filter_then_into | 0 | in | entry | - | 0 | -
+flat_map_then_into | 0 | in | entry | - | 0 | -
 named_sink | 0 | in | entry | - | 0 | -
 named_sink | 1 | renamed | plugin | 0 | - | renamed
 sink_names_channel | 0 | in | entry | - | 0 | -

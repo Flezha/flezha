@@ -1,7 +1,8 @@
 //! The routing seam's tests: a plugin output whose write failed and is held
-//! for the reconnect, and the entry-channel resolution — a declared name
+//! for the reconnect, the entry-channel resolution — a declared name
 //! delivered, an absent one defaulted, and a name the operative does not
-//! declare parked under the name it asked for.
+//! declare parked under the name it asked for — and a host payload fanned
+//! across several dynamic keys.
 
 use std::io::Read;
 use std::os::unix::net::UnixStream;
@@ -341,4 +342,50 @@ fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
 
     state_sink::set_secondary_stream(None);
     state_sink::reset_for_test();
+}
+
+/// A host class whose one entry is keyed into a dynamic procedure, the shape a
+/// `key_by` behind a fanning `flat_map` declares.
+fn keyed_dynamic_instance(id: &str) -> Arc<StreamInstance> {
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
+             "channels":[{{"name":"in","kind":"entry",
+                           "chains":[[{{"link":"key"}},{{"link":"into","procedure":0}}]]}}],
+             "procedures":[{{"name":"p0","entity_mode":"dynamic"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+}
+
+#[test]
+fn a_host_payload_fanned_across_keys_reaches_every_keyed_entity() {
+    let instance = keyed_dynamic_instance("fanned_host_keys");
+    let channel = instance.topology.channel(0).expect("the entry channel");
+    let value: Arc<dyn Any + Send + Sync> = Arc::new(crate::host::HostPayload {
+        bytes: b"a:1,b:2".to_vec(),
+        channel: 0,
+        keys: vec!["A".to_string(), "B".to_string()],
+        event_time: None,
+        metadata: Vec::new(),
+    });
+
+    route_to_consumers(
+        &instance,
+        channel,
+        &value,
+        &dead_stream(),
+        None,
+        false,
+        None,
+    );
+
+    let registry = instance.dynamic_registries[0]
+        .as_ref()
+        .expect("a dynamic consumer has a registry");
+    for key in ["A", "B"] {
+        let slot = registry.entities.get(key).unwrap_or_else(|| {
+            panic!("the fan answered key {key}, and no Entity was minted for it")
+        });
+        assert_eq!(slot.mailbox.len(), 1, "key {key} receives the payload once");
+    }
 }

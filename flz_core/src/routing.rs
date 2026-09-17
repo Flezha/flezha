@@ -188,8 +188,9 @@ fn deliver_to_consumer(
     Ok(deferred)
 }
 
-/// A dynamic consumer: one Entity by key, minted on first sight. A host
-/// class's key rides the payload, consulted when no edge closure exists.
+/// A dynamic consumer: one Entity per key, minted on first sight. A host
+/// class's keys ride the payload, consulted when no edge closure exists; a
+/// payload its host fanned out answers one key per Entity it reaches.
 fn deliver_dynamic(
     instance: &StreamInstance,
     edge: &ConsumerEdge,
@@ -203,24 +204,26 @@ fn deliver_dynamic(
     else {
         return Ok(());
     };
-    let key = match edge.key_of(value.as_ref()).map_err(Error::Routing)? {
-        Some(k) => Some(k),
+    let edge_key = edge.key_of(value.as_ref()).map_err(Error::Routing)?;
+    let keys = match &edge_key {
+        Some(key) => std::slice::from_ref(key),
         None => value
             .downcast_ref::<crate::host::HostPayload>()
-            .and_then(|p| p.keys.first().cloned()),
-    };
-    let Some(key) = key else {
-        return Ok(());
+            .map_or(&[][..], |p| p.keys.as_slice()),
     };
     // A key this member does not own means the source and the topology
     // disagree about what a key is. Refuse on the first frame — before
-    // `get_or_create` mints an Entity — so a misconfigured group parks
-    // its traffic instead of folding half of it into private state.
+    // `get_or_create` mints any Entity — so a misconfigured group parks
+    // its traffic instead of folding part of it into private state.
     if instance.partition.partitioned() {
-        instance.partition.admit(&key)?;
+        for key in keys {
+            instance.partition.admit(key)?;
+        }
     }
-    if let Ok(slot) = registry.get_or_create(&key) {
-        admit(&slot);
+    for key in keys {
+        if let Ok(slot) = registry.get_or_create(key) {
+            admit(&slot);
+        }
     }
     Ok(())
 }

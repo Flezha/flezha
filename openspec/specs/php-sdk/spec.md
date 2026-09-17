@@ -172,7 +172,7 @@ The PHP SDK SHALL expose event-time and processing-time timer registration and c
 - **THEN** the restored entity SHALL still hold those timers, rebuilt from its change log
 
 ### Requirement: Edge transforms, keys and inter-procedure routing
-The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMap and keyBy on stream handles, and merge with per-source mapping — with transforms composed at declaration time and evaluated where the core routes outputs.
+The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMap and keyBy on stream handles, and merge with per-source mapping — with transforms composed at declaration time and evaluated where the core routes outputs. `$c->merge()` SHALL return a merge handle with `from($source, callable $map)`, `keyBy(callable $key)`, `into(string $class, ?string $nodeName = null)`, recording each source as a chain closed by the core's `merge` link under one group and taking the merge refusals from the reference check. `$c->routeLatest($documents, $traffic, callable $keyFn)` and `routeLatestNamed(..., string $nodeName)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-entity procedure with journaled `{document, version, delivered}` state.
 
 #### Scenario: A chain of transforms is applied once per value
 - **WHEN** several transforms are declared on one edge before its terminal `into`
@@ -181,6 +181,14 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 #### Scenario: A throwing transform is contained
 - **WHEN** an edge transform throws
 - **THEN** the failure SHALL climb the channel's retry→park ladder rather than terminating the runner
+
+#### Scenario: Two channels merge into one procedure
+- **WHEN** an operative declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
+- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
+
+#### Scenario: The router delivers on a key's own traffic
+- **WHEN** `$c->routeLatest($config, $trades, fn ($t) => $t['symbol'])` is declared and the harness feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
+- **THEN** exactly one `['A', $document]` and one `['B', $document]` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: Workflow operatives at parity
 The PHP SDK SHALL support workflow operatives in both forms: structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier, and run-sugar, driven by `flz_core_workflow_emit` / `_recv` / `_cancelled`.
@@ -252,4 +260,9 @@ The SDK SHALL prove the set by one conformance run over every row of
 
 - **WHEN** the PHP interpreter authors an `ok` row
 - **THEN** the derived declaration equals the row's lines
+
+#### Scenario: A merge row runs through the SDK's own merge handle
+
+- **WHEN** the PHP interpreter reaches `merge_one_source` or `merge_same_twice`
+- **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 

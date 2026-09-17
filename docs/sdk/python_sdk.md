@@ -400,6 +400,3 @@ with it. It also drives `async def` handlers, so a test needs no event loop.
   declaration — only the in-process Rust host, which owns the runner channel
   directly, can notify a live controller. Java carries the same gap; owed to
   `sdk-abi-factory-resync`.
-- `workflow`, owed to `sdk-durable-fixture-parity` alongside the Node, Ruby, PHP
-  and Elixir apps that defer it. The mechanism is present in the SDK; what is
-  deferred is the fixture set that proves it end to end.

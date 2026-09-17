@@ -13,10 +13,14 @@ defmodule Flezha.SDK.TopologyWiringTest do
   their stamping mode, and two wires sharing it are the duplicate. The repeated
   consumer edge, whose rule IS the reference's, is the `edge_rewired` and
   `fan_in_noop` rows.
+
+  A merge wires one consumer edge per source, each fusing that source's own
+  transforms, its mapping and the merge's key, and meets the reference's three
+  refusals for its shape.
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Topology}
+  alias Flezha.SDK.{Channels, Ctx, Merge, Topology}
 
   defmodule EchoProc do
     @behaviour Flezha.SDK.Procedure
@@ -158,6 +162,117 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     assert {:DuplicateChannel, "shared"} in issues,
            "only two channels naming one SINK are the sink duplicate, read #{inspect(issues)}"
+  end
+
+  # --- merge ---
+
+  defmodule TwoSourceMerge do
+    def factory_id, do: "two_source_merge"
+
+    def channels(c) do
+      ticks = Channels.input(c, "ticks")
+      quotes = c |> Channels.input("quotes") |> Channels.map(&String.upcase/1)
+      fills = c |> Channels.input("orders") |> Channels.into(EchoProc)
+
+      c
+      |> Channels.merge()
+      |> Merge.from(ticks, &{:tick, &1})
+      |> Merge.from(quotes, &{:quote, &1})
+      |> Merge.from(fills, &{:fill, &1})
+      |> Merge.key_by(fn {_source, value} -> value |> String.split(":") |> hd() end)
+      |> Merge.into(KeyedProc)
+      |> Channels.sink("merged")
+    end
+  end
+
+  defmodule OneSourceMerge do
+    def factory_id, do: "one_source_merge"
+
+    def channels(c) do
+      ticks = Channels.input(c, "ticks")
+      c |> Channels.merge() |> Merge.from(ticks, & &1) |> Merge.into_named(KeyedProc, "m")
+    end
+  end
+
+  defmodule SameSourceTwice do
+    def factory_id, do: "same_source_twice"
+
+    def channels(c) do
+      ticks = Channels.input(c, "ticks")
+
+      c
+      |> Channels.merge()
+      |> Merge.from(ticks, & &1)
+      |> Merge.from(ticks, & &1)
+      |> Merge.into(KeyedProc)
+    end
+  end
+
+  defmodule MergeOverBareEdge do
+    def factory_id, do: "merge_over_bare_edge"
+
+    def channels(c) do
+      ticks = Channels.input(c, "ticks")
+      quotes = Channels.input(c, "quotes")
+      Channels.into(ticks, KeyedProc)
+
+      c
+      |> Channels.merge()
+      |> Merge.from(ticks, & &1)
+      |> Merge.from(quotes, & &1)
+      |> Merge.into(KeyedProc)
+    end
+  end
+
+  test "a merge wires one edge per source, each under its own transforms, mapping and key" do
+    assert {:ok, topo} = Topology.build(TwoSourceMerge)
+    assert {:ok, merged} = Topology.node_of(topo, "keyed")
+    assert {:ok, echo} = Topology.node_of(topo, "echo")
+
+    edges =
+      for {source, routes} <- topo.routes,
+          %{to: {:node, ^merged}} = route <- routes,
+          into: %{},
+          do: {source, route}
+
+    assert map_size(edges) == 3
+
+    for {source, input, mapped} <- [
+          {{:entry, "ticks"}, "aapl:1", {:tick, "aapl:1"}},
+          {{:entry, "quotes"}, "aapl:2", {:quote, "AAPL:2"}},
+          {{:node, echo}, "msft:3", {:fill, "msft:3"}}
+        ] do
+      %{transform: transform, key_by: key_by} = Map.fetch!(edges, source)
+      assert transform.(input) == [mapped]
+      assert key_by.(mapped) == mapped |> elem(1) |> String.split(":") |> hd()
+    end
+
+    assert topo.node_mode[merged] == :dynamic
+    assert [%{to: {:sink, "merged"}}] = topo.routes[{:node, merged}]
+  end
+
+  test "MergeTooFewSources: a merge over one source" do
+    assert {:error, {:invalid_topology, [{:MergeTooFewSources, "m", 1}]}} =
+             Topology.build(OneSourceMerge)
+  end
+
+  test "DuplicateMergeSource: one source merged twice, whose second edge is a re-declaration" do
+    label = inspect(KeyedProc)
+
+    assert {:error, {:invalid_topology, issues}} = Topology.build(SameSourceTwice)
+
+    assert issues == [
+             {:EdgeAlreadyWired, "ticks", label},
+             {:DuplicateMergeSource, "ticks"},
+             {:MergeTooFewSources, label, 1}
+           ]
+  end
+
+  test "EdgeAlreadyWired: a merge source already wired bare into the same node" do
+    assert {:error, {:invalid_topology, [{:EdgeAlreadyWired, "ticks", label}]}} =
+             Topology.build(MergeOverBareEdge)
+
+    assert label == inspect(KeyedProc)
   end
 
   defp sink_channels(topo),

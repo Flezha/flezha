@@ -22,9 +22,14 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.PostgresSink
 
-  def send_inputs(operative_id, namespace, inputs) do
+  def send_inputs(operative_id, namespace, inputs, metadata \\ %{}) do
     for input <- inputs do
-      OperativeManager.send_io(operative_id, namespace, input, %{"input_type" => "2"})
+      OperativeManager.send_io(
+        operative_id,
+        namespace,
+        input,
+        Map.put(metadata, "input_type", "2")
+      )
     end
   end
 

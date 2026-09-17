@@ -129,9 +129,10 @@ of a workflow instance and answers a `Flezha.SDK.Spawn` handle at once; the cont
 
 ## Graph builder (v1 subset)
 
-`input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`/`sealed`, with
+`input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`, with
 `map`/`filter`/`flat_map`/`key_by` as edge transforms (fused into one closure per consumer
-edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`. Fan-out is handle reuse;
+edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`, and `merge/1` with
+`route_latest/4` ([`multi_input_procedures.md`](multi_input_procedures.md)). Fan-out is handle reuse;
 unnamed mentions of one module unify (fan-in). A sink names the channel it terminates:
 `sink("input")` makes the frame `channel = "input"`, which is what reaches a forward
 target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
@@ -148,10 +149,9 @@ The names are the reference vocabulary every SDK answers with
 than submits: it is its own core and inherits nothing from `flz_core`, so what
 it shares is the fixture — `test/fixtures/reference_topologies.txt`, one row per
 refusal, driven against every SDK by the same conformance run
-([`conformance.md`](conformance.md) § The refusal table). Three names are absent
-here and the fixture's `needs` column says why: `BranchTooFewArms`,
-`MergeTooFewSources` and `DuplicateMergeSource` need a `branch` or a `merge`,
-and the v1 subset carries neither.
+([`conformance.md`](conformance.md) § The refusal table). One name is absent
+here and the fixture's `needs` column says why: `BranchTooFewArms` needs a
+`branch`, which the v1 subset does not carry.
 
 Six calls declare the class rather than an edge and answer the token so they pipe in any
 order: `effectively_once/1`, `checkpoint_ack/1` / `checkpoint_every/2` /
@@ -498,25 +498,17 @@ a rewound baseline and an event-time-ordered slice. The SDK's half is four thing
 The fixture is `candle` in `test/apps/elixir_runner`, the same id and the same knobs every
 other SDK registers, and the scenarios are `test/system/late_input_correction_e2e_test.exs`.
 
-## Deferred capabilities (v1 scope)
+## Scope
 
-The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)'s
-`deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
-the conformance gate ([`conformance.md`](conformance.md)). In prose: `merge`, `route_latest`,
-`branch`. A builder/ctx call into a deferred surface fails registration loudly,
-naming the operative module.
-
-One more, outside the vocabulary because no capability names it: publishing `flezha_sdk` to
-Hex.
-
-Each deferred capability's follow-up re-expresses the kernel's rules in Elixir under the
-"one change, every SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`, as its
-persistence already shows.
+The manifest at [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)
+defers nothing: every capability is carried with the reference's fixtures. The one builder
+surface this SDK does not author is `branch`, since fan-out is handle reuse; a call to it fails
+registration naming the operative module.
 
 ## The package
 
 The SDK is the `flezha_sdk` mix package, developed in a repository of its own and carried
-here as a submodule at `sdk/elixir`. It depends on no controller module. The controller
+here as a submodule at `sdk/elixir`. It is not published to Hex yet. It depends on no controller module. The controller
 depends on it and imports the pure modules both need — the record frame, the postcard codec,
 the key-group hash, the bounded call, the counter-table macro and the in-node stream — so
 each exists once. The compiler holds that direction: the package compiles with

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added: `merge`, the latest-document router and `flat_map` in every SDK
+
+Node, Python, Ruby, PHP and Elixir can now merge several channels into one procedure, as
+Rust and Java could: each source brings the mapping that turns its values into the one value
+the procedure reads, the key is declared once on the merge, and a merge of one source, of the
+same source twice, or of a source already wired into the procedure is refused by the same
+names (`MergeTooFewSources`, `DuplicateMergeSource`, `EdgeAlreadyWired`). The spellings are
+`c.merge().from(s, f).keyBy(k).into(P)` in Node, `c.merge().from_(s, f).key_by(k).into(P)`
+in Python, `c.merge.from(s) { }.key_by { }.into(P)` in Ruby,
+`$c->merge()->from($s, fn)->keyBy(fn)->into(P::class)` in PHP and
+`Channels.merge/1` with `Flezha.SDK.Merge` in Elixir. The same five gain `route_latest`
+(`routeLatest`) and its named form, and Node, Python and Ruby gain `flat_map` (`flatMap`).
+Every SDK's test app carries two new fixtures, `merged_input` and `transform_chain`, driven
+end to end by `test/system/stream_graph_e2e_test.exs` on whichever runtime is selected.
+
+An input fanned by `flat_map` across several keys now reaches every one of them in the
+Java, Node, Python, Ruby and PHP runners; it used to reach the first key only. Each Entity
+runs only the values keyed to it, and a static consumer whose `entities_for` answers no key
+runs nowhere, as in Rust.
+
+The Elixir SDK's `Channels.sealed/1` is removed: it sealed nothing. Drop the call; the
+topology is unchanged.
+
 ### Changed: the Elixir SDK is the `flezha_sdk` package, in its own repository
 
 The Elixir SDK is a mix package of its own, `flezha_sdk`, developed in

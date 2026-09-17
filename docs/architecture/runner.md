@@ -457,9 +457,7 @@ The rule, normative for every binding:
   because that is a heartbeat key and heartbeat keys are a cross-SDK contract.
 - **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
   deferred *by name* — in the change's spec delta and in that SDK's scope matrix
-  (that SDK's `conformance.json` `deferred` list, and
-  [`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md#deferred-capabilities-v1-scope))
-  — together with the follow-up that owes it. The crate is the dogfood host (a capability the
+  (that SDK's `conformance.json` `deferred` list) — together with the follow-up that owes it. The crate is the dogfood host (a capability the
   crate reaches and the C ABI does not is a defect); one level up the same holds: a capability
   one SDK reaches that another neither reaches nor names as deferred is a defect of the change,
   not a backlog item.

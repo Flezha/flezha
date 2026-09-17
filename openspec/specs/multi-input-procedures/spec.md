@@ -3,9 +3,8 @@
 ## Purpose
 TBD - created by archiving change add-multi-input-procedures. Update Purpose after archive.
 ## Requirements
-
 ### Requirement: A procedure SHALL be authorable over multiple source channels via a mapped sum-type input
-Both SDKs (Rust and Java, released together) SHALL provide a merge authoring form in which a procedure declares a single `Input` sum type and subscribes to two or more source channels, each subscription supplying a pure mapping from the source channel's payload into that `Input` type. On a stream operative, entry channels and inter-procedure typed channels SHALL both be valid sources. On a workflow operative, only inter-procedure typed channels SHALL be valid sources: a workflow operative is seeded through one entry channel from its spawn args (and, for a per-input loop, its inbox items), neither of which carries the channel a payload arrived on, so no mapping could be selected — that shape SHALL be refused at definition time rather than accepted. The single-input `into` form SHALL remain unchanged.
+Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge authoring form in which a procedure declares a single `Input` sum type and subscribes to two or more source channels, each subscription supplying a pure mapping from the source channel's payload into that `Input` type. On a stream operative, entry channels and inter-procedure typed channels SHALL both be valid sources. On a workflow operative, only inter-procedure typed channels SHALL be valid sources: a workflow operative is seeded through one entry channel from its spawn args (and, for a per-input loop, its inbox items), neither of which carries the channel a payload arrived on, so no mapping could be selected — that shape SHALL be refused at definition time rather than accepted. The single-input `into` form SHALL remain unchanged.
 
 #### Scenario: Two typed channels feed one procedure
 
@@ -34,8 +33,8 @@ Both SDKs (Rust and Java, released together) SHALL provide a merge authoring for
 
 #### Scenario: SDK parity
 
-- **WHEN** the capability ships
-- **THEN** Rust and Java SDKs SHALL expose equivalent merge authoring with identical semantics and mirrored test scenarios
+- **WHEN** the `merged_input` fixture is started on any of the seven runtimes and one frame is injected on each of its two entry channels
+- **THEN** the merged procedure SHALL emit one line per source on the `merged` sink, each tagged by that source's mapping, and every SDK's own suite SHALL carry the mirrored merge tests: two typed sources into one procedure, an entry channel as a source, per-source FIFO under interleaving, the key evaluated on the mapped value, and the definition-time refusals
 
 ### Requirement: Merged delivery SHALL preserve per-source FIFO order and replay determinism
 Frames SHALL be journaled per source channel unchanged; per-source mappings and any edge transforms and key function SHALL run identically on live delivery and WAL replay, so a warm restart replays a merged procedure to the same state as live processing. Per-source FIFO ordering SHALL be preserved; no ordering SHALL be guaranteed across sources. `entities_for` and the edge key function SHALL be evaluated on the mapped input value; a merge's key function SHALL be declared once on the merge rather than per source, because every source has been mapped into one type by the time keying runs. Mappings, transforms, and key functions SHALL be pure and total; none is offered a retry, and on a workflow chain — where they run on the driver thread rather than inside an entity invocation — an unwinding closure SHALL be contained so the operative still terminates observably. Where a producer's released batch is mapped into its consumers, the mapping SHALL be applied only after that producer's completion has been recorded, so the producer is always within the saga's undo scope, and both SDKs SHALL unwind the same set of procedures in the same order. Where a crash-resumed chain's mapping is applied to a journaled handoff, the undo scope is whatever that SDK's resumed iteration records as completed, which is not the same on both SDKs.
@@ -85,3 +84,4 @@ Value transforms (`map`, `filter`, `flat_map`) declared on a merge SHALL apply t
 
 - **WHEN** a source handle declares `.filter(...)` and is then passed to `merge().from(source, Map::new)`
 - **THEN** the predicate SHALL receive that source's own payload type and SHALL run before the source's mapping
+

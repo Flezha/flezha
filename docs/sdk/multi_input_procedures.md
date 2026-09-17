@@ -2,10 +2,10 @@
 
 For operative authors who need one Procedure fed from two or more Channels —
 a data stream plus a config stream, a join of two computed streams, an
-enrichment path — and for SDK implementers: the `merge` surface in Rust and
-Java, what it does and does not promise, containment of a failing mapping,
-the refusals, the workflow restriction, and where the code lives. The Elixir
-SDK defers `merge` ([`elixir_sdk.md`](elixir_sdk.md)).
+enrichment path — and for SDK implementers: the `merge` surface every SDK
+carries, shown here in Rust and Java, what it does and does not promise,
+containment of a failing mapping, the refusals, the workflow restriction, and
+where the code lives.
 
 A Procedure consumes one `Input` type, and `.into::<Proc>()` type-locks it to
 one Channel. A **merge** declares the `Input` as an author-defined sum type

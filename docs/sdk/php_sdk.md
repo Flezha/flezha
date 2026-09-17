@@ -477,28 +477,13 @@ both rules against the parsed source rather than the prose.
 - **Installing needs the release's binary.** An offline or plugin-less install
   supplies it by hand, as above.
 
-## Deferred fixtures
+## Fixtures
 
-The manifest at `test/apps/php_runner/conformance.json` carries the seven
-capabilities every SDK must (`runner_lifecycle`, `connect_discovery`,
-`graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge`),
-carries `keyed_channels`, `dynamic_entity`, `state_persistence`,
-`entity_timers`, `schema_evolution`, `effectively_once` and `correction_window`
-besides, and defers one.
-
-The deferral is about **fixtures, not mechanism**: the workflow kind is
-implemented here and reached through the same core the Rust and Java arms
-prove it on. What is missing is the fixture-by-fixture proof against the
-reference, which needs the one builder surface every veneer lacks — a hybrid
-`sink()->into()` — and is owed to the follow-up that adds it, alongside the
-Node, Ruby and Python SDKs.
-
-Keyed channels are not on that list, and were not implemented here until
-`Ctx::stampIdentity` minted `flz.entity` / `flz.seq` / `flz.key`: the capability
-now carries the reference's `partition_relay` fixture. Per-entity persistence,
-schema evolution and the effectively-once tier left it with the reference's
-fixtures, in `test/apps/php_runner/fixtures_state.php`, and timers and
-correction windows with `session_timeout` and `candle` in `fixtures.php`.
+The manifest at `test/apps/php_runner/conformance.json` defers nothing: every
+capability is carried with the reference's fixtures, the persistence, schema
+evolution and effectively-once set in `test/apps/php_runner/fixtures_state.php`,
+the workflow set in `fixtures_workflow.php` and `fixtures_workflow_loop.php`, and
+the rest in `fixtures.php` and `fixtures_probe.php`.
 
 ## Diagnostics
 

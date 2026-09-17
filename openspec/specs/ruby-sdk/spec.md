@@ -51,6 +51,18 @@ The Ruby authoring surface SHALL carry both operative kinds — stream and workf
 - **WHEN** a Ruby workflow operative runs a chained loop with a suspension and is resumed after a runner restart
 - **THEN** the journal SHALL drive resume without re-running a committed procedure
 
+#### Scenario: Two channels merge into one procedure
+- **WHEN** an operative declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
+- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `process` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
+
+#### Scenario: One input becomes three deliveries
+- **WHEN** an edge declares `.flat_map { |line| line.split(",") }` into a procedure and the dispatcher is handed `a,b,c`
+- **THEN** `process` SHALL run three times, once per element, under one consumed offset, and feeding an empty line SHALL run it zero times
+
+#### Scenario: The latest-document router is offered
+- **WHEN** `c.route_latest(config, trades) { |t| t[:symbol] }` is declared and `Flezha::Testing::Harness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
+- **THEN** exactly one `["A", document]` and one `["B", document]` SHALL be emitted, the repeated document SHALL be inert, and `route_latest_named` SHALL take a node name
+
 ### Requirement: State and Change serialize through author-declared `to_h` / `from_h` over MessagePack
 
 State and Change types SHALL serialize through author-declared `to_h` and `from_h` methods encoded as MessagePack, carrying an author-controlled schema version. The SDK SHALL NOT use `Marshal` for any persisted or wire-bound value. The SDK SHALL raise at registration time when a declared State or Change type does not implement both methods.
@@ -94,4 +106,9 @@ The SDK SHALL prove the set by one conformance run over every row of
 
 - **WHEN** the Ruby interpreter authors an `ok` row
 - **THEN** the derived declaration equals the row's lines
+
+#### Scenario: A merge row runs through the SDK's own merge handle
+
+- **WHEN** the Ruby interpreter reaches `merge_one_source` or `merge_same_twice`
+- **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 

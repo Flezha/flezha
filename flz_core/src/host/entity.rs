@@ -23,7 +23,7 @@ use crate::timer::PendingTimers;
 pub struct HostPayload {
     pub bytes: Vec<u8>,
     pub channel: crate::channel::ChannelId,
-    /// One key for a dynamic consumer, any number for a static fan-out.
+    /// The Entities the payload reaches: one per key its host answered.
     pub keys: Vec<String>,
     pub event_time: Option<u64>,
     pub metadata: Vec<(String, String)>,

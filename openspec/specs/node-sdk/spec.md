@@ -149,3 +149,23 @@ the defaults the other SDKs ship, and SHALL NOT require an observability depende
 - **WHEN** a logger is supplied at runner construction
 - **THEN** SDK diagnostics SHALL be emitted through it
 
+### Requirement: The channel builder carries merge, the latest-document router and flatMap
+
+The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(procedure)` and `into(procedure, nodeName)`, with the `multi-input-procedures` semantics: a source is an entry stream or an inter-procedure stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged procedure's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "procedure", "group"}`) under one group per merge and SHALL take the merge refusals (`MergeTooFewSources`, `DuplicateMergeSource`, `EdgeAlreadyWired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-entity procedure with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
+
+#### Scenario: Two channels merge into one procedure
+- **WHEN** an operative declares `c.merge().from(ticks, (t) => ({kind: 'tick', ...t})).from(quotes, (q) => ({kind: 'quote', ...q})).keyBy((v) => v.symbol).into(Detector)`
+- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each edge SHALL apply its own mapping, and a value from either entry SHALL reach Detector's handler as the mapped object keyed by `symbol`
+
+#### Scenario: A duplicated source is refused by the reference name
+- **WHEN** a merge declares the same stream twice
+- **THEN** registration SHALL refuse with `DuplicateMergeSource` naming the channel, and a merge with one source SHALL refuse with `MergeTooFewSources`
+
+#### Scenario: One input becomes three deliveries
+- **WHEN** an edge declares `.flatMap((line) => line.split(',').filter(Boolean))` into a procedure and the dispatcher is handed `a,b,c`
+- **THEN** the handler SHALL run three times, once per element, under one consumed offset, and a line the closure answers `[]` for SHALL run it zero times
+
+#### Scenario: The router delivers on a key's own traffic
+- **WHEN** `c.routeLatest(config, trades, (t) => t.symbol)` is declared and the harness feeds a document, then trades for `A` and `B`, then the same document, then a trade for `A`
+- **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
+

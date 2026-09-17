@@ -252,7 +252,7 @@ defmodule Flezha.SDK.UnitTest do
   test "a builder call into a deferred surface fails registration naming the module" do
     defmodule Deferred do
       def factory_id, do: "def"
-      def channels(c), do: Channels.merge(c)
+      def channels(c), do: Channels.branch(c)
     end
 
     assert {:error, {:invalid_topology, [{:DeferredBuilderSurface, Deferred, _}]}} =

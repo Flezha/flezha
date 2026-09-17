@@ -217,7 +217,6 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
       |> Channels.named("producer")
       |> Channels.into(HeldConsumerProc)
       |> Channels.named("consumer")
-      |> Channels.sealed()
     end
   end
 

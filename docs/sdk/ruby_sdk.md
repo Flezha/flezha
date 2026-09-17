@@ -295,26 +295,12 @@ discipline lands now so it stays a swap rather than a rewrite: all per-VM SDK
 state resolves per Ractor from day one. The gem's unit suite asserts that no
 bare mutable global holds any of it.
 
-## Deferred fixtures
+## Fixtures
 
-The manifest defers one capability's end-to-end fixture set — `workflow` —
-to the follow-up that owes the one builder surface every veneer lacks, a
-hybrid `sink().into()`, shared with the Node, PHP and Python apps. The Elixir app defers more, because its SDK is its own
-core.
-
-This is a deferral of **fixtures, not mechanism**: the dispatcher answers every
-activation kind the boundary defines — work, restore fold, snapshot, live state
-read, apply state, migration serialize, key request, workflow run and
-compensate run — and the gem's unit suite sweeps all of them. What is owed is
-the end-to-end coverage, and the conformance gate holds the deferral honest in
-both directions.
-
-`keyed_channels` left that list when the gem began minting the output identity
-stamps (`Flezha::Ctx#stamp_identity`): the capability is carried with the
-reference's `partition_relay` fixture and proved end to end. `state_persistence`,
-`schema_evolution` and `effectively_once` left it with the reference's
-fixtures, in `test/apps/ruby_runner/fixtures_state.rb`, and `entity_timers`
-and `correction_window` with `session_timeout` and `candle` in `fixtures.rb`.
+The manifest at `test/apps/ruby_runner/conformance.json` defers nothing: every
+capability is carried with the reference's fixtures, the persistence, schema
+evolution and effectively-once set in `test/apps/ruby_runner/fixtures_state.rb`,
+the workflow set in `fixtures_workflow.rb`, and the rest in `fixtures.rb`.
 
 ## The runner image
 

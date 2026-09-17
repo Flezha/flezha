@@ -8,7 +8,7 @@ defmodule Flezha.SDK.DispatchTest do
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup}
+  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup, Merge}
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.Wire
@@ -210,11 +210,50 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.sink()
   end
 
+  # Two entries merged into one procedure, each source's mapping tagging its
+  # value, keyed on the symbol after the tag: an unmapped value keys elsewhere.
+  defmodule MergeOp do
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "merge_op"
+
+    def channels(c) do
+      ticks = Channels.input(c, "ticks")
+      quotes = Channels.input(c, "quotes")
+
+      c
+      |> Channels.merge()
+      |> Merge.from(ticks, &"ticks:#{&1}")
+      |> Merge.from(quotes, &"quotes:#{&1}")
+      |> Merge.key_by(&(&1 |> String.split(":") |> Enum.at(1)))
+      |> Merge.into(EchoProc)
+      |> Channels.named("labels")
+      |> Channels.sink()
+    end
+  end
+
+  defmodule FanOp do
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "fan_op"
+
+    def channels(c) do
+      c
+      |> Channels.input("in")
+      |> Channels.flat_map(&String.split(&1, ",", trim: true))
+      |> Channels.key_by(&(&1 |> String.split(":") |> hd()))
+      |> Channels.into(EchoProc)
+      |> Channels.named("fanned")
+      |> Channels.sink()
+    end
+  end
+
   # --- helpers ---
 
   defdelegate start_operative(op_module, opts \\ []), to: SdkOperativeHarness
+  defdelegate entity!(op, procedure, key), to: SdkOperativeHarness
   defdelegate rebind_secondary(op), to: SdkOperativeHarness
   defdelegate close_secondary(handle), to: SdkOperativeHarness
+
+  defp payloads(n), do: n |> SdkOperativeHarness.frames() |> Enum.map(&elem(&1, 1))
 
   # --- tests ---
 
@@ -267,6 +306,44 @@ defmodule Flezha.SDK.DispatchTest do
       expected = "v#{n}"
       assert_receive {:ran, ^expected}, 1_000
     end
+  end
+
+  test "two merged entries reach one procedure under their own mappings, keyed on the mapped value" do
+    %{op: op} = start_operative(MergeOp)
+    Inbox.input(op, "ticks", "AAPL:1", %{})
+    Inbox.input(op, "quotes", "AAPL:2", %{})
+
+    assert Enum.sort(payloads(2)) == ["quotes:AAPL:2", "ticks:AAPL:1"]
+    assert is_pid(entity!(op, "echo", "AAPL"))
+  end
+
+  test "each merged source keeps its own order" do
+    %{op: op} = start_operative(MergeOp)
+
+    for n <- 1..3 do
+      Inbox.input(op, "ticks", "MSFT:#{n}", %{})
+      Inbox.input(op, "quotes", "MSFT:#{n}", %{})
+    end
+
+    released = payloads(6)
+
+    assert Enum.filter(released, &String.starts_with?(&1, "ticks:")) ==
+             ~w(ticks:MSFT:1 ticks:MSFT:2 ticks:MSFT:3)
+
+    assert Enum.filter(released, &String.starts_with?(&1, "quotes:")) ==
+             ~w(quotes:MSFT:1 quotes:MSFT:2 quotes:MSFT:3)
+  end
+
+  test "a fan of three runs the procedure three times under three keys, and a fan of none is a drop" do
+    %{op: op, counters: counters} = start_operative(FanOp)
+    Inbox.input(op, "in", "", %{})
+    Inbox.input(op, "in", "a:1,b:2,c:3", %{})
+
+    assert Enum.sort(payloads(3)) == ["a:1", "b:2", "c:3"]
+    assert NodeTestHelper.wait_until(fn -> Counters.dispatches(counters) == 3 end, 1_000)
+    for key <- ~w(a b c), do: assert(is_pid(entity!(op, "echo", key)))
+    refute_receive {:flz_data, _id, "op-1", _payload, _meta}, 200
+    assert Counters.dispatches(counters) == 3
   end
 
   test "a transient failure recovers within the retry budget (no park)" do

@@ -58,6 +58,16 @@ a handle whose channel already carries a plugin sink.
 - **WHEN** a stream attaches a plugin sink and then declares a transform or an edge key on the returned handle, even where that chain is closed by a later `.into(...)`
 - **THEN** definition SHALL fail naming the channel; declaring the transform and its `.into(...)` before attaching the sink SHALL succeed and SHALL produce the same topology
 
+#### Scenario: A fanned value answers every key at the crossing
+
+- **WHEN** a chain declares `flat_map` yielding three values and then `key_by`, and the host answers the core's key request for one payload
+- **THEN** the answer SHALL carry the three keys, one per fanned value, a chain whose fan yields nothing SHALL answer no key, exactly as a filtered payload does, and the core SHALL deliver the payload to the Entity of every answered key, where the host runs only the values whose key names that Entity
+
+#### Scenario: The transform chain is proven on every runtime
+
+- **WHEN** the `transform_chain` fixture is started on any of the seven runtimes and the frames `a:1,b:2` and `drop` are injected on `trades`
+- **THEN** exactly `A:1` and `B:2` SHALL reach the `transformed` sink, on the keys `A` and `B` (the key is read after the upper-casing `map`), and nothing SHALL reach it for `drop`
+
 ### Requirement: Entity keying SHALL be declared on the edge, not on the Procedure
 
 Both SDKs SHALL offer `key_by` (Rust) / `keyBy` (Java) on the stream handles,

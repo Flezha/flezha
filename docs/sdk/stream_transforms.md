@@ -114,10 +114,9 @@ names — it inherits no code.
 The whole vocabulary is `flz_core/src/host/issue.rs`; the table above is the
 transform half of it. `test/fixtures/reference_topologies.txt` carries one row
 per name, and `test/sdk_conformance/topology_check_test.exs` fails if a name
-has no row or a row has no name. The three names the Elixir SDK does not carry
-— `BranchTooFewArms`, `MergeTooFewSources`, `DuplicateMergeSource` — are a
-surface difference, not a gap: its v1 subset has no `branch` and no `merge`,
-and the fixture's `needs` column says so.
+has no row or a row has no name. The one name the Elixir SDK does not carry,
+`BranchTooFewArms`, is a surface difference, not a gap: its v1 subset has no
+`branch`, and the fixture's `needs` column says so.
 
 `TransformAfterTerminal` makes the declaration order load-bearing where a
 channel carries both a sink and a transformed consumer: close the transform on
