@@ -16,7 +16,7 @@ defmodule Flezha.Runner.ControlUnit do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   use GenServer
   use Flezha.Process.Timer, keys: [:heartbeat]

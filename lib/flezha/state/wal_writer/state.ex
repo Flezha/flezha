@@ -12,7 +12,8 @@ defmodule Flezha.State.WalWriter.State do
   and credit; the effectively-once outbox; and the two per-file indexes.
   """
 
-  alias Flezha.State.{Paths, RecordFrame, SeqIndex}
+  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.{Paths, SeqIndex}
 
   defstruct [
     :entity_id,

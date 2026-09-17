@@ -37,7 +37,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Process.Hub
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Service.CallerContext
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate

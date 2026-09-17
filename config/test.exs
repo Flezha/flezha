@@ -27,6 +27,8 @@ config :flezha,
     end
   ]
 
+config :flezha_sdk, socket_nif: true
+
 config :logger,
   level: :error
 

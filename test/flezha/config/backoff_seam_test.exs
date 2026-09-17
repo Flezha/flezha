@@ -18,9 +18,11 @@ defmodule Flezha.Config.BackoffSeamTest do
 
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
+  alias Flezha.SDK.Knob
   alias FlezhaTest.Helper.SourceWalk
 
   @ladder_seam "lib/flezha/config/backoff.ex"
+  @sdk_runner_server "sdk/elixir/lib/flezha/sdk/runner_server.ex"
   @duration_seam "lib/flezha/config/durations.ex"
 
   # The two shapes of the seam, as Erlang regular expressions: every spelling
@@ -84,15 +86,10 @@ defmodule Flezha.Config.BackoffSeamTest do
     test "every :on_success row announces its reset, and no :per_call row does" do
       sites = read_text(lib_files() -- [@ladder_seam])
 
-      # Two readers of the one table: the controller calls it by name, and the
-      # Elixir SDK calls it through `Flezha.SDK.Knob`, which is the single SDK
-      # file the packaging boundary lets name the controller's configuration.
       for {key, %{reset: reset}} <- Backoff.ladders() do
         announced? =
-          Enum.any?(["Backoff", "Knob"], fn reader ->
-            String.contains?(sites, "#{reader}.reset(:#{key}") or
-              String.contains?(sites, "#{reader}.new(:#{key})")
-          end)
+          String.contains?(sites, "Backoff.reset(:#{key}") or
+            String.contains?(sites, "Backoff.new(:#{key})")
 
         case reset do
           :on_success ->
@@ -157,8 +154,8 @@ defmodule Flezha.Config.BackoffSeamTest do
       shutdown = File.read!("flz_core/src/shutdown.rs")
       resume = File.read!("flz_core/src/workflow/resume.rs")
 
-      retry = Backoff.ladder(:sdk_retry)
-      reconnect = Backoff.ladder(:sdk_reconnect)
+      retry = Knob.ladder(:sdk_retry)
+      reconnect = Knob.ladder(:sdk_reconnect)
 
       assert retry.cap == rust_const(channel, "RETRY_BACKOFF_MAX_MS")
       assert reconnect.cap == 30_000
@@ -186,7 +183,7 @@ defmodule Flezha.Config.BackoffSeamTest do
 
     test "both runtimes reset the reconnect ladder on a completed handshake, and only there" do
       core = File.read!("flz_core/src/control_unit.rs")
-      sdk = File.read!("lib/flezha/sdk/runner_server.ex")
+      sdk = File.read!(@sdk_runner_server)
 
       core_rule? = String.contains?(core, "note_session_end(live.handshake_completed())")
 
@@ -197,7 +194,7 @@ defmodule Flezha.Config.BackoffSeamTest do
       assert core_rule? and sdk_rule?,
              "the ladder's reset rule moved in one runtime alone: " <>
                "flz_core/src/control_unit.rs resets on the completed handshake: #{core_rule?}; " <>
-               "lib/flezha/sdk/runner_server.ex does, and nowhere else: #{sdk_rule?}"
+               "#{@sdk_runner_server} does, and nowhere else: #{sdk_rule?}"
     end
   end
 
@@ -226,8 +223,8 @@ defmodule Flezha.Config.BackoffSeamTest do
     end
 
     test "jitter is uniform in [d/2, 3d/2) and then capped" do
-      assert Backoff.jitter(1_000, fn _ -> 1 end) == 501
-      assert Backoff.jitter(1_000, fn max -> max end) == 1_500
+      assert Knob.jitter(1_000, fn _ -> 1 end) == 501
+      assert Knob.jitter(1_000, fn max -> max end) == 1_500
 
       for {key, row} <- Backoff.ladders(), row.jitter, cap = cap_of(row) do
         for attempt <- 1..10 do

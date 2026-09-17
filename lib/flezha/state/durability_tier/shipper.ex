@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig

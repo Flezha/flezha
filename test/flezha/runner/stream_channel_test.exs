@@ -4,7 +4,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.Paths
-  alias Flezha.State.Wire
+  alias Flezha.SDK.Wire
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper

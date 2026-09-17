@@ -46,7 +46,7 @@ defmodule Flezha.Transport.LivenessCounters do
   """
 
   alias Flezha.Config
-  alias Flezha.Process.Counters
+  alias Flezha.SDK.CounterTable
 
   @table :flezha_liveness_counters
 
@@ -85,7 +85,7 @@ defmodule Flezha.Transport.LivenessCounters do
   # the slot itself is a gauge the runner writes whole. The mis-typing is filed
   # rather than corrected here, because changing the key renames a live series —
   # stating it on the row is what makes it a decision instead of an accident.
-  use Flezha.Process.Counters,
+  use Flezha.SDK.CounterTable,
     table: :channel,
     defaults: [scope: :channel],
     slots: [
@@ -264,7 +264,7 @@ defmodule Flezha.Transport.LivenessCounters do
       [name: :send_gate_held, kind: :count, surface: [{:metric, :send_gate_held}]]
     ]
 
-  use Flezha.Process.Counters,
+  use Flezha.SDK.CounterTable,
     table: :operative,
     defaults: [kind: :count, scope: :operative],
     slots: [
@@ -314,7 +314,7 @@ defmodule Flezha.Transport.LivenessCounters do
   release and not the next because an emit line was forgotten.
   """
   @spec surfaces(:metric | :verdict | :telemetry | :internal) ::
-          [{:channels | :operatives, Counters.row(), term()}]
+          [{:channels | :operatives, CounterTable.row(), term()}]
   def surfaces(kind) do
     for {group, rows} <- [channels: @channel_rows, operatives: @operative_rows],
         row <- rows,
@@ -343,7 +343,7 @@ defmodule Flezha.Transport.LivenessCounters do
       value =
         Enum.reduce(Map.fetch!(rows, group), 0, &reduce(group, slot, &2, Map.fetch!(&1, slot)))
 
-      {name, %{Counters.measurement(row) => value}}
+      {name, %{CounterTable.measurement(row) => value}}
     end
   end
 

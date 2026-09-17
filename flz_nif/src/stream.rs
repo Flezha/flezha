@@ -34,7 +34,7 @@ fn send_frame<'a>(
         message: message.as_slice().to_vec(),
         metadata,
     });
-    stream.waker.wake();
+    let _ = stream.waker.wake();
     Ok(match queued {
         // The command channel is unbounded, so the only way a send fails is
         // that the driver thread is gone — and then the frame is lost. Saying
@@ -68,7 +68,7 @@ fn activate<'a>(env: Env<'a>, stream: StreamHandleArc, once: bool) -> NifResult<
         stream_id: stream.stream_id,
         once,
     });
-    stream.waker.wake();
+    let _ = stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -78,7 +78,7 @@ fn set_passive(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
     let _ = stream.cmd_tx.send(ServerCommand::SetPassive {
         stream_id: stream.stream_id,
     });
-    stream.waker.wake();
+    let _ = stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -88,7 +88,7 @@ fn close(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
     let _ = stream.cmd_tx.send(ServerCommand::CloseStream {
         stream_id: stream.stream_id,
     });
-    stream.waker.wake();
+    let _ = stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -126,7 +126,7 @@ fn controlling_process(env: Env, stream: StreamHandleArc, new_owner: LocalPid) -
         stream_id: stream.stream_id,
         new_owner,
     });
-    stream.waker.wake();
+    let _ = stream.waker.wake();
 
     Ok(atoms::ok().encode(env))
 }

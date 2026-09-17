@@ -29,7 +29,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.StreamPool
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
 

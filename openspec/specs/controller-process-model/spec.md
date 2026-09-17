@@ -5,7 +5,7 @@ TBD - created by archiving change bound-every-call-find-every-process-once. Upda
 ## Requirements
 ### Requirement: Every call into a resolved process SHALL be bounded and SHALL declare its refusal
 
-A controller-side call into a process reached by pid, or by a variable that holds one, SHALL pass through `Flezha.SafeCall` with an explicit bound, and its answer on a timeout, a `:noproc` or any other exit SHALL be a value the caller declared, never an exit the caller inherits.
+A controller-side call into a process reached by pid, or by a variable that holds one, SHALL pass through `Flezha.SDK.SafeCall`, the bounded call the controller imports from the Elixir SDK, with an explicit bound, and its answer on a timeout, a `:noproc` or any other exit SHALL be a value the caller declared, never an exit the caller inherits.
 
 The reason → result mapping SHALL be data supplied at the call site, not a `catch` clause written there, so that a call site adds a declaration and never a policy. `SafeCall` SHALL supply no default bound: a nested pair of calls is only bounded when the inner bound is strictly smaller than the outer one, and a seam that invented a shared default would make both equal and abandon the caller at the instant the callee gives up.
 

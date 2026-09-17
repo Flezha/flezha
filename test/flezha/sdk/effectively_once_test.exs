@@ -4,7 +4,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   effectful invocation ships in place of the change records and the outputs,
   the consumed offset it carries, the floor a restore rebuilds, and what a
   class with persistence off does under the tier. No controller, no real
-  transport — frames are read off a native `Local.Stream` the test owns.
+  transport — frames are read off a native `LocalStream` the test owns.
   """
   use ExUnit.Case, async: true
 

@@ -8,7 +8,7 @@ frames and the per-Entity persistence frames. Operative authors do not need it
 The protocol has two implementations: the shared Rust kernel `flz_core`
 (linked by the Rust SDK as a crate and by the Java SDK through the
 `flz_core_ffi` C ABI and the `FlzCore` JNI binding) and the Elixir SDK
-(`Flezha.SDK`, `lib/flezha/sdk/`), its own core that inherits nothing from
+(`Flezha.SDK`, the `sdk/elixir` package), its own core that inherits nothing from
 `flz_core`. The host-facing Activation contract inside a `flz_core` runner is a
 separate boundary: [`poll_core.md`](poll_core.md).
 
@@ -115,7 +115,7 @@ window (§5) — and uses an 8 MiB per-stream receive window.
 ### Native (in-node Elixir SDK)
 
 An Elixir SDK hosted inside the controller's own BEAM node speaks `native`:
-streams are `Flezha.Transport.Local.Stream` processes and frames are delivered
+streams are `Flezha.SDK.LocalStream` processes and frames are delivered
 as `{:flz_data, id, payload_id, message, metadata}` terms — no framing, no
 syscalls. Same-node only, opt-in. A standalone Elixir runner uses the binary
 protocol over UDS/QUIC and is indistinguishable from a Rust runner. See
@@ -335,7 +335,8 @@ Control-plane commands are Protocol Buffers v3 (`proto3`, package
 `runner_commands`). The authoritative definition is
 `protobufs/runner_commands.proto`; the generated Rust module is
 `flz_core/src/generated/runner_commands.rs` (and a twin in `flz_transport`),
-the Elixir decoder is `Flezha.Runner.CommandsProto` (Protox).
+the controller's Elixir decoder is `Flezha.Runner.CommandsProto` and the Elixir
+SDK's `Flezha.SDK.Proto` (both Protox).
 
 ### Envelope
 
@@ -1028,7 +1029,7 @@ layout, WAL writer and `flz state` CLI are in
 ### Data-stream payload-id `entity_state_change`
 
 Runner → controller. One Change record for the per-Entity WAL. Frame layout
-(decoded by `Flezha.State.Wire.decode_frame/1`):
+(decoded by `Flezha.SDK.Wire.decode_frame/1`):
 
 ```text
 [entity_id_len: u16 BE]
@@ -1077,7 +1078,7 @@ Runner → controller, effectively-once tier only. Same frame as
 `EffectRecordBody` — one invocation's state change(s), plugin outputs and
 consumed input-log offset, persisted by the controller as ONE WAL record under
 ONE fsync so state, outputs and progress can never tear apart. Decoded by
-`Flezha.State.Wire.decode_effect_body/1`:
+`Flezha.SDK.Wire.decode_effect_body/1`:
 
 ```text
 EffectRecordBody {
@@ -1150,7 +1151,7 @@ budget (`max_attempts` default 3, exponential backoff ±50 % jitter capped at
 the Entity until the controller acks the park as durable (`ParkPayloadAck`),
 re-sending every 2 s — park-then-advance, never a drop. Same outer frame as
 `entity_state_change` with a zero header; `body` is the postcard `ParkBody`
-(`Flezha.State.Wire.decode_park_body/1`):
+(`Flezha.SDK.Wire.decode_park_body/1`):
 
 ```text
 ParkBody {

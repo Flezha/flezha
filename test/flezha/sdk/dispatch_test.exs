@@ -2,7 +2,7 @@ defmodule Flezha.SDK.DispatchTest do
   @moduledoc """
   Exercises the SDK dispatch runtime (Operative router + Entity mailbox/ladder)
   in isolation — no controller, no real transport. Sink output is captured on a
-  native `Local.Stream` whose controller side the test owns; `run/3` runs in the
+  native `LocalStream` whose controller side the test owns; `run/3` runs in the
   test's BEAM so it can also probe directly.
   """
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
@@ -11,7 +11,7 @@ defmodule Flezha.SDK.DispatchTest do
   alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup}
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.Operative.Inbox
-  alias Flezha.State.Wire
+  alias Flezha.SDK.Wire
   alias FlezhaTest.Helper.{NodeTestHelper, SdkOperativeHarness}
 
   # --- fixtures ---

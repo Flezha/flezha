@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Helper.SdkOperativeHarness do
   @moduledoc """
   One SDK Operative in isolation — no controller, no real transport. Its
-  secondary is a native `Local.Stream` whose controller side the calling test
+  secondary is a native `LocalStream` whose controller side the calling test
   owns, so every sink output and every record frame the Operative's Entities
   ship arrives at the test process as `{:flz_data, _id, payload_id, frame,
   metadata}`, in the order it was written. `frames/1` reads them back,
@@ -13,9 +13,9 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
 
   alias Flezha.SDK.{Counters, KeyGroup, Operative, Record, Topology}
   alias Flezha.SDK.Operative.Inbox
-  alias Flezha.State.RecordFrame
-  alias Flezha.State.Wire
-  alias Flezha.Transport.Local
+  alias Flezha.SDK.RecordFrame
+  alias Flezha.SDK.Wire
+  alias Flezha.SDK.LocalStream
 
   @doc """
   Start `op_module` as operative `op-1` (override with `:operative_id`,
@@ -53,7 +53,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   `{sdk_handle, controller_handle}`. What a runner's rebind hands the Operative.
   """
   def own_secondary do
-    {sdk_sec, ctrl_sec} = Local.Stream.open()
+    {sdk_sec, ctrl_sec} = LocalStream.open()
     :ok = Flezha.Transport.Stream.controlling_process(ctrl_sec, self())
     :ok = Flezha.Transport.Stream.set_active(ctrl_sec)
     {sdk_sec, ctrl_sec}
@@ -67,7 +67,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   alive and be delivered. Waiting for the exit is what makes "the wire is gone"
   true for the next write instead of merely likely.
   """
-  def close_secondary(%Local.Stream{pid: pid} = handle) do
+  def close_secondary(%LocalStream{pid: pid} = handle) do
     ref = Process.monitor(pid)
     :ok = Flezha.Transport.Stream.close(handle)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000

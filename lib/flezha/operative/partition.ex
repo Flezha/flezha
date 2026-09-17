@@ -7,11 +7,9 @@ defmodule Flezha.Partition do
   contiguous range of them. This module is the controller's half of that
   contract: the hash, the range split, and the coverage check the CLI renders.
 
-  The hash is FNV-1a-128 with the constants frozen by the SDKs' `StableId`
-  (`sdk/rust/src/procedure/ctx.rs`, `StableId.java`). Three implementations,
-  one fixture set — `partition_test.exs` asserts the same vectors as
-  `determinism.rs` and `StableIdTest.java`, so a constant that drifts in any
-  one of them breaks all three suites at once.
+  The hash is `Flezha.SDK.KeyGroup.group_of/1`, the Elixir SDK's FNV-1a-128, so
+  the range a member is assigned here and the keys its runner admits are
+  computed by one function.
 
   Ranges are stored and shipped explicitly (member cspec opts + the
   `AddOperative` wire fields), never re-derived from `(partition, partitions)`:
@@ -19,42 +17,12 @@ defmodule Flezha.Partition do
   change.
   """
 
-  import Bitwise
+  alias Flezha.SDK.KeyGroup
 
-  @offset_basis 0x6C62272E07BB014262B821756295C58D
-  @prime 0x0000000001000000000000000000013B
-  @mask 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-
-  @key_groups 256
+  @key_groups KeyGroup.key_groups()
 
   @typedoc "An inclusive `{from, to}` key-group range, both ends in `0..255`."
   @type range() :: {non_neg_integer(), non_neg_integer()}
-
-  @doc "How many key groups the space is divided into."
-  @spec key_groups() :: pos_integer()
-  def key_groups, do: @key_groups
-
-  @doc """
-  FNV-1a-128 over `bytes`, starting from the frozen offset basis.
-  """
-  @spec fnv1a128(binary()) :: non_neg_integer()
-  def fnv1a128(bytes) when is_binary(bytes), do: fnv1a128(@offset_basis, bytes)
-
-  @doc """
-  FNV-1a-128 continuing from `hash` — the chaining form the `StableId` fixture
-  vectors are built from (identity, then big-endian seq, then ordinal).
-  """
-  @spec fnv1a128(non_neg_integer(), binary()) :: non_neg_integer()
-  def fnv1a128(hash, <<byte, rest::binary>>),
-    do: fnv1a128(band(bxor(hash, byte) * @prime, @mask), rest)
-
-  def fnv1a128(hash, <<>>), do: hash
-
-  @doc """
-  The key group a routing key belongs to: `fnv1a128(key) mod 256`.
-  """
-  @spec group_of(binary()) :: non_neg_integer()
-  def group_of(key) when is_binary(key), do: band(fnv1a128(key), @key_groups - 1)
 
   @doc """
   Whether `range` owns `key` — the one definition of "this is mine", shared by
@@ -62,7 +30,7 @@ defmodule Flezha.Partition do
   """
   @spec owns?(range(), binary()) :: boolean()
   def owns?({from, to}, key) when is_binary(key) do
-    group = group_of(key)
+    group = KeyGroup.group_of(key)
     group >= from and group <= to
   end
 

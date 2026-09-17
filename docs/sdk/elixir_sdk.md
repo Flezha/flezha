@@ -217,8 +217,8 @@ byte-compatible `park_payload` and holds the Entity until the controller's `Park
 With `partition_count >= 2` on `AddOperative`, a dynamic key is admitted against the owned
 range **before** any Entity state exists (a miss parks with the contract error naming the key
 and its group); static keys outside the range idle silently; a keyless topology refuses the
-bind (`PartitionsWithoutKeyedProcedure`). The hash is the controller's own
-`Flezha.Partition.group_of/1` ([`partitioned_operatives.md`](partitioned_operatives.md)).
+bind (`PartitionsWithoutKeyedProcedure`). The hash is `Flezha.SDK.KeyGroup.group_of/1`, the
+one the controller's range assignment calls ([`partitioned_operatives.md`](partitioned_operatives.md)).
 
 ## Dynamic entities
 
@@ -315,7 +315,7 @@ end
 After a successful dispatch the Entity ships one `entity_state_change` frame per recorded
 change — the shared 16-byte header (`sdk_lang` 3, the SDK's version, the schema version, the
 Erlang External Term Format id `7` allocated in `flz_core::header`), the record framed
-through `Flezha.State.Wire.encode_frame/4` under the instance-keyed identity, at
+through `Flezha.SDK.Wire.encode_frame/4` under the instance-keyed identity, at
 `seq = change_seq` from `0`, in dispatch order on one secondary stream, before the dispatch's
 own output frame, each under the credit window. The body is `:erlang.term_to_binary/2`,
 deterministic. With the class's `persistence_enabled/0` false the seq advances and nothing
@@ -402,7 +402,7 @@ identity at flush.
 
 **One record per effectful invocation.** In place of the change records and the trailing
 timer-ops record, the Entity ships one `entity_effect_record` (`format_id = 2`, the postcard
-body `Flezha.State.Wire.encode_effect_body/1` writes byte-exactly) carrying the invocation's
+body `Flezha.SDK.Wire.encode_effect_body/1` writes byte-exactly) carrying the invocation's
 changes, its captured plugin outputs, the consumed offset, the event time, the timer ops and,
 on a park, the dead-letter entry. State, outputs and the offset cannot tear because they are
 one record at one seq.
@@ -454,12 +454,13 @@ as it does outside it.
 
 ## Runner-only boot (standalone)
 
-A standalone node depends on flezha as a library without becoming a controller:
-`config :flezha, controller_enabled: false` (env `FLEZHA_CONTROLLER_ENABLED=false|0|no|off`;
-default true). `Flezha.Application.start/2` then starts an empty supervision tree — no
-transport servers, HubManager, convergence, state-path migration or boot-ready gate — and the
-host app runs SDK processes via `Flezha.SDK.child_spec/1`. `test/apps/elixir_runner` is a
-working example (path dependency, runner-only, stdin-EOF watcher).
+A standalone node depends on the `flezha_sdk` package, which starts no controller, and runs
+SDK processes via `Flezha.SDK.child_spec/1`. `test/apps/elixir_runner` is a working example
+(path dependency, stdin-EOF watcher). An application that depends on `flezha` itself and wants
+no controller tree sets `config :flezha, controller_enabled: false` (env
+`FLEZHA_CONTROLLER_ENABLED=false|0|no|off`; default true): `Flezha.Application.start/2` then
+starts an empty supervision tree — no transport servers, HubManager, convergence, state-path
+migration or boot-ready gate.
 
 ## Late-input correction
 
@@ -505,29 +506,22 @@ the conformance gate ([`conformance.md`](conformance.md)). In prose: `merge`, `r
 `branch`. A builder/ctx call into a deferred surface fails registration loudly,
 naming the operative module.
 
-One more, outside the vocabulary because no capability names it: the hex package
-(`package-elixir-sdk`).
+One more, outside the vocabulary because no capability names it: publishing `flezha_sdk` to
+Hex.
 
 Each deferred capability's follow-up re-expresses the kernel's rules in Elixir under the
 "one change, every SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`, as its
 persistence already shows.
 
-## Packaging boundary
+## The package
 
-SDK modules (`lib/flezha/sdk/`) touch the controller application only through named seams:
-`Flezha.SDK.Codec` (the only module that may reference `Flezha.Runner.CommandsProto` /
-`RunnerCommands`), `Flezha.State.Wire` (the frame and entity-id codec, the postcard park body),
-`Flezha.Partition.group_of/1` (key-group hash), `Flezha.Transport.Stream`,
-`Flezha.Transport.Local(.Stream)` and `Flezha.Transport.Server` (native),
-`Flezha.Transport.Native` (the `flz_nif` client entry points, socket modes), and
-`Flezha.SDK.Knob` (the only module that may reference `Flezha.Config` and the tables under
-it — a runner is a different process and reads the environment, never the controller's
-application env, so every other SDK module asks `Knob.get/1` for a value and
-`Knob.arm/4`/`Knob.wait/4` for a wait), and `Flezha.SafeCall` (only inside `Flezha.SDK.Call`,
-which is the SDK's own caller of the bounded-call wrapper, for the same reason).
-`scripts/check-sdk-boundary.sh` enforces it, so the hex extraction (`package-elixir-sdk`) is a
-swap of seam internals, not a rewrite.
-
+The SDK is the `flezha_sdk` mix package, developed in a repository of its own and carried
+here as a submodule at `sdk/elixir`. It depends on no controller module. The controller
+depends on it and imports the pure modules both need — the record frame, the postcard codec,
+the key-group hash, the bounded call, the counter-table macro and the in-node stream — so
+each exists once. The compiler holds that direction: the package compiles with
+`--warnings-as-errors`, where a reference to a controller module is an undefined-module
+warning.
 ## Calls into the runner's own processes
 
 A runner lives inside your application, so a wedged Entity or Operative must not take one of

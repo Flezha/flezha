@@ -5,7 +5,7 @@
 //! `ServerCommand` arms, send-side framing, the send-gate ledger, the gate
 //! observation, the per-iteration stats snapshot, the frame parse and delivery,
 //! and the close report. A [`Transport`] supplies only wire operations, and a
-//! close reason is one [`CloseReason`] variant spelled once for every wire.
+//! close reason is one `CloseReason` variant spelled once for every wire.
 //!
 //! A capability added here reaches every transport at once. That is the point:
 //! a capability one transport has and another lacks is a defect of the loop,
@@ -13,10 +13,11 @@
 //! loop of its own is how such a gap hides.
 
 use std::collections::HashMap;
+use std::io;
 use std::sync::{Arc, Mutex};
-use std::{fmt, io};
 
 use crossbeam::channel::{Receiver, Sender};
+use flz_transport::transport::close_reason::CloseReason;
 use flz_transport::transport::send_gate::{SendGate, Transition};
 use mio::{Interest, Poll, Token, Waker};
 use rustler::{LocalPid, ResourceArc};
@@ -24,7 +25,7 @@ use rustler::{LocalPid, ResourceArc};
 use crate::driver_msg::{report_gate, send_closed_msg};
 use crate::driver_stats::{DriverStats, StreamCounters, StreamSnapshot};
 use crate::frame_buffer::{FrameBuffer, Inbox};
-use crate::resources::{StreamHandle, StreamWaker};
+use crate::resources::StreamHandle;
 
 pub(crate) mod quic;
 pub(crate) mod uds;
@@ -113,56 +114,6 @@ pub struct DriverReady {
     pub waker: Arc<Waker>,
 }
 
-/// Why a stream ended, in the one vocabulary every transport reports through.
-///
-/// The same wire event is the same variant whichever transport observed it, so
-/// what a controller's log says happened to a stream does not depend on which
-/// transport it was configured with. A reason only one wire can produce is
-/// still declared here rather than written as a literal where it is produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CloseReason {
-    /// The peer ended the stream cleanly. Every transport produces it.
-    ConnectionClosed,
-    /// The peer reset the stream. QUIC only: a UDS peer has no way to say it.
-    StreamReset,
-    /// A read failed. Every transport produces it.
-    ReadError,
-    /// A write failed. Every transport produces it.
-    WriteError,
-    /// A frame declared a length above the configured maximum, so the byte
-    /// stream cannot resync. Every transport produces it.
-    FrameTooLarge,
-    /// The whole connection died, carrying the wire's own account of it. QUIC
-    /// only: a UDS connection IS its stream, so it closes rather than is lost.
-    ConnectionLost(String),
-}
-
-impl From<io::ErrorKind> for CloseReason {
-    /// How a byte-stream read failure reads as a close. The server wire and
-    /// the NIF's own client both answer through this, so a reason read from a
-    /// log does not depend on which side of the connection produced it.
-    fn from(kind: io::ErrorKind) -> Self {
-        match kind {
-            io::ErrorKind::UnexpectedEof => CloseReason::ConnectionClosed,
-            io::ErrorKind::InvalidData => CloseReason::FrameTooLarge,
-            _ => CloseReason::ReadError,
-        }
-    }
-}
-
-impl fmt::Display for CloseReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CloseReason::ConnectionClosed => f.write_str("connection_closed"),
-            CloseReason::StreamReset => f.write_str("stream_reset"),
-            CloseReason::ReadError => f.write_str("read_error"),
-            CloseReason::WriteError => f.write_str("write_error"),
-            CloseReason::FrameTooLarge => f.write_str("frame_too_large"),
-            CloseReason::ConnectionLost(e) => write!(f, "connection_lost: {}", e),
-        }
-    }
-}
-
 /// Who ended a stream. A wire that has already ended one has nothing left to
 /// tell its peer, so only a close the NIF asked for says so on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,7 +193,7 @@ impl<W> StreamState<W> {
         let handle = ResourceArc::new(StreamHandle {
             stream_id: id,
             cmd_tx: cmd_tx.clone(),
-            waker: StreamWaker::Mio(Arc::clone(waker)),
+            waker: Arc::clone(waker),
             owner: Arc::clone(&owner),
             gate: Arc::clone(&gate),
             peer_cert,

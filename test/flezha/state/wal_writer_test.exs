@@ -6,6 +6,7 @@ defmodule Flezha.State.WalWriterTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.SDK.RecordFrame, as: Frame
   alias FlezhaTest.Helper.NodeTestHelper
 
   import ExUnit.CaptureLog
@@ -21,7 +22,7 @@ defmodule Flezha.State.WalWriterTest do
   describe "encode/decode round-trip" do
     test "encode_record produces a byte-identical, crc-valid record", %{} do
       header = TestHelpers.stub_header()
-      bytes = RecordFrame.encode_record(7, header, "hello")
+      bytes = Frame.encode_record(7, header, "hello")
 
       assert <<7::64-big, len::32-big, ^header::binary, "hello", crc::32-big>> = bytes
       assert len == 16 + byte_size("hello")
@@ -31,7 +32,7 @@ defmodule Flezha.State.WalWriterTest do
     test "decode_record/2 reads the same record back", %{base: base} do
       path = Path.join(base, "round_trip.bin")
       header = TestHelpers.stub_header()
-      bytes = RecordFrame.encode_record(42, header, "payload-bytes")
+      bytes = Frame.encode_record(42, header, "payload-bytes")
       File.write!(path, bytes)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
@@ -44,7 +45,7 @@ defmodule Flezha.State.WalWriterTest do
     test "decode_record/2 detects crc mismatch", %{base: base} do
       path = Path.join(base, "corrupt.bin")
       header = TestHelpers.stub_header()
-      record = RecordFrame.encode_record(1, header, "x")
+      record = Frame.encode_record(1, header, "x")
       prefix_size = byte_size(record) - 1
       <<prefix::binary-size(^prefix_size), _last>> = record
 
@@ -61,14 +62,14 @@ defmodule Flezha.State.WalWriterTest do
     test "the truncation proof answers only what it can prove", %{} do
       # Design §3, as a table. `remaining` is the byte count from the failure
       # point to the end of the file.
-      assert RecordFrame.repairable?(:short_read, nil, 900)
-      assert RecordFrame.repairable?(:crc_mismatch, 36, 36)
-      refute RecordFrame.repairable?(:crc_mismatch, 36, 72)
-      assert RecordFrame.repairable?(:bad_len, nil, 31)
-      refute RecordFrame.repairable?(:bad_len, nil, 32)
+      assert Frame.repairable?(:short_read, nil, 900)
+      assert Frame.repairable?(:crc_mismatch, 36, 36)
+      refute Frame.repairable?(:crc_mismatch, 36, 72)
+      assert Frame.repairable?(:bad_len, nil, 31)
+      refute Frame.repairable?(:bad_len, nil, 32)
 
       # An I/O error is not a proof of anything, so it is never a repair.
-      refute RecordFrame.repairable?(:ebadf, nil, 0)
+      refute Frame.repairable?(:ebadf, nil, 0)
     end
 
     test "a reader with no channel for a refusal raises instead of reading short",
@@ -78,9 +79,9 @@ defmodule Flezha.State.WalWriterTest do
 
       File.write!(
         path,
-        RecordFrame.encode_record(0, header, "a") <>
-          RecordFrame.encode_record(1, header, "b") <>
-          RecordFrame.encode_record(2, header, "c")
+        Frame.encode_record(0, header, "a") <>
+          Frame.encode_record(1, header, "b") <>
+          Frame.encode_record(2, header, "c")
       )
 
       # The middle record: a corrupt LAST record is the torn tail the fold is
@@ -381,8 +382,8 @@ defmodule Flezha.State.WalWriterTest do
 
       # File should be truncated back to the end of the last valid record.
       {:ok, info} = :file.read_file_info(Paths.wal_path(pid))
-      r1 = RecordFrame.encode_record(0, header, "a")
-      r2 = RecordFrame.encode_record(1, header, "bb")
+      r1 = Frame.encode_record(0, header, "a")
+      r2 = Frame.encode_record(1, header, "bb")
       assert elem(info, 1) == byte_size(r1) + byte_size(r2)
     end
   end
@@ -423,9 +424,9 @@ defmodule Flezha.State.WalWriterTest do
 
       File.write!(
         wal_path,
-        RecordFrame.encode_record(0, header, "a") <>
-          RecordFrame.encode_record(1, header, "b") <>
-          RecordFrame.encode_record(2, header, "c")
+        Frame.encode_record(0, header, "a") <>
+          Frame.encode_record(1, header, "b") <>
+          Frame.encode_record(2, header, "c")
       )
 
       {:ok, srv} = Supervisor.find_or_start(pid)

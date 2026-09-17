@@ -12,7 +12,7 @@ defmodule Flezha.SDK.CommandsTest do
   alias Flezha.SDK.{Codec, Commands, Counters, Credit, Entity, Hold, Park, Record}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
-  alias Flezha.State.Wire
+  alias Flezha.SDK.Wire
   alias FlezhaTest.Helper.NodeTestHelper
 
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{
@@ -407,7 +407,7 @@ defmodule Flezha.SDK.CommandsTest do
   end
 
   defp runner_side do
-    {sdk, ctrl} = Flezha.Transport.Local.Stream.open()
+    {sdk, ctrl} = Flezha.SDK.LocalStream.open()
     :ok = Flezha.Transport.Stream.controlling_process(sdk, self())
     :ok = Flezha.Transport.Stream.set_active(sdk)
     {sdk, ctrl}

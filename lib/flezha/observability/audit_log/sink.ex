@@ -26,7 +26,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
   alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.{Codec, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   @sink_name :audit_log
   @default_high_watermark 10_000

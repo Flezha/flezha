@@ -181,18 +181,18 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   end
 
   test "the SDK and the controller resolve one directory, from the one ladder" do
-    # The Elixir SDK derives no path of its own: both roles ask
-    # `flz_transport` through the NIF, which is the same code a Rust, Java or
-    # Node runner reaches through `flz_core`. That a Rust runner started in the
+    # The Elixir SDK derives no path of its own: the SDK's NIF and the
+    # controller's both ask `flz_transport`, which is the same code a Rust, Java
+    # or Node runner reaches through `flz_core`. That a Rust runner started in the
     # same environment lands on the same directory is proven end to end by
     # `test/system/connect_discovery_e2e_test.exs`, under every runtime.
     configured = Support.socket_dir()
 
     assert {:ok, runner_dir, _quic} =
-             Native.resolve_connect("runner", configured, nil)
+             Flezha.SDK.Native.resolve_connect(configured, nil)
 
     assert {:ok, controller_dir, _quic} =
-             Native.resolve_connect("controller", configured, nil)
+             Native.resolve_connect(configured, nil)
 
     assert runner_dir == controller_dir
     assert runner_dir == configured
@@ -417,7 +417,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     [runner] = FleetManager.active_runners(ns)
 
-    # The close a killed SDK-side Local.Stream's peer monitor synthesizes.
+    # The close a killed SDK-side LocalStream's peer monitor synthesizes.
     send(RunnerServer.whereis(), {:flz_closed, control_stream_id(), "test_injected"})
 
     # The runner reconnects under a fresh session, which the binding swap lists

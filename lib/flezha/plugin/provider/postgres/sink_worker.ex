@@ -17,7 +17,6 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   alias Flezha.Config.Backoff
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
-  alias Flezha.State.Wire
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry]
@@ -322,7 +321,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # outputs. A record with no identity gets a unique synthetic key: a plain
   # insert, which the monotonicity guard never fires for.
   defp decode_record(msg, metadata) do
-    case Wire.output_identity(metadata) do
+    case Outbox.output_identity(metadata) do
       {:ok, identity} ->
         Map.merge(identity, %{
           key: Map.get(metadata, "flz.key") || "#{identity.entity}/#{identity.seq}",

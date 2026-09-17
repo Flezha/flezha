@@ -180,11 +180,11 @@ wedged, not an idle Operative.
 | Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core | `entity.ex` — `admit/2` at admission, `handle_info({:timer_due, _})` off the BEAM's timer service |
 | The surface and the hook | `sdk/rust/src/procedure/{ctx,mod}.rs` | `flezha-sdk-api/.../procedure/{ProcedureCtx,Procedure}.java`, `.../state/TimerKind.java` | `lib/flezha/sdk/{ctx,procedure}.ex` |
 | The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/operative/dispatcher.rs`, `sdk/rust/src/entity/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) | `entity.ex` (`dispatch/2`, `call/3`), `lib/flezha/sdk/record.ex` (the fold), `lib/flezha/sdk/entity/records.ex` (the record, the restatement, the slot) |
-| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | `Flezha.State.Wire.encode_timer_ops/1` — the same bytes |
-| Controller: `Flezha.State.Wire` decodes the effect record's `timers` field; nothing else changes | `lib/flezha/state/wire.ex` | — | — |
+| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | `Flezha.SDK.Wire.encode_timer_ops/1` — the same bytes |
+| Controller: `Flezha.SDK.Wire` decodes the effect record's `timers` field; nothing else changes | `sdk/elixir/lib/flezha/sdk/wire.ex` | — | — |
 
 Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`, Java `ActivationDispatcherTest`,
-Elixir `test/flezha/sdk/{timers_test,entity_timers_test}.exs`,
+Elixir `sdk/elixir/test/flezha/sdk/timers_test.exs` and `test/flezha/sdk/entity_timers_test.exs`,
 and `test/system/entity_timers_e2e_test.exs`, which drives a session-timeout
 fixture on every runtime, including a re-seat from disk that proves the
 pending timer survived it. Examples: `sdk/rust/examples/session_timeout.rs`,

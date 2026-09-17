@@ -534,6 +534,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "flz_sdk_nif"
+version = "0.1.0"
+dependencies = [
+ "crossbeam",
+ "flz_transport",
+ "rustler",
+]
+
+[[package]]
 name = "flz_transport"
 version = "0.1.0"
 dependencies = [

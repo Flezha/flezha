@@ -21,7 +21,8 @@ defmodule Flezha.State.Outbox do
 
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.State.{Paths, Wire, WriterRegistry}
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{Paths, WriterRegistry}
   alias Flezha.State.ProcJournal
 
   @type t :: %{
@@ -103,7 +104,7 @@ defmodule Flezha.State.Outbox do
   with (`run/2`).
 
   The one place a durable output is minted — which is what makes the token
-  impossible to forget. `identity` is `Flezha.State.Wire.output_stamps/1`'s
+  impossible to forget. `identity` is `output_stamps/1`'s
   input plus `:owner` (the writer whose ledger the entry sits in), `:entry` (the
   key one confirmation completes) and optional `:metadata` the output carries of
   its own.
@@ -118,7 +119,7 @@ defmodule Flezha.State.Outbox do
       identity
       |> Map.drop([:owner, :entry, :metadata])
       |> Map.put_new_lazy(:ack, fn -> token(owner, entity, entry) end)
-      |> Wire.output_stamps()
+      |> output_stamps()
 
     {payload, Map.merge(Map.new(Map.get(identity, :metadata, %{})), stamps),
      %{owner: owner, key: entry}}
@@ -378,4 +379,112 @@ defmodule Flezha.State.Outbox do
   defp entity_bytes(bytes) when is_binary(bytes), do: bytes
 
   defp encode(bytes), do: Base.url_encode64(bytes, padding: false)
+
+  # ---------- output identity ----------
+
+  @doc """
+  Canonical label of an Entity identity — `<operative_class>/<procedure_id>/<entity_key>`,
+  the value carried by the `flz.entity` output stamp. Accepts the decoded triple
+  or the on-wire identity bytes (undecodable bytes fall back to lowercase hex, so a
+  corrupt identity is still traceable rather than fatal).
+  """
+  @spec entity_label({binary(), binary(), binary()} | binary()) :: binary()
+  def entity_label({operative_class, procedure_id, entity_key}),
+    do: "#{operative_class}/#{procedure_id}/#{entity_key}"
+
+  def entity_label(entity_id) when is_binary(entity_id) do
+    case Wire.decode_entity_id(entity_id) do
+      {:ok, entity} -> entity_label(entity)
+      {:error, _} -> Base.encode16(entity_id, case: :lower)
+    end
+  end
+
+  @doc """
+  The reserved output-identity metadata stamped on every durable output as it
+  reaches the `:on_output` plugin chain — the ONE definition of the contract a
+  conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
+  `Flezha.Plugin.Provider.Kafka`).
+
+  Both durable outbox flushes mint it: the stream effectively-once tier
+  (`Flezha.State.WalWriter`, `seq` = `<change_seq>.<emit_ordinal>`) and the
+  workflow transactional outbox (`Flezha.State.ProcJournal`, `seq` =
+  `<proc_idx>.<seq_in_proc>`, an undo carrying a trailing `.1`). `seq` is a numeric
+  dotted sequence so a sink can order it; `key` is omitted when the output
+  carries no natural key.
+
+  `ack` is the delivery-confirmation token (`ack_key/0`) the owning
+  writer waits on before advancing its cursor. Both durable flushes mint one;
+  live non-durable output carries none, and a sink treats its absence as "no
+  cursor is waiting on this".
+  """
+  @spec output_stamps(%{
+          required(:entity) => {binary(), binary(), binary()} | binary(),
+          required(:seq) => binary(),
+          required(:epoch) => non_neg_integer(),
+          required(:channel) => binary(),
+          optional(:key) => binary(),
+          optional(:ack) => binary()
+        }) :: %{binary() => binary()}
+  def output_stamps(identity) do
+    stamps = %{
+      "channel" => identity.channel,
+      "flz.entity" => entity_label(identity.entity),
+      "flz.seq" => identity.seq,
+      "flz.epoch" => Integer.to_string(identity.epoch)
+    }
+
+    stamps
+    |> put_stamp("flz.key", Map.get(identity, :key))
+    |> put_stamp(@ack_key, Map.get(identity, :ack))
+  end
+
+  defp put_stamp(stamps, key, value) when is_binary(value) and value != "",
+    do: Map.put(stamps, key, value)
+
+  defp put_stamp(stamps, _key, _value), do: stamps
+
+  @doc """
+  The identity `output_stamps/1` put on an output, read back: the Entity, the
+  seq, the epoch, and a `sort` key ordering two identities of one Entity. The
+  one reading every sink that guards on `(epoch, seq)` shares.
+
+  An output has an identity when it names an Entity and a numeric dotted seq,
+  not when it carries an epoch: a `.keyed()` channel off the effectively-once
+  tier is stamped by the SDK, which cannot mint one. An absent epoch is epoch 0,
+  where the outbox lineage starts, and every controller-side path that bumps it
+  stamps it. `sort` compares the epoch, then the seq numerically, so `"10.0"`
+  follows `"9.1"`.
+  """
+  @spec output_identity(map()) ::
+          {:ok,
+           %{
+             entity: binary(),
+             seq: binary(),
+             epoch: integer(),
+             sort: {integer(), [non_neg_integer()]}
+           }}
+          | :none
+  def output_identity(metadata) when is_map(metadata) do
+    entity = Map.get(metadata, "flz.entity", "")
+    seq = Map.get(metadata, "flz.seq", "")
+
+    if entity != "" and is_binary(seq) and seq =~ ~r/^\d+(\.\d+)*$/ do
+      epoch = parse_epoch(Map.get(metadata, "flz.epoch"))
+      sort = {epoch, seq |> String.split(".") |> Enum.map(&String.to_integer/1)}
+      {:ok, %{entity: entity, seq: seq, epoch: epoch, sort: sort}}
+    else
+      :none
+    end
+  end
+
+  defp parse_epoch(epoch) when is_integer(epoch), do: epoch
+
+  defp parse_epoch(epoch) when is_binary(epoch) do
+    case Integer.parse(epoch) do
+      {parsed, ""} -> parsed
+      _unparsable -> 0
+    end
+  end
+
+  defp parse_epoch(_absent), do: 0
 end

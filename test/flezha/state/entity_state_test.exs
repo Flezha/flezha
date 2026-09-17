@@ -5,6 +5,7 @@ defmodule Flezha.State.RestoreTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Operative.Replay
+  alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.State.{Paths, RecordFrame, Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
 
   setup do
@@ -54,8 +55,8 @@ defmodule Flezha.State.RestoreTest do
 
     # change_log_bytes contains exactly seq 4 and seq 5 in WAL framing.
     expected =
-      RecordFrame.encode_record(4, header, "x4") <>
-        RecordFrame.encode_record(5, header, "x5")
+      Frame.encode_record(4, header, "x4") <>
+        Frame.encode_record(5, header, "x5")
 
     assert payload.change_log_bytes == expected
   end
@@ -119,8 +120,8 @@ defmodule Flezha.State.RestoreTest do
     assert payload.terminal_seq_hint == 1
 
     assert payload.change_log_bytes ==
-             RecordFrame.encode_record(0, header, "x0") <>
-               RecordFrame.encode_record(1, header, "x1")
+             Frame.encode_record(0, header, "x0") <>
+               Frame.encode_record(1, header, "x1")
   end
 end
 
@@ -198,6 +199,7 @@ defmodule Flezha.State.TimeTravelTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use FlezhaTest.StateCase, async: false
 
+  alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{RecordFrame, Snapshot, Supervisor, TestHelpers, TimeTravel, WalWriter}
 
@@ -222,8 +224,8 @@ defmodule Flezha.State.TimeTravelTest do
     assert result.terminal_seq == 4
 
     expected =
-      RecordFrame.encode_record(3, header, "v3") <>
-        RecordFrame.encode_record(4, header, "v4")
+      Frame.encode_record(3, header, "v3") <>
+        Frame.encode_record(4, header, "v4")
 
     assert result.change_log_bytes == expected
   end

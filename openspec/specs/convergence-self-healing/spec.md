@@ -108,11 +108,11 @@ Committing the binding first records `bound_runner ∈ active_runners` for a run
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
-Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick; that backoff is the `:heal` row of the ladder table, whose rungs SHALL be `2 s → 5 s → 10 s → 15 s → 20 s → 30 s → 45 s → 60 s → 90 s → 120 s → 180 s → 300 s`, held at 300 s, reset on `:ok`. The early rungs are dense because the common fault is a runner restart measured in seconds, and a coarse first step punishes it as though it were permanent.
+Every cross-process call inside the Loop MUST be wrapped in `Flezha.SDK.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick; that backoff is the `:heal` row of the ladder table, whose rungs SHALL be `2 s → 5 s → 10 s → 15 s → 20 s → 30 s → 45 s → 60 s → 90 s → 120 s → 180 s → 300 s`, held at 300 s, reset on `:ok`. The early rungs are dense because the common fault is a runner restart measured in seconds, and a coarse first step punishes it as though it were permanent.
 
 The Watchdog's compaction handshake SHALL ride a `:compaction` row of its own with rungs `5 s → 30 s → 60 s → 300 s` and its existing give-up bound of four attempts. It MUST NOT share the heal row's rungs: it gives up by attempt count, so a denser ladder would shorten the wall-clock it waits before abandoning a compaction, which is a change to durability behaviour and not to healing.
 
-The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits at the root. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
+The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits with the pure modules the controller imports from the Elixir SDK. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
 
 #### Scenario: a flapping target is backed off
 - **GIVEN** operative `r1` was just rebound by the Loop
@@ -789,8 +789,10 @@ so a session that is alive over a data plane that is dead is two fields of one r
 
 ### Requirement: Every retry ladder is one declared row of the backoff table
 
-Every wait-before-retry in the controller and the Elixir SDK SHALL be one row of
-`Flezha.Config.Backoff`'s ladder table — rungs or a geometric base and cap, a jitter
+Every wait-before-retry in the controller SHALL be one row of
+`Flezha.Config.Backoff`'s ladder table, and every one in the Elixir SDK one of the
+four `Flezha.SDK.Knob` declares with the same arithmetic, jitter rule and events,
+held to the core's constants by the backoff seam test — rungs or a geometric base and cap, a jitter
 flag, a reset rule (`:on_success`, or `{:stable_for, duration}` where success means an
 owned process stayed up) and a give-up bound — and every site SHALL obtain its delay
 from that row through `Backoff.delay/3`, `Backoff.wait/3` or the `%Backoff{}` struct,

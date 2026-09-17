@@ -19,8 +19,9 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
+  alias Flezha.SDK.Wire
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{Outbox, Paths, ProcInbox, ProcJournal, TestHelpers, Wire}
+  alias Flezha.State.{Outbox, Paths, ProcInbox, ProcJournal, TestHelpers}
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper

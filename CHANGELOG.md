@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed: the Elixir SDK is the `flezha_sdk` package, in its own repository
+
+The Elixir SDK is a mix package of its own, `flezha_sdk`, developed in
+[`flezha_elixir_sdk`](https://github.com/flezha/flezha_elixir_sdk) and present here as a
+git submodule at `sdk/elixir`, with `test/apps/elixir_runner` a symlink to its test app and
+the echo example moved with it. An Elixir runner now depends on `{:flezha_sdk, "~> 0.1.0"}`
+alone rather than on the whole controller, and needs no `controller_enabled: false`.
+
+The controller depends on the package and imports the modules both use rather than keeping
+copies: `Flezha.SafeCall` is `Flezha.SDK.SafeCall`, `Flezha.Process.Counters` is
+`Flezha.SDK.CounterTable`, `Flezha.State.Wire` is `Flezha.SDK.Wire` (its output stamps moved
+to `Flezha.State.Outbox`), the key-group hash is `Flezha.SDK.KeyGroup.group_of/1`, the record
+frame's pure half is `Flezha.SDK.RecordFrame`, and `Flezha.Transport.Local.Stream` is
+`Flezha.SDK.LocalStream`.
+
+The socket modes dial through the package's own NIF, which a release publishes precompiled
+for the five supported triples with a checksum file; other hosts build it from source. The
+controller builds none of it outside its test environment. The in-node `:native` transport
+reaches the controller through the `Flezha.SDK.Connect` behaviour it registers at boot.
+`scripts/check-sdk-boundary.sh` is gone: the compiler enforces the direction now.
+
 ### Changed: every SDK but Elixir lives in its own repository
 
 The PHP, Java, Python, Ruby and Rust SDKs follow Node out of this repository:

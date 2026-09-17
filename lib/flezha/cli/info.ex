@@ -9,6 +9,7 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.Convergence.Verdict
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
+  alias Flezha.SDK.KeyGroup
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
@@ -154,7 +155,7 @@ defmodule Flezha.Service.Cli.Info do
 
     case report.coverage do
       :ok ->
-        IO.puts("  coverage: all #{Partition.key_groups()} key groups owned exactly once")
+        IO.puts("  coverage: all #{KeyGroup.key_groups()} key groups owned exactly once")
 
       {:error, %{gaps: gaps, overlaps: overlaps}} ->
         IO.puts("  WARNING: key-group coverage is broken — traffic for the named groups is lost")

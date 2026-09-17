@@ -23,7 +23,7 @@ defmodule Flezha.Schedule.Hub do
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Schedule.{Job, Store}
   alias Flezha.Service.HubManager
 

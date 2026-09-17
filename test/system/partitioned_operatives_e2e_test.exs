@@ -23,6 +23,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.KeyGroup
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Paths
@@ -61,7 +62,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
   defp owner(group, keys_count, key) do
     ranges = Partition.ranges(keys_count)
-    Partition.member_id(group, Partition.owner(ranges, Partition.group_of(key)))
+    Partition.member_id(group, Partition.owner(ranges, KeyGroup.group_of(key)))
   end
 
   defp live_state(namespace, member, key) do

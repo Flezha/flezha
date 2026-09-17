@@ -25,3 +25,7 @@
 	path = sdk/rust
 	url = https://github.com/flezha/flezha_rust_sdk.git
 	branch = main
+[submodule "sdk/elixir"]
+	path = sdk/elixir
+	url = https://github.com/flezha/flezha_elixir_sdk.git
+	branch = main

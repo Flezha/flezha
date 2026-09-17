@@ -11,6 +11,11 @@ config :flezha,
   pre_hooks: [],
   post_hooks: []
 
+# The Elixir SDK in this VM runs in-node and dials no socket, so its socket
+# client is neither downloaded nor compiled. `config/test.exs` builds it: the
+# controller's own transport tests dial through it.
+config :flezha_sdk, socket_nif: false
+
 config :logger,
   handle_sasl_reports: true,
   handle_otp_reports: true,

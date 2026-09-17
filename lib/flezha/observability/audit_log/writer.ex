@@ -24,7 +24,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
   alias Flezha.Observability.AuditLog.Reader
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.Index
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   @active_filename "audit-current.jsonl"
   @audit_source :audit_log

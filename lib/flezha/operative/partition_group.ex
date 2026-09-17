@@ -26,6 +26,7 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
@@ -92,9 +93,9 @@ defmodule Flezha.Operative.PartitionGroup do
 
   defp check_partitionable(namespace, operative, partitions, already_held) do
     cond do
-      partitions < 2 or partitions > Partition.key_groups() ->
+      partitions < 2 or partitions > KeyGroup.key_groups() ->
         {:error,
-         "partitions must be between 2 and #{Partition.key_groups()} " <>
+         "partitions must be between 2 and #{KeyGroup.key_groups()} " <>
            "(one partition per key group); got #{partitions}"}
 
       operative.kind != :stream ->
@@ -502,7 +503,7 @@ defmodule Flezha.Operative.PartitionGroup do
     for member <- members,
         {_class, procedure, key} = entity <- entities_of_member(member),
         key not in reserved,
-        new_index = Partition.owner(new_ranges, Partition.group_of(key)),
+        new_index = Partition.owner(new_ranges, KeyGroup.group_of(key)),
         new_index != nil,
         new_class = Partition.member_id(group_id, new_index),
         # A move is owed when the owner changes — and also when the Entity

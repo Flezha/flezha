@@ -111,7 +111,7 @@ defmodule Flezha.Socket.Support do
   end
 
   defp resolve_socket_dir() do
-    case Native.resolve_connect("controller") do
+    case Native.resolve_connect() do
       {:ok, dir, _quic_addresses} ->
         Application.put_env(:flezha, :socket_files_path, dir)
         dir

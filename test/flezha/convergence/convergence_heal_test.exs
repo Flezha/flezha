@@ -17,7 +17,7 @@ defmodule Flezha.Convergence.HealTest do
   alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Snapshot}
   alias Flezha.Operative.Overwatch
   alias Flezha.Service.{HubManager, OperativeManager}
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias FlezhaTest.Helper.NodeTestHelper
 
   describe "data-plane verdict → heal op (D3)" do

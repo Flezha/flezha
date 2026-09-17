@@ -472,7 +472,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   # Open an in-node stream and connect over it, answering the connect's result.
   defp connect(namespace, extra) do
     Flezha.Transport.Server.ensure_started(:native)
-    {sdk, controller_side} = Flezha.Transport.Local.Stream.open()
+    {sdk, controller_side} = Flezha.SDK.LocalStream.open()
     :ok = Flezha.Transport.Stream.controlling_process(sdk, self())
     :ok = Flezha.Transport.Stream.set_active(sdk)
 

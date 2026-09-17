@@ -11,7 +11,8 @@
 # a value pasted with a stray space still means what it looks like.
 #
 # Every runtime's own suite feeds this file to its own reader:
-#   test/flezha/config/parse_test.exs          the controller and the Elixir SDK
+#   test/flezha/config/parse_test.exs          the controller
+#   sdk/elixir/test/flezha/sdk/knob_test.exs   the Elixir SDK
 #   flz_transport/src/env.rs                   the crates and the Rust SDK
 #   sdk/java/.../FlezhaEnvTest.java            Java
 #   sdk/node/test/env.test.mjs                 Node

@@ -92,7 +92,7 @@ defmodule Flezha.Observability.RingBufferSink do
     ensure_index_table()
 
     # A single monotonic sequence, not a slot layout: one cell has nothing to
-    # declare, so it stays a bare ref rather than a `Flezha.Process.Counters` table.
+    # declare, so it stays a bare ref rather than a `Flezha.SDK.CounterTable` table.
     seq_ref = :counters.new(1, [:atomics])
 
     state = %{

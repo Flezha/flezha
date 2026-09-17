@@ -1,3 +1,4 @@
+pub mod close_reason;
 pub mod config;
 pub mod liveness;
 pub mod protocol;

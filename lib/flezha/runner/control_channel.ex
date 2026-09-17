@@ -24,7 +24,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
 

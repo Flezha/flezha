@@ -75,3 +75,14 @@ release_binary_name() {
   local dir="$1" bin_ext="$2"
   echo "flz-fake-controller-${dir}${bin_ext}"
 }
+
+# The Elixir SDK's socket client as `rustler_precompiled` names it, without the
+# `.tar.gz` it is published in: the NIF version is the oldest one the package
+# declares, and the extension is the one the BEAM loads a NIF by.
+elixir_nif_name() {
+  local triple="$1" version="$2" nif_version="2.16"
+  case "${triple}" in
+    *windows*) echo "flz_sdk_nif-v${version}-nif-${nif_version}-${triple}.dll" ;;
+    *)         echo "libflz_sdk_nif-v${version}-nif-${nif_version}-${triple}.so" ;;
+  esac
+}

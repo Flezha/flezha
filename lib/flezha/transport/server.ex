@@ -33,16 +33,18 @@ defmodule Flezha.Transport.Server do
   alias Flezha.Process.Watch
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamPool
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Transport.CertGenerator
-  alias Flezha.Transport.Local
+  alias Flezha.SDK.LocalStream
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream
 
   require Logger
 
   use GenServer
+
+  @behaviour Flezha.SDK.Connect
 
   # Stream type constants (match flz_transport protocol.rs)
   @stream_type_primary 1
@@ -64,10 +66,14 @@ defmodule Flezha.Transport.Server do
   seam the UDS/QUIC `connect_control_channel` path reaches. Rejects a handle
   owned by another BEAM node (the native transport is same-node only). Returns
   `{:ok, runner_id}` or `{:error, reason}`; a rejected connect is counted and the
-  handle closed, exactly as the socket path.
+  handle closed, exactly as the socket path. The `:native` transport server is
+  started first, so the runner appears among the active transports.
   """
-  @spec connect(map(), Local.Stream.t()) :: {:ok, term()} | {:error, term()}
-  def connect(init_payload, %Local.Stream{pid: pid} = handle) when is_map(init_payload) do
+  @impl Flezha.SDK.Connect
+  @spec connect(map(), LocalStream.t()) :: {:ok, term()} | {:error, term()}
+  def connect(init_payload, %LocalStream{pid: pid} = handle) when is_map(init_payload) do
+    _ = ensure_started(:native)
+
     if node(pid) != node() do
       {:error, :remote_node_rejected}
     else
@@ -91,6 +97,7 @@ defmodule Flezha.Transport.Server do
   when the pool is full. `stream_type` is the wire constant (1 primary / 2
   secondary). Returns `{:ok, type, name}` | `{:error, reason}`.
   """
+  @impl Flezha.SDK.Connect
   @spec bind_data_stream(term(), non_neg_integer(), TStream.handle()) ::
           {:ok, :primary | :secondary, term()} | {:error, term()}
   def bind_data_stream(runner_id, stream_type, handle) do
@@ -245,7 +252,7 @@ defmodule Flezha.Transport.Server do
   end
 
   # Native (in-node) transport: no NIF server, no listener, no peer to
-  # authenticate. Streams are pid-backed `Flezha.Transport.Local.Stream` handles
+  # authenticate. Streams are pid-backed `Flezha.SDK.LocalStream` handles
   # bound directly by the in-node SDK through `bind_data_stream/3`.
   def init(:native) do
     Logger.info("[Transport.Server] native (in-node) transport ready")

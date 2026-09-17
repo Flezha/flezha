@@ -21,14 +21,7 @@ defmodule Flezha.Process.SeamTest do
   alias Flezha.Process.Timer
   alias FlezhaTest.Helper.SourceWalk
 
-  # `lib/flezha/sdk/` is out of scope by the packaging gate
-  # (`scripts/check-sdk-boundary.sh`): a module there may not name
-  # `Flezha.SafeCall`, `Flezha.Parallel` or any `Flezha.Process.*`, so its
-  # sites cannot fold and are not judged here.
-  @roots_excluded ["lib/flezha/sdk/"]
-
   @seam_files [
-    "lib/flezha/process/safe_call.ex",
     "lib/flezha/process/parallel.ex",
     "lib/flezha/process/watch.ex",
     "lib/flezha/process/timer.ex",
@@ -42,7 +35,6 @@ defmodule Flezha.Process.SeamTest do
   defp sources do
     ["lib/flezha"]
     |> SourceWalk.files([".ex"])
-    |> Enum.reject(fn p -> Enum.any?(@roots_excluded, &String.starts_with?(p, &1)) end)
     |> Enum.reject(&(&1 in @seam_files))
   end
 
@@ -75,10 +67,8 @@ defmodule Flezha.Process.SeamTest do
       # the ref rides `{:kafka_worker_dead, ref, reason}` to every caller
       "lib/flezha/plugin/provider/kafka/worker_registry.ex",
       # one monitor for one owner; no map, nothing to book
-      "lib/flezha/transport/local/stream.ex",
       "lib/flezha/plugin/installer.ex",
       "lib/flezha/service/hub_manager/lifecycle.ex",
-      "lib/flezha/sdk.ex",
       # the ref is a field of the worker entry the table replaces in place
       "lib/flezha/plugin/extension/table/workers.ex",
       # one monitor for one owner, held in a named field, with no map to book
@@ -140,9 +130,7 @@ defmodule Flezha.Process.SeamTest do
       "lib/flezha/schedule/job.ex",
       "lib/flezha/service/hub_manager/rows.ex",
       "lib/flezha/service/hub_manager/placement.ex",
-      "lib/flezha/state/recovery.ex",
-      # the Elixir SDK's own child spec; the packaging gate forbids it the seam
-      "lib/flezha/sdk.ex"
+      "lib/flezha/state/recovery.ex"
     ]
   end
 

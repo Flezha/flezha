@@ -14,7 +14,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
 
   alias Flezha.SDK.{Channels, Ctx, Entity}
   alias Flezha.SDK.Operative.Inbox
-  alias Flezha.State.Wire
+  alias Flezha.SDK.Wire
   import FlezhaTest.Helper.SdkOperativeHarness
 
   defmodule ProcA do
@@ -173,7 +173,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   end
 
   # A metadata value is capped at 255 bytes on the wire, and that is exactly
-  # what `Flezha.State.Wire.encode_entity_id/3` will take for the slot the
+  # what `Flezha.SDK.Wire.encode_entity_id/3` will take for the slot the
   # requested name rides in. The longest name a frame can carry must park
   # rather than raise there.
   # `flz_core::first_of_kind` walks the channels in declaration order, so the

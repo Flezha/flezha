@@ -1278,9 +1278,9 @@ A refusal SHALL leave the bytes on disk untouched and SHALL leave the operative 
 
 ### Requirement: The durable record frame SHALL have exactly one reader and one writer
 
-Every read and every write of the durable record framing `[seq: u64 BE][len: u32 BE][header: 16 B][change_bytes][crc32: u32 BE]` SHALL go through `Flezha.State.RecordFrame`, on disk and over a binary alike.
+Every read and every write of the durable record framing `[seq: u64 BE][len: u32 BE][header: 16 B][change_bytes][crc32: u32 BE]` SHALL go through `Flezha.SDK.RecordFrame`, the Elixir SDK's frame module, on disk and over a binary alike; `Flezha.State.RecordFrame` walks a record log on a device through it.
 
-A module that holds framed records SHALL NOT decompose the framing itself, SHALL NOT compute the framing crc32 itself, and SHALL NOT restate the header's byte length. This applies to the Controller's restore path and to the Elixir SDK, which reads the same framing from bytes the Controller ships rather than from a file, and which reaches the seam through the packaging-boundary allow-list the way it already reaches `Flezha.State.Wire`.
+A module that holds framed records SHALL NOT decompose the framing itself, SHALL NOT compute the framing crc32 itself, and SHALL NOT restate the header's byte length. This applies to the Controller's restore path and to the Elixir SDK, which reads the same framing from bytes the Controller ships rather than from a file.
 
 The crc32 over `header <> change_bytes` SHALL be written and verified in one expression. Two spellings of the same value — `crc32(header <> body)` and `crc32(crc32(header), body)` — are the same crc computed twice, and only one of them SHALL remain.
 
@@ -1313,7 +1313,7 @@ Every whole-file install of durable data SHALL use the one install function, whi
 
 What varies between callers SHALL be read from the durable file's declaration rather than being a constant inside the function: the in-progress suffix it writes under, whether the install owes an fsync of its own, and whether it creates the directory it writes into. A caller that needs a different suffix uses the ceremony instead of re-implementing it.
 
-A runtime packaged separately from the Controller is out of this ceremony, and the reason SHALL be stated where its install lives: the packaging boundary refuses it the module the ceremony belongs to, so an install of its own is the boundary holding rather than a bypass.
+A runtime packaged separately from the Controller is out of this ceremony, and the reason SHALL be stated where its install lives: it depends on no module of the Controller, the ceremony's included, so an install of its own is that boundary holding rather than a bypass.
 
 Every module that owns durable bytes on disk SHALL declare, in one table, the frame it uses (`record` or `whole-file`), its durability mode (batched through the shared fsync cadence, or fsynced inline) and its in-progress suffix. The scanners that must ignore in-progress files SHALL derive their exclusions from those declared suffixes rather than listing them, so that a new durable file cannot be surfaced as a phantom Entity by omission.
 

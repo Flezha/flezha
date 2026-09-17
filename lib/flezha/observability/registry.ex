@@ -20,14 +20,14 @@ defmodule Flezha.Observability.Registry do
 
   # The two counter tables this registry keeps per entry: one per source, one
   # per sink. Declared rather than numbered by hand in function clauses.
-  use Flezha.Process.Counters,
+  use Flezha.SDK.CounterTable,
     table: :source_counter,
     slots: [
       [name: :budget_exceeded, kind: :count],
       [name: :violations, kind: :count]
     ]
 
-  use Flezha.Process.Counters,
+  use Flezha.SDK.CounterTable,
     table: :sink_counter,
     slots: [
       [name: :dropped, kind: :count],

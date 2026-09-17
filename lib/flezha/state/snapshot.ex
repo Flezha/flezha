@@ -17,7 +17,8 @@ defmodule Flezha.State.Snapshot do
        own `entity.wal.rewriting` -> rename sequence.
   """
 
-  alias Flezha.State.{Metrics, Paths, RecordFrame, WalWriter, WriterRegistry}
+  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.{Metrics, Paths, WalWriter, WriterRegistry}
 
   @header_size RecordFrame.header_size()
 

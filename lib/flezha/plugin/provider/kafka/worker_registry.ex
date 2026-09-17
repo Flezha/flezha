@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
   alias Flezha.Config.Durations
   alias Flezha.Process.Cspec
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   @type host :: {binary(), pos_integer()}
   @type identity :: %{

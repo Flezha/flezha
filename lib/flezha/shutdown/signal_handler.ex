@@ -51,7 +51,7 @@ defmodule Flezha.Shutdown.SignalHandler do
 
   alias Flezha.Config
   alias Flezha.Config.Durations
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Shutdown.Coordinator
 
   defstruct count: 0, enabled: true, status: :ok, signal_server: :erl_signal_server

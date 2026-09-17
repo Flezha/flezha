@@ -10,7 +10,7 @@ defmodule Flezha.Service.OperativeManager.Init do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager.Teardown
   alias Flezha.Service.Validator

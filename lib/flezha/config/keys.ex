@@ -615,6 +615,10 @@ defmodule Flezha.Config.Keys do
     {:release_base_url, :string, nil, runtimes: [:php], env: "FLEZHA_RELEASE_BASE_URL"},
     {:sha, :string, nil, runtimes: [:build], env: "FLEZHA_SHA"},
     {:ui_path, :path, nil, runtimes: [:build], env: "FLEZHA_UI_PATH"},
+    # The Elixir SDK's two build-time names: where its compile reads the
+    # contract set, and whether its socket client builds from source.
+    {:contract_dir, :path, nil, runtimes: [:elixir_sdk], env: "FLEZHA_CONTRACT_DIR"},
+    {:sdk_build_nif, :bool, false, runtimes: [:elixir_sdk], env: "FLEZHA_SDK_BUILD_NIF"},
 
     # ---- benchmarks ---------------------------------------------------------
     {:bench_log, :path, nil, runtimes: [:bench], env: "FLEZHA_BENCH_LOG"},

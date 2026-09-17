@@ -3,11 +3,11 @@
 
 use std::sync::{Arc, Mutex};
 
+use flz_transport::transport::close_reason::CloseReason;
 use flz_transport::transport::send_gate::{GateChange, Transition};
 use rustler::{Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
 
 use crate::atoms;
-use crate::driver::CloseReason;
 use crate::frame_buffer::ParsedFrame;
 use crate::resources::StreamHandle;
 

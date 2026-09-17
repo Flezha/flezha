@@ -26,6 +26,7 @@ defmodule Flezha.Transport.DriverParityTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Transport.CertGenerator
+  alias Flezha.SDK.Native, as: Client
   alias Flezha.Transport.Native
 
   # Every word `flz_nif`'s `CloseReason` renders. A reason outside this set is a
@@ -84,14 +85,14 @@ defmodule Flezha.Transport.DriverParityTest do
   # surfaces it only once the peer writes: the opening frame is what makes the
   # stream visible to the driver.
   defp open_peer(:uds, path) do
-    {:ok, client} = Native.client_connect_uds(path, self())
+    {:ok, client} = Client.client_connect_uds(path, self())
     [client]
   end
 
   defp open_peer(:quic, address) do
-    {:ok, conn} = Native.client_connect_quic(address, ca_path())
-    {:ok, client} = Native.client_open_stream(conn, 0, 0, self())
-    :ok = Native.send_frame(client, "p-open", "open", %{})
+    {:ok, conn} = Client.client_connect_quic(address, ca_path())
+    {:ok, client} = Client.client_open_stream(conn, 0, 0, self())
+    :ok = Client.send_frame(client, "p-open", "open", %{})
     [client, conn]
   end
 
@@ -155,10 +156,10 @@ defmodule Flezha.Transport.DriverParityTest do
         {_server, dial} = start_server(transport)
         {client, server_handle} = connect(transport, dial)
         :ok = Native.set_active(server_handle)
-        client_id = Native.stream_id(client)
+        client_id = Client.stream_id(client)
         server_id = Native.stream_id(server_handle)
 
-        :ok = Native.send_frame(client, "p-up", "up", %{"k" => "v"})
+        :ok = Client.send_frame(client, "p-up", "up", %{"k" => "v"})
         assert_receive {:flz_data, ^server_id, "p-up", "up", %{"k" => "v"}}, 5_000
 
         :ok = Native.send_frame(server_handle, "p-down", "down", %{})
@@ -172,7 +173,7 @@ defmodule Flezha.Transport.DriverParityTest do
         :ok = Native.set_active(server_handle)
         server_id = Native.stream_id(server_handle)
 
-        :ok = Native.send_frame(client, "p-up", "up", %{})
+        :ok = Client.send_frame(client, "p-up", "up", %{})
         assert_receive {:flz_data, ^server_id, "p-up", _, _}, 5_000
         :ok = Native.send_frame(server_handle, "p-down", "down", %{})
 
@@ -198,7 +199,7 @@ defmodule Flezha.Transport.DriverParityTest do
 
         opening = if transport == :quic, do: ["p-open"], else: []
         sent = opening ++ ["p-1", "p-2", "p-3"]
-        for id <- sent -- opening, do: :ok = Native.send_frame(client, id, "", %{})
+        for id <- sent -- opening, do: :ok = Client.send_frame(client, id, "", %{})
 
         # Every frame is read before the stream is activated, so which ones reach
         # an owner is decided by the mode and not by timing.
@@ -246,7 +247,7 @@ defmodule Flezha.Transport.DriverParityTest do
             handles = open_peer(transport, dial)
             send(test_pid, :peer_up)
             receive do: (:never -> :ok)
-            Enum.each(handles, &Native.stream_id/1)
+            Enum.each(handles, &Client.stream_id/1)
           end)
 
         assert_receive :peer_up, 10_000
@@ -284,7 +285,7 @@ defmodule Flezha.Transport.DriverParityTest do
       :ok = Native.set_active(server_handle)
       server_id = Native.stream_id(server_handle)
 
-      :ok = Native.send_frame(client, "p-up", "up", %{})
+      :ok = Client.send_frame(client, "p-up", "up", %{})
       assert_receive {:flz_data, ^server_id, "p-up", _, _}, 5_000
 
       row =

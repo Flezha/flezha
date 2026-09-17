@@ -25,8 +25,7 @@ defmodule Flezha.State.Commands do
   alias Flezha.State.ProcJournal
   alias Flezha.State.Restore
   alias Flezha.State.Watchdog
-  alias Flezha.State.Wire
-
+  alias Flezha.SDK.Wire
   require Logger
 
   # Bound on the CompactEntityResponse round-trip. Generous because the SDK

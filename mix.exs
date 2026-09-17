@@ -15,8 +15,8 @@ defmodule Flezha.MixProject do
       start_permanent: Mix.env() == :prod,
       releases: releases(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      # The nested test/apps/elixir_runner mix project has its own mix.exs and
-      # lib/*.ex; keep `mix test`'s test-file scan from mistaking them for
+      # The test apps under test/apps/ are projects of their own with mix.exs
+      # and lib/*.ex; keep `mix test`'s test-file scan from mistaking them for
       # mis-named test files.
       test_ignore_filters: [&String.starts_with?(&1, "test/apps/")],
       deps: deps(),
@@ -236,6 +236,12 @@ defmodule Flezha.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      # The Elixir SDK, developed in the `sdk/elixir` submodule. The controller
+      # implements its in-node transport and shares its pure modules.
+      {:flezha_sdk, path: "sdk/elixir"},
+      # The Elixir test app's bench factories, which the in-process bench and
+      # the in-node tests register. Compiled, never started, in no release.
+      {:elixir_runner, path: "sdk/elixir/test_app", runtime: false},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
       # Pinned to the dev branch until 0.7.1 is published: 0.7.0 ignores
@@ -334,9 +340,8 @@ defmodule Flezha.MixProject do
     %{release | options: Keyword.put(release.options, :quiet, true)}
   end
 
-  # Explicit test dirs (not a recursive "test" glob) so a nested mix app under
-  # test/apps/ — e.g. test/apps/elixir_runner — is never compiled into the
-  # controller and cannot collide with the app's own compile.
+  # Explicit test dirs (not a recursive "test" glob) so a test app under
+  # test/apps/ is never compiled into the controller as source.
   defp elixirc_paths(:prod), do: ["lib"]
   defp elixirc_paths(:test), do: ["lib", "test/fixtures", "test/helpers"]
   defp elixirc_paths(_), do: ["lib", "test/fixtures", "test/helpers"]

@@ -11,7 +11,7 @@ defmodule Flezha.Observability.Counters do
   @key {__MODULE__, :ref}
   @error_classes :flezha_observability_error_classes
 
-  use Flezha.Process.Counters,
+  use Flezha.SDK.CounterTable,
     table: :counter,
     slots: [
       [name: :dispatcher_failure_count, kind: :count],

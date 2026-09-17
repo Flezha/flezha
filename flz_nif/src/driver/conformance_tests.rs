@@ -438,35 +438,3 @@ fn bytes_the_peer_sent_are_framed<W: Wire>(wire: &mut W) {
     assert_eq!(frames[0].payload_id, "p-2");
     assert_eq!(frames[0].message, b"from the peer");
 }
-
-// --- what the vocabulary declares --------------------------------------------
-
-/// Every reason is declared once and rendered once, including the two only one
-/// wire can produce. A word written as a literal at the site that produces it
-/// is what this set exists to prevent.
-#[test]
-fn the_close_vocabulary_is_one_declared_set() {
-    let rendered: Vec<String> = [
-        CloseReason::ConnectionClosed,
-        CloseReason::StreamReset,
-        CloseReason::ReadError,
-        CloseReason::WriteError,
-        CloseReason::FrameTooLarge,
-        CloseReason::ConnectionLost("aborted by peer".into()),
-    ]
-    .iter()
-    .map(CloseReason::to_string)
-    .collect();
-
-    assert_eq!(
-        rendered,
-        [
-            "connection_closed",
-            "stream_reset",
-            "read_error",
-            "write_error",
-            "frame_too_large",
-            "connection_lost: aborted by peer",
-        ]
-    );
-}

@@ -5,7 +5,7 @@ TBD - created by archiving change elixir-sdk-native-transport. Update Purpose af
 ## Requirements
 ### Requirement: Native stream handles satisfy the existing stream contract through one polymorphic seam
 
-The system SHALL provide a native stream handle type (`%Flezha.Transport.Local.Stream{}` — one process per stream, carrying a `:controller` and an `:sdk` side) and a dispatch seam (`Flezha.Transport.Stream`) such that `send_frame/4`, `set_active/1`, `close/1`, `controlling_process/2`, and `stream_id/1` work on both NIF stream resources and native handles, with the NIF arm delegating to `Flezha.Transport.Native` unchanged.
+The system SHALL provide a native stream handle type (`%Flezha.SDK.LocalStream{}`, the Elixir SDK's in-node stream — one process per stream, carrying a `:controller` and an `:sdk` side) and a dispatch seam (`Flezha.Transport.Stream`) such that `send_frame/4`, `set_active/1`, `close/1`, `controlling_process/2`, and `stream_id/1` work on both NIF stream resources and native handles, with the NIF arm delegating to `Flezha.Transport.Native` unchanged.
 
 The five modules that call per-stream NIF operations (`transport/server.ex`, `stream_acceptor.ex`, `control_channel.ex`, `stream_channel.ex`, `fleet_manager.ex`) SHALL go through the seam; no per-stream `Native.` call SHALL remain outside `native.ex` and the seam.
 

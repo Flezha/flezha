@@ -55,7 +55,7 @@ defmodule Flezha.Convergence.Heal do
   alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.{ControlUnit, FleetManager}
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Service.{HubManager, OperativeManager}
   alias Flezha.State.Recovery
   alias ProcessHub.Service.Migration

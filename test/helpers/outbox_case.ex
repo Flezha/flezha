@@ -21,7 +21,9 @@ defmodule FlezhaTest.OutboxCase do
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{InputLog, Outbox, RecordFrame, Supervisor, TestHelpers, WalWriter, Wire}
+  alias Flezha.SDK.RecordFrame
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{InputLog, Outbox, Supervisor, TestHelpers, WalWriter}
 
   using do
     quote do
@@ -47,6 +49,7 @@ defmodule FlezhaTest.OutboxCase do
 
       alias Flezha.Dlq.Store, as: DlqStore
       alias Flezha.Operative.ClassRegistry
+      alias Flezha.SDK.{RecordFrame, Wire}
       alias Flezha.Service.CliManager
 
       alias Flezha.State.{
@@ -54,11 +57,9 @@ defmodule FlezhaTest.OutboxCase do
         InputLog,
         Outbox,
         Paths,
-        RecordFrame,
         Supervisor,
         TestHelpers,
-        WalWriter,
-        Wire
+        WalWriter
       }
     end
   end

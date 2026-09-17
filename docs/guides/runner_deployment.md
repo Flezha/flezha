@@ -718,7 +718,7 @@ the workflow kind.
 ### Elixir
 
 The whole example:
-[`examples/elixir/echo`](https://github.com/flezha/flezha/tree/main/examples/elixir/echo).
+[`sdk/elixir/examples/echo`](../../sdk/elixir/examples/echo).
 
 ```elixir
 # lib/echo/procedure.ex: the procedure. The processing stage the graph routes each message into.
@@ -785,9 +785,9 @@ end
 The runner is a child of your own supervision tree, so a crash restarts it and it
 reconnects under the same identity. `transport: :uds` because this node is not the
 controller's: the default, `:native`, is for code inside the controller's own node,
-and it is not taken from the environment. The `flezha` package is the controller
-and the SDK in one, so the example's `config/config.exs` sets
-`controller_enabled: false`. `workflows:` is the same list for the workflow kind.
+and it is not taken from the environment. The example depends on the `flezha_sdk`
+package alone, which starts no controller. `workflows:` is the same list for the
+workflow kind.
 
 > #### Concurrency in Elixir {: .info}
 >

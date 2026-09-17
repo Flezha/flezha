@@ -3,7 +3,7 @@ defmodule Flezha.Transport.NativeTransportTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.RunnerSupervisor
-  alias Flezha.Transport.Local.Stream
+  alias Flezha.SDK.LocalStream
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -71,7 +71,7 @@ defmodule Flezha.Transport.NativeTransportTest do
     # A live pid on the peer node — the native transport is same-node only.
     remote_pid = :erpc.call(node, :erlang, :whereis, [:code_server])
     assert node(remote_pid) == node
-    handle = %Stream{pid: remote_pid, id: 1, side: :controller}
+    handle = %LocalStream{pid: remote_pid, id: 1, side: :controller}
 
     assert {:error, :remote_node_rejected} =
              Server.connect(%{"namespace" => "default"}, handle)

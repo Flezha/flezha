@@ -9,7 +9,8 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.State.{FsyncBatcher, Outbox, Paths, RecordFrame, Supervisor, WalWriter}
+  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
   # The outputs of a received dispatch batch not yet asserted on.

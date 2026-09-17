@@ -17,7 +17,8 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Config.Durations
   alias Flezha.Operative.Lookup
-  alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, Wire}
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths}
   alias Flezha.Process.Timer
   alias Flezha.State.WalWriter.State
 

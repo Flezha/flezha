@@ -20,7 +20,7 @@ defmodule Flezha.State.Metrics do
 
   # `:write_concurrency` rather than `:atomics`: a per-Entity table written by
   # the writer and read by the exporter, not a hot single-process counter.
-  use Flezha.Process.Counters,
+  use Flezha.SDK.CounterTable,
     table: :counter,
     new_opts: [:write_concurrency],
     slots: [

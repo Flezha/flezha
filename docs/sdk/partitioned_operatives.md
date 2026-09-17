@@ -23,7 +23,7 @@ group(key) = fnv1a128(key_bytes) mod 256
 
 The hash is the FNV-1a-128 the SDKs' `StableId` already freezes (offset basis
 `0x6c62272e07bb014262b821756295c58d`, prime `2^88 + 0x13b`). Two implementations carry the key
-group — `Flezha.Partition.group_of/1` (controller and Elixir SDK) and
+group — `Flezha.SDK.KeyGroup.group_of/1` (controller and Elixir SDK) and
 `flz_core::util::key_group` (Rust SDK, and the Java host through the poll core) — pinned
 against shared fixture vectors:
 

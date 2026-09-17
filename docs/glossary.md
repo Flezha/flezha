@@ -26,7 +26,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   which node hosts each namespace hub (`Flezha.Cluster.Directory`), read locally on every node.
   A request landing on the wrong node is forwarded once, so every node is a valid entry point.
 - **Native transport** — the in-node `:native` mode of the Elixir SDK: pid-backed
-  `Flezha.Transport.Local.Stream` handles and `{:flz_data, ...}` messages instead of a socket. A
+  `Flezha.SDK.LocalStream` handles and `{:flz_data, ...}` messages instead of a socket. A
   standalone Elixir runner speaks the binary protocol over UDS/QUIC. See [`sdk/elixir_sdk.md`](sdk/elixir_sdk.md).
 - **Source adapter / sink adapter** — where input comes from and where output goes. Both are
   plugins at the edge (a websocket, an HTTP endpoint, Kafka, Postgres), never core components.

@@ -7,11 +7,12 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
 
   import ExUnit.Assertions
 
-  alias Flezha.State.{TestHelpers, WalWriter, Wire}
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @doc "Build one `entity_state_change` wire frame (`Flezha.State.Wire` layout)."
+  @doc "Build one `entity_state_change` wire frame (`Flezha.SDK.Wire` layout)."
   def state_change_frame(class, key, seq, body, procedure \\ "op1") do
     sid = Wire.encode_entity_id(class, procedure, key)
     header = TestHelpers.stub_header()

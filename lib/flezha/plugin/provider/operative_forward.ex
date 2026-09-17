@@ -24,6 +24,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   alias Flezha.Plugin.Provider.OperativeForward.ForwardWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.SDK.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
@@ -175,7 +176,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
         case Partition.owner_of(routes, key) do
           nil ->
             {:error,
-             "key #{inspect(key)} hashes to group #{Partition.group_of(key)}, " <>
+             "key #{inspect(key)} hashes to group #{KeyGroup.group_of(key)}, " <>
                "owned by no member"}
 
           route ->
@@ -287,7 +288,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   # is what keeps a single-member target byte-identical to before partitioning.
   defp target_members(target, namespace) do
     case group_members(namespace, target) do
-      [] -> [{target, {0, Partition.key_groups() - 1}}]
+      [] -> [{target, {0, KeyGroup.key_groups() - 1}}]
       members -> Enum.map(members, &{&1.id, &1.partition.range})
     end
   end

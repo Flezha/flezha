@@ -9,22 +9,6 @@ use rustler::{LocalPid, ResourceArc};
 use crate::driver::ServerCommand;
 use crate::driver_stats::DriverStats;
 
-/// How a stream nudges its driver after a command is queued. Server streams
-/// wake a `mio` poll; client streams' writer threads block on the command
-/// channel itself, so no wake is needed.
-pub enum StreamWaker {
-    Mio(Arc<Waker>),
-    Channel,
-}
-
-impl StreamWaker {
-    pub fn wake(&self) {
-        if let StreamWaker::Mio(waker) = self {
-            let _ = waker.wake();
-        }
-    }
-}
-
 /// Opaque handle to a running transport server, held by Elixir as a NIF resource.
 pub struct TransportServer {
     pub cmd_tx: Sender<ServerCommand>,
@@ -50,7 +34,8 @@ impl Drop for TransportServer {
 pub struct StreamHandle {
     pub stream_id: u64,
     pub cmd_tx: Sender<ServerCommand>,
-    pub waker: StreamWaker,
+    /// Nudges the driver's poll after a command is queued.
+    pub waker: Arc<Waker>,
     pub owner: Arc<Mutex<LocalPid>>,
     /// Shared with the driver's stream state: the driver raises it as its send
     /// buffer fills, `send_frame` reads it before queueing anything more.
@@ -67,7 +52,7 @@ impl Drop for StreamHandle {
         let _ = self.cmd_tx.send(ServerCommand::CloseStream {
             stream_id: self.stream_id,
         });
-        self.waker.wake();
+        let _ = self.waker.wake();
     }
 }
 

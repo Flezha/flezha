@@ -25,6 +25,7 @@ defmodule FlezhaTest.System.OperativeListenE2ETest do
   alias Flezha.Operative.{Builder, PartitionGroup}
   alias Flezha.Partition
   alias Flezha.Plugin
+  alias Flezha.SDK.KeyGroup
   alias Flezha.Service.{CliManager, OperativeManager}
 
   # The listener, the plugin it enables and what detaches it are controller
@@ -264,7 +265,7 @@ defmodule FlezhaTest.System.OperativeListenE2ETest do
   defp lines(text), do: String.split(text, "\n", trim: true)
 
   defp owner(group, key),
-    do: Partition.member_id(group, Partition.owner(Partition.ranges(2), Partition.group_of(key)))
+    do: Partition.member_id(group, Partition.owner(Partition.ranges(2), KeyGroup.group_of(key)))
 
   defp forward_to(pid) do
     %Plugin{

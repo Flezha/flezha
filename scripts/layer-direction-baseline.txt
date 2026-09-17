@@ -118,8 +118,6 @@ lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Snapshot
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Supervisor
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.WalWriter
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Watchdog
-lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Wire
-lib/flezha/sdk.ex -> (no directory owns it)
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Boot.RecoveryHooks
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Coordinator
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Step

@@ -12,7 +12,8 @@ defmodule Flezha.State.WalWriter.Epoch do
   """
 
   alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame, Wire}
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame}
   alias Flezha.State.WalWriter.{Admission, Settlement, State}
 
   # Only a frame from a *different* session than the epoch owner consults the

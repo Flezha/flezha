@@ -3,16 +3,14 @@ defmodule Flezha.Config.ParseTest do
   One parse rule per knob type, and the same rule in every runtime.
 
   `test/fixtures/knob_parse_cases.txt` is the rule written down once; this is
-  the controller's and the Elixir SDK's reading of it. Every other runtime's
-  suite feeds the same file to its own reader, so a Ruby runner and a Rust
-  runner answer `"0"` the way this does.
+  the controller's reading of it. Every runtime's suite feeds the same file to
+  its own reader, so a Ruby runner and a Rust runner answer `"0"` the way this
+  does.
   """
   use ExUnit.Case, async: true
 
   alias Flezha.Config
   alias Flezha.Config.Environment
-  alias Flezha.Config.Keys
-  alias Flezha.SDK.Knob
 
   @fixture "test/fixtures/knob_parse_cases.txt"
 
@@ -69,25 +67,6 @@ defmodule Flezha.Config.ParseTest do
     assert_raise ArgumentError, fn ->
       Environment.runtime_config(%{"FLEZHA_TRANSPORT" => "carrier-pigeon"}, :prod)
     end
-  end
-
-  test "the SDK's reader answers the runner's side of a row" do
-    assert Knob.get(:log_level) == :warn
-    assert Config.default(:log_level, :controller) == :info
-  end
-
-  test "the SDK's reader reads the variable, and falls back on a value that is not one" do
-    var = Keys.env_name(:mailbox_capacity)
-    System.put_env(var, "2048")
-    on_exit(fn -> System.delete_env(var) end)
-    assert Knob.get(:mailbox_capacity) == 2_048
-
-    System.put_env(var, "0")
-    assert Knob.get(:mailbox_capacity) == Config.default(:mailbox_capacity)
-  end
-
-  test "a caller's computed default wins over the row's when the variable is unset" do
-    assert Knob.get(:reap_interval_ms, 125) == 125
   end
 
   test "a variable set to nothing is a variable nobody set" do

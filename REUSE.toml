@@ -9,20 +9,18 @@ path = ["**"]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "MPL-2.0"
 
-# The SDK side, including the Elixir SDK that compiles into the controller app
-# and the wire contract every SDK implements. A later table wins for its paths.
+# The SDK side and the wire contract every SDK implements. A later table wins
+# for its paths.
 [[annotations]]
 path = [
   "sdk/**",
   "flz_core/**",
   "flz_core_ffi/**",
   "flz_transport/**",
-  "lib/flezha/sdk/**",
   "protobufs/**",
   # Worked SDK examples are meant to be copied into a user's own project, so
   # they carry the SDK's licence rather than the controller's.
   "examples/node/**",
-  "examples/elixir/echo/**",
 ]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "Apache-2.0"

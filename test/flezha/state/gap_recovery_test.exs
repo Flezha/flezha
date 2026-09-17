@@ -17,9 +17,10 @@ defmodule Flezha.State.GapRecoveryTest do
 
   alias Flezha.Convergence.Heal
   alias Flezha.Runner.StreamChannel
+  alias Flezha.SDK.Wire
   alias Flezha.State.Restore
   alias Flezha.State.Snapshot, as: StateSnapshot
-  alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Wire}
+  alias Flezha.State.{Supervisor, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup %{base: base} do

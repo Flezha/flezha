@@ -1,12 +1,12 @@
 defmodule Flezha.Config.Backoff do
   @moduledoc """
-  Every wait-before-retry in the controller and the Elixir SDK, as one table of
-  declared ladders.
+  Every wait-before-retry in the controller, as one table of declared ladders.
+  The arithmetic, the jitter and the announcements are `Flezha.SDK.Knob`'s, which
+  the Elixir SDK's own four ladders wait by too.
 
   A row is a key and the schedule that key waits: rungs (a list, indexed by the
-  attempt and held at the last) or a geometric `base`/`cap` (`base · 2^(n−1)`,
-  the exponent itself capped where the runtime it mirrors caps it), whether the
-  wait is jittered, how the attempt count resets, and the attempt at which the
+  attempt and held at the last) or a geometric `base`/`cap` (`base · 2^(n−1)`),
+  whether the wait is jittered, how the attempt count resets, and the attempt at which the
   site gives up. `base` and `cap` may name a `Flezha.Config.Durations` row
   instead of a number, so an operator's knob is the ladder's bound without the
   ladder holding a second copy of it.
@@ -24,11 +24,12 @@ defmodule Flezha.Config.Backoff do
   `[:flezha, :backoff, :reset]` naming the ladder, the target and the attempt,
   so a ladder's behaviour is observable without reading its site.
 
-  **One jitter rule.** `jitter/2` is uniform in `[d/2, 3d/2)` and the cap is
+  **One jitter rule.** `Flezha.SDK.Knob.jitter/2` is uniform in `[d/2, 3d/2)` and the cap is
   applied after it, so no row's wait exceeds its cap.
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.SDK.Knob
 
   # The convergence loop's rungs. Dense early because the common fault is a
   # runner restart measured in seconds, and a coarse first step punishes that
@@ -70,11 +71,7 @@ defmodule Flezha.Config.Backoff do
     # ---- cluster and transport --------------------------------------------
     {:cluster_reconnect,
      base: 1_000, cap: :reconnect_max_backoff_ms, jitter: true, reset: :per_call},
-    {:sdk_reconnect, base: 100, cap: 30_000, exponent_cap: 8, jitter: true, reset: :on_success},
-    {:sdk_retry, base: 50, cap: 5_000, exponent_cap: 16, jitter: true, reset: :per_call},
-    {:park_resend, base: 2_000, cap: 2_000, reset: :per_call},
     {:proc_outbox_retry, base: 1_000, cap: 1_000, reset: :per_call},
-    {:entity_wake_retry, base: 5, cap: 5, reset: :per_call},
 
     # ---- services ---------------------------------------------------------
     {:no_response, base: 150, cap: 5_000, reset: :per_call, give_up: 8},
@@ -100,7 +97,6 @@ defmodule Flezha.Config.Backoff do
                 rungs: fields[:rungs],
                 base: fields[:base],
                 cap: fields[:cap],
-                exponent_cap: fields[:exponent_cap],
                 factor: fields[:factor] || 2,
                 jitter: Keyword.get(fields, :jitter, false),
                 reset: Keyword.fetch!(fields, :reset),
@@ -108,16 +104,12 @@ defmodule Flezha.Config.Backoff do
               }}
            end)
 
-  @wait_event [:flezha, :backoff, :wait]
-  @reset_event [:flezha, :backoff, :reset]
-
   @type key :: {atom(), term()}
   @type ladder :: atom()
   @type row :: %{
           rungs: [pos_integer()] | nil,
           base: pos_integer() | atom() | nil,
           cap: pos_integer() | atom() | nil,
-          exponent_cap: pos_integer() | nil,
           factor: number(),
           jitter: boolean(),
           reset: :on_success | :per_call,
@@ -152,9 +144,9 @@ defmodule Flezha.Config.Backoff do
   @spec delay(ladder(), pos_integer(), keyword()) :: non_neg_integer()
   def delay(ladder, attempt \\ 1, opts \\ []) do
     row = ladder(ladder)
-    plain = rung(row, attempt, opts)
+    resolved = %{row | base: bound(opts[:base] || row.base), cap: bound(opts[:cap] || row.cap)}
 
-    if row.jitter, do: min(jitter(plain, opts[:rand]), cap(row, opts)), else: plain
+    Knob.delay(resolved, attempt, Keyword.take(opts, [:rand]))
   end
 
   @doc """
@@ -162,9 +154,8 @@ defmodule Flezha.Config.Backoff do
   a timer rather than sleeping. Answers the delay so it reads as one call.
   """
   @spec arm(ladder(), pos_integer(), term(), keyword()) :: non_neg_integer()
-  def arm(ladder, attempt, target, opts \\ []) do
-    ladder |> delay(attempt, opts) |> announce(ladder, attempt, target)
-  end
+  def arm(ladder, attempt, target, opts \\ []),
+    do: Knob.announce(ladder, attempt, target, delay(ladder, attempt, opts))
 
   @doc """
   `arm/4` and the sleep — the one spelling of "wait before trying again" for a
@@ -194,17 +185,7 @@ defmodule Flezha.Config.Backoff do
   the reset is visible on telemetry rather than only in its state.
   """
   @spec reset(ladder(), term()) :: 0
-  def reset(ladder, target) do
-    :telemetry.execute(@reset_event, %{attempt: 0}, %{ladder: ladder, target: target})
-    0
-  end
-
-  @doc "Uniform in `[value/2, value · 3/2)` — the one jitter rule."
-  @spec jitter(non_neg_integer(), (pos_integer() -> pos_integer()) | nil) :: non_neg_integer()
-  def jitter(value, rand \\ nil) do
-    rand = rand || (&:rand.uniform/1)
-    div(value, 2) + rand.(max(value, 1))
-  end
+  defdelegate reset(ladder, target), to: Knob
 
   @doc """
   Keep only the ops whose `{primitive, target}` key is past its cooldown
@@ -255,36 +236,11 @@ defmodule Flezha.Config.Backoff do
     %{b | entries: Map.put(entries, key, {attempt + 1, now + delay})}
   end
 
-  # A rung list is indexed by the attempt and held at its last; a geometric row
-  # doubles from its base, with the exponent capped where the runtime this row
-  # mirrors caps it, and the value capped always.
-  defp rung(%{rungs: rungs}, attempt, _opts) when is_list(rungs),
-    do: Enum.at(rungs, attempt - 1) || List.last(rungs)
-
-  defp rung(%{base: base} = row, attempt, opts) do
-    base = bound(opts[:base] || base)
-    exponent = attempt - 1
-    exponent = if row.exponent_cap, do: min(exponent, row.exponent_cap), else: exponent
-
-    min(round(base * Float.pow(row.factor / 1, exponent / 1)), cap(row, opts))
-  end
-
-  # The value a wait may not exceed: the caller's own knob, the row's, or — for
-  # a rung row — its last rung.
-  defp cap(row, opts), do: bound(opts[:cap] || row.cap || List.last(row.rungs))
-
-  # A bound is a number, or the name of the duration row an operator tunes.
-  defp bound(name) when is_atom(name) and not is_nil(name), do: Durations.get(name)
+  # A bound is a number, the name of the duration row an operator tunes, or
+  # absent on a rung row.
+  defp bound(nil), do: nil
+  defp bound(name) when is_atom(name), do: Durations.get(name)
   defp bound(ms) when is_integer(ms), do: ms
-
-  defp announce(delay, ladder, attempt, target) do
-    :telemetry.execute(@wait_event, %{delay_ms: delay, attempt: attempt}, %{
-      ladder: ladder,
-      target: target
-    })
-
-    delay
-  end
 
   defp monotonic_ms(), do: System.monotonic_time(:millisecond)
 end

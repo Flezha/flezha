@@ -70,7 +70,7 @@ defmodule Flezha.Healthz.Server do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.{RecoveryGate, Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.State.DurabilityTier
 
   # ---------- Public API ----------

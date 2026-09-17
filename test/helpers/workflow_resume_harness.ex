@@ -21,7 +21,7 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.ProcJournal
-  alias Flezha.State.RecordFrame
+  alias Flezha.SDK.RecordFrame
   alias FlezhaTest.Helper.NodeTestHelper
 
   def collect_loop(acc) do

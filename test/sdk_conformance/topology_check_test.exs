@@ -41,7 +41,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "sdk/php/src",
     "sdk/java/flezha-sdk-api/src/main",
     "sdk/java/flezha-sdk-runtime/src/main",
-    "lib/flezha/sdk"
+    "sdk/elixir/lib"
   ]
 
   # The seam and the one re-expression of it. The Elixir SDK is its own core and
@@ -52,9 +52,9 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "flz_core/src/host/register.rs",
     "flz_core/src/host/chains.rs",
     "flz_core/src/host/issue.rs",
-    "lib/flezha/sdk/topology.ex",
-    "lib/flezha/sdk/channels.ex",
-    "lib/flezha/sdk/workflow/spec.ex"
+    "sdk/elixir/lib/flezha/sdk/topology.ex",
+    "sdk/elixir/lib/flezha/sdk/channels.ex",
+    "sdk/elixir/lib/flezha/sdk/workflow/spec.ex"
   ]
 
   # Java's refusal type, matched because the shape names its constructor. These

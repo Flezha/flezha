@@ -18,7 +18,6 @@ defmodule Flezha.Config.KeysSeamTest do
     "lib/flezha/config/keys.ex",
     "lib/flezha/config/durations.ex",
     "lib/flezha/config/environment.ex",
-    "lib/flezha/sdk/knob.ex",
     "flz_transport/src/env.rs"
   ]
 
@@ -35,7 +34,7 @@ defmodule Flezha.Config.KeysSeamTest do
 
   # Where each runtime's source lives, for the declaration clause.
   @runtime_roots %{
-    elixir_sdk: ["lib/flezha/sdk"],
+    elixir_sdk: ["sdk/elixir/lib"],
     rust: @rust_roots,
     java: ["sdk/java/flezha-sdk-runtime/src/main"],
     node: ["sdk/node/src"],
@@ -48,6 +47,7 @@ defmodule Flezha.Config.KeysSeamTest do
   @parse_fixture "test/fixtures/knob_parse_cases.txt"
   @parse_readers [
     "test/flezha/config/parse_test.exs",
+    "sdk/elixir/test/flezha/sdk/knob_test.exs",
     "flz_transport/src/env.rs",
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/config/KnobParseRuleTest.java",
     "sdk/node/test/env.test.mjs",
@@ -182,6 +182,23 @@ defmodule Flezha.Config.KeysSeamTest do
               "#{path}:#{number}: #{var} is #{declared} in the crate and #{row.default} in the row"
 
       assert drifted == []
+    end
+
+    test "the Elixir SDK's own rows are the table's" do
+      # The SDK is a package of its own and declares what it reads, as every
+      # runtime's reader does. Its variable, type and runner-side default are
+      # the row's, so a change to either is a red build.
+      drifted =
+        for {name, sdk} <- Flezha.SDK.Knob.rows(),
+            row = Keys.row(name),
+            declared = row && {row.env, row.type, Flezha.Config.default(name, :runner)},
+            declared != {sdk.env, sdk.type, sdk.default} or :elixir_sdk not in row.runtimes,
+            do:
+              "#{name}: the SDK reads #{inspect({sdk.env, sdk.type, sdk.default})}, the table #{inspect(declared)}"
+
+      undeclared = for {name, _} <- Flezha.SDK.Knob.rows(), is_nil(Keys.row(name)), do: name
+
+      assert {undeclared, drifted} == {[], []}
     end
 
     test "the reference states both sides of a row two roles read differently" do

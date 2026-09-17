@@ -24,7 +24,7 @@ defmodule Flezha.Process.BoundedCallDrillTest do
 
   alias Flezha.Process.Timer
   alias Flezha.Process.Watch
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   defmodule Callee do
     @moduledoc false

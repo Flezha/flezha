@@ -3,7 +3,7 @@ defmodule Flezha.SDK.PersistenceTest do
   The SDK's own persistence core: the record it writes, the fold it reads
   back, the surface a procedure declares, and what an Entity does with them —
   shipping, the slot, restore, compaction. No controller, no real transport:
-  frames are read off a native `Local.Stream` the test owns.
+  frames are read off a native `LocalStream` the test owns.
   """
   use ExUnit.Case, async: true
 
@@ -25,7 +25,7 @@ defmodule Flezha.SDK.PersistenceTest do
   }
 
   alias Flezha.SDK.Operative.Inbox
-  alias Flezha.State.Wire
+  alias Flezha.SDK.Wire
 
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{
     CappedOp,

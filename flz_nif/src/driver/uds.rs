@@ -9,13 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam::channel::{Receiver, Sender};
+use flz_transport::transport::close_reason::CloseReason;
 use mio::net::UnixListener;
 use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::LocalPid;
 
 use super::{
-    CloseReason, DriverReady, Ended, Pass, ReadBuf, ServerCommand, StreamState, Streams, Transport,
-    Written,
+    DriverReady, Ended, Pass, ReadBuf, ServerCommand, StreamState, Streams, Transport, Written,
 };
 use crate::driver_msg::send_connection_msg;
 use crate::driver_stats::DriverStats;

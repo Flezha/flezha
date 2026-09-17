@@ -3,6 +3,7 @@ defmodule Flezha.SDK.UnitTest do
 
   alias Flezha.Identificator
   alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Topology}
+  alias Flezha.SDK.Proto.RunnerCommands
   alias Flezha.SDK.Transport
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 

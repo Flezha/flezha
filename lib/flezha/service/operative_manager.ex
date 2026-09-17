@@ -10,7 +10,7 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager.Admission
   alias Flezha.Service.OperativeManager.Init

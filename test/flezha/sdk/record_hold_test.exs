@@ -20,8 +20,8 @@ defmodule Flezha.SDK.RecordHoldTest do
   alias Flezha.SDK.{Codec, Counters, Credit, Entity, Hold, Record, RunnerServer}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
-  alias Flezha.State.Wire
-  alias Flezha.Transport.Local
+  alias Flezha.SDK.Wire
+  alias Flezha.SDK.LocalStream
   alias FlezhaTest.Helper.SdkOperativeHarness
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, OptedOutCounterOp, TimerOp}
 
@@ -253,7 +253,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   # controller, and a control handle whose peer nothing owns, so only the data
   # frames the replay writes reach this process.
   defp runner_state(secondaries, counters \\ Counters.new(), cap \\ nil) do
-    {control_handle, _peer} = Local.Stream.open()
+    {control_handle, _peer} = LocalStream.open()
 
     %ServerState{
       transport: :native,

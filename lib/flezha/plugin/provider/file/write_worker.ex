@@ -24,7 +24,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.State.{Durable, Outbox, Wire}
+  alias Flezha.State.{Durable, Outbox}
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry, :roll]
@@ -298,7 +298,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   # it would drop a record that was never written.
   defp verdict(metadata, committed, marks) do
     with true <- Outbox.guaranteed?(metadata),
-         {:ok, identity} <- Wire.output_identity(metadata) do
+         {:ok, identity} <- Outbox.output_identity(metadata) do
       cond do
         covers?(committed, identity) -> :committed
         covers?(marks, identity) -> :in_roll
@@ -517,7 +517,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       with {:ok, entity} <- Base.url_decode64(key, padding: false),
            [epoch, seq] when is_integer(epoch) <- value,
            stamps = %{"flz.entity" => entity, "flz.seq" => seq, "flz.epoch" => epoch},
-           {:ok, identity} <- Wire.output_identity(stamps) do
+           {:ok, identity} <- Outbox.output_identity(stamps) do
         {:cont, {:ok, Map.put(marks, entity, identity)}}
       else
         _corrupt -> {:halt, :error}

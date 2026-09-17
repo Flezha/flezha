@@ -24,7 +24,8 @@ defmodule Flezha.State.InputLog do
   alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Process.Cspec
-  alias Flezha.SafeCall
+  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.SDK.SafeCall
 
   alias Flezha.State.{
     CreditLedger,
@@ -674,7 +675,7 @@ defmodule Flezha.State.InputLog do
   defp encode_append(state, body) do
     offset = state.next_offset
     header = record_header(System.system_time(:millisecond))
-    record = RecordFrame.encode_record(offset, header, body)
+    record = Frame.encode_record(offset, header, body)
 
     {offset, record,
      %{

@@ -45,7 +45,7 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
           %{reference_id: handshake, command: {kind, _}}
           when kind in [:assign_runner_id, :connect_socket] ->
             response = Flezha.SDK.Codec.encode_response(handshake, "success")
-            Flezha.Transport.Stream.send_frame(stream, "control_command", response, %{})
+            Flezha.SDK.Transport.send_frame(stream, "control_command", response, %{})
             await_answering_handshake(stream, reference_id, timeout)
 
           _other ->

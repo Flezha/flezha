@@ -166,9 +166,9 @@ jobs:
 
       - name: Pre-build the Elixir test runner
         if: matrix.runtime == 'elixir'
-        # The standalone runner app compiles a whole flezha on its first
-        # `mix run`, which no connect budget covers.
-        run: cd test/apps/elixir_runner && mix compile
+        # The standalone runner app compiles the Elixir SDK and builds its socket
+        # client on its first `mix run`, which no connect budget covers.
+        run: cd test/apps/elixir_runner && mix deps.get && mix compile
 
       - name: Run system + multi_node suites
         run: |

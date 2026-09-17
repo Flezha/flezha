@@ -16,7 +16,8 @@ defmodule Flezha.State.WalWriter do
   use Flezha.Process.Timer, keys: [:outbox_retry]
 
   alias Flezha.Config.Durations
-  alias Flezha.SafeCall
+  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.SDK.SafeCall
   alias Flezha.State.{FsyncBatcher, Metrics, Outbox, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, Settlement, State}
 
@@ -665,7 +666,7 @@ defmodule Flezha.State.WalWriter do
   # ---------- Append / realign ----------
 
   defp write_record(state, seq, header, change_bytes, runner_id, now) do
-    record = RecordFrame.encode_record(seq, header, change_bytes)
+    record = Frame.encode_record(seq, header, change_bytes)
     :ok = :file.write(state.file_handle, record)
     size = byte_size(record)
 

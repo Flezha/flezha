@@ -25,7 +25,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
   alias Flezha.Process.Cspec
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.State.Outbox
   alias KafkaEx.Client.NodeSelector
 

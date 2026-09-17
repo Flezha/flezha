@@ -15,7 +15,8 @@ defmodule Flezha.State.Restore do
   """
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Paths, RecordFrame, Snapshot}
+  alias Flezha.SDK.RecordFrame
+  alias Flezha.State.{Paths, Snapshot}
 
   @type payload :: %{
           snapshot_bytes: binary(),

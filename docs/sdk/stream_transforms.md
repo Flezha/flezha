@@ -153,7 +153,7 @@ channel has no producer.
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operative/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,EntityRouting,EdgeTransforms}.java` |
 | Workflow containment (`extend_mapped`) and refusals | `flz_core/src/workflow/{driver,spec}.rs` | shared core |
-| Elixir SDK | `lib/flezha/sdk/{channels,topology}.ex` | — |
+| Elixir SDK | `sdk/elixir/lib/flezha/sdk/{channels,topology}.ex` | — |
 
 Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/procedure_entity_key_removed.rs`, Java

@@ -3,7 +3,8 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
   The export seam: an event name the tree writes reaches an exporter, or the
   bridge says why it does not.
 
-  Three clauses walk `lib/flezha` and fail naming what they found:
+  Three clauses walk `lib/flezha` and the Elixir SDK's `sdk/elixir/lib` and fail
+  naming what they found:
 
     1. **Coverage** - every `[:flezha, …]` event NAME the tree writes is a key
        of the bridge's merged mapping or a member of its unexported list, whose
@@ -352,5 +353,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
     acc
   end
 
-  defp source_files(), do: SourceWalk.files(["lib/flezha"], [".ex"])
+  # The Elixir SDK's own events are emitted in this VM too, by the in-node SDK
+  # and by the pure modules the controller shares with it.
+  defp source_files(), do: SourceWalk.files(["lib/flezha", "sdk/elixir/lib"], [".ex"])
 end

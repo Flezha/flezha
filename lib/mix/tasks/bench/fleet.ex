@@ -13,6 +13,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   `bench` profile) — the same line the e2e harness renders for its `test` profile.
   """
 
+  alias ElixirRunner.BenchFactories
   alias Flezha.AuthZ
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.TokenStore
@@ -23,7 +24,6 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PortPilot
   alias Flezha.State.Paths
-  alias Mix.Tasks.Bench.ElixirFactories
   alias Mix.Tasks.Bench.Report
 
   # Wide enough that no bench dimension meets a quota. Only the counts a bench can
@@ -227,7 +227,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   defp start_native_sdk(namespace) do
     handle =
       Enum.reduce(
-        ElixirFactories.all(),
+        BenchFactories.all(),
         Flezha.SDK.create_runner(namespace, transport: :native),
         fn m, acc ->
           Flezha.SDK.define_stream(acc, m)

@@ -4,14 +4,14 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   against the Entity's event-time high-water, the correction request it sends
   instead of dispatching, the beyond-window policy, and the replayed slice it
   holds to its end marker and folds in event-time order. No controller and no
-  real transport — frames are read off a native `Local.Stream` the test owns.
+  real transport — frames are read off a native `LocalStream` the test owns.
   """
   use ExUnit.Case, async: true
 
   alias Flezha.SDK.{Channels, Ctx, Entity, Hold, Record, Spawn}
   alias Flezha.SDK.Entity.{State, Tier}
   alias Flezha.SDK.Operative.Inbox
-  alias Flezha.State.Wire
+  alias Flezha.SDK.Wire
   alias FlezhaTest.Helper.SdkTierFixtures.{CorrectionDropOp, CorrectionOp, CorrectionProc}
 
   import FlezhaTest.Helper.SdkOperativeHarness

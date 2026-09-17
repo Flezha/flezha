@@ -5,8 +5,8 @@ defmodule Flezha.Config.Environment do
   One job, two entry points: `parse/2` reads one variable's text by its row's
   rule, and `runtime_config/2` reads a whole environment — every variable turned
   into the application-env key its row names, every per-run resource derived
-  from the one run token, every environment's own default applied. The Elixir
-  SDK translates its runner's environment through the same `parse/2`, which is
+  from the one run token, every environment's own default applied. A scalar
+  type parses by the Elixir SDK's own reader, `Flezha.SDK.Knob.parse/2`, which is
   what makes a runner and a boot answer one text the same way.
 
   The parse rule is the same one every runtime repeats;
@@ -21,6 +21,7 @@ defmodule Flezha.Config.Environment do
 
   alias Flezha.Config
   alias Flezha.Config.Keys
+  alias Flezha.SDK.Knob
 
   @doc """
   Read one row out of `env_map`, applying the same precedence
@@ -185,17 +186,11 @@ defmodule Flezha.Config.Environment do
     end
   end
 
-  defp parse_type(:bool, raw) do
-    case String.downcase(raw) do
-      truthy when truthy in ["1", "true", "yes", "on"] -> {:ok, true}
-      falsy when falsy in ["0", "false", "no", "off"] -> {:ok, false}
-      _ -> :error
-    end
-  end
+  # The scalar types are the Elixir SDK's reader's own rule, so a runner and a
+  # boot answer one text the same way.
+  defp parse_type(type, raw) when type in [:bool, :ms, :positive_int, :int, :string, :path],
+    do: Knob.parse(type, raw)
 
-  defp parse_type(:ms, raw), do: whole(raw, 0)
-  defp parse_type(:positive_int, raw), do: whole(raw, 1)
-  defp parse_type(:int, raw), do: whole(raw, nil)
   defp parse_type(:atom, raw), do: {:ok, String.to_atom(raw)}
   defp parse_type(:term, raw), do: {:ok, raw}
 
@@ -227,7 +222,7 @@ defmodule Flezha.Config.Environment do
   end
 
   defp parse_type({:custom, :days_to_seconds}, raw) do
-    case whole(raw, 0) do
+    case Knob.parse(:ms, raw) do
       {:ok, days} -> {:ok, days * 86_400}
       :error -> :error
     end
@@ -243,17 +238,6 @@ defmodule Flezha.Config.Environment do
       |> Enum.map(&File.read!/1)
 
     {:ok, keys}
-  end
-
-  # `:string` and `:path` take the text as it stands.
-  defp parse_type(_text, raw), do: {:ok, raw}
-
-  defp whole(raw, floor) do
-    case Integer.parse(raw) do
-      {n, ""} when floor == nil -> {:ok, n}
-      {n, ""} when n >= floor -> {:ok, n}
-      _ -> :error
-    end
   end
 
   # One slice of a thousand-wide band per contested port, so the next one is a

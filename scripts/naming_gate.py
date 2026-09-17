@@ -21,9 +21,6 @@ allowlist carries the open-ended plain-English sense, and an unmaskable pattern
 set carries the closed kind sense, so a broad allowlist rule cannot hide the
 error the gate exists to catch.
 
-`check-sdk-boundary.sh` writes its own `check` because its violation is a
-reference outside an allowed set, not a spelling.
-
 A third kind of gate judges a whole tree against a recorded list rather than a
 line against a pattern: `check-layer-direction.sh`. It does not share the walk,
 because its finding is a set difference and not a line, but it shares the list
@@ -353,8 +350,6 @@ GATES = (
      "argv": ["scripts/check-local-mode-naming.sh"]},
     {"id": "module-naming", "group": "naming",
      "argv": ["scripts/check-module-naming.sh"]},
-    {"id": "sdk-boundary", "group": "naming",
-     "argv": ["scripts/check-sdk-boundary.sh"]},
     {"id": "layer-direction", "group": "naming",
      "argv": ["scripts/check-layer-direction.sh"]},
     {"id": "mimic-global", "group": "naming",

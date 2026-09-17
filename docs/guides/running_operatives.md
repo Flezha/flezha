@@ -330,7 +330,7 @@ and answers `{:ok, result}` or `{:error, reason}`. The runner is connected once 
 child has started, so the calls can follow `Supervisor.start_link/2`.
 
 The echo example carries the calls commented out in its `application.ex`,
-[ready to uncomment](https://github.com/flezha/flezha/tree/main/examples/elixir/echo).
+[ready to uncomment](../../sdk/elixir/examples/echo/lib/echo/application.ex).
 
 <!-- tabs-close -->
 

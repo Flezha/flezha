@@ -15,6 +15,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
   import ExUnit.CaptureLog
 
   alias Flezha.SDK.Record, as: SdkRecord
+  alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.State.RecordFrame
 
   @fixture Path.join([__DIR__, "..", "..", "fixtures", "durable_frame.txt"])
@@ -52,9 +53,9 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       log =
         Enum.map_join(@bodies, "", fn {seq, body} ->
           header =
-            RecordFrame.encode_header(@lang_rust, @sdk_version, @schema_version, 1, body)
+            Frame.encode_header(@lang_rust, @sdk_version, @schema_version, 1, body)
 
-          RecordFrame.encode_record(seq, header, body)
+          Frame.encode_record(seq, header, body)
         end)
 
       assert Base.encode16(log, case: :lower) ==
@@ -68,7 +69,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
 
         result =
           capture_result(fn ->
-            RecordFrame.fold_bytes(log, {:payload, "fixture:#{name}"}, [], &collect/2)
+            Frame.fold_bytes(log, {:payload, "fixture:#{name}"}, [], &collect/2)
           end)
 
         case verdict do
@@ -118,7 +119,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       {:ok, device} = :file.open(path, [:raw, :read, :binary])
 
       try do
-        assert {:ok, seq, header, body, raw, consumed} = RecordFrame.decode_bytes(log)
+        assert {:ok, seq, header, body, raw, consumed} = Frame.decode_bytes(log)
         assert {:ok, ^seq, ^header, ^body, ^consumed} = RecordFrame.decode_record(device, 0)
         assert raw == binary_part(log, 0, consumed)
       after
@@ -161,7 +162,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
   describe "the header table both runtimes hold" do
     test "every allocated value decodes to the fields the fixture declares" do
       Enum.each(rows("header"), fn [name, hex, lang, version, schema, format, crc] ->
-        assert {:ok, decoded} = RecordFrame.decode_header(bytes(hex)), "row #{name}"
+        assert {:ok, decoded} = Frame.decode_header(bytes(hex)), "row #{name}"
 
         assert decoded == %{
                  sdk_lang: String.to_integer(lang),
@@ -175,24 +176,24 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     end
 
     test "a header of any other length is refused rather than guessed at" do
-      assert :error = RecordFrame.decode_header(<<1, 2, 3>>)
-      assert :error = RecordFrame.decode_header(<<>>)
+      assert :error = Frame.decode_header(<<1, 2, 3>>)
+      assert :error = Frame.decode_header(<<>>)
     end
 
     test "the language table names every allocated value" do
       Enum.each(rows("lang"), fn [value, name] ->
-        assert RecordFrame.sdk_lang_name(String.to_integer(value)) == name
+        assert Frame.sdk_lang_name(String.to_integer(value)) == name
       end)
 
-      assert RecordFrame.sdk_lang_name(200) == "unallocated"
+      assert Frame.sdk_lang_name(200) == "unallocated"
     end
 
     test "the format table is the one the SDK stamps with" do
       Enum.each(rows("header"), fn [name, hex, _lang, _version, _schema, format, _crc] ->
         if String.starts_with?(name, "format_") do
           codec = name |> String.trim_leading("format_") |> String.to_atom()
-          assert RecordFrame.format_id(codec) == String.to_integer(format)
-          assert {:ok, %{format_id: id}} = RecordFrame.decode_header(bytes(hex))
+          assert Frame.format_id(codec) == String.to_integer(format)
+          assert {:ok, %{format_id: id}} = Frame.decode_header(bytes(hex))
           assert id == String.to_integer(format)
         end
       end)
@@ -209,11 +210,11 @@ defmodule Flezha.State.DurableFrameConformanceTest do
         floor = String.to_integer(floor)
 
         header =
-          RecordFrame.encode_header(
+          Frame.encode_header(
             Flezha.SDK.Codec.sdk_lang(),
             @sdk_version,
             stamped,
-            RecordFrame.format_id(:etf),
+            Frame.format_id(:etf),
             body
           )
 

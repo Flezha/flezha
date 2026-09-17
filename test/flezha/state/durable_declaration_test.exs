@@ -11,20 +11,21 @@ defmodule Flezha.State.DurableDeclarationTest do
 
   alias Flezha.State.Durable
 
-  # The record frame lives in one module. `wire.ex` is the second file allowed
-  # to carry the shape because it frames a DIFFERENT thing: the wire envelope
-  # carries an entity id and crcs the body alone.
-  @frame_allowed ["lib/flezha/state/record_frame.ex", "lib/flezha/state/wire.ex"]
-  @frame_roots ["lib/flezha/state", "lib/flezha/sdk"]
+  # The record frame lives in the Elixir SDK's frame module, and the device walk
+  # over it here reads a record's length before its frame. `wire.ex` is the
+  # third file allowed to carry the shape because it frames a DIFFERENT thing:
+  # the wire envelope carries an entity id and crcs the body alone.
+  @sdk_frame "sdk/elixir/lib/flezha/sdk/record_frame.ex"
+  @frame_allowed [
+    @sdk_frame,
+    "lib/flezha/state/record_frame.ex",
+    "sdk/elixir/lib/flezha/sdk/wire.ex"
+  ]
+  @frame_roots ["lib/flezha/state", "sdk/elixir/lib"]
 
   # An in-progress suffix is spelled in the declaration and nowhere else.
-  # `lib/flezha/sdk/` is out of scope with a reason, not by omission: the Elixir
-  # SDK is its own core and the packaging boundary
-  # (`scripts/check-sdk-boundary.sh`) refuses it `Flezha.State.Paths`, so its
-  # runner-id file keeps an install of its own.
   @suffix_allowed ["lib/flezha/state/durable.ex"]
   @suffix_roots ["lib/flezha"]
-  @suffix_skipped "lib/flezha/sdk/"
 
   defp sources(roots) do
     roots
@@ -103,7 +104,7 @@ defmodule Flezha.State.DurableDeclarationTest do
     test "the header size is restated nowhere" do
       offenders =
         for path <- sources(@frame_roots),
-            path != "lib/flezha/state/record_frame.ex",
+            path != @sdk_frame,
             File.read!(path) =~ ~r/@header_size\s+\d/,
             do: path
 
@@ -115,7 +116,6 @@ defmodule Flezha.State.DurableDeclarationTest do
       offenders =
         for path <- sources(@suffix_roots),
             path not in @suffix_allowed,
-            not String.starts_with?(path, @suffix_skipped),
             File.read!(path) =~ ~r/"\.(tmp|rewriting|transferring)/,
             do: path
 

@@ -6,9 +6,9 @@ defmodule Flezha.Service.Cli.Journal do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Outbox
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
-  alias Flezha.State.Wire
 
   @doc "The row both reads are judged by: the instance's class namespace."
   def instance_row([instance_id | _]),
@@ -62,7 +62,7 @@ defmodule Flezha.Service.Cli.Journal do
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
     |> Map.merge(%{
-      entities_ran: Enum.map(payload.entities_ran, &Wire.entity_label/1),
+      entities_ran: Enum.map(payload.entities_ran, &Outbox.entity_label/1),
       outbox: journal_outbox(payload.outbox)
     })
   end
@@ -136,7 +136,7 @@ defmodule Flezha.Service.Cli.Journal do
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
-        entity: Wire.entity_label(item.entity_id),
+        entity: Outbox.entity_label(item.entity_id),
         seq_in_proc: item.seq_in_proc,
         channel: item.channel,
         bytes: byte_size(item.payload)

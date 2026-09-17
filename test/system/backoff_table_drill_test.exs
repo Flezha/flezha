@@ -2,8 +2,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   @moduledoc """
   Every ladder row driven through the site that walks it, read off telemetry.
 
-  The row set is `Backoff.ladders/0`, so a new ladder is covered with no test
-  edit: a row this module neither drives nor accounts for fails `every row is
+  The row set is the controller's `Backoff.ladders/0` and the Elixir SDK's
+  `Knob.ladders/0`, so a new ladder is covered with no test edit: a row this module neither drives nor accounts for fails `every row is
   accounted for` by name.
 
   A driven row induces the failure at the edge where its site meets the outside
@@ -35,6 +35,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.SDK.Channels
+  alias Flezha.SDK.Knob
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.Service.OperativeManager.Init
   alias Flezha.State.Watchdog
@@ -83,7 +84,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       accounted = MapSet.new(Map.keys(@accounted))
 
       unaccounted =
-        for key <- Map.keys(Backoff.ladders()),
+        for key <- Map.keys(Backoff.ladders()) ++ Map.keys(Knob.ladders()),
             not MapSet.member?(driven, key),
             not MapSet.member?(accounted, key),
             do: key
@@ -386,9 +387,12 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   # jittered floor, and the band is what the one jitter rule allows above it.
   # `knobs` are the caller's `base`/`cap` where the row's bound is a per-plugin
   # setting, so the band is the one that site actually walks.
+  # The table a ladder is declared in: the controller's, or the Elixir SDK's own.
+  defp table(ladder), do: if(Map.has_key?(Knob.ladders(), ladder), do: Knob, else: Backoff)
+
   defp assert_in_band(ladder, attempt, delay, knobs) do
-    row = Backoff.ladder(ladder)
-    floor = Backoff.delay(ladder, attempt, Keyword.put(knobs, :rand, fn _ -> 1 end))
+    row = table(ladder).ladder(ladder)
+    floor = table(ladder).delay(ladder, attempt, Keyword.put(knobs, :rand, fn _ -> 1 end))
 
     if row.jitter do
       cap =
@@ -417,7 +421,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       1
     end
 
-    _ = Backoff.delay(ladder, attempt, Keyword.put(knobs, :rand, rand))
+    _ = table(ladder).delay(ladder, attempt, Keyword.put(knobs, :rand, rand))
 
     receive do
       {:unjittered, max} -> max

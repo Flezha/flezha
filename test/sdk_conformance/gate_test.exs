@@ -49,7 +49,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     ruby: Path.wildcard("sdk/ruby/lib/**/*.rb"),
     php: Path.wildcard("sdk/php/src/**/*.php"),
     python: Path.wildcard("sdk/python/src/**/*.py"),
-    elixir: ["lib/flezha/sdk/transport.ex", "lib/flezha/transport/native.ex"]
+    elixir: Path.wildcard("sdk/elixir/lib/**/*.ex")
   }
 
   # A variable this contract governs: the socket directory, the QUIC endpoints,
@@ -87,7 +87,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     python: "sdk/python/src/flezha/admin.py",
     ruby: "sdk/ruby/lib/flezha/admin.rb",
     php: "sdk/php/src/Admin.php",
-    elixir: "lib/flezha/sdk/admin.ex"
+    elixir: "sdk/elixir/lib/flezha/sdk/admin.ex"
   }
 
   # A manifest must declare all of these.
@@ -290,7 +290,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         java:
           {"sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
            ~r/SDK_LANG_JAVA = (\d+);/},
-        elixir: {"lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/},
+        elixir: {"sdk/elixir/lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/},
         node: {"sdk/node/src/graph.ts", ~r/SDK_LANG_NODE = (\d+)/},
         ruby: {"sdk/ruby/lib/flezha/graph.rb", ~r/SDK_LANG_RUBY = (\d+)/},
         php: {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_LANG_PHP = (\d+);/},
@@ -781,21 +781,26 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
     end
 
-    test "the Elixir SDK's heartbeat carries every key the controller mirrors" do
-      # The Elixir SDK is its own core: `flz_core`'s key set says nothing about
-      # what it sends. A key the controller holds a slot for and this runtime
-      # omits is an operator surface that is correct for six SDKs and blank for
-      # the seventh.
+    test "the Elixir SDK's heartbeat carries exactly the keys the controller mirrors" do
+      # The Elixir SDK is its own core and declares its own key set: `flz_core`'s
+      # says nothing about what it sends. A key the controller holds a slot for
+      # and this runtime omits is an operator surface that is correct for six
+      # SDKs and blank for the seventh; a key it sends and nothing mirrors is
+      # paid for on the wire and read by no one.
+      declared = MapSet.new(Flezha.SDK.Counters.heartbeat_keys())
       sent = Flezha.SDK.RunnerServer.heartbeat_metadata(Flezha.SDK.Counters.new())
       mirrored = MapSet.new(Flezha.Runner.StreamChannel.heartbeat_keys())
-      missing = MapSet.difference(mirrored, MapSet.new(Map.keys(sent)))
+      missing = MapSet.difference(mirrored, declared)
+      unmirrored = MapSet.difference(declared, mirrored)
 
-      if MapSet.size(missing) > 0 do
+      if MapSet.size(missing) + MapSet.size(unmirrored) > 0 do
         fail(
-          "the Elixir SDK's data heartbeat omits #{Enum.join(Enum.sort(missing), ", ")}, " <>
-            "which the controller mirrors into a liveness slot"
+          "the Elixir SDK's data heartbeat omits #{Enum.join(Enum.sort(missing), ", ")} and " <>
+            "sends #{Enum.join(Enum.sort(unmirrored), ", ")}, which the controller does not mirror"
         )
       end
+
+      assert MapSet.new(Map.keys(sent)) == declared
 
       # A runtime that discarded nothing reports zero rather than omitting the
       # key: "nothing was discarded" and "nothing was measured" are different

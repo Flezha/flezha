@@ -396,7 +396,7 @@ extract `libflz_core_ffi` somewhere it can be loaded. See
 | Path | License |
 |---|---|
 | Everything not listed below — the controller (`lib/`), `cli/`, `flz_nif/`, `config/`, `rel/`, `docker/`, `kubernetes/`, `test/`, `docs/`, `scripts/`, `bench/` | [MPL-2.0](LICENSE) |
-| The SDK side — `sdk/`, `flz_core/`, `flz_core_ffi/`, `flz_transport/`, `lib/flezha/sdk/`, `protobufs/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
+| The SDK side — `sdk/`, `flz_core/`, `flz_core_ffi/`, `flz_transport/`, `protobufs/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
 
 The per-path map is machine-readable in [`REUSE.toml`](REUSE.toml) and checked
 by CI (`reuse lint`). In short: build on the SDKs freely; if you modify and

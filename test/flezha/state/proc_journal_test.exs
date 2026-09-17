@@ -11,7 +11,8 @@ defmodule FlezhaTest.State.ProcJournalTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Commands, Outbox, Paths, ProcJournal, TestHelpers, WalWriter, Wire}
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{Commands, Outbox, Paths, ProcJournal, TestHelpers, WalWriter}
   alias Flezha.State.ProcJournal.Codec
 
   import Flezha.State.TestHelpers,

@@ -21,7 +21,7 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
   alias Flezha.Observability.Bus
   alias Flezha.Observability.Export.PrometheusRegistry
   alias Flezha.Observability.Signal
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   # ---------- Public API ----------
 

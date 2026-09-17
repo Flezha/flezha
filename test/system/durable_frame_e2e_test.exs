@@ -30,6 +30,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Paths
   alias Flezha.State.RecordFrame
@@ -69,7 +70,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     bytes = File.read!(path)
 
     assert {:ok, from_bytes} =
-             RecordFrame.fold_bytes(bytes, {:log, path}, [], &collect/2)
+             Frame.fold_bytes(bytes, {:log, path}, [], &collect/2)
 
     assert {:ok, from_device} =
              RecordFrame.fold_path(path, [], fn {seq, header, body}, acc ->
@@ -91,8 +92,8 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     # Every header on disk decodes through the one header decoder, and every one
     # of them names an allocated language.
     for {_seq, header, _body} <- from_bytes do
-      assert {:ok, decoded} = RecordFrame.decode_header(header)
-      assert RecordFrame.sdk_lang_name(decoded.sdk_lang) != "unallocated"
+      assert {:ok, decoded} = Frame.decode_header(header)
+      assert Frame.sdk_lang_name(decoded.sdk_lang) != "unallocated"
     end
 
     assert {:ok, payload} = Restore.assemble_payload(entity_id)
@@ -164,7 +165,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   # before they damage it.
   defp complete_prefix(bytes) do
     {:ok, consumed} =
-      RecordFrame.fold_bytes(bytes, {:log, "live_wal"}, 0, fn {_s, _h, _b, raw}, n ->
+      Frame.fold_bytes(bytes, {:log, "live_wal"}, 0, fn {_s, _h, _b, raw}, n ->
         {:cont, n + byte_size(raw)}
       end)
 

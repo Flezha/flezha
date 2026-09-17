@@ -60,7 +60,11 @@ ENV MIX_ENV=prod \
     LANG=C.UTF-8
 
 # Copy mix metadata first to maximise layer-cache hits when only source changes.
+# The Elixir SDK and its test app are path dependencies, so their manifests are
+# metadata too.
 COPY mix.exs mix.lock ./
+COPY sdk/elixir/mix.exs ./sdk/elixir/
+COPY sdk/elixir/test_app/mix.exs ./sdk/elixir/test_app/
 
 RUN --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.mix \
@@ -72,13 +76,17 @@ RUN --mount=type=cache,target=/root/.hex \
     && mix deps.get --only prod
 
 # RUSTLER_SKIP_COMPILATION makes rustler pick up the .so dropped into
-# priv/native/ below instead of invoking cargo again.
-ENV RUSTLER_SKIP_COMPILATION=true
+# priv/native/ below instead of invoking cargo again. The Elixir SDK's socket
+# client is not built at all (`config :flezha_sdk, socket_nif: false`), and the
+# SDK reads the schema it compiles from this tree, which carries no fixture list.
+ENV RUSTLER_SKIP_COMPILATION=true \
+    FLEZHA_CONTRACT_DIR=/app
 
 COPY config ./config
 COPY rel ./rel
 COPY protobufs ./protobufs
 COPY lib ./lib
+COPY sdk/elixir ./sdk/elixir
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY LICENSES ./LICENSES
 

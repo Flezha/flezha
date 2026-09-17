@@ -16,7 +16,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   The guarantee class each frame carries — a durable frame held and replayed, a
   control frame refused, a heartbeat owed nothing, a payload id the table does
   not name refused at the call — is proved over real streams by
-  `test/flezha/sdk/hold_class_test.exs`, `test/flezha/sdk/record_hold_test.exs`
+  `sdk/elixir/test/flezha/sdk/hold_class_test.exs`, `test/flezha/sdk/record_hold_test.exs`
   and `flz_core/src/state_sink.rs`'s own tests, one per runtime core.
 
   A data plane the controller severs is a wire that has gone for part of the

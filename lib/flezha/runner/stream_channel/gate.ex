@@ -13,7 +13,7 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Transport.LivenessCounters
 
   # The send, and the hold the send gate asks for. `send_frame/4` answers

@@ -18,7 +18,7 @@ defmodule Flezha.Runner.StreamPool do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
 
   @doc "The channel names for `runner_id`'s `type` pool, in pool order."
   @spec stream_ids(binary(), :primary | :secondary) :: [atom()]

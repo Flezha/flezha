@@ -45,7 +45,6 @@ defmodule Flezha.Config.DurationRows do
      derived: {:factor, :control_liveness_interval_ms, 3}},
     {:control_call_timeout_ms, :ms, 5_000, []},
     {:listen_port_call_ms, :ms, 1_000, []},
-    {:local_stream_call_ms, :ms, 5_000, []},
     {:stream_pool_bind_call_ms, :ms, 5_000, []},
     {:control_unit_reply_timeout_ms, :ms, 5_000, []},
     {:control_unit_heartbeat_interval_ms, :ms, 15_000, key: true},
@@ -233,6 +232,10 @@ defmodule Flezha.Config.DurationRows do
     {:port_counter_reset_ms, :ms, 30_000, []},
 
     # ---- the Elixir SDK ----------------------------------------------------
+    # The SDK declares these itself (`Flezha.SDK.Knob`); a row here is what its
+    # values are held to, and the relation a derivation keeps to a controller
+    # timeout.
+    {:local_stream_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     {:control_keepalive_ms, :ms, 15_000, runtimes: [:controller, :elixir_sdk, :rust]},
     {:data_heartbeat_ms, :ms, 10_000,
      env: "FLEZHA_DATA_HEARTBEAT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
@@ -241,33 +244,36 @@ defmodule Flezha.Config.DurationRows do
     # A call into one of the runner's own control processes: the RunnerServer,
     # an Operative, a local run. None of them runs author code on the answering
     # clause, so a wait here is a wedged process rather than a busy one.
-    {:sdk_control_call_ms, :ms, 5_000, []},
+    {:sdk_control_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # A call into an Entity that answers from its queue rather than from its
     # state — the same question the serialise wait asks, kept as a row of its
     # own because a state read and a lifecycle call move apart the moment either
     # is tuned.
-    {:sdk_entity_call_ms, :ms, 5_000, []},
+    {:sdk_entity_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # The three calls whose duration grows with the state, not with the queue in
     # front of them. A refused call is not a cancelled one — the Entity finishes
     # the work either way — so each waits inside the Controller surface that
     # asked, and never the flat control bound. An inner bound equal to the outer
     # is no bound at all.
-    {:sdk_entity_restore_ms, :ms, nil, derived: {:headroom, :restore_await_timeout_ms, -5_000}},
-    {:sdk_entity_snapshot_ms, :ms, nil, derived: {:headroom, :compaction_timeout_ms, -5_000}},
+    {:sdk_entity_restore_ms, :ms, nil,
+     derived: {:headroom, :restore_await_timeout_ms, -5_000}, runtimes: [:elixir_sdk]},
+    {:sdk_entity_snapshot_ms, :ms, nil,
+     derived: {:headroom, :compaction_timeout_ms, -5_000}, runtimes: [:elixir_sdk]},
     {:sdk_entity_apply_ms, :ms, nil,
-     derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}},
-    {:sdk_idle_probe_ms, :ms, 50, []},
-    {:sdk_max_reap_interval_ms, :ms, 30_000, []},
+     derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}, runtimes: [:elixir_sdk]},
+    {:sdk_idle_probe_ms, :ms, 50, runtimes: [:elixir_sdk]},
+    {:sdk_max_reap_interval_ms, :ms, 30_000, runtimes: [:elixir_sdk]},
     # How long a rehydrated per-input workflow loop waits for the inbox tail its
     # bind still owes before it may park: a park there would drop the tail.
-    {:sdk_owed_inbox_wait_ms, :ms, 60_000, []},
-    {:sdk_serialize_wait_ms, :ms, 5_000, []},
+    {:sdk_owed_inbox_wait_ms, :ms, 60_000, runtimes: [:elixir_sdk]},
+    {:sdk_serialize_wait_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # The task yield outlasts the read it awaits, so a wedged Entity answers the
     # read's own bound rather than the yield's.
-    {:sdk_serialize_yield_ms, :ms, nil, derived: {:headroom, :sdk_serialize_wait_ms, 1_000}},
-    {:sdk_shutdown_ack_ms, :ms, 2_000, []},
+    {:sdk_serialize_yield_ms, :ms, nil,
+     derived: {:headroom, :sdk_serialize_wait_ms, 1_000}, runtimes: [:elixir_sdk]},
+    {:sdk_shutdown_ack_ms, :ms, 2_000, runtimes: [:elixir_sdk]},
     # How long a procedure's spawn request waits for the controller's answer.
-    {:sdk_spawn_reply_ms, :ms, 30_000, []}
+    {:sdk_spawn_reply_ms, :ms, 30_000, runtimes: [:elixir_sdk]}
   ]
 
   @doc "The duration rows, in the table's own declaration shape."

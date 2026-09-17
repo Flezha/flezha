@@ -36,7 +36,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter
   alias Flezha.State.Watchdog
-  alias Flezha.State.Wire, as: StateWire
+  alias Flezha.SDK.Wire
   alias Flezha.Transport.LivenessCounters
 
   require Logger
@@ -235,7 +235,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # this stream is each WalWriter's own mailbox: the cast demuxes here and
   # queues there, so only the shared credit window couples Entities.
   def handle_entity_state_change(state, frame) do
-    case StateWire.decode_frame(frame) do
+    case Wire.decode_frame(frame) do
       {:ok, %{entity_id: {rc, _sh, _pk} = entity_id} = record} ->
         if admit(state, rc, :entity_state_change),
           do: append_to_entity(state, entity_id, rc, record, byte_size(frame)),
@@ -287,8 +287,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # cast, so it cannot block the store either.
   def handle_correction_request(state, frame) do
     with {:ok, %{entity_id: {operative_class, _, _} = entity_id, body: body}} <-
-           StateWire.decode_frame(frame),
-         {:ok, target} <- StateWire.decode_correction_request(body),
+           Wire.decode_frame(frame),
+         {:ok, target} <- Wire.decode_correction_request(body),
          true <- admit(state, operative_class, :correction_request),
          {:ok, overwatch} <- Lookup.overwatch(operative_class) do
       Replay.request_correction(overwatch, entity_id, target)
@@ -302,8 +302,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   def handle_park_payload(state, frame) do
-    with {:ok, %{entity_id: {rc, sh, pk}, body: body}} <- StateWire.decode_frame(frame),
-         {:ok, park} <- StateWire.decode_park_body(body),
+    with {:ok, %{entity_id: {rc, sh, pk}, body: body}} <- Wire.decode_frame(frame),
+         {:ok, park} <- Wire.decode_park_body(body),
          true <- admit(state, rc, :park_payload) do
       runner_id = state.runner_id
 
@@ -341,10 +341,10 @@ defmodule Flezha.Runner.StreamChannel.Records do
     :ok
   end
 
-  def frame_entity_id("delete_entity_state", frame), do: StateWire.decode_entity_id(frame)
+  def frame_entity_id("delete_entity_state", frame), do: Wire.decode_entity_id(frame)
 
   def frame_entity_id(_payload_id, frame) do
-    with {:ok, %{entity_id: entity_id}} <- StateWire.decode_frame(frame),
+    with {:ok, %{entity_id: entity_id}} <- Wire.decode_frame(frame),
          do: {:ok, entity_id}
   end
 
@@ -472,7 +472,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # into its writer), so run it in a separate process — off this channel's loop
   # and outside the writer (which would self-call).
   def handle_entity_state_snapshot(state, frame) do
-    case StateWire.decode_frame(frame) do
+    case Wire.decode_frame(frame) do
       {:ok, %{entity_id: {rc, _sh, _pk} = entity_id, seq: seq, header: header, body: body}} ->
         if admit(state, rc, :entity_state_snapshot),
           do: spawn(fn -> write_snapshot(entity_id, seq, header, body) end)
@@ -487,7 +487,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # `RestoreInitState`). Write off this channel's loop so a slow disk never stalls
   # the output-carrying channel.
   def handle_compensation_record(state, payload_id, frame) do
-    case StateWire.decode_frame(frame) do
+    case Wire.decode_frame(frame) do
       {:ok, %{entity_id: {rc, _sh, _pk} = entity_id}} ->
         kind = if payload_id == "compensation_intent", do: :intent, else: :done
 
@@ -522,7 +522,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   def handle_delete_entity_state(state, frame) do
-    case StateWire.decode_entity_id(frame) do
+    case Wire.decode_entity_id(frame) do
       {:ok, {rc, _sh, _pk} = entity_id} ->
         if admit(state, rc, :delete_entity_state), do: delete_if_dynamic(entity_id)
 

@@ -18,7 +18,9 @@ defmodule Flezha.State.TimeTravel do
   """
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Paths, RecordFrame, Snapshot, Wire}
+  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.SDK.Wire
+  alias Flezha.State.{Paths, RecordFrame, Snapshot}
 
   defmodule TimeTravelError do
     @moduledoc "Reasons a `TimeTravel.query/2` cannot be served."
@@ -168,7 +170,7 @@ defmodule Flezha.State.TimeTravel do
         {:halt, unchanged}
 
       seq > snapshot_seq ->
-        {:cont, {[RecordFrame.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
+        {:cont, {[Frame.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
 
       true ->
         {:cont, unchanged}

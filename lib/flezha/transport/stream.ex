@@ -1,7 +1,7 @@
 defmodule Flezha.Transport.Stream do
   @moduledoc """
   Handle-polymorphic dispatch for per-stream transport operations. A handle is
-  either a native `%Flezha.Transport.Local.Stream{}` (in-node transport) or a
+  either a native `%Flezha.SDK.LocalStream{}` (in-node transport) or a
   NIF stream resource (UDS/QUIC servers, and the standalone client). The five
   runner/transport call sites go through this seam so a native and a socket
   runner can coexist on one Controller; the NIF arm delegates to
@@ -14,20 +14,20 @@ defmodule Flezha.Transport.Stream do
   is grep-simple — no per-stream `Native.` call outside `native.ex` and here.
   """
 
-  alias Flezha.Transport.Local
+  alias Flezha.SDK.LocalStream
   alias Flezha.Transport.Native
 
-  @type handle :: Local.Stream.t() | reference()
+  @type handle :: LocalStream.t() | reference()
 
   @spec send_frame(handle(), binary(), term(), map()) :: :ok | {:error, term()}
-  def send_frame(%Local.Stream{} = handle, payload_id, message, metadata),
-    do: Local.Stream.send_frame(handle, payload_id, message, metadata)
+  def send_frame(%LocalStream{} = handle, payload_id, message, metadata),
+    do: LocalStream.send_frame(handle, payload_id, message, metadata)
 
   def send_frame(ref, payload_id, message, metadata),
     do: Native.send_frame(ref, payload_id, message, metadata)
 
   @spec set_active(handle()) :: :ok | {:error, term()}
-  def set_active(%Local.Stream{} = handle), do: Local.Stream.set_active(handle)
+  def set_active(%LocalStream{} = handle), do: LocalStream.set_active(handle)
   def set_active(ref), do: Native.set_active(ref)
 
   @doc """
@@ -39,17 +39,17 @@ defmodule Flezha.Transport.Stream do
   def set_active_once(ref) when is_reference(ref), do: Native.set_active_once(ref)
 
   @spec close(handle()) :: :ok | {:error, term()}
-  def close(%Local.Stream{} = handle), do: Local.Stream.close(handle)
+  def close(%LocalStream{} = handle), do: LocalStream.close(handle)
   def close(ref), do: Native.close(ref)
 
   @spec controlling_process(handle(), pid()) :: :ok | {:error, term()}
-  def controlling_process(%Local.Stream{} = handle, pid),
-    do: Local.Stream.controlling_process(handle, pid)
+  def controlling_process(%LocalStream{} = handle, pid),
+    do: LocalStream.controlling_process(handle, pid)
 
   def controlling_process(ref, pid), do: Native.controlling_process(ref, pid)
 
   @spec stream_id(handle()) :: non_neg_integer()
-  def stream_id(%Local.Stream{} = handle), do: Local.Stream.stream_id(handle)
+  def stream_id(%LocalStream{} = handle), do: LocalStream.stream_id(handle)
   def stream_id(ref), do: Native.stream_id(ref)
 
   @doc """
@@ -58,6 +58,6 @@ defmodule Flezha.Transport.Stream do
   handshake and an in-node stream has no peer.
   """
   @spec peer_certificate(handle()) :: binary() | nil
-  def peer_certificate(%Local.Stream{}), do: nil
+  def peer_certificate(%LocalStream{}), do: nil
   def peer_certificate(ref), do: Native.peer_certificate(ref)
 end

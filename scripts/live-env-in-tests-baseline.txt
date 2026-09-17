@@ -31,7 +31,6 @@ test/flezha/sdk/sdk_unit_test.exs
 # There is nothing to state instead, because the variable is what is being
 # tested. It is exposed all the same, and the module is `async: true`, so the
 # window is wider here than anywhere else on this list.
-test/flezha/config/parse_test.exs
 
 # Every documented variable at once, built from `Keys.rows/0`. The subject is
 # the boot translation: that each variable reaches the key its row names, in

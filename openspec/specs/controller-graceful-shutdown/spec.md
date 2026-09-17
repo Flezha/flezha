@@ -331,7 +331,7 @@ handed the budget still remaining, stopping at the budget and naming the steps n
 its return. A step SHALL run in the CALLER's process, because a teardown releases what the
 caller owns — the links its plugin table holds, the ETS tables its marks live in, the
 routes that name `self()` — and SHALL return inside the budget it is handed; every
-cross-process call inside one is bounded as `Flezha.SafeCall.bounded/3` requires. The walk
+cross-process call inside one is bounded as `Flezha.SDK.SafeCall.bounded/3` requires. The walk
 SHALL re-check the deadline between steps, and a step that raises, exits or answers
 `{:error, _}` SHALL halt it. The steps are declared by the resource they tear down — the migrate task first,
 the class registry, the control unit, the plugin table (one step: the on-terminate hooks,

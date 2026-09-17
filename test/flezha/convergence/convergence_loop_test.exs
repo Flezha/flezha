@@ -12,6 +12,7 @@ defmodule Flezha.Convergence.LoopTest do
 
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.SDK.Wire
   alias FlezhaTest.Helper.ConvergenceFixtures
 
   alias Flezha.Convergence.{Diff, Intent}
@@ -340,7 +341,7 @@ defmodule Flezha.Convergence.LoopTest do
   describe "Progress.progress_markers/0 — the tier cursors reach the classifier" do
     alias Flezha.Convergence.{Loop, StallClassifier}
     alias Flezha.Operative.ClassRegistry
-    alias Flezha.State.{InputLog, Supervisor, WalWriter, Wire}
+    alias Flezha.State.{InputLog, Supervisor, WalWriter}
 
     setup do
       FlezhaTest.Case.install([:tmp_app_data, :state_tree])

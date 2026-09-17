@@ -63,6 +63,11 @@ sdk/python/dist
 sdk/python/src/flezha/*.so
 sdk/ruby/lib/flezha/*.so
 sdk/ruby/pkg
+sdk/elixir/_build
+sdk/elixir/deps
+sdk/elixir/priv
+sdk/elixir/examples
+sdk/elixir/test_app/_build
 
 # Bench run outputs. `bench/` itself is source (the harness); its reports are
 # logs, and one of them is 70 MB.

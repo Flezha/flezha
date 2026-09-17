@@ -7,6 +7,9 @@
 #      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_core_ffi.<ext>
 #   1a. flz-fake-controller (feature "fake-controller") for all 5 platforms ->
 #      dist/tools/<sdk-dir>/flz-fake-controller
+#   1f. the Elixir SDK's socket client (flz_sdk_nif) for all 5 platforms, packed
+#      as rustler_precompiled downloads it, with the checksum file the package
+#      carries -> dist/elixir-nifs/
 #   1b. The contract set (test/fixtures/contract.txt) as one archive, staged
 #      by --stage-release only: it is files already in the tree, not a build.
 #   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
@@ -149,6 +152,10 @@ wheel_tiers() {
     echo "cp${v//[.t]/}-cp${v//[.t]/}t|--interpreter python${v}"
   done
 }
+# The Elixir SDK's socket client archives, and the checksum file the package
+# carries beside them.
+ELIXIR_NIFS_OUT="${REPO_ROOT}/dist/elixir-nifs"
+ELIXIR_NIF_CHECKSUMS="checksum-Elixir.Flezha.SDK.Native.exs"
 # The precompiled Ruby gems, and the Ruby minors each one carries a library for.
 RUBY_GEMS_OUT="${REPO_ROOT}/dist/ruby-gems"
 RUBY_GEM_MINORS="3.3,3.4"
@@ -290,7 +297,10 @@ if [[ "${MODE}" == "stage-release" ]]; then
                 "$(release_binary_name "${dir}" "${bin_ext}")"
     gem="flezha-${RELEASE_VERSION}-${TRIPLE_TO_GEM_PLATFORM[${t}]}.gem"
     stage_asset "${RUBY_GEMS_OUT}/${gem}" "${gem}"
+    nif="$(elixir_nif_name "${t}" "${RELEASE_VERSION}").tar.gz"
+    stage_asset "${ELIXIR_NIFS_OUT}/${nif}" "${nif}"
   done
+  stage_asset "${ELIXIR_NIFS_OUT}/${ELIXIR_NIF_CHECKSUMS}" "${ELIXIR_NIF_CHECKSUMS}"
   stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
   stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
   stage_fixture_archive
@@ -414,6 +424,36 @@ for t in "${ALL_TRIPLES[@]}"; do
   bin="flz-fake-controller${TRIPLE_TO_BIN_EXT[${t}]}"
   stage_built "${t}" "${bin}" "${TOOLS_OUT}/${TRIPLE_TO_DIR[${t}]}/${bin}"
 done
+
+# ---------------------------------------------------------------------------
+# 4f. The Elixir SDK's socket client, one per triple.
+#
+#     Each archive holds the library under the archive's own name, which is
+#     what `rustler_precompiled` extracts and loads, and the checksum file is
+#     the map the package verifies a download against. An SDK release copies
+#     that file into the package; a triple it names no archive for builds from
+#     source.
+# ---------------------------------------------------------------------------
+rm -rf "${ELIXIR_NIFS_OUT}"
+mkdir -p "${ELIXIR_NIFS_OUT}"
+elixir_checksums=()
+for t in "${ALL_TRIPLES[@]}"; do
+  step "building flz_sdk_nif for ${t}"
+  cargo_for_triple "${t}" -p flz_sdk_nif
+  nif="$(elixir_nif_name "${t}" "${RELEASE_VERSION}")"
+  stage_built "${t}" "${TRIPLE_TO_PREFIX[${t}]}flz_sdk_nif.${TRIPLE_TO_EXT[${t}]}" \
+              "${ELIXIR_NIFS_OUT}/${nif}"
+  tar -czf "${ELIXIR_NIFS_OUT}/${nif}.tar.gz" -C "${ELIXIR_NIFS_OUT}" "${nif}"
+  rm "${ELIXIR_NIFS_OUT}/${nif}"
+  sum="$(sha256sum "${ELIXIR_NIFS_OUT}/${nif}.tar.gz" | cut -d' ' -f1)"
+  elixir_checksums+=("  \"${nif}.tar.gz\" => \"sha256:${sum}\"")
+done
+{
+  echo "%{"
+  ( IFS=$'\n'; echo "${elixir_checksums[*]}" ) | sed '$!s/$/,/'
+  echo "}"
+} > "${ELIXIR_NIFS_OUT}/${ELIXIR_NIF_CHECKSUMS}"
+echo "  -> ${ELIXIR_NIFS_OUT}/${ELIXIR_NIF_CHECKSUMS}"
 
 # ---------------------------------------------------------------------------
 # 4c. The Node addons, one per row of the package's own platform table, and

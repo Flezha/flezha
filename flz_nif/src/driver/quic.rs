@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use crossbeam::channel::{Receiver, Sender};
+use flz_transport::transport::close_reason::CloseReason;
 use flz_transport::transport::quic::{expire_timer, flush_transmits, send_transmit};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Waker};
@@ -21,8 +22,7 @@ use quinn_proto::{
 use rustler::LocalPid;
 
 use super::{
-    CloseReason, DriverReady, Ended, Pass, ReadBuf, ServerCommand, StreamState, Streams, Transport,
-    Written,
+    DriverReady, Ended, Pass, ReadBuf, ServerCommand, StreamState, Streams, Transport, Written,
 };
 use crate::driver_msg::{send_connection_msg, send_refused_msg, send_stream_msg};
 use crate::driver_stats::DriverStats;

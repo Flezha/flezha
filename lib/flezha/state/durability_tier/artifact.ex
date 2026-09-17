@@ -19,9 +19,11 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   alias Flezha.Dlq
   alias Flezha.Layout.Table, as: Layout
+  alias Flezha.SDK.RecordFrame, as: Frame
+  alias Flezha.SDK.Wire
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.Store
-  alias Flezha.State.{Outbox, Paths, RecordFrame, Restore, Wire}
+  alias Flezha.State.{Outbox, Paths, RecordFrame, Restore}
 
   @type ref :: Manifest.ref()
 
@@ -270,7 +272,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
           true ->
             {:cont,
-             {[RecordFrame.encode_record(seq, header, body) | acc], count + 1,
+             {[Frame.encode_record(seq, header, body) | acc], count + 1,
               max_consumed(offset, header, body)}}
         end
       end)

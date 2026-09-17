@@ -14,7 +14,7 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.Parallel
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.FleetManager
-  alias Flezha.SafeCall
+  alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.State.WriterRegistry
 

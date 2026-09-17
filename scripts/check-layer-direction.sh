@@ -26,9 +26,10 @@
 # the number the restructuring is measured by.
 #
 # A reference that resolves to no file in this tree — a registered process name
-# like `Flezha.Operative.MessageHandlerTaskSup`, a NIF module like
-# `Flezha.Transport.Local`, a bare namespace prefix — falls back to its first
-# segment read as a directory name. That is the only meaning such a name has,
+# like `Flezha.Operative.MessageHandlerTaskSup`, a bare namespace prefix — falls
+# back to its first segment read as a directory name, and a name whose segment
+# is no directory here (the Elixir SDK's `Flezha.SDK.*`, a dependency) is no
+# edge. That is the only meaning such a name has,
 # and skipping it would hide real edges. The fallback never applies to a module
 # that has a file, so a moved file is judged by its new home.
 #
@@ -129,17 +130,14 @@ LAYERS = {
     "authz": 5,
     "convergence": 5,
     "observability": 5,
-    # 6 — the outermost: the operator and network surfaces, the node's own
-    # bring-up and tear-down, and the Elixir SDK, an application on top of the
-    # controller's transport (its own boundary is
-    # `scripts/check-sdk-boundary.sh`). Boot starts the services and shutdown
-    # stops them, so both name every layer and none may name them.
+    # 6 — the outermost: the operator and network surfaces, and the node's own
+    # bring-up and tear-down. Boot starts the services and shutdown stops them,
+    # so both name every layer and none may name them.
     "boot": 6,
     "shutdown": 6,
     "cli": 6,  # the operator surface, carved out of service/
     "http": 6,
     "healthz": 6,
-    "sdk": 6,
 }
 
 # One directory can hold two layers, and `http/` does. `Flezha.Http.Client` is
