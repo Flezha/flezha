@@ -230,7 +230,7 @@ A channel names the format of its payload with `codec:` on `input` and on
 | `ChannelCodec::Json` | the decoded JSON, an object as an array | any value as JSON, a string quoted |
 
 ```php
-$c->input('in', codec: ChannelCodec::Text)->into(Echo::class)->sink('out');
+$c->input('in', codec: ChannelCodec::Text)->into(EchoProcedure::class)->sink('out');
 ```
 
 An entry with no codec and no decoder reads JSON: `{"a":1}` arrives as

@@ -126,8 +126,8 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | unspecified                                         | `type Config = ()` / `Void`                         |
 | `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Java, Ruby and PHP: the class name in snake_case |
 | `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
-| `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the auto-wired entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
-| `input = "…"` (short form only)                     | name of the auto-wired entry channel (§5); absent, that channel is named `input` |
+| `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the generated entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
+| `input = "…"` (short form only)                     | name of the generated entry channel (§5); absent, that channel is named `input` |
 
 A mutable-state parameter is **the single signal** that a procedure is
 stateful. Its presence sets `State` and selects the derived change type; its
@@ -388,7 +388,7 @@ exists to catch is structurally unrepresentable for sugared procedures.
 A Procedure can act because time passed, not only because an input arrived:
 `ctx.timer_at_event_time(ts)` / `ctx.timer_after(d)` (Rust) —
 `ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) —
-`Ctx.timer_at_event_time(ctx, ts)` / `Ctx.timer_after(ctx, ms)` (Elixir) —
+`timer_at_event_time(ctx, ts)` / `timer_after(ctx, ms)` (Elixir, imported by `use`) —
 register a per-Entity deadline, and `Procedure::on_timer` /
 `Procedure.onTimer` / `on_timer/4` handles the firing with the same
 `StateHandle` and `ProcedureCtx` `run` gets.
@@ -720,6 +720,7 @@ fn static_downstream(input: String) -> Vec<u8> {
 }
 
 flezha::operative! {
+    pub struct StaticEntity;
     id: "static_entity",
     pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka")
 }
@@ -743,8 +744,8 @@ flezha::operative! {
 `Clock = WallClock`, `Config = ()` for both.
 
 Where the fixtures live: the hand-written `StaticEntityOperative`
-(`factory_id` `static_entity`) and its `operative!` twin `sugar_static_entity`
-are in `test/apps/rust_runner/src/main.rs`; the Java twin is
+(`factory_id` `static_entity`) is in `test/apps/rust_runner/src/entity.rs` and
+its `operative!` twin `sugar_static_entity` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
 `test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticEntityStreamOperative.java`
 (`sugar_static_entity`, `SugarEntry` with `@EntitiesFor`), asserted by
 `SugarTwinTest.referenceOperativeMatchesContract`. Java has no pipeline macro,
@@ -814,7 +815,7 @@ fn apply_change(state: &mut RollingWindowState, change: &RollingWindowStateChang
 The sugared and hand-written forms produce byte-identical emits and
 logically-equal state, and the sugared form passes `replay_equals` /
 `replayEquals()`. Fixtures (`N = 3`): Rust `rolling_window` +
-`RollingWindowTwin` in `test/apps/rust_runner/src/main.rs`; Java
+`RollingWindowTwin` in `test/apps/rust_runner/src/sugar.rs`; Java
 `RollingWindow` (`java_rolling_window`) + `RollingWindowTwin`, asserted by
 `SugarTwinTest.rollingWindowMatchesHandWrittenTwin`.
 

@@ -146,7 +146,7 @@ docker exec -it flezha_controller_dev bash
 
 
 # Start operative, websocket plugin and kafka output plugins:
-_build/dev/rel/flezha/bin/flz operative start my_operative store_input --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}' 
+_build/dev/rel/flezha/bin/flz operative start store_input --id my_operative --init-values '{"store_input_procedure": {"binary_inputs": [], "text_inputs": ["FIRST"]}}'
 
 
 # `--X…` flags are PROVIDER options; attachment (`--operative_id`) and hooks

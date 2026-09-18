@@ -93,6 +93,7 @@ end
 defmodule MyProc do
   use Flezha.SDK.Procedure, name: "my_proc"
 
+  @impl true
   def run(input, state, ctx) do
     emit(ctx, transform(input))
     {:ok, state}
@@ -102,11 +103,11 @@ end
 
 Both operative macros import `Flezha.SDK.Channels`, so a whole pipe — a merge
 included — is written with no module prefix. `use Flezha.SDK.Procedure` imports
-`Flezha.SDK.Ctx`'s authoring functions — every one but `apply/3`, which would
-shadow `Kernel.apply/3` — and leaves `init_state/1` answering `nil` unless the
-module writes one, so a stateless procedure writes only `run/3`. A workflow
-procedure ends its instance with the imported `complete/2`, honoured once its
-iteration commits.
+`Flezha.SDK.Ctx`'s authoring functions (every one but `apply/3`, which would
+shadow `Kernel.apply/3`, and `complete/2`) and leaves `init_state/1` answering
+`nil` unless the module writes one, so a stateless procedure writes only
+`run/3`. A workflow procedure ends its instance with
+`Flezha.SDK.Ctx.complete/2`, honoured once its iteration commits.
 
 An unknown option is a `CompileError` naming it, and so is a missing required
 one (`name` for a procedure, `factory_id` for an operative).
@@ -190,8 +191,8 @@ operative macros. This SDK cannot see a procedure's output type, so it owes no
 
 ### The behaviours beneath
 
-The plain `@behaviour` form keeps working unchanged, and is what the macros
-expand to:
+The plain `@behaviour` form compiles as well, and is what the macros expand
+to:
 
 ```elixir
 defmodule MyOperative do
@@ -422,11 +423,18 @@ produced — one fold, one push, so a replay of the recorded changes is the stat
 
 ```elixir
 defmodule Counter do
-  @behaviour Flezha.SDK.Procedure
-  def name, do: "counter"
+  use Flezha.SDK.Procedure, name: "counter"
+
+  @impl true
   def init_state(_key), do: %{value: 0}
+
+  @impl true
   def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
+
+  @impl true
   def state_from_json(%{"value" => v}), do: %{value: v}
+
+  @impl true
   def run(n, s, ctx), do: {:ok, Flezha.SDK.Ctx.apply(ctx, s, {:delta, n})}
 end
 ```
@@ -450,6 +458,7 @@ defmodule Position do
     %{state | qty: state.qty + qty, fill_ids: state.fill_ids ++ [id]}
   end
 
+  @impl true
   def run({:fill, qty, id}, state, ctx), do: {:ok, record_fill(state, ctx, qty, id)}
   def run({:set, qty}, state, ctx), do: {:ok, set_qty(state, ctx, qty)}
 end

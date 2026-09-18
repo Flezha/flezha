@@ -126,43 +126,44 @@ The same graph, declared with the Elixir SDK's builder:
 
 ```elixir
 defmodule Normalise do
-  @behaviour Flezha.SDK.Procedure
-  def name, do: "normalise"
-  def init_state(_key), do: nil
+  use Flezha.SDK.Procedure, name: "normalise"
 
+  @impl true
   def run(word, state, ctx) do
-    Flezha.SDK.Ctx.emit(ctx, String.downcase(word))
+    emit(ctx, String.downcase(word))
     {:ok, state}
   end
 end
 
 defmodule Tally do
-  @behaviour Flezha.SDK.Procedure
-  def name, do: "tally"
-  def init_state(_key), do: 0
+  use Flezha.SDK.Procedure, name: "tally"
 
-  def run(word, count, ctx) do
-    Flezha.SDK.Ctx.emit(ctx, "#{word} #{count + 1}")
-    {:ok, count + 1}
+  state do
+    field :count, :integer, default: 0
+  end
+
+  @impl true
+  def run(word, state, ctx) do
+    state = set_count(state, ctx, state.count + 1)
+    emit(ctx, "#{word} #{state.count}")
+    {:ok, state}
   end
 end
 
 defmodule WordCount do
-  @behaviour Flezha.SDK.StreamOperative
-  alias Flezha.SDK.Channels
+  use Flezha.SDK.StreamOperative, factory_id: "word_count"
 
-  def factory_id, do: "word_count"
-
+  @impl true
   def channels(c) do
     c
-    |> Channels.input("lines")
-    |> Channels.filter(&(not String.starts_with?(&1, "#")))
-    |> Channels.flat_map(&String.split/1)
-    |> Channels.into(Normalise)
-    |> Channels.key_by(& &1)
-    |> Channels.into(Tally)
-    |> Channels.keyed()
-    |> Channels.sink("counts")
+    |> input("lines")
+    |> filter(&(not String.starts_with?(&1, "#")))
+    |> flat_map(&String.split/1)
+    |> into(Normalise)
+    |> key_by(& &1)
+    |> into(Tally)
+    |> keyed()
+    |> sink("counts")
   end
 end
 ```

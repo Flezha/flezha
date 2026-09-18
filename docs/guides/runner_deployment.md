@@ -273,39 +273,25 @@ The whole example:
 [`sdk/java/examples/echo`](https://github.com/flezha/flezha_java_sdk/tree/main/examples/echo).
 
 ```java
-// The procedure. The processing stage the graph routes each message into.
-public final class EchoProcedure
-        implements Procedure<String, EchoProcedure.None, String, NoChange, WallClock, Void> {
+// Echo.java: the procedure. The processing stage the graph routes each message into.
+@Procedure(id = "echo")                      // state is saved under this name, so choose it once
+public final class Echo {
 
-    // This procedure keeps nothing, so its state type has no components.
-    public record None() {}
-
-    @Override
-    public String name() {
-        return "echo";                       // state is saved under this name, so choose it once
-    }
-
-    @Override
-    public None initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
-        return new None();                   // the empty state it starts with
-    }
-
-    @Override
-    public void run(String input, StateHandle<None, NoChange> state, ProcedureCtx ctx) {
-        ctx.emit("echo: " + input);          // send the result out; the operative picks the channel
+    public String run(String input) {
+        return "echo: " + input;             // what it returns is emitted
     }
 }
 ```
 
-**The six type arguments** are, in order: the input, the per-entity state, the
-output, the change type, the clock, and the configuration. The runtime recovers
-all six from the `implements` clause at registration, so each has to be a
-concrete class there rather than a type variable. `NoChange` is how this one
-declares that it records no state changes, and `Void` that it takes no
-configuration.
+**`@Procedure` is expanded at compile time.** The SDK's annotation processor
+generates `EchoProcedure` from this class, reading the input and output types
+from the `run` signature, and the operative names that generated class. `run`
+takes no state parameter, so it keeps nothing between messages and journals
+nothing. A standalone project lists `flezha-sdk-processor` under
+`annotationProcessorPaths`, as the example's `pom.xml` does.
 
 ```java
-// The operative. The graph, and the unit the controller schedules.
+// EchoOperative.java: the operative. The graph, and the unit the controller schedules.
 public final class EchoOperative implements StreamOperative {
 
     @Override
@@ -326,7 +312,7 @@ terminated on the plugin layer. `sink(name)` does both jobs, so naming the
 channel again with `named(...)` is refused at registration rather than resolved.
 
 ```java
-// The runner. Connects, offers the operative, and serves.
+// Main.java: the runner. Connects, offers the operative, and serves.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
             .registerFactory(EchoOperative.class)
@@ -361,43 +347,22 @@ The whole example:
 [`sdk/rust/examples/echo`](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/echo).
 
 ```rust
-// The procedure. The processing stage the graph routes each message into.
-#[derive(Default)]
-pub struct EchoProcedure;
+// src/procedure.rs: the procedure. The processing stage the graph routes each message into.
+use flezha_runner::procedure;
 
-impl Procedure for EchoProcedure {
-    type Input = String;
-    type Output = String;
-    type State = ();         // nothing kept between messages
-    type Change = NoChange;  // nothing journaled
-    type Clock = WallClock;
-    type Config = ();
-
-    fn name() -> &'static str {
-        "echo"               // state is saved under this name, so choose it once
-    }
-
-    fn init_state(_entity_key: Option<&str>, _init_payload: Option<RestoreInitPayload<'_>>) {}
-
-    fn run(
-        &mut self,
-        input: String,
-        _state: StateHandle<'_, Self>,
-        ctx: &mut ProcedureCtx<'_>,
-    ) -> Result<(), ProcedureError> {
-        ctx.emit(format!("echo: {input}"))  // send the result out; the operative picks the channel
-    }
+#[procedure(id = "echo")]                // state is saved under this name, so choose it once
+pub fn echo(input: String) -> String {
+    format!("echo: {input}")             // what it returns is emitted
 }
 ```
 
-**The six associated types** are the ones Java writes as type arguments: the
-input, the output, the per-entity state, the change type, the clock and the
-configuration. `()` state and `NoChange` are how this one keeps nothing and
-journals nothing. The runtime constructs the procedure itself, which is why it
-is `Default`.
+**`#[procedure]` turns the function into a procedure type**, `Echo`, named after
+the function, and that type is what the operative routes into. The input and
+output types are read from the signature. There is no `&mut` state parameter, so
+it keeps nothing between messages and journals nothing.
 
 ```rust
-// The operative. The graph, and the unit the controller schedules.
+// src/operative.rs: the operative. The graph, and the unit the controller schedules.
 pub struct EchoOperative;
 
 impl StreamOperative for EchoOperative {
@@ -407,7 +372,7 @@ impl StreamOperative for EchoOperative {
 
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("in")
-            .into::<EchoProcedure>()
+            .into::<Echo>()
             .sink_named("out");
     }
 }
@@ -420,7 +385,7 @@ and `sink()` would leave it the procedure's name. A graph whose types do not
 line up is refused when the runner declares it.
 
 ```rust
-// The runner. Connects, offers the operative, and serves.
+// src/main.rs: the runner. Connects, offers the operative, and serves.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let namespace = std::env::args().nth(1).unwrap_or_else(|| "default".to_string());
 
@@ -495,14 +460,16 @@ value other than a string or bytes would leave as JSON. The module exports what
 // runner.mjs: the runner. Connects, offers the operative, and serves.
 import { createRunner } from '@flezha/sdk';
 
-const runner = createRunner(process.argv[2] ?? 'default').registerFactory('./echo_operative.mjs');
+const runner = createRunner(process.argv[2] ?? 'default');
+await runner.registerFactory('./echo_operative.mjs');
 
 await runner.run();
 ```
 
 The operative is registered by **module specifier**, a path rather than an
-imported value, because every dispatch loop imports the module itself. A relative
-specifier resolves against the working directory. `run()` resolves once the
+imported value, because every dispatch loop imports the module itself. Registering
+therefore imports it, which is why it is awaited. A relative specifier resolves
+against the working directory. `run()` resolves once the
 runner is connected and serving, and the process keeps running until a SIGTERM
 or until its standard input closes. `registerFactory` is the same call for the
 workflow kind.
@@ -635,7 +602,8 @@ explicitly: nothing is autoloaded, and what runs is what you named.
 > with the GVL released. The lock bounds your handler body and nothing else.
 >
 > So the lever for CPU-bound handlers is **process count, not thread count**:
-> `flz operative start -p N`. Handlers that are 90% I/O saturate a core at
+> run more runner processes, and start the operative with `--partitions N` so
+> its keys spread across them. Handlers that are 90% I/O saturate a core at
 > roughly 2,000 activations per second and the pool grows to cover the wait;
 > handlers that are pure Ruby at 5 ms each serve about 200 per second however
 > large the pool is.
@@ -723,45 +691,34 @@ The whole example:
 ```elixir
 # lib/echo/procedure.ex: the procedure. The processing stage the graph routes each message into.
 defmodule Echo.Procedure do
-  @behaviour Flezha.SDK.Procedure
-
-  alias Flezha.SDK.Ctx
-
-  @impl true
-  def name, do: "echo"                   # state is saved under this name, so choose it once
-
-  @impl true
-  def init_state(_entity_key), do: nil   # nothing kept between messages
+  use Flezha.SDK.Procedure, name: "echo"   # state is saved under this name, so choose it once
 
   @impl true
   def run(input, state, ctx) do
-    Ctx.emit(ctx, "echo: " <> input)     # send the result out; the operative picks the channel
+    emit(ctx, "echo: " <> input)           # send the result out; the operative picks the channel
     {:ok, state}
   end
 end
 ```
 
-`run/3` answers `{:ok, state}`, and what it emitted is released only then. With no
-`apply_change/2` it journals nothing.
+`use Flezha.SDK.Procedure` declares the procedure and imports what `run/3` calls
+on the ctx, `emit/2` among them. `run/3` answers `{:ok, state}`, and what it
+emitted is released only then. With no `state` block it keeps nothing between
+messages and journals nothing.
 
 ```elixir
 # lib/echo/operative.ex: the operative. The graph, and the unit the controller schedules.
 defmodule Echo.Operative do
-  @behaviour Flezha.SDK.StreamOperative
-
-  @impl true
-  def factory_id, do: "echo"
+  use Flezha.SDK.StreamOperative, factory_id: "echo"
 
   @impl true
   def channels(c) do
-    import Flezha.SDK.Channels
-
     c |> input("in") |> into(Echo.Procedure) |> sink("out")
   end
 end
 ```
 
-The graph is a pipe. A binary crosses a channel as it is, so plain text needs no
+The graph is a pipe, and `use` imports the builder it is written with. A binary crosses a channel as it is, so plain text needs no
 decoder or encoder here.
 
 ```elixir

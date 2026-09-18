@@ -5,11 +5,13 @@ A Java 21 binding hosted on the shared `flz_core` kernel through
 dispatch, overflow, the retry→park ladder, the partition guard, timers and the
 effectively-once tier are one implementation, not two.
 
-Authoring surface: `StreamOperative` / `WorkflowOperative` / `Procedure` with
-`ChannelBuilder`, plus the `@Procedure` / `@StreamOperative` /
-`@WorkflowOperative` / `@State` annotation sugar. See [`authoring_contract.md`](authoring_contract.md) for what
-each tier expands to and [`state_persistence.md`](state_persistence.md) for the
-`StateHandle` / Kryo side.
+Authoring surface: `@Procedure` classes, with `@State` for their state, wired by
+a `StreamOperative` / `WorkflowOperative` through `ChannelBuilder`; the
+`Procedure` interface the annotation processor implements for them; and the
+`@StreamOperative` / `@WorkflowOperative` short form. See
+[`authoring_contract.md`](authoring_contract.md) for what each tier expands to
+and [`state_persistence.md`](state_persistence.md) for the `StateHandle` / Kryo
+side.
 
 ## Threading
 
@@ -28,14 +30,14 @@ each new fetcher's own `poll` entry restarts the core's dwell. What it does not
 buy is a thread against user code that never returns — that is the conformance
 `pool_wedge` condition, and no ceiling outruns it.
 
-**`complete` no longer parks on a full consumer** (`FLEZHA_DROP_NOTHING_NONPARKING`,
-default off during rollout). The kernel holds an undeliverable inter-procedure
-output in the producing Entity's push holdback and withholds work from that
-Entity instead, so the completion returns and the virtual thread — and the
-carrier it pinned — is released. This SDK carries **no Java-side code for it**:
-`flz_core_complete` is the seam, so the change arrives below it. The
-`pending_pushes` / `pending_push_oldest_ms` heartbeat keys it adds are minted by
-`flz_core`'s heartbeat, which this SDK also uses unchanged. The starvation
+**With `FLEZHA_DROP_NOTHING_NONPARKING` on, `complete` does not park on a full
+consumer** (the switch is off by default during rollout). The kernel holds an
+undeliverable inter-procedure output in the producing Entity's push holdback
+and withholds work from that Entity instead, so the completion returns and the
+virtual thread — and the carrier it pinned — is released. This SDK carries **no
+Java-side code for it**: `flz_core_complete` is the seam, so the behaviour lives
+below it. The `pending_pushes` / `pending_push_oldest_ms` heartbeat keys it adds
+are minted by `flz_core`'s heartbeat, which this SDK also uses unchanged. The starvation
 supervisor stays exactly as load-bearing: with the flag off it is still the only
 rescue, and it is what the holdback's bound falls back on.
 

@@ -41,7 +41,7 @@ export const Session = defineProcedure({
     }
   },
 
-  handle: (event, ctx) => {
+  run: (event, ctx) => {
     // Cancel the deadline this input replaces, then arm the next one. Both are
     // anchored on the core-evaluated clock, so a replay arms the same instant.
     if (ctx.state.deadline !== 0n) {

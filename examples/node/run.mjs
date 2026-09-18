@@ -17,8 +17,8 @@ const workers = Number(process.env.FLEZHA_NODE_WORKERS ?? 0) || 0;
 
 const runner = createRunner(process.argv[2] || 'default')
   .logger(consoleLogger('info'))
-  .defineStream(resolve(here, 'session.mjs'))
   .workers(workers);
+await runner.registerFactory(resolve(here, 'session.mjs'));
 
 await runner.run();
 console.log(`sessions up — ${workers === 0 ? 'main-loop' : `${workers}-worker`} dispatch`);

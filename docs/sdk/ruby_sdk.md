@@ -283,7 +283,8 @@ refused at startup, naming it. Walk-through:
   1024), regardless of pool size. The pool is a servicing detail, never the
   concurrency bound.
 - **The lever for CPU-bound handlers is process count, not thread count**:
-  `flz operative start -p N`.
+  run more runner processes, and start the operative with `--partitions N` so
+  its keys spread across them.
 
 Worked example. Handlers that spend 90% of their time on I/O and 10% on Ruby,
 at 5 ms each: one process saturates its core at roughly 2,000 activations per

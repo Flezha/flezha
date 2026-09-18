@@ -36,8 +36,8 @@ SpawnHandle one = ctx.spawnWorkflow("triage", input.getBytes(UTF_8),
 ```
 
 ```elixir
-job = Flezha.SDK.Ctx.spawn_workflow(ctx, "triage", input)
-one = Flezha.SDK.Ctx.spawn_workflow(ctx, "triage", input, id: "triage@" <> subject, if_running: :deliver)
+job = spawn_workflow(ctx, "triage", input)
+one = spawn_workflow(ctx, "triage", input, id: "triage@" <> subject, if_running: :deliver)
 ```
 
 ```python

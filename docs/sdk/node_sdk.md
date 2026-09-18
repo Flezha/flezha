@@ -61,6 +61,7 @@ naming the host it detected, the package it looked for and the build above.
 import { createRunner, defineOperative, defineProcedure } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
+interface Candle { symbol: string; close: number }
 
 const Ohlc = defineProcedure({
   name: 'ohlc',
@@ -71,7 +72,7 @@ const Ohlc = defineProcedure({
     state.high = Math.max(state.high, change.close);
     state.low = state.low === 0 ? change.close : Math.min(state.low, change.close);
   },
-  run: (trade: Trade, ctx) => {
+  run: (trade: Trade, ctx): Candle => {
     ctx.change({ close: trade.price });
     return { symbol: trade.symbol, close: ctx.state.close };
   },

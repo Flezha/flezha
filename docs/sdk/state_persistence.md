@@ -61,7 +61,7 @@ their place, carrying the outputs rather than preceding them.
 |---|---|---|---|
 | Stream class toggle | `StreamOperative::PERSISTENCE_ENABLED` const, default `true`; frozen on the instance at start, a change applies on the next stop + start | `StreamOperative.persistenceEnabled()` default-method exists but the runtime does not read it; the host declaration ships `persistent = true` iff some Procedure declares a Change other than `NoChange`, so the Java opt-out is per-Procedure via `NoChange` | `StreamOperative.persistence_enabled/0`, default `true`, read when an Entity starts; a Procedure without `apply_change/2` is `NoChange` |
 | Runner override | `StreamInstance::new` (`flz_core/src/operative/instance.rs`, `operator_override.unwrap_or(class_const)`) accepts an `operative_persistence.<OperativeClass>` override, but the runner's `start_operative` passes none — the class const decides | same core seam, same unfed override | none — the class callback decides |
-| Workflow class toggle | `WorkflowOperative::PERSISTENCE_ENABLED`, default `true` | `WorkflowOperative.persistenceEnabled()`, default `true` | the workflow kind is deferred |
+| Workflow class toggle | `WorkflowOperative::PERSISTENCE_ENABLED`, default `true` | `WorkflowOperative.persistenceEnabled()`, default `true` | `WorkflowOperative.persistence_enabled/0`, default `true` |
 | Controller side | `:operative_persistence` (`%{class => bool}`) resolves `persistent_state?` for workflow classes; a stream class is always durable on the controller side | same | same |
 
 Durable-vs-opted-out workflow guarantees: [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
@@ -314,10 +314,12 @@ assertThat(ProcedureTestHarness.of(new CountProcedure()).withWallClock(t0)
 
 ## Elixir SDK
 
-The authoring surface is the behaviour pair: `apply_change/2` on a `Procedure` declares it
-changeful, `Flezha.SDK.Ctx.apply/3` is the recorded mutation path, `state_from_json/1` turns
-a JSON object read back from the controller into the state term, `compact_after_bytes/0` is
-the compaction threshold, and `StreamOperative.persistence_enabled/0` is the class toggle;
+The authoring surface is `use Flezha.SDK.Procedure` with a `state do field … end` block:
+the block generates `apply_change/2`, which declares the procedure changeful,
+`state_from_json/1`, which turns a JSON object read back from the controller into the state
+term, and the recorders, each journaling through `Flezha.SDK.Ctx.apply/3`, the recorded
+mutation path. `compact_after_bytes` is the compaction threshold, and
+`StreamOperative.persistence_enabled/0` is the class toggle;
 `schema_version/0` and `min_readable_schema_version/0` declare the version and the readable
 floor, and `migrate_state/2` / `migrate_change/2` read an older version's DECODED term into
 the running one — the body codec is the language's own, so there is no second codec to choose.

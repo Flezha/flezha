@@ -168,9 +168,9 @@ runner
 ### Node
 
 ```javascript
-const runner = createRunner('trading')
-  .registerFactory('./candles_operative.mjs')
-  .registerFactory('./paper_order_operative.mjs');
+const runner = createRunner('trading');
+await runner.registerFactory('./candles_operative.mjs');
+await runner.registerFactory('./paper_order_operative.mjs');
 await runner.run();
 ```
 

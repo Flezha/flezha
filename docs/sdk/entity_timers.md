@@ -53,13 +53,14 @@ public void onTimer(long firedAt, TimerKind kind,
 
 | Rust | Java | Elixir | Fires when |
 | --- | --- | --- | --- |
-| `ctx.timer_at_event_time(ts)` | `ctx.timerAtEventTime(ts)` | `Ctx.timer_at_event_time(ctx, ts)` | the Entity's event-time high-water reaches `ts` |
-| `ctx.timer_after(d)` | `ctx.timerAfter(d)` | `Ctx.timer_after(ctx, ms)` | wall-clock time reaches `ctx.now() + d` |
-| `ctx.cancel_event_time_timer(ts)` | `ctx.cancelEventTimeTimer(ts)` | `Ctx.cancel_event_time_timer(ctx, ts)` | — |
-| `ctx.cancel_processing_time_timer(ts)` | `ctx.cancelProcessingTimeTimer(ts)` | `Ctx.cancel_processing_time_timer(ctx, ts)` | — |
+| `ctx.timer_at_event_time(ts)` | `ctx.timerAtEventTime(ts)` | `timer_at_event_time(ctx, ts)` | the Entity's event-time high-water reaches `ts` |
+| `ctx.timer_after(d)` | `ctx.timerAfter(d)` | `timer_after(ctx, ms)` | wall-clock time reaches `ctx.now() + d` |
+| `ctx.cancel_event_time_timer(ts)` | `ctx.cancelEventTimeTimer(ts)` | `cancel_event_time_timer(ctx, ts)` | — |
+| `ctx.cancel_processing_time_timer(ts)` | `ctx.cancelProcessingTimeTimer(ts)` | `cancel_processing_time_timer(ctx, ts)` | — |
 
-Registration returns the **absolute** scheduled timestamp, which is the handle
-a cancellation takes. Pending timers are a **set**: a duplicate registration
+The Elixir functions are `Flezha.SDK.Ctx`'s, imported by
+`use Flezha.SDK.Procedure`. Registration returns the **absolute** scheduled
+timestamp, which is the handle a cancellation takes. Pending timers are a **set**: a duplicate registration
 is idempotent, and cancelling an unregistered timer changes nothing.
 `on_timer` / `onTimer` receives the same `StateHandle` and `ProcedureCtx` as
 `run`, so a firing may apply Changes, emit and register further timers. Its

@@ -241,7 +241,8 @@ The echo example carries the calls commented out in its `main.rs`,
 ### Node
 
 ```javascript
-const runner = createRunner('default').registerFactory('./echo_operative.mjs');
+const runner = createRunner('default');
+await runner.registerFactory('./echo_operative.mjs');
 await runner.run();
 
 const admin = runner.admin();

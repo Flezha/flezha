@@ -116,20 +116,21 @@ fallible call returns `FlezhaError`:
 
 | Refusal | When |
 |---|---|
-| `DuplicateFactoryId` | a second `define_*` of the same factory id on one runner — the declared set is per runner and starts empty, even though the class registry is process-global |
-| `NotDefined` | `remove_*` names a factory this runner never declared |
-| `OperativeTypeInUse { live_instances }` | `remove_*` while live instances exist; the type stays defined |
+| `DuplicateFactoryId` | a second `register_factory` of the same factory id on one runner — the declared set is per runner and starts empty, even though the class registry is process-global |
+| `NotDefined` | `unregister_factory` names a factory this runner never declared |
+| `OperativeTypeInUse { live_instances }` | `unregister_factory` while live instances exist; the type stays defined |
 | `AlreadyRunning` | a second `start()` in the process — at most one started runner per process |
 | `InvalidTopology` / `InvalidWorkflow` | reported at the declaring call site, never a panic |
 | `NotStarted` | `operatives()` / `await_termination()` on a never-started runner |
 
-Starting with zero declared classes is legal, and `define_*` / `remove_*` stay
-callable after `start()`; a post-start change ships the runner's full factory
-set as an `UpdateFactories` control request — fire-and-forget, no ack; the
-reconnect init frame is the resync of record. To call them after `start()`,
-bind the runner: a chained `Flezha::create_runner(ns)?.start()?` drops the
-temporary at statement end and shuts the runner down; write
-`let runner = …start()?;` (`run()` is immune — it blocks until shutdown).
+Starting with zero declared classes is legal, and `register_factory` /
+`unregister_factory` stay callable after `start()`; a post-start change ships
+the runner's full factory set as an `UpdateFactories` control request —
+fire-and-forget, no ack; the reconnect init frame is the resync of record. To
+call them after `start()`, bind the runner: a chained
+`Flezha::create_runner(ns)?.start()?` drops the temporary at statement end and
+shuts the runner down; write `let runner = Flezha::create_runner(ns)?;` and
+then `runner.start()?;` (`run()` is immune, because it blocks until shutdown).
 
 ## Authoring sugar (default path)
 
@@ -241,7 +242,7 @@ fails with a message beginning `SinkWithoutOutput`, and a missing `id` names the
 attribute. A hand-written `StreamOperative` or `WorkflowOperative` impl beside a
 short form is rustc's conflicting-implementation error, which the contract calls
 `ShortFormWithTopology`. `#[flezha_runner::procedure]` declares a procedure
-only and refuses `sink`, `input` and `kind`.
+only and refuses `sink`, `input`, `kind` and `on_full`.
 
 > A workflow short form started by a *spawn* does not see its payload yet —
 > `KB-381`. Start it with `--init-values` until that is fixed.
@@ -320,9 +321,10 @@ dynamic mode is read off the wiring on both sides (the annotation processor
 refuses `@EntityKey`) with `entityIdleTtl()` as the only knob; zero-copy
 passes the value by reference, so the producer must treat an emitted value as
 immutable. `@Procedure` / `@State` / `@EntitiesFor` (`flezha-sdk-processor`)
-generate the impls, and a `@Procedure` with a `sink` also generates the short
-form's `<Class>StreamOperative` or `<Class>WorkflowOperative`, which the
-application registers with `registerFactory`. Persisted
+generate the impls, and a `@StreamOperative` or `@WorkflowOperative` class
+generates the short form's `<Class>StreamOperative` or
+`<Class>WorkflowOperative`, which the application registers with
+`registerFactory`. Persisted
 Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
 `WorkflowOperative` emits `WorkflowCompleted` byte-identically to Rust.
 
@@ -620,8 +622,8 @@ port: [`state_persistence.md`](state_persistence.md).
   handlers are in [`../plugins/message_handlers.md`](../plugins/message_handlers.md).
 - **One started runner per process** (`FlezhaError::AlreadyRunning`).
 - **`UpdateFactories` has no ack**; the reconnect init frame is the resync.
-- **`remove_*` cannot see a suspended durable workflow instance**: the removal
-  succeeds and rehydration fails placement.
+- **`unregister_factory` cannot see a suspended durable workflow instance**:
+  the removal succeeds and rehydration fails placement.
 - **Only the overflow aggregates leave the process** — `blocked_parks`,
   `drops_newest`, `drops_oldest`, `pending_pushes` and `pending_push_oldest_ms`
   ride the data heartbeat; the per-Entity breakdown and the dynamic-entity

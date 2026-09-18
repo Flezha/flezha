@@ -13,7 +13,7 @@ import { LocalOperative, defineOperative, defineProcedure } from '@flezha/sdk';
 
 const Split = defineProcedure({
   name: 'split',
-  handle: (line, ctx) => {
+  run: (line, ctx) => {
     for (const word of line.split(/\s+/).filter(Boolean)) {
       ctx.emit(word.toLowerCase());
     }
@@ -27,7 +27,7 @@ const Tally = defineProcedure({
   applyChange: (state, change) => {
     state.seen = change.seen;
   },
-  handle: (word, ctx) => {
+  run: (word, ctx) => {
     const seen = ctx.state.seen + 1;
     ctx.change({ seen });
     ctx.emit(`${word} ${seen}`);
