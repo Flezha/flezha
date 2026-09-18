@@ -31,13 +31,13 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`introduction.md`](guides/introduction.md) | **Start here.** What Flezha is, and how these guides are laid out in three parts |
+| [`what_is_flezha.md`](guides/what_is_flezha.md) | **Start here.** What Flezha is, and one echo running in Docker |
+| [`introduction.md`](guides/introduction.md) | The three guides, the topics each one covers, and the order to read them in |
 | [`controller_deployment.md`](guides/controller_deployment.md) | Part 1. Running one controller: the Docker image, the release binaries, or your own Elixir application |
 | [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner offering an operative class |
 | [`running_operatives.md`](guides/running_operatives.md) | Part 1. Starting an operative, watching it, stopping it, and what survives a restart |
 | [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
 | [`cli.md`](guides/cli.md) | Reference. `flz` itself: reaching a controller, output formats, identity for a gated verb |
-| [`setup.md`](guides/tradedesk/setup.md) | Part 2. The tradedesk stack in Docker Compose |
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. The boundary runners, operatives and credentials sit inside |
 | [`stream_basics.md`](guides/tradedesk/stream_basics.md) | Part 2. Writing the stream operative: chained procedures, transforms, a merge and state |
 | [`workflow_basics.md`](guides/tradedesk/workflow_basics.md) | Part 2. Writing the workflow: steps, retries and compensation |

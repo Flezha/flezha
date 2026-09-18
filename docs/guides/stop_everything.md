@@ -85,5 +85,5 @@ you did not stop comes back on its own.
 
 ## Next
 
-That is Part 1. [`introduction.md`](introduction.md) lists what Part 2 builds,
-starting at [`setup.md`](tradedesk/setup.md).
+That is Part 1. [`introduction.md`](introduction.md) lists what Part 2 covers,
+starting at [`namespaces.md`](tradedesk/namespaces.md).

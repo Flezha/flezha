@@ -67,8 +67,9 @@ defmodule Flezha.MixProject do
 
   defp docs do
     [
-      main: "introduction",
+      main: "what_is_flezha",
       extras: [
+        "docs/guides/what_is_flezha.md",
         "docs/guides/introduction.md",
         "docs/guides/controller_deployment.md",
         "docs/guides/runner_deployment.md",
@@ -76,7 +77,6 @@ defmodule Flezha.MixProject do
         "docs/guides/sources_and_sinks.md",
         "docs/guides/stop_everything.md",
         "docs/guides/cli.md",
-        "docs/guides/tradedesk/setup.md",
         "docs/guides/tradedesk/namespaces.md",
         "docs/guides/tradedesk/stream_basics.md",
         "docs/guides/tradedesk/workflow_basics.md",
@@ -106,16 +106,18 @@ defmodule Flezha.MixProject do
       ],
       before_closing_body_tag: &mermaid/1,
       groups_for_extras: [
-        "Getting started": [
-          "docs/guides/introduction.md",
+        "Guide Part 0: Start here": [
+          "docs/guides/what_is_flezha.md",
+          "docs/guides/introduction.md"
+        ],
+        "Guide Part 1: Introduction": [
           "docs/guides/controller_deployment.md",
           "docs/guides/runner_deployment.md",
           "docs/guides/running_operatives.md",
           "docs/guides/sources_and_sinks.md",
           "docs/guides/stop_everything.md"
         ],
-        "Digging deeper": [
-          "docs/guides/tradedesk/setup.md",
+        "Guide Part 2: The basics": [
           "docs/guides/tradedesk/namespaces.md",
           "docs/guides/tradedesk/stream_basics.md",
           "docs/guides/tradedesk/workflow_basics.md",
@@ -126,7 +128,7 @@ defmodule Flezha.MixProject do
           "docs/guides/tradedesk/clustering.md",
           "docs/guides/tradedesk/kubernetes_deployment.md"
         ],
-        "Advanced topics": [
+        "Guide Part 3: Advanced topics": [
           "docs/guides/advanced/custom_plugins.md",
           "docs/guides/advanced/effectively_once.md",
           "docs/guides/advanced/erlang_vm_tuning.md",

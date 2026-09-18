@@ -14,7 +14,9 @@ The runner and operative steps wait for the tradedesk code that
 [`stream_basics.md`](stream_basics.md) and [`workflow_basics.md`](workflow_basics.md)
 write, and the mailer for its own page.
 
-**Before you start:** finish [`setup.md`](setup.md) and leave the stack up.
+**Before you start:** bring up the tradedesk stack that
+[`introduction.md`](../introduction.md#part-2-the-basics) describes, and leave
+it up. TODO: the commands are not written yet.
 Every `flz` on this page runs inside the controller container, so read
 `flz ...` as:
 
