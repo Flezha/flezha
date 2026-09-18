@@ -501,13 +501,13 @@ name. A row a runtime refuses at run time SHALL boot for real, whichever the lan
 
 #### Scenario: A compile-time refusal is cited, and the citation is checked
 
-- **WHEN** the Rust app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_kind`
-- **THEN** it exits non-zero printing `SinkWithoutKind` and `sdk/rust/tests/ui/procedure_sink_without_kind.stderr`, and the drill fails if that file is absent or does not contain the name
+- **WHEN** the Rust app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_with_topology`
+- **THEN** it exits non-zero printing `ShortFormWithTopology` and `sdk/rust/tests/ui/operative_with_hand_written_impl.rs`, the compile-fail fixture whose own text names the refusal because rustc's conflicting-impl error cannot, and the drill fails if that file is absent or does not contain the name
 
 #### Scenario: An Elixir `use` refusal is cited the same way
 
-- **WHEN** the Elixir app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_id`
-- **THEN** it exits non-zero printing `SinkWithoutId` and the path of the SDK test that compiles that declaration and asserts the `CompileError`, and the drill checks the cited file contains the name
+- **WHEN** the Elixir app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_with_topology`
+- **THEN** it exits non-zero printing `ShortFormWithTopology` and the path of the SDK test that compiles that declaration and asserts the `CompileError`, and the drill checks the cited file contains the name
 
 #### Scenario: A runtime refusal boots on every runtime
 
@@ -769,14 +769,21 @@ end-to-end.
 - **THEN** the gate SHALL fail on the missing manifest as it would for any absent test app, naming the path
 
 ### Requirement: The short form is a required capability every manifest carries and every app spells
-`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input` and `sugar_workflow`, and those ids SHALL NOT appear under `graph_builder` or `workflow`. Every test app SHALL declare each of the four through its SDK's short form (one procedure declaration carrying identity, kind and sink, and a text entry codec where the SDK's builder names codecs) and SHALL register each with one call; no app SHALL hand-write an operative for them. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all four fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input` and `sugar_workflow`.
+`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `workflow`. Every test app SHALL declare each of the five through its SDK's short form, which is **one operative declaration** at the kind-named operative entry point carrying its factory id and a procedure body (a `sink` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a procedure beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`.
 
-The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a procedure declaring no output), needing the surface `shorthand`; `shorthand_typed_output` for the row only an SDK that can read a procedure's output type at declaration time can write; and `shorthand_omittable_sink` for the row only an SDK whose spelling can omit the sink can write. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
+`sugar_state_only` SHALL be a stream short form with the entry channel `ticks`, no `sink`, and a body that records its input in declared state. It has no sink frame to observe, so its proof SHALL be the entity state read back through the live entity-state query rather than a sink assertion.
+
+The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a body declaring no output), needing the surface `shorthand`, and `shorthand_typed_output` for the row only an SDK that can read a body's output type at declaration time can write. The rows SHALL be `shorthand_with_topology` and `shorthand_sink_without_output`. The `shorthand_omittable_sink` surface SHALL be removed from the `needs` vocabulary and from every manifest, because a sink is optional in every SDK's short form and no spelling has to omit a key that rides it. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
 
 #### Scenario: A manifest carrying the old grouping fails the gate
 
 - **WHEN** a manifest still lists `sugar_do_nothing` under `graph_builder`
 - **THEN** the gate fails naming the manifest, the capability and the id
+
+#### Scenario: A manifest missing the sinkless fixture fails the gate
+
+- **WHEN** a manifest lists four `shorthand` fixtures and not `sugar_state_only`
+- **THEN** the gate fails naming the manifest and the missing id
 
 #### Scenario: The named entry channel is reached by name on every runtime
 
@@ -793,17 +800,23 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 - **WHEN** the scenario starts `sugar_workflow` with init values under any runtime
 - **THEN** `sugar_workflow_placed` carries the start values' bytes and the instance completes with status `ok`
 
+#### Scenario: A sinkless short form is proven by its state on every runtime
+
+- **WHEN** the scenario injects a frame on channel `ticks` of a `sugar_state_only` operative under any runtime
+- **THEN** the operative declares no plugin channel, and the live entity-state query answers a state carrying that input
+
 #### Scenario: A row an untyped SDK cannot write skips by name
 
 - **WHEN** the Ruby app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_sink_without_output`
 - **THEN** it prints that its builder carries no `shorthand_typed_output` and the drill counts the skip against the Ruby manifest, which does not list that surface
 
-#### Scenario: A spelling that cannot omit the sink skips by name
+#### Scenario: A retired surface is gone from every manifest
 
-- **WHEN** the Ruby app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_key_without_sink`
-- **THEN** it prints that its builder carries no `shorthand_omittable_sink`, and the drill accepts the skip because the Ruby manifest does not list that surface
+- **WHEN** the seven manifests are read
+- **THEN** none lists `shorthand_omittable_sink`, and the `needs` vocabulary does not name it
 
 #### Scenario: A short-form row's name is checked against the contract, not the core
 
-- **WHEN** the refusal table carries a row named `SinkWithoutKind` with `needs` `shorthand`
+- **WHEN** the refusal table carries a row named `ShortFormWithTopology` with `needs` `shorthand`
 - **THEN** `topology_check_test.exs` passes without an issue variant of that name, and fails if `docs/sdk/authoring_contract.md` §5 does not list the name
+

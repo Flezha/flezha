@@ -173,6 +173,7 @@ fn ok_effect(outputs: Vec<Output>) -> ItemEffect {
         timers: Vec::new(),
         checkpoint: false,
         dlq: None,
+        complete: None,
     }
 }
 

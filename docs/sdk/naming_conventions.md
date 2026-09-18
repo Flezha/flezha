@@ -77,7 +77,7 @@ call (no "poisoned builder"):
 
 The two SDKs report the identical failure class with the same error name: what
 Java throws at `registerFactory(...)`, Rust returns as `Err` from
-`register_factory(R)`. The five short-form refusals
+`register_factory(R)`. The three short-form refusals
 (`docs/sdk/authoring_contract.md` §5.2) are named the same way in all seven
 SDKs, and the name appears verbatim in the error an author reads.
 

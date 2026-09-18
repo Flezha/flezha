@@ -195,8 +195,8 @@ pub struct HostClassDecl {
     pub sync_durability: bool,
     pub channels: Vec<HostChannelDecl>,
     pub procedures: Vec<HostProcedureDecl>,
-    /// Present for a workflow class: run-sugar with no procedures, a
-    /// structured chain with them.
+    /// Present for a workflow class: its loop, rollback and ladder facts
+    /// over the procedures declared above.
     #[serde(default)]
     pub workflow: Option<HostWorkflowDecl>,
 }

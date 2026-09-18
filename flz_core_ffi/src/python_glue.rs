@@ -551,37 +551,6 @@ impl Core {
         Ok(())
     }
 
-    /// Emit one output payload from a live workflow run-sugar body.
-    /// Non-blocking in the core (an unbounded coordinator send), so it holds
-    /// the GIL.
-    fn workflow_emit(&self, instance_id: &str, payload: &[u8]) -> PyResult<()> {
-        let ctx = self.ptr()?;
-        let instance = veneer::c_string("instance id", instance_id)?;
-        Ok(veneer::workflow_emit(ctx, &instance, payload)?)
-    }
-
-    /// The next inbox item of a live workflow body, or `None` on timeout.
-    fn workflow_recv<'py>(
-        &self,
-        py: Python<'py>,
-        instance_id: &str,
-        timeout_ms: u64,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let ctx = self.ptr()?;
-        let instance = veneer::c_string("instance id", instance_id)?;
-        match py.detach(move || veneer::workflow_recv(ctx, &instance, timeout_ms))? {
-            Some(payload) => payload_view(py, payload),
-            None => Ok(py.None().into_bound(py)),
-        }
-    }
-
-    /// Whether the named workflow body's cancellation token has tripped.
-    fn workflow_cancelled(&self, instance_id: &str) -> PyResult<bool> {
-        let ctx = self.ptr()?;
-        let instance = veneer::c_string("instance id", instance_id)?;
-        Ok(veneer::workflow_cancelled(ctx, &instance))
-    }
-
     /// Request a spawn from the live activation `token`; answers the handle
     /// number at once. An empty `id` asks the controller to generate one.
     /// Never waits, so it holds the GIL.
@@ -706,9 +675,6 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.abandon", "flz_core_abandon"),
     ("Core.shutdown", "flz_core_shutdown"),
     ("Core.watch_stdin_eof", "flz_core_watch_stdin_eof"),
-    ("Core.workflow_emit", "flz_core_workflow_emit"),
-    ("Core.workflow_recv", "flz_core_workflow_recv"),
-    ("Core.workflow_cancelled", "flz_core_workflow_cancelled"),
     ("Core.spawn_request", "flz_core_spawn_request"),
     ("Core.spawn_result", "flz_core_spawn_result"),
     ("Core.admin_call", "flz_core_admin_call"),

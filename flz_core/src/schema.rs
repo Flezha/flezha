@@ -47,10 +47,6 @@ pub enum ActivationKind {
     /// The prepare crossing: one [`PrepareAnswer`] per payload, in order,
     /// before anything is enqueued.
     KeyRequest(KeyRequest),
-    /// A run-sugar body, completed with [`ActivationOutcome::WorkflowDone`].
-    WorkflowRun {
-        args: Vec<u8>,
-    },
     /// `compensate` over the recorded forward outputs; the answer's single
     /// effect carries any undo outputs.
     CompensateRun {
@@ -142,11 +138,6 @@ pub enum ActivationOutcome {
     Prepared(Vec<Result<PrepareAnswer, WorkError>>),
     /// The whole activation failed before per-item processing.
     Failed(WorkError),
-    /// A run-sugar body returned; `completed` mirrors `ctx.complete(..)`.
-    WorkflowDone {
-        completed: bool,
-        result: Vec<u8>,
-    },
 }
 
 /// One processed item's effect record plus its verdict.
@@ -161,6 +152,9 @@ pub struct ItemEffect {
     /// The host called `ctx.checkpoint()`.
     pub checkpoint: bool,
     pub dlq: Option<DlqEntry>,
+    /// The host called `ctx.complete(result)`: inside a workflow the instance
+    /// ends after the iteration commits; a stream refuses it.
+    pub complete: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +327,7 @@ mod tests {
                 timers: vec![TimerOp::register(TimerKind::EventTime, 5000)],
                 checkpoint: false,
                 dlq: None,
+                complete: Some(b"done".to_vec()),
             }]),
         };
         let decoded = decode_result(&encode_result(&r)).unwrap();
@@ -392,6 +387,7 @@ mod fixture_tests {
                 timers: vec![TimerOp::cancel(TimerKind::ProcessingTime, 2_000)],
                 checkpoint: true,
                 dlq: None,
+                complete: None,
             }]),
         }
     }
@@ -405,7 +401,7 @@ mod fixture_tests {
         );
         assert_eq!(
             hex(&encode_result(&result_fixture())),
-            "2a0001000101010101036f757401026b32000001020107e8070101d00f000100"
+            "2a0001000101010101036f757401026b32000001020107e8070101d00f00010000"
         );
         // And they decode back to the same values (shims decode activations,
         // the core decodes results).
@@ -459,16 +455,10 @@ mod fixture_tests {
                 "06020101700100000166",
             ),
             (
-                ActivationKind::WorkflowRun {
-                    args: b"go".to_vec(),
-                },
-                "0702676f000166",
-            ),
-            (
                 ActivationKind::CompensateRun {
                     outputs: vec![vec![0x0A]],
                 },
-                "0801010a000166",
+                "0701010a000166",
             ),
         ];
         for (kind, expected) in kinds {

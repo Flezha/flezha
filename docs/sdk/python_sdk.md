@@ -76,7 +76,7 @@ class Bumped:
 
 
 class Upcase:
-    def process(self, value: str, ctx: flezha.Ctx[Seen]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[Seen]) -> str:
         ctx.change(Bumped(by=1))
         return value.upper()
 
@@ -114,17 +114,21 @@ def test_price() -> None:
 
 ### The short form
 
-A procedure that declares a `sink` is a whole operative: one declaration, no
-`stream_operative` beside it. `kind` says which kind it generates, and `codec`
-is the entry codec `Channels.input` takes.
+`@flezha.stream_operative` and `@flezha.workflow_operative` declare a whole
+single-procedure operative when they decorate a procedure's body instead of a
+channels body: one declaration, no `flezha.procedure` beside it. The decorator
+names the kind. `id` is the factory id and is always written; `sink`, `input`
+and `codec` (the entry codec `Channels.input` takes) are optional, and so are
+the procedure's own keywords (`entity_keys`, `clock`, `mailbox_capacity`,
+`schema_version` and the rest `flezha.procedure` takes, except `name`).
 
 ```python
-@flezha.procedure(name="upcase", kind="stream", sink="out", codec="text")
+@flezha.stream_operative(id="upcase", sink="out", codec="text")
 def upcase(value: str) -> str:
     return value.upper()
 
 
-@flezha.procedure(name="place", kind="workflow", sink="placed", input="order", codec="text")
+@flezha.workflow_operative(id="place", sink="placed", input="order", codec="text")
 def place(order: str) -> str:
     return order
 
@@ -133,25 +137,53 @@ runner = flezha.create_runner("default")
 runner.register_factory(upcase).register_factory(place).run()
 ```
 
+The body is a function, or a class whose `run` is the handler and whose other
+methods are the hooks. A function is a channels body when it takes one
+parameter annotated `flezha.Channels`, or not annotated at all; any other
+function is a procedure body.
+
+With no `sink`, the operative declares its entry channel and the procedure and
+no plugin channel, which is how an operative that only keeps state is written:
+
+```python
+@flezha.stream_operative(id="counter", input="ticks", codec="text")
+class Counter:
+    def run(self, value: str, ctx: flezha.Ctx[Seen]) -> None:
+        ctx.change(Bumped(by=1))
+
+    def initial_state(self, entity_key: str | None) -> Seen:
+        return Seen()
+
+    def apply_change(self, state: Seen, change: Bumped) -> None:
+        state.count += change.by
+```
+
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` — or the `input` keyword's
-value — decoded by `codec`, the procedure, a plugin sink named by `sink`, a
-factory id equal to `name`, and every class-level setting at its default. A
-workflow short form is a `once` workflow, seeded on its entry channel from
-`flz operative start --kind workflow --init-values`.
+single procedure: an entry channel named `input` (or the `input` keyword's
+value) decoded by `codec`, the procedure, a plugin sink named by `sink` when one
+is written, a factory id equal to `id`, and every class-level setting at its
+default. The procedure is named `id` verbatim, so growing out of the short form
+keeps every entity's state where it was, and `upcase.procedure` wires it into
+another operative's channels body. A workflow short form is a `once` workflow,
+seeded on its entry channel from `flz operative start --kind workflow
+--init-values`.
 
 Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window. The short form declares none of them, and nothing is harvested — an
+window. The short form declares none of them, and nothing is harvested: an
 operative a runner declares is one you registered.
 
-Four refusals are raised where the decorator runs, each naming itself:
-`SinkWithoutId` (a `sink` with no `name`), `SinkWithoutKind`,
-`SinkWithoutOutput` (no return annotation, or `None`) and
-`ShorthandKeyWithoutSink` (`kind`, `input` or `codec` with no `sink`).
+Three refusals name themselves. `ShortFormWithTopology` (a class with `run`
+that also declares `channels` or `procedures`) and `SinkWithoutOutput` (a `sink` on a body with
+no return annotation, or `None`) are raised where the decorator runs, and
+`DuplicateFactoryId` where a second operative under one factory id is
+registered. A missing `id`, a class-level setting on a short form, and `sink`,
+`input`, `codec` or a procedure keyword on a channels body are refused where the
+decorator runs too, as is `kind`, `sink`, `input` or `codec` on
+`flezha.procedure`.
 
-> A workflow short form started by a *spawn* does not see its payload yet —
-> `KB-381`. Start it with `--init-values` until that is fixed.
+> A workflow short form started by a *spawn* does not see its payload yet
+> (`KB-381`). Start it with `--init-values` until that is fixed.
 
 ### Type hints are the declaration
 

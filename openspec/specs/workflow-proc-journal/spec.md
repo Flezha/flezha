@@ -200,15 +200,27 @@ typed oversized error. The `outbox_flushed` and `compensated` entry types
 
 The proc-journal codec SHALL write and interpret the `iter_committed` and
 `parked` entry types (previously reserved): `iter_committed` carries the
-iteration number and the consumed inbox offset; `parked` carries the iteration
-number and an optional wake deadline. Per-proc `proc_committed` entries SHALL carry
-the enclosing iteration in the `iter` field (0 for a non-looping chain). The
-`flz state journal` verb SHALL render both entry types.
+iteration number, the consumed inbox offset, and, when a procedure of that
+iteration called `ctx.complete(result)`, the completion and its result;
+`parked` carries the iteration number and an optional wake deadline. Per-proc
+`proc_committed` entries SHALL carry the enclosing iteration in the `iter`
+field (0 for a non-looping chain) and, when that procedure called
+`ctx.complete(result)`, its completion and result. An `iter_committed` or
+`proc_committed` entry written before completions existed SHALL read as
+carrying none. The restore state shipped on a rebind SHALL carry the latest
+committed iteration's completion and each committed procedure's own. The
+`flz state journal` verb SHALL render both entry types, and SHALL show a
+completing entry as completing.
 
 #### Scenario: Journal reflects loop progress
 
 - **WHEN** a looping instance has committed two iterations and parked
 - **THEN** `flz state journal` SHALL show the per-proc entries tagged with their iteration, two `iter_committed` entries with consumed offsets, and a final `parked` entry
+
+#### Scenario: A completing iteration is journaled as completing
+
+- **WHEN** a procedure of iteration 3 calls `ctx.complete(result)` and iteration 3 commits
+- **THEN** the journal's `iter_committed(3)` entry and the completing procedure's `proc_committed` entry SHALL each carry the completion and `result`, and `flz state journal` SHALL render both as completing
 
 ### Requirement: The crash-resume state ships every in-flight proc's handoff
 

@@ -61,6 +61,25 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert entry.payload.handoff == [{4, "handoff"}]
   end
 
+  test "a completing commit journals its result on both barriers, and a plain one none" do
+    inst = "opc_done_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("done")
+
+    for payload <- [
+          build_proc_commit_payload(inst, 0, [], [], "ref-done-p", completes_with: "3"),
+          build_iter_commit_payload(inst, 0, 0, [], "ref-done-i", completes_with: "3"),
+          build_proc_commit_payload(inst, 1, [], [], "ref-plain-p")
+        ] do
+      send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+      assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
+    end
+
+    assert {:ok, [proc, iter, plain]} = ProcJournal.read(inst)
+    assert {proc.type, proc.payload.completion} == {:proc_committed, "3"}
+    assert {iter.type, iter.payload.completion} == {:iter_committed, "3"}
+    assert plain.payload.completion == nil
+  end
+
   test "a refused append (oversized handoff) rides back in the error field" do
     on_exit(TestHelpers.override_env(:wal_high_watermark_bytes, 1024))
 
@@ -499,12 +518,21 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
            Enum.map(Keyword.get(opts, :outbox, []), fn item ->
              struct!(RunnerCommands.ProcOutboxItem, item)
            end),
-         compensating: Keyword.get(opts, :compensating, false)
+         compensating: Keyword.get(opts, :compensating, false),
+         completes: Keyword.has_key?(opts, :completes_with),
+         result: Keyword.get(opts, :completes_with, "")
        }}
     )
   end
 
-  defp build_iter_commit_payload(operative_id, iter, consumed_offset, handoff, reference_id) do
+  defp build_iter_commit_payload(
+         operative_id,
+         iter,
+         consumed_offset,
+         handoff,
+         reference_id,
+         opts \\ []
+       ) do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_commit,
       %RunnerCommands.IterCommit{
@@ -514,7 +542,9 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
         handoff:
           Enum.map(handoff, fn {cid, bytes} ->
             %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes}
-          end)
+          end),
+        completes: Keyword.has_key?(opts, :completes_with),
+        result: Keyword.get(opts, :completes_with, "")
       }
     })
   end

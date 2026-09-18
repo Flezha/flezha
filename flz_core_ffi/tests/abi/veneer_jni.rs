@@ -138,7 +138,6 @@ fn the_blocking_entry_points_are_the_declared_ones() {
             "poll",
             "complete",
             "waitStarvation",
-            "workflowRecv",
             "spawnResult",
             "adminCall"
         ]

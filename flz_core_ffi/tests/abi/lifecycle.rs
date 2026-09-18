@@ -62,7 +62,7 @@ fn c_abi_full_scenario() {
     restores_and_applies_the_offset_floor(ctx, &controller, &stream);
     a_live_read_answers_with_the_host_json(ctx, &controller);
     a_keyed_dynamic_route_crosses_for_its_key(ctx, &controller, &stream);
-    a_workflow_body_runs_through_the_abi(ctx, &controller);
+    a_workflow_procedure_completes_through_the_abi(ctx, &controller);
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
@@ -615,25 +615,25 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     controller.await_success("AddOperative dyn response", "ref-add-dyn");
 }
 
-fn a_workflow_body_runs_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
+fn a_workflow_procedure_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
     declares_the_workflow_class(ctx, controller);
     let (status, act) = abi_poll(ctx, 5_000);
-    assert_eq!(status, FLZ_POLL_ACTIVATION, "workflow seed hands out");
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "the workflow's step hands out");
     let act = act.unwrap();
-    assert_eq!(act.target.operative, "sugar-1");
-    let schema::ActivationKind::WorkflowRun { args } = &act.kind else {
-        panic!("expected a workflow run, got {:?}", act.kind);
-    };
-    assert_eq!(args, b"seed");
-    the_workflow_session_calls_answer(ctx);
+    assert_eq!(act.target.operative, "wf-1");
+    assert!(
+        matches!(act.kind, schema::ActivationKind::Work(_)),
+        "a workflow step is ordinary work, got {:?}",
+        act.kind
+    );
     abi_complete(
         ctx,
         &schema::ActivationResult {
             token: act.token,
-            outcome: schema::ActivationOutcome::WorkflowDone {
-                completed: true,
-                result: b"done".to_vec(),
-            },
+            outcome: schema::ActivationOutcome::Work(vec![schema::ItemEffect {
+                complete: Some(b"done".to_vec()),
+                ..ok_effect(None, Vec::new())
+            }]),
         },
     );
 
@@ -644,7 +644,7 @@ fn a_workflow_body_runs_through_the_abi(ctx: *mut FlzContext, controller: &Contr
                     matches!(
                         r.command,
                         Some(flz_core::pb::command_request::Command::WorkflowCompleted(ref c))
-                            if c.operative_id == "sugar-1"
+                            if c.operative_id == "wf-1"
                                 && c.status == "ok"
                                 && c.result == b"done".to_vec()
                     )
@@ -656,10 +656,10 @@ fn a_workflow_body_runs_through_the_abi(ctx: *mut FlzContext, controller: &Contr
 
 fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
-        "factory_id": "abi_sugar",
+        "factory_id": "abi_workflow",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [],
-        "procedures": [],
+        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
+        "procedures": [{"name": "wf_step"}],
         "workflow": {}
     }"#;
     assert_eq!(
@@ -667,31 +667,13 @@ fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
         FLZ_OK
     );
     controller.send(
-        "ref-add-sugar",
+        "ref-add-wf",
         flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
-            operative_id: "sugar-1".to_string(),
-            factory_id: "abi_sugar".to_string(),
+            operative_id: "wf-1".to_string(),
+            factory_id: "abi_workflow".to_string(),
             kind: "workflow".to_string(),
             init_values: "seed".to_string(),
             ..Default::default()
         }),
-    );
-}
-
-/// The session calls a live body uses, through the ABI.
-fn the_workflow_session_calls_answer(ctx: *mut FlzContext) {
-    let instance = CString::new("sugar-1").unwrap();
-    assert_eq!(
-        unsafe { flz_core_workflow_cancelled(ctx, instance.as_ptr()) },
-        0,
-        "a live body is not cancelled"
-    );
-    let mut buf: *mut u8 = std::ptr::null_mut();
-    let mut len: usize = 0;
-    let status = unsafe { flz_core_workflow_recv(ctx, instance.as_ptr(), 50, &mut buf, &mut len) };
-    assert_eq!(status, FLZ_POLL_TIMEOUT, "an empty inbox times out");
-    assert_eq!(
-        unsafe { flz_core_workflow_emit(ctx, instance.as_ptr(), b"mid".as_ptr(), 3) },
-        FLZ_OK
     );
 }

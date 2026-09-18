@@ -218,7 +218,9 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
     :ok = on(peer, :serve, [hub_id, ["report"]])
     assert wait(fn -> Helper.group_nodes(hub_id, "report") == [peer] end)
 
-    assert Helper.start_child(hub_id, "waiting", "report", :declared, durable: true) == {:ok, peer}
+    assert Helper.start_child(hub_id, "waiting", "report", :declared, durable: true) ==
+             {:ok, peer}
+
     assert wait(fn -> Helper.declared(hub_id) == ["waiting"] end)
 
     # The only node serving `report` leaves. The child stays declared, and the

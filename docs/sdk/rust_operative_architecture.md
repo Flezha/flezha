@@ -71,28 +71,28 @@ of probing the compute unit — `flz state get` on a workflow operative answers
 A workflow operative is a run-once job: `flz operative start <factory> [--id <id>]
 --kind workflow` sets the optional `kind` on `AddOperative` (empty ⇒
 `:stream`). The SDK keeps one sealed registry of live units (`Operative::Stream`
-| `Operative::Workflow`) resolved once per frame at the dispatch boundary. The
-`run`-sugar form:
+| `Operative::Workflow`) resolved once per frame at the dispatch boundary. A
+workflow class declares its procedures on the same builder a stream uses:
 
 ```rust
 struct Greet;
 impl flezha_runner::WorkflowOperative for Greet {
     fn factory_id() -> &'static str { "greet" }
-    fn run(ctx: &mut flezha_runner::WorkflowCtx, args: &str)
-        -> Result<(), flezha_runner::WorkflowError> {
-        ctx.emit(format!("hello {args}").into_bytes())?;
-        Ok(())
+    fn procedures(c: &flezha_runner::ChannelBuilder) {
+        c.input::<String>("in").into::<SayHello>().sink_named("out");
     }
 }
 flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
 ```
 
-`run` is scheduled once per started instance with `args` from `init_values`;
-a class implements either `run` or the structured `procedures(&ChannelBuilder)`
-DAG. When the job ends, the SDK emits `WorkflowCompleted` on the control
-stream and the controller drives the one teardown path
-(`Flezha.Service.OperativeManager.stop_operative/3`). An erroring `run` is
-terminal — teardown plus `[:flezha, :workflow, :failed]`, no retry. A job that
+`SayHello` is an ordinary `Procedure` whose `run` emits `format!("hello {input}")`.
+The entry channel is seeded once per started instance from `init_values`; a
+class declaring no procedure is refused at registration. A procedure ends a
+looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
+`WorkflowCompleted` on the control stream and the controller drives the one
+teardown path (`Flezha.Service.OperativeManager.stop_operative/3`). A procedure
+that fails past its retry ladder is terminal: compensation, then teardown
+plus `[:flezha, :workflow, :failed]`, no re-run. A job that
 completes before the start RPC confirms its binding is reported as a successful
 start with no live `runner_id`. Lifecycle, durable loop, suspension, saga
 compensation, entity retry and finished-job retention are in
@@ -169,15 +169,15 @@ flezha_runner::operative! {
 }
 ```
 
-A single-procedure `input → sink` operative adds `kind = "stream" | "workflow"`
-and `sink = "…"` to the attribute and needs no `operative!`: the generated
-procedure type itself implements the kind's operative trait, so
-`runner.register_factory(Ohlc)` declares it. Attribute opt-ins: `id`, `kind`,
-`sink`, `input`, `emits`, `keys` + `entities_for` (static mode), `key`,
-`idle_ttl` + `max_entities` (dynamic-mode knobs — the key itself is declared on
-the wiring with `.key_by(f)`), `capacity`, `on_full`, `clock`. Nothing is
-harvested: every operative a runner declares is one the author registered.
-Fan-out and multi-input stay on an explicit `channels()` body.
+A single-procedure operative needs no `operative!`: its `run` function takes
+`#[flezha_runner::stream_operative]` or `#[flezha_runner::workflow_operative]`
+instead (the short form, below). Attribute opt-ins: `id`, `emits`, `keys` +
+`entities_for` (static mode), `key`, `idle_ttl` + `max_entities` (dynamic-mode
+knobs; the key itself is declared on the wiring with `.key_by(f)`), `capacity`,
+`clock`, and on the short-form attributes `sink`, `input` and `on_full`, which
+describe the operative's entry channel.
+Nothing is harvested: every operative a runner declares is one the author
+registered. Fan-out and multi-input stay on an explicit `channels()` body.
 
 Both shorthands name their entry channel `input` unless the author says
 otherwise: `input = "prices"` on the attribute, `input::<String>("prices")` on
@@ -186,16 +186,18 @@ takes its name in.
 
 ### The short form
 
-A `sink` on the attribute makes that one procedure a whole operative of the
-written `kind`, and the generated procedure type is what you register:
+`#[flezha_runner::stream_operative]` or `#[flezha_runner::workflow_operative]`
+on a `run` function declares a whole operative of the kind the attribute names.
+It emits two types: the operative under the function's PascalCase name, which
+is what you register, and the procedure beside it, suffixed `Procedure`:
 
 ```rust
-#[flezha_runner::procedure(id = "upcase", kind = "stream", sink = "out")]
+#[flezha_runner::stream_operative(id = "upcase", sink = "out")]
 fn upcase(value: String) -> String {
     value.to_uppercase()
 }
 
-#[flezha_runner::procedure(id = "place", kind = "workflow", sink = "placed", input = "order")]
+#[flezha_runner::workflow_operative(id = "place", sink = "placed", input = "order")]
 fn place(order: String) -> String {
     order
 }
@@ -207,22 +209,39 @@ Flezha::create_runner("default")?
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` — or the `input` key's value —
-the procedure, a plugin sink named by `sink`, a factory id equal to `id`, and
-every class-level setting at its trait default. A workflow short form is a
-`once` workflow, seeded on its entry channel from
+single procedure: an entry channel named `input` (or the `input` key's value),
+the procedure, a plugin sink named by `sink` when one is written, a factory id
+equal to `id`, and every class-level setting at its trait default. The
+procedure (`UpcaseProcedure`) is named `id` verbatim, so its entities keep their
+state path when the operative grows into the full form, and it wires into
+another operative's `channels()` body like any procedure. A workflow short form
+is a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
+
+`sink` is optional. With none, the entry channel feeds the procedure and no
+plugin channel is declared: the operative that only keeps state.
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Default, flezha_runner::State)]
+struct CounterState { seen: Vec<String> }
+
+#[flezha_runner::stream_operative(id = "counter", input = "ticks")]
+fn counter(tick: String, state: &mut CounterState) {
+    state.push_seen(tick);
+}
+```
 
 Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window. Rust names no entry codec — an entry decodes by its declared type — so
 the short form takes no `codec` key.
 
-Four refusals are compile errors whose message begins with its own name:
-`SinkWithoutId` (a `sink` with no `id`), `SinkWithoutKind`, `SinkWithoutOutput`
-(a unit return with no `emits`) and `ShorthandKeyWithoutSink` (`input` or
-`kind` with no `sink`). A `kind` outside `"stream"` and `"workflow"` names both
-values.
+The refusals are compile errors. A `sink` on a unit return with no `emits`
+fails with a message beginning `SinkWithoutOutput`, and a missing `id` names the
+attribute. A hand-written `StreamOperative` or `WorkflowOperative` impl beside a
+short form is rustc's conflicting-implementation error, which the contract calls
+`ShortFormWithTopology`. `#[flezha_runner::procedure]` declares a procedure
+only and refuses `sink`, `input` and `kind`.
 
 > A workflow short form started by a *spawn* does not see its payload yet —
 > `KB-381`. Start it with `--init-values` until that is fixed.
@@ -627,7 +646,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | Wire dispatch (`OperativeDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
 | Operative state JSON shape, `apply_init_values` | `flz_core/src/command/entity_state.rs` |
-| `WorkflowOperative`, `WorkflowCtx`; `ProcedureTestHarness` | `sdk/rust/src/workflow/mod.rs`, `flz_core/src/workflow/mod.rs`; `sdk/rust/src/testing/harness.rs` |
+| `WorkflowOperative`; `ProcedureTestHarness` | `sdk/rust/src/workflow/mod.rs`, `flz_core/src/workflow/mod.rs`; `sdk/rust/src/testing/harness.rs` |
 
 ## See also
 

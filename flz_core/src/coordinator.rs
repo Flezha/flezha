@@ -120,16 +120,12 @@ impl RunnerNode {
             None => return false,
         };
 
-        // Build the Entities (structured; empty for run-sugar) + the instance
-        // now — synchronously, before the AddOperative frame is ACKed — and
-        // register it so the Controller's RestoreInitState frames reach live
-        // slots and the driver holds its first Procedure until the restores land.
+        // Build the Entities + the instance now, synchronously, before the
+        // AddOperative frame is ACKed, and register it so the Controller's
+        // RestoreInitState frames reach live slots and the driver holds its
+        // first Procedure until the restores land.
         let id: Arc<str> = Arc::from(instance_id.as_str());
-        let stage_entities = spec
-            .topology
-            .as_ref()
-            .map(|_| crate::workflow::driver::build_all_stage_entities(&spec, &id))
-            .unwrap_or_default();
+        let stage_entities = crate::workflow::driver::build_all_stage_entities(&spec, &id);
         let (instance, inbox_rx) = crate::workflow::instance::WorkflowInstance::new(
             Arc::clone(&id),
             Arc::from(factory_id.as_str()),

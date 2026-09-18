@@ -199,8 +199,10 @@ prepare crossing, entity modes, tiers, timers, inter-procedure routing,
 and workflow lifecycles. The CI scenario suite SHALL grow to drive at least:
 a restore fold, a live state read, a keyed dynamic route via the prepare
 crossing, an effectively-once completion with offsets, and a workflow
-run-sugar lifecycle — all through the C entry points, failing if any
-required surface is missing.
+procedure's `complete` ending its instance, all through the C entry points,
+failing if any required surface is missing. A step answer SHALL carry a
+procedure's completion request and its result, and no entry point SHALL exist
+for a one-function workflow body, which no host declares.
 
 Every shim is a consumer of the C entry points, never a fork of them —
 whether it is a language veneer built from this crate (the JNI veneer behind
@@ -242,6 +244,10 @@ exported symbols the way a veneer's exports are.
 #### Scenario: A host that cannot drain inline is still safe
 - **WHEN** a shim-based host completes an activation whose emit blocks on a full `DropNothing` consumer mailbox, and the inline-drain hook the in-process Rust host installs is unavailable to it
 - **THEN** the core SHALL report the condition through `flz_core_wait_starvation`, so a host that services that wait can recover without a per-host kernel path
+
+#### Scenario: A step answer ends its workflow
+- **WHEN** a host answers a workflow step activation whose procedure called `ctx.complete(result)`
+- **THEN** the core SHALL end the instance with that result once the iteration commits, with no host-side path of its own
 
 ### Requirement: The restore crossing carries each record's stamped schema version
 

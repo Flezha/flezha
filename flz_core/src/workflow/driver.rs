@@ -1,6 +1,6 @@
-//! The workflow driver: one dedicated thread per instance that runs the body
-//! — `run`-sugar or the procedure DAG, where a child runs only after every
-//! producer feeding it commits — and converges every exit trigger on one
+//! The workflow driver: one dedicated thread per instance that runs the
+//! procedure DAG, where a child runs only after every producer feeding it
+//! commits, and converges every exit trigger on one
 //! `WorkflowCompleted`. The invariant: the driver only ever blocks (inbox,
 //! barrier, commit ack) and is never a thread its own stages need; stage
 //! work leaves as [`WorkflowStep`] activations the poll core hands out.
@@ -16,12 +16,13 @@ use crossbeam::channel::Receiver;
 
 use super::commit::{commit_iteration, commit_proc_boundary};
 use super::compensation::{
-    emit_compensation_record, run_compensation, run_rewind_undo, stages_from_intents, StageRecord,
+    emit_compensation_record, run_compensation, run_rewind_undo, stages_from_intents, EntityRun,
+    StageRecord,
 };
 use super::instance::{InboxItem, JournalResume, WorkflowInstance};
 use super::resume::{journaled_stages, next_iteration_seed, park, IterationSeed, IterationStart};
 use super::spec::{ProcDag, WorkflowSpec};
-use super::{LoopMode, RollbackMode, WorkflowCtx, WorkflowError, WorkflowRunFn};
+use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::channel::{BuildEntityArgs, ConsumerEdge, ProcedureId, RetryPolicy};
 use crate::entity::EntitySlot;
 use crate::flusher::EntityFlusher;
@@ -159,7 +160,10 @@ fn run(
         .max_duration
         .map(|d| spawn_duration_watcher(d, Arc::clone(&instance.cancel), Arc::clone(&finished)));
 
-    let outcome = run_body(&spec, &instance, inbox_rx, &args);
+    // Hold on the crash-resume gate until the Controller's Entity restores
+    // land, then drive the chain over the restored state.
+    instance.wait_for_restore();
+    let outcome = run_structured(&spec, &instance, &args, &inbox_rx);
 
     finished.store(true, Ordering::Release);
     if let Some(w) = watcher {
@@ -185,76 +189,6 @@ fn run(
     }
 }
 
-/// The body by class shape: a structured chain, a host run-sugar body crossed
-/// through the poll surface, or the typed in-process `run`.
-fn run_body(
-    spec: &WorkflowSpec,
-    instance: &Arc<WorkflowInstance>,
-    inbox_rx: Receiver<InboxItem>,
-    args: &str,
-) -> RunOutcome {
-    match spec.topology.as_ref() {
-        // Structured: hold on the crash-resume gate until the Controller's
-        // Entity restores land, then drive the chain over the restored state.
-        Some(_) => {
-            instance.wait_for_restore();
-            run_structured(spec, instance, args, &inbox_rx)
-        }
-        // Run-sugar: no Entities, no restore — a crash re-runs from the top.
-        None if spec.host => {
-            let (outcome, result) = crate::host::run_workflow_sugar(
-                &instance.instance_id,
-                &instance.factory_id,
-                args,
-                &instance.cancel,
-                inbox_rx,
-            );
-            classify(outcome, &instance.cancel, result)
-        }
-        None => run_sugar(
-            spec.run,
-            &instance.instance_id,
-            args,
-            &instance.cancel,
-            inbox_rx,
-        ),
-    }
-}
-
-fn run_sugar(
-    run: WorkflowRunFn,
-    instance_id: &Arc<str>,
-    args: &str,
-    cancel: &Arc<AtomicBool>,
-    inbox_rx: Receiver<InboxItem>,
-) -> RunOutcome {
-    let mut ctx = WorkflowCtx::new(Arc::clone(instance_id), Arc::clone(cancel), inbox_rx);
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut ctx, args)));
-    let (_completed, result) = ctx.into_result();
-    classify(outcome, cancel, result)
-}
-
-/// The terminal tuple: a failure or panic is `error`, else a tripped token
-/// is `cancelled`, else `ok`.
-fn classify(
-    outcome: std::thread::Result<Result<(), WorkflowError>>,
-    cancel: &AtomicBool,
-    result: Vec<u8>,
-) -> RunOutcome {
-    let (status, error) = match outcome {
-        Ok(Ok(())) => {
-            if cancel.load(Ordering::Acquire) {
-                ("cancelled".to_string(), String::new())
-            } else {
-                ("ok".to_string(), String::new())
-            }
-        }
-        Ok(Err(e)) => ("error".to_string(), e.to_string()),
-        Err(panic) => ("error".to_string(), crate::util::format_panic(panic)),
-    };
-    RunOutcome::Terminal(status, error, result)
-}
-
 /// Structured path: walk the DAG; sibling branches and entities interleave.
 fn run_structured(
     spec: &WorkflowSpec,
@@ -262,10 +196,7 @@ fn run_structured(
     args: &str,
     inbox: &Receiver<InboxItem>,
 ) -> RunOutcome {
-    let topology = spec
-        .topology
-        .as_ref()
-        .expect("run_structured invoked only for a structured spec");
+    let topology = &spec.topology;
 
     // Entities were built + registered up front by `start_workflow_resumable`
     // (so restore could reach them and the resume gate could hold); a durable
@@ -296,10 +227,7 @@ pub fn build_all_stage_entities(
     spec: &WorkflowSpec,
     instance_id: &Arc<str>,
 ) -> Vec<Vec<Arc<EntitySlot>>> {
-    let topology = spec
-        .topology
-        .as_ref()
-        .expect("build_all_stage_entities invoked only for a structured spec");
+    let topology = &spec.topology;
     let mut stage_entities: Vec<Vec<Arc<EntitySlot>>> = Vec::with_capacity(spec.dag.len());
     for &proc_id in &spec.dag.order {
         let proc = topology
@@ -352,6 +280,16 @@ fn resume_plan(ctx: &ChainCtx) -> Result<ResumePlan, RunOutcome> {
     }
 
     let resume = journal.unwrap_or_default();
+
+    // The last committed iteration asked to end the instance: its commit is
+    // durable, so the run ends as it would have before the crash.
+    if let Some(result) = &resume.completion {
+        return Err(RunOutcome::Terminal(
+            "ok".to_string(),
+            String::new(),
+            result.clone(),
+        ));
+    }
 
     // The journal's committed work, in the two granularities the driver needs:
     // the fully-committed iterations (`plan_compensation`'s `committed` input, so
@@ -428,18 +366,22 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
         if let Some(offset) = consumed {
             consumed_offset = offset;
         }
-        let terminal_batch = match run_iteration(ctx, iter, start, cancel, &mut completed) {
-            Ok(batch) => batch,
-            Err((status, error)) => {
-                run_compensation(ctx, &committed, &completed);
-                return RunOutcome::Terminal(status, error, Vec::new());
-            }
-        };
+        let (terminal_batch, completion) =
+            match run_iteration(ctx, iter, start, cancel, &mut completed) {
+                Ok(released) => released,
+                Err((status, error)) => {
+                    run_compensation(ctx, &committed, &completed);
+                    return RunOutcome::Terminal(status, error, Vec::new());
+                }
+            };
         if let Err(outcome) = seal_iteration(
             ctx,
-            iter,
-            consumed_offset,
-            &terminal_batch,
+            Seal {
+                iter,
+                consumed_offset,
+                terminal_batch: &terminal_batch,
+                completion,
+            },
             cancel,
             &committed,
             &completed,
@@ -453,14 +395,21 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
     }
 }
 
-/// The iteration boundary: commit it durably, then the loop enters the next
-/// iteration. A non-looping chain finishes here; a refused commit undoes what
-/// is outstanding. `Err` ends the run.
-fn seal_iteration(
-    ctx: &ChainCtx,
+/// What an iteration hands its boundary.
+struct Seal<'a> {
     iter: u32,
     consumed_offset: u64,
-    terminal_batch: &[Value],
+    terminal_batch: &'a [Value],
+    /// A procedure's `complete`: the run ends once the commit is durable.
+    completion: Option<Vec<u8>>,
+}
+
+/// The iteration boundary: commit it durably, then the loop enters the next
+/// iteration. A non-looping chain, or one a procedure completed, finishes
+/// here; a refused commit undoes what is outstanding. `Err` ends the run.
+fn seal_iteration(
+    ctx: &ChainCtx,
+    seal: Seal,
     cancel: &AtomicBool,
     committed: &[Vec<StageRecord>],
     completed: &[StageRecord],
@@ -469,15 +418,28 @@ fn seal_iteration(
         return Err(RunOutcome::Terminal(
             "ok".to_string(),
             String::new(),
-            Vec::new(),
+            seal.completion.unwrap_or_default(),
         ));
     }
-    if let Err(e) = commit_iteration(ctx, iter, consumed_offset, terminal_batch) {
+    if let Err(e) = commit_iteration(
+        ctx,
+        seal.iter,
+        seal.consumed_offset,
+        seal.terminal_batch,
+        seal.completion.as_deref(),
+    ) {
         let (status, error) = abnormal_status(cancel, e);
         run_compensation(ctx, committed, completed);
         return Err(RunOutcome::Terminal(status, error, Vec::new()));
     }
-    Ok(())
+    match seal.completion {
+        Some(result) => Err(RunOutcome::Terminal(
+            "ok".to_string(),
+            String::new(),
+            result,
+        )),
+        None => Ok(()),
+    }
 }
 
 /// The frontier a seed opens, or the outcome that ends the run instead.
@@ -519,22 +481,28 @@ fn seed_frontier(
 
 pub(super) type Runnable = (usize, Vec<Value>);
 
+/// What a node or a whole iteration releases: its batch, and the completion
+/// a procedure asked for.
+type Released = (Vec<Value>, Option<Vec<u8>>);
+
 /// One iteration of the DAG from `start`, frontier by frontier: a node runs,
 /// commits, and accumulates its batch into each child, which runs once every
 /// producer committed — so a join is dispatched exactly once. `completed`
 /// records stages in topological order. `Ok` is the batch the leaves
-/// released; `Err` the terminal status of an abnormal exit.
+/// released and the completion a procedure asked for; `Err` the terminal
+/// status of an abnormal exit.
 fn run_iteration(
     ctx: &ChainCtx,
     iter: u32,
     start: IterationStart,
     cancel: &AtomicBool,
     completed: &mut Vec<StageRecord>,
-) -> Result<Vec<Value>, (String, String)> {
+) -> Result<Released, (String, String)> {
     let IterationStart {
         ready: mut frontier,
         mut pending,
         mut waiting,
+        mut completion,
     } = start;
     let mut children = Children {
         pending: &mut pending,
@@ -553,7 +521,9 @@ fn run_iteration(
         let mut next: Vec<Runnable> = Vec::new();
 
         for (node, out) in level {
-            let batch = advance_node(ctx, iter, node, out, failure.is_some(), cancel, completed)?;
+            let (batch, asked) =
+                advance_node(ctx, iter, node, out, failure.is_some(), cancel, completed)?;
+            completion.note(node, asked);
             if failure.is_none() {
                 children.accumulate(ctx, node, batch, &mut next, cancel)?;
             }
@@ -565,7 +535,42 @@ fn run_iteration(
         frontier = next;
     }
 
-    Ok(children.leaf_batch)
+    Ok((children.leaf_batch, completion.result()))
+}
+
+/// The completion an iteration's procedures asked for, resolved so it never
+/// depends on which step answered first: the procedure latest in the chain's
+/// commit order wins, and within one procedure the greatest entity key.
+#[derive(Default)]
+pub(super) struct Completion(Option<(usize, Vec<u8>)>);
+
+impl Completion {
+    pub(super) fn note(&mut self, node: usize, asked: Option<Vec<u8>>) {
+        let Some(result) = asked else {
+            return;
+        };
+        if self.0.as_ref().is_none_or(|(held, _)| node > *held) {
+            self.0 = Some((node, result));
+        }
+    }
+
+    fn result(self) -> Option<Vec<u8>> {
+        self.0.map(|(_, result)| result)
+    }
+}
+
+/// The completion one procedure asked for: its greatest entity key's.
+fn node_completion(ctx: &ChainCtx, node: usize, runs: &[EntityRun]) -> Option<Vec<u8>> {
+    let slots = &ctx.stage_entities[node];
+    runs.iter()
+        .filter_map(|run| {
+            Some((
+                &slots[run.entity_index].entity_key,
+                run.completion.as_ref()?,
+            ))
+        })
+        .max_by(|a, b| a.0.cmp(b.0))
+        .map(|(_, result)| result.clone())
 }
 
 /// Each child's input batch accumulating until every producer committed, and
@@ -614,10 +619,11 @@ impl Children<'_> {
 }
 
 /// Record one committed node — intent markers first, then the proc-boundary
-/// commit, then its stage record — and answer its released batch. The order
-/// is the at-least-once contract: a crash between marker and ack resolves as
-/// "not committed → re-run". A node beside a failed sibling still records
-/// (it ran and needs undo) but does not commit.
+/// commit, then its stage record — and answer its released batch and the
+/// completion it asked for. The order is the at-least-once contract: a crash
+/// between marker and ack resolves as "not committed → re-run". A node beside
+/// a failed sibling still records (it ran and needs undo) but does not
+/// commit.
 fn advance_node(
     ctx: &ChainCtx,
     iter: u32,
@@ -626,10 +632,9 @@ fn advance_node(
     sibling_failed: bool,
     cancel: &AtomicBool,
     completed: &mut Vec<StageRecord>,
-) -> Result<Vec<Value>, (String, String)> {
-    let proc = ctx.proc(node);
-    let slots = &ctx.stage_entities[node];
-    if proc.compensate_overridden {
+) -> Result<Released, (String, String)> {
+    if ctx.proc(node).compensate_overridden {
+        let slots = &ctx.stage_entities[node];
         for seg_run in &out.entities {
             emit_compensation_record(
                 COMPENSATION_INTENT_PAYLOAD_ID,
@@ -638,10 +643,11 @@ fn advance_node(
             );
         }
     }
+    let asked = node_completion(ctx, node, &out.entities);
     let commit = if sibling_failed {
         Ok(())
     } else {
-        commit_proc_boundary(ctx, node, iter, proc, &out.entities, slots, &out.batch)
+        commit_proc_boundary(ctx, node, iter, &out.entities, &out.batch, asked.as_deref())
     };
     completed.push(StageRecord {
         stage_idx: node,
@@ -651,7 +657,7 @@ fn advance_node(
     if let Err(e) = commit {
         return Err(abnormal_status(cancel, e));
     }
-    Ok(out.batch)
+    Ok((out.batch, asked))
 }
 
 /// `cancelled` when a stop tripped the token, else `ok`.

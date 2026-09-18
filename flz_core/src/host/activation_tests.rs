@@ -8,7 +8,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use super::activation::settle_item;
+use super::activation::{refuse_completion, settle_item};
 use super::HostPayload;
 use crate::entity::{EntityItem, EntityPayload, EntitySlot};
 use crate::poll_core::ItemAttempt;
@@ -72,6 +72,7 @@ fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::Item
         timers: Vec::new(),
         checkpoint: false,
         dlq: None,
+        complete: None,
     };
     (work, effect)
 }
@@ -184,4 +185,42 @@ fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     crate::poll_core::global().rearm_deferred_pushes(&producer);
     assert_eq!(full.mailbox.len(), 1, "the last consumer got its value");
     assert!(shipped(&producer) > before);
+}
+
+/// A stream never completes: an effect asking to fails as the author's own
+/// non-retryable error, recording nothing, and an item that already failed
+/// keeps its verdict.
+#[test]
+fn a_stream_effect_carrying_a_completion_fails_non_retryable() {
+    let (_, mut asked) = work_and_effect(7, &[2]);
+    asked.consumed_offset = Some(7);
+    asked.event_time = 42;
+    asked.checkpoint = true;
+    asked.complete = Some(b"3".to_vec());
+    refuse_completion(&mut asked);
+    assert_eq!(
+        asked,
+        schema::ItemEffect {
+            verdict: schema::Verdict::NonRetryableError {
+                message: crate::workflow::COMPLETE_OUTSIDE_WORKFLOW.to_string()
+            },
+            consumed_offset: Some(7),
+            event_time: 42,
+            ..super::activation::empty_effect()
+        },
+        "the changes, outputs and checkpoint the item recorded go with it"
+    );
+
+    let (_, mut failed) = work_and_effect(0, &[]);
+    failed.complete = Some(b"3".to_vec());
+    failed.verdict = schema::Verdict::RetryableError {
+        message: "own".to_string(),
+    };
+    refuse_completion(&mut failed);
+    assert_eq!(
+        failed.verdict,
+        schema::Verdict::RetryableError {
+            message: "own".to_string()
+        }
+    );
 }

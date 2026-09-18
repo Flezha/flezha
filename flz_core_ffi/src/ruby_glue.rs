@@ -504,38 +504,6 @@ fn watch_stdin_eof(grace_ms: u32) -> Result<(), Error> {
     Ok(())
 }
 
-/// Emit one output payload from a live workflow run-sugar body. Non-blocking
-/// in the core (an unbounded coordinator send), so it holds the GVL.
-fn workflow_emit(instance_id: String, payload: RString) -> Result<(), Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
-    let payload = unsafe { payload.as_slice() }.to_vec();
-    veneer::workflow_emit(ctx, &instance, &payload).map_err(refused)
-}
-
-/// The next inbox item of a live workflow body, or `nil` on timeout.
-fn workflow_recv(instance_id: String, timeout_ms: u64) -> Result<Value, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let refused = |r| raise(&ruby, r);
-    let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
-    let received = without_gvl(move || veneer::workflow_recv(ctx, &instance, timeout_ms));
-    match received.map_err(refused)? {
-        Some(payload) => shape::Sink::bytes(&Values(&ruby), payload),
-        None => Ok(ruby.qnil().as_value()),
-    }
-}
-
-/// Whether the named workflow body's cancellation token has tripped.
-fn workflow_cancelled(instance_id: String) -> Result<bool, Error> {
-    let ruby = ruby();
-    let ctx = context(&ruby)?;
-    let instance = veneer::c_string("instance id", &instance_id).map_err(|r| raise(&ruby, r))?;
-    Ok(veneer::workflow_cancelled(ctx, &instance))
-}
-
 /// Request a spawn from the live activation `token`; answers the handle number
 /// at once. An empty `id` asks the controller to generate one. Never waits, so
 /// it holds the GVL.
@@ -644,9 +612,6 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("abandon", "flz_core_abandon"),
     ("shutdown", "flz_core_shutdown"),
     ("watch_stdin_eof", "flz_core_watch_stdin_eof"),
-    ("workflow_emit", "flz_core_workflow_emit"),
-    ("workflow_recv", "flz_core_workflow_recv"),
-    ("workflow_cancelled", "flz_core_workflow_cancelled"),
     ("spawn_request", "flz_core_spawn_request"),
     ("spawn_result", "flz_core_spawn_result"),
     ("admin_call", "flz_core_admin_call"),
@@ -690,9 +655,6 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("abandon", function!(abandon, 1))?;
     native.define_module_function("shutdown", function!(shutdown, 0))?;
     native.define_module_function("watch_stdin_eof", function!(watch_stdin_eof, 1))?;
-    native.define_module_function("workflow_emit", function!(workflow_emit, 2))?;
-    native.define_module_function("workflow_recv", function!(workflow_recv, 2))?;
-    native.define_module_function("workflow_cancelled", function!(workflow_cancelled, 1))?;
     native.define_module_function("spawn_request", function!(spawn_request, 6))?;
     native.define_module_function("spawn_result", function!(spawn_result, 2))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;

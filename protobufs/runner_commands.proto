@@ -247,6 +247,9 @@ message ProcOutboxItem {
 // for the already-committed procedure `proc_idx`, journaled as a
 // `compensated` entry and flushed with comp-marked keys. The per-entity
 // compensation markers still decide which hooks run.
+//
+// `completes` / `result` carry the procedure's `ctx.complete` request, so a
+// crash before the iteration commits still ends the instance on resume.
 message ProcCommit {
     string operative_id = 1;
     uint32 proc_idx = 2;
@@ -255,6 +258,8 @@ message ProcCommit {
     repeated ProcHandoffItem handoff = 5;
     repeated ProcOutboxItem outbox = 6;
     bool compensating = 7;
+    bool completes = 8;
+    bytes result = 9;
 }
 
 // Controller -> SDK reply to ProcCommit, emitted only AFTER the journal
@@ -278,11 +283,17 @@ message ProcCommitResponse {
 // offset, and replies IterCommitResponse. The driver enters iteration
 // `iter + 1` only on the successful reply — a crash before it re-runs the
 // whole iteration (at-least-once), never the ones below it.
+//
+// `completes` is set when a procedure of the iteration called
+// `ctx.complete(result)`: the instance ends with `result` once this commit is
+// durable, and a crash after it still ends it on resume.
 message IterCommit {
     string operative_id = 1;
     uint32 iter = 2;
     uint64 consumed_offset = 3;
     repeated ProcHandoffItem handoff = 4;
+    bool completes = 5;
+    bytes result = 6;
 }
 
 // Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
@@ -316,6 +327,8 @@ message ProcCommittedProc {
     uint32 proc_idx = 1;
     uint32 iter = 2;
     repeated bytes entities_ran = 3;
+    bool completes = 4;
+    bytes result = 5;
 }
 
 // What one committed procedure of the in-flight iteration released, keyed by
@@ -337,7 +350,9 @@ message ProcEdgeHandoff {
 // loop. `committed_procs` carries every forward proc commit with its iteration
 // (compensation planning), `consumed_offset` the inbox offset the last
 // committed iteration consumed, and `parked` / `wake_deadline_ms` the
-// suspension record (workflow-durable-suspension).
+// suspension record (workflow-durable-suspension). `completed` / `result` are
+// the last committed iteration's completion request: a resume ends the
+// instance with `result` instead of waiting for input.
 //
 // `rewind_undo` carries the procedures a rewind unwound that have not been
 // compensated yet (workflow-loop-rewind). The driver runs them through the
@@ -355,6 +370,8 @@ message ProcJournalState {
     uint64 wake_deadline_ms = 7;
     repeated ProcCommittedProc rewind_undo = 8;
     repeated ProcEdgeHandoff proc_handoffs = 9;
+    bool completed = 10;
+    bytes result = 11;
 }
 
 // Per-Entity state restore handshake: Controller ships latest snapshot

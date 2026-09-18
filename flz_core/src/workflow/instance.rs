@@ -29,6 +29,7 @@ fn committed_proc(proc: &crate::pb::ProcCommittedProc) -> CommittedProc {
         proc_idx: proc.proc_idx,
         iter: proc.iter,
         entities_ran: proc.entities_ran.clone(),
+        completion: proc.completes.then(|| proc.result.clone()),
     }
 }
 
@@ -56,8 +57,8 @@ pub struct WorkflowInstance {
     /// Inbox items the controller still owes this bind; the loop does not
     /// park before they arrive.
     pub owed_inbox: u32,
-    /// Pre-built Entities per stage, empty for run-sugar; a restore rebuilds
-    /// a slot in place before the gate releases the driver.
+    /// Pre-built Entities per stage; a restore rebuilds a slot in place
+    /// before the gate releases the driver.
     pub stage_entities: Vec<Vec<Arc<EntitySlot>>>,
     /// Entity restores to wait for before the first procedure runs.
     expected: usize,
@@ -87,6 +88,8 @@ pub struct JournalResume {
     pub consumed_offset: u64,
     /// Procedures a rewind unwound that nothing has compensated yet.
     pub rewind_undo: Vec<CommittedProc>,
+    /// The result the last committed iteration's `complete` asked for.
+    pub completion: Option<Vec<u8>>,
 }
 
 /// What one committed procedure of the in-flight iteration released.
@@ -101,6 +104,8 @@ pub struct CommittedProc {
     pub proc_idx: u32,
     pub iter: u32,
     pub entities_ran: Vec<Vec<u8>>,
+    /// The result this procedure's `complete` asked for.
+    pub completion: Option<Vec<u8>>,
 }
 
 impl From<&crate::pb::ProcJournalState> for JournalResume {
@@ -120,6 +125,7 @@ impl From<&crate::pb::ProcJournalState> for JournalResume {
             committed_procs: journal.committed_procs.iter().map(committed_proc).collect(),
             consumed_offset: journal.consumed_offset,
             rewind_undo: journal.rewind_undo.iter().map(committed_proc).collect(),
+            completion: journal.completed.then(|| journal.result.clone()),
         }
     }
 }

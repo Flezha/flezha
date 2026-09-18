@@ -26,7 +26,9 @@ Transport configuration SHALL ride the same environment the other poll hosts rea
 The SDK SHALL provide a factory-function authoring surface — a procedure definition, a stream
 operative definition, a workflow operative definition — wired by a fluent channel builder carrying
 entry channels, inter-procedure edges, keying and edge transforms. Handler input and output types
-SHALL drive graph wiring.
+SHALL drive graph wiring. A procedure's body SHALL be the definition's `run` field, the name every
+SDK gives a procedure's body; a definition carrying a `handle` field SHALL throw `DeclarationError`
+naming `run`.
 
 Decorators SHALL NOT be required, and the surface SHALL be usable from plain JavaScript with no
 build step.
@@ -39,6 +41,14 @@ build step.
 #### Scenario: Plain JavaScript authors without a build step
 - **WHEN** an operative is declared from a plain JavaScript module
 - **THEN** it SHALL register and run with no transpilation
+
+#### Scenario: A procedure's body is its run field
+- **WHEN** a module calls `defineProcedure({ name: 'upcase', run: (s) => s.toUpperCase() })` and an operative wires it
+- **THEN** each input SHALL reach `run`, and its return value SHALL be the procedure's output
+
+#### Scenario: The old body field is refused
+- **WHEN** a module calls `defineProcedure({ name: 'upcase', handle: (s) => s })`
+- **THEN** loading it SHALL throw `DeclarationError` naming `run`
 
 ### Requirement: A Mismatched Edge Is a Compile Error, and the Refusal Is Pinned
 
@@ -170,27 +180,51 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-procedure short form is four definition fields
-`defineProcedure` SHALL accept `kind` (`'stream'` or `'workflow'`), `sink`, `input` and `codec` beside `name`. A definition carrying `name`, `kind` and `sink` SHALL return a procedure that also carries a generated `ClassSpec` of that kind whose factory id is `name`: a stream, or a `once` workflow with every workflow setting at its default, wiring an entry channel named `input` (or the `input` field's value) into the procedure and the procedure to the `sink` plugin channel. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is. `defineProcedure` SHALL throw `DeclarationError` with the refusal's name in `refusals` and at the start of the message: `SinkWithoutId` for a `sink` with an empty `name`, raised before the plain non-empty-name check; `SinkWithoutKind` for a `sink` with no `kind`; and `ShorthandKeyWithoutSink` for `kind`, `input` or `codec` with no `sink`, naming the fields. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short-form procedure the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. Whether `SinkWithoutOutput` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`.
+The short form SHALL be declared with `defineOperative` or `defineWorkflow`, the same functions that declare a full-form operative, and SHALL NOT be declared with `defineProcedure`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `DeclarationError` naming the field and the operative function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the procedure fields it already reads; the kind is the function's own name and SHALL NOT be a field.
 
-#### Scenario: A module exporting one procedure is a whole stream operative
+A definition SHALL be a short form exactly when it carries `run` and not `channels` or `procedures`; carrying both SHALL throw `DeclarationError` naming `ShortFormWithTopology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated procedure named `factoryId` and that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
-- **WHEN** `./upcase.mjs` default-exports `defineProcedure({ name: 'upcase', kind: 'stream', sink: 'out', codec: 'text', handle })` and the runner is given `registerFactory('./upcase.mjs')`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and the module calls no `defineOperative`
+An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. Whether `SinkWithoutOutput` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
-#### Scenario: A module exporting one procedure is a whole workflow operative
+#### Scenario: A module exporting one definition is a whole stream operative
 
-- **WHEN** `./place.mjs` exports `defineProcedure({ name: 'place', kind: 'workflow', sink: 'placed', input: 'order', codec: 'text', handle })`, the runner is given `registerFactory('./place.mjs')`, and an instance is started with init values
-- **THEN** `handle` receives the start values as text, its return value reaches `placed`, and the instance completes
+- **WHEN** `./upcase.mjs` default-exports `defineOperative({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and the module calls no `defineProcedure`
 
-#### Scenario: A sink without a name is refused by the short form's name
+#### Scenario: A module exporting one definition is a whole workflow operative
 
-- **WHEN** a module calls `defineProcedure({ kind: 'stream', sink: 'out', handle })`
-- **THEN** loading it throws `DeclarationError` whose refusals contain `SinkWithoutId`
+- **WHEN** `./place.mjs` exports `defineWorkflow({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, and an instance is started with init values
+- **THEN** `run` receives the start values as text, its return value reaches `placed`, and the instance completes
 
-#### Scenario: A sink without a kind is refused
+#### Scenario: A short form with no sink is declared
 
-- **WHEN** a module calls `defineProcedure({ name: 'upcase', sink: 'out', handle })`
-- **THEN** loading it throws `DeclarationError` whose refusals contain `SinkWithoutKind`
+- **WHEN** a module exports `defineOperative({ factoryId: 'counter', input: 'ticks', codec: 'text', initialState, applyChange, run })`
+- **THEN** the operative declares `ticks` into the generated procedure and no plugin channel
+
+#### Scenario: A codec needs no sink
+
+- **WHEN** a definition carries `codec: 'text'` and no `sink`
+- **THEN** it is accepted and the entry channel decodes text
+
+#### Scenario: A run body beside a channels body is refused
+
+- **WHEN** a module calls `defineOperative({ factoryId: 'x', run, channels })`
+- **THEN** loading it throws `DeclarationError` whose refusals contain `ShortFormWithTopology`
+
+#### Scenario: A definition with neither body is refused
+
+- **WHEN** a module calls `defineOperative({ factoryId: 'x' })`
+- **THEN** loading it throws `DeclarationError` naming the missing `run` or `channels`
+
+#### Scenario: An operative field on a procedure is refused
+
+- **WHEN** a module calls `defineProcedure({ name: 'upcase', sink: 'out', run })`
+- **THEN** loading it throws `DeclarationError` naming `sink` and `defineOperative`
+
+#### Scenario: A definition with no factory id is refused
+
+- **WHEN** a module calls `defineOperative({ sink: 'out', run })`
+- **THEN** loading it throws `DeclarationError` naming the required `factoryId`
 
 #### Scenario: Plain JavaScript still needs no build step
 
@@ -219,3 +253,4 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 
 - **WHEN** `unregisterFactory('./echo_operative.mjs')` is awaited after `run()`
 - **THEN** the promise rejects saying a running Node runner cannot stop serving a started declaration, and the operative stays declared
+

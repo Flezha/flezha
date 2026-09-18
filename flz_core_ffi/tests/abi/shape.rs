@@ -449,10 +449,6 @@ fn assert_kind_maps(h: &Map<String, Value>, kind: &schema::ActivationKind) {
                 .collect();
             assert_eq!(payloads, request.payloads);
         }
-        schema::ActivationKind::WorkflowRun { args } => {
-            assert_eq!(text(h, "kind"), "workflow_run");
-            assert_eq!(bytes_at(h, "args"), *args);
-        }
         schema::ActivationKind::CompensateRun { outputs } => {
             assert_eq!(text(h, "kind"), "compensate_run");
             let mapped: Vec<Vec<u8>> = rows(h, "outputs")
@@ -520,11 +516,6 @@ fn record_result(r: &schema::ActivationResult) -> Map<String, Value> {
             out.insert("error".into(), json!(e.message));
             out.insert("non_retryable".into(), json!(e.non_retryable));
         }
-        schema::ActivationOutcome::WorkflowDone { completed, result } => {
-            say("workflow_done");
-            out.insert("workflow_completed".into(), json!(completed));
-            out.insert("workflow_result".into(), raw(result));
-        }
     }
     out
 }
@@ -554,6 +545,7 @@ fn record_effect(e: &schema::ItemEffect) -> Value {
             "attempts": d.attempts,
             "payload": d.payload.as_deref().map(raw),
         })),
+        "complete": e.complete.as_deref().map(raw),
     })
 }
 

@@ -211,12 +211,14 @@ and no core thread SHALL block awaiting a host completion — the driver's
 count-based barrier is the only wait, and the work-stealing pool SHALL NOT
 exist. Saga compensation crosses as a dedicated activation flavor carrying the
 recorded outputs; the proc-journal, staged outbox, durable loop, suspension,
-entity-retry, and rewind semantics are unchanged. The `run`-sugar class is
-expressible with no journal and no barriers.
+entity-retry, and rewind semantics are unchanged. Every workflow class
+declares procedures, so every workflow host class runs through step
+activations; a step completion MAY carry a procedure's completion request,
+which the driver folds at the iteration barrier.
 
-#### Scenario: A run-sugar workflow host class completes
-- **WHEN** a workflow host class declaring only a run body is spawned with args
-- **THEN** the host receives one activation carrying the seed, its completion's terminal outcome drives the same `WorkflowCompleted` teardown the typed path produces
+#### Scenario: A host step completion ends its workflow
+- **WHEN** a workflow host class's procedure answers its step activation with a completion request and a result
+- **THEN** the driver SHALL commit the iteration and drive the same `WorkflowCompleted` teardown the typed path produces, carrying that result
 
 #### Scenario: A structured chain's barrier waits for the host and the ack
 - **WHEN** a durable structured workflow class finishes a stage's activations

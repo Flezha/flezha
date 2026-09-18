@@ -1,9 +1,9 @@
 defmodule FlezhaTest.System.ShorthandE2ETest do
   @moduledoc """
   The §5 short form, driven end to end on the runtime `FLEZHA_E2E_RUNTIME`
-  selects. Four fixtures, one declaration each in every app — no hand-written
-  operative stands beside them, which is what the `shorthand` capability
-  asserts:
+  selects. Five fixtures, one operative declaration each in every app — no
+  hand-written operative stands beside them, which is what the `shorthand`
+  capability asserts:
 
     * `sugar_do_nothing`: the default entry channel `input`, echoing onto
       `sugar_do_nothing_echo`;
@@ -13,7 +13,10 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
       read back off the live Entity;
     * `sugar_workflow`: the workflow short form, a `once` workflow seeded on
       `order` from its start values, whose output reaches
-      `sugar_workflow_placed` and which then completes.
+      `sugar_workflow_placed` and which then completes;
+    * `sugar_state_only`: a short form with no sink, whose entry `ticks` feeds
+      a procedure that only keeps state, read back off the live Entity since
+      no sink frame exists to observe.
 
   Text entries throughout, so the bytes a sink carries are equal across
   runtimes: a JSON round trip re-spaces the start values in some languages.
@@ -64,9 +67,27 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
 
     assert receive_payloads(2) == ["one", "two"]
 
-    assert wait_until(fn -> stored(ctx.namespace, operative_id) == ["one", "two"] end, 30_000),
+    assert wait_until(
+             fn -> stored(ctx.namespace, operative_id, "sugar_store_input") == ["one", "two"] end,
+             30_000
+           ),
            "the short form's state never came back; read " <>
              inspect(state_of(ctx.namespace, operative_id))
+  end
+
+  test "a short form with no sink keeps what it was sent in state", ctx do
+    operative_id = start(ctx.namespace, "sugar_state_only")
+
+    send_inputs(operative_id, ctx.namespace, ["one", "two"], %{"channel" => "ticks"})
+
+    assert wait_until(
+             fn -> stored(ctx.namespace, operative_id, "sugar_state_only") == ["one", "two"] end,
+             30_000
+           ),
+           "the sinkless short form's state never came back; read " <>
+             inspect(state_of(ctx.namespace, operative_id))
+
+    refute_receive {:message_forward, _payload, _metadata}, 500
   end
 
   test "a workflow short form runs once on its start values and completes", ctx do
@@ -120,12 +141,12 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     end
   end
 
-  # The text inputs the stateful short form pushed, whatever the SDK spells the
-  # field's container as: every runtime's state is one procedure's, and its one
-  # list field is what the fixture accumulates.
-  defp stored(namespace, operative_id) do
+  # The text inputs a stateful short form pushed, whatever the SDK spells the
+  # field's container as: every runtime's state is one procedure's, named after
+  # the factory id, and its one list field is what the fixture accumulates.
+  defp stored(namespace, operative_id, procedure) do
     case state_of(namespace, operative_id) do
-      %{"sugar_store_input" => entity} when is_map(entity) ->
+      %{^procedure => entity} when is_map(entity) ->
         entity |> Map.values() |> Enum.find(&is_list/1)
 
       _ ->

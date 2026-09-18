@@ -1,11 +1,11 @@
 //! The frozen registration-time result of authoring a workflow class: a
-//! run-sugar body or a validated procedure DAG (single-rooted, acyclic, no
-//! dynamic entities), plus the class's loop, rollback and durability facts.
+//! validated procedure DAG (single-rooted, acyclic, no dynamic entities),
+//! plus the class's loop, rollback and durability facts.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{LoopMode, RollbackMode, WorkflowRunFn};
+use super::{LoopMode, RollbackMode};
 use crate::channel::{ProcedureId, RetryPolicy};
 use crate::operative::topology::OperativeTopology;
 
@@ -150,13 +150,9 @@ pub fn graph_order(
     }
 }
 
-/// A workflow class as the registry holds it; `topology` is `None` for the
-/// run-sugar form.
+/// A workflow class as the registry holds it.
 pub struct WorkflowSpec {
-    /// The SDK language; a run-sugar class has no topology to carry it.
-    pub sdk_lang: u8,
-    pub run: WorkflowRunFn,
-    pub topology: Option<Arc<OperativeTopology>>,
+    pub topology: Arc<OperativeTopology>,
     pub dag: ProcDag,
     pub max_duration: Option<Duration>,
     pub rollback_mode: RollbackMode,
@@ -170,9 +166,6 @@ pub struct WorkflowSpec {
     /// The controller ships a barrier to its durability backend before acking
     /// it; inert without a backend.
     pub sync_durability: bool,
-    /// A host class: every body crosses through the poll surface, and the
-    /// driver never touches `run`.
-    pub host: bool,
 }
 
 // Manual: `OperativeTopology` holds closures and is not `Debug`. A summary is
@@ -180,7 +173,6 @@ pub struct WorkflowSpec {
 impl std::fmt::Debug for WorkflowSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WorkflowSpec")
-            .field("structured", &self.topology.is_some())
             .field("dag_len", &self.dag.len())
             .field("max_duration", &self.max_duration)
             .field("rollback_mode", &self.rollback_mode)
@@ -274,8 +266,8 @@ pub enum BuildWorkflowError {
 
     #[error(
         "workflow operative `{factory_id}` is not terminable: its only possible exit is an external \
-         stop. Add a terminal condition — let run()/the chain complete, give the loop a terminal \
-         predicate, or declare max_duration()."
+         stop. Add a terminal condition: let the chain complete, have a procedure call \
+         ctx.complete, or declare max_duration()."
     )]
     ExternalStopOnly { factory_id: &'static str },
 
@@ -299,11 +291,10 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares a chain loop but no procedures; a loop iterates \
-         a structured chain — declare procedures() (c.input::<T>(...) + procedures), or drop \
-         loop_mode() and let the run() body drive its own loop_until"
+        "workflow operative `{factory_id}` declares no procedures; a workflow runs a graph of \
+         procedures from one entry channel, declared in procedures() on the builder a stream uses"
     )]
-    LoopWithoutChain { factory_id: &'static str },
+    NoProcedures { factory_id: &'static str },
 
     #[error(
         "workflow operative `{factory_id}` is a durable handoff-chained loop, but its terminal \

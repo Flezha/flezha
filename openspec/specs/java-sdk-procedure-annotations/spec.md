@@ -6,12 +6,12 @@ The java-sdk-procedure-annotations capability is the Java realization of the SDK
 ## Requirements
 ### Requirement: `@Procedure` annotation processor
 
-The Java SDK SHALL provide an annotation processor that generates a complete `Procedure` implementation from an `@Procedure`-annotated class with a `run` method, conforming to the authoring contract. The generated procedure's `name()` SHALL be the `id` element when one is written, and the class name in snake_case otherwise. The annotation SHALL carry a `kind` element declared `OperativeKind[] kind() default {}` over `enum OperativeKind { STREAM, WORKFLOW }`, and an optional `input` element naming the generated operative's entry channel, defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`. A class declaring a `sink` SHALL be a short form: the processor SHALL generate `<Class>StreamOperative implements StreamOperative` (for `STREAM`, with `channels()`) or `<Class>WorkflowOperative implements WorkflowOperative` (for `WORKFLOW`, with `procedures()`) wiring the entry channel into `<Class>Procedure` and `<Class>Procedure` to the named plugin sink, with `factoryId()` equal to the `id` and every other operative method at its interface default, and SHALL register nothing; the application registers the generated class with `registerFactory`. The processor SHALL NOT generate an aggregate registration class. Each short-form refusal SHALL fail compilation with a message beginning with its name: `SinkWithoutId` for a `sink` with an empty `id`, `SinkWithoutKind` for a `sink` with no `kind`, `SinkWithoutOutput` for a `sink` on a class whose `run` returns `void` and declares no `emits`, and `ShorthandKeyWithoutSink` for an `input` or `kind` element on a class with no `sink`, naming the elements. A `kind` element holding more than one value SHALL fail compilation.
+The Java SDK SHALL provide an annotation processor that generates a complete `Procedure` implementation from an `@Procedure`-annotated class with a `run` method, conforming to the authoring contract. The generated procedure's `name()` SHALL be the `id` element when one is written, and the class name in snake_case otherwise. The annotation SHALL declare a procedure and nothing else: it SHALL NOT carry `kind`, `sink` or `input`, which belong to an operative declaration, and the processor SHALL fail compilation naming the member and directing the author to `@StreamOperative` or `@WorkflowOperative` when one is written. The processor SHALL generate no operative class from `@Procedure` and SHALL NOT generate an aggregate registration class.
 
 #### Scenario: Stateless procedure generates type getters and impl
 
-- **WHEN** a class `SingleMode` annotated `@Procedure(id = "single_mode", kind = OperativeKind.STREAM, sink = "sink")` declares `String run(String input)`
-- **THEN** the processor generates the six `*Type()` getters, `name` returning `single_mode`, `initState`, a `Procedure` implementation with `Input = String` and `Output = String`, and `SingleModeStreamOperative`
+- **WHEN** a class `SingleMode` annotated `@Procedure(id = "single_mode")` declares `String run(String input)`
+- **THEN** the processor generates the six `*Type()` getters, `name` returning `single_mode`, `initState`, a `Procedure` implementation with `Input = String` and `Output = String`, and no operative class
 
 #### Scenario: Stateful procedure infers State from the run parameter
 
@@ -25,48 +25,18 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Pr
 
 #### Scenario: A written id is the procedure's name
 
-- **WHEN** a class `SugarStore` is annotated `@Procedure(id = "sugar_store_input", kind = OperativeKind.STREAM, sink = "sugar_store_sink")`
+- **WHEN** a class `SugarStore` is annotated `@Procedure(id = "sugar_store_input")`
 - **THEN** the generated procedure's `name()` is `sugar_store_input`, and its state is saved under that name
 
-#### Scenario: A workflow short form generates a workflow operative
+#### Scenario: A procedure with no id keeps its derived name
 
-- **WHEN** a class `Place` is annotated `@Procedure(id = "place", kind = OperativeKind.WORKFLOW, sink = "placed", input = "order")`
-- **THEN** the processor generates `PlaceWorkflowOperative`, and `Flezha.createRunner(ns).registerFactory(PlaceWorkflowOperative.class)` registers a `once` workflow `place` wiring `order` into the procedure and the procedure to `placed`
-
-#### Scenario: Nothing registers itself
-
-- **WHEN** an application declares short-form classes and never calls `registerFactory` for their generated operatives
-- **THEN** its runner declares no operative for them, and no `com.flezha.generated.GeneratedStreamOperatives` class exists
-
-#### Scenario: The generated entry channel keeps its default name
-
-- **WHEN** a class annotated `@Procedure(id = "single_mode", kind = OperativeKind.STREAM, sink = "sink")` declares no `input` element
-- **THEN** the generated operative's entry channel SHALL be named `input`
-
-#### Scenario: The annotation names the generated entry channel
-
-- **WHEN** a class is annotated `@Procedure(id = "single_mode", kind = OperativeKind.STREAM, sink = "sink", input = "prices")`
-- **THEN** the generated operative's entry channel SHALL be named `prices`
-
-#### Scenario: A short-form element without a `sink` is refused
-
-- **WHEN** a class is annotated `@Procedure(id = "single_mode", input = "prices")` with no `sink`
-- **THEN** the processor SHALL fail compilation with a message beginning `ShorthandKeyWithoutSink`, naming `input` and the missing `sink`
-
-#### Scenario: A `sink` without an `id` is refused rather than derived
-
-- **WHEN** a class `Upcase` is annotated `@Procedure(kind = OperativeKind.STREAM, sink = "out")` with no `id`
-- **THEN** the processor SHALL fail compilation with a message beginning `SinkWithoutId`, and SHALL NOT generate an operative under `upcase`
-
-#### Scenario: A `sink` without a `kind` is refused
-
-- **WHEN** a class is annotated `@Procedure(id = "upcase", sink = "out")`
-- **THEN** the processor SHALL fail compilation with a message beginning `SinkWithoutKind`
-
-#### Scenario: A procedure with no `sink` keeps its derived id
-
-- **WHEN** a class `StaticDownstream` is annotated `@Procedure` with neither `id` nor `sink`
+- **WHEN** a class `StaticDownstream` is annotated `@Procedure` with no `id`
 - **THEN** the generated procedure is named `static_downstream`, as before
+
+#### Scenario: An operative member on a procedure is refused
+
+- **WHEN** a class annotated `@Procedure(id = "do_nothing", sink = "echo")`, or the same with `kind` or `input`, is compiled
+- **THEN** the processor SHALL fail compilation naming the member and the short-form annotation that carries it
 
 #### Scenario: The duplicate-id exception carries the name
 
@@ -170,3 +140,62 @@ The `@Procedure` annotation processor SHALL recognise an `@InitState`-annotated 
 
 - **WHEN** `@InitState` is declared on a `@Procedure` class whose `run` has no `@State` handle parameter
 - **THEN** the processor emits an error stating `@InitState` requires a stateful run, and generates no init delegation
+
+### Requirement: `@StreamOperative` and `@WorkflowOperative` carry the short form
+
+The Java SDK SHALL provide annotations `@StreamOperative` and `@WorkflowOperative` in `com.flezha.sdk.authoring`, applied to a class with exactly one public method named `run`, declaring a whole single-procedure operative of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink` and an optional `input` defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `com.flezha.sdk.authoring.OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
+
+The processor SHALL generate `<Class>Procedure`, whose `name()` is the written `id` verbatim, and `<Class>StreamOperative implements StreamOperative` (with `channels()`) or `<Class>WorkflowOperative implements WorkflowOperative` (with `procedures()`), whose `factoryId()` is that `id`, whose topology body wires the entry channel into `<Class>Procedure` and, when a `sink` is written, `<Class>Procedure` to that plugin sink, and whose every other operative method is at its interface default. With no `sink`, the topology body SHALL declare the entry channel and the procedure and no plugin channel. The processor SHALL register nothing and SHALL NOT generate an aggregate registration class. An empty or absent `id` SHALL fail compilation naming the required member. A `sink` on a class whose `run` returns `void` and declares no `emits` SHALL fail compilation with a message beginning `SinkWithoutOutput`. An annotated class that also implements `StreamOperative` or `WorkflowOperative` SHALL fail compilation with a message beginning `ShortFormWithTopology`.
+
+`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept a class annotated `@StreamOperative` or `@WorkflowOperative` and resolve its generated operative by the processor's naming rule, so the author registers the class they wrote. Resolution SHALL be per class, with no aggregate class written in the processor's last round.
+
+#### Scenario: An annotated class is a whole stream operative
+
+- **WHEN** a class `Echo` with `String run(String s)` is annotated `@StreamOperative(id = "echo", sink = "out")` and the runner is given `registerFactory(Echo.class)`
+- **THEN** the runner declares a stream operative `echo` with entry channel `input` and sink `out`, backed by a generated procedure named `echo`
+
+#### Scenario: An annotated class is a whole workflow operative
+
+- **WHEN** a class `Place` is annotated `@WorkflowOperative(id = "place", sink = "placed", input = "order")`, is registered, and an instance is started with init values
+- **THEN** `run` receives the start values on `order`, its return value reaches `placed`, and the instance completes as a `once` workflow
+
+#### Scenario: A short form with no sink is declared
+
+- **WHEN** a class is annotated `@StreamOperative(id = "counter", input = "ticks")` and registered
+- **THEN** the generated operative declares `ticks` into the generated procedure and no plugin channel
+
+#### Scenario: The author registers the class they wrote
+
+- **WHEN** `registerFactory(Echo.class)` is called for an annotated class
+- **THEN** the generated operative is declared, and the author never names `EchoStreamOperative`
+
+#### Scenario: Nothing registers itself
+
+- **WHEN** an application declares annotated short-form classes and never calls `registerFactory` for them
+- **THEN** its runner declares no operative for them, and no `com.flezha.generated.GeneratedStreamOperatives` class exists
+
+#### Scenario: The generated entry channel keeps its default name
+
+- **WHEN** a class annotated `@StreamOperative(id = "echo", sink = "out")` declares no `input` element
+- **THEN** the generated operative's entry channel SHALL be named `input`
+
+#### Scenario: The annotation names the generated entry channel
+
+- **WHEN** a class is annotated `@StreamOperative(id = "echo", sink = "out", input = "prices")`
+- **THEN** the generated operative's entry channel SHALL be named `prices`
+
+#### Scenario: An annotation with no id is refused
+
+- **WHEN** a class `Upcase` is annotated `@StreamOperative(sink = "out")` with no `id`
+- **THEN** the processor SHALL fail compilation naming the required `id`, and SHALL NOT derive a factory id from the class name
+
+#### Scenario: An annotated class implementing an operative interface is refused
+
+- **WHEN** a class annotated `@StreamOperative` also implements `StreamOperative`
+- **THEN** the processor SHALL fail compilation with a message beginning `ShortFormWithTopology`
+
+#### Scenario: A sink on a void run is refused
+
+- **WHEN** a class annotated `@StreamOperative(id = "drain", sink = "out")` declares `void run(String s)` with no `emits`
+- **THEN** the processor SHALL fail compilation with a message beginning `SinkWithoutOutput`
+

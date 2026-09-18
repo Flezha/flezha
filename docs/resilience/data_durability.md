@@ -278,8 +278,8 @@ durable. The commit path, crash-resume and journal layout are in
 
 - **Staged, not emitted.** Inside a structured procedure `ctx.emit` does not reach the wire;
   each Entity buffers its serialized plugin-bound output, so a failed, aborted or cancelled
-  procedure leaks **nothing**. The `run`-sugar form has no barrier to stage against and keeps
-  the direct at-least-once path, as do opted-out classes.
+  procedure leaks **nothing**. Opted-out classes have no barrier to stage against and keep the
+  direct at-least-once path.
 - **One durable write.** At the barrier the staged outbox travels inside `ProcCommit` and is
   journaled with the procedure's completion in ONE `proc_committed` record in `proc.journal`,
   fsynced by the `FsyncBatcher` tick before the ack. Progress and output cannot tear apart; a

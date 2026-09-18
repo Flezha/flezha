@@ -639,7 +639,6 @@ fn command_kind_name(kind: &crate::schema::ActivationKind) -> &'static str {
         ActivationKind::ApplyState { .. } => "apply_state",
         ActivationKind::MigrationSerialize => "migration_serialize",
         ActivationKind::KeyRequest(_) => "key_request",
-        ActivationKind::WorkflowRun { .. } => "workflow_run",
         ActivationKind::CompensateRun { .. } => "compensate_run",
     }
 }

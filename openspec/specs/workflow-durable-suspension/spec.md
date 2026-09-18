@@ -3,9 +3,7 @@
 ## Purpose
 
 The workflow-durable-suspension capability lets a waiting durable workflow instance cost nothing while losing nothing. Post-start input for a durable workflow instance is no longer an in-memory channel: the controller appends every message to a per-instance append-only `inbox.wal` — same WalWriter/FsyncBatcher substrate as `proc.journal` — with a monotonic offset and a dedup id (sender-supplied message id, else a payload hash) **before** forwarding it to the runner, so a duplicate send inside the undelivered window is absorbed at append and a message sent while the instance is suspended, crashed, or migrating is delivered on rehydrate rather than dropped. Payloads live only in `inbox.wal`; `proc.journal` carries offsets, and the consumed offset recorded by `iter_committed` (`workflow-durable-loop`) is what makes consumed entries truncatable. When a looping durable instance blocks on an empty inbox at a committed iteration boundary, the SDK parks: the controller journals `parked(N[, wake_deadline])` and tears the instance down with no terminal completion — registry state `suspended`, zero live runner resources — while a mid-iteration `recv` still blocks in memory as before, and an eviction-hysteresis knob keeps trickling input from thrashing the cycle. A new inbox append or the elapse of the journaled wake deadline rehydrates the instance through the normal workflow spawn path on any live runner (existing session fencing applies): journal state and iteration-boundary snapshots are restored, the undelivered inbox tail is delivered from the recorded offset, and the loop enters iteration N+1. Every input to that decision is durable, so suspension survives controller restart or redeploy, and racing wake sources resolve to exactly one rehydration.
-
 ## Requirements
-
 ### Requirement: Post-start input is durably journaled before delivery
 
 The controller SHALL append every post-start input for a durable workflow
@@ -37,11 +35,12 @@ only in `inbox.wal`, never in `proc.journal`.
 The SDK SHALL, when a looping durable workflow instance blocks on an empty
 inbox at a committed iteration boundary, send a park notification (iteration N,
 optional wake deadline) and the controller SHALL journal `parked(N[,
-deadline])`, then tear the instance down without a terminal completion —
-registry state `suspended`, zero live runner resources. Parking SHALL only
-occur at a committed iteration boundary; a mid-iteration `recv` SHALL block in
-memory as today. An eviction-hysteresis knob SHALL avoid park/rehydrate thrash
-under trickling input.
+deadline])`, then tear the instance down without a terminal completion:
+registry state `suspended`, zero live runner resources. An iteration boundary
+SHALL be the only place an instance waits for input: no procedure SHALL block
+on its inbox mid-iteration, so parking SHALL only occur at a committed
+iteration boundary. An eviction-hysteresis knob SHALL avoid park/rehydrate
+thrash under trickling input.
 
 The suspended Overwatch SHALL hibernate: a sleeper holds nothing of its bind on
 its heap (the restore frames and plugin setup are garbage once it parks).
@@ -56,10 +55,10 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 - **WHEN** a looping instance commits iteration N and its inbox stays empty past the idle threshold
 - **THEN** `parked(N)` SHALL be journaled, the instance SHALL be removed from runner memory, and the registry SHALL report it `suspended`
 
-#### Scenario: Mid-iteration wait does not park
+#### Scenario: A message arriving mid-iteration waits for the boundary
 
-- **WHEN** a procedure inside an uncommitted iteration waits on `recv`
-- **THEN** the instance SHALL keep blocking in memory and SHALL NOT be suspended
+- **WHEN** a message reaches a `PerInput` instance while an iteration is still running
+- **THEN** it SHALL be journaled to the inbox and SHALL seed the next iteration after the current one commits, and no procedure SHALL receive it mid-iteration
 
 ### Requirement: A suspended instance rehydrates on new input or its durable timer
 

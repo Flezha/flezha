@@ -198,7 +198,8 @@ outbox), `6 = rewound` (the loop was rewound to the iteration in this entry's `i
 proc_committed: [n_entities: u16 BE] n × ([len: u16 BE][entity_identity])
                 [handoff]
                 [outbox]
-iter_committed: [consumed_offset: u64 BE][handoff]
+                [completion]
+iter_committed: [consumed_offset: u64 BE][handoff][completion]
 parked:         [wake_deadline_ms: u64 BE]   # 0 = no deadline
 compensated:    [outbox]
 outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
@@ -206,6 +207,8 @@ rewound:        <empty>          # the target iteration is the `iter` field
 handoff:        [n: u32 BE] n × ([channel_id: u32 BE][len: u32 BE][payload])
 outbox:         [n: u32 BE] n × ([len: u16 BE][entity_identity][seq_in_proc: u32 BE]
                                  [len: u16 BE][channel][len: u32 BE][payload])
+completion:     <empty>                      # none; an entry written before completions existed
+                | [1: u8][len: u32 BE][result]
 ```
 
 A torn tail is truncated by the `WalWriter` open scan; the read path stops at the first invalid

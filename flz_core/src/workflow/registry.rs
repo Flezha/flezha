@@ -1,7 +1,7 @@
 //! Workflow class registry: process-global, one entry per workflow class. Mirrors
 //! `operative::registry`'s `OperativeClassRegistry` — keyed by the controller-facing
 //! `factory_id`, looked up when `AddOperative --kind workflow` arrives. Holds the
-//! frozen [`WorkflowSpec`] (run-sugar fn + optional structured topology).
+//! frozen [`WorkflowSpec`] (its procedure topology and class facts).
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};

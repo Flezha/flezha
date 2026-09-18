@@ -272,23 +272,17 @@ fn host_facts(
     }
 }
 
-/// The workflow half: run-sugar and a structured chain build the same spec.
+/// The workflow half: the chain's spec over the topology the stream half built.
 pub(super) fn register_workflow_class(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
-    topology: Option<Arc<OperativeTopology>>,
+    topology: Arc<OperativeTopology>,
     dag: ProcDag,
     loop_mode: LoopMode,
 ) {
-    let factory_id: &'static str = match &topology {
-        Some(topology) => topology.factory_id,
-        None => Box::leak(decl.factory_id.clone().into_boxed_str()),
-    };
     crate::workflow::registry::register_class(
-        factory_id,
+        topology.factory_id,
         WorkflowSpec {
-            sdk_lang: decl.sdk_lang,
-            run: host_run_unreachable,
             topology,
             dag,
             max_duration: workflow
@@ -304,7 +298,6 @@ pub(super) fn register_workflow_class(
             barrier_retry_attempts: workflow.barrier_retry_attempts,
             persistence_enabled: decl.persistent,
             sync_durability: decl.sync_durability,
-            host: true,
         },
     );
 }
@@ -314,16 +307,6 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
         HostRollbackMode::AllOrNothing => RollbackMode::AllOrNothing,
         HostRollbackMode::KeepProgress => RollbackMode::KeepProgress,
     }
-}
-
-/// The driver branches on `spec.host` before ever calling `run`.
-fn host_run_unreachable(
-    _ctx: &mut crate::workflow::WorkflowCtx,
-    _args: &str,
-) -> Result<(), crate::workflow::WorkflowError> {
-    Err(crate::workflow::WorkflowError::from(
-        "host workflow classes run through the poll crossing",
-    ))
 }
 
 /// Kahn toposort from the entry root, refusing what the typed builder

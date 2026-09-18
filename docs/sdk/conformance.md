@@ -394,8 +394,8 @@ so the conformance app runs the standalone binary protocol like the other six.
 ## The short form
 
 `shorthand` is a required capability: the §5 single-procedure short form is one
-every SDK carries, so no manifest may defer it. Four fixtures, each a single
-declaration in every app, with no hand-written operative beside it:
+every SDK carries, so no manifest may defer it. Five fixtures, each one
+operative declaration in every app, with no hand-written operative beside it:
 
 | Id | Kind | Entry | Sink |
 | --- | --- | --- | --- |
@@ -403,25 +403,28 @@ declaration in every app, with no hand-written operative beside it:
 | `sugar_store_input` | stream | `input`, text | `sugar_store_sink` |
 | `sugar_named_input` | stream | `prices`, text | `sugar_named_input_sink` |
 | `sugar_workflow` | workflow | `order`, text | `sugar_workflow_placed` |
+| `sugar_state_only` | stream | `ticks`, text | none |
 
 Text entries, so the bytes a sink carries are equal across runtimes: a JSON
 round trip re-spaces the start values in some languages.
-`test/system/shorthand_e2e_test.exs` drives all four on the selected runtime.
+`test/system/shorthand_e2e_test.exs` drives all five on the selected runtime;
+`sugar_state_only` has no sink, so its proof is the entity state it keeps, read
+back through the live entity-state query.
 
 The refusal table carries one row per short-form refusal, written with the step
-`shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)` and the `.noout` modifier for
-a procedure declaring no output. Their names are the authoring contract's, not
+`shorthand(<id>|-, <sink>|-, <input>|-)`, the `.noout` modifier for a body
+declaring no output and the `.topology` modifier for a declaration that also
+carries a topology body. Their names are the authoring contract's, not
 `flz_core`'s — the core never sees a short form — so a row whose `needs` begins
 with `shorthand` is exempt from the issue-variant pairing and is checked
 against the list `docs/sdk/authoring_contract.md` §5.2 carries.
 
-Three `needs` surfaces say what a spelling can write:
+Two `needs` surfaces say what a spelling can write:
 
 | Surface | Carried by |
 | --- | --- |
 | `shorthand` | every manifest; the short form itself |
 | `shorthand_typed_output` | Rust, Java, Python — the SDKs that can see a procedure declares no output |
-| `shorthand_omittable_sink` | every manifest but Ruby's, whose keys ride the `sink` call |
 
 ### A compile-time refusal is cited, and the citation is checked
 
@@ -431,9 +434,9 @@ does not compile, so for a row they refuse at compile time the app answers
 the compile-fail test that pins it:
 
 ```json
-{"topology": "shorthand_sink_without_kind", "outcome": "cited",
- "names": ["SinkWithoutKind"],
- "citation": "sdk/rust/tests/ui/procedure_sink_without_kind.stderr"}
+{"topology": "shorthand_with_topology", "outcome": "cited",
+ "names": ["ShortFormWithTopology"],
+ "citation": "sdk/rust/tests/ui/operative_with_hand_written_impl.rs"}
 ```
 
 The drill checks the cited file exists and carries the name, so a citation
@@ -454,9 +457,10 @@ drops or spells differently is a diff on every other.
 The committed goldens are `candle`, `checkpoint_batched_store`,
 `commit_block_workflow`, `keyed_output_stamps`, `saga_block_workflow`,
 `static_entity`, `store_input`, `sugar_do_nothing`, `sugar_named_input`,
-`sugar_static_entity`, `sugar_workflow` and `tier_store`. The three `sugar_*`
-short-form ones pin that a short form declares the entry channel, the sink and
-the kind its author wrote, in every runtime.
+`sugar_state_only`, `sugar_static_entity`, `sugar_workflow` and `tier_store`.
+The four short-form ones (every `sugar_*` but `sugar_static_entity`) pin that a
+short form declares the entry channel, the sink when one is written and the
+kind its author wrote, in every runtime.
 
 Regenerate with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any
 other runtime refuses.

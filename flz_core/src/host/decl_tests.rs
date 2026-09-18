@@ -137,7 +137,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_wf_transient");
         let err = decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,"sync_durability":true,
-                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
+                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
         ))
         .expect_err("there is no barrier to ship for a class that journals nothing");
 
@@ -149,7 +150,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_wf_ok");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
-                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
+                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
         ))
         .expect("a durable workflow class declares sync durability");
 
@@ -162,7 +164,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_wf_default");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
+                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
         ))
         .expect("a workflow class declaring nothing registers");
 

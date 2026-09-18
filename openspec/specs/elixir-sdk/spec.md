@@ -685,8 +685,8 @@ the output was lost and no counter records it.
 ### Requirement: The Elixir SDK authors and drives workflow operatives in its own core
 
 The Elixir SDK SHALL carry a `Flezha.SDK.WorkflowOperative` behaviour whose class declares
-either a run-sugar `run/2` body or a structured `procedures/1` DAG on the same builder token
-`channels/1` uses, plus the optional knobs `max_duration_ms/0`, `self_terminating?/0`,
+a structured `procedures/1` DAG on the same builder token `channels/1` uses, and no one-function
+`run/2` body, plus the optional knobs `max_duration_ms/0`, `self_terminating?/0`,
 `loop_mode/0` (`:once` | `:per_input` | `:chained`), `wake_after_ms/0`, `retry_attempts/0`,
 `retry_backoff_ms/0`, `barrier_retry_attempts/0`, `rollback_mode/0` (`:all_or_nothing` |
 `:keep_progress`), `persistence_enabled/0` and `sync_durability/0`, each reading a default when
@@ -695,9 +695,8 @@ exactly as it registers a stream class, because the controller places by factory
 the kind from the `AddOperative` it sends rather than from the advertisement.
 
 Registration SHALL accumulate refusals into `{:error, {:invalid_workflow, issues}}` (never a
-raise) using the reference's names: `NoWorkflowBody`, `ExternalStopOnly` (not self-terminating
-and no duration cap), `ZeroRetryBackoff`, `LoopWithoutChain` (a loop mode on a run-sugar body),
-`NoEntryChannel`, `EntryRoot` (an entry feeding more than one procedure),
+raise) using the reference's names: `NoWorkflowBody` (no `procedures/1`), `ExternalStopOnly` (not
+self-terminating and no duration cap), `ZeroRetryBackoff`, `NoEntryChannel`, `EntryRoot` (an entry feeding more than one procedure),
 `MergeFromEntryChannel`, `DynamicEntities` and `BranchingChainedLoop`. A refusal the shared
 topology already raises SHALL be carried through as `{:Topology, issue}` rather than restated,
 and the reference's `Cycle`, `Disconnected` and `MultipleOutputChannels` SHALL NOT exist here:
@@ -716,10 +715,9 @@ declared to the controller in the `AddOperative` response.
 
 #### Scenario: A structured class is refused for every fault at once
 
-- **WHEN** a class declares a chained loop on a run-sugar body, a zero retry backoff and no
-  terminal condition
+- **WHEN** a class declares no procedures, a zero retry backoff and no terminal condition
 - **THEN** registration answers `{:error, {:invalid_workflow, issues}}` naming
-  `LoopWithoutChain`, `ZeroRetryBackoff` and `ExternalStopOnly` together, not the first alone
+  `NoWorkflowBody`, `ZeroRetryBackoff` and `ExternalStopOnly` together, not the first alone
 
 #### Scenario: A stage's Entities are the SDK's own, not a second mechanism
 
@@ -735,6 +733,12 @@ declared to the controller in the `AddOperative` response.
 - **THEN** the output is carried in that stage's `ProcCommit` outbox and reaches the plugin only
   after the controller has journalled and acknowledged the commit, and a class that journals
   nothing stages none
+
+#### Scenario: A procedure ends its workflow
+
+- **WHEN** a procedure of a `:per_input` class calls `Flezha.SDK.Ctx.complete(ctx, result)` while handling a message
+- **THEN** the iteration is committed durably, and the instance then completes with `result`
+  instead of waiting for the next message
 
 ### Requirement: One plugin sink per channel and plugin
 
@@ -927,8 +931,7 @@ If the Elixir SDK discards no queued input on restore, it SHALL still declare th
 
 The Elixir SDK SHALL let a procedure request spawn-or-deliver of a workflow instance in its
 own namespace with one call, under the contract the other SDKs implement
-(`docs/sdk/procedure_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_workflow/4`, and the same call
-on `Flezha.SDK.Workflow.Ctx` for a run-sugar body, SHALL take a workflow factory id, a binary
+(`docs/sdk/procedure_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_workflow/4` SHALL take a workflow factory id, a binary
 payload and a keyword list of options defaulting to `[]`, whose keys are `id:` (an instance id)
 and `if_running:` (`:deliver` or `:error`, `:deliver` when an `id:` is given without it). The call
 SHALL send `SpawnWorkflowRequest` on the runner's control plane, with an empty instance id when no
@@ -1080,7 +1083,7 @@ The SDK SHALL declare a connect behaviour for in-node runners and SHALL call the
 - **THEN** the SDK SHALL refuse naming the behaviour and the modes it does support
 
 ### Requirement: The Elixir SDK authors with `use` macros that expand to its behaviours
-The SDK SHALL provide `use Flezha.SDK.Procedure`, `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Procedure` SHALL require `name` and accept `entity_keys`, `mailbox_capacity`, `max_entities`, `entity_idle_ttl_ms`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `clock` and `max_timers_per_entity`, plus the short-form options; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.StreamOperative` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.WorkflowOperative` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `wake_after_ms`, `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts`, `rollback_mode`, `persistence_enabled` and `sync_durability`, and SHALL import `Flezha.SDK.Workflow.Ctx`'s `emit/2`, `emit_on/3`, `complete/2` and `spawn_workflow/3,4`. Both operative macros SHALL import `Flezha.SDK.Channels`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module written with `@behaviour` and hand-written callbacks SHALL keep working unchanged.
+The SDK SHALL provide `use Flezha.SDK.Procedure`, `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Procedure` SHALL require `name` and accept `entity_keys`, `mailbox_capacity`, `max_entities`, `entity_idle_ttl_ms`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `clock` and `max_timers_per_entity`, plus the short-form options; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.StreamOperative` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.WorkflowOperative` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `wake_after_ms`, `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts`, `rollback_mode`, `persistence_enabled` and `sync_durability`,. Both operative macros SHALL import `Flezha.SDK.Channels`; a workflow procedure ends its instance with `complete/2`, which `use Flezha.SDK.Procedure` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module written with `@behaviour` and hand-written callbacks SHALL keep working unchanged.
 
 #### Scenario: A written option is a callback, an unwritten one is not
 
@@ -1131,24 +1134,61 @@ The SDK SHALL provide `use Flezha.SDK.Procedure`, `use Flezha.SDK.StreamOperativ
 - **THEN** compilation fails naming `apply_change/2` and the `state` block
 
 ### Requirement: The single-procedure short form is three `use` options
-`use Flezha.SDK.Procedure` SHALL accept `kind` (`:stream` or `:workflow`), `sink` and `input`. With `sink`, the module SHALL additionally implement `Flezha.SDK.StreamOperative` (for `:stream`, defining `factory_id/0` and `channels/1`) or `Flezha.SDK.WorkflowOperative` (for `:workflow`, defining `factory_id/0` and `procedures/1`), wiring an entry channel named `"input"` (or the `input` value) into the module and the module to the `sink` plugin channel, with `factory_id/0` equal to `name` and every other operative callback left undefined so its default applies. The module SHALL be registered as any operative is: listed under `operatives:` in the child spec, or passed to `register_factory/2`, which reads its kind from the callbacks the macro defined. Each short-form refusal SHALL be a `CompileError` whose message begins with its name: `SinkWithoutId` for `sink` with no `name`, `SinkWithoutKind` for `sink` with no `kind`, `ShorthandKeyWithoutSink` for `kind` or `input` with no `sink`, naming the options. The Elixir SDK cannot see a procedure's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. The duplicate-id tuple `{:duplicate_factory_id, id}` SHALL keep its shape, and the runner's printed form of it SHALL contain `DuplicateFactoryId`.
+The short form SHALL be declared with `use Flezha.SDK.StreamOperative` or `use Flezha.SDK.WorkflowOperative`, the same macros that declare a full-form operative, and SHALL NOT be declared with `use Flezha.SDK.Procedure`, which SHALL accept none of `kind`, `sink` or `input` and SHALL raise a `CompileError` naming the option and the operative macro when one is given. Each operative macro SHALL accept `sink` and `input` beside the `factory_id` it already requires. The kind is the macro's own name and SHALL NOT be an option.
 
-#### Scenario: A procedure module is a whole stream operative
+A module SHALL be a short form exactly when it defines `run/3` and no topology body, a topology body being `channels/1` or `procedures/1`. Defining both SHALL be a `CompileError` beginning `ShortFormWithTopology`, and defining neither SHALL be a `CompileError` naming the missing body; both SHALL be decided at `@before_compile`, where the module's definitions are known.
 
-- **WHEN** a module writes `use Flezha.SDK.Procedure, name: "upcase", kind: :stream, sink: "out"` and `run/3`, and the child spec lists it under `operatives:`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` and sink `out`, and no separate `Flezha.SDK.StreamOperative` module exists for it
+With `sink`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` (for a stream) or `procedures/1` (for a workflow) wiring an entry channel named `"input"` (or the `input` value) into a generated nested procedure module and that module to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Procedure`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate procedure and a separate operative rather than one module in both roles. Every other operative callback SHALL be left undefined so its default applies, and a workflow short form SHALL be a `once` workflow. The module SHALL be registered as any operative is: listed under `operatives:` in the child spec, or passed to `register_factory/2`.
 
-#### Scenario: A procedure module is a whole workflow operative
+The Elixir SDK cannot see a procedure's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. The duplicate-id tuple `{:duplicate_factory_id, id}` SHALL keep its shape, and the runner's printed form of it SHALL contain `DuplicateFactoryId`.
 
-- **WHEN** a module writes `use Flezha.SDK.Procedure, name: "place", kind: :workflow, sink: "placed", input: "order"`, is listed under `operatives:`, and an instance is started with init values
+#### Scenario: An operative module with a run body is a whole stream operative
+
+- **WHEN** a module writes `use Flezha.SDK.StreamOperative, factory_id: "upcase", sink: "out"` and `run/3`, and the child spec lists it under `operatives:`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` and sink `out`, backed by a generated nested procedure whose `name/0` is `upcase`
+
+#### Scenario: An operative module with a run body is a whole workflow operative
+
+- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "place", sink: "placed", input: "order"` and `run/3`, is listed under `operatives:`, and an instance is started with init values
 - **THEN** `run/3` receives the start values on `order`, what it emits reaches `placed`, and the instance completes
+
+#### Scenario: A short form with no sink is declared
+
+- **WHEN** a module writes `use Flezha.SDK.StreamOperative, factory_id: "counter", input: "ticks"`, a `state do ... end` block and `run/3`
+- **THEN** the operative declares `ticks` into the generated procedure module and no plugin channel, and the block's recorders journal as they do on any procedure
+
+#### Scenario: An input needs no sink
+
+- **WHEN** a module writes `use Flezha.SDK.StreamOperative, factory_id: "counter", input: "ticks"` and `run/3`
+- **THEN** it compiles and the entry channel is named `ticks`
 
 #### Scenario: register reads a short form's kind
 
-- **WHEN** a `kind: :workflow` short form is passed to `register_factory/2`
-- **THEN** it is declared as a workflow operative, because the module exports `procedures/1` and no `channels/1`
+- **WHEN** a module written with `use Flezha.SDK.WorkflowOperative` and a `sink` is passed to `register_factory/2`
+- **THEN** it is declared as a workflow operative, because the macro defined `procedures/1` and no `channels/1`
 
-#### Scenario: A sink without a kind does not compile
+#### Scenario: The generated procedure is a module of its own
+
+- **WHEN** a short form module `Upcase` is compiled
+- **THEN** a nested module implementing `Flezha.SDK.Procedure` exists whose `run/3` delegates to `Upcase.run/3`, and `Upcase` itself implements no procedure callback
+
+#### Scenario: A run body beside a channels body does not compile
+
+- **WHEN** a module writes `use Flezha.SDK.StreamOperative, factory_id: "upcase", sink: "out"` and defines both `run/3` and `channels/1`
+- **THEN** compilation fails with a `CompileError` whose message begins `ShortFormWithTopology`
+
+#### Scenario: A sink on a procedure does not compile
 
 - **WHEN** a module writes `use Flezha.SDK.Procedure, name: "upcase", sink: "out"`
-- **THEN** compilation fails with a `CompileError` whose message begins `SinkWithoutKind`
+- **THEN** compilation fails with a `CompileError` naming `sink` and `Flezha.SDK.StreamOperative`
+
+#### Scenario: An operative with neither body does not compile
+
+- **WHEN** a module writes `use Flezha.SDK.StreamOperative, factory_id: "upcase"` and defines neither `run/3` nor `channels/1`
+- **THEN** compilation fails naming the missing body
+
+#### Scenario: The behaviour form keeps working
+
+- **WHEN** a module writes `@behaviour Flezha.SDK.StreamOperative` with hand-written `factory_id/0` and `channels/1`
+- **THEN** it registers and runs unchanged, and owes no short-form refusal
+

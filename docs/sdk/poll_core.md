@@ -148,7 +148,7 @@ An **Activation** targets exactly one entity and carries one `ActivationKind`:
 | `Work(items)`                                                        | An ordered per-entity batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
 | `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize` | The five host-participating command kinds, under the same per-entity exclusivity. No other controller command produces an activation (pinned: a `Ping` generates none). |
 | `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches an entity mailbox. |
-| `WorkflowRun`, `CompensateRun`                                       | A run-sugar workflow body, and an undo step of a structured chain. |
+| `CompensateRun`                                                      | An undo step of a workflow chain. |
 
 An **ActivationResult** (`ActivationOutcome::Work(Vec<ItemEffect>)`) carries,
 per processed item, the effect record the flusher consumes exactly as it
@@ -342,7 +342,6 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_schema_version`, `flz_core_context_new`, `flz_core_init_error`, `flz_core_last_error` | Version negotiation and error text |
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
 | `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
-| `flz_core_workflow_emit`, `flz_core_workflow_recv`, `flz_core_workflow_cancelled` | Workflow session calls |
 | `flz_core_spawn_request`, `flz_core_spawn_result` | Procedure-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
 | `flz_core_set_log_callback` | The one host callback the core ever invokes |
@@ -390,7 +389,8 @@ The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
 drives connect, AddOperative over the real control path, input activations, a
 timer firing, a restore fold, a live state read, a
 keyed dynamic route through the prepare crossing, an effectively-once floor
-skip, a workflow run-sugar lifecycle and shutdown entirely through the C ABI —
+skip, a workflow procedure completing its instance and shutdown entirely
+through the C ABI —
 a capability reachable in the crate API but not the ABI is a defect, not a
 backlog item.
 
@@ -406,7 +406,7 @@ effectively-once tier and checkpoint ack-granularity, the late-input correction
 window, the record-header lang/format bytes (`sdk_lang`, `change_format_id` — a
 Java host's durable records claim Kryo), and workflow lifecycle facts
 (`workflow`: loop mode, rollback mode, stage retry, max-duration, wake-after;
-empty `procedures` = run-sugar).
+a workflow class declaring no procedure is refused).
 
 At runtime the full contract crosses the boundary:
 
@@ -422,19 +422,19 @@ At runtime the full contract crosses the boundary:
   host for routing keys and/or extracted event times before anything is
   enqueued; a per-payload failure climbs the entry channel's retry→park
   ladder, and the end-of-slice broadcast defers behind staged slice members.
-- **Tiers ride completions.** `ItemEffect` carries changes, outputs, timer ops
-  and `checkpoint`; the core builds effect records (offsets are
+- **Tiers ride completions.** `ItemEffect` carries changes, outputs, timer ops,
+  `checkpoint` and a workflow procedure's `complete` request (a stream item
+  carrying one fails, non-retryable, naming `CompleteOutsideWorkflow`); the core builds effect records (offsets are
   core-authoritative), stages checkpoint intervals, holds a
   failed-but-retryable attempt's changes out of the flusher's reach, and mints
   DLQ entries where the typed layer does.
 - **Inter-procedure edges route on `(edge, key)`**: outputs name their
   consumer; keys and event times are producer-evaluated (the host holds the
   typed value and the extractor; the core holds neither).
-- **Workflow lifecycles run under poll**: a run-sugar body is one
-  `WorkflowRun` activation plus the session calls (`flz_core_workflow_emit` /
-  `_recv` / `_cancelled`); a structured chain hands out one **step
-  activation** per entity of the stage — a `Work` batch, or `CompensateRun`
-  for an undo — and collects the answers at its stage barrier. Both language
+- **Workflow lifecycles run under poll**: a workflow chain hands out one
+  **step activation** per entity of the stage — a `Work` batch, or
+  `CompensateRun` for an undo — and collects the answers at its stage
+  barrier. Both language
   paths take that route, so a step costs exactly one thread (the SDK's) and no
   core thread waits on a host: the driver is the only waiter, and its retry
   timing lives there too. Barriers, proc-journal, loop modes, suspension and
@@ -455,8 +455,8 @@ The Java SDK is a poll host over `flz_core`: its runtime binds to
 `flz_core_ffi` built with the `jni` feature through the one-to-one `FlzCore`
 class — `schemaVersion()`, `contextNew(shimSchemaVersion)`,
 `declareClass(ctx, json)`, `start(ctx, namespace)`, `poll(ctx, timeoutMs)`,
-`complete(ctx, result)`, `workflowEmit` / `workflowRecv` / `workflowCancelled`,
-`spawnRequest` / `spawnResult`, `monotonicNanos()`, `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
+`complete(ctx, result)`, `spawnRequest` / `spawnResult`, `monotonicNanos()`,
+`shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
 `poll → decode Activation → hand off → poll`; the kernel (transport, ordering,
 durability, retries, timers, credit, routing, the workflow driver, reconnect)
 lives entirely in the core.
@@ -473,13 +473,13 @@ refuses a shim/core version mismatch before any controller connection.
 
 **Buffer ownership at the JNI boundary.**
 
-1. Every `byte[]` the binding returns (a polled activation, an inbox payload, a
-   spawn result) is copied from the core's buffer into a fresh Java array, and
+1. Every `byte[]` the binding returns (a polled activation, a spawn result) is
+   copied from the core's buffer into a fresh Java array, and
    the native buffer is freed through `flz_core_buf_free` before the JNI method
    returns. No native buffer escapes.
 2. Java-owned arrays handed into native methods (`declareClass`, `complete`,
-   `workflowEmit`, …) are copied into Rust-side buffers before the call
-   returns; the JVM retains ownership.
+   …) are copied into Rust-side buffers before the call returns; the JVM
+   retains ownership.
 
 ## The Node binding
 

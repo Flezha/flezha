@@ -329,6 +329,9 @@ pub struct ProcOutboxItem {
 /// for the already-committed procedure `proc_idx`, journaled as a
 /// `compensated` entry and flushed with comp-marked keys. The per-entity
 /// compensation markers still decide which hooks run.
+///
+/// `completes` / `result` carry the procedure's `ctx.complete` request, so a
+/// crash before the iteration commits still ends the instance on resume.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProcCommit {
     #[prost(string, tag = "1")]
@@ -345,6 +348,10 @@ pub struct ProcCommit {
     pub outbox: ::prost::alloc::vec::Vec<ProcOutboxItem>,
     #[prost(bool, tag = "7")]
     pub compensating: bool,
+    #[prost(bool, tag = "8")]
+    pub completes: bool,
+    #[prost(bytes = "vec", tag = "9")]
+    pub result: ::prost::alloc::vec::Vec<u8>,
 }
 /// Controller -> SDK reply to ProcCommit, emitted only AFTER the journal
 /// entry is durable (fsync). Carries the originating request's
@@ -370,6 +377,10 @@ pub struct ProcCommitResponse {
 /// offset, and replies IterCommitResponse. The driver enters iteration
 /// `iter + 1` only on the successful reply — a crash before it re-runs the
 /// whole iteration (at-least-once), never the ones below it.
+///
+/// `completes` is set when a procedure of the iteration called
+/// `ctx.complete(result)`: the instance ends with `result` once this commit is
+/// durable, and a crash after it still ends it on resume.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterCommit {
     #[prost(string, tag = "1")]
@@ -380,6 +391,10 @@ pub struct IterCommit {
     pub consumed_offset: u64,
     #[prost(message, repeated, tag = "4")]
     pub handoff: ::prost::alloc::vec::Vec<ProcHandoffItem>,
+    #[prost(bool, tag = "5")]
+    pub completes: bool,
+    #[prost(bytes = "vec", tag = "6")]
+    pub result: ::prost::alloc::vec::Vec<u8>,
 }
 /// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
 /// is durable (fsync). Same reference_id / terminal-error contract as
@@ -422,6 +437,10 @@ pub struct ProcCommittedProc {
     pub iter: u32,
     #[prost(bytes = "vec", repeated, tag = "3")]
     pub entities_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bool, tag = "4")]
+    pub completes: bool,
+    #[prost(bytes = "vec", tag = "5")]
+    pub result: ::prost::alloc::vec::Vec<u8>,
 }
 /// What one committed procedure of the in-flight iteration released, keyed by
 /// its proc_idx (workflow-branching). A procedure tree re-seeds each uncommitted
@@ -444,7 +463,9 @@ pub struct ProcEdgeHandoff {
 /// loop. `committed_procs` carries every forward proc commit with its iteration
 /// (compensation planning), `consumed_offset` the inbox offset the last
 /// committed iteration consumed, and `parked` / `wake_deadline_ms` the
-/// suspension record (workflow-durable-suspension).
+/// suspension record (workflow-durable-suspension). `completed` / `result` are
+/// the last committed iteration's completion request: a resume ends the
+/// instance with `result` instead of waiting for input.
 ///
 /// `rewind_undo` carries the procedures a rewind unwound that have not been
 /// compensated yet (workflow-loop-rewind). The driver runs them through the
@@ -472,6 +493,10 @@ pub struct ProcJournalState {
     pub rewind_undo: ::prost::alloc::vec::Vec<ProcCommittedProc>,
     #[prost(message, repeated, tag = "9")]
     pub proc_handoffs: ::prost::alloc::vec::Vec<ProcEdgeHandoff>,
+    #[prost(bool, tag = "10")]
+    pub completed: bool,
+    #[prost(bytes = "vec", tag = "11")]
+    pub result: ::prost::alloc::vec::Vec<u8>,
 }
 /// Per-Entity state restore handshake: Controller ships latest snapshot
 /// bytes plus tail-WAL bytes, SDK applies them to the entity's State

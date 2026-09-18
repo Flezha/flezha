@@ -36,17 +36,3 @@ A workflow operative SHALL advance from one procedure to the next via a **barrie
 - **WHEN** a procedure processes a finite, known batch of items across its entities
 - **THEN** "procedure complete" SHALL be determined by all dispatched items having been processed (a count), not by an idle-timeout heuristic
 
-### Requirement: `run` is sugar for a single-Procedure workflow operative
-
-The bare `run(ctx, args) -> Result<Output>` authoring form SHALL be retained as **sugar** that expands to a workflow operative with one implicit Procedure and one implicit Entity, whose body is `run` and whose completion is `run` returning. Authoring `run` SHALL be equivalent to hand-writing the one-Procedure form; an author SHALL be able to start from `run` and grow into explicit Procedures/Entities without a rewrite of unrelated code.
-
-#### Scenario: `run` expands to the one-Procedure form
-
-- **WHEN** a workflow operative is authored with only `run(ctx, args)`
-- **THEN** it SHALL run as a single-Procedure, single-Entity workflow operative, and SHALL behave identically to the equivalent hand-written one-Procedure workflow operative
-
-#### Scenario: Growing from `run` to procedures is additive
-
-- **WHEN** an author replaces a `run`-form workflow operative with an explicit multi-Procedure form
-- **THEN** no change to the controller, protocol, or WAL format SHALL be required for it to run
-

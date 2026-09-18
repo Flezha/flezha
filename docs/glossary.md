@@ -40,9 +40,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
 - **Workflow operative** — the terminating kind: a DAG of procedures run level by level behind a
   commit barrier, with an inbox, saga compensation, a durable loop and suspension. Implements
-  `WorkflowOperative`; ends on chain completion, `ctx.complete`, a loop's terminal predicate,
-  `max_duration` or `flz operative stop`. `run(ctx, args)` is single-procedure, single-entity
-  sugar. See [`architecture/workflow_profile.md`](architecture/workflow_profile.md).
+  `WorkflowOperative`; ends on chain completion, a procedure's `ctx.complete(result)`, a loop
+  that runs out of work, `max_duration` or `flz operative stop`. See
+  [`architecture/workflow_profile.md`](architecture/workflow_profile.md).
 - **Procedure** — a typed stage inside an operative, declaring `Input`, `Output`, `State`,
   `Change` and `Clock` types. A procedure has exactly one output channel.
 - **Entity** — the per-key state-bearing slice of a procedure and the unit of durability (one WAL,

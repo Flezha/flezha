@@ -25,9 +25,6 @@ poll|flz_core_poll
 complete|flz_core_complete
 waitStarvation|flz_core_wait_starvation
 abandon|flz_core_abandon
-workflowEmit|flz_core_workflow_emit
-workflowRecv|flz_core_workflow_recv
-workflowCancelled|flz_core_workflow_cancelled
 spawnRequest|flz_core_spawn_request
 spawnResult|flz_core_spawn_result
 adminCall|flz_core_admin_call

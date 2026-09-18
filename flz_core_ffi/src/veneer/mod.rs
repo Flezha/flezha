@@ -28,7 +28,6 @@ pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
     "flz_core_poll",
     "flz_core_wait_starvation",
     "flz_core_complete",
-    "flz_core_workflow_recv",
     // With a nonzero timeout. A read with a timeout of 0 never waits, so a
     // host may make that one on any thread.
     "flz_core_spawn_result",
@@ -312,42 +311,6 @@ pub fn local_run_until_idle(ctx: CtxPtr, timeout_ms: u64) -> Result<(), Refusal>
 /// End the local run; a context with none is a no-op.
 pub fn local_stop(ctx: CtxPtr) {
     unsafe { crate::flz_core_local_stop(ctx.get()) };
-}
-
-pub fn workflow_emit(ctx: CtxPtr, instance: &CStr, payload: &[u8]) -> Result<(), Refusal> {
-    let status = unsafe {
-        crate::flz_core_workflow_emit(
-            ctx.get(),
-            instance.as_ptr(),
-            payload.as_ptr(),
-            payload.len(),
-        )
-    };
-    verdict(ctx, status)
-}
-
-/// The next inbox item of a live workflow body; `None` on timeout.
-pub fn workflow_recv(
-    ctx: CtxPtr,
-    instance: &CStr,
-    timeout_ms: u64,
-) -> Result<Option<Vec<u8>>, Refusal> {
-    let (status, payload) = with_buffer(
-        &[FLZ_POLL_ACTIVATION],
-        |buf, len| unsafe {
-            crate::flz_core_workflow_recv(ctx.get(), instance.as_ptr(), timeout_ms, buf, len)
-        },
-        <[u8]>::to_vec,
-    );
-    match (status, payload) {
-        (FLZ_POLL_ACTIVATION, Some(bytes)) => Ok(Some(bytes)),
-        (FLZ_POLL_TIMEOUT, _) => Ok(None),
-        _ => Err(core(ctx)),
-    }
-}
-
-pub fn workflow_cancelled(ctx: CtxPtr, instance: &CStr) -> bool {
-    unsafe { crate::flz_core_workflow_cancelled(ctx.get(), instance.as_ptr()) != 0 }
 }
 
 /// Request a spawn from the live activation `token`; the handle number, at

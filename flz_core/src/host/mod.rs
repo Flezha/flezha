@@ -45,7 +45,4 @@ pub use register::{
     check, check_class_json, register_host_class, register_host_class_json, Derived,
     DerivedChannel, DerivedEdge, MAX_MAILBOX_CAPACITY,
 };
-pub use workflow::{
-    fold_workflow_outcome, run_workflow_sugar, workflow_session_cancelled, workflow_session_recv,
-    HostWorkflowSession,
-};
+pub use workflow::fold_workflow_outcome;

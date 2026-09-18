@@ -19,17 +19,12 @@ A workflow operative class SHALL be **durable by default**; an author MAY **opt 
 
 ### Requirement: A durable workflow operative resumes from the WAL on crash, at-least-once
 
-When a durable workflow operative's runner or controller restarts mid-run, the operative SHALL be respawned and its Procedure/Entity state restored from the WAL via the bind-time restore path, then execution SHALL **resume at the current procedure/iteration** rather than restarting from the beginning; the controller-side **proc-journal** decides redo-vs-skip — procedures recorded `proc_committed` SHALL be skipped and the first uncommitted procedure SHALL be seeded from the journaled handoff batch. For the `run`-sugar form (no entities, no checkpoints) "resume" SHALL mean re-running `run` from the top; an instance with no journal (opted-out class, or created before the journal existed) SHALL also re-run from the top. Execution SHALL therefore be **at-least-once** — a step whose completion was not journaled before the crash MAY run again on resume — so steps and compensations SHALL be idempotent by author contract. An entity error inside a structured procedure SHALL first pass through the per-entity retry ladder (`workflow-entity-retry`); an error that is non-retryable or has exhausted the ladder SHALL be terminal — the operative compensates and terminates with status `error`, with no further platform re-run of the operative (author loops own their own semantic retry); this is distinct from crash-resume. A crash during a retry ladder SHALL converge on normal crash-resume of the uncommitted procedure (the in-memory attempt counter resets).
+When a durable workflow operative's runner or controller restarts mid-run, the operative SHALL be respawned and its Procedure/Entity state restored from the WAL via the bind-time restore path, then execution SHALL **resume at the current procedure/iteration** rather than restarting from the beginning; the controller-side **proc-journal** decides redo-vs-skip — procedures recorded `proc_committed` SHALL be skipped and the first uncommitted procedure SHALL be seeded from the journaled handoff batch. An instance with no journal (opted-out class, or created before the journal existed) SHALL re-run from the top. Execution SHALL therefore be **at-least-once** — a step whose completion was not journaled before the crash MAY run again on resume — so steps and compensations SHALL be idempotent by author contract. An entity error inside a structured procedure SHALL first pass through the per-entity retry ladder (`workflow-entity-retry`); an error that is non-retryable or has exhausted the ladder SHALL be terminal — the operative compensates and terminates with status `error`, with no further platform re-run of the operative (author loops own their own semantic retry); this is distinct from crash-resume. A crash during a retry ladder SHALL converge on normal crash-resume of the uncommitted procedure (the in-memory attempt counter resets).
 
 #### Scenario: Crash mid-run resumes from durable state
 
 - **WHEN** a durable workflow operative has committed Entity state and journaled `proc_committed` entries for several completed procedures, then its runner crashes and it is respawned
 - **THEN** it SHALL restore the committed state, skip the journaled procedures, and continue from the first uncommitted procedure seeded with the journaled handoff — not from the beginning
-
-#### Scenario: `run`-sugar re-runs from the top on crash
-
-- **WHEN** a durable `run`-sugar workflow operative (no entities) crashes mid-run and is respawned
-- **THEN** `run` SHALL be re-run from the top, relying on author idempotency, rather than reporting a partial result
 
 #### Scenario: Exhausted or non-retryable error is terminal
 

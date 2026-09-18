@@ -172,6 +172,7 @@ The CLI SHALL expose a single `flz operative` verb tree for lifecycle management
 
 - **WHEN** the operator runs `flz relay start`
 - **THEN** the CLI SHALL reject it as an unknown command
+<!-- kind-naming-record:end -->
 
 ### Requirement: Operative start requests SHALL be location-transparent across controller nodes
 

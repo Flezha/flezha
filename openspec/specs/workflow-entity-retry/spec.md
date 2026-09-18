@@ -2,10 +2,8 @@
 
 ## Purpose
 
-The workflow-entity-retry capability is the retry rung between an entity failure and the abort of a workflow procedure: an entity whose work errors inside a structured procedure is retried in place — default 3 attempts with the platform's shared jittered exponential backoff — while sibling entities' completed results stay buffered at the barrier. A retry that succeeds lets the stage quiesce and commit normally; exhaustion (or an author-declared non-retryable error) fails the procedure into the existing AbortAll + saga path with status `error`, introducing no new terminal state. Retry is strictly pre-commit, so a committed procedure is never retried and a crash mid-ladder converges on normal crash-resume of the uncommitted procedure. Authors classify permanent failures via a non-retryable marker on `WorkflowError` and tune attempts/backoff per class (attempts = 0 restores fail-fast); `run`-sugar bodies keep terminal-on-error.
-
+The workflow-entity-retry capability is the retry rung between an entity failure and the abort of a workflow procedure: an entity whose work errors inside a structured procedure is retried in place — default 3 attempts with the platform's shared jittered exponential backoff — while sibling entities' completed results stay buffered at the barrier. A retry that succeeds lets the stage quiesce and commit normally; exhaustion (or an author-declared non-retryable error) fails the procedure into the existing AbortAll + saga path with status `error`, introducing no new terminal state. Retry is strictly pre-commit, so a committed procedure is never retried and a crash mid-ladder converges on normal crash-resume of the uncommitted procedure. Authors classify permanent failures via a non-retryable marker on `WorkflowError` and tune attempts/backoff per class (attempts = 0 restores fail-fast).
 ## Requirements
-
 ### Requirement: A failing entity is retried with backoff before the procedure fails
 
 An entity whose work errors inside a structured workflow procedure SHALL be
@@ -53,10 +51,10 @@ entity, attempt, delay).
 skip the ladder and fail the procedure immediately. Errors produced by the
 existing string conversions SHALL remain retryable by default. The
 `WorkflowOperative` trait SHALL expose per-class policy knobs for attempt count
-and backoff base; attempts = 0 SHALL restore fail-fast. Retry SHALL apply only
-to structured-procedure entities — `run`-sugar bodies keep terminal-on-error —
-and SHALL only ever occur before the procedure's commit (a committed procedure
-is never retried).
+and backoff base; attempts = 0 SHALL restore fail-fast. Retry SHALL apply to
+every workflow's procedure entities, since every workflow runs procedures, and
+SHALL only ever occur before the procedure's commit (a committed procedure is
+never retried).
 
 #### Scenario: Non-retryable error aborts immediately
 
@@ -67,13 +65,6 @@ is never retried).
 
 - **WHEN** a class sets its retry attempts to 0 and an entity errors
 - **THEN** the procedure SHALL fail on the first error, matching pre-change behavior
-
-#### Scenario: run-sugar stays terminal on error
-
-- **WHEN** a `run`-sugar workflow operative's body returns an error
-- **THEN** the failure SHALL be terminal with no platform retry
-</content>
-</invoke>
 
 ### Requirement: A backoff wait holds no worker thread
 
@@ -99,3 +90,4 @@ SHALL be unchanged.
 - **THEN** the wait SHALL end promptly and the operative SHALL take the normal
   abnormal-exit path, exactly as the pre-existing stop-interrupts-backoff
   scenario pins
+

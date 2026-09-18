@@ -117,5 +117,6 @@ pub fn ok_effect(consumed_offset: Option<u64>, timers: Vec<schema::TimerOp>) -> 
         timers,
         checkpoint: false,
         dlq: None,
+        complete: None,
     }
 }

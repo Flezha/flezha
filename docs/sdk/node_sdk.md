@@ -71,7 +71,7 @@ const Ohlc = defineProcedure({
     state.high = Math.max(state.high, change.close);
     state.low = state.low === 0 ? change.close : Math.min(state.low, change.close);
   },
-  handle: (trade: Trade, ctx) => {
+  run: (trade: Trade, ctx) => {
     ctx.change({ close: trade.price });
     return { symbol: trade.symbol, close: ctx.state.close };
   },
@@ -110,28 +110,30 @@ is what makes enabling worker threads a flag rather than a rewrite.
 
 ### The short form
 
-A `defineProcedure` that declares a `sink` is a whole operative: one
-definition, no `defineOperative` beside it. `kind` says which kind it
-generates, and `codec` is the entry codec `c.input` takes.
+An operative of one procedure can be one declaration: `defineOperative` or
+`defineWorkflow` carrying that procedure's `run` body in place of `channels`.
+The function's name is the kind. `factoryId` is required, `sink` is optional,
+`input` names the entry channel, and `codec` is the entry codec `c.input`
+takes. The procedure's own fields (`initialState`, `applyChange`, `entities`,
+`clock`, `mailboxCapacity`, `schemaVersion` and the rest `defineProcedure`
+reads) are written beside `run`.
 
 ```ts
 // upcase.mjs
-export const upcase = defineProcedure({
-  name: 'upcase',
-  kind: 'stream',
+export const upcase = defineOperative({
+  factoryId: 'upcase',
   sink: 'out',
   codec: 'text',
-  handle: (value) => value.toUpperCase(),
+  run: (value) => value.toUpperCase(),
 });
 
 // place.mjs
-export const place = defineProcedure({
-  name: 'place',
-  kind: 'workflow',
+export const place = defineWorkflow({
+  factoryId: 'place',
   sink: 'placed',
   input: 'order',
   codec: 'text',
-  handle: (order) => order,
+  run: (order) => order,
 });
 ```
 
@@ -143,26 +145,48 @@ await runner.run();
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` — or the `input` field's value
-— decoded by `codec`, the procedure, a plugin sink named by `sink`, a factory
-id equal to `name`, and every class-level setting at its default. A workflow
-short form is a `once` workflow, seeded on its entry channel from
+single procedure: an entry channel named `input`, or the `input` field's value,
+decoded by `codec`; the procedure, named `factoryId` verbatim, so its entities
+keep their state path when it grows into the full form; a plugin sink named by
+`sink`; and every class-level setting at its default. A workflow short form is
+a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
+
+With no `sink` there is no plugin channel, so the procedure has no output
+channel either: its `run` keeps state and returns nothing.
+
+```ts
+export const counter = defineOperative({
+  factoryId: 'counter',
+  input: 'ticks',
+  codec: 'text',
+  initialState: () => ({ seen: [] }),
+  applyChange: (state, change) => {
+    state.seen.push(change);
+  },
+  run: (tick, ctx) => {
+    ctx.change(tick);
+  },
+});
+```
 
 Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window.
 
-The spec is built where `defineProcedure` runs, so a malformed short form is
-refused while the module loads rather than inside `run()`. Three refusals name
-themselves: `SinkWithoutId` (a `sink` with an empty `name`), `SinkWithoutKind`
-and `ShorthandKeyWithoutSink` (`kind`, `input` or `codec` with no `sink`).
-There is no `SinkWithoutOutput`: a plain `.mjs` author runs no type checker and
-this SDK ships no build step, so a handler that returns nothing cannot be seen
-here — the manifest leaves `shorthand_typed_output` off and the conformance row
-skips by name.
+The spec is built where `defineOperative` or `defineWorkflow` runs, so a
+malformed short form is refused while the module loads rather than inside
+`run()`. Two refusals name themselves: `ShortFormWithTopology` (`run` beside
+`channels`), and `DuplicateFactoryId`, raised when the runner declares a second
+operative, of either kind, under a factory id it holds. A key written where it
+does not belong is refused naming the key: a class-level setting, `name` or
+`kind` beside `run`, `sink`, `input`, `codec` or a procedure field beside `channels`, and `kind`,
+`sink`, `input` or `codec` on a `defineProcedure`. There is no `SinkWithoutOutput`: a plain `.mjs`
+author runs no type checker and this SDK ships no build step, so a body that
+returns nothing cannot be seen here. The manifest leaves
+`shorthand_typed_output` off and the conformance row skips by name.
 
-> A workflow short form started by a *spawn* does not see its payload yet —
+> A workflow short form started by a *spawn* does not see its payload yet:
 > `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## The parallelism model, as arithmetic
@@ -230,8 +254,8 @@ nothing could free it — a wedged **process**, not a wedged worker.
 
 So no blocking core call is reachable synchronously from JavaScript. `poll` is
 not exported to JavaScript at all; it is driven from the SDK's own native
-threads, never the runtime's shared I/O threadpool. `complete`,
-`workflowRecv`, `spawnWait` and `start` return promises whose blocking work
+threads, never the runtime's shared I/O threadpool. `complete`, `spawnWait`
+and `start` return promises whose blocking work
 runs on native threads the binding owns; `spawnRequest` and `spawnTryResult`
 never wait, so `ctx.spawnWorkflow` returns its handle synchronously and only
 the handle's `wait()` is a promise. A test over the addon's exported

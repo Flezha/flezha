@@ -4,11 +4,13 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   against a live reference runner over UDS: a loop that commits per iteration,
   parks when its inbox is empty and rehydrates on the next input; a rewind that
   compensates back to an earlier iteration and bumps the epoch; the entity
-  retry ladder and what it does when it exhausts; and a branching tree, whose
-  fan-out either joins once or unwinds every branch before their parent.
+  retry ladder and what it does when it exhausts; a branching tree, whose
+  fan-out either joins once or unwinds every branch before their parent; and a
+  loop a procedure ends with `complete`.
 
-  These prove controller mechanics rather than a runner, so every cell pins the
-  reference SDK. Tagged `:system` (boots real subprocesses) — excluded from the
+  All but the last prove controller mechanics rather than a runner, so those
+  cells pin the reference SDK; the completion is each SDK's own, so its cell
+  runs on the selected runtime. Tagged `:system` (boots real subprocesses) — excluded from the
   default `mix test`; run with:
 
       mix test --only workflow_crash_resume
@@ -28,6 +30,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
@@ -292,6 +295,59 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       # The point of the test: the second turn's staged output was delivered.
       assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
+    end
+  end
+
+  describe "a procedure ends the loop (uds)" do
+    # Not pinned to the reference SDK: the completion is each runtime's own
+    # `ctx.complete`, and every test app's `chat_loop_workflow` ends itself on
+    # the turn `bye`, completing with the number of turns its first procedure
+    # recorded.
+    @describetag transport: :uds, cell: :uds_complete
+
+    test "turns then bye end the instance ok with the turn count, and it does not park after",
+         ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("workflow_bye")
+      operative_id = unique("chat_loop_workflow")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      # A short idle window, so a loop that went on waiting after `bye` would
+      # park inside this test rather than after it.
+      {_port, _exec} =
+        boot_runner(namespace, ctx, id_path,
+          release?: false,
+          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+        )
+
+      start_workflow(namespace, operative_id, "chat_loop_workflow",
+        plugins: [forward_sink("chat_sink", collector)]
+      )
+
+      for turn <- ["one", "two", "three", "bye"], do: send_turn(namespace, operative_id, turn)
+
+      assert NodeTestHelper.wait_until(
+               fn -> match?({:ok, %{status: _}}, Completion.read(operative_id)) end,
+               60_000
+             ),
+             "the loop did not end on bye; committed iterations: " <>
+               inspect(committed_iters(operative_id))
+
+      assert {:ok, %{status: "ok", result: "3"}} = Completion.read(operative_id)
+
+      # The completing turn still ran its whole iteration, reply included.
+      assert replies(collector, 4, operative_id) ==
+               ["reply:one", "reply:two", "reply:three", "reply:bye"]
+
+      {:ok, entries} = ProcJournal.read(operative_id)
+      assert committed_iters(operative_id) == [0, 1, 2, 3]
+      last = entries |> Enum.filter(&(&1.type == :iter_committed)) |> List.last()
+      assert last.payload.completion == "3"
+
+      refute entries |> Enum.drop_while(&(&1 != last)) |> Enum.any?(&(&1.type == :parked)),
+             "the completed loop parked after its last turn"
     end
   end
 

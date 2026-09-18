@@ -782,6 +782,9 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     NodeTestHelper.wait_until(
       fn -> Enum.sort(GroupedHashing.served_groups(hub_id)) == Enum.sort(groups) end,
       2_000
-    ) || flunk("declared #{inspect(GroupedHashing.served_groups(hub_id))}, wanted #{inspect(groups)}")
+    ) ||
+      flunk(
+        "declared #{inspect(GroupedHashing.served_groups(hub_id))}, wanted #{inspect(groups)}"
+      )
   end
 end

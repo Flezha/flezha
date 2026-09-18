@@ -70,9 +70,6 @@ needs a known entity set to know when a procedure is *done*. `--partitions` is r
 [partitioning](stream_profile.md#partitioned-operatives) is a stream concern; a workflow scales
 by spawning instances.
 
-`run(ctx, args)` is sugar for a single-procedure, single-entity workflow operative — the simplest
-case, and the only form with a directly interactive inbox.
-
 The `(operative_class, procedure_id, entity_key)` identity is the same one a stream operative
 uses. A workflow operative genuinely has procedures and entities; there are no synthetic
 placeholders.
@@ -91,9 +88,9 @@ record body:          [type u8][proc_idx u16 BE][iter u32 BE][payload]
 
 | Type | Entry | Carries |
 | --- | --- | --- |
-| 1 | `proc_committed` | the entities that ran, the handoff batch, and the staged outbox |
+| 1 | `proc_committed` | the entities that ran, the handoff batch, the staged outbox, and the procedure's completion if it asked to end the instance |
 | 2 | `outbox_flushed` | a marker: this entry's outbox reached its sinks |
-| 3 | `iter_committed` | the iteration's consumed inbox offset and its terminal handoff |
+| 3 | `iter_committed` | the iteration's consumed inbox offset, its terminal handoff, and its completion |
 | 4 | `parked` | the iteration the operative is suspended at, and an optional wake deadline |
 | 5 | `compensated` | an undo ran — with the undo's own outbox |
 | 6 | `rewound` | a marker: everything above this iteration is un-committed |
@@ -179,8 +176,7 @@ construction. A crash between the commit and the flush costs nothing but a dupli
 absorbs.
 
 An **opted-out** class, or one running without a controller (a unit test, a bench), keeps the
-direct path: emits go straight to the wire as they happen, exactly as before. `run`-sugar is
-always direct — it has no barrier to stage against.
+direct path: emits go straight to the wire as they happen, exactly as before.
 
 A workflow output carries no `flz.key`: its plugin wire has no natural key to stamp. That is why
 the *only* undo the engine can guarantee for a workflow procedure is the procedure's own
@@ -299,7 +295,7 @@ stateDiagram-v2
     Iter2 --> Commit2
     Commit2 --> Iter3: wait
     Iter3 --> Commit3
-    Commit3 --> [*]: terminal predicate / max_duration / stop
+    Commit3 --> [*]: ctx.complete / max_duration / stop
 
     Commit3 --> Rewind: flz operative rewind --to-iteration 2
     Rewind --> Iter3: compensate iterations above 2 in reverse,<br/>bump the epoch, resume waiting

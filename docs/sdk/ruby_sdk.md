@@ -47,7 +47,7 @@ class Upcase < Flezha::Procedure
   def initial_state(_entity_key) = { seen: 0 }
   def apply_change(state, change) = state[:seen] += change[:by]
 
-  def process(input, ctx)
+  def run(input, ctx)
     ctx.change({ by: 1 })
     input.upcase
   end
@@ -76,47 +76,84 @@ same reasons, as the Rust builder's `TopologyIssue`.
 
 ### The short form
 
-A `Flezha::Procedure` subclass that declares `sink` in its class body is a
-whole operative: one class, no `StreamOperative` beside it. `kind:` says which
-kind it generates, and `codec:` is the entry codec the builder's `input` takes.
+A `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass that
+defines `run` instead of `channels` is a whole operative: the class carries its
+one procedure's body, and no `Flezha::Procedure` stands beside it. The base
+class is the kind. `factory_id` is required; `sink`, `input` and `codec` are
+optional, each its own call, and `codec` is the entry codec the builder's
+`input` takes. A `sink` written on a `Flezha::Procedure` is refused, naming the
+two operative bases.
 
 ```ruby
-class Upcase < Flezha::Procedure
-  procedure_name "upcase"
-  sink "out", kind: :stream, codec: :text
+class Upcase < Flezha::StreamOperative
+  factory_id "upcase"
+  sink "out"
+  codec :text
 
-  def process(value, _ctx) = value.upcase
+  def run(value, _ctx) = value.upcase
 end
 
-class Place < Flezha::Procedure
-  procedure_name "place"
-  sink "placed", kind: :workflow, input: "order", codec: :text
+class Place < Flezha::WorkflowOperative
+  factory_id "place"
+  sink "placed"
+  input "order"
+  codec :text
 
-  def process(order, _ctx) = order
+  def run(order, _ctx) = order
 end
 
 Flezha.create_runner("default").register_factory(Upcase).register_factory(Place).run
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` — or the `input:` value —
-decoded by `codec:`, the procedure, a plugin sink named by `sink`, a factory id
-equal to `procedure_name`, and every class-level setting at its default. A
-workflow short form is a `once` workflow, seeded on its entry channel from
+single procedure: an entry channel named `input`, or the `input` value,
+decoded by `codec`, the procedure, a plugin sink named by `sink` when one is
+written, a factory id equal to `factory_id`, and every class-level setting at
+its default. The procedure is named after the factory id, so a full form that
+names its procedure the same keeps every entity where it was. A workflow short
+form is a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
+
+With no `sink`, the operative declares the entry channel and the procedure and
+no plugin channel: the operative that only keeps state.
+
+```ruby
+class Counter < Flezha::StreamOperative
+  factory_id "counter"
+  input "ticks"
+  codec :text
+
+  def initial_state(_entity_key) = { seen: [] }
+  def apply_change(state, change) = state[:seen] << change[:push]
+
+  def run(tick, ctx)
+    ctx.change({ push: tick })
+    nil
+  end
+end
+```
+
+The procedure's settings and hooks are written on the class and handed to the
+generated procedure: settings such as `entity_keys`, `dynamic_entities`,
+`clock`, `mailbox_capacity`, `schema_version` and `state_type`, the ones a
+`Flezha::Procedure` class body declares, and hook methods such as
+`initial_state`, `apply_change` and `entities_for`.
 
 Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window.
+window. A class setting written on a short form is refused rather than
+ignored, and so is a `sink`, `input`, `codec` or procedure setting written
+beside `channels`.
 
-With a `sink`, `procedure_name` must be written: the factory id is an address
-an operator types, and a class rename must not move it. Two refusals are raised
-at `register_factory`, where this SDK places every refusal, each naming itself:
-`SinkWithoutId` and `SinkWithoutKind`. The other keys ride the `sink` call, so
-Ruby cannot write one without a sink and owes no `ShorthandKeyWithoutSink`; it
-cannot see a procedure's output type either, so it owes no `SinkWithoutOutput`.
+`factory_id` must be written: the factory id is an address an operator types,
+and a class rename must not move it. A class without one is refused at
+`register_factory`, where this SDK places every refusal. So is a class defining
+both `run` and `channels`, naming `ShortFormWithTopology`, and one defining
+neither. A second operative under a factory id the runner already holds, short
+or full, fails naming `DuplicateFactoryId` when the runner declares its
+classes.
 
-> A workflow short form started by a *spawn* does not see its payload yet —
+> A workflow short form started by a *spawn* does not see its payload yet:
 > `KB-381`. Start it with `--init-values` until that is fixed.
 
 ### Channel payloads
@@ -279,11 +316,10 @@ thread per activation up to the core's in-flight cap.
 
 ### The GVL, and the interrupt bound
 
-Every blocking core call — `poll`, `wait_starvation`, `complete` and the
-workflow inbox receive — runs with the GVL released, through one function in
-the veneer. `workflow_recv` is the sharp one: a workflow stage waiting seconds
-on its inbox with the lock held would freeze every other thread in the VM,
-fetchers included.
+Every blocking core call — `poll`, `wait_starvation` and `complete` — runs
+with the GVL released, through one function in the veneer. `poll` is the sharp
+one: a poller waiting on an idle core with the lock held would freeze every
+other thread in the VM, fetchers included.
 
 `flz_core_shutdown` wakes *every* poller, so the ABI has no per-thread wake and
 none is in scope to add. Each `poll` is therefore bounded by a timeout, and

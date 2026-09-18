@@ -190,7 +190,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       entities_ran: entities_ran,
       handoff: handoff,
       outbox: outbox,
-      compensating: compensating
+      compensating: compensating,
+      completes: completes,
+      result: result
     } = commit
 
     outbox =
@@ -206,7 +208,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     barrier =
       if compensating,
         do: {:compensated, proc_idx, iter, outbox},
-        else: {:proc_committed, proc_idx, iter, entities_ran, handoff_items(handoff), outbox}
+        else:
+          {:proc_committed, proc_idx, iter, entities_ran, handoff_items(handoff), outbox,
+           completion(completes, result)}
 
     %{
       operative_id: operative_id,
@@ -244,14 +248,18 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       operative_id: operative_id,
       iter: iter,
       consumed_offset: consumed_offset,
-      handoff: handoff
+      handoff: handoff,
+      completes: completes,
+      result: result
     } = commit
 
     runner_id = state.runner_id
 
     %{
       operative_id: operative_id,
-      barrier: {:iter_committed, iter, consumed_offset, handoff_items(handoff)},
+      barrier:
+        {:iter_committed, iter, consumed_offset, handoff_items(handoff),
+         completion(completes, result)},
       telemetry:
         {[:flezha, :state, :iter_commit], %{count: 1, consumed_offset: consumed_offset},
          %{namespace: state.namespace, operative_id: operative_id, iter: iter}},
@@ -273,6 +281,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       {cid, bytes}
     end)
   end
+
+  defp completion(true, result), do: result
+  defp completion(false, _result), do: nil
 
   # Boundary snapshot: ask the SDK to compact every Entity of the instance, so a
   # rehydrate restores iteration-N state from a snapshot instead of replaying the

@@ -30,9 +30,9 @@ repeated here; [`data_durability.md`](data_durability.md) says what is lost when
 An instance is spawned with `args` (`init_values` seeds the root) from the CLI
 (`flz operative start`), a schedule (`flz schedule`) or a running procedure
 (`ctx.spawn_workflow`, [`../sdk/procedure_requested_spawn.md`](../sdk/procedure_requested_spawn.md))
-and terminates on the first of: chain quiescence (every leaf committed); `ctx.complete(result)`;
-a loop terminal predicate (`ctx.loop_until(pred, body)` on a `run`-sugar body, which blocks on
-its inbox with a 200 ms wake to observe cancellation); `max_duration()` / `maxDuration()`
+and terminates on the first of: chain quiescence (every leaf committed); a procedure's
+`ctx.complete(result)`, honoured once its iteration commits; a loop that runs out of work (a
+chained loop's empty batch); `max_duration()` / `maxDuration()`
 elapsing (a cooperative cancellation token); `flz operative stop` (a cooperative `WorkflowStop`
 that trips the same token — an instance not bound to a runner takes the hard `RemOperative`
 teardown, `OperativeManager.request_stop/3`).
@@ -42,19 +42,19 @@ Every trigger converges on one `WorkflowCompleted` (`status` `ok | error | cance
 reader, **settling both output debts first** (`ControlChannel.drain_owed_outputs/2`). They are
 settled differently. The data stream is *flushed*: `Placement.flush_stream_channels/1` issues one
 bounded call per stream channel of the runner, and a channel answers only after every frame
-already in its mailbox has been routed to an Overwatch — so an opted-out or `run`-sugar class's
+already in its mailbox has been routed to an Overwatch — so an opted-out class's
 last direct output is run before its Overwatch is stopped, however the two sockets interleave on
 arrival, and even when an output of that run was lost rather than delivered. The journal is
 *waited for*: up to 60 s, re-driving `ProcJournal.flush_pending/1`, until
 `ProcJournal.pending_entries/1` is empty. A deadline hit is logged (`... still owed`) and the
 retained journal keeps the debt. `status = "error"` tears down identically — there is no
-platform retry of a failed procedure. A `run`-sugar body may `recv()` input after it starts; a
-frame addressed to a running instance is routed to its inbox, never dropped.
+platform retry of a failed procedure. A frame addressed to a running instance is routed to its
+inbox, never dropped; a `PerInput` loop runs one iteration per inbox item.
 
 ## Durable loop and suspension
 
-Loop modes are declared with `loop_mode()` / `loopMode()`. Registration refuses a loop on a
-`run`-sugar class (`LoopWithoutChain`) and a durable `Chained` loop whose terminal procedure
+Loop modes are declared with `loop_mode()` / `loopMode()`. Registration refuses a class that
+declares no procedure (`NoProcedures`) and a durable `Chained` loop whose terminal procedure
 releases no inter-procedure channel (`LoopTerminalWithoutHandoff`). Two shapes fail that: a
 terminal nothing consumes and that names no sink owns no output channel at all, and one whose only
 wiring is a plugin sink gets no journal codec, because the runtime attaches one to inter-procedure
@@ -118,8 +118,7 @@ binding; undelivered input outranks the park. Inspect with `flz state journal <o
 ## Entity retry: the rung before the abort
 
 A failing entity inside a **structured** procedure is retried in place while its finished
-siblings stay buffered at the barrier; a `run`-sugar body has no entity to scope a retry to and
-is terminal on its first error.
+siblings stay buffered at the barrier.
 
 | Knob | Rust / Java | Default |
 | --- | --- | --- |
@@ -215,7 +214,7 @@ and hooks are idempotent.
 A class is durable by default and opts out with `PERSISTENCE_ENABLED = false` /
 `persistenceEnabled()`; the controller resolves it in `PersistenceResolver.persistent_state?/3`
 (operator override available). Opted out, the per-Entity flush drains and discards — no WAL,
-snapshot, journal or handshake — and a crash re-runs from the top; so does `run`-sugar.
+snapshot, journal or handshake — and a crash re-runs from the top.
 
 **The commit path.** At every barrier the driver ships `ProcCommit` (`proc_idx`, `iter`,
 `entities_ran`, the handoff through the channel's codec, the staged `outbox`) and blocks.

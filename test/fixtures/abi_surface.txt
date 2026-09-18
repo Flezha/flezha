@@ -37,6 +37,3 @@ flz_core_spawn_result
 flz_core_start
 flz_core_wait_starvation
 flz_core_watch_stdin_eof
-flz_core_workflow_cancelled
-flz_core_workflow_emit
-flz_core_workflow_recv

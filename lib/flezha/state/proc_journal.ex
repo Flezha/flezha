@@ -84,14 +84,19 @@ defmodule Flezha.State.ProcJournal do
   """
   @type barrier ::
           {:proc_committed, non_neg_integer(), non_neg_integer(), [binary()], [handoff_item()],
-           [outbox_entry()]}
+           [outbox_entry()], completion()}
           | {:compensated, non_neg_integer(), non_neg_integer(), [outbox_entry()]}
-          | {:iter_committed, non_neg_integer(), non_neg_integer(), [handoff_item()]}
+          | {:iter_committed, non_neg_integer(), non_neg_integer(), [handoff_item()],
+             completion()}
+
+  @typedoc "The result a procedure's `complete` asked for, or `nil` when none did."
+  @type completion :: binary() | nil
 
   @doc """
-  Append one `proc_committed` entry — entities ran, inter-proc handoff, and the
-  procedure's staged outbox in ONE record — durable before returning; the caller
-  replies `ProcCommitResponse` only on `:ok`. An entry whose encoded body
+  Append one `proc_committed` entry — entities ran, inter-proc handoff, the
+  procedure's staged outbox and the completion it asked for in ONE record —
+  durable before returning; the caller replies `ProcCommitResponse` only on
+  `:ok`. An entry whose encoded body
   exceeds `max_entry_bytes/0` is refused with
   `{:error, {:oversized_handoff, size, max}}` (keep bulk data in Entity state,
   which is already WAL-durable, and hand off references).
@@ -102,24 +107,42 @@ defmodule Flezha.State.ProcJournal do
           non_neg_integer(),
           [binary()],
           [handoff_item()],
-          [outbox_entry()]
+          [outbox_entry()],
+          completion()
         ) :: :ok | {:error, term()}
-  def append_proc_committed(instance_id, proc_idx, iter, entities_ran, handoff, outbox \\ [])
+  def append_proc_committed(
+        instance_id,
+        proc_idx,
+        iter,
+        entities_ran,
+        handoff,
+        outbox \\ [],
+        completion \\ nil
+      )
       when is_binary(instance_id) and is_integer(proc_idx) and proc_idx >= 0 do
-    append_barrier(instance_id, {:proc_committed, proc_idx, iter, entities_ran, handoff, outbox})
+    append_barrier(
+      instance_id,
+      {:proc_committed, proc_idx, iter, entities_ran, handoff, outbox, completion}
+    )
   end
 
   @doc """
   Append one `iter_committed` entry — loop iteration `iter` finished, having
   consumed the inbox up to `consumed_offset` and released `handoff` as its
-  terminal batch — durable before the reply. The commit boundary a crash-resume
-  restarts after: iterations at or below `iter` never re-run.
+  terminal batch, and ended the instance when `completion` is not `nil` —
+  durable before the reply. The commit boundary a crash-resume restarts after:
+  iterations at or below `iter` never re-run.
   """
-  @spec append_iter_committed(binary(), non_neg_integer(), non_neg_integer(), [handoff_item()]) ::
-          :ok | {:error, term()}
-  def append_iter_committed(instance_id, iter, consumed_offset, handoff)
+  @spec append_iter_committed(
+          binary(),
+          non_neg_integer(),
+          non_neg_integer(),
+          [handoff_item()],
+          completion()
+        ) :: :ok | {:error, term()}
+  def append_iter_committed(instance_id, iter, consumed_offset, handoff, completion \\ nil)
       when is_binary(instance_id) and is_integer(iter) and iter >= 0 do
-    append_barrier(instance_id, {:iter_committed, iter, consumed_offset, handoff})
+    append_barrier(instance_id, {:iter_committed, iter, consumed_offset, handoff, completion})
   end
 
   @doc """
@@ -299,9 +322,12 @@ defmodule Flezha.State.ProcJournal do
   them released, so every uncommitted child branch re-seeds from exactly its own
   parent's edge (`workflow-branching`). `handoff` is the previous iteration's
   terminal handoff — what a handoff-chained loop feeds its next iteration.
-  `committed_procs` carries every forward proc commit with its iteration, which is
-  what the driver folds into `plan_compensation`'s per-iteration `committed`
-  input.
+  `committed_procs` carries every forward proc commit with its iteration and the
+  completion it asked for, which is what the driver folds into
+  `plan_compensation`'s per-iteration `committed` input and what ends a resumed
+  iteration whose completing procedure committed before the crash.
+  `completion` is the result the last committed iteration ended the instance
+  with, `nil` when it did not.
 
   A rewind folds into the same shape — the resume point simply lands back at the
   rewound-to iteration — plus `rewind_undo`: the procedures the rewind unwound
@@ -321,7 +347,8 @@ defmodule Flezha.State.ProcJournal do
             rewind_undo: [committed_proc()],
             parked: boolean(),
             wake_deadline_ms: non_neg_integer() | nil,
-            consumed_offset: non_neg_integer()
+            consumed_offset: non_neg_integer(),
+            completion: completion()
           }
           | nil
   def restore_state(instance_id) do
@@ -351,7 +378,8 @@ defmodule Flezha.State.ProcJournal do
           rewind_undo: rewind_undo(raw),
           parked: match?(%{type: :parked}, List.last(entries)),
           wake_deadline_ms: wake_deadline(List.last(entries)),
-          consumed_offset: consumed_offset_of(last_iter)
+          consumed_offset: consumed_offset_of(last_iter),
+          completion: completion_of(last_iter)
         }
     end
   end
@@ -395,9 +423,9 @@ defmodule Flezha.State.ProcJournal do
   (`workflow-branching`), derived from the journal alone.
 
   `leaf_procs` is the class's declared leaf set (`ClassRegistry.leaf_procs/1`, from
-  the SDK's `AddOperative` response). `nil` — a class that declared none
-  (run-sugar, stream, an SDK without the declaration) — is not derivable, so
-  the answer is `nil` rather than a guess. An empty journal is not complete.
+  the SDK's `AddOperative` response). `nil` — a class that declared none (a
+  stream, an SDK without the declaration) — is not derivable, so the answer is
+  `nil` rather than a guess. An empty journal is not complete.
   """
   @spec complete?(binary(), [non_neg_integer()] | nil) :: boolean() | nil
   def complete?(_instance_id, nil), do: nil
@@ -511,8 +539,13 @@ defmodule Flezha.State.ProcJournal do
     end
   end
 
-  defp committed_proc(%{proc_idx: proc_idx, iter: iter, payload: %{entities_ran: entities_ran}}),
-    do: %{proc_idx: proc_idx, iter: iter, entities_ran: entities_ran}
+  defp committed_proc(%{proc_idx: proc_idx, iter: iter, payload: payload}),
+    do: %{
+      proc_idx: proc_idx,
+      iter: iter,
+      entities_ran: payload.entities_ran,
+      completion: payload.completion
+    }
 
   defp latest_iter_committed(entries) do
     entries
@@ -525,6 +558,9 @@ defmodule Flezha.State.ProcJournal do
 
   defp consumed_offset_of(nil), do: 0
   defp consumed_offset_of(%{payload: %{consumed_offset: offset}}), do: offset
+
+  defp completion_of(nil), do: nil
+  defp completion_of(%{payload: %{completion: completion}}), do: completion
 
   defp wake_deadline(%{type: :parked, payload: %{wake_deadline_ms: ms}}), do: ms
   defp wake_deadline(_), do: nil
@@ -578,18 +614,28 @@ defmodule Flezha.State.ProcJournal do
     append(instance_id, type, proc_idx, iter, payload)
   end
 
-  defp barrier_record({:proc_committed, proc_idx, iter, entities_ran, handoff, outbox}),
-    do:
-      {@type_proc_committed, proc_idx, iter,
-       [Codec.encode_committed_payload(entities_ran, handoff), Codec.encode_outbox(outbox)]}
+  defp barrier_record(
+         {:proc_committed, proc_idx, iter, entities_ran, handoff, outbox, completion}
+       ),
+       do:
+         {@type_proc_committed, proc_idx, iter,
+          [
+            Codec.encode_committed_payload(entities_ran, handoff),
+            Codec.encode_outbox(outbox),
+            Codec.encode_completion(completion)
+          ]}
 
   defp barrier_record({:compensated, proc_idx, iter, outbox}),
     do: {@type_compensated, proc_idx, iter, Codec.encode_outbox(outbox)}
 
-  defp barrier_record({:iter_committed, iter, consumed_offset, handoff}),
+  defp barrier_record({:iter_committed, iter, consumed_offset, handoff, completion}),
     do:
       {@type_iter_committed, 0, iter,
-       [<<consumed_offset::64-big>>, Codec.encode_handoff(handoff)]}
+       [
+         <<consumed_offset::64-big>>,
+         Codec.encode_handoff(handoff),
+         Codec.encode_completion(completion)
+       ]}
 
   # `epoch` defaults to the instance's current one (a journal read); a caller
   # already holding the entry it is marking passes that entry's epoch instead,

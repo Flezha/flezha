@@ -678,7 +678,7 @@ one is torn down identically (terminal — the platform never re-runs it; a
 structured chain's per-Entity retry ladder runs *inside* the run) and surfaced
 via `[:flezha, :workflow, :failed]`.
 
-An opted-out (or `run`-sugar) instance writes its plugin-bound outputs straight
+An opted-out instance writes its plugin-bound outputs straight
 to the data stream — a frame whose payload id is the instance id, on a
 secondary stream — so those outputs and this completion travel different
 sockets. Before deregistering the instance the controller **flushes** the
@@ -1369,7 +1369,10 @@ receives it keeps the Entity held and re-sends the park — delay, never loss.
 
 ```protobuf
 message ProcHandoffItem   { uint32 channel_id = 1; bytes payload = 2; }   // channel codec bytes of one value
-message ProcCommittedProc { uint32 proc_idx = 1; uint32 iter = 2; repeated bytes entities_ran = 3; }
+message ProcCommittedProc {
+    uint32 proc_idx = 1; uint32 iter = 2; repeated bytes entities_ran = 3;
+    bool completes = 4; bytes result = 5;          // the procedure's own `ctx.complete`
+}
 message ProcEdgeHandoff   { uint32 proc_idx = 1; repeated ProcHandoffItem handoff = 2; }
 
 message ProcJournalState {
@@ -1382,6 +1385,8 @@ message ProcJournalState {
     uint64 wake_deadline_ms = 7;
     repeated ProcCommittedProc rewind_undo = 8;    // unwound by a rewind, not yet compensated
     repeated ProcEdgeHandoff proc_handoffs = 9;    // in-flight iteration, per committed proc
+    bool   completed = 10;                         // the last committed iteration ended the instance
+    bytes  result = 11;                            // and ended it with this
 }
 ```
 
@@ -1390,7 +1395,10 @@ skips `committed_proc_idxs`, re-seeds each uncommitted child branch from its
 own parent's edge in `proc_handoffs` (filtered to the channel the child
 consumes — the latest commit's handoff alone would strand a sibling), re-seeds
 iteration N+1 of a handoff-chained loop from `handoff`, and rebuilds the
-compensation planner's input from `committed_procs`. `rewind_undo` lists the
+compensation planner's input from `committed_procs`. When `completed` is set
+the driver ends the run at once with `result`, and a skipped procedure of the
+in-flight iteration whose `completes` is set supplies that iteration's
+completion, since it never runs again to ask. `rewind_undo` lists the
 procedures a rewind unwound that nothing has compensated yet: the driver runs
 them through the ordinary compensation planner (reverse iteration, reverse
 chain position) before resuming forward at `iter`, each undo journaling a
@@ -1416,6 +1424,8 @@ message ProcCommit {
     repeated ProcHandoffItem handoff = 5;
     repeated ProcOutboxItem outbox = 6;     // staged plugin output
     bool compensating = 7;                  // undo record, not forward progress
+    bool completes = 8;                     // this procedure called `ctx.complete`
+    bytes result = 9;                       // with this result
 }
 
 message ProcCommitResponse { string operative_id = 1; uint32 proc_idx = 2; string error = 3; }
@@ -1426,8 +1436,8 @@ instance: procedure `proc_idx` completed forward on `entities_ran` and released
 the inter-proc handoff batch, serialized through the producing channel's byte
 codec, which the runtime derives and no SDK declares. The driver **blocks** until `ProcCommitResponse` — the
 next procedure must not race ahead of the committed record. Opted-out classes
-(`PERSISTENCE_ENABLED = false`) and the `run`-sugar form skip the barrier and
-keep the direct at-least-once wire path.
+(`PERSISTENCE_ENABLED = false`) skip the barrier and keep the direct
+at-least-once wire path.
 
 `outbox` is the procedure's **staged** plugin-bound output: inside a structured
 procedure `ctx.emit` never reaches the wire; each Entity buffers its serialized
@@ -1497,6 +1507,8 @@ message IterCommit {
     uint32 iter = 2;
     uint64 consumed_offset = 3;             // durable-inbox offset this iteration consumed
     repeated ProcHandoffItem handoff = 4;   // the iteration's terminal batch
+    bool completes = 5;                     // a procedure of this iteration called `ctx.complete`
+    bytes result = 6;                       // the resolved result the instance ends with
 }
 message IterCommitResponse { string operative_id = 1; uint32 iter = 2; string error = 3; }
 ```

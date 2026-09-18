@@ -186,7 +186,11 @@ defmodule Flezha.State.Commands do
           rewind_undo: Enum.map(resume.rewind_undo, &committed_proc/1),
           consumed_offset: resume.consumed_offset,
           parked: resume.parked,
-          wake_deadline_ms: resume.wake_deadline_ms || 0
+          wake_deadline_ms: resume.wake_deadline_ms || 0,
+          # The last committed iteration ended the instance: a resume ends it at
+          # once with this result instead of waiting for input.
+          completed: resume.completion != nil,
+          result: resume.completion || <<>>
         }
     end
   end
@@ -195,7 +199,9 @@ defmodule Flezha.State.Commands do
     %RunnerCommands.ProcCommittedProc{
       proc_idx: proc.proc_idx,
       iter: proc.iter,
-      entities_ran: proc.entities_ran
+      entities_ran: proc.entities_ran,
+      completes: proc.completion != nil,
+      result: proc.completion || <<>>
     }
   end
 

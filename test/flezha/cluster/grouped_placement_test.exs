@@ -89,7 +89,8 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
              inspect(Enum.frequencies(strays))
   end
 
-  defp strays(ids, peer_node), do: ids |> Enum.map(&hosting_node/1) |> Enum.reject(&(&1 == peer_node))
+  defp strays(ids, peer_node),
+    do: ids |> Enum.map(&hosting_node/1) |> Enum.reject(&(&1 == peer_node))
 
   # ---------- the cluster this test runs against ----------
 

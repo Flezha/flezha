@@ -12,6 +12,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.SDK.Wire
+  alias Flezha.Service.Cli.Journal
   alias Flezha.State.{Commands, Outbox, Paths, ProcJournal, TestHelpers, WalWriter}
   alias Flezha.State.ProcJournal.Codec
 
@@ -189,10 +190,101 @@ defmodule FlezhaTest.State.ProcJournalTest do
     # Every forward commit is carried back with its iteration — the compensation
     # planner's per-iteration `committed` input.
     assert resume.committed_procs == [
-             %{proc_idx: 0, iter: 0, entities_ran: [seg]},
-             %{proc_idx: 1, iter: 0, entities_ran: []},
-             %{proc_idx: 0, iter: 1, entities_ran: [seg]}
+             %{proc_idx: 0, iter: 0, entities_ran: [seg], completion: nil},
+             %{proc_idx: 1, iter: 0, entities_ran: [], completion: nil},
+             %{proc_idx: 0, iter: 1, entities_ran: [seg], completion: nil}
            ]
+  end
+
+  # ---------- a procedure's completion ----------
+
+  test "a completion rides both commit entries, and an entry without one reads as not completing" do
+    inst = instance_id()
+    :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [{1, "h"}], [], "3")
+    :ok = ProcJournal.append_iter_committed(inst, 0, 2, [], "3")
+    :ok = ProcJournal.append_proc_committed(inst, 1, 1, [], [])
+
+    close_journal_writer(inst)
+
+    # Written the way a build without completions wrote them: no trailing segment.
+    path = Paths.journal_path(inst)
+
+    old_proc =
+      Codec.encode_entry(1, 2, 1, [
+        Codec.encode_committed_payload([], []),
+        Codec.encode_outbox([])
+      ])
+
+    old_iter = Codec.encode_entry(3, 0, 1, [<<5::64-big>>, Codec.encode_handoff([])])
+    File.write!(path, TestHelpers.build_wal_record(3, <<0::128>>, old_proc), [:append])
+    File.write!(path, TestHelpers.build_wal_record(4, <<0::128>>, old_iter), [:append])
+
+    assert {:ok, [proc, iter, plain, old_p, old_i]} = ProcJournal.read(inst)
+    assert proc.payload.completion == "3"
+    assert proc.payload.handoff == [{1, "h"}]
+    assert iter.payload.completion == "3"
+    assert iter.payload.consumed_offset == 2
+    assert plain.payload.completion == nil
+    assert {old_p.payload.completion, old_i.payload.completion} == {nil, nil}
+    assert old_i.payload.consumed_offset == 5
+  end
+
+  test "a completion carrying an empty result still completes" do
+    inst = instance_id()
+    :ok = ProcJournal.append_iter_committed(inst, 0, 1, [], "")
+
+    assert {:ok, [entry]} = ProcJournal.read(inst)
+    assert entry.payload.completion == ""
+    assert %{completion: ""} = ProcJournal.restore_state(inst)
+  end
+
+  test "the restore state ships the latest iteration's completion and each procedure's own" do
+    inst = instance_id()
+
+    # Iteration 0 ends without a completion: the resume waits for input.
+    :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [])
+    :ok = ProcJournal.append_iter_committed(inst, 0, 1, [])
+    assert %{completion: nil} = ProcJournal.restore_state(inst)
+
+    # Iteration 1's completing procedure commits and the crash lands before its
+    # iteration does: the in-flight commit carries what it asked for.
+    :ok = ProcJournal.append_proc_committed(inst, 0, 1, [], [{1, "bye"}], [], "2")
+    resume = ProcJournal.restore_state(inst)
+    assert %{iter: 1, committed_proc_idxs: [0], completion: nil} = resume
+
+    assert List.last(resume.committed_procs) == %{
+             proc_idx: 0,
+             iter: 1,
+             entities_ran: [],
+             completion: "2"
+           }
+
+    journal = Commands.proc_journal_state(inst)
+
+    assert [
+             %RunnerCommands.ProcCommittedProc{iter: 0, completes: false, result: ""},
+             %RunnerCommands.ProcCommittedProc{iter: 1, completes: true, result: "2"}
+           ] = journal.committed_procs
+
+    # The iteration commits with it: the instance has ended.
+    :ok = ProcJournal.append_iter_committed(inst, 1, 2, [], "2")
+    assert %{iter: 2, completion: "2"} = ProcJournal.restore_state(inst)
+
+    assert %RunnerCommands.ProcJournalState{completed: true, result: "2"} =
+             Commands.proc_journal_state(inst)
+  end
+
+  test "flz state journal names a completing entry and the size of its result" do
+    inst = instance_id()
+    :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [], [], "done")
+    :ok = ProcJournal.append_iter_committed(inst, 0, 1, [], "done")
+
+    text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    assert length(String.split(text, "completes the instance: result 4 byte(s)")) == 3
+
+    json = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "json", nil) end)
+    assert %{"entries" => [proc, iter]} = Jason.decode!(json)
+    assert {proc["completes_bytes"], iter["completes_bytes"]} == {4, 4}
   end
 
   test "park record survives as the suspension signal until the loop runs again" do

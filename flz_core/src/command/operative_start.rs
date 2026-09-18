@@ -187,8 +187,7 @@ fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
     let spec = crate::workflow::registry::get_class(factory_id);
     if spec
         .as_ref()
-        .and_then(|spec| spec.topology.as_ref().map(|t| t.effectively_once))
-        .unwrap_or(false)
+        .is_some_and(|spec| spec.topology.effectively_once)
     {
         metadata.insert("effectively_once".to_string(), "true".to_string());
     }
@@ -197,8 +196,7 @@ fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
     }
     if let Some(procs) = declared_procs("workflow", factory_id, |spec, node| {
         spec.topology
-            .as_ref()
-            .and_then(|t| t.procedure(spec.dag.order[node]))
+            .procedure(spec.dag.order[node])
             .is_some_and(|proc| proc.compensate_overridden)
     }) {
         metadata.insert("compensable_procs".to_string(), procs);
@@ -264,7 +262,6 @@ fn declared_procs(
         return None;
     }
     let spec = crate::workflow::registry::get_class(factory_id)?;
-    spec.topology.as_ref()?;
     Some(
         (0..spec.dag.len())
             .filter(|&node| select(&spec, node))
@@ -277,14 +274,16 @@ fn declared_procs(
 #[cfg(test)]
 mod metadata_tests {
     //! The `AddOperativeResponse` metadata is the controller's only view of
-    //! what a class declared; a class declaring nothing encodes to zero bytes.
+    //! what a class declared; a class nothing is known of encodes to zero
+    //! bytes.
 
     use super::{metadata_response, AddOperativeResponse, Message};
 
     fn register_workflow(id: &str, sync: bool) {
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":{sync},
-                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
+                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
@@ -306,11 +305,21 @@ mod metadata_tests {
     }
 
     #[test]
-    fn a_class_declaring_nothing_still_encodes_to_zero_bytes() {
+    fn a_workflow_declaring_nothing_extra_ships_only_its_graph() {
         let id = format!("meta_plain_{}", std::process::id());
         register_workflow(&id, false);
 
-        assert!(metadata_response("workflow", &id).is_empty());
+        let encoded = metadata_response("workflow", &id);
+        let decoded = AddOperativeResponse::decode(encoded.as_slice()).expect("response decodes");
+        let keys: std::collections::BTreeMap<_, _> = decoded.metadata.into_iter().collect();
+        assert_eq!(
+            keys.into_iter().collect::<Vec<_>>(),
+            vec![
+                ("compensable_procs".to_string(), String::new()),
+                ("leaf_procs".to_string(), "0".to_string())
+            ]
+        );
+        assert!(metadata_response("stream", "meta_never_registered").is_empty());
     }
 }
 

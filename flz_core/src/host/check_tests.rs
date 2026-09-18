@@ -31,6 +31,8 @@ struct Row {
 /// only the two flag families the fixture header names are skipped.
 const UNWRITABLE: [&str; 2] = ["raw_flags", "raw_class_flags"];
 
+/// The rows a record can be judged on. A short-form row is refused by its SDK
+/// before any declaration exists, so the core never sees one.
 fn rows() -> Vec<Row> {
     let body = std::fs::read_to_string(FIXTURE)
         .unwrap_or_else(|e| panic!("the fixture is the contract and must be readable: {e}"));
@@ -46,6 +48,7 @@ fn rows() -> Vec<Row> {
                 needs: cols[3].to_string(),
             })
         })
+        .filter(|row| !row.needs.starts_with("shorthand"))
         .collect()
 }
 

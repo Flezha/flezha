@@ -580,7 +580,7 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperative.proc_jo
 
 ### Requirement: Java SDK implements workflow staged commit and the transactional outbox
 
-The Java SDK SHALL implement the `workflow-transactional-outbox` capability. Inside a structured proc of a durable workflow class, `ctx.emit` SHALL NOT reach the wire: `WorkflowCollectSink` SHALL buffer `(channel, bytes)` and the buffered outputs SHALL ride the same `ProcCommit` as the journal record, in the `outbox` field (`ProcOutboxItem{entity_id, seq_in_proc, channel, payload}`). A failing stage SHALL drop its staged bytes together with the error, so nothing leaks. `run`-sugar classes (no barrier to stage against) and transport-less runs SHALL keep the direct-emit path.
+The Java SDK SHALL implement the `workflow-transactional-outbox` capability. Inside a structured proc of a durable workflow class, `ctx.emit` SHALL NOT reach the wire: `WorkflowCollectSink` SHALL buffer `(channel, bytes)` and the buffered outputs SHALL ride the same `ProcCommit` as the journal record, in the `outbox` field (`ProcOutboxItem{entity_id, seq_in_proc, channel, payload}`). A failing stage SHALL drop its staged bytes together with the error, so nothing leaks. A transport-less run SHALL keep the direct-emit path.
 
 Compensation output SHALL ride the same handshake with `compensating` set.
 
@@ -594,16 +594,11 @@ Compensation output SHALL ride the same handshake with `compensating` set.
 - **WHEN** a stage emits once and then throws
 - **THEN** the staged bytes SHALL be dropped with the error and SHALL NOT appear in any subsequent `ProcCommit`
 
-#### Scenario: run-sugar keeps the direct path
-
-- **WHEN** a workflow class authored with `run`-sugar calls `ctx.emit(v)`
-- **THEN** the frame SHALL be sent directly, as before this change
-
 ### Requirement: Java SDK implements the workflow durable loop and suspension
 
 The Java SDK SHALL implement the `workflow-durable-loop` and `workflow-durable-suspension` capabilities. `WorkflowOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
 
-At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, and the terminal handoff, and SHALL await `IterCommitResponse` (tag 31). Registration SHALL reject a loop on `run`-sugar (`LoopWithoutChain`). A durable `CHAINED` loop whose terminal proc releases no inter-procedure channel — whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec — SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
+At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, the terminal handoff, and a procedure's completion request with its result when one was made, and SHALL await `IterCommitResponse` (tag 31). A durable `CHAINED` loop whose terminal proc releases no inter-procedure channel — whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec — SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
 
 When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The SDK SHALL read its inbox offset from the inbound `flz.inbox_offset` metadata key.
 
@@ -621,11 +616,6 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 
 - **WHEN** a looping workflow class committed iteration 2 and is then rebound after a crash
 - **THEN** the SDK SHALL resume at iteration 3, seeded (for `CHAINED`) from iteration 2's journaled terminal handoff
-
-#### Scenario: A loop on run-sugar is refused
-
-- **WHEN** a workflow class authored with `run`-sugar declares a non-`ONCE` `loopMode()`
-- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `LoopWithoutChain`
 
 #### Scenario: A durable chained loop whose terminal proc releases nothing is refused
 
@@ -1125,3 +1115,4 @@ absent from.
   from `com.flezha.sdk.operative`, and the workflow supporting types
   (`WorkflowOperativeCtx`, `LoopMode`, `RollbackMode`, `WorkflowLoopBody` and the
   workflow exception types) SHALL resolve from the same package
+

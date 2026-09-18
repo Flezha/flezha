@@ -85,9 +85,9 @@ defmodule Flezha.Operative.ClassRegistry do
   A class's SDK-side declarations, as resolved from the `AddOperative` response.
 
   `compensable_procs` is the chain positions whose procedure declares a `compensate`
-  hook, or `nil` when the class declares nothing (run-sugar, stream, or a Java
-  runner) — which a rewind reads as "no coverage information", not as "nothing
-  is compensable".
+  hook, or `nil` when the class declares nothing (a stream, or a Java runner) —
+  which a rewind reads as "no coverage information", not as "nothing is
+  compensable".
   """
   @type declarations :: %{
           effectively_once: boolean(),
@@ -399,8 +399,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   @doc """
   Resolve `operative_class`'s leaf procedures: ETS → durable sidecar → `nil`
-  (the class declared nothing — run-sugar, stream, or an SDK without the
-  declaration).
+  (the class declared nothing — a stream, or an SDK without the declaration).
   """
   @spec leaf_procs(binary()) :: [non_neg_integer()] | nil
   def leaf_procs(operative_class) when is_binary(operative_class) do

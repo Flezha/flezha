@@ -125,13 +125,15 @@ the Rust builder's compile-time refusals.
 
 ### The short form
 
-A procedure class whose `#[Proc]` declares a `sink` is a whole operative: one
-class, no `#[Operative]` beside it. `kind` says which kind it generates, and
-`codec` is the entry codec the builder's `input` takes.
+An operative class that defines its one procedure's `run` instead of
+`channels()` is a whole operative: one class, no procedure class beside it. The
+kind is the class it extends, and `#[Operative]` names the channels around that
+procedure: `sink` is the plugin sink its output reaches, `input` the entry
+channel, and `codec` the entry codec the builder's `input` takes.
 
 ```php
-#[Proc(name: 'upcase', kind: OperativeKind::Stream, sink: 'out', codec: ChannelCodec::Text)]
-final class Upcase extends Procedure
+#[Operative(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
+final class Upcase extends StreamOperative
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -139,14 +141,8 @@ final class Upcase extends Procedure
     }
 }
 
-#[Proc(
-    name: 'place',
-    kind: OperativeKind::Workflow,
-    sink: 'placed',
-    input: 'order',
-    codec: ChannelCodec::Text,
-)]
-final class Place extends Procedure
+#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
+final class Place extends WorkflowOperative
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -161,24 +157,63 @@ Flezha::createRunner('default')
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` — or the `input` argument's
-value — decoded by `codec`, the procedure, a plugin sink named by `sink`, a
-factory id equal to `name`, and every class-level setting at its default. A
-workflow short form is a `once` workflow, seeded on its entry channel from
+single procedure: an entry channel named `input` (or the `input` argument's
+value) decoded by `codec`, the procedure, a plugin sink named by `sink`, a
+factory id equal to `factoryId`, and every class-level setting at its default.
+The procedure is named `factoryId` verbatim, so the full form that wires a
+procedure of that name keeps every entity where it was. It runs the class's
+`run` and takes whichever hooks the class defines (`state`, `applyChange`, ...),
+and a `#[Proc]` on the class carries its settings, all but `name`. A workflow
+short form is a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
+
+`sink` is optional. Without one, the operative declares its entry channel into
+the procedure and no plugin channel, which is all an operative that only keeps
+state needs:
+
+```php
+#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
+final class Counter extends StreamOperative
+{
+    public function state(?string $entityKey): mixed
+    {
+        return ['seen' => []];
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state['seen'][] = $change;
+    }
+
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->change($input);
+
+        return null;
+    }
+}
+```
 
 Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window.
 
-With a `sink`, `name` must be written: the factory id is an address an operator
-types, and a class rename must not move it. Three refusals are raised at
-`registerFactory`, where this SDK places every refusal, each naming itself:
-`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink`. There is no
-`SinkWithoutOutput`: `Procedure::run` is declared `: mixed` and PHP forbids an
-override narrowing that to `: void`, so a procedure declaring no output cannot
-be written at all — the manifest leaves `shorthand_typed_output` off and the
-conformance row skips by name.
+The factory id is always written: it is an address an operator types, and a
+class rename must not move it, so a class with no `#[Operative]` is refused as
+any operative is. `registerFactory`, where this SDK places every refusal,
+refuses a class defining both `run` and `channels()` naming
+`ShortFormWithTopology`, and one defining neither naming both. A second
+operative of either kind under a factory id the runner holds is refused naming
+`DuplicateFactoryId`. `#[Proc]` takes no `kind`, `sink`, `input` or `codec`,
+and a procedure carrying one is refused naming `#[Operative]`. `#[Proc]` on a
+class defining `channels()` is refused too: a full form's procedure settings go
+on its procedure classes. A hook a short form defines is held to the signature
+`Procedure` gives it, and one PHP would refuse on a procedure is refused naming
+the hook. There is no
+`SinkWithoutOutput`: `run` is declared `: mixed` on both `Procedure` and
+`Operative`, and PHP forbids an override narrowing that to `: void`, so a body
+declaring no output cannot be written at all. The manifest leaves
+`shorthand_typed_output` off and the conformance row skips by name.
 
 > A workflow short form started by a *spawn* does not see its payload yet —
 > `KB-381`. Start it with `--init-values` until that is fixed.

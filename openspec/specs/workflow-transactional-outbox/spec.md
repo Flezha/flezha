@@ -2,10 +2,8 @@
 
 ## Purpose
 
-The workflow-transactional-outbox capability makes a durable structured workflow operative's plugin-bound output transactional with its proc progress. Plugin-bound emits inside a structured procedure are staged per entity instead of routed straight to the wire; at the procedure barrier they travel to the controller inside the `ProcCommit` request and are persisted as outbox entries in the same `proc_committed` journal entry (one durable write + fsync) that records the procedure's completion. Only after that durable point are the entries flushed to the unit's bound plugins, stamped with the deterministic key `(entity_key, proc_idx, seq_in_proc, epoch)` — aligned with the effectively-once `(seg, N, epoch)` output-identity shape — and an `outbox_flushed` entry is appended. A crash between commit and flush re-drives the outbox on restore with the original keys; a failed, aborted, or cancelled procedure leaks nothing. Compensation undo-effects ride the same journal-gated path via the `compensated` entry type, with comp-marked keys that can never collide with the forward output they reverse. The `run`-sugar form (no procedures/barriers) keeps the direct at-least-once emit path.
-
+The workflow-transactional-outbox capability makes a durable structured workflow operative's plugin-bound output transactional with its proc progress. Plugin-bound emits inside a structured procedure are staged per entity instead of routed straight to the wire; at the procedure barrier they travel to the controller inside the `ProcCommit` request and are persisted as outbox entries in the same `proc_committed` journal entry (one durable write + fsync) that records the procedure's completion. Only after that durable point are the entries flushed to the unit's bound plugins, stamped with the deterministic key `(entity_key, proc_idx, seq_in_proc, epoch)` — aligned with the effectively-once `(seg, N, epoch)` output-identity shape — and an `outbox_flushed` entry is appended. A crash between commit and flush re-drives the outbox on restore with the original keys; a failed, aborted, or cancelled procedure leaks nothing. Compensation undo-effects ride the same journal-gated path via the `compensated` entry type, with comp-marked keys that can never collide with the forward output they reverse. An opted-out class, which journals nothing, keeps the direct at-least-once emit path.
 ## Requirements
-
 ### Requirement: Plugin-bound output of a structured procedure is staged until the proc's durable commit
 
 Plugin-bound output emitted inside a structured workflow procedure SHALL be
@@ -13,8 +11,8 @@ buffered per entity and SHALL NOT reach the wire, plugins, or sinks before the
 producing procedure's `proc_committed` journal entry is durable. The staged
 outputs SHALL travel to the controller inside the `ProcCommit` barrier request. A
 failed, aborted, or cancelled procedure SHALL leak none of its staged output.
-The `run`-sugar form (no procedures/barriers) SHALL keep the direct
-at-least-once emit path.
+Every workflow's output SHALL take this path: no workflow form emits straight
+to the wire from a durable class.
 
 #### Scenario: Mid-proc emit is not visible before commit
 
@@ -26,10 +24,10 @@ at-least-once emit path.
 - **WHEN** procedure B's entities emitted output and another B entity then fails terminally (proc does not commit)
 - **THEN** none of B's staged output SHALL ever be delivered to a plugin or sink
 
-#### Scenario: run-sugar keeps the direct path
+#### Scenario: A completing procedure's output is still staged
 
-- **WHEN** a `run`-sugar workflow operative calls `ctx.emit`
-- **THEN** the output SHALL be routed to the wire immediately (at-least-once), as today
+- **WHEN** a procedure emits plugin-bound output and calls `ctx.complete(result)` in the same run
+- **THEN** its output SHALL be staged and flushed after its commit like any other, and the instance SHALL end only after that commit
 
 ### Requirement: Outbox entries are part of the single durable proc-commit write
 
@@ -117,3 +115,4 @@ can never collide with the forward output it reverses.
 
 - **WHEN** the controller crashes after journaling a `compensated` entry but before delivering its undo outputs
 - **THEN** on restore the undo outputs SHALL be delivered with the original comp-marked keys
+

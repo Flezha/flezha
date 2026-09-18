@@ -25,6 +25,8 @@ pub struct EntityRun {
     pub entity_index: usize,
     pub outputs: Vec<Value>,
     pub staged: Vec<StagedOutput>,
+    /// The result this entity's `complete` asked the instance to end with.
+    pub completion: Option<Vec<u8>>,
 }
 
 /// A completed procedure, recorded so it can be rolled back; `iter` keys its
@@ -151,6 +153,8 @@ fn journal_undo(
         handoff: Vec::new(),
         outbox,
         compensating: true,
+        completes: false,
+        result: Vec::new(),
     });
 
     if let Err(e) = ship_and_await(ctx, record.stage_idx, what, false, commit) {
@@ -175,6 +179,7 @@ pub(super) fn stages_from_intents(ctx: &ChainCtx) -> Vec<StageRecord> {
                 entity_index,
                 outputs: Vec::new(),
                 staged: Vec::new(),
+                completion: None,
             })
             .collect();
         if !entities.is_empty() {

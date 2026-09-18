@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Changed: the single-procedure short form is an operative declaration; every procedure body is `run`
+
+The short form moves from the procedure declaration to each SDK's kind-named operative entry
+point in all seven SDKs, with no alias: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]`
+in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` /
+`@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a
+`Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class
+extending `StreamOperative` / `WorkflowOperative` in PHP, and `use Flezha.SDK.StreamOperative` /
+`use Flezha.SDK.WorkflowOperative` in Elixir. A declaration is a short form when it carries its
+procedure's `run` body instead of a topology body; the kind is the entry point's name, the identity
+is the operative's factory id, and the generated procedure is named after it, so growing into the
+full form keeps every entity's state. `sink` is optional: with none, the entry channel feeds the
+procedure and no plugin channel is declared. The refusals are `ShortFormWithTopology`,
+`SinkWithoutOutput` and `DuplicateFactoryId`; the three that policed the old `sink` switch are gone.
+Node's `handle` and the `process` method of Ruby's and Python's class procedures are renamed `run`,
+the name every SDK now gives a procedure's body. The conformance suite gains `sugar_state_only`, a
+short form with no sink proven by its entity state.
+
+### Removed: the one-function workflow body; a procedure ends its instance
+
+A workflow always runs procedures. The one-function body `run(ctx, args)` and its context
+(`emit`, `recv`, `loop_until`, `complete`, `is_cancelled`) are deleted in all seven SDKs with no
+alias, together with the C ABI's `flz_core_workflow_emit`, `_recv` and `_cancelled`, the
+`WorkflowRun` activation and the `WorkflowDone` outcome; a workflow class that declares no
+procedure is refused at registration. A chat agent is a `PerInput` workflow whose procedure keeps
+the conversation in entity state, so a crash loses no turn.
+
+Every procedure context gains `complete(result)`: once the iteration commits, the instance ends
+with status `ok` and `result` instead of waiting for its next input. The rest of the iteration
+still runs; several completions resolve to the procedure latest in the chain and, within it, the
+entity whose key sorts last; a failed iteration discards its completion; a stream procedure
+calling it fails its input, non-retryable, naming `CompleteOutsideWorkflow`. The result is
+encoded the way a sink naming no codec encodes a value: bytes as they are, a string as UTF-8,
+anything else as JSON. The completion rides `ProcCommit` and `IterCommit`, is journaled in
+`proc_committed` and `iter_committed` (an entry written before this change reads as not
+completing), comes back on a rebind, and `flz state journal` shows a completing entry.
+
 ### Changed: an operative starts without a name, and every start answers its id
 
 The id is optional at every start. `flz operative start <factory>` takes the id as

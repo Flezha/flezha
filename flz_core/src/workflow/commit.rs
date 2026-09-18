@@ -14,7 +14,6 @@ use super::driver::{ChainCtx, Value, CANCEL_POLL_CHUNK};
 use super::WorkflowError;
 use crate::channel::RetryPolicy;
 use crate::entity::EntitySlot;
-use crate::operative::topology::ProcedureDescriptor;
 
 /// One wait for a commit response (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`); an
 /// expired wait re-sends under the same `reference_id`, up to the class's
@@ -22,24 +21,25 @@ use crate::operative::topology::ProcedureDescriptor;
 const ACK_TIMEOUT_DEFAULT_MS: u64 = 30_000;
 const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS";
 
-/// Ship `ProcCommit` for a completed stage — its handoff through the output
-/// channel's codec, its staged plugin output as the outbox — and block for
-/// the durable ack. Skipped for a run that does not journal, which never
-/// stages. A refused ack ends the run; the un-acked proc re-runs on resume.
+/// Ship `ProcCommit` for a completed stage (its handoff through the output
+/// channel's codec, its staged plugin output as the outbox, the completion it
+/// asked for) and block for the durable ack. Skipped for a run that does not
+/// journal, which never stages. A refused ack ends the run; the un-acked proc
+/// re-runs on resume.
 pub(super) fn commit_proc_boundary(
     ctx: &ChainCtx,
     stage_idx: usize,
     iter: u32,
-    proc: &ProcedureDescriptor,
     entities: &[EntityRun],
-    slots: &[Arc<EntitySlot>],
     batch: &[Value],
+    completion: Option<&[u8]>,
 ) -> Result<(), WorkflowError> {
     if !ctx.journaling() {
         return Ok(());
     }
 
-    let handoff = encode_handoff(ctx, proc.output_channel_id, batch)
+    let slots = &ctx.stage_entities[stage_idx];
+    let handoff = encode_handoff(ctx, ctx.proc(stage_idx).output_channel_id, batch)
         .map_err(|e| WorkflowError::from(format!("proc {stage_idx} {e}")))?;
 
     let entities_ran: Vec<Vec<u8>> = entities
@@ -63,18 +63,21 @@ pub(super) fn commit_proc_boundary(
                 .flat_map(|seg_run| outbox_items(&slots[seg_run.entity_index], &seg_run.staged))
                 .collect(),
             compensating: false,
+            completes: completion.is_some(),
+            result: completion.map(<[u8]>::to_vec).unwrap_or_default(),
         }),
     )
 }
 
-/// Ship `IterCommit` for a finished iteration and block for the durable
-/// ack; the next iteration starts only on it, so a crash re-runs at most the
-/// in-flight one.
+/// Ship `IterCommit` for a finished iteration, with the completion a
+/// procedure asked for, and block for the durable ack; the next iteration
+/// starts only on it, so a crash re-runs at most the in-flight one.
 pub(super) fn commit_iteration(
     ctx: &ChainCtx,
     iter: u32,
     consumed_offset: u64,
     batch: &[Value],
+    completion: Option<&[u8]>,
 ) -> Result<(), WorkflowError> {
     if !ctx.journaling() {
         return Ok(());
@@ -102,6 +105,8 @@ pub(super) fn commit_iteration(
             iter,
             consumed_offset,
             handoff,
+            completes: completion.is_some(),
+            result: completion.map(<[u8]>::to_vec).unwrap_or_default(),
         }),
     )
 }

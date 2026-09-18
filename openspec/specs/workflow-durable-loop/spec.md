@@ -3,9 +3,7 @@
 ## Purpose
 
 The workflow-durable-loop capability turns the structured workflow chain into a durable loop: a class may declare its chain to repeat, one iteration seeded from the next durable inbox item or from the previous iteration's handoff, with each iteration running under the existing per-proc commit gating (`workflow-proc-journal`) and ending in an iteration commit. The commit tuple is one durable point plus its consequences — the controller appends `iter_committed(N, consumed_inbox_offset)` to the instance's `proc.journal`, requests iteration-boundary snapshot compaction of the instance's entities through the existing CompactEntity machinery, and flushes the iteration's staged outbox (`workflow-transactional-outbox`). Per-proc journal entries carry the enclosing iteration so a resumed instance re-enters at iteration `N+1` — never at the loop start — restored from the boundary snapshots (or WAL-tail replay) and re-seeded from the recorded consumed offset; only an uncommitted in-flight iteration may re-run (at-least-once, unchanged author contract). Because committed iterations are journal-backed, the saga planner's `committed` input is finally real: `KeepProgress` keeps every journaled iteration and undoes only the in-flight one, while all-or-nothing unwinds the in-flight iteration and then every journaled iteration in reverse, reusing `plan_compensation`'s ordering contract unchanged. Loop termination (terminal predicate, cancellation, `complete`) is preserved from the existing loop contract.
-
 ## Requirements
-
 ### Requirement: A structured workflow chain can loop with a durable per-iteration commit
 
 A structured workflow class SHALL be able to declare its chain as a loop: each
@@ -96,3 +94,35 @@ ordering contract SHALL be reused unchanged.
 
 - **WHEN** an all-or-nothing looping instance with journaled iterations 1–2 fails in iteration 3
 - **THEN** compensation SHALL undo iteration 3's completed procedures, then iterations 2 and 1, in reverse completion order
+
+### Requirement: A procedure ends its workflow after the iteration commits
+
+A procedure running inside a workflow operative SHALL be able to call `ctx.complete(result)` on its own procedure context, in every SDK. The call SHALL NOT stop the iteration: every remaining stage of the iteration SHALL run, its outputs SHALL be staged and committed as usual, and once the iteration's commit is durable the instance SHALL end with status `ok` and `result`, instead of waiting for the next inbox item, re-seeding a chained loop, or parking. The completion SHALL travel with the iteration commit (`IterCommit`) and be journaled in its `iter_committed` entry, so an instance that crashes after that commit is durable and before its `WorkflowCompleted` is sent SHALL, on resume, end with the same result rather than wait for input. The completing procedure's own completion SHALL also travel with its proc commit (`ProcCommit`) and be journaled in its `proc_committed` entry, and a resume that skips that committed procedure SHALL end the resumed iteration with it, so a crash between the two commits loses nothing. In a `once` workflow the call SHALL set the result the single pass ends with.
+
+When more than one entity calls `ctx.complete` in one iteration, the instance SHALL end once, with the result of the call whose procedure is latest in the chain's commit order and, within that procedure, whose entity key sorts last, so the result does not depend on scheduling. A procedure that calls `ctx.complete` and then fails SHALL fail its iteration as any failure does, and the completion SHALL be discarded with the iteration.
+
+#### Scenario: A chat agent ends itself
+
+- **WHEN** a `PerInput` workflow whose one procedure calls `ctx.complete({"turns": n})` on a message whose kind is `end` receives three messages and then that message
+- **THEN** four iterations SHALL commit, the instance SHALL end with status `ok` and result `{"turns": n}`, and it SHALL NOT park after the fourth
+
+#### Scenario: A completion survives a crash after the commit
+
+- **WHEN** an instance crashes after `iter_committed(N)` carrying a completion is durable and before `WorkflowCompleted` reaches the controller
+- **THEN** the rehydrated instance SHALL end with the journaled result and SHALL NOT wait for input
+
+#### Scenario: A completion survives a crash between the two commits
+
+- **WHEN** an instance crashes after the completing procedure's `proc_committed` entry is durable and before its iteration's `iter_committed`
+- **THEN** the resumed iteration SHALL skip that procedure, run the procedures still uncommitted, commit with the journaled completion, and end with its result without waiting for input
+
+#### Scenario: A failed iteration discards its completion
+
+- **WHEN** a procedure calls `ctx.complete(result)` and a later stage of the same iteration fails after its retry ladder
+- **THEN** the iteration SHALL fail and compensate per the rollback mode, and the instance SHALL end with status `error`, not with `result`
+
+#### Scenario: Two completions in one iteration end the instance once
+
+- **WHEN** two entities of one procedure call `ctx.complete` with different results in one iteration
+- **THEN** the instance SHALL end once, with the result of the entity whose key sorts last
+

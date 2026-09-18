@@ -470,33 +470,6 @@ pub fn shutdown() -> Result<()> {
     Ok(())
 }
 
-/// Emit one output payload from a live workflow run-sugar body. Non-blocking
-/// in the core (an unbounded coordinator send), so synchronous here.
-#[napi]
-pub fn workflow_emit(instance_id: String, payload: Buffer) -> Result<()> {
-    let ctx = context()?;
-    let instance = veneer::c_string("instance id", &instance_id)?;
-    Ok(veneer::workflow_emit(ctx, &instance, &payload)?)
-}
-
-/// The next inbox item of a live workflow body, or `null` on timeout.
-/// Asynchronous: it parks for the whole timeout when the inbox is empty.
-#[napi(ts_return_type = "Promise<Buffer | null>")]
-pub fn workflow_recv<'a>(env: &'a Env, instance_id: String, timeout_ms: u32) -> Result<Object<'a>> {
-    let instance = veneer::c_string("instance id", &instance_id)?;
-    off_loop(env, context()?, move |ctx| {
-        Ok(veneer::workflow_recv(ctx, &instance, u64::from(timeout_ms))?.map(Buffer::from))
-    })
-}
-
-/// Whether the named workflow body's cancellation token has tripped.
-#[napi]
-pub fn workflow_cancelled(instance_id: String) -> Result<bool> {
-    let ctx = context()?;
-    let instance = veneer::c_string("instance id", &instance_id)?;
-    Ok(veneer::workflow_cancelled(ctx, &instance))
-}
-
 /// Request a spawn from the live activation `token`; answers the handle number
 /// at once. An empty `id` asks the controller to generate one. Synchronous:
 /// the request never waits.
@@ -627,9 +600,6 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("complete", "flz_core_complete"),
         veneer("abandon", "flz_core_abandon"),
         veneer("shutdown", "flz_core_shutdown"),
-        veneer("workflowEmit", "flz_core_workflow_emit"),
-        veneer("workflowRecv", "flz_core_workflow_recv"),
-        veneer("workflowCancelled", "flz_core_workflow_cancelled"),
         veneer("spawnRequest", "flz_core_spawn_request"),
         // A read that always passes a timeout of zero never waits.
         host("spawnTryResult", Some("flz_core_spawn_result"), false),

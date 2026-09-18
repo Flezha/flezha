@@ -191,7 +191,7 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 - **THEN** exactly one `['A', $document]` and one `['B', $document]` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: Workflow operatives at parity
-The PHP SDK SHALL support workflow operatives in both forms: structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier, and run-sugar, driven by `flz_core_workflow_emit` / `_recv` / `_cancelled`.
+The PHP SDK SHALL support workflow operatives as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\WorkflowOperative` SHALL carry no one-function `run`, and `Flezha\WorkflowCtx` SHALL NOT exist; a procedure inside a workflow SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
 
 Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's existing machinery, reached through step activations; the SDK SHALL NOT implement a driver.
 
@@ -203,9 +203,9 @@ Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's
 - **WHEN** a stage fails after earlier stages committed
 - **THEN** the core SHALL hand out `CompensateRun` activations for the committed stages in reverse order
 
-#### Scenario: A run-sugar body receives and emits
-- **WHEN** a run-sugar workflow body calls the SDK's receive with a timeout and no item is available
-- **THEN** the call SHALL return empty on timeout rather than block indefinitely, so the body can observe cancellation and a shutdown request between attempts
+#### Scenario: A procedure ends its workflow
+- **WHEN** a procedure of a `PerInput` workflow calls `$ctx->complete(['turns' => 4])` while handling a message
+- **THEN** the iteration SHALL commit and the instance SHALL complete with that result instead of waiting for the next message
 
 #### Scenario: A resumed chain skips journaled stages
 - **WHEN** a workflow instance is resumed after a crash mid-chain
@@ -267,29 +267,51 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-procedure short form is four attribute arguments
-`#[Proc]` SHALL accept `kind` (`OperativeKind::Stream` or `OperativeKind::Workflow`, an enum in the `Flezha` namespace), `sink`, `input` and `codec` (a `ChannelCodec`) beside `name`. A procedure class carrying `name`, `kind` and `sink` SHALL carry a generated operative of that kind whose factory id is `name`: a stream, or a `once` workflow with every workflow setting at its default, wiring an entry channel named `input` (or the `input` argument's value) into the procedure and the procedure to the `sink` plugin channel, the entry decoded by `codec` where one is written. With `sink`, `name` SHALL be written; a class that would otherwise take its name from the class SHALL be refused. `Runner::registerFactory` SHALL accept such a class string and register the generated operative, raising `DeclarationException` at registration with the name in its refusals and at the start of its message: `SinkWithoutId` (a sink with no written name), `SinkWithoutKind` (a sink with no `kind`) and `ShorthandKeyWithoutSink` (`kind`, `input` or `codec` with no `sink`, naming the arguments). A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Procedure::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a procedure declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`, and SHALL list `shorthand_omittable_sink`.
+The short form SHALL be declared with the `#[Operative]` attribute a full-form operative already carries, on a class extending `Flezha\StreamOperative` or `Flezha\WorkflowOperative`, and SHALL NOT be declared with `#[Proc]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operative]` when one is given. `#[Operative]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
 
-#### Scenario: A procedure class is a whole stream operative
+A class SHALL be a short form exactly when it defines the procedure body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the procedure hooks a `Flezha\Procedure` subclass defines (`state`, `applyChange`), which the generated procedure takes.
 
-- **WHEN** a class is attributed `#[Proc(name: 'upcase', kind: OperativeKind::Stream, sink: 'out', codec: ChannelCodec::Text)]` and the runner is given `registerFactory(Upcase::class)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and no `StreamOperative` subclass exists for it
+`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated procedure named `factoryId` and, when a `sink` is written, that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-#### Scenario: A procedure class is a whole workflow operative
+`Runner::registerFactory` SHALL accept such a class string and register the generated operative, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Procedure::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a procedure declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
-- **WHEN** a class is attributed `#[Proc(name: 'place', kind: OperativeKind::Workflow, sink: 'placed', input: 'order', codec: ChannelCodec::Text)]`, the runner is given `registerFactory(Place::class)`, and an instance is started with init values
+#### Scenario: An attributed class is a whole stream operative
+
+- **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and no `Flezha\Procedure` subclass exists for it
+
+#### Scenario: An attributed class is a whole workflow operative
+
+- **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, and an instance is started with init values
 - **THEN** `run` receives the start values as text, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A short form with no sink is declared
+
+- **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
+- **THEN** the operative declares `ticks` into the generated procedure and no plugin channel
+
+#### Scenario: An input and codec need no sink
+
+- **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
+- **THEN** `registerFactory` accepts it and the entry channel takes that name and codec
+
+#### Scenario: A run body beside a channels override is refused
+
+- **WHEN** an attributed operative class defines `run` and overrides `channels`
+- **THEN** `registerFactory` throws `DeclarationException` naming `ShortFormWithTopology`
 
 #### Scenario: A procedure cannot declare no output
 
 - **WHEN** a class extending `Flezha\Procedure` declares `public function run(mixed $input, Ctx $ctx): void`
-- **THEN** it SHALL fail to load, because `Procedure::run` is declared `: mixed` — so no PHP procedure can declare no output, and the SDK owes no `SinkWithoutOutput`
+- **THEN** it SHALL fail to load, because `Procedure::run` is declared `: mixed`, so no PHP procedure can declare no output and the SDK owes no `SinkWithoutOutput`
 
-#### Scenario: A derived name is refused under a sink
+#### Scenario: A sink on a procedure attribute is refused
 
-- **WHEN** a class is attributed `#[Proc(kind: OperativeKind::Stream, sink: 'out')]` with no `name`
-- **THEN** `registerFactory` throws naming `SinkWithoutId`
+- **WHEN** a class is attributed `#[Proc(name: 'upcase', sink: 'out')]`
+- **THEN** `registerFactory` throws naming `sink` and `#[Operative]`
 
-#### Scenario: A kind without a sink is refused
+#### Scenario: A derived factory id is refused
 
-- **WHEN** a class is attributed `#[Proc(name: 'upcase', kind: OperativeKind::Stream)]` with no `sink`
-- **THEN** `registerFactory` throws naming `ShorthandKeyWithoutSink` and `kind`
+- **WHEN** a class extending `Flezha\StreamOperative` defines `run` and carries no `#[Operative]` attribute
+- **THEN** `registerFactory` throws naming the required `#[Operative(factoryId: ...)]`
+

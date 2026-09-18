@@ -11,7 +11,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossbeam::channel::RecvTimeoutError;
 
 use super::compensation::{EntityRun, StageRecord};
-use super::driver::{extend_mapped, ChainCtx, RunOutcome, Runnable, Value, CANCEL_POLL_CHUNK};
+use super::driver::{
+    extend_mapped, ChainCtx, Completion, RunOutcome, Runnable, Value, CANCEL_POLL_CHUNK,
+};
 use super::instance::{CommittedProc, InboxItem, JournalResume};
 use super::{LoopMode, WorkflowError};
 use crate::channel::{ChannelId, ChannelKind};
@@ -34,6 +36,9 @@ pub(super) struct IterationStart {
     /// Batches of nodes with producers still outstanding.
     pub(super) pending: HashMap<usize, Vec<Value>>,
     pub(super) waiting: HashMap<usize, usize>,
+    /// On a resume, what the skipped committed procedures asked for; they
+    /// never run again to ask twice.
+    pub(super) completion: Completion,
 }
 
 impl IterationStart {
@@ -54,6 +59,12 @@ fn resumed_start(
     committed: &[usize],
 ) -> Result<IterationStart, WorkflowError> {
     let mut start = IterationStart::default();
+    for proc in &resume.committed_procs {
+        let node = proc.proc_idx as usize;
+        if proc.iter == resume.iter && committed.contains(&node) {
+            start.completion.note(node, proc.completion.clone());
+        }
+    }
     for node in 0..ctx.dag.len() {
         if committed.contains(&node) {
             continue;
@@ -343,6 +354,7 @@ fn stage_record(
             entity_index,
             outputs: Vec::new(),
             staged: Vec::new(),
+            completion: None,
         })
         .collect();
     Some(StageRecord {

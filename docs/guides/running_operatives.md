@@ -35,8 +35,8 @@ per entity. `echo` is one, and everything below uses this kind. It runs until
 you stop it.
 
 **Workflow operatives terminate.** A graph of procedures run level by level
-behind a commit barrier, ending by itself on chain completion, on
-`ctx.complete`, on a durable loop's terminal predicate, or at `max_duration`.
+behind a commit barrier, ending by itself on chain completion, when a
+procedure calls `ctx.complete`, or at `max_duration`.
 Stopping one by hand ends it early; it is not how one is meant to finish.
 [`workflow_basics.md`](tradedesk/workflow_basics.md) is the kind's own guide.
 

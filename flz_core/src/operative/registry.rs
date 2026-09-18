@@ -45,7 +45,9 @@ pub fn class_factory_ids() -> Vec<&'static str> {
 pub fn sdk_lang_for_factory(factory_id: &str) -> u8 {
     get_class(factory_id)
         .map(|topology| topology.sdk_lang)
-        .or_else(|| crate::workflow::registry::get_class(factory_id).map(|spec| spec.sdk_lang))
+        .or_else(|| {
+            crate::workflow::registry::get_class(factory_id).map(|spec| spec.topology.sdk_lang)
+        })
         .unwrap_or(crate::header::SDK_LANG_UNSPECIFIED)
 }
 

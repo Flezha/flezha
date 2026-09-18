@@ -93,23 +93,64 @@ The declarations are named for the Entity, not the Procedure. Static mode is dec
 - **THEN** it SHALL offer no `entity_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
 ### Requirement: Single-procedure auto-wiring and registration
-The contract SHALL define exactly one topology that may be auto-wired, a single procedure from a controller input to one sink, as a short form of either operative kind, and every SDK SHALL carry it for both kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. A procedure declaration SHALL be a short form exactly when it declares a `sink`. The declaration SHALL be the procedure's own: its identity (`id` in Rust and Java, `name` in Python, Node, PHP and Elixir, `procedure_name` in Ruby), a `kind` of `stream` or `workflow`, the `sink`, optionally an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), optionally that SDK's `codec` with the builder's vocabulary. With a `sink`, the identity and the `kind` SHALL be written by the author; an SDK that otherwise derives a procedure's name SHALL NOT derive it here, because the factory id is an address an operator types.
+The contract SHALL define exactly one topology that may be written short, a single procedure from a controller input to at most one sink, and every SDK SHALL carry it for both operative kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operative declaration**, written at the SDK's kind-named operative entry point, and SHALL NOT be a procedure declaration that becomes an operative: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]` in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` / `@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class extending `Flezha\StreamOperative` / `Flezha\WorkflowOperative` in PHP, `use Flezha.SDK.StreamOperative` / `use Flezha.SDK.WorkflowOperative` in Elixir.
 
-The generated operative SHALL be the operative an author would hand-write with that one procedure: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the procedure; a plugin sink named by `sink`; a factory id equal to the identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow whose entry channel receives its start values. A class-level setting (loop mode, retry ladder, duration, persistence, the effectively-once tier, a correction window) SHALL NOT be expressible on the short form; it is the full form.
+An operative declaration SHALL be a short form exactly when it carries its one procedure's body **instead of** a topology body, a topology body being `channels` or `procedures`. The body SHALL be named `run`, as every SDK names a procedure's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operative]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operative's factory id, spelled as that SDK's full-form operative already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
 
-Registration SHALL be explicit in every SDK: the author hands the short form to the runner's `register_factory`, which reads its kind as it reads any operative's, and nothing is harvested, scanned or collected.
+`sink` SHALL be optional. With a `sink`, the generated operative SHALL declare an entry channel, the procedure, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the procedure and no plugin channel, which is the topology a full-form operative already declares when its channel ends at a procedure. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
 
-An `input`, `kind` or `codec` on a procedure that declares no `sink` SHALL be refused, naming the keys and the missing `sink`, because no operative is generated for them to describe; a spelling that cannot omit the sink owes no refusal. A `sink` with no identity SHALL be refused. A `sink` with no `kind` SHALL be refused. A `sink` on a procedure the SDK can see declares no output SHALL be refused; an SDK whose procedures declare no output type owes no such refusal and says so in its conformance manifest.
+The generated operative SHALL otherwise be the operative an author would hand-write with that one procedure: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the procedure; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow whose entry channel receives its start values. A class-level setting (loop mode, retry ladder, duration, persistence, the effectively-once tier, a correction window) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. The procedure's own settings (entity keys and `entities_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated procedure. A short-form key (`sink`, `input`, `codec`) or a procedure setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
+
+The expansion SHALL produce an ordinary procedure and an ordinary operative, and the generated procedure's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a procedure's name is a durable component of every entity's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operative's, because that is what the declaration declares.
+
+Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any operative's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
+
+An operative declaration carrying both a procedure body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose procedures declare no output type owes no such refusal and says so in its conformance manifest.
 
 #### Scenario: A stream short form is the hand-written single-procedure stream
 
-- **WHEN** a procedure declares its identity, `kind` `stream` and a `sink`, and the author registers it
+- **WHEN** a stream operative declaration carries its identity, a `sink` and a procedure body, and the author registers it
 - **THEN** the runner declares a stream operative wiring the controller input to the procedure to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-procedure stream produces
 
 #### Scenario: A workflow short form runs once on its start values
 
-- **WHEN** a procedure declares its identity, `kind` `workflow` and a `sink`, is registered, and an instance is started with init values
+- **WHEN** a workflow operative declaration carries its identity, a `sink` and a procedure body, is registered, and an instance is started with init values
 - **THEN** the entry channel receives the start values, the procedure runs once, its output reaches the sink, and the instance completes
+
+#### Scenario: A short form with no sink declares an entry channel and a procedure
+
+- **WHEN** a stream operative declaration carries its identity and a procedure body and no `sink`
+- **THEN** the generated operative SHALL declare the entry channel and the procedure and no plugin channel, and the declaration SHALL be accepted, as a full-form operative whose channel ends at a procedure is accepted
+
+#### Scenario: An entry channel name and codec need no sink
+
+- **WHEN** a short form declares `input` or a `codec` and no `sink`
+- **THEN** the declaration SHALL be accepted and the entry channel SHALL take that name and codec
+
+#### Scenario: The generated procedure is named after the factory id
+
+- **WHEN** a short form declares the factory id `echo`
+- **THEN** the generated procedure's name SHALL be `echo`, so its entities live at the same state path a hand-written procedure named `echo` uses, and ejecting to the full form moves no entity state
+
+#### Scenario: A procedure setting reaches the generated procedure
+
+- **WHEN** a short form declares a procedure setting such as a mailbox capacity or entity keys
+- **THEN** the generated procedure SHALL carry it, as a hand-written procedure declaring it does
+
+#### Scenario: A class setting on a short form is refused
+
+- **WHEN** a short form, in an SDK whose spelling can write one, declares a class-level setting such as a loop mode or persistence off
+- **THEN** the SDK SHALL refuse the declaration naming the setting
+
+#### Scenario: A short-form key beside a topology body is refused
+
+- **WHEN** an operative declaration carries a `channels` or `procedures` body and also a `sink`, an `input` or a `codec`
+- **THEN** the SDK SHALL refuse the declaration rather than ignore the key
+
+#### Scenario: The kind is read from the entry point, not from a key
+
+- **WHEN** a short form is written at the stream entry point and another at the workflow entry point
+- **THEN** each SHALL be an operative of that kind, no declaration SHALL carry a `kind` key, and no declaration SHALL be able to name a kind that disagrees with its entry point
 
 #### Scenario: The auto-wired entry channel keeps its default name
 
@@ -131,24 +172,19 @@ An `input`, `kind` or `codec` on a procedure that declares no `sink` SHALL be re
 - **WHEN** a program declares a short form and never hands it to its runner
 - **THEN** the runner declares no operative for it
 
-#### Scenario: A short-form key without a sink is refused
+#### Scenario: The author registers what the author wrote
 
-- **WHEN** a procedure declares `input`, `kind` or `codec` but no `sink`, in a spelling that can omit one
-- **THEN** the SDK SHALL refuse, naming `ShorthandKeyWithoutSink`, the keys and the missing `sink`, at compile time where the language has one and at declaration or registration otherwise
+- **WHEN** a short form is registered in any of the seven SDKs
+- **THEN** the argument SHALL be the declaration the author wrote, and no SDK SHALL require the author to name a type, class or module the SDK generated
 
-#### Scenario: A sink without an identity is refused
+#### Scenario: A procedure body beside a topology body is refused
 
-- **WHEN** a procedure declares a `sink` and no written identity
-- **THEN** the SDK SHALL refuse naming `SinkWithoutId` rather than derive a factory id
+- **WHEN** an operative declaration carries a procedure body and also a `channels` or `procedures` body
+- **THEN** the SDK SHALL refuse naming `ShortFormWithTopology`, at compile time where the language has one and at declaration or registration otherwise
 
-#### Scenario: A sink without a kind is refused
+#### Scenario: A sink on a body with no output is refused
 
-- **WHEN** a procedure declares its identity and a `sink` but no `kind`
-- **THEN** the SDK SHALL refuse naming `SinkWithoutKind`
-
-#### Scenario: A sink on a procedure with no output is refused
-
-- **WHEN** a short form's procedure is one the SDK can see declares no output
+- **WHEN** a short form declares a `sink` and its body is one the SDK can see declares no output
 - **THEN** the SDK SHALL refuse naming `SinkWithoutOutput`
 
 #### Scenario: Multi-procedure topology stays explicit
@@ -163,8 +199,8 @@ An `input`, `kind` or `codec` on a procedure that declares no `sink` SHALL be re
 
 #### Scenario: The same declaration in every SDK
 
-- **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input` and `sugar_workflow` are authored in each SDK's test app
-- **THEN** each is one procedure declaration carrying its identity, kind and sink (and `prices` or `order` for the named entries), no hand-written operative and one registration call, and every runtime's declaration equals the reference golden
+- **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only` are authored in each SDK's test app
+- **THEN** each is one operative declaration carrying its factory id and a procedure body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate procedure declaration and one registration call, and every runtime's declaration equals the reference golden
 
 ### Requirement: Contract binds all current and future SDKs
 The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Operative` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
@@ -473,8 +509,8 @@ other) SHALL remain on the per-kind traits.
 
 Every SDK's runner handle SHALL register an operative of either kind through one method,
 `register_factory`, and remove it through one inverse, `unregister_factory` (`registerFactory` and
-`unregisterFactory` in Java, Node and PHP), both taking the same argument: a Rust operative value (`register_factory(EchoOperative)`), a Java class, a Python
-operative or short-form procedure, a Node module specifier, a Ruby class, a PHP class
+`unregisterFactory` in Java, Node and PHP), both taking the same argument, short form or full: a Rust operative value (`register_factory(EchoOperative)`), a Java class, a Python
+operative, a Node module specifier, a Ruby class, a PHP class
 string, an Elixir module. The kind SHALL be read from the operative and never named by the
 call. `unregister_factory` SHALL undo a registration made before the runner starts in every SDK, and
 one made after start in every SDK whose runner can stop serving a started declaration; an SDK whose
@@ -483,7 +519,7 @@ Elixir), not free functions, static methods, or methods on a builder type, and S
 generic over the shared base where the host language expresses such a bound. An operative
 whose kind cannot be read, because it declares both kinds or neither, SHALL be refused at
 registration with an error beginning `AmbiguousOperativeKind` or `UnknownOperativeKind`; in
-Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error. The
+Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error. A short form's kind is its entry point's name, so no short form can reach either refusal. The
 base SHALL NOT require unifying the sealed operative *instance* enum, which stays
 asymmetric. Adding a future operative kind SHALL require implementing the base and teaching
 `register_factory` and `unregister_factory` the kind, without editing the existing two authoring surfaces
@@ -497,6 +533,11 @@ that the grouping states the taxonomy the vocabulary already uses.
 
 - **WHEN** a stream operative and a workflow operative are each handed to the runner's `register_factory` / `registerFactory`
 - **THEN** both SHALL be declared, sharing `factory_id()`, and no call SHALL name a kind
+
+#### Scenario: A short form registers through the same method
+
+- **WHEN** a short form of either kind is handed to `register_factory` / `registerFactory`
+- **THEN** it SHALL be declared exactly as a full-form operative of that kind is, through the same method and with no kind named by the call
 
 #### Scenario: Unregister takes what register took
 
@@ -527,14 +568,22 @@ that the grouping states the taxonomy the vocabulary already uses.
   grouping, and neither kind SHALL be the only one placed outside it
 
 ### Requirement: Short-form refusals carry one name per refusal in every SDK
-The five short-form refusals SHALL be named `SinkWithoutId`, `SinkWithoutKind`, `SinkWithoutOutput`, `ShorthandKeyWithoutSink` and `DuplicateFactoryId` in every SDK, and the name SHALL appear verbatim in the error the author reads: the compile error text in Rust, Java and an Elixir `use` declaration, the declaration error's refusal list and message in Python, Node, Ruby and PHP, and the printed form of the registration error in Elixir. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
+The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWithoutOutput` and `DuplicateFactoryId` in every SDK, and the name SHALL appear verbatim in the error the author reads: the compile error text in Rust, Java and an Elixir `use` declaration, the declaration error's refusal list and message in Python, Node, Ruby and PHP, and the printed form of the registration error in Elixir. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
+
+`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is an operative's factory id, which every operative has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
 
 #### Scenario: A refusal is recognisable across languages
 
-- **WHEN** an author writes a `sink` without an identity in any of the seven SDKs
-- **THEN** the error they see contains `SinkWithoutId`, whatever else that SDK's error carries
+- **WHEN** an author writes a procedure body beside a topology body in any of the seven SDKs
+- **THEN** the error they see contains `ShortFormWithTopology`, whatever else that SDK's error carries
 
 #### Scenario: The duplicate-id error is named, not only described
 
 - **WHEN** a runner is asked to define a second operative with a factory id it already holds
 - **THEN** the error contains `DuplicateFactoryId` and the id, in every SDK
+
+#### Scenario: A retired refusal name is gone from every SDK
+
+- **WHEN** the seven SDK repositories are searched for `SinkWithoutId`, `SinkWithoutKind` or `ShorthandKeyWithoutSink`
+- **THEN** no source, test, fixture or document names any of the three
+

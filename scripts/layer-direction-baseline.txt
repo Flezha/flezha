@@ -96,9 +96,9 @@ lib/flezha/runner/control_channel/requests.ex -> Flezha.State.ProcJournal
 lib/flezha/runner/control_unit.ex -> Flezha.Partition
 lib/flezha/runner/fleet_manager.ex -> Flezha.AuthZ.RunnerProof
 lib/flezha/runner/fleet_manager.ex -> Flezha.Service.HubManager
+lib/flezha/runner/fleet_manager/announce.ex -> Flezha.AuthZ.QuotaCounters
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Operative.ClassRegistry
 lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Service.HubManager
-lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.QuotaCounters
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Quotas
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.RoleStore
 lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Verb

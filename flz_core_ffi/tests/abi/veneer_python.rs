@@ -50,7 +50,6 @@ fn the_native_surface_is_the_declared_one() {
             "Core.poll",
             "Core.wait_starvation",
             "Core.complete",
-            "Core.workflow_recv",
             "Core.spawn_result",
             "Core.admin_call"
         ]

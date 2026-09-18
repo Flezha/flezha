@@ -130,6 +130,18 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
              every short-form refusal name. These rows name something it does not:
              #{Enum.join(unlisted, "\n")}
              """
+
+      rowless =
+        contract_names
+        |> MapSet.difference(MapSet.new(shorthand_rows, & &1.refusal))
+        |> Enum.sort()
+
+      assert rowless == [],
+             """
+             #{@contract} §5 lists a short-form refusal no fixture row drives, so \
+             no SDK is held to raising it. Add a row for each:
+             #{Enum.join(rowless, "\n")}
+             """
     end
 
     test "every row spells a topology id and a needs column" do
@@ -259,8 +271,9 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     section =
       @contract
       |> File.read!()
-      |> String.split("### 5.2 The five refusal names")
+      |> String.split("### 5.2 The three refusal names")
       |> Enum.at(1)
+      |> then(&(&1 && &1 |> String.split(~r/^##/m) |> hd()))
 
     assert section != nil,
            "#{@contract} no longer carries the §5 refusal list the fixture rows are judged against"

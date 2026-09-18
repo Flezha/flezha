@@ -111,25 +111,16 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
     let mut issues = Vec::new();
     refuse_class_facts(&decl, &mut issues);
 
-    // Run-sugar: one imperative body, no topology to derive.
-    let run_sugar = decl.workflow.is_some() && decl.procedures.is_empty();
-    let channels = if run_sugar {
-        Vec::new()
-    } else {
-        derive_channels(&decl, &mut issues)
-    };
-
-    if !run_sugar {
-        refuse_names(&decl, &channels, &mut issues);
-        for proc_decl in &decl.procedures {
-            refuse_procedure(proc_decl, &mut issues);
-        }
-        for channel in &channels {
-            refuse_channel(&decl, channel, &mut issues);
-        }
-        refuse_edge_keying(&decl, &channels, &mut issues);
-        refuse_graph_shape(&decl, &channels, &mut issues);
+    let channels = derive_channels(&decl, &mut issues);
+    refuse_names(&decl, &channels, &mut issues);
+    for proc_decl in &decl.procedures {
+        refuse_procedure(proc_decl, &mut issues);
     }
+    for channel in &channels {
+        refuse_channel(&decl, channel, &mut issues);
+    }
+    refuse_edge_keying(&decl, &channels, &mut issues);
+    refuse_graph_shape(&decl, &channels, &mut issues);
 
     if issues.is_empty() {
         Ok(Derived {
@@ -201,8 +192,7 @@ fn refuse_names(
     }
 }
 
-/// The class-level refusals; a run-sugar class is refused only on its
-/// workflow facts.
+/// The class-level refusals.
 fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     if !crate::header::sdk_lang_allocated(decl.sdk_lang) {
         issues.push(TopologyIssue::Declaration(format!(
@@ -222,16 +212,13 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
             decl.factory_id, decl.sdk_version
         )));
     }
-    if decl.procedures.is_empty() && decl.workflow.is_none() {
+    if decl.procedures.is_empty() {
         issues.push(TopologyIssue::Declaration(
             "a host class declares at least one procedure".to_string(),
         ));
     }
     if let Some(workflow) = &decl.workflow {
         refuse_workflow_facts(decl, workflow, issues);
-        if decl.procedures.is_empty() {
-            return;
-        }
     }
     if decl.sync_durability && decl.workflow.is_none() {
         issues.push(TopologyIssue::SyncDurabilityOnStream {
@@ -246,11 +233,6 @@ fn refuse_workflow_facts(
     workflow: &HostWorkflowDecl,
     issues: &mut Vec<TopologyIssue>,
 ) {
-    if decl.procedures.is_empty() && !decl.channels.is_empty() {
-        issues.push(TopologyIssue::Declaration(
-            "a run-sugar workflow class (no procedures) declares no channels".to_string(),
-        ));
-    }
     if decl.effectively_once {
         issues.push(TopologyIssue::EffectivelyOnceOnWorkflow);
     }
@@ -539,13 +521,6 @@ fn register(derived: Derived) -> Result<(), Error> {
         ack_granularity,
         decl,
     } = derived;
-    if let Some(workflow) = &decl.workflow {
-        if decl.procedures.is_empty() {
-            // Run-sugar: one imperative body, no topology.
-            register_workflow_class(&decl, workflow, None, ProcDag::default(), LoopMode::Once);
-            return Ok(());
-        }
-    }
     let class = resolve_class_facts(&decl, ack_granularity);
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (procedures, procedure_name_to_id) =
@@ -636,6 +611,6 @@ fn register_structured_workflow(
         HostLoopMode::PerInput => LoopMode::PerInput,
         HostLoopMode::Chained => LoopMode::Chained,
     };
-    register_workflow_class(decl, workflow, Some(topology), dag, loop_mode);
+    register_workflow_class(decl, workflow, topology, dag, loop_mode);
     Ok(())
 }

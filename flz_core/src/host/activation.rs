@@ -272,7 +272,8 @@ fn settle_items(
     effects: Vec<schema::ItemEffect>,
 ) -> Result<(), Error> {
     let mut queue: std::collections::VecDeque<ItemAttempt> = items.into();
-    for effect in effects {
+    for mut effect in effects {
+        refuse_completion(&mut effect);
         let Some(work) = queue.pop_front() else {
             core.abandon(token, Vec::new());
             return Err(Error::Answer(
@@ -309,6 +310,21 @@ fn settle_items(
     }
     finish_batch(core, token, queue);
     Ok(())
+}
+
+/// A stream never completes: an item whose procedure asked to fails as the
+/// author's own non-retryable error would, carrying nothing it recorded.
+pub(super) fn refuse_completion(effect: &mut schema::ItemEffect) {
+    if effect.complete.is_some() && effect.verdict == schema::Verdict::Ok {
+        *effect = schema::ItemEffect {
+            verdict: schema::Verdict::NonRetryableError {
+                message: crate::workflow::COMPLETE_OUTSIDE_WORKFLOW.to_string(),
+            },
+            consumed_offset: effect.consumed_offset,
+            event_time: effect.event_time,
+            ..empty_effect()
+        };
+    }
 }
 
 /// Anything still queued behind a parked head is owed a fresh round, or a
@@ -362,6 +378,7 @@ pub(crate) fn empty_effect() -> schema::ItemEffect {
         timers: Vec::new(),
         checkpoint: false,
         dlq: None,
+        complete: None,
     }
 }
 

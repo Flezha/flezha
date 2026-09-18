@@ -27,8 +27,16 @@ pub(super) struct StageOut {
     pub(super) entities: Vec<EntityRun>,
 }
 
-/// One entity's stage result: collected output plus staged plugin output.
-type EntityOut = (Vec<Value>, Vec<StagedOutput>);
+/// One entity's stage result, as its collecting sink gathered it.
+#[derive(Debug, Default)]
+struct EntityOut {
+    /// Inter-procedure output for the next stage.
+    outputs: Vec<Value>,
+    /// Plugin-bound output held for the commit.
+    staged: Vec<StagedOutput>,
+    /// The result the entity's `complete` asked for.
+    completion: Option<Vec<u8>>,
+}
 
 /// Which entity partition a step belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -85,7 +93,7 @@ pub(super) fn run_compensation_step(
     submit_step(ctx, key, StepWork::Compensate(outputs), &tx);
     match rx.recv() {
         Ok(StepDone {
-            result: Ok((_, staged)),
+            result: Ok(EntityOut { staged, .. }),
             ..
         }) => staged,
         _ => Vec::new(),
@@ -234,13 +242,14 @@ impl StageBarrier {
             .min()
     }
 
-    fn bank(&mut self, key: StepKey, (outputs, staged): EntityOut) {
+    fn bank(&mut self, key: StepKey, out: EntityOut) {
         self.ladders.remove(&key);
         if let Some(runs) = self.runs.get_mut(&key.node) {
             runs.push(EntityRun {
                 entity_index: key.entity_index,
-                outputs,
-                staged,
+                outputs: out.outputs,
+                staged: out.staged,
+                completion: out.completion,
             });
         }
     }
@@ -447,13 +456,13 @@ impl WorkflowStep {
     fn finish(mut self, outcome: Result<(), WorkflowError>, sink: WorkflowEntitySink) {
         let compensating = matches!(self.work, StepWork::Compensate(_));
         let result = match outcome {
-            Ok(()) => Ok((sink.collected, sink.staged)),
+            Ok(()) => Ok(sink.out),
             Err(error) if compensating => {
                 eprintln!(
                     "[flezha] workflow {} compensation error: {error}",
                     self.instance_id
                 );
-                Ok((sink.collected, sink.staged))
+                Ok(sink.out)
             }
             Err(error) => Err(error),
         };
@@ -466,8 +475,7 @@ impl WorkflowStep {
 /// forwarded straight to the wire otherwise.
 struct WorkflowEntitySink {
     instance_id: Arc<str>,
-    collected: Vec<Value>,
-    staged: Vec<StagedOutput>,
+    out: EntityOut,
     staging: bool,
 }
 
@@ -475,8 +483,7 @@ impl WorkflowEntitySink {
     fn new(instance_id: &Arc<str>, staging: bool) -> Self {
         Self {
             instance_id: Arc::clone(instance_id),
-            collected: Vec::new(),
-            staged: Vec::new(),
+            out: EntityOut::default(),
             staging,
         }
     }
@@ -484,15 +491,19 @@ impl WorkflowEntitySink {
 
 impl WorkflowCollectSink for WorkflowEntitySink {
     fn collect(&mut self, value: Value) {
-        self.collected.push(value);
+        self.out.outputs.push(value);
     }
 
     fn emit_plugin_bytes(&mut self, channel: &str, bytes: Vec<u8>) {
         if self.staging {
-            self.staged.push((channel.to_string(), bytes));
+            self.out.staged.push((channel.to_string(), bytes));
         } else {
             crate::runner::emit_workflow_output(self.instance_id.to_string(), bytes);
         }
+    }
+
+    fn complete(&mut self, result: Vec<u8>) {
+        self.out.completion = Some(result);
     }
 }
 
@@ -535,7 +546,7 @@ mod tests {
             },
             tx,
         );
-        reply.send(Ok((Vec::new(), Vec::new())));
+        reply.send(Ok(EntityOut::default()));
         drop(reply);
 
         assert!(rx.try_recv().expect("the answer").result.is_ok());

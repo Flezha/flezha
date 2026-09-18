@@ -5,17 +5,22 @@ TBD - created by archiving change workflow-operative-functionality. Update Purpo
 ## Requirements
 ### Requirement: A workflow operative is spawned on demand and terminates on an exit trigger
 
-A workflow operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (entities are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all procedures done** — its linear chain of procedures has run to the final procedure's completion with no loop active; (b) an explicit `ctx.complete(result)` call; (c) an internal loop's terminal predicate; (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. A stream operative SHALL never reach a terminal trigger.
+A workflow operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (entities are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all procedures done**: its chain of procedures has run to the final procedure's completion with no loop active; (b) a procedure calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. A stream operative SHALL never reach a terminal trigger, and a procedure of a stream operative calling `ctx.complete` SHALL fail that input with an error naming `CompleteOutsideWorkflow`.
 
 #### Scenario: The chain running to its end terminates the operative
 
 - **WHEN** a workflow operative's last procedure completes (all its entities finished) and no loop is active
 - **THEN** the operative SHALL proceed to terminal teardown with status `ok`
 
-#### Scenario: Explicit completion terminates the operative
+#### Scenario: A procedure's completion terminates the operative
 
-- **WHEN** a workflow operative calls `ctx.complete(result)`
-- **THEN** it SHALL stop accepting new work, tear down terminally, and report `result` in its completion
+- **WHEN** a procedure of a workflow operative calls `ctx.complete(result)`
+- **THEN** the rest of its iteration SHALL run and commit, the operative SHALL accept no further input, tear down terminally, and report `result` in its completion
+
+#### Scenario: A procedure of a stream cannot complete it
+
+- **WHEN** a procedure of a stream operative calls `ctx.complete(result)`
+- **THEN** that input SHALL fail with an error naming `CompleteOutsideWorkflow`, handled as any procedure error, and the stream SHALL keep running
 
 #### Scenario: Duration elapse terminates the operative
 
@@ -43,12 +48,12 @@ A workflow operative MAY declare an entry channel and **receive input after it h
 
 ### Requirement: Internal loop with an intrinsic terminal condition
 
-The SDK SHALL provide a loop construct usable inside a Procedure/`run` that repeats a body until the author's terminal predicate is satisfied OR a cancellation token (duration or external stop) trips. The construct SHALL observe the cancellation token automatically and SHALL block/sleep while idle. A loop SHALL have at least one **non-timeout** exit (a terminal predicate, an exhausted input source, or external stop); authoring a workflow operative whose **only** possible exit is external cancellation SHALL be rejected at registration with a clear error directing the author to add a terminal condition. A declared `max_duration` MAY additionally bound any loop as a backstop but SHALL NOT be required when a non-timeout exit exists.
+A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iteration per inbox item, or `Chained`, each iteration seeded by the previous one's terminal output), never by a loop written inside a procedure body. Waiting for the next item SHALL happen at a committed iteration boundary, observe the cancellation token (duration or external stop), and block or park while idle. A loop SHALL have at least one **non-timeout** exit: a procedure's `ctx.complete`, a chained loop's empty batch, or external stop. Authoring a workflow operative whose **only** possible exit is external cancellation SHALL be rejected at registration with a clear error directing the author to add a terminal condition. A declared `max_duration` MAY additionally bound any loop as a backstop but SHALL NOT be required when a non-timeout exit exists.
 
-#### Scenario: Loop exits on the terminal predicate
+#### Scenario: A loop ends on a procedure's completion
 
-- **WHEN** a workflow operative loops with a predicate that becomes true
-- **THEN** the loop SHALL exit and the operative SHALL proceed toward terminal teardown with status `ok`
+- **WHEN** a `PerInput` workflow's procedure calls `ctx.complete(result)` while handling an item
+- **THEN** the loop SHALL NOT wait for another item after that iteration commits, and the operative SHALL proceed toward terminal teardown with status `ok`
 
 #### Scenario: Loop exits on cancellation
 
@@ -57,7 +62,7 @@ The SDK SHALL provide a loop construct usable inside a Procedure/`run` that repe
 
 #### Scenario: External-stop-only loop authoring is rejected
 
-- **WHEN** a workflow operative uses the loop construct with no terminal predicate, no exhausted-input exit, and no duration bound — so its only exit is an external kill
+- **WHEN** a workflow operative declares a loop and marks itself as having no terminal condition and no duration bound, so its only exit is an external kill
 - **THEN** registration SHALL reject it, naming the missing terminal condition
 
 ### Requirement: A workflow operative can be stopped externally

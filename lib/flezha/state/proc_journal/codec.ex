@@ -74,8 +74,9 @@ defmodule Flezha.State.ProcJournal.Codec do
   defp decode_payload(:proc_committed, <<n_entities::16-big, rest::binary>>) do
     with {:ok, entities, rest} <- decode_entities(rest, n_entities, []),
          {:ok, handoff, rest} <- decode_handoff(rest),
-         {:ok, outbox, <<>>} <- decode_outbox(rest) do
-      {:ok, %{entities_ran: entities, handoff: handoff, outbox: outbox}}
+         {:ok, outbox, rest} <- decode_outbox(rest),
+         {:ok, completion} <- decode_completion(rest) do
+      {:ok, %{entities_ran: entities, handoff: handoff, outbox: outbox, completion: completion}}
     else
       {:error, _} = err -> err
       _ -> {:error, :bad_payload}
@@ -83,8 +84,10 @@ defmodule Flezha.State.ProcJournal.Codec do
   end
 
   defp decode_payload(:iter_committed, <<consumed_offset::64-big, rest::binary>>) do
-    case decode_handoff(rest) do
-      {:ok, handoff, <<>>} -> {:ok, %{consumed_offset: consumed_offset, handoff: handoff}}
+    with {:ok, handoff, rest} <- decode_handoff(rest),
+         {:ok, completion} <- decode_completion(rest) do
+      {:ok, %{consumed_offset: consumed_offset, handoff: handoff, completion: completion}}
+    else
       _ -> {:error, :bad_payload}
     end
   end
@@ -115,6 +118,18 @@ defmodule Flezha.State.ProcJournal.Codec do
       encode_handoff(handoff)
     ]
   end
+
+  @doc """
+  The trailing completion segment of a `proc_committed` or `iter_committed`
+  payload: empty for none, so an entry written before completions existed
+  reads as not completing.
+  """
+  def encode_completion(nil), do: <<>>
+  def encode_completion(result), do: <<1, byte_size(result)::32-big, result::binary>>
+
+  defp decode_completion(<<>>), do: {:ok, nil}
+  defp decode_completion(<<1, len::32-big, result::binary-size(len)>>), do: {:ok, result}
+  defp decode_completion(_), do: {:error, :bad_payload}
 
   def encode_handoff(handoff) do
     [

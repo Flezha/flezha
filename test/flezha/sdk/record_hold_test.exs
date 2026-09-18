@@ -210,29 +210,25 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   describe "the workflow driver's writes, which the runner ships" do
-    test "a record and an output cast with no stream bound are held and replayed" do
+    test "records cast with no stream bound are held and replayed in order" do
       s = runner_state([])
 
       s = cast(s, {:record, @saga_marker, <<1, 2, 3>>})
-      s = cast(s, {:emit_output, "op-1", %{"channel" => "c"}, "body"})
+      s = cast(s, {:record, @saga_marker, <<4>>})
 
       bind(s)
 
-      assert [
-               {@saga_marker, <<1, 2, 3>>, %{}},
-               {"op-1", "body", %{"channel" => "c"}}
-             ] = frames(2)
+      assert [{@saga_marker, <<1, 2, 3>>, %{}}, {@saga_marker, <<4>>, %{}}] = frames(2)
     end
 
     test "a write the wire refuses is held rather than discarded" do
       s = runner_state([dead_secondary()])
 
       s = cast(s, {:record, @saga_marker, <<4>>})
-      s = cast(s, {:emit_output, "op-1", %{}, "body"})
 
       bind(s)
 
-      assert [{@saga_marker, <<4>>, %{}}, {"op-1", "body", %{}}] = frames(2)
+      assert [{@saga_marker, <<4>>, %{}}] = frames(1)
     end
 
     test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do

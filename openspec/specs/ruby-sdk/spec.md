@@ -29,7 +29,7 @@ The SDK SHALL expose one entry point that declares classes, claims a runner slot
 
 ### Requirement: Class-based authoring surface with explicit registration
 
-Operatives and procedures SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal.
+Operatives and procedures SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal. A procedure's body SHALL be its `run` method, the name every SDK gives a procedure's body; a procedure class defining `process` and no `run` SHALL be refused at registration naming `run`.
 
 #### Scenario: An undeclared class never runs
 - **WHEN** a procedure class is defined but not registered
@@ -38,6 +38,14 @@ Operatives and procedures SHALL be authored as Ruby classes. The SDK SHALL NOT s
 #### Scenario: A bad topology is refused by name
 - **WHEN** a registered procedure emits to a channel no procedure consumes and the operative is not sealed on that edge
 - **THEN** registration SHALL raise naming the class, the method and the channel; no controller connection SHALL be attempted
+
+#### Scenario: A procedure's body is its run method
+- **WHEN** a `Flezha::Procedure` subclass defines `run(input, ctx)` and an operative wires it
+- **THEN** each input SHALL reach `run`, and its return value SHALL be the procedure's output
+
+#### Scenario: The old body method is refused
+- **WHEN** a registered procedure class defines `process(input, ctx)` and no `run`
+- **THEN** registration SHALL raise naming the class and `run`
 
 ### Requirement: The authoring surface carries the shared vocabulary at full parity
 
@@ -53,11 +61,11 @@ The Ruby authoring surface SHALL carry both operative kinds — stream and workf
 
 #### Scenario: Two channels merge into one procedure
 - **WHEN** an operative declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
-- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `process` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
+- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
 
 #### Scenario: One input becomes three deliveries
 - **WHEN** an edge declares `.flat_map { |line| line.split(",") }` into a procedure and the dispatcher is handed `a,b,c`
-- **THEN** `process` SHALL run three times, once per element, under one consumed offset, and feeding an empty line SHALL run it zero times
+- **THEN** `run` SHALL run three times, once per element, under one consumed offset, and feeding an empty line SHALL run it zero times
 
 #### Scenario: The latest-document router is offered
 - **WHEN** `c.route_latest(config, trades) { |t| t[:symbol] }` is declared and `Flezha::Testing::Harness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
@@ -113,24 +121,44 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-procedure short form is a class-body declaration
-A `Flezha::Procedure` subclass SHALL be able to declare `sink "name", kind:, input:, codec:` in its class body, `kind:` taking `:stream` or `:workflow` and `codec:` taking the vocabulary of the builder's `input(name, codec:)`. Such a class SHALL carry a generated operative of that kind whose factory id is the class's `procedure_name`: a stream, or a `once` workflow with every workflow setting at its default, wiring an entry channel named `input` (or the `input:` value) into the procedure and the procedure to the `sink` plugin channel, the entry decoded by `codec:` where one is written. With `sink`, `procedure_name` SHALL be written by the author; a class that would otherwise take its name from the class constant SHALL be refused. `Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `SinkWithoutId` (a sink with a derived name) or `SinkWithoutKind` (a sink with no `kind:`). The keys ride the `sink` call, so the Ruby spelling cannot omit the sink, owes no `ShorthandKeyWithoutSink`, and SHALL NOT list `shorthand_omittable_sink` in its manifest. The Ruby SDK cannot see a procedure's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output`. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+The short form SHALL be a `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass, the same base a full-form operative subclasses, and SHALL NOT be a `Flezha::Procedure` subclass; `Flezha::Procedure` SHALL lose its `sink` class-body declaration and SHALL raise naming the operative base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operative already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
 
-#### Scenario: A procedure class is a whole stream operative
+Such a class SHALL be a short form exactly when it defines `run` and not `channels` or `procedures`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated procedure named `factory_id` and, when a `sink` is declared, that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
-- **WHEN** `class Upcase < Flezha::Procedure` declares `procedure_name "upcase"` and `sink "out", kind: :stream, codec: :text` and the runner is given `register_factory(Upcase)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and no `StreamOperative` subclass exists for it
+`Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a procedure's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
-#### Scenario: A procedure class is a whole workflow operative
+#### Scenario: An operative class with a run body is a whole stream operative
 
-- **WHEN** a class declares `procedure_name "place"` and `sink "placed", kind: :workflow, input: "order", codec: :text`, the runner is given `register_factory(Place)`, and an instance is started with init values
-- **THEN** `process` receives the start values as text, its return value reaches `placed`, and the instance completes
+- **WHEN** `class Upcase < Flezha::StreamOperative` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and no `Flezha::Procedure` subclass exists for it
 
-#### Scenario: A derived name is refused under a sink
+#### Scenario: An operative class with a run body is a whole workflow operative
 
-- **WHEN** a class declares `sink "out", kind: :stream` and no `procedure_name`
-- **THEN** `register_factory` raises `Flezha::DeclarationError` naming `SinkWithoutId`, and no controller connection is attempted
+- **WHEN** `class Place < Flezha::WorkflowOperative` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, and an instance is started with init values
+- **THEN** `run` receives the start values as text, its return value reaches `placed`, and the instance completes
 
-#### Scenario: A sink without a kind is refused
+#### Scenario: A short form with no sink is declared
 
-- **WHEN** a class declares `procedure_name "upcase"` and `sink "out"`
-- **THEN** `register_factory` raises naming `SinkWithoutKind`
+- **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `sink`
+- **THEN** the operative declares `ticks` into the generated procedure and no plugin channel
+
+#### Scenario: An input and codec need no sink
+
+- **WHEN** a class declares `input "ticks"` and `codec :text` and no `sink`
+- **THEN** `register_factory` accepts it and the entry channel takes that name and codec
+
+#### Scenario: A channels body beside a run body is refused
+
+- **WHEN** a `Flezha::StreamOperative` subclass defines both `channels` and `run`
+- **THEN** `register_factory` raises `Flezha::DeclarationError` naming `ShortFormWithTopology`
+
+#### Scenario: A sink on a procedure is refused
+
+- **WHEN** a `Flezha::Procedure` subclass declares `sink "out"`
+- **THEN** loading it raises naming `Flezha::StreamOperative` and `Flezha::WorkflowOperative`
+
+#### Scenario: A derived factory id is refused
+
+- **WHEN** a `Flezha::StreamOperative` subclass declares `sink "out"` and `run` and no `factory_id`
+- **THEN** `register_factory` raises `Flezha::DeclarationError` naming the required `factory_id`, and no controller connection is attempted
+

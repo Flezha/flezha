@@ -126,8 +126,8 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | unspecified                                         | `type Config = ()` / `Void`                         |
 | `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Java, Ruby and PHP: the class name in snake_case |
 | `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
-| `on_full = …` / `onFull = "…"`                      | overflow policy of the auto-wired entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
-| `input = "…"` (Rust and Java)                       | name of the auto-wired entry channel (§5); absent, that channel is named `input` |
+| `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the auto-wired entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
+| `input = "…"` (short form only)                     | name of the auto-wired entry channel (§5); absent, that channel is named `input` |
 
 A mutable-state parameter is **the single signal** that a procedure is
 stateful. Its presence sets `State` and selects the derived change type; its
@@ -501,65 +501,107 @@ shared between them.
 ## 5. The single-procedure short form, and registration
 
 Exactly **one** topology may be written short: a single procedure from a
-controller input to one named sink (`input → procedure → plugin(sink)`), as an
-operative of either kind. **Every SDK carries it** — Rust, Java, Python, Node,
-Ruby, PHP and Elixir — and a procedure declaration is a short form exactly when
-it declares a `sink`.
+controller input to at most one named sink (`input → procedure → plugin(sink)`,
+or `input → procedure` with no sink), as an operative of either kind. **Every
+SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
 
-The declaration is the procedure's own. It carries its identity (`id` in Rust
-and Java, `name` in Python, Node, PHP and Elixir, `procedure_name` in Ruby), a
-`kind` of `stream` or `workflow`, the `sink`, optionally an entry channel name
-`input`, and — in an SDK whose channel builder names an entry codec (Python,
-Node, Ruby, PHP) — optionally that SDK's `codec` with the builder's own
-vocabulary. With a `sink`, the identity and the `kind` are **written by the
-author**: an SDK that otherwise derives a procedure's name does not derive it
-here, because the factory id is an address an operator types and a rename must
-not move it.
+**The short form is an operative declaration**, written at the SDK's
+kind-named operative entry point, the one a full-form operative already uses.
+An operative declaration is a short form exactly when it carries its one
+procedure's body **instead of** a topology body (`channels` or `procedures`).
+The body is `run`, the name every SDK gives a procedure's body. The kind is the
+entry point's own name (in PHP, the base class the `#[Operative]` class
+extends), never a key. The identity is the operative's factory id, spelled as
+that SDK's full form spells it, and is **written by the author**: an SDK that
+otherwise derives a name does not derive a factory id, because the factory id
+is an address an operator types and a rename must not move it.
 
 | SDK | Stream short form | Workflow short form |
 | --- | --- | --- |
-| Rust | `#[flezha::procedure(id = "echo", kind = "stream", sink = "out", input = "in")] fn echo(s: String) -> String` | `kind = "workflow"` |
-| Java | `@Procedure(id = "echo", kind = OperativeKind.STREAM, sink = "out", input = "in") class Echo { String run(String s) }` | `kind = OperativeKind.WORKFLOW` |
-| Python | `@flezha.procedure(name="echo", kind="stream", sink="out", input="in", codec="text") def echo(s: str) -> str` | `kind="workflow"` |
-| Node | `defineProcedure({ name: 'echo', kind: 'stream', sink: 'out', input: 'in', codec: 'text', handle })` | `kind: 'workflow'` |
-| Ruby | `class Echo < Flezha::Procedure; procedure_name "echo"; sink "out", kind: :stream, input: "in", codec: :text; …; end` | `kind: :workflow` |
-| PHP | `#[Proc(name: 'echo', kind: OperativeKind::Stream, sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends Procedure` | `kind: OperativeKind::Workflow` |
-| Elixir | `use Flezha.SDK.Procedure, name: "echo", kind: :stream, sink: "out", input: "in"` | `kind: :workflow` |
+| Rust | `#[flezha::stream_operative(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String` | `#[flezha::workflow_operative(...)]` |
+| Java | `@StreamOperative(id = "echo", sink = "out", input = "in") class Echo { String run(String s) }` | `@WorkflowOperative(...)` |
+| Python | `@flezha.stream_operative(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str` | `@flezha.workflow_operative(...)` |
+| Node | `defineOperative({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineWorkflow({ ... })` |
+| Ruby | `class Echo < Flezha::StreamOperative; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = s; end` | `< Flezha::WorkflowOperative` |
+| PHP | `#[Operative(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends StreamOperative { public function run(mixed $s, Ctx $ctx): mixed }` | `extends WorkflowOperative` |
+| Elixir | `use Flezha.SDK.StreamOperative, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.WorkflowOperative, ...` |
+
+**`sink` is optional.** With a `sink`, the generated operative declares an
+entry channel, the procedure, and a plugin sink of that name. With no `sink`,
+it declares the entry channel and the procedure and no plugin channel, which is
+the topology a full-form operative declares when its channel ends at a
+procedure: the operative that only keeps state is one declaration. `input` and
+`codec` are accepted either way, because an entry channel exists either way.
 
 **The generated operative is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
-`codec` where one is written; the procedure; a plugin sink named by `sink`; a
-factory id equal to the identity; and every class-level setting at that SDK's
-default for that kind. A stream short form is a default stream. A workflow
-short form is a `once` workflow: `flz operative start --kind workflow
---init-values '<json>'` seeds the entry channel, the procedure runs once, its
-output reaches the sink after the commit, and the instance completes. A
-workflow short form started by a spawn does not see its payload yet — that is
-`KB-381`, not a property of the short form.
+`codec` where one is written (Python, Node, Ruby, PHP); the procedure; the sink
+when one is written; a factory id equal to the identity; and every class-level
+setting at that SDK's default for that kind. A stream short form is a default
+stream. A workflow short form is a `once` workflow: `flz operative start --kind
+workflow --init-values '<json>'` seeds the entry channel, the procedure runs
+once, its output reaches the sink after the commit, and the instance
+completes. A workflow short form started by a spawn does not see its payload
+yet; that is `KB-381`, not a property of the short form.
+
+**The expansion is an ordinary procedure and an ordinary operative, and the
+procedure is named after the factory id, verbatim.** An entity lives at
+`<state_root>/<namespace>/<class>/<procedure_id>/<entity_key>`, so a
+procedure's name is a durable address; pinning it to the factory id is what
+makes growing out of the short form keep its state. Where an SDK generates
+code, the two are separate types and the author-facing name is the
+operative's: Rust emits the operative `Echo` and the procedure `EchoProcedure`;
+Java emits `EchoProcedure` and `EchoStreamOperative` and registers from the
+class the author wrote; Elixir generates the nested module `Echo.Procedure`.
+The generated procedure composes in another operative's topology body like any
+procedure.
+
+Growing out of the short form is a move, not a rewrite. With the stream short
+form `echo` above, the full form that keeps every entity where it was is:
+
+```rust
+#[flezha::procedure(id = "echo")]
+fn echo_procedure(s: String) -> String { s }
+
+struct Echo;
+impl StreamOperative for Echo {
+    fn factory_id() -> &'static str { "echo" }
+    fn channels(c: &ChannelBuilder) {
+        c.input::<String>("in").into::<EchoProcedure>().sink_named("out");
+    }
+}
+```
+
+The procedure keeps the name `echo` and the operative keeps the name `Echo`,
+so `register_factory(Echo)` is unchanged and the entities stay at
+`<class>/echo/<entity_key>`.
 
 Per-procedure settings the declaration already carries keep working (entity
-keys and `entities_for`, mailbox capacity and `on_full`, clock, schema
-version), because they belong to the procedure, not to the class.
+keys and `entities_for`, mailbox capacity, clock, schema version), because they
+belong to the procedure, not to the class. Where an SDK names an entry channel's
+overflow policy on the declaration (`on_full` / `onFull` in Rust and Java), it is
+the short form's, describing the entry channel it generates.
 
 - **The entry channel takes the name the author writes, and `input` when the
   author writes none.** That name is the address an operator injects on and the
-  name a forwarded frame has to match, so growing out of the short form no
-  longer means abandoning it. In Rust it is also an optional name on the
-  `flezha::operative!` pipeline head, `input::<String>("prices")`, in the same
-  position the `plugin` terminator takes one.
+  name a forwarded frame has to match, so growing out of the short form keeps
+  it. In Rust it is also an optional name on the `flezha::operative!` pipeline
+  head, `input::<String>("prices")`, in the same position the `plugin`
+  terminator takes one.
 
 - **Multi-procedure topology stays explicit.** More than one procedure, any
   fan-out or multi-input edge, a keyed edge, or any class-level setting (a loop
   mode, a retry ladder, a duration, persistence off, the effectively-once tier,
-  a correction window) requires the full form — an explicit `channels()` /
+  a correction window) requires the full form: an explicit `channels()` /
   `procedures()` body, or, in Rust, the linear `flezha::operative! { pub struct
   Name; id: "…", pipeline: input::<T> -> A -> B -> plugin::<U>("name") }` sugar
   for a strictly linear chain. The SDK refuses rather than guessing a graph.
 
 - **Registration is written by the author, in every SDK.** The author hands the
-  short form to the runner's `register_factory` like any operative; nothing is
-  harvested, scanned or collected. A program that declares a short form and
-  never registers it declares no operative.
+  short form to the runner's `register_factory` like any operative, naming the
+  declaration they wrote and never a generated type; nothing is harvested,
+  scanned or collected. A program that declares a short form and never
+  registers it declares no operative.
 
 ### 5.1 One `register_factory`, one `unregister_factory`
 
@@ -569,8 +611,8 @@ sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
 `Operative<StreamKind>`) and every `WorkflowOperative` (as
 `Operative<WorkflowKind>`), so an author implements only the kind trait. The
 base's shared member is `factory_id()`; the kind-divergent surface (`channels`
-and the persistence opt-in on one side, `run` and `procedures` on the other)
-stays on the per-kind traits.
+and the persistence opt-in on one side, `procedures` and the workflow settings
+on the other) stays on the per-kind traits.
 
 An operative declares its kind where it is written, so a runner call that names
 the kind again says nothing new and can disagree with the declaration. Every
@@ -585,7 +627,7 @@ same argument:
 | Node | `await runner.registerFactory('./echo.mjs')` | `await runner.unregisterFactory('./echo.mjs')` | read from the module's exports |
 | Ruby | `runner.register_factory(Echo)` | `runner.unregister_factory(Echo)` | read from the class |
 | PHP | `$runner->registerFactory(Echo::class)` | `$runner->unregisterFactory(Echo::class)` | read from the class |
-| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `operatives: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the callbacks the module exports: `channels/1` a stream, `procedures/1` or `run/2` a workflow |
+| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `operatives: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the behaviour the module's `use` or `@behaviour` names |
 
 Both are methods on the concrete runner handle (functions over the handle in
 Elixir), legal before and after `start()`, and generic over the shared base
@@ -613,9 +655,9 @@ specifier, so a module that fails to load or exports no operative rejects at
 the line that registers it; after `run()` it also declares the operative
 against the running core and every worker.
 
-### 5.2 The five refusal names
+### 5.2 The three refusal names
 
-Each name appears **verbatim** in the error the author reads — the compile
+Each name appears **verbatim** in the error the author reads: the compile
 error text in Rust, Java and an Elixir `use` declaration, the declaration
 error's refusal list and message in Python, Node, Ruby and PHP, and the printed
 form of the registration error in Elixir. These are the names the conformance
@@ -623,19 +665,17 @@ refusal table's short-form rows are checked against:
 
 | Name | Condition |
 | --- | --- |
-| `SinkWithoutId` | a `sink` with no written identity |
-| `SinkWithoutKind` | a `sink` with no `kind` |
-| `SinkWithoutOutput` | a `sink` on a procedure the SDK can see declares no output |
-| `ShorthandKeyWithoutSink` | `input`, `kind` or `codec` on a procedure with no `sink`, naming the keys |
+| `ShortFormWithTopology` | an operative declaration carries a procedure body and also a `channels` or `procedures` body |
+| `SinkWithoutOutput` | a `sink` on a body the SDK can see declares no output |
 | `DuplicateFactoryId` | a second operative, of either kind, under a factory id the runner holds |
 
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
-whose procedures declare no output type (Ruby, Elixir) owes no
-`SinkWithoutOutput` and says so in its conformance manifest; a spelling that
-cannot omit the sink (Ruby's keys ride the `sink` call) owes no
-`ShorthandKeyWithoutSink` and says so the same way. An Elixir author who skips
-the macro writes the operative callbacks by hand, which is the full form and
-owes no short-form refusal.
+whose procedure bodies declare no output type the SDK can read (Node, Ruby,
+PHP, Elixir) owes no `SinkWithoutOutput` and says so in its conformance
+manifest. A declaration with neither body, or with no written identity, is
+refused by the rule every operative already obeys, not by a short-form name.
+There is no other short-form refusal: an operative declaration always has a
+kind, and `input` and `codec` need no sink.
 
 **Duplicate factory id fails fast across kinds.** Declaring a second operative
 under a factory id the runner already holds fails at that call, whichever kind

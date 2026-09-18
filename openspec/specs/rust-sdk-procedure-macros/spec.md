@@ -6,57 +6,27 @@ The rust-sdk-procedure-macros capability is the Rust realization of the SDK auth
 ## Requirements
 ### Requirement: `#[flezha::procedure]` attribute macro
 
-The Rust SDK SHALL provide a `#[flezha::procedure]` attribute macro applied to a single `run` function that generates a complete `Procedure` implementation conforming to the authoring contract. When the attribute declares a `sink`, it SHALL also require an `id` and a `kind` of `"stream"` or `"workflow"`, SHALL accept an optional `input` key naming the entry channel and SHALL name that channel `input` when the key is absent, and the generated procedure type SHALL additionally implement `StreamOperative` (for `"stream"`, with `channels()`) or `WorkflowOperative` (for `"workflow"`, with `procedures()`) wiring the entry channel into the procedure and the procedure to the named plugin sink, with every other operative item at its trait default and `factory_id()` equal to the `id`. The generated procedure's `name()` SHALL be the `id` when one is written. Each short-form refusal SHALL fail to compile with a message beginning with its name: `SinkWithoutId` for a `sink` with no `id`, `SinkWithoutKind` for a `sink` with no `kind`, `SinkWithoutOutput` for a `sink` on a run function with a unit return and no `emits`, and `ShorthandKeyWithoutSink` for an `input` or `kind` key with no `sink`, naming the keys. A `kind` other than `"stream"` or `"workflow"` SHALL fail to compile naming the two values.
+The Rust SDK SHALL provide a `#[flezha::procedure]` attribute macro applied to a single `run` function that generates a complete `Procedure` implementation conforming to the authoring contract. The attribute SHALL declare a procedure and nothing else: it SHALL NOT accept `kind`, `sink`, `input` or `on_full`, which describe an operative and its entry channel, and SHALL fail to compile naming the key and directing the author to `#[flezha::stream_operative]` or `#[flezha::workflow_operative]` when one is written. The generated procedure's `name()` SHALL be the `id` when one is written.
 
 #### Scenario: Stateless procedure collapses to a function
 
-- **WHEN** `#[flezha::procedure(id = "do_nothing", kind = "stream", sink = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
-- **THEN** the macro generates a `Default` procedure type `DoNothing`, a `Procedure` impl with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()`, `name`, `init_state`, and a `run` wrapper that emits the returned value, and a `StreamOperative` impl on `DoNothing` whose `factory_id()` is `do_nothing`
+- **WHEN** `#[flezha::procedure(id = "do_nothing")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
+- **THEN** the macro generates a `Default` procedure type `DoNothing`, a `Procedure` impl with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()`, `name`, `init_state`, and a `run` wrapper that emits the returned value, and no operative impl
 
 #### Scenario: Stateful procedure infers State from the mutable parameter
 
-- **WHEN** `#[flezha::procedure(id = "store_input", kind = "stream", sink = "sink")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
+- **WHEN** `#[flezha::procedure(id = "store_input")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
 - **THEN** the generated `Procedure` impl sets `State = StoreInputState` and routes mutations through the existing state-handle path
-
-#### Scenario: A workflow short form implements the workflow trait
-
-- **WHEN** `#[flezha::procedure(id = "place", kind = "workflow", sink = "placed", input = "order")]` annotates `fn place(order: String) -> String`
-- **THEN** `Place` implements `WorkflowOperative` with `factory_id()` `place` and a `procedures()` body wiring `order` into `Place` and `Place` to the `placed` plugin sink, every other workflow item at its default, and `runner.register_factory(Place)` registers it
 
 #### Scenario: Generated procedure type is referenceable in channels
 
 - **WHEN** a procedure is generated from `fn static_entry(..)`
 - **THEN** a PascalCase procedure type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` or `procedures()` body via `.from`/`.into`
 
-#### Scenario: The attribute keeps the default entry channel name
+#### Scenario: An operative key on a procedure is refused
 
-- **WHEN** `#[flezha::procedure(id = "do_nothing", kind = "stream", sink = "echo")]` declares no `input` key
-- **THEN** the generated operative's entry channel SHALL be named `input`
-
-#### Scenario: The attribute names the generated entry channel
-
-- **WHEN** `#[flezha::procedure(id = "do_nothing", kind = "stream", sink = "echo", input = "prices")]` annotates a run function
-- **THEN** the generated operative's entry channel SHALL be named `prices`
-
-#### Scenario: A short-form key without a sink is refused
-
-- **WHEN** `#[flezha::procedure(id = "do_nothing", input = "prices")]` annotates a run function with no `sink`
-- **THEN** the macro fails to compile with a message beginning `ShorthandKeyWithoutSink`, naming `input` and the missing `sink`
-
-#### Scenario: A sink without a kind is refused
-
-- **WHEN** `#[flezha::procedure(id = "do_nothing", sink = "echo")]` annotates a run function
-- **THEN** the macro fails to compile with a message beginning `SinkWithoutKind`
-
-#### Scenario: A sink without an id is refused
-
-- **WHEN** `#[flezha::procedure(kind = "stream", sink = "echo")]` annotates a run function
-- **THEN** the macro fails to compile with a message beginning `SinkWithoutId`
-
-#### Scenario: An empty entry channel name is rejected
-
-- **WHEN** `#[flezha::procedure(id = "do_nothing", kind = "stream", sink = "echo", input = "")]` annotates a run function
-- **THEN** the macro fails to compile, stating that an entry channel name may not be empty
+- **WHEN** `#[flezha::procedure(id = "do_nothing", sink = "echo")]`, or the same with `kind`, `input` or `on_full`, annotates a run function
+- **THEN** the macro fails to compile naming the key and the short-form attribute that carries it
 
 ### Requirement: Attribute opt-ins for entity and mailbox behavior
 
@@ -189,3 +159,67 @@ An operative SHALL be able to mix macro-generated procedures and hand-written pr
 
 - **WHEN** `#[flezha::procedure(init = …)]` is applied to a `run` with no `&mut State` parameter
 - **THEN** expansion emits a `compile_error!` stating `init` requires a state parameter
+
+### Requirement: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]` short-form attributes
+
+The Rust SDK SHALL provide two attribute macros applied to a single `run` function that declare a whole single-procedure operative of the kind the attribute names: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operative]` because `flezha::operative!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
+
+Each attribute SHALL emit **two** types: the operative type under the author's PascalCase name (`Echo` for `fn echo`), implementing `StreamOperative` with `channels()` or `WorkflowOperative` with `procedures()`, with `factory_id()` equal to the `id` and every other operative item at its trait default; and the procedure type beside it under that name suffixed `Procedure` (`EchoProcedure`), carrying the `Procedure` impl the `#[flezha::procedure]` attribute would generate for the same function. The generated procedure's `name()` SHALL be the `id` verbatim. `EchoProcedure` SHALL be nameable in another operative's `channels()` or `procedures()` body.
+
+With a `sink`, the generated topology SHALL wire the entry channel into the procedure and the procedure to that plugin sink. With no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A `sink` on a run function with a unit return and no `emits` SHALL fail to compile with a message beginning `SinkWithoutOutput`.
+
+#### Scenario: A stream short form emits an operative and a procedure
+
+- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
+- **THEN** the macro generates `DoNothing` implementing `StreamOperative` with `factory_id()` `do_nothing` and a `channels()` body wiring `input` into `DoNothingProcedure` and `DoNothingProcedure` to the `echo` plugin sink, and `DoNothingProcedure` implementing `Procedure` with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()` and `name()` `do_nothing`
+
+#### Scenario: The operative takes the author's name
+
+- **WHEN** a short form is registered
+- **THEN** `runner.register_factory(DoNothing)` SHALL register the operative, and `DoNothing` SHALL NOT implement `Procedure`
+
+#### Scenario: A workflow short form implements the workflow trait
+
+- **WHEN** `#[flezha::workflow_operative(id = "place", sink = "placed", input = "order")]` annotates `fn place(order: String) -> String`
+- **THEN** `Place` implements `WorkflowOperative` with `factory_id()` `place` and a `procedures()` body wiring `order` into `PlaceProcedure` and `PlaceProcedure` to the `placed` plugin sink, every other workflow item at its default, and `runner.register_factory(Place)` registers it
+
+#### Scenario: A short form with no sink wires only the entry channel
+
+- **WHEN** `#[flezha::stream_operative(id = "counter", input = "ticks")]` annotates `fn counter(input: String, state: &mut CounterState)`
+- **THEN** `Counter`'s `channels()` body wires `ticks` into `CounterProcedure` and declares no plugin sink, and the operative registers and runs
+
+#### Scenario: A stateful short form infers State from the mutable parameter
+
+- **WHEN** `#[flezha::stream_operative(id = "store_input", sink = "sink")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
+- **THEN** `StoreInputProcedure`'s `Procedure` impl sets `State = StoreInputState` and routes mutations through the existing state-handle path
+
+#### Scenario: The generated procedure is nameable in another topology
+
+- **WHEN** `EchoProcedure` is named in a hand-written `channels()` body of a different operative
+- **THEN** it wires as any procedure does, and `Echo`'s own operative is declared only if `Echo` is also registered
+
+#### Scenario: The attribute keeps the default entry channel name
+
+- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo")]` declares no `input` key
+- **THEN** the generated operative's entry channel SHALL be named `input`
+
+#### Scenario: The attribute names the generated entry channel
+
+- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo", input = "prices")]` annotates a run function
+- **THEN** the generated operative's entry channel SHALL be named `prices`
+
+#### Scenario: A sink on a unit return is refused
+
+- **WHEN** `#[flezha::stream_operative(id = "drain", sink = "out")]` annotates a run function with a unit return and no `emits`
+- **THEN** the macro fails to compile with a message beginning `SinkWithoutOutput`
+
+#### Scenario: An empty entry channel name is rejected
+
+- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo", input = "")]` annotates a run function
+- **THEN** the macro fails to compile, stating that an entry channel name may not be empty
+
+#### Scenario: A topology body beside a short form does not compile
+
+- **WHEN** a type carrying a short-form attribute also has a hand-written `StreamOperative` or `WorkflowOperative` impl
+- **THEN** compilation fails, and the compile-fail fixture pinning it cites `ShortFormWithTopology`
+

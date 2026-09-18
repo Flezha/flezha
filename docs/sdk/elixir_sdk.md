@@ -101,12 +101,12 @@ end
 ```
 
 Both operative macros import `Flezha.SDK.Channels`, so a whole pipe — a merge
-included — is written with no module prefix; the workflow macro also imports
-`Flezha.SDK.Workflow.Ctx`'s `emit/2`, `emit_on/3`, `complete/2` and
-`spawn_workflow/3,4` for a `run/2` body. `use Flezha.SDK.Procedure` imports
+included — is written with no module prefix. `use Flezha.SDK.Procedure` imports
 `Flezha.SDK.Ctx`'s authoring functions — every one but `apply/3`, which would
 shadow `Kernel.apply/3` — and leaves `init_state/1` answering `nil` unless the
-module writes one, so a stateless procedure writes only `run/3`.
+module writes one, so a stateless procedure writes only `run/3`. A workflow
+procedure ends its instance with the imported `complete/2`, honoured once its
+iteration commits.
 
 An unknown option is a `CompileError` naming it, and so is a missing required
 one (`name` for a procedure, `factory_id` for an operative).
@@ -119,12 +119,13 @@ one (`name` for a procedure, `factory_id` for an operative).
 
 ### The short form
 
-A `sink` makes that one procedure module a whole operative of the written
-`kind`. Nothing else changes: it is registered as any operative is.
+An operative module that writes its one procedure's `run/3` instead of
+`channels/1` (or `procedures/1`) is a whole single-procedure operative of the
+kind its `use` names, registered as any operative is.
 
 ```elixir
 defmodule Upcase do
-  use Flezha.SDK.Procedure, name: "upcase", kind: :stream, sink: "out"
+  use Flezha.SDK.StreamOperative, factory_id: "upcase", sink: "out"
 
   def run(input, state, ctx) do
     emit(ctx, String.upcase(input))
@@ -133,7 +134,7 @@ defmodule Upcase do
 end
 
 defmodule Place do
-  use Flezha.SDK.Procedure, name: "place", kind: :workflow, sink: "placed", input: "order"
+  use Flezha.SDK.WorkflowOperative, factory_id: "place", sink: "placed", input: "order"
 
   def run(input, state, ctx) do
     emit(ctx, input)
@@ -144,23 +145,45 @@ end
 children = [{Flezha.SDK, namespace: "default", operatives: [Upcase, Place]}]
 ```
 
-The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `"input"` — or the `input` option's
-value — the procedure, a plugin sink named by `sink`, a `factory_id/0` equal to
-`name`, and every other operative callback left undefined so its default
-applies. A workflow short form is a `once` workflow, seeded on its entry
-channel from `flz operative start --kind workflow --init-values`.
+The module generates the nested procedure module `Upcase.Procedure`, whose
+`name/0` is the factory id verbatim and which delegates to the procedure
+callbacks the module defines, and a `channels/1` (or `procedures/1`) wiring an
+entry channel named `"input"` (or the `input` option's value) into it and, with
+`sink`, it to that plugin sink. Every other operative callback is left undefined
+so its default applies. Because the procedure is named after the factory id,
+its entities keep their state path when the module grows into the full form. A
+workflow short form is a `once` workflow, seeded on its entry channel from
+`flz operative start --kind workflow --init-values`.
+
+`run/3` is written as in a procedure: the ctx functions are imported, a `state`
+block and `defchange` work, and the options `use Flezha.SDK.Procedure` takes
+(`max_entities:`, `clock:`, ...) apply to the generated procedure. `sink` is
+optional; with none, nothing leaves the procedure but its state:
+
+```elixir
+defmodule Counter do
+  use Flezha.SDK.StreamOperative, factory_id: "counter", input: "ticks"
+
+  state do
+    field(:seen, :list, default: [])
+  end
+
+  def run(tick, state, ctx), do: {:ok, push_seen(state, ctx, tick)}
+end
+```
 
 Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window. Elixir names no entry codec — binaries pass through and `input_with/3`
 takes a parser — so the short form takes no `codec` option.
 
-Three refusals are `CompileError`s whose message begins with its own name:
-`SinkWithoutId` (a `sink` with no `name`), `SinkWithoutKind` and
-`ShorthandKeyWithoutSink` (`kind` or `input` with no `sink`). This SDK cannot
-see a procedure's output type, so it owes no `SinkWithoutOutput` and its
-manifest does not list `shorthand_typed_output`.
+The refusals are `CompileError`s. `run/3` beside `channels/1` or
+`procedures/1` begins `ShortFormWithTopology`, and writing neither names both.
+A class setting (`persistence_enabled:`, `loop_mode:`, ...) on a short form and
+a short-form option on a full form each name the option, and
+`use Flezha.SDK.Procedure` refuses `kind`, `sink` and `input`, naming the
+operative macros. This SDK cannot see a procedure's output type, so it owes no
+`SinkWithoutOutput` and its manifest does not list `shorthand_typed_output`.
 
 > A workflow short form started by a *spawn* does not see its payload yet —
 > `KB-381`. Start it with `--init-values` until that is fixed.

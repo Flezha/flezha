@@ -53,7 +53,6 @@ pub const SNAPSHOT: Key = Key::flat("snapshot");
 pub const CHANGES: Key = Key::flat("changes");
 pub const STATE_JSON: Key = Key::of("state_json", "stateJson");
 pub const KEY_REQUEST: Key = Key::of("key_request", "keyRequest");
-pub const ARGS: Key = Key::flat("args");
 pub const OUTPUTS: Key = Key::flat("outputs");
 pub const CHANNEL: Key = Key::flat("channel");
 pub const PAYLOAD: Key = Key::flat("payload");
@@ -75,13 +74,12 @@ pub const JSON: Key = Key::flat("json");
 pub const PREPARED: Key = Key::flat("prepared");
 pub const ERROR: Key = Key::flat("error");
 pub const NON_RETRYABLE: Key = Key::of("non_retryable", "nonRetryable");
-pub const WORKFLOW_COMPLETED: Key = Key::of("workflow_completed", "workflowCompleted");
-pub const WORKFLOW_RESULT: Key = Key::of("workflow_result", "workflowResult");
 pub const VERDICT: Key = Key::flat("verdict");
 pub const MESSAGE: Key = Key::flat("message");
 pub const EVENT_TIME: Key = Key::of("event_time", "eventTime");
 pub const TIMERS: Key = Key::flat("timers");
 pub const CHECKPOINT: Key = Key::flat("checkpoint");
+pub const COMPLETE: Key = Key::flat("complete");
 pub const DLQ: Key = Key::flat("dlq");
 pub const REGISTER: Key = Key::flat("register");
 pub const ATTEMPTS: Key = Key::flat("attempts");
@@ -112,7 +110,6 @@ pub mod record {
         CHANGES,
         STATE_JSON,
         super::KEY_REQUEST,
-        ARGS,
         OUTPUTS,
     ];
     pub const WORK_ITEM: &[Key] = &[
@@ -138,8 +135,6 @@ pub mod record {
         PREPARED,
         ERROR,
         NON_RETRYABLE,
-        WORKFLOW_COMPLETED,
-        WORKFLOW_RESULT,
     ];
     pub const ITEM_EFFECT: &[Key] = &[
         VERDICT,
@@ -151,6 +146,7 @@ pub mod record {
         TIMERS,
         CHECKPOINT,
         DLQ,
+        COMPLETE,
     ];
     pub const OUTPUT: &[Key] = &[
         TARGET,
@@ -179,7 +175,6 @@ pub mod word {
     pub const APPLY_STATE: &str = "apply_state";
     pub const MIGRATION_SERIALIZE: &str = "migration_serialize";
     pub const KEY_REQUEST: &str = "key_request";
-    pub const WORKFLOW_RUN: &str = "workflow_run";
     pub const COMPENSATE_RUN: &str = "compensate_run";
 
     pub const EDGE: &str = "edge";
@@ -197,7 +192,6 @@ pub mod word {
     pub const MIGRATION_STATE: &str = "migration_state";
     pub const PREPARED: &str = "prepared";
     pub const FAILED: &str = "failed";
-    pub const WORKFLOW_DONE: &str = "workflow_done";
 }
 
 /// What a refusal calls the record it was reading.
@@ -335,11 +329,6 @@ fn kind_out<S: Sink>(
             set_word(s, out, KIND, word::KEY_REQUEST)?;
             let request = key_request(s, request)?;
             s.set(out, KEY_REQUEST, request)?;
-        }
-        K::WorkflowRun { args } => {
-            set_word(s, out, KIND, word::WORKFLOW_RUN)?;
-            let args = s.bytes(args)?;
-            s.set(out, ARGS, args)?;
         }
         K::CompensateRun { outputs } => {
             set_word(s, out, KIND, word::COMPENSATE_RUN)?;
@@ -591,10 +580,6 @@ pub fn result<S: Source>(s: &S, r: &S::Map) -> Result<schema::ActivationResult, 
             message: opt_text(s, r, ERROR)?.unwrap_or_else(|| "activation failed".into()),
             non_retryable: opt_bool(s, r, NON_RETRYABLE)?,
         }),
-        word::WORKFLOW_DONE => O::WorkflowDone {
-            completed: opt_bool(s, r, WORKFLOW_COMPLETED)?,
-            result: opt_bytes(s, r, WORKFLOW_RESULT)?.unwrap_or_default(),
-        },
         other => return Err(unknown::<S>("activation outcome", other)),
     };
     Ok(schema::ActivationResult {
@@ -625,6 +610,7 @@ fn effect<S: Source>(s: &S, value: &S::Value) -> Result<schema::ItemEffect, S::E
         timers,
         checkpoint: opt_bool(s, &h, CHECKPOINT)?,
         dlq,
+        complete: opt_bytes(s, &h, COMPLETE)?,
     })
 }
 

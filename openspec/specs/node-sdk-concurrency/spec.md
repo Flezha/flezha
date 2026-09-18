@@ -7,7 +7,7 @@ TBD - created by archiving change node-sdk. Update Purpose after archive.
 
 The SDK SHALL NOT expose any blocking core entry point as a synchronous call from JavaScript.
 `flz_core_poll` SHALL NOT be exported to JavaScript at all. `flz_core_complete`,
-`flz_core_workflow_recv`, `flz_core_spawn_result` read with a nonzero timeout, and `flz_core_start`
+`flz_core_spawn_result` read with a nonzero timeout, and `flz_core_start`
 SHALL be reachable only as asynchronous operations whose blocking work executes on a thread that is
 not an event-loop thread.
 

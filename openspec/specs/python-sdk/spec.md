@@ -29,7 +29,7 @@ The runner SHALL report, in its startup line, the wheel build tier, the active e
 
 ### Requirement: Decorator-Based Authoring Surface
 
-The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.procedure`, `@flezha.stream_operative` and `@flezha.workflow_operative`. A decorated handler SHALL be an ordinary Python callable, callable directly in a unit test without any Flezha runtime present. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O.
+The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.procedure`, `@flezha.stream_operative` and `@flezha.workflow_operative`. A decorated handler SHALL be an ordinary Python callable, callable directly in a unit test without any Flezha runtime present. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O. A class procedure's body SHALL be its `run` method, the name every SDK gives a procedure's body; a decorated class defining `process` and no `run` SHALL raise `DeclarationError` naming `run`. A function procedure is its own body.
 
 Declaration SHALL be a pure expansion onto the shared authoring contract's surface — introducing no new runtime path, protocol message or WAL change — and decorated procedures SHALL compose with one another in a single operative graph.
 
@@ -40,6 +40,14 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 #### Scenario: Decorating performs no I/O
 - **WHEN** a module containing `@flezha.procedure` and `@flezha.stream_operative` declarations is imported with no controller running
 - **THEN** the import SHALL succeed, open no socket, and start no thread
+
+#### Scenario: A class procedure's body is its run method
+- **WHEN** a class decorated `@flezha.procedure` defines `run(self, value, ctx)` and an operative wires it
+- **THEN** each input SHALL reach `run`, and its return value SHALL be the procedure's output
+
+#### Scenario: The old body method is refused
+- **WHEN** a class decorated `@flezha.procedure` defines `process` and no `run`
+- **THEN** decorating it SHALL raise `DeclarationError` naming `run`
 
 ### Requirement: Type Hints Drive Graph Wiring, And The Graph Is Statically Checkable
 
@@ -270,34 +278,64 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-procedure short form is four decorator keywords
-`flezha.procedure` SHALL accept `kind` (`"stream"` or `"workflow"`), `sink`, `input` and `codec` beside its existing declarations, on both the bare-decorator and the factory form. A procedure declared with `name`, `kind` and `sink` SHALL carry a generated `Operative` of that kind whose factory id is `name`: a stream operative, or a `once` workflow operative with every workflow setting at its default, wiring an entry channel named `input` (or the `input` keyword's value) into the procedure and the procedure to the `sink` plugin channel. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call. Declaring SHALL still perform no I/O. At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutId` for a `sink` with no written `name` (the SDK SHALL NOT derive it from `__name__`), `SinkWithoutKind` for a `sink` with no `kind`, `SinkWithoutOutput` for a `sink` on a procedure whose return annotation is absent or `None`, and `ShorthandKeyWithoutSink` for `kind`, `input` or `codec` with no `sink`, naming the keywords. `Runner.register_factory` SHALL accept a short-form procedure and register its operative, and `Runner.register_modules` SHALL register the operative a short-form procedure in the named module carries, alongside the module's `Operative`s. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+The short form SHALL be declared with `@flezha.stream_operative` or `@flezha.workflow_operative`, the same decorators that declare a full-form operative, and SHALL NOT be declared with `flezha.procedure`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operative decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.procedure` takes but `name`, which it hands to the generated procedure; the kind is the decorator's own name and SHALL NOT be a keyword.
+
+A decorated object SHALL be a short form when it is a procedure body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operative of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated procedure named `id` and that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
+
+At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a body whose return annotation is absent or `None`, and `ShortFormWithTopology` for a decorated object carrying both a procedure body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operative, and `Runner.register_modules` SHALL register the operatives a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
 #### Scenario: A decorated function is a whole stream operative
 
-- **WHEN** a module declares `@flezha.procedure(name="upcase", kind="stream", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text and sink `out`, and the module declares no `stream_operative`
+- **WHEN** a module declares `@flezha.stream_operative(id="upcase", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and the module declares no `flezha.procedure`
 
 #### Scenario: A decorated function is a whole workflow operative
 
-- **WHEN** a module declares `@flezha.procedure(name="place", kind="workflow", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, and an instance is started with init values
+- **WHEN** a module declares `@flezha.workflow_operative(id="place", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, and an instance is started with init values
 - **THEN** the procedure receives the start values as text on `order`, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A short form with no sink is declared
+
+- **WHEN** a module declares `@flezha.stream_operative(id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
+- **THEN** the operative declares `ticks` into the procedure and no plugin channel, and the procedure's changes are journaled as any procedure's are
+
+#### Scenario: A codec needs no sink
+
+- **WHEN** a short form declares `codec="text"` and no `sink`
+- **THEN** the declaration is accepted and the entry channel decodes text
 
 #### Scenario: register_modules collects a short form
 
-- **WHEN** a module declares a short-form procedure and the runner is given `register_modules("that.module")`
+- **WHEN** a module declares a short form and the runner is given `register_modules("that.module")`
 - **THEN** the runner declares the short form's operative
 
-#### Scenario: A derived name is refused under a sink
+#### Scenario: A builder body is still the full form
 
-- **WHEN** a module declares `@flezha.procedure(kind="stream", sink="out") def upcase(s: str) -> str`
-- **THEN** importing it raises `DeclarationError` naming `SinkWithoutId`, and no socket is opened
+- **WHEN** `@flezha.stream_operative(id="static_entity")` decorates `def f(c: flezha.Channels) -> None`
+- **THEN** it declares a full-form operative from that body, and no procedure is generated
 
-#### Scenario: A sink without a kind is refused
+#### Scenario: A procedure body beside a channels body is refused
 
-- **WHEN** a module declares `@flezha.procedure(name="upcase", sink="out") def upcase(s: str) -> str`
-- **THEN** importing it raises `DeclarationError` naming `SinkWithoutKind`
+- **WHEN** a decorated class declares both a `run` body and a `channels` body
+- **THEN** importing it raises `DeclarationError` naming `ShortFormWithTopology`
 
-#### Scenario: The short form still composes as a procedure
+#### Scenario: An operative keyword on a procedure is refused
 
-- **WHEN** a short-form procedure is named in another operative's `Channels` body
-- **THEN** it wires as any procedure does, and its own operative is declared only if the runner is also handed the procedure or its module
+- **WHEN** a module declares `@flezha.procedure(name="upcase", sink="out")`
+- **THEN** importing it raises `DeclarationError` naming `sink` and `flezha.stream_operative`
+
+#### Scenario: A derived id is refused
+
+- **WHEN** a module declares `@flezha.stream_operative(sink="out") def upcase(s: str) -> str`
+- **THEN** importing it raises `DeclarationError` naming the required `id`, and no socket is opened
+
+#### Scenario: A sink on a body with no output is refused
+
+- **WHEN** a module declares `@flezha.stream_operative(id="drain", sink="out") def drain(s: str) -> None`
+- **THEN** importing it raises `DeclarationError` naming `SinkWithoutOutput`
+
+#### Scenario: The generated procedure composes in another topology
+
+- **WHEN** a short form's generated procedure is named in another operative's `Channels` body
+- **THEN** it wires as any procedure does, and the short form's own operative is declared only if the runner is also handed it or its module
+

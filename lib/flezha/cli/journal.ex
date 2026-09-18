@@ -50,7 +50,7 @@ defmodule Flezha.Service.Cli.Journal do
 
   # The leaf set is what "done" means for a tree-shaped chain: the operative is
   # complete when the in-flight iteration has committed every leaf. A class that
-  # declared none (run-sugar, stream, an older SDK) leaves it underivable.
+  # declared none (a stream, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
     do: IO.puts("\n  complete: unknown (class declares no leaf procedures)")
 
@@ -65,6 +65,7 @@ defmodule Flezha.Service.Cli.Journal do
       entities_ran: Enum.map(payload.entities_ran, &Outbox.entity_label/1),
       outbox: journal_outbox(payload.outbox)
     })
+    |> journal_completion(payload.completion)
   end
 
   defp journal_row(%{type: :compensated, payload: payload} = entry) do
@@ -78,6 +79,7 @@ defmodule Flezha.Service.Cli.Journal do
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
     |> Map.put(:consumed_offset, payload.consumed_offset)
+    |> journal_completion(payload.completion)
   end
 
   defp journal_row(%{type: :parked, payload: payload} = entry) do
@@ -133,6 +135,11 @@ defmodule Flezha.Service.Cli.Journal do
     }
   end
 
+  # A completing entry names the result's size, as an outbox item does, rather
+  # than printing an author's bytes.
+  defp journal_completion(row, nil), do: row
+  defp journal_completion(row, result), do: Map.put(row, :completes_bytes, byte_size(result))
+
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
@@ -174,6 +181,10 @@ defmodule Flezha.Service.Cli.Journal do
 
     if Map.has_key?(row, :consumed_offset) do
       IO.puts("    consumed inbox offset: #{row.consumed_offset}")
+    end
+
+    if Map.has_key?(row, :completes_bytes) do
+      IO.puts("    completes the instance: result #{row.completes_bytes} byte(s)")
     end
 
     if Map.has_key?(row, :wake_deadline_ms) do

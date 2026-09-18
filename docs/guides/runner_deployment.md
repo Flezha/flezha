@@ -462,7 +462,7 @@ import { defineProcedure } from '@flezha/sdk';
 
 export const EchoProcedure = defineProcedure({
   name: 'echo',                         // state is saved under this name, so choose it once
-  handle: (input) => `echo: ${input}`,  // what it returns is emitted
+  run: (input) => `echo: ${input}`,     // what it returns is emitted
 });
 ```
 
@@ -586,7 +586,7 @@ The whole example:
 class EchoProcedure < Flezha::Procedure
   procedure_name "echo"                          # state is saved under this name, so choose it once
 
-  def process(input, _ctx) = "echo: #{input}"    # what it returns is emitted
+  def run(input, _ctx) = "echo: #{input}"        # what it returns is emitted
 end
 ```
 
