@@ -1,11 +1,21 @@
 # Deploy a runner
 
-**Before you start:** finish [`controller_deployment.md`](controller_deployment.md)
-and leave that controller running. A runner alone is not of much use: it does its
-work only once it has connected to a controller. Check that yours is ready:
+A runner is a program of your own that runs your code. It connects to a
+controller, tells it which operatives it can run, and then does the work the
+controller gives it. You write it in any of the seven languages, and you start
+and stop it yourself, like any other service.
+
+> Checks that the controller from
+> [`controller_deployment.md`](controller_deployment.md) is still running and
+> ready. A runner does its work only once it has connected to a controller.
+> {: .step}
 
 ```sh
-flz boot await    # boot await: ready
+$ flz boot await
+```
+
+```output
+boot await: ready
 ```
 
 ## Reach the controller
@@ -59,6 +69,9 @@ when a controller answered:
 
 ```sh
 $ flz runner check
+```
+
+```output
 controller reachable
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
@@ -97,12 +110,12 @@ and mount it in both places.
 If the runner is also a container, a named volume is the whole answer:
 
 ```sh
-docker run -d --name flezha-controller \
+$ docker run -d --name flezha-controller \
   -v flezha_data:/flezha/app_data \
   -v flezha_sockets:/flezha/app_data/sockets \
   flezha/flezha:0.1.0
 
-docker run -d --name my-runner \
+$ docker run -d --name my-runner \
   -e FLEZHA_SOCKET_FILES_PATH=/flezha/app_data/sockets \
   -v flezha_sockets:/flezha/app_data/sockets \
   my-runner-image
@@ -110,6 +123,9 @@ docker run -d --name my-runner \
 
 ```sh
 $ docker exec my-runner flz runner check
+```
+
+```output
 controller reachable
   directory  /flezha/app_data/sockets (from $FLEZHA_SOCKET_FILES_PATH)
   checked    /flezha/app_data/sockets
@@ -119,12 +135,12 @@ If the runner runs on the host instead, bind mount a host directory in place of
 the named volume:
 
 ```sh
-docker run -d --name flezha-controller \
+$ docker run -d --name flezha-controller \
   -v flezha_data:/flezha/app_data \
   -v /tmp/flz_sock:/flezha/app_data/sockets \
   flezha/flezha:0.1.0
 
-FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock flz runner check
+$ FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock flz runner check
 ```
 
 **That one has a condition.** The image runs as uid 1000 and the directory it
@@ -264,6 +280,11 @@ particular to that language is explained here; what the parts are for is
 > concurrency semantics of the host language, and with them how work spreads
 > across cores and how much throughput one process reaches. Those differences
 > are real and sometimes large, and each tab below says what they are.
+
+> Gets the echo in your language. Pick your language's tab and take the whole
+> example linked at its top: it holds the procedure, the operative and the
+> runner shown below, plus the project files that build them.
+> {: .step}
 
 <!-- tabs-open -->
 
@@ -792,6 +813,10 @@ The commands below show one way to start each language's echo runner, from a
 terminal on the controller's machine. They are examples, and you are not limited
 to them.
 
+> Starts the echo runner. Open a new terminal on the controller's machine, go to
+> your language's echo example folder, and run the command in its tab.
+> {: .step}
+
 <!-- tabs-open -->
 
 ### Java
@@ -799,7 +824,7 @@ to them.
 From the echo example's folder, build and start in one line:
 
 ```sh
-mvn -q package && java -jar target/echo.jar
+$ mvn -q package && java -jar target/echo.jar
 ```
 
 The jar carries the SDK, so nothing else goes on the classpath. The first
@@ -810,7 +835,7 @@ argument is the namespace, `default` when omitted.
 From the echo example's folder:
 
 ```sh
-cargo run --release
+$ cargo run --release
 ```
 
 The namespace follows `--`, `default` when omitted: `cargo run --release -- my_app`.
@@ -820,7 +845,7 @@ The namespace follows `--`, `default` when omitted: `cargo run --release -- my_a
 From the echo example's folder:
 
 ```sh
-npm install && node runner.mjs
+$ npm install && node runner.mjs
 ```
 
 Start it from that folder, because the operative's module specifier resolves
@@ -832,7 +857,7 @@ when omitted.
 From the echo example's folder, with Python 3.11 or later:
 
 ```sh
-pip install -r requirements.txt && python3 runner.py
+$ pip install -r requirements.txt && python3 runner.py
 ```
 
 The first argument is the namespace, `default` when omitted.
@@ -844,7 +869,7 @@ starts a controller and this runner together with Docker.
 From the echo example's folder, with Ruby 3.3 or later:
 
 ```sh
-bundle install && bundle exec ruby runner.rb
+$ bundle install && bundle exec ruby runner.rb
 ```
 
 The first argument is the namespace, `default` when omitted.
@@ -854,7 +879,7 @@ The first argument is the namespace, `default` when omitted.
 From the echo example's folder, with PHP 8.4 or later and `ext-ffi`:
 
 ```sh
-composer install && php runner.php
+$ composer install && php runner.php
 ```
 
 The first argument is the namespace, `default` when omitted.
@@ -864,7 +889,7 @@ The first argument is the namespace, `default` when omitted.
 From the echo example's folder:
 
 ```sh
-mix deps.get && mix run --no-halt
+$ mix deps.get && mix run --no-halt
 ```
 
 The namespace follows `--`, `default` when omitted: `mix run --no-halt -- my_app`.
@@ -879,10 +904,16 @@ controller.
 The runner keeps that terminal. Leave it running: the next guide starts work on
 it, and [`stop_everything.md`](stop_everything.md) stops it at the end of Part 1.
 
-From another terminal, check that it connected:
+From another terminal, you can check that it connected:
 
 ```sh
-flz runner list
+$ flz runner list
+```
+
+```output
+Fetching runners for namespace 'default'...
+Runners in namespace 'default':
+  - default_23fc85126379
 ```
 
 Your runner's id in that list means it connected to the controller. If it is

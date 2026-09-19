@@ -1,21 +1,30 @@
 # Stop everything
 
-**Before you start:** this is the last page of Part 1, and it stops what the
-four before it started. You do not have to: skip it and go on to Part 2 with
-everything still running.
+> #### Before you start {: .info}
+>
+> This is the last page of Part 1, and it stops what the four before it
+> started. Do it before Part 2, which starts a controller of its own with
+> authorization on.
 
 Stop things in the reverse order you started them: the plugin, the operative,
 the runner, then the controller.
 
 ## The plugin and the operative
 
+> Detaches the file sink and stops `my_echo`.
+> {: .step}
+
 ```sh
-flz plugin disable writer
-flz operative stop my_echo
+$ flz plugin disable writer
+$ flz operative stop my_echo
 ```
 
-`reader` is already off if you followed
-[Turn one off](sources_and_sinks.md#turn-one-off).
+If you did not turn `reader` off in
+[Turn one off](sources_and_sinks.md#turn-one-off), disable it too:
+
+```sh
+$ flz plugin disable reader
+```
 
 **These are the only steps that forget anything.** The controller keeps enabled
 plugins and started operatives in a durable registry, so if you skip them, they
@@ -24,8 +33,10 @@ them when you want that next start to be empty.
 
 ## The runner
 
-Press Ctrl-C in the terminal your runner is running in. An in-node Elixir
-runner has nothing to stop: it stops with the controller.
+> Stops your runner: press Ctrl-C in the terminal it is running in.
+> {: .step}
+
+An in-node Elixir runner has nothing to stop: it stops with the controller.
 
 ## The controller
 
@@ -43,12 +54,15 @@ runner has nothing to stop: it stops with the controller.
 > An operative that declares effectively-once delivery does not have that gap,
 > because its outputs wait until the change behind them is on disk.
 
+> Stops the controller. Use the tab for the way you started it.
+> {: .step}
+
 <!-- tabs-open -->
 
 ### Binaries
 
 ```sh
-flz controller stop
+$ flz controller stop
 ```
 
 It quiesces, drains and finalises, and says so:
@@ -67,7 +81,7 @@ which is what to reach for on a controller you cannot authorize against.
 ### Docker
 
 ```sh
-docker stop flezha-controller
+$ docker stop flezha-controller
 ```
 
 ### Inside an Elixir application
@@ -85,5 +99,5 @@ you did not stop comes back on its own.
 
 ## Next
 
-That is Part 1. [`introduction.md`](introduction.md) lists what Part 2 covers,
+That is Part 1. [`guides.md`](guides.md) lists what Part 2 covers,
 starting at [`namespaces.md`](tradedesk/namespaces.md).

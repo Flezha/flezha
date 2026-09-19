@@ -8,7 +8,34 @@ The parts do not share their example, and nothing needs to be left running from
 one part to the next. What carries over is what you learned: each part assumes
 you have done the ones before it, so read them in order.
 
-## Part 1: Introduction
+## How to follow a guide
+
+A page mixes explanation with the steps you take. Each step has a purple box
+with a pencil, right above the command to run or the code to write. The steps
+are not optional: to try things for real and reach the working example at the
+end of the part, do every one of them, in the order the page gives. The box says
+what the step does and names anything that has to be in place first:
+
+> Checks that the controller is up and ready to take commands. It needs a
+> controller started first.
+> {: .step}
+
+```sh
+$ flz boot await
+```
+
+```output
+boot await: ready
+```
+
+A command or a piece of code with no purple box above it is there to read: it
+shows an option or a variant, and the guide does not need it.
+
+The copy button on a command copies the command alone, without the `$` prompt.
+What the command prints is shown right below it, and your ids, tokens and times
+will differ from the ones on the page.
+
+## Part 1: First steps
 
 Starting a controller, connecting a runner of your own, running an operative,
 and attaching a real input and output to it. The example is an echo that
@@ -23,39 +50,38 @@ last one stops everything.
 | [`sources_and_sinks.md`](sources_and_sinks.md) | Data arriving from somewhere real, and results going somewhere real |
 | [`stop_everything.md`](stop_everything.md) | Everything above stopped, and what comes back when you start again |
 
-## Part 2: The basics
+## Part 2: Going further
 
-Namespaces, streams and workflows, authorization, durability, plugins,
-partitioning and clustering. The example is `tradedesk`, a toy trader: a stream
-turns trades into candles, and when a candle gives a signal a workflow places an
-order with paper money, so nothing reaches a real exchange. It runs in Docker
-Compose, with a controller, a testnet standing in for the exchange, and a runner
-with your code.
+Authorization, namespaces, streams and workflows, durability, plugins and
+partitioning. The example is `tradedesk`, a toy trader: a stream turns trades
+into candles, and when a candle gives a signal a workflow places an order with
+paper money, so nothing reaches a real exchange.
 
 | Guide | What you do |
 |---|---|
+| [`authorization.md`](tradedesk/authorization.md) | Keep authorization on, claim the admin, and issue the key tradedesk's runner connects with |
 | [`namespaces.md`](tradedesk/namespaces.md) | Give tradedesk a namespace of its own |
 | [`stream_basics.md`](tradedesk/stream_basics.md) | Write the stream operative by hand: chained procedures, `map`, `filter`, `key_by`, a merge, and state per symbol |
 | [`workflow_basics.md`](tradedesk/workflow_basics.md) | Write the paper-order workflow by hand: steps, retries and compensation, started by the stream operative |
-| [`authorization.md`](tradedesk/authorization.md) | Turn enforcement on, claim the admin, give the runner a credential and the spawn role |
 | [`durability.md`](tradedesk/durability.md) | Kill the runner mid-order: the order continues from its step, is never placed twice, and candles keep coming |
 | [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
 | [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operative scale` |
-| [`clustering.md`](tradedesk/clustering.md) | Run several controllers in Docker, then stop one |
-| [`kubernetes_deployment.md`](tradedesk/kubernetes_deployment.md) | Run the same images on k3s |
 
 ## Part 3: Advanced topics
 
-Subjects that go deeper, to read in any order. The example, not written yet, is
-an AI agent behind an HTTP service, where every user talks to a session of
-their own and many run at once.
+Subjects that go deeper. The example, not written yet, is an AI agent behind an
+HTTP service, where every user talks to a session of their own and many run at
+once. It runs in Docker Compose, which the first page sets up; the rest can be
+read in any order.
 
 | Guide | Covers |
 |---|---|
+| [`clustering.md`](advanced/clustering.md) | Set up the example in Docker, run several controllers, then stop one |
 | [`custom_plugins.md`](advanced/custom_plugins.md) | Writing and installing a plugin of your own |
 | [`effectively_once.md`](advanced/effectively_once.md) | The delivery guarantee, what it requires, and what it costs |
 | [`erlang_vm_tuning.md`](advanced/erlang_vm_tuning.md) | Scheduler, memory and IO settings for a controller under load |
 | [`elixir_applications.md`](advanced/elixir_applications.md) | Flezha inside an Elixir application of your own |
+| [`kubernetes_deployment.md`](advanced/kubernetes_deployment.md) | Run the same images on k3s |
 
 ## Also useful
 

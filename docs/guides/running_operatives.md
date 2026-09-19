@@ -1,15 +1,15 @@
 # Running operatives
 
-**Before you start:** finish [`runner_deployment.md`](runner_deployment.md). The
-controller and your runner should both still be running, each in its own
-terminal. From a third, check both:
+> Checks, from a third terminal, that the controller and your runner from
+> [`runner_deployment.md`](runner_deployment.md) are both still running. The
+> first command answers `boot await: ready` and the second lists your runner. If
+> either is missing, start it again the way its guide showed.
+> {: .step}
 
 ```sh
-flz boot await     # boot await: ready
-flz runner list    # lists your runner
+$ flz boot await
+$ flz runner list
 ```
-
-If either is missing, start it again the way its guide showed.
 
 ## What an operative is
 
@@ -47,11 +47,15 @@ Declaring an operative on a runner says that process is *able* to serve one.
 Starting it is a separate step, and it is the one that creates a running
 instance.
 
-```bash
-flz operative start echo --id my_echo
+> Starts an operative from the `echo` class your runner offers, and names it
+> `my_echo`. It needs your runner connected.
+> {: .step}
+
+```sh
+$ flz operative start echo --id my_echo
 ```
 
-```
+```output
 Started my_echo
 ```
 
@@ -83,11 +87,14 @@ id.
 
 ## Confirm it is bound
 
-```bash
-flz operative list
+You can list the operatives in the namespace, with the runner each one is bound
+to:
+
+```sh
+$ flz operative list
 ```
 
-```
+```output
 Fetching operatives for namespace 'default'...
 Operatives in namespace 'default':
 
@@ -103,11 +110,15 @@ in your code and another way on the command line.
 
 ## Send one message and see what comes back
 
-```bash
-flz operative send my_echo --text 'hello world' --await 2000
+> Sends `hello world` to `my_echo`, and prints what it sends out during the next
+> two seconds.
+> {: .step}
+
+```sh
+$ flz operative send my_echo --text 'hello world' --await 2000
 ```
 
-```
+```output
 Delivered to 'my_echo'.
 out	echo: hello world
 ```
@@ -131,8 +142,8 @@ description of both.
 
 ## Or watch it from another terminal
 
-```bash
-flz operative listen my_echo
+```sh
+$ flz operative listen my_echo
 ```
 
 It shows every message the operative sends out, one per line, for 30 seconds.
@@ -168,8 +179,8 @@ now:** the next guide attaches plugins to it, and
 [`stop_everything.md`](stop_everything.md) stops it at the end of Part 1. The
 command is:
 
-```bash
-flz operative stop my_echo
+```sh
+$ flz operative stop my_echo
 ```
 
 Two things about the lifetime surprise people.
@@ -348,18 +359,6 @@ The echo example carries the calls commented out in its `application.ex`,
 An operative started this way is the cluster's, not the connection's: it
 survives the runner disconnecting, and an operator sees it in
 `flz operative list` and can stop it there.
-
-**This works here because Part 1 turned authorization off**, which allows every
-call. With enforcement on, the connection is `runner@<namespace>` bound to the
-`runner` role, which grants the connect and nothing else, so every one of these
-is refused until an operator grants it once:
-
-```sh
-flz role bind runner@default app default
-```
-
-The whole surface, what it deliberately cannot do, and the spelling in each of
-the seven SDKs: [`../sdk/admin.md`](../sdk/admin.md).
 
 ## Next
 

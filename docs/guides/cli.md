@@ -8,6 +8,6 @@ controller it sits next to, which is why the Docker form is
 `docker exec <container> /flezha/bin/flz`. Every verb that renders takes
 `--json`, and a format that is neither that nor text is refused rather than
 printed anyway. And identity for a gated verb rides `--token` or
-`FLEZHA_TOKEN`, which is what [`authorization.md`](tradedesk/authorization.md) turns on.
+`FLEZHA_TOKEN`, which is what [`authorization.md`](tradedesk/authorization.md#claim-the-admin) sets up.
 
 TODO: not written yet.

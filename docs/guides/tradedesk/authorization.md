@@ -1,125 +1,167 @@
 # Authorization
 
-TODO: a draft, written before Part 2 was a tutorial and not yet run against
-tradedesk.
+Authorization is what keeps namespaces, the rooms of the next page, apart. The
+controller asks everyone who they are and lets them do only what their role
+allows: an `flz` command shows a token, and a runner shows the key issued for
+its namespace. It is on by default. Part 1 turned it off with `FLEZHA_AUTHZ_ENABLED=false` to keep the first run
+simple, and from here on it stays on, as it would in any real deployment.
 
-Flezha enforces authorization by default. The Part 1 guides turn it off, so if
-you followed them your controller is running with `FLEZHA_AUTHZ_ENABLED=false`
-and every caller is trusted. This guide turns it back on.
-
-**What "off" actually means.** The posture is `open`: no verb needs a token, no
-runner is asked to prove the namespace it connects to, and the boot logs a
-warning every time. Nothing else about the system changes, so turning it on
-later is a restart, not a migration.
-
-## Turn it on
-
-Drop `FLEZHA_AUTHZ_ENABLED=false` and restart. Enforcement is the default, so
-removing the variable is the whole change:
-
-| Way | What to do |
-|---|---|
-| Docker | remove `-e FLEZHA_AUTHZ_ENABLED=false` from the `docker run` |
-| Binaries | start without the variable in the environment |
-| Elixir application | it is off by default as a library, so this one has to be asked for: `config :flezha, authn_authz: [enabled: true]` |
-
-An enforced controller has no admin yet, so every gated verb refuses and names
-the state it is in:
-
-```
-authz.namespace_create: refused: authorization is enforced but the bootstrap has not been claimed
-```
-
-It goes on to name `flz auth bootstrap` and the file holding the token.
-
-Data keeps flowing while that is true. It is the operator surface that is shut,
-not the controller.
+In more technical terms, a token names a principal, such as the admin or
+`runner@trading`, and binds it to a role in one namespace. The role decides
+which commands it may run, and [Roles](#roles) below lists them. Only the
+admin, bound in `_system`, may act on every namespace.
 
 ## Claim the admin
 
-The first enforced boot writes a one-time token to
-`app_data/auth/bootstrap.token`, under the working directory the controller was
-started from, or `/flezha/app_data/auth/bootstrap.token` in the container. Read
-the file rather than the log: the path is logged only on the boot that creates
-it.
+With authorization on, a controller has no administrator until someone claims
+one, and until then every command that changes something is refused.
+
+The controller's first start writes a one-time token to
+`app_data/auth/bootstrap.token`, under the directory the controller was started
+from. Whoever claims it becomes the controller's first administrator, and the
+file is deleted.
+
+> Needs a controller started from the binaries, as in Part 1's
+> [Start a controller](../controller_deployment.md#start-a-controller), but
+> without `FLEZHA_AUTHZ_ENABLED=false`, and the rest of Part 2 uses the same
+> one.\
+> Run this from the directory it was started in. Claims the admin with the
+> one-time token. The answer is your admin token, shown once, so keep it.
+> {: .step}
 
 ```sh
-$ cat app_data/auth/bootstrap.token
-g5dy7mfj3z3ccnmgdzjzn74wuw6iqhqthz3gvht4clobnuaghwwa
-
-$ flz auth bootstrap g5dy7mfj3z3ccnmgdzjzn74wuw6iqhqthz3gvht4clobnuaghwwa
-bootstrap claimed; admin@_system bound to admin-ad133413363b2d3c
-admin token (shown once, store it now): flzt_kpkt3cgsped2eqyei25nowypv6nu4d45o4ig37ikvyomwbbszwga
+$ flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
 ```
 
-The claim unlinks the file, and "shown once" means it: nothing can print that
-token again.
+```output
+bootstrap claimed; admin@_system bound to admin-8cc3f398fb1b4ae5
+admin token (shown once, store it now): flzt_fwn2ctvoleymwb4blf55ybn7baw6qns44iballspqtxethhlqjhq
+```
 
-## Use it
+This token lasts a day.
+[Tokens, a lost admin, and turning it off](#tokens-a-lost-admin-and-turning-it-off)
+shows how to issue one that lasts longer.
 
-A gated verb takes the token from `--token` or from `FLEZHA_TOKEN`:
+> Puts the admin token where every `flz` command in this shell finds it. A new
+> terminal needs the same line again.
+> {: .step}
 
 ```sh
-$ export FLEZHA_TOKEN=flzt_kpkt3cgsped2eqyei25nowypv6nu4d45o4ig37ikvyomwbbszwga
+$ export FLEZHA_TOKEN=flzt_fwn2ctvoleymwb4blf55ybn7baw6qns44iballspqtxethhlqjhq
+```
+
+`flz auth whoami` shows who the token says you are. The admin lives in
+`_system`, the controller's own namespace, which is what lets it act on every
+other one:
+
+```sh
 $ flz auth whoami
-principal: admin-ad133413363b2d3c
+```
+
+```output
+principal: admin-8cc3f398fb1b4ae5
 namespace: _system
 role:      admin
 ```
 
-That variable belongs in the shell that runs `flz`, not in the controller's
-environment. The container is the one exception: its entrypoint runs
-`flz controller stop` on SIGTERM, so a container with no `FLEZHA_TOKEN` is
-forced down instead of drained.
+## Give the runner its key
 
-## The first token lasts a day
+A runner proves which namespace it may join with a key issued for that
+namespace: a token with the `runner` role. It never expires, because a runner
+runs unattended, and a key that lapsed would stop it at its next restart.
 
-The minted admin token carries the default lifetime of one day. Issue a longer
-one before it lapses:
+> Issues the key for `trading`, the namespace [`namespaces.md`](namespaces.md)
+> creates next; a key can be issued before its namespace exists. `--ttl never` is
+> required, since without it the token gets the default lifetime of one day and
+> is refused. Keep the token: the runner in [`stream_basics.md`](stream_basics.md)
+> reads it from `FLEZHA_NAMESPACE_SECRET`.
+> {: .step}
+
+```sh
+$ flz token issue runner@trading trading runner --ttl never
+```
+
+```output
+token issued for runner@trading (runner@trading)
+id:    c5c749c28131
+token (shown once, store it now): flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra
+```
+
+A runner with no key, or with a key for another namespace, is refused. The
+runner itself only reports that it keeps reconnecting, so the reason is in the
+controller's log: `Rejected runner connect (:namespace_not_proven)`.
+
+## Roles
+
+Every token binds a principal, the name it was issued to, to roles in one
+namespace. Only `admin@_system` reaches across namespaces.
+
+| Role | What it may do |
+|---|---|
+| `viewer` | read: operatives, plugins, entity state, audit, the schedule |
+| `app` | what an application does to its own work: start, stop and send to an operative, listen to it, enable and disable a plugin |
+| `operator` | everything `app` may, plus the rest of the operative lifecycle: the dead-letter queue, rewind, replay, rescale, schedules |
+| `admin` | everything `operator` may, plus tokens, roles, namespaces and quotas, and stopping the controller |
+| `runner` | connect a runner, and nothing else |
+| `spawner` | what a runner needs so that a procedure can start a workflow: start and send, in its own namespace |
+| `stopper` | what a runner needs to stop its own operatives |
+
+The key makes the runner `runner@trading`, which holds only `runner`.
+[`workflow_basics.md`](workflow_basics.md) binds `spawner` to it as well, when
+the stream operative starts its first workflow.
+[`../../operations/authn_authz.md`](../../operations/authn_authz.md) has every
+verb and the role that grants it.
+
+## Tokens, a lost admin, and turning it off
+
+**A longer admin token.** Issue one before the token from the claim lapses.
+The positionals are `<principal> <namespace> <role>`, and `--ttl` is in
+seconds:
 
 ```sh
 $ flz token issue admin _system admin --ttl 2592000
-token issued for admin (admin@_system)
-id:    60384fcaea2a
-token (shown once, store it now): flzt_qngtidkyk7ljhvz7ohg4hjnhviqfkhepyvohqxkbvfomkrhb4mea
 ```
 
-The positionals are `<principal> <namespace> <role>`, where the role is
-`viewer`, `operator`, `admin` or `runner`.
+```output
+token issued for admin (admin@_system)
+id:    4f8cfd4bef6b
+token (shown once, store it now): flzt_xiqktybnu4ohm5vyfkl74boaooerehchsrnitki7swtfqxkapivq
+```
 
-## If you lose the admin
+**Two refusals tell you which state you are in.** One naming
+`flz auth bootstrap` and a file means the admin was never claimed, and the token
+is in that file. `no verifiable identity` means it was claimed, and this shell
+has no token:
 
-No token file to read means the bootstrap was already claimed. Mint a fresh one
-without stopping the controller:
+```output
+authz.whoami: refused: no verifiable identity — supply `--token <token>` or set FLEZHA_TOKEN
+```
+
+**If you lose the admin token,** mint a new one-time token without stopping the
+controller, then claim it as before:
 
 ```sh
 $ flz auth rebootstrap
+```
+
+```output
 Bootstrap token written to ./app_data/auth/bootstrap.token.
 Claim it against the RUNNING controller:
-    flz auth bootstrap 5ce1782ca518d067b7bbfa9dd81dd26a6c8df1af9f71425c4d5415d9a3da6a85
+    flz auth bootstrap 260cd28f8acf6b95e5ac9bec6e7ed73b69665780724253baafcd2ccc14422f11
+The claim unbinds every admin@_system and revokes its _system admin tokens before binding the new admin, and it is audited as a recovery.
 ```
 
-That claim unbinds every `admin@_system` and revokes its `_system` admin
-tokens. Operatives, runner connections and runner credentials carry on.
+Every old admin token stops working. Runner keys are untouched.
 
-Two refusals tell the two states apart. One naming `flz auth bootstrap` and a
-file path means not claimed, and the token is in that file. `no verifiable
-identity` means claimed, and you need a token.
+**Stopping the controller is an admin command too,** so `flz controller stop`
+needs the token like any other.
 
-## Turning it off again
+**Turning it off** is `FLEZHA_AUTHZ_ENABLED=false` again, which is handy for a
+quick local experiment. It hides enforcement rather than clearing anything: the
+admin, the tokens and the keys come back when the variable goes.
 
-`FLEZHA_AUTHZ_ENABLED=false` puts it back to the Part 1 posture, which is worth
-knowing for a local experiment. It masks enforcement rather than clearing
-anything, so a claimed bootstrap and its tokens survive and come back when the
-variable goes. The boot says so on every start:
+## Next
 
-```
-[warning] [authz] authn/authz is OFF; every caller is trusted.
-```
-
-## See also
-
-[`../../operations/authn_authz.md`](../../operations/authn_authz.md) is the reference
-behind this guide: postures, certificates, role bindings, the verb table and
-recovery.
-
+You are the admin and hold the runner's key.
+[`namespaces.md`](namespaces.md) creates `trading`, the namespace the key is
+for.

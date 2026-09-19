@@ -1,13 +1,14 @@
 # Sources and sinks
 
-**Before you start:** finish [`running_operatives.md`](running_operatives.md),
-with the controller, your runner and `my_echo` all still running. Check:
+> Checks that the controller, your runner and `my_echo` from
+> [`running_operatives.md`](running_operatives.md) are all still running. It
+> should list `my_echo` with your runner under `RUNNER`. If it does not, go back
+> to the guide that starts the missing piece.
+> {: .step}
 
 ```sh
-flz operative list    # my_echo, with your runner under RUNNER
+$ flz operative list
 ```
-
-If it is not there, go back to the guide that starts the missing piece.
 
 TODO: a draft. The commands are taken from
 [`../plugins/file.md`](../plugins/file.md) but have not been run end to end yet.
@@ -50,10 +51,13 @@ was started from.** Started the way
 `/flezha/app_data/files`, inside the data volume. The controller creates the
 folder the first time a file plugin is enabled.
 
-**Ask the controller for the exact path:**
+You can ask the controller for the exact path:
 
 ```sh
 $ flz controller status | grep file_plugin_root
+```
+
+```output
 file_plugin_root:              /opt/flezha/app_data/files
 ```
 
@@ -71,8 +75,8 @@ controller starts. It is read at boot, so a running controller keeps its folder
 until it is restarted, and a folder you name has to exist already:
 
 ```sh
-mkdir -p "$HOME/flezha-files"
-FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz controller start
+$ mkdir -p "$HOME/flezha-files"
+$ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz controller start
 ```
 
 > #### Warning {: .warning}
@@ -88,8 +92,12 @@ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz cont
 
 ## Write the output to a file
 
+> Attaches a file sink named `writer` to `my_echo`, so everything it sends out
+> is written to `echo-out.txt` in the plugin folder.
+> {: .step}
+
 ```sh
-flz plugin enable writer operative_file_sink \
+$ flz plugin enable writer operative_file_sink \
   --operative_id=my_echo \
   --hook=on_output \
   --Xpath=echo-out.txt
@@ -110,12 +118,24 @@ never looks at the extension.
 Send something and the file grows. The sink writes in small batches, so the line
 lands a moment after the send rather than with it:
 
+> Sends a message to `my_echo`. A moment later its echo is a line in
+> `echo-out.txt`, which `cat` prints from the directory the controller was
+> started in.
+> {: .step}
+
 ```sh
-flz operative send my_echo --text hello
-cat app_data/files/echo-out.txt
+$ flz operative send my_echo --text hello
 ```
 
+```output
+Delivered to 'my_echo'.
 ```
+
+```sh
+$ cat app_data/files/echo-out.txt
+```
+
+```output
 echo: hello
 ```
 
@@ -125,8 +145,12 @@ sink writes every record its hook hands it.
 
 ## Read the input from a file
 
+> Attaches a file source named `reader` to `my_echo`, so every line added to
+> `echo-in.txt` in the plugin folder is sent in on the `in` channel.
+> {: .step}
+
 ```sh
-flz plugin enable reader operative_file_source \
+$ flz plugin enable reader operative_file_source \
   --operative_id=my_echo \
   --Xpath=echo-in.txt \
   --Xchannel_in=in
@@ -139,12 +163,19 @@ itself, reading the file and pushing lines in, rather than being sent anything.
 It looks for new lines once a second, so give it that second before reading the
 output:
 
+> Adds a line to the input file. About a second later the source picks it up,
+> and its echo is the second line of `echo-out.txt`, which `cat` prints.
+> {: .step}
+
 ```sh
-echo "from a file" >> app_data/files/echo-in.txt
-cat app_data/files/echo-out.txt
+$ echo "from a file" >> app_data/files/echo-in.txt
 ```
 
+```sh
+$ cat app_data/files/echo-out.txt
 ```
+
+```output
 echo: hello
 echo: from a file
 ```
@@ -156,11 +187,13 @@ restart.
 
 ## See what is attached
 
+You can list every operative in the namespace, with the plugins attached to it:
+
 ```sh
-flz operative info
+$ flz operative info
 ```
 
-```
+```output
 Fetching operative information for namespace 'default'...
 Operative information for namespace 'default':
 
@@ -190,8 +223,10 @@ is where to look for the plugin that is not healthy.
 
 ## Turn one off
 
+To detach a plugin, disable it by its id:
+
 ```sh
-flz plugin disable reader
+$ flz plugin disable reader
 ```
 
 The id is the one you chose at enable, the same one `flz operative info` lists

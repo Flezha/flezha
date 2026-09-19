@@ -40,6 +40,10 @@ last, [`stop_everything.md`](stop_everything.md), stops it.
 
 ## Start a controller
 
+> Starts your first controller. Pick one of the four tabs below and follow it
+> from top to bottom, then leave the controller running for the rest of Part 1.
+> {: .step}
+
 <!-- tabs-open -->
 
 ### Binaries
@@ -51,7 +55,7 @@ TODO: download links, one archive per platform.
 Until then, build a release from a checkout:
 
 ```sh
-make build-release
+$ make build-release
 ```
 
 That writes `_build/prod/rel/flezha/`, holding `bin/flz` (the operator CLI) and
@@ -61,16 +65,16 @@ Erlang runtime, so the machine it runs on needs no Elixir and no Erlang.
 **Put that `bin` on your path**, or every command below is `command not found`:
 
 ```sh
-cd _build/prod/rel/flezha
-export PATH="$PWD/bin:$PATH"
+$ cd _build/prod/rel/flezha
+$ export PATH="$PWD/bin:$PATH"
 ```
 
 A downloaded archive is the same two steps with an unpack in front:
 
 ```sh
-tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
-cd flezha
-export PATH="$PWD/bin:$PATH"
+$ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
+$ cd flezha
+$ export PATH="$PWD/bin:$PATH"
 ```
 
 An `export` lasts as long as the shell. A second terminal needs it again, or put
@@ -120,9 +124,17 @@ Two different questions, two commands. Is it ready:
 
 ```sh
 $ flz boot await
-boot await: ready
+```
 
+```output
+boot await: ready
+```
+
+```sh
 $ flz boot status
+```
+
+```output
 readiness: ready
   met    boot_sequence_complete
   met    hubs_recovered
@@ -134,6 +146,9 @@ And can a runner reach it, which needs no controller and no credential:
 
 ```sh
 $ flz runner check
+```
+
+```output
 controller reachable
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
@@ -148,7 +163,7 @@ Both exit zero only on success.
 #### Get the image
 
 ```sh
-docker pull flezha/flezha:0.1.0
+$ docker pull flezha/flezha:0.1.0
 ```
 
 TODO: amd64 only for now, other architectures to follow.
@@ -156,7 +171,7 @@ TODO: amd64 only for now, other architectures to follow.
 #### Start it
 
 ```sh
-docker run -d --name flezha-controller \
+$ docker run -d --name flezha-controller \
   -e FLEZHA_AUTHZ_ENABLED=false \
   -v flezha_data:/flezha/app_data \
   flezha/flezha:0.1.0
@@ -171,6 +186,9 @@ starts cold after every `docker rm`.
 
 ```sh
 $ docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
+```
+
+```output
 flezha-controller	flezha/flezha:0.1.0	Up 20 seconds (healthy)
 ```
 
@@ -182,6 +200,9 @@ Ask it directly for the same answer:
 
 ```sh
 $ docker exec flezha-controller /flezha/bin/flz boot await
+```
+
+```output
 boot await: ready
 ```
 
@@ -251,7 +272,7 @@ posture and a warning on every boot until it sets
 #### Start it
 
 ```sh
-mix run --no-halt
+$ mix run --no-halt
 ```
 
 Or `iex -S mix`, or your release. The boot ends with the transport listening:
@@ -284,6 +305,9 @@ From outside, with `healthz_enabled: true`:
 
 ```sh
 $ curl localhost:9569/healthz
+```
+
+```output
 {"status":"healthy","durability":"local_only","tick_age_ms":3460,"bound_operatives":0,"producing_operatives":0,"unknown_operatives":0}
 ```
 
@@ -306,7 +330,7 @@ prove the namespace it connects to.
 **The boot prints decisions you can ignore for now:** the node cookie it minted,
 the state root it resolved, and that no durability backend is set. They start to
 matter once there is a second machine or a second disk, which is
-[`clustering.md`](tradedesk/clustering.md) and [`durability.md`](tradedesk/durability.md). One more
+[`clustering.md`](advanced/clustering.md) and [`durability.md`](tradedesk/durability.md). One more
 line names the folder file plugins may use, which
 [`sources_and_sinks.md`](sources_and_sinks.md) comes back to.
 

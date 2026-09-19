@@ -65,31 +65,97 @@ defmodule Flezha.MixProject do
 
   defp mermaid(:epub), do: ""
 
+  # A guide step is a one-paragraph blockquote classed `{: .step}`, right above
+  # the command or code it introduces, saying what that block does. The `:has`
+  # on the paragraph's rule outranks ExDoc's padding under a blockquote's last
+  # paragraph. A command's output goes in an `output` fence of its own, drawn as
+  # the lower half of the command's block, so the command's copy button copies
+  # the command alone. ExDoc highlights an `output` fence in the page's
+  # language, so it is left uncoloured.
+  defp guide_styles(:html) do
+    """
+    <style>
+      .content-inner blockquote:has(> p.step) {
+        margin: var(--baseLineHeight) 0 0.5rem;
+        padding: 0.7rem 1rem;
+        background-color: hsl(250, 68%, 97%);
+        border-left: 4px solid var(--main);
+        border-radius: 0 var(--borderRadius-base) var(--borderRadius-base) 0;
+      }
+      body.dark .content-inner blockquote:has(> p.step) {
+        background-color: hsl(250, 25%, 15%);
+      }
+      .content-inner blockquote:has(> p.step) > p.step {
+        position: relative;
+        margin: 0;
+        padding: 0 0 0 1.7rem;
+      }
+      .content-inner blockquote > p.step::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.15em;
+        width: 1.15rem;
+        height: 1.15rem;
+        background-color: var(--main);
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z'/%3E%3C/svg%3E") no-repeat center / contain;
+      }
+      .content-inner pre:has(+ pre > code.output) {
+        margin-bottom: 0;
+      }
+      .content-inner pre:has(+ pre > code.output) > code {
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+      }
+      .content-inner pre:has(> code.output) {
+        margin-top: -1px;
+      }
+      .content-inner pre code.output {
+        margin: 0;
+        border-top-style: dashed;
+        border-top-left-radius: 0;
+        border-top-right-radius: 0;
+      }
+      .content-inner pre code.output::before {
+        content: none;
+      }
+      .content-inner pre code.output span {
+        color: inherit;
+      }
+      .content-inner pre:has(> code.output) .copy-button {
+        display: none;
+      }
+    </style>
+    """
+  end
+
+  defp guide_styles(:epub), do: ""
+
   defp docs do
     [
       main: "what_is_flezha",
       extras: [
         "docs/guides/what_is_flezha.md",
-        "docs/guides/introduction.md",
+        "docs/guides/guides.md",
         "docs/guides/controller_deployment.md",
         "docs/guides/runner_deployment.md",
         "docs/guides/running_operatives.md",
         "docs/guides/sources_and_sinks.md",
         "docs/guides/stop_everything.md",
         "docs/guides/cli.md",
+        "docs/guides/tradedesk/authorization.md",
         "docs/guides/tradedesk/namespaces.md",
         "docs/guides/tradedesk/stream_basics.md",
         "docs/guides/tradedesk/workflow_basics.md",
-        "docs/guides/tradedesk/authorization.md",
         "docs/guides/tradedesk/durability.md",
         "docs/guides/tradedesk/plugins.md",
         "docs/guides/tradedesk/partitioning.md",
-        "docs/guides/tradedesk/clustering.md",
-        "docs/guides/tradedesk/kubernetes_deployment.md",
+        "docs/guides/advanced/clustering.md",
         "docs/guides/advanced/custom_plugins.md",
         "docs/guides/advanced/effectively_once.md",
         "docs/guides/advanced/erlang_vm_tuning.md",
         "docs/guides/advanced/elixir_applications.md",
+        "docs/guides/advanced/kubernetes_deployment.md",
         "docs/quickstart.md",
         "docs/sdk/admin.md",
         "docs/plugins/file.md",
@@ -104,35 +170,36 @@ defmodule Flezha.MixProject do
         "docs/configuration.md",
         "docs/operations/authn_authz.md"
       ],
+      before_closing_head_tag: &guide_styles/1,
       before_closing_body_tag: &mermaid/1,
       groups_for_extras: [
         "Guide Part 0: Start here": [
           "docs/guides/what_is_flezha.md",
-          "docs/guides/introduction.md"
+          "docs/guides/guides.md"
         ],
-        "Guide Part 1: Introduction": [
+        "Guide Part 1: First steps": [
           "docs/guides/controller_deployment.md",
           "docs/guides/runner_deployment.md",
           "docs/guides/running_operatives.md",
           "docs/guides/sources_and_sinks.md",
           "docs/guides/stop_everything.md"
         ],
-        "Guide Part 2: The basics": [
+        "Guide Part 2: Going further": [
+          "docs/guides/tradedesk/authorization.md",
           "docs/guides/tradedesk/namespaces.md",
           "docs/guides/tradedesk/stream_basics.md",
           "docs/guides/tradedesk/workflow_basics.md",
-          "docs/guides/tradedesk/authorization.md",
           "docs/guides/tradedesk/durability.md",
           "docs/guides/tradedesk/plugins.md",
-          "docs/guides/tradedesk/partitioning.md",
-          "docs/guides/tradedesk/clustering.md",
-          "docs/guides/tradedesk/kubernetes_deployment.md"
+          "docs/guides/tradedesk/partitioning.md"
         ],
         "Guide Part 3: Advanced topics": [
+          "docs/guides/advanced/clustering.md",
           "docs/guides/advanced/custom_plugins.md",
           "docs/guides/advanced/effectively_once.md",
           "docs/guides/advanced/erlang_vm_tuning.md",
-          "docs/guides/advanced/elixir_applications.md"
+          "docs/guides/advanced/elixir_applications.md",
+          "docs/guides/advanced/kubernetes_deployment.md"
         ],
         SDK: ~r"docs/sdk/",
         Plugins: ~r"docs/plugins/",

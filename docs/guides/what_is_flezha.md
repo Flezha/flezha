@@ -44,13 +44,13 @@ Bring up a controller and a runner that is already offering an operative, and
 send a message through it:
 
 ```sh
-cd sdk/python/examples/echo_deployment
-docker compose up -d --wait
-docker compose exec controller /flezha/bin/flz operative start echo --id my_echo
-docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
+$ cd sdk/python/examples/echo_deployment
+$ docker compose up -d --wait
+$ docker compose exec controller /flezha/bin/flz operative start echo --id my_echo
+$ docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
 ```
 
-```
+```output
 Delivered to 'my_echo'.
 out	echo: hello world
 ```
@@ -62,9 +62,9 @@ It is a demo, not a deployment: it makes every choice for you. The guides start
 a controller of their own, so take it down first:
 
 ```sh
-docker compose down
+$ docker compose down
 ```
 
 ## Next
 
-[`introduction.md`](introduction.md) lays out the guides.
+[`guides.md`](guides.md) lays out the guides.
