@@ -40,8 +40,8 @@ answer "what are the options"; a guide answers "what do I type".
 | [`cli.md`](guides/cli.md) | Reference. `flz` itself: reaching a controller, output formats, identity for a gated verb |
 | [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Claiming the admin, tokens, the runner's key and roles |
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
-| [`stream_basics.md`](guides/tradedesk/stream_basics.md) | Part 2. Writing the stream operative: chained procedures, transforms, a merge and state |
 | [`workflow_basics.md`](guides/tradedesk/workflow_basics.md) | Part 2. Writing the workflow: steps, retries and compensation |
+| [`stream_basics.md`](guides/tradedesk/stream_basics.md) | Part 2. Writing the stream operative: chained procedures, transforms, a merge and state |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |

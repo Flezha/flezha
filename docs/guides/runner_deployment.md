@@ -920,5 +920,19 @@ Your runner's id in that list means it connected to the controller. If it is
 missing, [`../troubleshooting/runner_cannot_connect.md`](../troubleshooting/runner_cannot_connect.md)
 names every reason with its fix.
 
+> #### One runner, one namespace {: .info}
+>
+> A runner process serves exactly one namespace, and at most one runner may run
+> in a process: a second one started beside it is refused, naming the namespace
+> already running. Serving two namespaces means two processes.
+>
+> Two runner processes in the same namespace, on one machine, are an ordinary
+> way to spread the work, but each needs an identity file of its own. The
+> controller binds operatives to a runner's durable identity, which the runner
+> reads from `FLEZHA_RUNNER_ID_PATH`, `/var/lib/flezha-runner/id` by default. Two
+> processes reading one file present one identity, and the newer one takes the
+> older one's work. Give each process its own path, or run them in containers,
+> where the default path is separate already.
+
 Nothing runs on it yet. [`running_operatives.md`](running_operatives.md) starts
 the first operative.

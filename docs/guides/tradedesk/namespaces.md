@@ -25,7 +25,7 @@ flowchart LR
             direction TB
             T1["runners"] ~~~ T2["operatives"] ~~~ T3[("saved data")]
         end
-        subgraph M["namespace: mailer"]
+        subgraph M["namespace: another app"]
             direction TB
             M1["runners"] ~~~ M2["operatives"] ~~~ M3[("saved data")]
         end
@@ -106,7 +106,7 @@ Namespaces:
 ```
 
 `_system` is the controller's own namespace and is always there. `RUNNING` says
-whether the namespace's hub is up, and for `trading` that happens when its first
+whether a namespace's hub is up, and for `trading` that happens when its first
 runner connects.
 
 ## Joining it from a runner
@@ -128,43 +128,43 @@ created, and it can serve operatives only there.
 ### Java
 
 ```java
-FlezhaRunner runner = Flezha.createRunner("trading");
+FlezhaRunner desk = Flezha.createRunner("trading");
 ```
 
 ### Rust
 
 ```rust
-let runner = Flezha::create_runner("trading")?;
+let desk = Flezha::create_runner("trading")?;
 ```
 
 ### Node
 
 ```javascript
-const runner = createRunner('trading');
+const desk = createRunner('trading');
 ```
 
 ### Python
 
 ```python
-runner = flezha.create_runner("trading")
+desk = flezha.create_runner("trading")
 ```
 
 ### Ruby
 
 ```ruby
-runner = Flezha.create_runner("trading")
+desk = Flezha.create_runner("trading")
 ```
 
 ### PHP
 
 ```php
-$runner = Flezha::createRunner('trading');
+$desk = Flezha::createRunner('trading');
 ```
 
 ### Elixir
 
 ```elixir
-runner = Flezha.SDK.create_runner("trading", transport: :uds)
+desk = Flezha.SDK.create_runner("trading", transport: :uds)
 ```
 
 <!-- tabs-close -->
@@ -195,29 +195,9 @@ The six limits, their defaults, and what each one refuses:
 | `max_state_bytes` | 100 GiB | the namespace's state on disk; a start is refused while over it |
 | `max_runners` | 32 | runners connected to the namespace at once |
 
-A namespace can get limits of its own when it is created. The desk's second
-namespace, `mailer`, is for the small service that sends a message for every
-filled order. It runs one operative, so it gets room for ten and no more.
-
-> Create the `mailer` namespace, with `max_operatives` set to 10 and every
-> other limit at its default.
-> {: .step}
-
-```sh
-$ flz namespace create mailer --Xmax_operatives=10
-```
-
-```output
-namespace mailer created
-namespace: mailer
-quotas:
-  max_entities_per_operative: 1024
-  max_mailbox_bytes_total: 268435456
-  max_message_rate_per_second: 100000
-  max_operatives: 10
-  max_runners: 32
-  max_state_bytes: 107374182400
-```
+A namespace can take limits of its own the moment it is created, with the same
+`--X<field>=<value>` the commands below use: `flz namespace create reporting
+--Xmax_operatives=10` sets one and leaves the rest at their defaults.
 
 You can read a namespace's limits:
 
@@ -263,7 +243,7 @@ quota check passes.
 
 ## Deleting one
 
-The desk keeps `trading` and `mailer`, so try it on a third one. Create it:
+The desk keeps `trading`, so try it on another one. Create it:
 
 ```sh
 $ flz namespace create scratch
@@ -302,6 +282,6 @@ namespace it runs in is no longer in the listing. Empty it, then delete it.
 
 ## Next
 
-The desk has its two namespaces and nothing in them.
-[`stream_basics.md`](stream_basics.md) writes `candles`, the operative that
-turns trades into candles, and starts it there.
+The desk has its namespace and nothing in it.
+[`workflow_basics.md`](workflow_basics.md) writes `paper_order`, the workflow
+that places an order with paper money, and starts one in `trading`.
