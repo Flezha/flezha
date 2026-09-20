@@ -1,9 +1,9 @@
 # Sources and sinks
 
-> Checks that the controller, your runner and `my_echo` from
-> [`running_operatives.md`](running_operatives.md) are all still running. It
-> should list `my_echo` with your runner under `RUNNER`. If it does not, go back
-> to the guide that starts the missing piece.
+> Check that the controller, your runner and `my_echo` from
+> [`running_operatives.md`](running_operatives.md) are all still running:
+> `my_echo` should be listed with your runner under `RUNNER`. If it is not, go
+> back to the guide that starts the missing piece.
 > {: .step}
 
 ```sh
@@ -92,8 +92,8 @@ $ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz co
 
 ## Write the output to a file
 
-> Attaches a file sink named `writer` to `my_echo`, so everything it sends out
-> is written to `echo-out.txt` in the plugin folder.
+> Attach a file sink named `writer` to `my_echo`, so everything the operative
+> sends out is written to `echo-out.txt` in the plugin folder.
 > {: .step}
 
 ```sh
@@ -118,8 +118,8 @@ never looks at the extension.
 Send something and the file grows. The sink writes in small batches, so the line
 lands a moment after the send rather than with it:
 
-> Sends a message to `my_echo`. A moment later its echo is a line in
-> `echo-out.txt`, which `cat` prints from the directory the controller was
+> Send a message to `my_echo`, then print the file a moment later: its echo is
+> a line in `echo-out.txt`. Run both from the directory the controller was
 > started in.
 > {: .step}
 
@@ -145,7 +145,7 @@ sink writes every record its hook hands it.
 
 ## Read the input from a file
 
-> Attaches a file source named `reader` to `my_echo`, so every line added to
+> Attach a file source named `reader` to `my_echo`, so every line added to
 > `echo-in.txt` in the plugin folder is sent in on the `in` channel.
 > {: .step}
 
@@ -163,8 +163,8 @@ itself, reading the file and pushing lines in, rather than being sent anything.
 It looks for new lines once a second, so give it that second before reading the
 output:
 
-> Adds a line to the input file. About a second later the source picks it up,
-> and its echo is the second line of `echo-out.txt`, which `cat` prints.
+> Add a line to the input file, then print the output file a second later: the
+> source picks the line up, and its echo lands at the end of `echo-out.txt`.
 > {: .step}
 
 ```sh

@@ -14,9 +14,9 @@ A page mixes explanation with the steps you take. Each step has a purple box
 with a pencil, right above the command to run or the code to write. The steps
 are not optional: to try things for real and reach the working example at the
 end of the part, do every one of them, in the order the page gives. The box says
-what the step does and names anything that has to be in place first:
+what to do and what it does, and names anything that has to be in place first:
 
-> Checks that the controller is up and ready to take commands. It needs a
+> Check that the controller is up and ready to take commands. It needs a
 > controller started first.
 > {: .step}
 

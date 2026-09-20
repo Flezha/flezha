@@ -1,9 +1,9 @@
 # Running operatives
 
-> Checks, from a third terminal, that the controller and your runner from
-> [`runner_deployment.md`](runner_deployment.md) are both still running. The
-> first command answers `boot await: ready` and the second lists your runner. If
-> either is missing, start it again the way its guide showed.
+> From a third terminal, check that the controller and your runner from
+> [`runner_deployment.md`](runner_deployment.md) are both still running: one
+> answers `boot await: ready`, the other lists your runner. If either is
+> missing, start it again the way its guide showed.
 > {: .step}
 
 ```sh
@@ -47,8 +47,8 @@ Declaring an operative on a runner says that process is *able* to serve one.
 Starting it is a separate step, and it is the one that creates a running
 instance.
 
-> Starts an operative from the `echo` class your runner offers, and names it
-> `my_echo`. It needs your runner connected.
+> Start an operative from the `echo` class your runner offers, and name it
+> `my_echo`. Your runner has to be connected.
 > {: .step}
 
 ```sh
@@ -110,8 +110,8 @@ in your code and another way on the command line.
 
 ## Send one message and see what comes back
 
-> Sends `hello world` to `my_echo`, and prints what it sends out during the next
-> two seconds.
+> Send `hello world` to `my_echo`. The answer is everything the operative sends
+> out during the next two seconds.
 > {: .step}
 
 ```sh

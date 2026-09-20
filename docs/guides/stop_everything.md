@@ -11,7 +11,7 @@ the runner, then the controller.
 
 ## The plugin and the operative
 
-> Detaches the file sink and stops `my_echo`.
+> Detach the file sink and stop `my_echo`.
 > {: .step}
 
 ```sh
@@ -33,7 +33,7 @@ them when you want that next start to be empty.
 
 ## The runner
 
-> Stops your runner: press Ctrl-C in the terminal it is running in.
+> Stop your runner: press Ctrl-C in the terminal it is running in.
 > {: .step}
 
 An in-node Elixir runner has nothing to stop: it stops with the controller.
@@ -54,7 +54,7 @@ An in-node Elixir runner has nothing to stop: it stops with the controller.
 > An operative that declares effectively-once delivery does not have that gap,
 > because its outputs wait until the change behind them is on disk.
 
-> Stops the controller. Use the tab for the way you started it.
+> Stop the controller with the tab below that matches the way you started it.
 > {: .step}
 
 <!-- tabs-open -->

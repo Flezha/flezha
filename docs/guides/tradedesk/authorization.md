@@ -1,32 +1,41 @@
 # Authorization
 
-Authorization is what keeps namespaces, the rooms of the next page, apart. The
-controller asks everyone who they are and lets them do only what their role
-allows: an `flz` command shows a token, and a runner shows the key issued for
-its namespace. It is on by default. Part 1 turned it off with `FLEZHA_AUTHZ_ENABLED=false` to keep the first run
-simple, and from here on it stays on, as it would in any real deployment.
+Authorization decides who may do what. With it on, the controller takes no
+command on trust: every caller has to say who it is, and gets to do only what
+that identity is allowed. An `flz` command says it with a token, and a runner
+with a key of its own.
+
+It is on by default. Part 1 turned it off with `FLEZHA_AUTHZ_ENABLED=false` to
+keep the first run simple, and from here on it stays on.
 
 In more technical terms, a token names a principal, such as the admin or
-`runner@trading`, and binds it to a role in one namespace. The role decides
-which commands it may run, and [Roles](#roles) below lists them. Only the
-admin, bound in `_system`, may act on every namespace.
+`runner@trading`, and grants it a role, or several. The role is what decides
+which commands that principal may run, and [Roles](#roles) below lists them all.
+A role is granted inside one namespace, the boundary that
+[`namespaces.md`](namespaces.md) builds next, so a token is good in that
+namespace alone. The admin is the exception: it lives in `_system`, the
+controller's own namespace, and reaches every other one.
 
 ## Claim the admin
 
 With authorization on, a controller has no administrator until someone claims
 one, and until then every command that changes something is refused.
 
-The controller's first start writes a one-time token to
-`app_data/auth/bootstrap.token`, under the directory the controller was started
-from. Whoever claims it becomes the controller's first administrator, and the
+> Start the controller Part 2 uses. Follow Part 1's
+> [Start a controller](../controller_deployment.md#start-a-controller) from the
+> binaries, but leave out `FLEZHA_AUTHZ_ENABLED=false` this time, so it comes
+> up with authorization on. Stop Part 1's controller first if it is still
+> running. Keep this one running: every page of Part 2 uses it, and the
+> commands here are run from the directory you started it in.
+> {: .step}
+
+A controller with authorization on and no admin claimed writes a one-time token
+to `app_data/auth/bootstrap.token`, under the directory it was started in.
+Whoever claims that token becomes the controller's first administrator, and the
 file is deleted.
 
-> Needs a controller started from the binaries, as in Part 1's
-> [Start a controller](../controller_deployment.md#start-a-controller), but
-> without `FLEZHA_AUTHZ_ENABLED=false`, and the rest of Part 2 uses the same
-> one.\
-> Run this from the directory it was started in. Claims the admin with the
-> one-time token. The answer is your admin token, shown once, so keep it.
+> Claim the admin with that one-time token, from the directory the controller
+> was started in. The answer is your admin token, shown once, so keep it.
 > {: .step}
 
 ```sh
@@ -42,8 +51,9 @@ This token lasts a day.
 [Tokens, a lost admin, and turning it off](#tokens-a-lost-admin-and-turning-it-off)
 shows how to issue one that lasts longer.
 
-> Puts the admin token where every `flz` command in this shell finds it. A new
-> terminal needs the same line again.
+> Put your admin token where every `flz` command in this shell finds it, with
+> the token from the claim in place of the one here. A new terminal needs the
+> same line again.
 > {: .step}
 
 ```sh
@@ -70,11 +80,12 @@ A runner proves which namespace it may join with a key issued for that
 namespace: a token with the `runner` role. It never expires, because a runner
 runs unattended, and a key that lapsed would stop it at its next restart.
 
-> Issues the key for `trading`, the namespace [`namespaces.md`](namespaces.md)
-> creates next; a key can be issued before its namespace exists. `--ttl never` is
-> required, since without it the token gets the default lifetime of one day and
-> is refused. Keep the token: the runner in [`stream_basics.md`](stream_basics.md)
-> reads it from `FLEZHA_NAMESPACE_SECRET`.
+> Issue the key for `trading`, the namespace
+> [`namespaces.md`](namespaces.md) creates next; a key can be issued before its
+> namespace exists. `--ttl never` is required, since without it the token gets
+> the default lifetime of one day and is refused. Keep the token: the runner in
+> [`stream_basics.md`](stream_basics.md) reads it from
+> `FLEZHA_NAMESPACE_SECRET`.
 > {: .step}
 
 ```sh

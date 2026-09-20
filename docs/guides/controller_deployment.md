@@ -40,8 +40,8 @@ last, [`stop_everything.md`](stop_everything.md), stops it.
 
 ## Start a controller
 
-> Starts your first controller. Pick one of the four tabs below and follow it
-> from top to bottom, then leave the controller running for the rest of Part 1.
+> Start your first controller: pick one of the four tabs below and follow it
+> from top to bottom. Leave it running for the rest of Part 1.
 > {: .step}
 
 <!-- tabs-open -->

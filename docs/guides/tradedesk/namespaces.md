@@ -59,9 +59,9 @@ with a lowercase letter, followed by up to 62 lowercase letters, digits, `-` or
 
 The first namespace of our example application, tradedesk, is `trading`.
 
-> Needs the admin token from [`authorization.md`](authorization.md) in
-> `FLEZHA_TOKEN`. Creates `trading` in the controller's catalog with the default
-> limits. The answer is the entry as the controller stored it.
+> Create `trading` in the controller's catalog, with the default limits. It
+> needs the admin token from [`authorization.md`](authorization.md) in
+> `FLEZHA_TOKEN`, and answers with the entry as the controller stored it.
 > {: .step}
 
 ```sh
@@ -114,13 +114,13 @@ runner connects.
 Code never creates a namespace. A runner names the one it joins when it is
 created, and it can serve operatives only there.
 
-> Needs a runner project in your language, set up as in Part 1's
-> [The code](../runner_deployment.md#the-code). Its runner starts with this
-> line, naming `trading`. It connects nothing yet: the runner joins the
-> `trading` namespace when it runs, with the key from
+> The next steps need a runner of your own, and this is where you start writing
+> it. Part 1's [The code](../runner_deployment.md#the-code) has the whole
+> example in your language; here we write only its namespace part, the line
+> below, which names `trading`. Nothing connects yet: the runner joins
+> `trading` when you run it, with the key from
 > [`authorization.md`](authorization.md#give-the-runner-its-key) in
-> `FLEZHA_NAMESPACE_SECRET` and the operatives that
-> [`stream_basics.md`](stream_basics.md) writes.
+> `FLEZHA_NAMESPACE_SECRET`.
 > {: .step}
 
 <!-- tabs-open -->
@@ -199,7 +199,7 @@ A namespace can get limits of its own when it is created. The desk's second
 namespace, `mailer`, is for the small service that sends a message for every
 filled order. It runs one operative, so it gets room for ten and no more.
 
-> Creates the `mailer` namespace, with `max_operatives` set to 10 and every
+> Create the `mailer` namespace, with `max_operatives` set to 10 and every
 > other limit at its default.
 > {: .step}
 

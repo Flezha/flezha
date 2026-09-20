@@ -5,9 +5,9 @@ controller, tells it which operatives it can run, and then does the work the
 controller gives it. You write it in any of the seven languages, and you start
 and stop it yourself, like any other service.
 
-> Checks that the controller from
+> Check that the controller from
 > [`controller_deployment.md`](controller_deployment.md) is still running and
-> ready. A runner does its work only once it has connected to a controller.
+> ready. A runner does its work only once it has connected to one.
 > {: .step}
 
 ```sh
@@ -281,9 +281,9 @@ particular to that language is explained here; what the parts are for is
 > across cores and how much throughput one process reaches. Those differences
 > are real and sometimes large, and each tab below says what they are.
 
-> Gets the echo in your language. Pick your language's tab and take the whole
-> example linked at its top: it holds the procedure, the operative and the
-> runner shown below, plus the project files that build them.
+> Get the echo in your language: pick your language's tab below and take the
+> whole example linked at its top. It holds the three files explained here,
+> plus the project files that build them.
 > {: .step}
 
 <!-- tabs-open -->
@@ -813,8 +813,8 @@ The commands below show one way to start each language's echo runner, from a
 terminal on the controller's machine. They are examples, and you are not limited
 to them.
 
-> Starts the echo runner. Open a new terminal on the controller's machine, go to
-> your language's echo example folder, and run the command in its tab.
+> Start the echo runner: open a new terminal on the controller's machine, go to
+> your language's echo example folder, and run the command in its tab below.
 > {: .step}
 
 <!-- tabs-open -->
