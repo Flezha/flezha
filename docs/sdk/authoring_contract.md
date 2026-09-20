@@ -199,7 +199,7 @@ compiler refuses it.
 Opting a state type into change derivation (`#[derive(flezha::State)]` in
 Rust, `@State` in Java) generates:
 
-- a `<State>Change` enum (Rust) / sealed class (Java) with **one variant per
+- a `<State>Change` enum (Rust) / sealed interface of records (Java) with **one variant per
   field**: `Set<Field>(T)` for every field, plus collection deltas for
   `Vec`/`List` and `VecDeque`/`Deque` fields (table below);
 - `apply_change` folding each variant into the state;
