@@ -3,7 +3,7 @@
 //! The text is hand-aligned and not uniform across screens — `flz schedule
 //! help` sets two description columns inside one block — so no renderer
 //! computes a column here: a screen is its own bytes, and the only mechanism
-//! is the table that names them. `cli/tests/golden/` holds the same 31 screens
+//! is the table that names them. `cli/tests/golden/` holds the same screens
 //! captured from the binary, which is what proves an edit here is deliberate.
 
 /// One help screen, without its trailing newline.
@@ -334,8 +334,8 @@ INIT VALUES:
 
     A name the class does not carry is ignored, not refused: the runner logs
     it and the start still succeeds, so check the spelling. A workflow
-    operative passes the whole document to its run as args instead of
-    applying it as state.
+    operative applies no state: the whole document seeds its entry channel,
+    decoded into that channel's declared type.
 
 EXAMPLES:
     flz operative start do_nothing

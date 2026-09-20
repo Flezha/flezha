@@ -34,8 +34,8 @@ INIT VALUES:
 
     A name the class does not carry is ignored, not refused: the runner logs
     it and the start still succeeds, so check the spelling. A workflow
-    operative passes the whole document to its run as args instead of
-    applying it as state.
+    operative applies no state: the whole document seeds its entry channel,
+    decoded into that channel's declared type.
 
 EXAMPLES:
     flz operative start do_nothing

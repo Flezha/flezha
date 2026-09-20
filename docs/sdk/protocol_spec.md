@@ -316,8 +316,9 @@ minted on first sight of a key and none exists at the bind, so the entry
 reaches nothing. Migration is unaffected, because a dynamic procedure's
 Entities are restored from their own records rather than through this path.
 
-A workflow operative does not use this shape at all. Its `init_values` is
-passed to the run whole as `args` and is never applied as state.
+A workflow operative does not use this shape at all. Its `init_values` seeds
+the entry channel whole, decoded into that channel's declared type, and is
+never applied as state.
 
 ### Frame buffering
 
@@ -619,7 +620,7 @@ message AddOperative {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the procedure-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance whose run is scheduled once on its driver thread with `init_values` as its argument; a durable driver holds its first procedure until `resume_entity_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
+| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the procedure-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance scheduled on its driver thread, its entry channel seeded with the whole `init_values` decoded into that channel's declared type; a durable driver holds its first procedure until `resume_entity_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedProcedure: ...` |
