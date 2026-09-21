@@ -2,18 +2,18 @@
 
 ## Purpose
 
-The workflow-durable-suspension capability lets a waiting durable workflow instance cost nothing while losing nothing. Post-start input for a durable workflow instance is no longer an in-memory channel: the controller appends every message to a per-instance append-only `inbox.wal` — same WalWriter/FsyncBatcher substrate as `proc.journal` — with a monotonic offset and a dedup id (sender-supplied message id, else a payload hash) **before** forwarding it to the runner, so a duplicate send inside the undelivered window is absorbed at append and a message sent while the instance is suspended, crashed, or migrating is delivered on rehydrate rather than dropped. Payloads live only in `inbox.wal`; `proc.journal` carries offsets, and the consumed offset recorded by `iter_committed` (`workflow-durable-loop`) is what makes consumed entries truncatable. When a looping durable instance blocks on an empty inbox at a committed iteration boundary, the SDK parks: the controller journals `parked(N[, wake_deadline])` and tears the instance down with no terminal completion — registry state `suspended`, zero live runner resources — while a mid-iteration `recv` still blocks in memory as before, and an eviction-hysteresis knob keeps trickling input from thrashing the cycle. A new inbox append or the elapse of the journaled wake deadline rehydrates the instance through the normal workflow spawn path on any live runner (existing session fencing applies): journal state and iteration-boundary snapshots are restored, the undelivered inbox tail is delivered from the recorded offset, and the loop enters iteration N+1. Every input to that decision is durable, so suspension survives controller restart or redeploy, and racing wake sources resolve to exactly one rehydration.
+The workflow-durable-suspension capability lets a waiting durable workflow instance cost nothing while losing nothing. Post-start input for a durable workflow instance is no longer an in-memory channel: the controller appends every message to a per-instance append-only `inbox.wal` — same WalWriter/FsyncBatcher substrate as `task.journal` — with a monotonic offset and a dedup id (sender-supplied message id, else a payload hash) **before** forwarding it to the runner, so a duplicate send inside the undelivered window is absorbed at append and a message sent while the instance is suspended, crashed, or migrating is delivered on rehydrate rather than dropped. Payloads live only in `inbox.wal`; `task.journal` carries offsets, and the consumed offset recorded by `iter_committed` (`workflow-durable-loop`) is what makes consumed entries truncatable. When a looping durable instance blocks on an empty inbox at a committed iteration boundary, the SDK parks: the controller journals `parked(N[, wake_deadline])` and tears the instance down with no terminal completion — registry state `suspended`, zero live runner resources — while a mid-iteration `recv` still blocks in memory as before, and an eviction-hysteresis knob keeps trickling input from thrashing the cycle. A new inbox append or the elapse of the journaled wake deadline rehydrates the instance through the normal workflow spawn path on any live runner (existing session fencing applies): journal state and iteration-boundary snapshots are restored, the undelivered inbox tail is delivered from the recorded offset, and the loop enters iteration N+1. Every input to that decision is durable, so suspension survives controller restart or redeploy, and racing wake sources resolve to exactly one rehydration.
 ## Requirements
 ### Requirement: Post-start input is durably journaled before delivery
 
 The controller SHALL append every post-start input for a durable workflow
 instance to a per-instance append-only `inbox.wal` (same WalWriter/FsyncBatcher
-substrate as `proc.journal`) with a monotonic offset and a dedup id — the
+substrate as `task.journal`) with a monotonic offset and a dedup id — the
 sender-supplied message id when present, else a payload hash — **before**
 forwarding it to the runner. A duplicate dedup id within the undelivered
 window SHALL be dropped at append. Entries at or below the consumed offset
 recorded by `iter_committed` SHALL be truncated. Message payloads SHALL live
-only in `inbox.wal`, never in `proc.journal`.
+only in `inbox.wal`, never in `task.journal`.
 
 #### Scenario: Input survives the instance being down
 
@@ -37,7 +37,7 @@ inbox at a committed iteration boundary, send a park notification (iteration N,
 optional wake deadline) and the controller SHALL journal `parked(N[,
 deadline])`, then tear the instance down without a terminal completion:
 registry state `suspended`, zero live runner resources. An iteration boundary
-SHALL be the only place an instance waits for input: no procedure SHALL block
+SHALL be the only place an instance waits for input: no tasklet SHALL block
 on its inbox mid-iteration, so parking SHALL only occur at a committed
 iteration boundary. An eviction-hysteresis knob SHALL avoid park/rehydrate
 thrash under trickling input.
@@ -58,7 +58,7 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 #### Scenario: A message arriving mid-iteration waits for the boundary
 
 - **WHEN** a message reaches a `PerInput` instance while an iteration is still running
-- **THEN** it SHALL be journaled to the inbox and SHALL seed the next iteration after the current one commits, and no procedure SHALL receive it mid-iteration
+- **THEN** it SHALL be journaled to the inbox and SHALL seed the next iteration after the current one commits, and no tasklet SHALL receive it mid-iteration
 
 ### Requirement: A suspended instance rehydrates on new input or its durable timer
 

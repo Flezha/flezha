@@ -99,12 +99,12 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     end
 
     test "a template substitutes the payload and the output's identity stamps" do
-      opts = sink!(%{sink_template: ~s({"e":"{{entity}}","s":"{{seq}}","d":{{payload}}})})
+      opts = sink!(%{sink_template: ~s({"e":"{{cell}}","s":"{{seq}}","d":{{payload}}})})
 
       {{:reply, [{:text, body}], _state}, _ref} =
-        dispatch(state(opts), "42", %{"flz.entity" => "rc/proc/k1", "flz.seq" => "7.0"})
+        dispatch(state(opts), "42", %{"flz.cell" => "rc/task/k1", "flz.seq" => "7.0"})
 
-      assert body == ~s({"e":"rc/proc/k1","s":"7.0","d":42})
+      assert body == ~s({"e":"rc/task/k1","s":"7.0","d":42})
     end
 
     test "a template that cannot carry the payload is refused at enable time" do
@@ -220,26 +220,26 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   describe "delivery semantics" do
     setup do
       rc = "ws_#{System.unique_integer([:positive])}"
-      entity_id = {rc, "proc", "k1"}
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
-      {:ok, entity_id: entity_id}
+      cell_id = {rc, "task", "k1"}
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      {:ok, cell_id: cell_id}
     end
 
-    defp guaranteed(entity_id, seq), do: TestHelpers.guaranteed_metadata(entity_id, seq)
+    defp guaranteed(cell_id, seq), do: TestHelpers.guaranteed_metadata(cell_id, seq)
 
-    test "\"none\" answers the hold at handoff", %{entity_id: entity_id} do
+    test "\"none\" answers the hold at handoff", %{cell_id: cell_id} do
       {{:reply, _frames, _state}, _ref} =
-        dispatch(state(sink!()), "v1", guaranteed(entity_id, 1))
+        dispatch(state(sink!()), "v1", guaranteed(cell_id, 1))
 
       assert :ok = TestHelpers.assert_confirmed([{:cursor, 1}], 2_000)
     end
 
-    test "\"none\" answers nothing while the socket is down", %{entity_id: entity_id} do
+    test "\"none\" answers nothing while the socket is down", %{cell_id: cell_id} do
       {{:ok, _state}, _ref} =
         dispatch(
           state(sink!(), %{websocket_established?: false}),
           "v1",
-          guaranteed(entity_id, 1)
+          guaranteed(cell_id, 1)
         )
 
       refute_receive {:"$gen_cast", {:outbox_confirmed_many, _}}, 200
@@ -255,11 +255,11 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       assert message =~ "{{req_id}}"
     end
 
-    test "\"required\" answers the hold only on the echoed id", %{entity_id: entity_id} do
+    test "\"required\" answers the hold only on the echoed id", %{cell_id: cell_id} do
       opts = required_opts()
 
       {{:reply, [{:text, body}], sent}, _ref} =
-        dispatch(state(opts), "v1", guaranteed(entity_id, 1))
+        dispatch(state(opts), "v1", guaranteed(cell_id, 1))
 
       assert %{"req_id" => req_id} = Jason.decode!(body)
       assert map_size(sent.sink.inflight) == 1
@@ -275,13 +275,13 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     # The per-frame path: a frame answered on its first send served no rung. The
     # re-sent frame after it is the control that shows the capture would see one.
     test "an ack on the first send announces no wait and no reset on the ack ladder",
-         %{entity_id: entity_id} do
+         %{cell_id: cell_id} do
       Telemetry.capture([[:flezha, :backoff, :wait], [:flezha, :backoff, :reset]],
         filter: &(Map.get(&1, :ladder) == :ws_sink_ack)
       )
 
       {{:reply, [{:text, body}], sent}, _ref} =
-        dispatch(state(required_opts()), "v1", guaranteed(entity_id, 1))
+        dispatch(state(required_opts()), "v1", guaranteed(cell_id, 1))
 
       %{"req_id" => req_id} = Jason.decode!(body)
 
@@ -291,7 +291,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       assert settled.sink.inflight == %{}
       refute_received {:telemetry, _event, _measurements, %{ladder: :ws_sink_ack}}
 
-      {{:reply, _frames, unanswered}, _ref} = dispatch(settled, "v2", guaranteed(entity_id, 2))
+      {{:reply, _frames, unanswered}, _ref} = dispatch(settled, "v2", guaranteed(cell_id, 2))
       aged = age_inflight(unanswered, Backoff.delay(:ws_sink_ack, 1) + 1)
       assert {:reply, [_frame], _resent} = Client.handle_info(:idle_check, aged)
 
@@ -300,11 +300,11 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     end
 
     test "an unanswered frame is re-sent, and the hold stays open",
-         %{entity_id: entity_id} do
+         %{cell_id: cell_id} do
       opts = required_opts()
 
       {{:reply, [{:text, first}], sent}, _ref} =
-        dispatch(state(opts), "v1", guaranteed(entity_id, 1))
+        dispatch(state(opts), "v1", guaranteed(cell_id, 1))
 
       # The sweep runs on the watchdog tick the client already owns; age the
       # send past the ladder's first rung rather than sleeping through it.
@@ -315,12 +315,12 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       refute_receive {:"$gen_cast", {:outbox_confirmed, _}}, 200
     end
 
-    test "an exhausted frame is parked with its entity and channel, and answers its hold",
-         %{entity_id: entity_id} do
+    test "an exhausted frame is parked with its cell and channel, and answers its hold",
+         %{cell_id: cell_id} do
       opts = required_opts()
 
       {{:reply, _frames, sent}, _ref} =
-        dispatch(state(opts), "v1", guaranteed(entity_id, 1))
+        dispatch(state(opts), "v1", guaranteed(cell_id, 1))
 
       spent = spend_budget(sent)
 

@@ -96,7 +96,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # before SIGTERM is sent.
     assert NodeTestHelper.wait_until(
              fn ->
-               case OperativeManager.get_entity_state(@namespace, operative_id) do
+               case OperativeManager.get_cell_state(@namespace, operative_id) do
                  {:ok, json} -> Enum.all?(inputs_sent, &String.contains?(json, &1))
                  _ -> false
                end
@@ -120,8 +120,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # initial state) would fail one of these.
     decoded = Jason.decode!(snapshot)
     assert is_map(decoded)
-    # Operative state serializes as `%{procedure_name => procedure_state}`;
-    # this single-procedure operative has exactly one entry.
+    # Operative state serializes as `%{tasklet_name => tasklet_state}`;
+    # this single-tasklet operative has exactly one entry.
     assert map_size(decoded) == 1
     inner = decoded |> Map.values() |> hd()
     assert Map.has_key?(inner, "text_inputs")

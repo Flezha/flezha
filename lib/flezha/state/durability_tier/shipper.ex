@@ -233,7 +233,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # The backstop: every reference with local durable state, so an entity that
+  # The backstop: every reference with local durable state, so a cell that
   # reaches no compaction, checkpoint or commit boundary is still bounded by one
   # sweep period. The whole-payload artifacts — the cspec, the parked failures,
   # the control-plane stores — ride the same sweep: they change rarely, and a
@@ -348,7 +348,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp upload_payload(state, _manifest, blob, bytes),
     do: state.backend.put(blob, bytes, state.opts)
 
-  # Seq-addressed artifact (Entity WAL + snapshots, proc-journal, durable inbox,
+  # Seq-addressed artifact (Cell WAL + snapshots, task-journal, durable inbox,
   # input log). The manifest is reconciled against local truth first — a rewind
   # dropped records above a seq, a compaction dropped them below one — and only
   # then extended with the cut being shipped.
@@ -372,7 +372,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # The manifest write is skipped when the cut is unchanged: a quiet entity
+  # The manifest write is skipped when the cut is unchanged: a quiet cell
   # reached by every backstop sweep must not rewrite its entry forever, and a
   # skipped write is still fully caught up.
   defp commit_cut(state, ref, previous, shipped, records, local_top) do
@@ -482,7 +482,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   # A shipped range is superseded only when the local WAL has dropped it AND
   # a retained snapshot covers it. Both halves matter: dropping ranges on the
-  # WAL floor alone would strand a rewound Entity whose snapshot was deleted
+  # WAL floor alone would strand a rewound Cell whose snapshot was deleted
   # with the records above it.
   defp snapshot_floor(manifest, min_seq) do
     floor = min_seq - 1

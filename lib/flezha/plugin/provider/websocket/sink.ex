@@ -17,7 +17,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   at-most-once past that point. `"required"` answers it only when an inbound
   frame echoes the correlation id, which is at-least-once — and because a repeat
   is then a normal event, that mode requires a template, through which the frame
-  carries the correlation id and the `flz.entity` / `flz.seq` stamps a consumer
+  carries the correlation id and the `flz.cell` / `flz.seq` stamps a consumer
   dedups on. Neither mode is effectively-once: a websocket exposes no
   transaction to enlist and no key to overwrite, so the dedup is the consumer's.
   """
@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   alias Flezha.State.Outbox
 
   @payload_placeholder "{{payload}}"
-  @entity_placeholder "{{entity}}"
+  @cell_placeholder "{{cell}}"
   @seq_placeholder "{{seq}}"
 
   @enforce_keys [:frame_type, :ack_mode, :queue_max]
@@ -150,7 +150,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   at once while there is room, on the drain that frees space once there is not.
 
   The payload goes out verbatim when no template is configured. A template
-  substitutes the payload, the correlation id and the `flz.entity` / `flz.seq`
+  substitutes the payload, the correlation id and the `flz.cell` / `flz.seq`
   stamps the output already carries (`Flezha.State.Outbox.output_stamps/1`), so
   the identity a consumer dedups on is the one the operative committed.
   """
@@ -185,7 +185,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
     template
     |> String.replace(@payload_placeholder, message)
     |> String.replace(Subscription.req_id_placeholder(), req_id || "")
-    |> String.replace(@entity_placeholder, Map.get(metadata, "flz.entity", ""))
+    |> String.replace(@cell_placeholder, Map.get(metadata, "flz.cell", ""))
     |> String.replace(@seq_placeholder, Map.get(metadata, "flz.seq", ""))
   end
 
@@ -294,7 +294,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   whose retry budget is spent, parked.
 
   Driven by the Client's existing watchdog tick, so the sink arms no timer. A
-  parked frame is written to the dead-letter store carrying its entity and
+  parked frame is written to the dead-letter store carrying its cell and
   channel and its hold is answered, so the cursor advances past exactly the
   parked range rather than stalling on it.
   """

@@ -2,7 +2,7 @@
 
 This is the wire-protocol reference for SDK implementers: transports, binary
 framing, the protobuf command set, the connection lifecycle, the data-plane
-frames and the per-Entity persistence frames. Operative authors do not need it
+frames and the per-Cell persistence frames. Operative authors do not need it
 — their surface is [`authoring_contract.md`](authoring_contract.md).
 
 The protocol has two implementations: the shared Rust kernel `flz_core`
@@ -24,7 +24,7 @@ separate boundary: [`poll_core.md`](poll_core.md).
 8. [Recommended SDK Public API](#8-recommended-sdk-public-api)
 9. [Worked Examples](#9-worked-examples)
 10. [Error Handling](#10-error-handling)
-11. [Per-Entity State Persistence](#11-per-entity-state-persistence)
+11. [Per-Cell State Persistence](#11-per-cell-state-persistence)
 
 ## 1. Overview
 
@@ -36,7 +36,7 @@ logic on the controller's behalf over two layers:
 | Layer | Purpose | Socket | Encoding |
 |-------|---------|--------|----------|
 | Control plane | Handshake, command dispatch, lifecycle, durability barriers | control channel (one per runner) | protobuf inside the binary frame |
-| Data plane | Operative input/output, heartbeats, per-Entity state records | N primary (controller → runner) + N secondary (runner → controller) streams | raw bytes inside the binary frame |
+| Data plane | Operative input/output, heartbeats, per-Cell state records | N primary (controller → runner) + N secondary (runner → controller) streams | raw bytes inside the binary frame |
 
 Of the command surface, only five interactions reach host code in a `flz_core`
 runner (as `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
@@ -93,7 +93,7 @@ against `FLEZHA_QUIC_CLIENT_CA` and refuses the handshake otherwise — no frame
 of an unauthenticated peer is ever parsed. That verification proves the peer was
 issued a certificate; **which namespace it may serve is a separate question**,
 and the certificate answers it only when it carries a SPIFFE URI SAN with an
-`/ns/<name>` entity. The pair generated on first start does not, so a default
+`/ns/<name>` cell. The pair generated on first start does not, so a default
 QUIC deployment proves its namespace with the credential of §5 step 2, exactly as
 UDS does. The runner principal (`runner@<namespace>`, role `runner`) is minted
 controller-side from the namespace the connection PROVED, never from the value
@@ -160,9 +160,9 @@ the logical id.
 | `control_ping` | runner → controller → runner | Keep-alive; a bare `Ping` the controller echoes verbatim (§5) |
 | `data_heartbeat` | runner → controller | Data-channel liveness, empty message + counters in metadata |
 | `{operative_id}` | both | Operative input (primary) and output (secondary) |
-| `entity_state_change`, `entity_effect_record`, `entity_state_snapshot` | runner → controller | Per-Entity persistence records (§11) |
+| `cell_state_change`, `cell_effect_record`, `cell_state_snapshot` | runner → controller | Per-Cell persistence records (§11) |
 | `compensation_intent`, `compensation_done` | runner → controller | Workflow saga markers (§11) |
-| `delete_entity_state` | runner → controller | Dynamic-Entity hard delete (§11) |
+| `delete_cell_state` | runner → controller | Dynamic-Cell hard delete (§11) |
 | `park_payload` | runner → controller | Dead-letter park (§11) |
 | `correction_request` | runner → controller | Late-input correction (§11) |
 
@@ -215,22 +215,22 @@ than at emit.
 | `input_type` | controller → runner | Stamped by the controller on every entry-channel input from the Operative's `:default_input_type` (`"2"` unless declared; `"1"` binary, `"2"` text). The SDKs do not read it: payload bytes are converted by the entry channel's declared payload type (`Vec<u8>`/`byte[]` passthrough, `String` UTF-8, anything else through the channel's entry parser). |
 | `channel` | controller → runner | The Operative's entry channel that receives this input. Absent ⇒ the Operative's first declared input channel. A name that is not one of the Operative's entry channels — undeclared, or declared as a channel of another kind — is parked to the dead-letter store under that name, never dropped and never routed to another channel. |
 | `channel` | runner → controller | Set on every plugin-bound emit. Plugin providers match on it via their `:channel` option to select which channel's outputs they consume. |
-| `flz.entity` | runner → controller | Output-identity stamp on `.keyed()` channels: `<operative_instance_id>/<procedure_name>/<entity_key>` (empty key for single-mode). |
-| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>` (stream) or `<proc_idx>.<seq_in_proc>` (workflow outbox). |
-| `flz.key` | runner → controller | Output-identity stamp: the emitting Entity's own key, or the caller's natural key from `emit_keyed(key, value)`. |
-| `flz.epoch` | controller → plugins | The Entity's WAL realign epoch (stream tier) or the instance's journal epoch (workflow outbox). `(flz.entity, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
+| `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<operative_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
+| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>` (stream) or `<task_idx>.<seq_in_task>` (workflow outbox). |
+| `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
+| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch (stream tier) or the instance's journal epoch (workflow outbox). `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | Effectively-once tier: the durable input-log offset of this forwarded input. The runner threads it through dispatch so the invocation's effect record carries it back as `consumed_offset`. |
 | `flz.inbox_offset` | controller → runner | Durable workflow inbox: the 1-based offset of this post-start input (§11). |
 | `flz.msg_id` | sender → controller | Sender-supplied message id used to deduplicate durable-inbox appends (§11). |
 | `flz.wake` | controller → runner | `"timer"` on the synthetic empty inbox entry that wakes a parked loop at its journaled deadline (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
-| `flz.change_seq` | runner → controller | On the `EntityState` reply frame: the seq a single selected Entity was serialized at (§6). |
+| `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
 
 The `flz.` prefix is a protected namespace: a user-supplied metadata key
 beginning with `flz.` is rejected at emit time with a typed error
-(`ProcedureError::ReservedMetadataKey` in Rust,
-`ProcedureException.ReservedMetadataKey` in Java) on every emit variant, so
+(`TaskletError::ReservedMetadataKey` in Rust,
+`TaskletException.ReservedMetadataKey` in Java) on every emit variant, so
 runtime stamps can never be spoofed or clobbered. Stamps are appended after
 user metadata; channels not declared `.keyed()` carry none.
 
@@ -239,7 +239,7 @@ channel's name derives from its producer node unless a `sink("...")` name or a
 `.named(...)` override supplies one; declaring both is refused), so renaming a
 language class never changes a wire or on-disk name. A
 plugin-bound frame is byte-identical whether or not the channel also fans out
-to inter-procedure consumers.
+to inter-tasklet consumers.
 
 ### Heartbeat frames
 
@@ -264,33 +264,33 @@ a key with no row cannot be mirrored at all — the cross-SDK gate compares the
 declared set against `flz_core`'s builder and the Elixir SDK's map on every
 default-suite run.
 
-### Per-Entity mailbox is bounded; on full, the channel's `OverflowPolicy` applies
+### Per-Cell mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
-The runner's per-Entity mailbox is a fixed-capacity queue
+The runner's per-Cell mailbox is a fixed-capacity queue
 (`crossbeam::queue::ArrayQueue`) sized at Operative startup. A frame for a
 full mailbox takes the channel's declared `OverflowPolicy`: `DropNothing`
 (nothing is discarded — the producer waits for a slot, which on an
-inter-procedure channel means the producing Entity is withheld further work and
+inter-tasklet channel means the producing Cell is withheld further work and
 on an entry channel means the reader stalls; the default for every
 channel kind in every SDK), `DropNewest` or `DropOldest` (a counter is
 bumped). Under `DropNothing` a saturated entry channel parks the **wire-reader
 thread** and sibling Operatives on that connection wait with it; the reader
-never runs procedures itself, and `DropNothing` requires an acyclic procedure
+never runs tasklets itself, and `DropNothing` requires an acyclic tasklet
 graph. Capacity declaration
 and counters: [`rust_operative_architecture.md`](rust_operative_architecture.md)
 "Backpressure and bounded mailboxes".
 
 ### Operative state JSON shape
 
-`MigrationSerialization` / `MigrationDeserialization` / `EntityState` and a
+`MigrationSerialization` / `MigrationDeserialization` / `CellState` and a
 stream operative's `AddOperative.init_values` all carry a JSON blob whose shape
 is:
 
-- Single-mode procedures (no Entity keys): `{"<procedure_name>": <state>}`
-- Static-mode procedures (`entity_keys()` non-empty):
-  `{"<procedure_name>": {"<entity_key>": <state>, ...}}`
-- Dynamic-mode procedures (keyed on the wiring with `.key_by` / `.keyBy`): the
-  same key-keyed object over the Entities the runner holds live at
+- Single-mode tasklets (no Cell keys): `{"<tasklet_name>": <state>}`
+- Static-mode tasklets (`cell_keys()` non-empty):
+  `{"<tasklet_name>": {"<cell_key>": <state>, ...}}`
+- Dynamic-mode tasklets (keyed on the wiring with `.key_by` / `.keyBy`): the
+  same key-keyed object over the Cells the runner holds live at
   serialization time.
 
 Both SDKs sort object keys, so an equivalent state serializes byte-identically
@@ -299,22 +299,22 @@ on either runtime.
 #### Applying the shape
 
 A document need not cover the operative. Every top-level entry is applied to
-the procedure it names and every inner entry to the Entity its key names; a
-procedure the document omits keeps the state its class builds. Within one
-entry there is no partial application: the value is handed to the procedure's
+the tasklet it names and every inner entry to the Cell its key names; a
+tasklet the document omits keeps the state its class builds. Within one
+entry there is no partial application: the value is handed to the tasklet's
 state deserializer whole, so it must be a complete state unless the class
 declares per-field defaults.
 
 An entry that names nothing live is **ignored, not refused**. The runner writes
-one line to its stderr (`ignoring unknown procedure`, `ignoring unknown
-entity_key`) and the command still succeeds; a value that fails to deserialize
+one line to its stderr (`ignoring unknown tasklet`, `ignoring unknown
+cell_key`) and the command still succeeds; a value that fails to deserialize
 is ignored the same way. Only the document as a whole can fail `AddOperative`:
 JSON that does not parse, and JSON that parses to anything but an object.
 
-A dynamic-mode procedure cannot be seeded by `init_values`: its Entities are
+A dynamic-mode tasklet cannot be seeded by `init_values`: its Cells are
 minted on first sight of a key and none exists at the bind, so the entry
-reaches nothing. Migration is unaffected, because a dynamic procedure's
-Entities are restored from their own records rather than through this path.
+reaches nothing. Migration is unaffected, because a dynamic tasklet's
+Cells are restored from their own records rather than through this path.
 
 A workflow operative does not use this shape at all. Its `init_values` seeds
 the entry channel whole, decoded into that channel's declared type, and is
@@ -365,15 +365,15 @@ message CommandResponse {
 | 5 | `RemOperative` | C → R | `CommandResponse` |
 | 6 | `MigrationSerialization` | C → R | `CommandResponse` (`raw_data` = JSON state) |
 | 7 | `MigrationDeserialization` | C → R | `CommandResponse` |
-| 8 | `EntityState` | C → R | `CommandResponse` (`raw_data` = JSON state; frame metadata `flz.change_seq`) |
+| 8 | `CellState` | C → R | `CommandResponse` (`raw_data` = JSON state; frame metadata `flz.change_seq`) |
 | 9 | `RunnerDisconnect` | C → R | `CommandResponse` |
 | 10 | `OperativeMessage` | C → R | `CommandResponse` (`raw_data` = `OperativeMessageResponse`) |
-| 11 | `EntityApplyState` | C → R | `CommandResponse` (reserved; see §6) |
+| 11 | `CellApplyState` | C → R | `CommandResponse` (reserved; see §6) |
 | 12 | `RunnerShutdownNotification` | R → C | `RunnerShutdownAck` (tag 13) under the same `reference_id` |
 | 13 | `RunnerShutdownAck` | C → R | none |
 | 14 | `RestoreInitState` | C → R | `CommandResponse` (`raw_data` = `RestoreInitStateResponse`, tag 15) |
-| 16 | `CompactEntity` | C → R | `CommandResponse` (`raw_data` = `CompactEntityResponse`, tag 17) |
-| 18 | `EntityMailboxStatus` | C → R | none (one-way) |
+| 16 | `CompactCell` | C → R | `CommandResponse` (`raw_data` = `CompactCellResponse`, tag 17) |
+| 18 | `CellMailboxStatus` | C → R | none (one-way) |
 | 19 | `Ping` | C → R | `CommandResponse` (`raw_data` = `PingResponse`) |
 | 20, 21 | `RunnerReconnected`, `ReassignRunnerId` | — | reserved; never emitted (§6) |
 | 22 | `WorkflowCompleted` | R → C | none |
@@ -381,8 +381,8 @@ message CommandResponse {
 | 24 | `CreditWindowInit` | C → R | `CommandResponse` (`raw_data` = `CreditWindowAck`, tag 25) |
 | 26 | `CreditGrant` | C → R | generic `CommandResponse`, ignored |
 | 27 | `ParkPayloadAck` | C → R | generic `CommandResponse`, ignored |
-| 28 | `ProcCommit` | R → C | `ProcCommitResponse` (tag 29) under the same `reference_id` |
-| 29 | `ProcCommitResponse` | C → R | none |
+| 28 | `TaskCommit` | R → C | `TaskCommitResponse` (tag 29) under the same `reference_id` |
+| 29 | `TaskCommitResponse` | C → R | none |
 | 30 | `IterCommit` | R → C | `IterCommitResponse` (tag 31) under the same `reference_id` |
 | 31 | `IterCommitResponse` | C → R | none |
 | 32 | `IterPark` | R → C | none |
@@ -413,7 +413,7 @@ Tags 15, 17 and 25 are message types that only ever ride as a
   decoder's unknown-field handling (a `flz_core` runner treats tags 20 and 21
   as `NotificationIgnore`).
 - **Reply metadata.** A handler may attach metadata to the reply **frame**
-  (`EntityState` → `flz.change_seq`).
+  (`CellState` → `flz.change_seq`).
 
 ## 5. Connection Lifecycle
 
@@ -547,7 +547,7 @@ streams. This is intentional — the runner MUST NOT reconnect.
 ### Auto-reconnection
 
 A control read error while the status is `Running` drives a reconnect. The
-runner keeps its operative registry and per-Entity state, marks itself
+runner keeps its operative registry and per-Cell state, marks itself
 `Stopped` for the duration, re-dials with the same handshake (same
 `stable_id`) and returns to `Running` on the new stream. Every connect attempt
 retries forever with full-jitter exponential backoff:
@@ -574,7 +574,7 @@ On the controller the reconnect is a **binding swap**: the re-presented
 `stable_id` resolves to the prior session, its bindings move to the new token,
 and `AddOperative` is re-issued for every instance still bound to the runner;
 the runner's handler is idempotent on a duplicate `operative_id`, so existing
-Entity state survives. A runner that never returns is removed after
+Cell state survives. A runner that never returns is removed after
 `FLEZHA_RUNNER_KEEPALIVE` (default 30000 ms; `0` disables the grace).
 
 ## 6. Command Reference
@@ -608,8 +608,8 @@ message AddOperative {
     string factory_id = 2;
     string init_values = 3;            // JSON; "" for none
     string kind = 4;                   // "stream" | "workflow"; empty ⇒ "stream"
-    uint32 resume_entity_count = 5;    // RestoreInitState frames to expect on this bind
-    ProcJournalState proc_journal = 6; // workflow crash-resume state (§11)
+    uint32 resume_cell_count = 5;      // RestoreInitState frames to expect on this bind
+    TaskJournalState task_journal = 6; // workflow crash-resume state (§11)
     uint32 partition_index = 7;
     uint32 partition_count = 8;        // < 2 ⇒ unpartitioned
     uint32 key_group_from = 9;         // inclusive key-group range, 0..255
@@ -620,10 +620,10 @@ message AddOperative {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the procedure-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance scheduled on its driver thread, its entry channel seeded with the whole `init_values` decoded into that channel's declared type; a durable driver holds its first procedure until `resume_entity_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
+| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance scheduled on its driver thread, its entry channel seeded with the whole `init_values` decoded into that channel's declared type; a durable driver holds its first tasklet until `resume_cell_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
-| Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedProcedure: ...` |
+| Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedTasklet: ...` |
 
 `AddOperativeResponse.metadata` carries the class's SDK-side declarations so
 the controller resolves per-class capabilities without a parallel config
@@ -633,13 +633,13 @@ channel (absent/undecodable ⇒ every default):
 |-----|-------|---------|
 | `effectively_once` | `"true"` | the class runs on the effectively-once tier |
 | `durability` | `"sync_remote"` | workflow only: withhold barrier acks until the remote backend holds them |
-| `keyed` | `"false"` | stream class with no keyed entry-fed procedure (sent only when false) |
+| `keyed` | `"false"` | stream class with no keyed entry-fed tasklet (sent only when false) |
 | `correction_window_ms` | ms | late-input correction window |
 | `beyond_window_policy` | `"process_as_arrival"` / `"drop"` | what a late input beyond the window gets |
 | `ack_granularity` | `"checkpoint"` | the class acknowledges input only at checkpoints |
-| `compact_after_bytes` | bytes | the smallest per-procedure compaction trigger, when it differs from the default |
-| `compensable_procs` | list | workflow tree positions whose procedure declares `compensate` |
-| `leaf_procs` | list | the workflow tree's leaf positions |
+| `compact_after_bytes` | bytes | the smallest per-tasklet compaction trigger, when it differs from the default |
+| `compensable_tasks` | list | workflow tree positions whose tasklet declares `compensate` |
+| `leaf_tasks` | list | the workflow tree's leaf positions |
 
 #### Partition identity
 
@@ -647,11 +647,11 @@ channel (absent/undecodable ⇒ every default):
 carry one member of a partitioned operative over 256 key groups
 ([`partitioned_operatives.md`](partitioned_operatives.md)). With
 `partition_count < 2` the instance owns the whole space; otherwise the runner
-checks that each computed Entity key hashes into
+checks that each computed Cell key hashes into
 `[key_group_from, key_group_to]` and parks a miss with an error naming the
 key, its key group and the owning partition. A migrate-time `AddOperative`
-carries the same fields. A class with no keyed entry-fed procedure is refused
-with `PartitionsWithoutKeyedProcedure` and answers `keyed: "false"` so the
+carries the same fields. A class with no keyed entry-fed tasklet is refused
+with `PartitionsWithoutKeyedTasklet` and answers `keyed: "false"` so the
 controller refuses a later partitioned start before touching a runner.
 
 ### RemOperative
@@ -676,7 +676,7 @@ trigger. `status` is `"ok"`, `"error"` (with
 drives the single stop/teardown path (deregister-on-completion) so a finished
 instance leaves the durable registry and is never replayed on boot; an errored
 one is torn down identically (terminal — the platform never re-runs it; a
-structured chain's per-Entity retry ladder runs *inside* the run) and surfaced
+structured chain's per-Cell retry ladder runs *inside* the run) and surfaced
 via `[:flezha, :workflow, :failed]`.
 
 An opted-out instance writes its plugin-bound outputs straight
@@ -691,38 +691,38 @@ journaled outbox instead, and that debt — exact and durable — is still waite
 for, re-driven, under a 60 s bound. Field 5 was a `direct_outputs` count and is
 reserved; a runner that still sets it is simply not read.
 
-### EntityState
+### CellState
 
 | Field | Value |
 |-------|-------|
-| Message | `EntityState { operative_id, procedure, entity_key }` |
-| Behaviour | Serialize live in-memory Entity state as JSON (shape in §3), narrowed by the selector |
-| Reply | `raw_data` = JSON; reply-frame metadata `flz.change_seq` when the selector names exactly one Entity |
+| Message | `CellState { operative_id, tasklet, cell_key }` |
+| Behaviour | Serialize live in-memory Cell state as JSON (shape in §3), narrowed by the selector |
+| Reply | `raw_data` = JSON; reply-frame metadata `flz.change_seq` when the selector names exactly one Cell |
 | Errors | `StreamOperative instance with id {id} not found`, plus the refusal tokens below |
 
-**Selector.** `procedure` and `entity_key` are optional (empty = absent), so a
+**Selector.** `tasklet` and `cell_key` are optional (empty = absent), so a
 selector-less command encodes byte-identically to the migration/handover
-shape. Absent ⇒ every Procedure; `procedure` ⇒ that Procedure's Entities;
-`procedure` + `entity_key` ⇒ one Entity.
+shape. Absent ⇒ every Tasklet; `tasklet` ⇒ that Tasklet's Cells;
+`tasklet` + `cell_key` ⇒ one Cell.
 
-**Freshness.** Serialization takes each Entity's state lock and does NOT drain
+**Freshness.** Serialization takes each Cell's state lock and does NOT drain
 pending changes: the value is at or ahead of the durable state, and
 `flz.change_seq` tells a reader which version it got. A read triggers no
 compaction, snapshot or WAL truncation.
 
 | Refusal token (leads the error string) | Meaning |
 |---|---|
-| `entity_key_without_procedure` | an Entity key is unique only within its Procedure |
-| `procedure_not_found` | the Operative declares no Procedure by that name |
-| `entity_not_found` | that Procedure holds no Entity by that key |
-| `entity_evicted` | the Entity was idle-evicted; eviction is destructive, so there is no durable value either |
+| `cell_key_without_tasklet` | a Cell key is unique only within its Tasklet |
+| `tasklet_not_found` | the Operative declares no Tasklet by that name |
+| `cell_not_found` | that Tasklet holds no Cell by that key |
+| `cell_evicted` | the Cell was idle-evicted; eviction is destructive, so there is no durable value either |
 
 The operator surface is `flz state get`
 ([`../internals/state_persistence.md`](../internals/state_persistence.md)).
 
-### EntityApplyState
+### CellApplyState
 
-`EntityApplyState { operative_id, factory_id, state_binary: bytes }` is
+`CellApplyState { operative_id, factory_id, state_binary: bytes }` is
 reserved: the controller never sends it. A `flz_core` runner answers an
 unknown instance with `StreamOperative instance with id {id} not found` and a
 known one with `status: "error"`, `errors: ["apply_state_not_supported"]` —
@@ -804,7 +804,7 @@ naming namespace, runner, factory id and affected operatives.
 ### SpawnWorkflowRequest
 
 `SpawnWorkflowRequest { instance_id, factory_id, payload: bytes, if_running:
-string }` travels runner → controller (tag 34) when a procedure asks for a
+string }` travels runner → controller (tag 34) when a tasklet asks for a
 workflow instance (`ctx.spawn_workflow` / `ctx.spawnWorkflow`). The controller
 spawns `factory_id` under `instance_id` when free, with `payload` as the first
 inbox entry (empty = spawn only); otherwise `if_running` applies: `"deliver"`
@@ -824,7 +824,7 @@ start against the `operative_start` row, which records it, and a delivery as
 `operative.send`, recorded only when refused because it happens once per event.
 With authorization enforced, an unbound principal is `runner`, and a start or a
 delivery answers `refused`. See
-[`procedure_requested_spawn.md`](procedure_requested_spawn.md).
+[`tasklet_requested_spawn.md`](tasklet_requested_spawn.md).
 
 ### SpawnWorkflowResponse
 
@@ -833,7 +833,7 @@ runner under the request's `reference_id`; `outcome` ∈ `spawned`, `delivered`,
 `already_running`, `factory_unknown`, `refused`, `error` details a `refused`,
 and `instance_id` is the id the request resolved to: the requester's own, or
 the generated one (empty when a request that carried none started nothing). It resolves the requester's result handle and never faults the
-requesting procedure (an unobserved handle logs the failure once); against an
+requesting tasklet (an unobserved handle logs the failure once); against an
 older controller the request is ignored and the requester times out.
 
 ### AdminRequest
@@ -860,9 +860,9 @@ rendered as JSON; `error` carries a refusal (policy, quota, a name that
 resolves to nothing, or the effect's own failure) and is empty otherwise.
 Against an older controller the request is ignored and the requester times out.
 
-The persistence commands (`RestoreInitState`, `CompactEntity`,
-`EntityMailboxStatus`, `CreditWindowInit` / `CreditWindowAck` / `CreditGrant`,
-`ParkPayloadAck`, `ProcCommit`, `IterCommit`, `IterPark`) are specified in
+The persistence commands (`RestoreInitState`, `CompactCell`,
+`CellMailboxStatus`, `CreditWindowInit` / `CreditWindowAck` / `CreditGrant`,
+`ParkPayloadAck`, `TaskCommit`, `IterCommit`, `IterPark`) are specified in
 §11.
 
 ## 7. Data Plane (Stream I/O)
@@ -881,12 +881,12 @@ instance it resolves the entry channel from `metadata["channel"]` (absent ⇒
 the first declared input channel; a name that is not one of its entry channels
 parks to the dead-letter queue under that name, with one attempt), wraps the payload
 bytes through that
-channel's declared type, and pushes the item onto every consumer Procedure's
-Entity mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
+channel's declared type, and pushes the item onto every consumer Tasklet's
+Cell mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
 `flz.replay_end` ride along as described in §11. For a **workflow** instance
 it routes the frame to the running driver's inbox with the `flz.inbox_offset`
 it carries (an instance that is not running or has no inbox drops it with a
-log line). Dispatch onto host threads, per-Entity ordering and exclusivity are
+log line). Dispatch onto host threads, per-Cell ordering and exclusivity are
 the poll core's job ([`poll_core.md`](poll_core.md)).
 
 **Output (secondary streams).** Every plugin-bound emit becomes one frame with
@@ -940,7 +940,7 @@ write that returns `WouldBlock` is retried on the next writable event.
 ## 8. Recommended SDK Public API
 
 Not part of the wire contract. The authoring surface every SDK must offer —
-factories, Procedures, Entities, channels, codecs, the runner handle and its
+factories, Tasklets, Cells, channels, codecs, the runner handle and its
 env knobs (`FLEZHA_WORKER_POOL_SIZE`, `FLEZHA_WORKER_POOL_MAX`,
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`) — is specified in
 [`authoring_contract.md`](authoring_contract.md); the kernel/host split that
@@ -978,14 +978,14 @@ bytes as the message.
 
 ### 9.2 Data frame (stream input)
 
-Text input `hello` for instance `proc_42` with metadata `{input_type: "2"}`:
+Text input `hello` for instance `task_42` with metadata `{input_type: "2"}`:
 
 ```text
 Metadata entry: key_len=10, val_len=1, "input_type", "2"
   0A 01 69 6E 70 75 74 5F 74 79 70 65 32             (13 bytes)
 
 Payload ID (32 bytes):
-  70 72 6F 63 5F 34 32 20 20 20 20 20 20 20 20 20   proc_42.........
+  70 72 6F 63 5F 34 32 20 20 20 20 20 20 20 20 20   task_42.........
   20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20   ................
 
 Payload Size (4): 4 + 5 + 2 + 13 = 24          00 00 00 18
@@ -1003,7 +1003,7 @@ Total frame: 32 + 4 + 24 = 60 bytes
 human-readable strings in `errors` (e.g.
 `"Factory with id unknown_factory does not exist"`) and normally an empty
 `raw_data`. Where §6 or §11 names a canonical token
-(`apply_state_not_supported`, `entity_key_without_procedure`, …) the token
+(`apply_state_not_supported`, `cell_key_without_tasklet`, …) the token
 leads the string so the controller maps it without parsing prose.
 
 **Connection close detection.** On the controller a closed control stream
@@ -1022,22 +1022,22 @@ buffering"). A frame whose declared length exceeds the limit poisons the stream
 (a bad protobuf body, an undecodable persistence body) is logged and the frame
 dropped; the stream stays open because the outer framing was intact.
 
-## 11. Per-Entity State Persistence
+## 11. Per-Cell State Persistence
 
 This section is the wire contract for persistence. The per-SDK trait surface
-(`Procedure::init_state` / `apply_change`, codecs, schema versions) is in
+(`Tasklet::init_state` / `apply_change`, codecs, schema versions) is in
 [`state_persistence.md`](state_persistence.md); the controller's on-disk
 layout, WAL writer and `flz state` CLI are in
 [`../internals/state_persistence.md`](../internals/state_persistence.md).
 
-### Data-stream payload-id `entity_state_change`
+### Data-stream payload-id `cell_state_change`
 
-Runner → controller. One Change record for the per-Entity WAL. Frame layout
+Runner → controller. One Change record for the per-Cell WAL. Frame layout
 (decoded by `Flezha.SDK.Wire.decode_frame/1`):
 
 ```text
-[entity_id_len: u16 BE]
-[entity_id_bytes]
+[cell_id_len: u16 BE]
+[cell_id_bytes]
 [seq:        u64 BE]
 [header:     16 B  ]      <- see "The 16-byte record header"
 [body_len:   u32 BE]
@@ -1045,13 +1045,13 @@ Runner → controller. One Change record for the per-Entity WAL. Frame layout
 [crc32:      u32 BE]      <- crc32 over body
 ```
 
-`entity_id_bytes` is structured so the controller routes the record to the
-right per-Entity WAL without a side table:
+`cell_id_bytes` is structured so the controller routes the record to the
+right per-Cell WAL without a side table:
 
 ```text
 [operative_class_len: u8   ][operative_class]
-[procedure_id_len:    u8   ][procedure_id]
-[entity_key_len:     u16 BE][entity_key]
+[tasklet_id_len:    u8   ][tasklet_id]
+[cell_key_len:     u16 BE][cell_key]
 ```
 
 #### The 16-byte record header
@@ -1060,25 +1060,25 @@ right per-Entity WAL without a side table:
 |--------|-------|-------|
 | 0 | `sdk_lang: u8` | `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python — the allocation table in `flz_core/src/header.rs` |
 | 1..5 | `sdk_version: u32 BE` | `(major << 16) \| (minor << 8) \| patch` of the **writing SDK's** own released version, each component clamped at 255; `0` means the SDK did not say. Advisory: no reader decides how a body is read from it |
-| 5..9 | `schema_version: u32 BE` | the Procedure's declared schema version |
+| 5..9 | `schema_version: u32 BE` | the Tasklet's declared schema version |
 | 9 | `format_id: u8` | `1` postcard change, `2` effect record, `3` timer-ops record, `4` Kryo change (Java), `5` MessagePack change (Node, Ruby, Python), `6` JSON change (PHP), `7` External Term Format change (Elixir) |
 | 10..12 | reserved | zero |
 | 12..16 | `crc32: u32 BE` | over the body — written, and read back by nothing: the record frame's own trailing crc is the one that is checked |
 
 The controller stores, truncates and re-ships every `format_id` identically
 and decodes only `format_id = 2`. A **timer-ops record** (`format_id = 3`)
-carries a postcard `Vec<TimerOp>` mutating the Entity's pending-timer set; the
+carries a postcard `Vec<TimerOp>` mutating the Cell's pending-timer set; the
 controller never decodes it — the pending set is SDK-owned state
-([`entity_timers.md`](entity_timers.md)). On restore the kernel validates the
+([`cell_timers.md`](cell_timers.md)). On restore the kernel validates the
 header for every host it serves — and the Elixir SDK's own fold does the same
 — and refuses a mismatch by name, the language before anything else:
 `RestoreError::LangMismatch` (one SDK reading another's header),
 `SchemaFromTheFuture` / `SchemaTooOld`, `CrcMismatch`, `HeaderInvalid`.
 
-### Data-stream payload-id `entity_effect_record`
+### Data-stream payload-id `cell_effect_record`
 
 Runner → controller, effectively-once tier only. Same frame as
-`entity_state_change` with `format_id = 2`; `body` is the postcard
+`cell_state_change` with `format_id = 2`; `body` is the postcard
 `EffectRecordBody` — one invocation's state change(s), plugin outputs and
 consumed input-log offset, persisted by the controller as ONE WAL record under
 ONE fsync so state, outputs and progress can never tear apart. Decoded by
@@ -1102,7 +1102,7 @@ DlqEntryBody { channel: String, error: String, attempts: u32, payload: Option<Ve
 Postcard encodes `Vec`/`String` as a LEB128 varint length + contents, structs
 as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
 
-- `event_time` is what the Procedure's declared clock evaluated to (extracted
+- `event_time` is what the Tasklet's declared clock evaluated to (extracted
   event time under `EventTimeFrom`, wall-clock ms under `WallClock`, the change
   seq under `LogicalClock`); late-input correction and `{:timestamp, ts}`
   time travel resolve against it.
@@ -1112,36 +1112,36 @@ as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
 - A tier-on dead-letter park rides the SAME record as its consumed-offset
   advance, so a crash can never advance the offset while losing the park; the
   controller materializes the DLQ entry after the fsync (idempotent on
-  `entity_key@consumed_offset`) and sends no `ParkPayloadAck` for it.
+  `cell_key@consumed_offset`) and sends no `ParkPayloadAck` for it.
 - On the tier plugin emits never ride the primary stream: the controller
   dispatches them to the `:on_output` chain only after the record's fsync,
-  stamped with `flz.entity`, `flz.seq = <record WAL seq>.<emit ordinal>` and
+  stamped with `flz.cell`, `flz.seq = <record WAL seq>.<emit ordinal>` and
   `flz.epoch`. Effect records are never coalesced at drain time.
 
-### Data-stream payload-id `entity_state_snapshot`
+### Data-stream payload-id `cell_state_snapshot`
 
-Runner → controller. Same frame as `entity_state_change`; `body` is the full
+Runner → controller. Same frame as `cell_state_change`; `body` is the full
 serialized `State` (postcard / Kryo) captured at `seq`. The controller writes
-it to `<entity_key>.snap.<seq>` (`.tmp → fsync → rename`), truncates the WAL
+it to `<cell_key>.snap.<seq>` (`.tmp → fsync → rename`), truncates the WAL
 up to `seq` and clears the in-flight compaction.
 
 ### Data-stream payload-ids `compensation_intent` / `compensation_done`
 
 Runner → controller, workflow saga change-log, same frame as
-`entity_state_change`. `compensation_intent` records a procedure's forward
+`cell_state_change`. `compensation_intent` records a tasklet's forward
 completion (so a crash mid-compensation knows what to undo),
 `compensation_done` a compensation hook's completion (so a resume skips it);
 the controller hands them back as the `has_compensation_*` flags of
 `RestoreInitState`.
 
-### Data-stream payload-id `delete_entity_state`
+### Data-stream payload-id `delete_cell_state`
 
 Runner → controller, dynamic-mode hard delete. The message is the bare
-structured `entity_id_bytes` — no seq, header or crc, so it is **not** the
-`entity_state_change` frame the saga markers reuse. Sent when the runner
-evicts a persistence-enabled dynamic Entity, under the **durable** class (§7):
-a refused write is held and replayed in write order behind that Entity's own
-records, never dropped at the write site. The controller drops the Entity's
+structured `cell_id_bytes` — no seq, header or crc, so it is **not** the
+`cell_state_change` frame the saga markers reuse. Sent when the runner
+evicts a persistence-enabled dynamic Cell, under the **durable** class (§7):
+a refused write is held and replayed in write order behind that Cell's own
+records, never dropped at the write site. The controller drops the Cell's
 WAL, snapshot and outbox files so a later recreate cold-starts, ignores the
 frame for a non-dynamic class, and writes no response frame. The reaper waits
 for none.
@@ -1152,9 +1152,9 @@ Runner → controller, dead-letter park for sessions **off** the
 effectively-once tier. When an invocation exhausts its input channel's retry
 budget (`max_attempts` default 3, exponential backoff ±50 % jitter capped at
 5 s) or returns a non-retryable error, the runner ships this frame and holds
-the Entity until the controller acks the park as durable (`ParkPayloadAck`),
+the Cell until the controller acks the park as durable (`ParkPayloadAck`),
 re-sending every 2 s — park-then-advance, never a drop. Same outer frame as
-`entity_state_change` with a zero header; `body` is the postcard `ParkBody`
+`cell_state_change` with a zero header; `body` is the postcard `ParkBody`
 (`Flezha.SDK.Wire.decode_park_body/1`):
 
 ```text
@@ -1166,17 +1166,17 @@ ParkBody {
 ```
 
 The controller appends the entry to the durable DLQ store
-(`app_data/dlq/<operative_class>/<procedure_id>/`), fsyncs, then acks.
+(`app_data/dlq/<operative_class>/<tasklet_id>/`), fsyncs, then acks.
 Appends are idempotent on origin identity (`channel:sha256(payload)`), so an
 ack-lost re-send never duplicates an entry.
 
 ### Data-stream payload-id `correction_request`
 
-Runner → controller, late-input correction. An Entity saw an input whose
+Runner → controller, late-input correction. A Cell saw an input whose
 extracted event time is behind its event-time high-water but inside the
 declared `correction_window`; only the runner can know that, so detection is
 the runner's half and orchestration the controller's. Same outer frame as
-`park_payload` (zero header, postcard body); the Entity identity rides the
+`park_payload` (zero header, postcard body); the Cell identity rides the
 envelope:
 
 ```text
@@ -1185,24 +1185,24 @@ CorrectionRequestBody { target_event_time: u64 }
 
 Inputs are journaled before they are forwarded, so the late input is already
 in the input log at its arrival offset and the controller re-reads the range.
-Fire-and-forget: concurrent requests per Entity coalesce into one replay, a
+Fire-and-forget: concurrent requests per Cell coalesce into one replay, a
 duplicate costs nothing, and a lost one is re-raised when the input is
 re-delivered. A transport-less run processes the input as an arrival.
 
 The controller marks every input of the re-forwarded slice with
 `flz.replay = "1"` and closes the slice with a **payload-less broadcast
-frame** carrying `flz.replay_end = "1"`. The Entity holds the slice, orders it
+frame** carrying `flz.replay_end = "1"`. The Cell holds the slice, orders it
 by event time and only then dispatches — an arrival-ordered replay would
 recompute the same wrong answer. The end marker is a broadcast because an
-input routes to exactly one Entity by key; a flag on the last input would
-strand every other Entity holding slice members. A `RestoreInitState` clears
+input routes to exactly one Cell by key; a flag on the last input would
+strand every other Cell holding slice members. A `RestoreInitState` clears
 any half-filled replay buffer, and every replay is preceded by a restore.
 
 ### Control command `RestoreInitState` (controller → runner)
 
 ```protobuf
 message RestoreInitState {
-    bytes  entity_id = 1;                // structured entity_id_bytes
+    bytes  cell_id = 1;                // structured cell_id_bytes
     bytes  snapshot_bytes = 2;           // full State, empty when none
     bytes  change_log_bytes = 3;         // WAL tail, on-disk framing below
     bool   has_compensation_intent = 4;  // saga crash-resume markers
@@ -1211,7 +1211,7 @@ message RestoreInitState {
     bytes  snapshot_header = 7;          // the snapshot's stored 16-byte header
 }
 message RestoreInitStateResponse {
-    bytes  entity_id = 1;
+    bytes  cell_id = 1;
     uint64 terminal_seq = 2;
     bool   migrated = 3;                 // a record was read at an older schema version
 }
@@ -1242,76 +1242,76 @@ the wire frame above crcs the **body alone** — two contracts that both say
 
 `snapshot_header` is the snapshot file's stored header, shipped rather than
 stripped: it carries the `schema_version` the snapshot was written at, and
-without it every compacted Entity is unverifiable. It is empty exactly when
+without it every compacted Cell is unverifiable. It is empty exactly when
 `snapshot_bytes` is empty.
 
 The runner resolves every record's header — the snapshot included — against
-the running Procedure's `schema_version` and `min_readable_schema_version`
+the running Tasklet's `schema_version` and `min_readable_schema_version`
 before decoding anything (see "Schema evolution" below), decodes
 `snapshot_bytes` (when non-empty) into `State`, folds the
-change-log records through the Procedure's `apply_change`, and re-arms the
-Entity's change seq to `max(change-log terminal, terminal_seq) + 1` — a
+change-log records through the Tasklet's `apply_change`, and re-arms the
+Cell's change seq to `max(change-log terminal, terminal_seq) + 1` — a
 snapshot-only restore (empty WAL tail after a compaction) has no record to
 derive the seq from, and a seq below the snapshot's would have its next
 Changes refused as duplicates. `RestoreInitStateResponse` returns as
-`raw_data`; the controller blocks the Entity's input until it lands (the
+`raw_data`; the controller blocks the Cell's input until it lands (the
 restore rides the control channel, the replay the data channel) and expects
-the next `entity_state_change` at `seq = terminal_seq + 1`. The proc-journal is
-**not** here — it is instance-scoped and rides `AddOperative.proc_journal`; a
-durable workflow class with no per-Entity state receives no `RestoreInitState`
+the next `cell_state_change` at `seq = terminal_seq + 1`. The task-journal is
+**not** here — it is instance-scoped and rides `AddOperative.task_journal`; a
+durable workflow class with no per-Cell state receives no `RestoreInitState`
 at all.
 
 #### Schema evolution
 
 A record's `schema_version` (header bytes 5..9) is the version of the
-Procedure that wrote it. Per record, against the running Procedure's
+Tasklet that wrote it. Per record, against the running Tasklet's
 `SCHEMA_VERSION` (`V`) and `MIN_READABLE_SCHEMA_VERSION` (`M`, defaulting to
 `V`):
 
 | stamped | outcome |
 |---|---|
 | `== V` | decode with the current codec |
-| `>= M` and `< V` | hand the bytes to the Procedure's migration for that version |
+| `>= M` and `< V` | hand the bytes to the Tasklet's migration for that version |
 | `< M` | refuse — the record predates what this build declares it reads |
 | `> V` | refuse — older code cannot read newer state; a downgrade, not an evolution |
 
 The decision is per record because one WAL legitimately holds both: records
 written before a deploy sit under records written after it. It is made in
-`flz_core` for every SDK, so a host-run Procedure receives only bodies it can
+`flz_core` for every SDK, so a host-run Tasklet receives only bodies it can
 decode at its own version or migrate from a named one, and a refusal never
 crosses to the host.
 
 When any record was migrated, the runner sets `migrated` on the response and
-the controller answers with the `CompactEntity` it already drives on WAL size
+the controller answers with the `CompactCell` it already drives on WAL size
 and age: the next snapshot is written by the running version and the migration
 is paid once rather than on every restore.
 
 `schema_version` and `min_readable_schema_version` are declared **per
-procedure** in the class declaration (`procedures[].schema_version`), never
-class-wide — a class-wide value re-stamps a Procedure's records with a version
+tasklet** in the class declaration (`tasklets[].schema_version`), never
+class-wide — a class-wide value re-stamps a Tasklet's records with a version
 it never declared.
 
-### Control command `CompactEntity` (controller → runner)
+### Control command `CompactCell` (controller → runner)
 
 ```protobuf
-message CompactEntity          { bytes entity_id = 1; }
-message CompactEntityResponse  { bytes entity_id = 1; uint64 snapshot_seq = 2; uint64 snapshot_bytes_size = 3; }
+message CompactCell          { bytes cell_id = 1; }
+message CompactCellResponse  { bytes cell_id = 1; uint64 snapshot_seq = 2; uint64 snapshot_bytes_size = 3; }
 ```
 
-Issued when the Entity's un-snapshotted WAL exceeds its compaction trigger
+Issued when the Cell's un-snapshotted WAL exceeds its compaction trigger
 (`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridable per class through
 `AddOperativeResponse.compact_after_bytes` and per operator), when its oldest
 un-snapshotted record is older than `FLEZHA_COMPACT_AFTER_AGE_MS` (default
 300000; `0` disables), or on `flz state rotate`. The runner drains the
-Entity's pending changes, clones `State` under the Entity's sticky CAS,
-serializes it, ships it as `entity_state_snapshot`, then returns
-`CompactEntityResponse` as `raw_data`. `snapshot_seq` MUST be the seq the
+Cell's pending changes, clones `State` under the Cell's sticky CAS,
+serializes it, ships it as `cell_state_snapshot`, then returns
+`CompactCellResponse` as `raw_data`. `snapshot_seq` MUST be the seq the
 drained state stands at — the writer treats it as a truncation point.
 
-### Control command `EntityMailboxStatus` (controller → runner)
+### Control command `CellMailboxStatus` (controller → runner)
 
 ```protobuf
-message EntityMailboxStatus { bytes entity_id = 1; string status = 2; }   // "full" | "open"
+message CellMailboxStatus { bytes cell_id = 1; string status = 2; }       // "full" | "open"
 ```
 
 One-way back-pressure signal for sessions that are **not** credit-speaking
@@ -1333,18 +1333,18 @@ message CreditWindowAck  { string stream_id = 1; }     // runner → controller,
 message CreditGrant      { string stream_id = 1; uint64 bytes = 2; }
 ```
 
-Offered on the **first** `entity_state_change` frame of a stream attach, so
+Offered on the **first** `cell_state_change` frame of a stream attach, so
 the window resolves per Operative from that frame's class
 (`:credit_window_bytes`, default `:wal_high_watermark_bytes`;
 `:credit_low_watermark_bytes`, default half the window). The runner arms the
 window and returns `CreditWindowAck` echoing `stream_id` as `raw_data`; on
 that ack the controller marks the session credit-speaking, stops sending
-`EntityMailboxStatus` and enforces the per-stream byte ledger. An SDK that
+`CellMailboxStatus` and enforces the per-stream byte ledger. An SDK that
 does not recognise the variant never acks; the offer times out after 10 s and
 the session keeps the legacy behaviour. `FLEZHA_CREDIT_FLOW_CONTROL=false`
 skips the offer entirely.
 
-From the ack on, every `entity_state_change` frame debits its full wire size
+From the ack on, every `cell_state_change` frame debits its full wire size
 before the write; an exhausted window parks the sending thread — park, never
 drop (`credit_parked` in the heartbeat). `CreditGrant` is one-way and minted
 only when appended bytes become durable: on WAL fsync the controller sends one
@@ -1363,100 +1363,100 @@ message ParkPayloadAck { string park_id = 1; }   // echoes ParkBody.park_id
 
 One-way durability ack for a `park_payload` frame, sent only after the DLQ
 entry is fsynced. On receipt the runner wakes the dispatch thread blocked in
-the park, drops the payload and advances the Entity. A runner that never
-receives it keeps the Entity held and re-sends the park — delay, never loss.
+the park, drops the payload and advances the Cell. A runner that never
+receives it keeps the Cell held and re-sends the park — delay, never loss.
 
-### Control command `AddOperative.proc_journal` (controller → runner)
+### Control command `AddOperative.task_journal` (controller → runner)
 
 ```protobuf
-message ProcHandoffItem   { uint32 channel_id = 1; bytes payload = 2; }   // channel codec bytes of one value
-message ProcCommittedProc {
-    uint32 proc_idx = 1; uint32 iter = 2; repeated bytes entities_ran = 3;
-    bool completes = 4; bytes result = 5;          // the procedure's own `ctx.complete`
+message TaskHandoffItem   { uint32 channel_id = 1; bytes payload = 2; }   // channel codec bytes of one value
+message TaskCommittedTask {
+    uint32 task_idx = 1; uint32 iter = 2; repeated bytes cells_ran = 3;
+    bool completes = 4; bytes result = 5;          // the tasklet's own `ctx.complete`
 }
-message ProcEdgeHandoff   { uint32 proc_idx = 1; repeated ProcHandoffItem handoff = 2; }
+message TaskEdgeHandoff   { uint32 task_idx = 1; repeated TaskHandoffItem handoff = 2; }
 
-message ProcJournalState {
-    repeated uint32 committed_proc_idxs = 1;       // committed inside the in-flight iteration — skipped
+message TaskJournalState {
+    repeated uint32 committed_task_idxs = 1;       // committed inside the in-flight iteration — skipped
     uint32 iter = 2;                               // the iteration to resume at
-    repeated ProcHandoffItem handoff = 3;          // previous iteration's terminal batch
-    repeated ProcCommittedProc committed_procs = 4;// every forward commit, for compensation planning
+    repeated TaskHandoffItem handoff = 3;          // previous iteration's terminal batch
+    repeated TaskCommittedTask committed_tasks = 4;// every forward commit, for compensation planning
     uint64 consumed_offset = 5;                    // inbox offset the last committed iteration consumed
     bool   parked = 6;                             // suspension record
     uint64 wake_deadline_ms = 7;
-    repeated ProcCommittedProc rewind_undo = 8;    // unwound by a rewind, not yet compensated
-    repeated ProcEdgeHandoff proc_handoffs = 9;    // in-flight iteration, per committed proc
+    repeated TaskCommittedTask rewind_undo = 8;    // unwound by a rewind, not yet compensated
+    repeated TaskEdgeHandoff task_handoffs = 9;    // in-flight iteration, per committed task
     bool   completed = 10;                         // the last committed iteration ended the instance
     bytes  result = 11;                            // and ended it with this
 }
 ```
 
-Present only when the instance has a non-empty proc-journal. A resumed driver
-skips `committed_proc_idxs`, re-seeds each uncommitted child branch from its
-own parent's edge in `proc_handoffs` (filtered to the channel the child
+Present only when the instance has a non-empty task-journal. A resumed driver
+skips `committed_task_idxs`, re-seeds each uncommitted child branch from its
+own parent's edge in `task_handoffs` (filtered to the channel the child
 consumes — the latest commit's handoff alone would strand a sibling), re-seeds
 iteration N+1 of a handoff-chained loop from `handoff`, and rebuilds the
-compensation planner's input from `committed_procs`. When `completed` is set
-the driver ends the run at once with `result`, and a skipped procedure of the
+compensation planner's input from `committed_tasks`. When `completed` is set
+the driver ends the run at once with `result`, and a skipped tasklet of the
 in-flight iteration whose `completes` is set supplies that iteration's
 completion, since it never runs again to ask. `rewind_undo` lists the
-procedures a rewind unwound that nothing has compensated yet: the driver runs
+tasklets a rewind unwound that nothing has compensated yet: the driver runs
 them through the ordinary compensation planner (reverse iteration, reverse
 chain position) before resuming forward at `iter`, each undo journaling a
 `compensated` entry so the list shrinks across a crash. The rewind itself
 never crosses the wire — the controller writes the `rewound` entry and rebinds
 the instance.
 
-### Control command `ProcCommit` (runner → controller)
+### Control command `TaskCommit` (runner → controller)
 
 ```protobuf
-message ProcOutboxItem {
-    bytes  entity_id = 1;     // wire identity of the producing Entity
-    uint32 seq_in_proc = 2;   // that Entity's emit order within the procedure
+message TaskOutboxItem {
+    bytes  cell_id = 1;     // wire identity of the producing Cell
+    uint32 seq_in_task = 2;   // that Cell's emit order within the tasklet
     string channel = 3;       // producing plugin channel's name
     bytes  payload = 4;       // serialized plugin-bound output
 }
 
-message ProcCommit {
+message TaskCommit {
     string operative_id = 1;
-    uint32 proc_idx = 2;
+    uint32 task_idx = 2;
     uint32 iter = 3;                        // 0 for the single-pass chain
-    repeated bytes entities_ran = 4;        // wire Entity identities
-    repeated ProcHandoffItem handoff = 5;
-    repeated ProcOutboxItem outbox = 6;     // staged plugin output
+    repeated bytes cells_ran = 4;        // wire Cell identities
+    repeated TaskHandoffItem handoff = 5;
+    repeated TaskOutboxItem outbox = 6;     // staged plugin output
     bool compensating = 7;                  // undo record, not forward progress
-    bool completes = 8;                     // this procedure called `ctx.complete`
+    bool completes = 8;                     // this tasklet called `ctx.complete`
     bytes result = 9;                       // with this result
 }
 
-message ProcCommitResponse { string operative_id = 1; uint32 proc_idx = 2; string error = 3; }
+message TaskCommitResponse { string operative_id = 1; uint32 task_idx = 2; string error = 3; }
 ```
 
-Emitted at each procedure barrier of a **durable structured** workflow
-instance: procedure `proc_idx` completed forward on `entities_ran` and released
-the inter-proc handoff batch, serialized through the producing channel's byte
-codec, which the runtime derives and no SDK declares. The driver **blocks** until `ProcCommitResponse` — the
-next procedure must not race ahead of the committed record. Opted-out classes
+Emitted at each tasklet barrier of a **durable structured** workflow
+instance: tasklet `task_idx` completed forward on `cells_ran` and released
+the inter-task handoff batch, serialized through the producing channel's byte
+codec, which the runtime derives and no SDK declares. The driver **blocks** until `TaskCommitResponse` — the
+next tasklet must not race ahead of the committed record. Opted-out classes
 (`PERSISTENCE_ENABLED = false`) skip the barrier and keep the direct
 at-least-once wire path.
 
-`outbox` is the procedure's **staged** plugin-bound output: inside a structured
-procedure `ctx.emit` never reaches the wire; each Entity buffers its serialized
-output and it travels here, so a failed or aborted procedure leaks nothing. The
-controller journals handoff AND outbox in ONE `proc_committed` record and
+`outbox` is the tasklet's **staged** plugin-bound output: inside a structured
+tasklet `ctx.emit` never reaches the wire; each Cell buffers its serialized
+output and it travels here, so a failed or aborted tasklet leaks nothing. The
+controller journals handoff AND outbox in ONE `task_committed` record and
 flushes the outbox only after that fsync. The frame bound applies to the
 combined payload; an oversized handoff + outbox is refused with a non-empty
 `error`.
 
 `compensating = true` marks the undo twin: a `compensate` hook's staged output
-for the already-committed procedure `proc_idx`, journaled as a `compensated`
-entry and flushed with comp-marked keys. It is shipped BEFORE that Entity's
+for the already-committed tasklet `task_idx`, journaled as a `compensated`
+entry and flushed with comp-marked keys. It is shipped BEFORE that Cell's
 `compensation_done` marker, so a crash between the two re-runs the
 (idempotent) hook rather than losing its undo output.
 
-**Reply and durability.** `ProcCommitResponse` rides a controller-initiated
+**Reply and durability.** `TaskCommitResponse` rides a controller-initiated
 `CommandRequest` under the request's `reference_id`, emitted only AFTER the
-`proc_committed` entry is fsynced in the instance's `proc.journal`
+`task_committed` entry is fsynced in the instance's `task.journal`
 (journal-then-ack). The fsync is batched by the `FsyncBatcher` tick and the
 acks of every barrier in the tick — across every instance on the runner — are
 released after that one sync. The control-channel reader never journals: it
@@ -1469,12 +1469,12 @@ run abnormally through the terminal-error path, including saga compensation.
 (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`, default 30 s) is re-sent: the same frame
 goes out under the **same `reference_id`**, after the class's retry backoff, up
 to `barrier_retry_attempts()` / `barrierRetryAttempts()` sends (default 3). The
-controller journals a barrier once by its identity `{proc_idx, iter, epoch}` —
+controller journals a barrier once by its identity `{task_idx, iter, epoch}` —
 the journal writer refuses an append whose 16-byte record header
-(`[epoch u32][type u8][proc_idx u16][iter u32]`, zero-padded) is already in the
+(`[epoch u32][type u8][task_idx u16][iter u32]`, zero-padded) is already in the
 file (`dedup: true`) — and answers a re-send from the existing entry. Only the
 exhausted ladder is mid-run channel loss: the run terminates and crash-resume
-re-drives from the last committed proc (the un-acked proc re-runs —
+re-drives from the last committed task (the un-acked task re-runs —
 at-least-once).
 
 **Outbox flush.** The response is the durable point past which the staged
@@ -1482,7 +1482,7 @@ output may be seen; the controller flushes it right after the ack, in journal
 order, through the same `:on_output` fan-out live workflow output uses,
 stamping each frame with the identity below, and appends `outbox_flushed`. A
 delivery that cannot happen yet is retried, never dropped; on restore every
-`proc_committed` / `compensated` entry without a matching `outbox_flushed` is
+`task_committed` / `compensated` entry without a matching `outbox_flushed` is
 re-driven with its original keys before the resumed run advances — a crash
 between commit and flush duplicates at worst (at-least-once with stable keys)
 and loses nothing.
@@ -1492,8 +1492,8 @@ and loses nothing.
 
 | Key | Value |
 |-----|-------|
-| `flz.entity` | `<instance_id>/<procedure_name>/<entity_key>` of the producing Entity |
-| `flz.seq` | `<proc_idx>.<seq_in_proc>`; an undo output carries a trailing `.1` (`<proc_idx>.<seq_in_proc>.1`) so it never collides with the forward output it reverses |
+| `flz.cell` | `<instance_id>/<tasklet_name>/<cell_key>` of the producing Cell |
+| `flz.seq` | `<task_idx>.<seq_in_task>`; an undo output carries a trailing `.1` (`<task_idx>.<seq_in_task>.1`) so it never collides with the forward output it reverses |
 | `flz.epoch` | the instance's journal epoch: `0` at first start, carried verbatim across crash re-drives, bumped only by a rewind |
 | `channel` | the producing plugin channel's name |
 
@@ -1507,31 +1507,31 @@ message IterCommit {
     string operative_id = 1;
     uint32 iter = 2;
     uint64 consumed_offset = 3;             // durable-inbox offset this iteration consumed
-    repeated ProcHandoffItem handoff = 4;   // the iteration's terminal batch
-    bool completes = 5;                     // a procedure of this iteration called `ctx.complete`
+    repeated TaskHandoffItem handoff = 4;   // the iteration's terminal batch
+    bool completes = 5;                     // a tasklet of this iteration called `ctx.complete`
     bytes result = 6;                       // the resolved result the instance ends with
 }
 message IterCommitResponse { string operative_id = 1; uint32 iter = 2; string error = 3; }
 ```
 
 Emitted at each **iteration** boundary of a looping durable structured
-instance, after the last procedure's `ProcCommit` is acked. A class opts into
+instance, after the last tasklet's `TaskCommit` is acked. A class opts into
 looping with `loop_mode()`: `PerInput` runs one iteration per inbox item,
 `Chained` seeds each iteration from the previous terminal handoff; the default
-`Once` never emits this frame. Every `ProcCommit` inside iteration `N` carries
+`Once` never emits this frame. Every `TaskCommit` inside iteration `N` carries
 `iter = N`, so redo-vs-skip works at both granularities from one scan.
 
 The controller appends ONE `iter_committed(iter, consumed_offset)` entry
 carrying the terminal handoff, fsyncs, and acks under the same batching,
-terminal-error and bounded re-send contract as `ProcCommitResponse` (a re-sent
+terminal-error and bounded re-send contract as `TaskCommitResponse` (a re-sent
 `IterCommit` is journaled once by `{iter, epoch}`). Everything after the ack is
-cleanup: a boundary `CompactEntity` per Entity of the instance, the flush of
+cleanup: a boundary `CompactCell` per Cell of the instance, the flush of
 what the iteration staged, the release of the inbox prefix at or below
-`consumed_offset`, and a cut of the proc-journal below the oldest entry its
+`consumed_offset`, and a cut of the task-journal below the oldest entry its
 fold still needs (the latest `iter_committed`, entries whose outbox is still
 owed, the latest `rewound` marker with its pending undos), deferred until the
 settled prefix exceeds `:record_log_cut_after_bytes` (64 KiB) and skipped for
-a class whose procedures declare `compensate`. The driver enters iteration
+a class whose tasklets declare `compensate`. The driver enters iteration
 `iter + 1` only on success, so a crash re-runs at most the in-flight
 iteration.
 
@@ -1586,13 +1586,13 @@ metadata:
 
 | Key | Value | Stability |
 |-----|-------|-----------|
-| `flz.entity` | `<operative_instance_id>/<procedure_name>/<entity_key>` | replay-stable |
-| `flz.seq` | `<change_seq>.<emit_ordinal>` — the Entity's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation | replay-stable while state advances |
-| `flz.key` | the emitting Entity's own key, or the caller's natural key from `ProcedureCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
+| `flz.cell` | `<operative_instance_id>/<tasklet_name>/<cell_key>` | replay-stable |
+| `flz.seq` | `<change_seq>.<emit_ordinal>` — the Cell's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation | replay-stable while state advances |
+| `flz.key` | the emitting Cell's own key, or the caller's natural key from `TaskletCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
 
 On a keyed channel a plain `emit` / `emit_with_meta` carries the emitting
-Entity's own key — equal to the key its input routed by — and `emit_keyed` is
-for the output whose natural key differs. A single-Entity Procedure has no such
+Cell's own key — equal to the key its input routed by — and `emit_keyed` is
+for the output whose natural key differs. A single-Cell Tasklet has no such
 key and its plain emit fails with `KeyRequiredOnKeyedChannel`; on a non-keyed
 channel `emit_keyed` fails with `KeyNotAllowedOnNonKeyedChannel` — the channel
 declaration is the single source of truth for whether output identity exists.
@@ -1604,9 +1604,9 @@ consumers that upsert on `flz.key`. It is NOT a sufficient handle for exact
 append-only dedup: consecutive invocations that apply no state change can
 produce colliding `<change_seq>.<emit_ordinal>` pairs. Exact dedup needs a
 durable outbox — the effectively-once tier and the workflow outbox both stamp
-`flz.epoch`, and `(flz.entity, flz.seq, flz.epoch)` is the identity a
+`flz.epoch`, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
 conforming sink deduplicates on (the Kafka producer uses `flz.key` as the
-record key and ships `<entity>/<outbox_seq>/<epoch>` in its
+record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 `flezha.dedup_key` header; the Postgres sink guards on `(epoch, seq)`). See
 [`../resilience/data_durability.md`](../resilience/data_durability.md).
 

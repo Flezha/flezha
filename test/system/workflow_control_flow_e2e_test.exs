@@ -3,13 +3,13 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   The durable control flow a structured workflow operative runs, end to end
   against a live reference runner over UDS: a loop that commits per iteration,
   parks when its inbox is empty and rehydrates on the next input; a rewind that
-  compensates back to an earlier iteration and bumps the epoch; the entity
+  compensates back to an earlier iteration and bumps the epoch; the cell
   retry ladder and what it does when it exhausts; a branching tree, whose
   fan-out either joins once or unwinds every branch before their parent; and a
-  loop a procedure ends with `complete`.
+  loop a tasklet ends with `complete`.
 
   All but the last prove controller mechanics rather than a runner, so those
-  cells pin the reference SDK; the completion is each SDK's own, so its cell
+  scenarios pin the reference SDK; the completion is each SDK's own, so its scenario
   runs on the selected runtime. Tagged `:system` (boots real subprocesses) — excluded from the
   default `mix test`; run with:
 
@@ -32,8 +32,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :workflow_crash_resume
@@ -41,7 +41,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   @moduletag timeout: 180_000
 
   describe "durable loop + suspension (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_loop, reference_runtime: true
+    @describetag transport: :uds, scenario: :uds_loop, reference_runtime: true
 
     # `workflow-durable-loop-and-suspension`, end to end on a real runner:
     #
@@ -89,10 +89,10 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       # Each iteration recorded the inbox offset it consumed, and the consumed
       # prefix was released.
       assert consumed_offsets(operative_id) == [1, 2]
-      assert ProcInbox.undelivered(operative_id) == []
+      assert TaskInbox.undelivered(operative_id) == []
 
-      # The iteration boundary compacts every Entity of the instance: the
-      # controller's CompactEntity must resolve a WORKFLOW Entity (not only a
+      # The iteration boundary compacts every Cell of the instance: the
+      # controller's CompactCell must resolve a WORKFLOW Cell (not only a
       # stream one), so a snapshot lands beside the turn WAL.
       assert NodeTestHelper.wait_until(
                fn -> snapshot_count(operative_id, "chat_turn") > 0 end,
@@ -102,7 +102,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
                inspect(File.ls(Path.join(Paths.class_dir(operative_id), "chat_turn")))
 
       assert NodeTestHelper.wait_until(
-               fn -> ProcJournal.restore_state(operative_id).parked end,
+               fn -> TaskJournal.restore_state(operative_id).parked end,
                20_000
              ),
              "the idle loop never parked at its committed boundary"
@@ -137,7 +137,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       send_turn(namespace, operative_id, "mid-crash")
 
       assert NodeTestHelper.wait_until(
-               fn -> ProcInbox.last_offset(operative_id) >= 4 end,
+               fn -> TaskInbox.last_offset(operative_id) >= 4 end,
                20_000
              ),
              "the crashing turn never reached the durable inbox"
@@ -199,15 +199,15 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert journal =~ "iter_committed"
       assert journal =~ "consumed inbox offset:"
       assert journal =~ "parked"
-      assert journal =~ "proc_committed proc_idx=0 iter=3"
+      assert journal =~ "task_committed task_idx=0 iter=3"
 
       # Every turn is consumed now, so the inbox has released all of them: the
       # journal keeps the offsets, the inbox delivers none. The file itself is
       # rewritten once the released prefix is worth its fsync (the cut
       # threshold); a few tiny turns stay on disk, never re-delivered.
-      assert ProcJournal.consumed_offset(operative_id) == 4
-      assert ProcJournal.released_offset(operative_id) == 4
-      assert ProcInbox.undelivered(operative_id) == []
+      assert TaskJournal.consumed_offset(operative_id) == 4
+      assert TaskJournal.released_offset(operative_id) == 4
+      assert TaskInbox.undelivered(operative_id) == []
     end
 
     # Suspension is durable STATE, not a live process: a controller-side restart
@@ -253,13 +253,13 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
     end
 
-    # The same park/rehydrate cycle for a class with NO per-Entity state. It has
-    # no Entity WAL, so the controller ships no `RestoreInitState` on the
-    # rehydrating bind — the proc-journal reaches the driver only because it rides
+    # The same park/rehydrate cycle for a class with NO per-Cell state. It has
+    # no Cell WAL, so the controller ships no `RestoreInitState` on the
+    # rehydrating bind — the task-journal reaches the driver only because it rides
     # `AddOperative`. Delivered on the restore frame instead, turn two commits at
     # iteration 0 again, collides with iteration 0's `outbox_flushed`, and its
     # reply is journaled but never delivered.
-    test "a loop with no per-Entity state resumes at its iteration and still delivers", ctx do
+    test "a loop with no per-Cell state resumes at its iteration and still delivers", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
       namespace = unique("workflow_loop_stateless")
       operative_id = unique("stateless_loop_workflow")
@@ -285,7 +285,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
              "the idle stateless loop never parked"
 
       # Nothing on disk to restore — the journal is the only thing carried over.
-      assert Replay.resume_entity_count(:workflow, operative_id) == 0
+      assert Replay.resume_cell_count(:workflow, operative_id) == 0
 
       send_turn(namespace, operative_id, "two")
 
@@ -298,12 +298,12 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
-  describe "a procedure ends the loop (uds)" do
+  describe "a tasklet ends the loop (uds)" do
     # Not pinned to the reference SDK: the completion is each runtime's own
     # `ctx.complete`, and every test app's `chat_loop_workflow` ends itself on
-    # the turn `bye`, completing with the number of turns its first procedure
+    # the turn `bye`, completing with the number of turns its first tasklet
     # recorded.
-    @describetag transport: :uds, cell: :uds_complete
+    @describetag transport: :uds, scenario: :uds_complete
 
     test "turns then bye end the instance ok with the turn count, and it does not park after",
          ctx do
@@ -341,7 +341,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert replies(collector, 4, operative_id) ==
                ["reply:one", "reply:two", "reply:three", "reply:bye"]
 
-      {:ok, entries} = ProcJournal.read(operative_id)
+      {:ok, entries} = TaskJournal.read(operative_id)
       assert committed_iters(operative_id) == [0, 1, 2, 3]
       last = entries |> Enum.filter(&(&1.type == :iter_committed)) |> List.last()
       assert last.payload.completion == "3"
@@ -352,13 +352,13 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   end
 
   describe "loop rewind (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_rewind, reference_runtime: true
+    @describetag transport: :uds, scenario: :uds_rewind, reference_runtime: true
 
     # `workflow-loop-rewind`, end to end on a real runner: three chat turns
     # commit, the operator rewinds to iteration 0, and
     #
-    #   * iterations 2 and 1 are compensated in that order — the reply procedure's
-    #     undo handle is in Entity State, so it retracts the turns in reverse;
+    #   * iterations 2 and 1 are compensated in that order — the reply tasklet's
+    #     undo handle is in Cell State, so it retracts the turns in reverse;
     #   * the loop resumes waiting at iteration 1, and the next message sent is
     #     processed as that iteration (a rewind is undo-and-continue: a committed
     #     turn's input is not retained past its commit);
@@ -390,7 +390,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
                inspect(committed_iters(operative_id))
 
       assert replies(collector, 3, operative_id) == ["reply:alpha", "reply:beta", "reply:gamma"]
-      assert ProcJournal.current_epoch(operative_id) == 0
+      assert TaskJournal.current_epoch(operative_id) == 0
       assert consumed_offsets(operative_id) == [1, 2, 3]
 
       # --- rewind to iteration 0 ---
@@ -404,14 +404,14 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       # The journal folded back: only iteration 0 is committed, and the epoch is
       # bumped so everything from here on supersedes what the unwound turns wrote.
       assert NodeTestHelper.wait_until(
-               fn -> ProcJournal.current_epoch(operative_id) == 1 end,
+               fn -> TaskJournal.current_epoch(operative_id) == 1 end,
                20_000
              )
 
       # --- the loop unwinds the two turns above the target ---
       # Only iteration 0 remains committed; iterations 2 and 1 are undone.
       assert NodeTestHelper.wait_until(
-               fn -> ProcJournal.committed_iterations(operative_id) == [0] end,
+               fn -> TaskJournal.committed_iterations(operative_id) == [0] end,
                60_000
              ),
              "the journal did not fold back to the rewound-to iteration"
@@ -423,7 +423,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       send_turn(namespace, operative_id, "delta")
 
       assert NodeTestHelper.wait_until(
-               fn -> ProcJournal.committed_iterations(operative_id) == [0, 1] end,
+               fn -> TaskJournal.committed_iterations(operative_id) == [0, 1] end,
                90_000
              ),
              "the resumed loop did not run the next message as iteration 1"
@@ -446,35 +446,35 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
-  describe "entity retry (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_retry, reference_runtime: true
+  describe "cell retry (reference/uds)" do
+    @describetag transport: :uds, scenario: :uds_retry, reference_runtime: true
 
-    # `workflow-entity-retry` on a live runner: `retry_flaky` fails its first
-    # attempt, the per-entity ladder re-runs it in place, and the procedure
+    # `workflow-cell-retry` on a live runner: `retry_flaky` fails its first
+    # attempt, the per-cell ladder re-runs it in place, and the tasklet
     # commits normally — nothing compensates and the run reports `ok`.
-    test "a transient entity failure is retried and the run completes", ctx do
+    test "a transient cell failure is retried and the run completes", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id = drive_retry_run(ctx, collector, "1", "ok")
 
-      # `res:...` is proc A's forward output; the terminal marker names the attempt
-      # the flaky entity finally succeeded on — 2 ⇒ the ladder absorbed the
+      # `res:...` is task A's forward output; the terminal marker names the attempt
+      # the flaky cell finally succeeded on — 2 ⇒ the ladder absorbed the
       # first failure.
       assert [{~s(res:{"seed":"go"}), _}, {marker, _}] = await_outputs(collector, 2, operative_id)
       assert marker == ~s(attempt:2:{"seed":"go"})
 
-      {:ok, entries} = ProcJournal.read(operative_id)
-      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
-      assert committed == [0, 1], "the retried procedure must still commit its boundary"
+      {:ok, entries} = TaskJournal.read(operative_id)
+      committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+      assert committed == [0, 1], "the retried tasklet must still commit its boundary"
 
       refute Enum.any?(entries, &(&1.type == :compensated)),
              "a recovered retry must not compensate"
     end
 
     # Arming more failures than the ladder has attempts exhausts it: the original
-    # error is terminal, proc A rolls back (its undo record is journaled + flushed),
+    # error is terminal, task A rolls back (its undo record is journaled + flushed),
     # and the run reports `error` — the pre-change failure path, unchanged.
-    test "a persistent entity failure exhausts the ladder, compensates and errors", ctx do
+    test "a persistent cell failure exhausts the ladder, compensates and errors", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id = drive_retry_run(ctx, collector, "99", "error")
@@ -482,19 +482,19 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert [{~s(res:{"seed":"go"}), _}, {"res:undone", _}] =
                await_outputs(collector, 2, operative_id)
 
-      {:ok, entries} = ProcJournal.read(operative_id)
+      {:ok, entries} = TaskJournal.read(operative_id)
 
-      assert [%{type: :compensated, proc_idx: 0}] =
+      assert [%{type: :compensated, task_idx: 0}] =
                Enum.filter(entries, &(&1.type == :compensated)),
              "the exhausted ladder did not run the saga rollback"
 
-      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
-      assert committed == [0], "the failing procedure must never commit"
+      committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+      assert committed == [0], "the failing tasklet must never commit"
     end
   end
 
   describe "branching tree (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_branch, reference_runtime: true
+    @describetag transport: :uds, scenario: :uds_branch, reference_runtime: true
 
     # The chain's args are the serialized `init_values` the harness starts with.
     @seed ~s({"seed":"go"})
@@ -527,17 +527,17 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert Enum.count(delivered, &(&1 == "c:#{@seed}")) == 1,
              "the sibling branch had already committed: it must not re-run"
 
-      {:ok, entries} = ProcJournal.read(operative_id)
-      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+      {:ok, entries} = TaskJournal.read(operative_id)
+      committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
 
       assert committed == [0, 1, 2, 3],
-             "each procedure commits exactly once across the crash: #{inspect(committed)}"
+             "each tasklet commits exactly once across the crash: #{inspect(committed)}"
 
       # The SDK declares the leaf set, so the controller derives DONE from the
       # journal alone — no runner to ask.
-      leaf_procs = ClassRegistry.leaf_procs(operative_id)
-      assert leaf_procs == [2, 3], "BranchC and BranchD are the tree's leaves"
-      assert ProcJournal.complete?(operative_id, leaf_procs)
+      leaf_tasks = ClassRegistry.leaf_tasks(operative_id)
+      assert leaf_tasks == [2, 3], "BranchC and BranchD are the tree's leaves"
+      assert TaskJournal.complete?(operative_id, leaf_tasks)
 
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
@@ -550,7 +550,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
     # A failure under one branch, after BOTH branches committed: the rollback is
     # reverse-topological — the sibling leaf and the failing branch's committed
-    # procedure unwind before the root they share.
+    # tasklet unwind before the root they share.
     test "a failure under one branch unwinds both branches before their parent", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
@@ -571,21 +571,21 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       await_status(operative_id, "error", 30_000)
 
-      # Forward output of the three completed procedures, then their undo — the
+      # Forward output of the three completed tasklets, then their undo — the
       # deepest first, the shared root last.
       delivered = collector |> await_outputs(6, operative_id) |> Enum.map(&elem(&1, 0))
 
       assert Enum.drop(delivered, 3) == ["undo-c", "b:undo-b", "a:undo-a"],
              "descendants before ancestors: #{inspect(delivered)}"
 
-      {:ok, entries} = ProcJournal.read(operative_id)
-      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+      {:ok, entries} = TaskJournal.read(operative_id)
+      committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
       assert committed == [0, 1, 2], "the failing leaf never commits"
 
-      compensated = for %{type: :compensated, proc_idx: idx} <- entries, do: idx
+      compensated = for %{type: :compensated, task_idx: idx} <- entries, do: idx
       assert Enum.sort(compensated) == [0, 1, 2]
 
-      refute ProcJournal.complete?(operative_id, ClassRegistry.leaf_procs(operative_id)),
+      refute TaskJournal.complete?(operative_id, ClassRegistry.leaf_tasks(operative_id)),
              "a leaf that never committed leaves the operative incomplete"
     end
   end
@@ -593,14 +593,14 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   # The crash point of `branch_workflow`: the root and BOTH its branches have
   # committed, and only the blocked grandchild is outstanding.
   defp branch_fanned_out?(operative_id) do
-    case ProcJournal.restore_state(operative_id) do
-      %{committed_proc_idxs: [0, 1, 2]} -> true
+    case TaskJournal.restore_state(operative_id) do
+      %{committed_task_idxs: [0, 1, 2]} -> true
       _ -> false
     end
   end
 
   # Start `retry_workflow` on a fresh runner with `failures` armed on the flaky
-  # entity, and wait for the run's terminal status.
+  # cell, and wait for the run's terminal status.
   defp drive_retry_run(ctx, collector, failures, terminal_status) do
     namespace = unique("workflow_retry")
     operative_id = unique("retry_workflow")
@@ -635,12 +635,12 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   end
 
   defp committed_iters(operative_id) do
-    {:ok, entries} = ProcJournal.read(operative_id)
+    {:ok, entries} = TaskJournal.read(operative_id)
     for %{type: :iter_committed, iter: iter} <- entries, do: iter
   end
 
   defp consumed_offsets(operative_id) do
-    {:ok, entries} = ProcJournal.read(operative_id)
+    {:ok, entries} = TaskJournal.read(operative_id)
     for %{type: :iter_committed, payload: %{consumed_offset: o}} <- entries, do: o
   end
 
@@ -651,21 +651,21 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
-  # Count change-log records in a procedure's retained WAL file(s). The WAL is
+  # Count change-log records in a tasklet's retained WAL file(s). The WAL is
   # a stream of `<seq::64><len::32><body::len><crc::32>` records.
-  defp snapshot_count(operative_id, procedure),
-    do: length(Paths.snapshot_paths({operative_id, procedure, ""}))
+  defp snapshot_count(operative_id, tasklet),
+    do: length(Paths.snapshot_paths({operative_id, tasklet, ""}))
 
-  # Distinct Changes applied to the keyless Entity: the seqs still in its WAL
+  # Distinct Changes applied to the keyless Cell: the seqs still in its WAL
   # plus everything its latest snapshot folded (seq 0..snapshot_seq).
-  defp change_count(operative_id, procedure) do
+  defp change_count(operative_id, tasklet) do
     folded =
-      case Paths.snapshot_paths({operative_id, procedure, ""}) do
+      case Paths.snapshot_paths({operative_id, tasklet, ""}) do
         [] -> MapSet.new()
         snaps -> snaps |> List.last() |> elem(0) |> then(&MapSet.new(0..&1//1))
       end
 
-    [Paths.class_dir(operative_id), procedure, "*.wal"]
+    [Paths.class_dir(operative_id), tasklet, "*.wal"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.flat_map(fn path -> wal_seqs(File.read!(path), []) end)

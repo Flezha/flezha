@@ -54,7 +54,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     %{namespace: namespace}
   end
 
-  @tag capability: :entity_timers, skip: FlezhaTest.SystemCase.deferral(:entity_timers)
+  @tag capability: :cell_timers, skip: FlezhaTest.SystemCase.deferral(:cell_timers)
   test "a runner evicted while alive keeps its copy, and the copy is refused when it speaks",
        %{namespace: namespace} do
     # A must notice, once resumed, that its session ended. The controller's end
@@ -80,8 +80,8 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
     # A's copy records the touch and arms its 4 s timer.
     send_input(namespace, id, "t1")
-    entity = await_entity(id)
-    seq_on_a = await_seq_change(entity, -1)
+    cell = await_cell(id)
+    seq_on_a = await_seq_change(cell, -1)
 
     # The controller judges A dead while the process is alive, and moves the
     # operative to B.
@@ -93,9 +93,9 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
     # The owner advances the lineage by two records.
     send_input(namespace, id, "t2")
-    seq_after_t2 = await_seq_change(entity, seq_on_a)
+    seq_after_t2 = await_seq_change(cell, seq_on_a)
     send_input(namespace, id, "t3")
-    owner_seq = await_seq_change(entity, seq_after_t2)
+    owner_seq = await_seq_change(cell, seq_after_t2)
 
     # A resumes: it reconnects under a fresh session token and the same stable
     # identity, still holding its copy, whose timer fires.
@@ -122,16 +122,16 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     # operative, so none reached the operative's sinks, and the owner's lineage
     # was never rewound. B's own firing of the restored timer may advance it.
     assert routed_by(runner_a2, id) == [], "the copy's session routed outputs for #{id}"
-    assert last_persisted_seq(entity) >= owner_seq, "the owner's WAL lineage was rewound"
+    assert last_persisted_seq(cell) >= owner_seq, "the owner's WAL lineage was rewound"
 
     # The copy's frames are counted, and it is reported and told to stop once.
     assert refused_frames(runner_a2) >= 1
     assert [%{operative_id: ^id}] = refusals(runner_a2)
 
     # The owner keeps its lineage and keeps advancing it.
-    persisted = last_persisted_seq(entity)
+    persisted = last_persisted_seq(cell)
     send_input(namespace, id, "t4")
-    assert await_seq_change(entity, persisted) > persisted
+    assert await_seq_change(cell, persisted) > persisted
   end
 
   test "a reconnect under the same stable identity re-points the operative's Overwatch",
@@ -199,23 +199,23 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   defp send_input(namespace, id, input),
     do: OperativeManager.send_io(id, namespace, input, %{"input_type" => "2"})
 
-  defp await_entity(id) do
-    assert wait_until(fn -> Paths.entities_of(id) != [] end, 30_000),
-           "the operative persisted no entity"
+  defp await_cell(id) do
+    assert wait_until(fn -> Paths.cells_of(id) != [] end, 30_000),
+           "the operative persisted no cell"
 
-    [entity] = Paths.entities_of(id)
-    entity
+    [cell] = Paths.cells_of(id)
+    cell
   end
 
-  defp await_seq_change(entity, previous) do
-    assert wait_until(fn -> last_persisted_seq(entity) not in [previous, nil] end, 30_000),
+  defp await_seq_change(cell, previous) do
+    assert wait_until(fn -> last_persisted_seq(cell) not in [previous, nil] end, 30_000),
            "the WAL never advanced past #{previous}"
 
-    last_persisted_seq(entity)
+    last_persisted_seq(cell)
   end
 
-  defp last_persisted_seq(entity) do
-    case Flezha.State.Supervisor.lookup(entity) do
+  defp last_persisted_seq(cell) do
+    case Flezha.State.Supervisor.lookup(cell) do
       {:ok, writer} -> WalWriter.last_persisted_seq(writer)
       :error -> nil
     end

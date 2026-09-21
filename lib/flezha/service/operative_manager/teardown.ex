@@ -19,14 +19,14 @@ defmodule Flezha.Service.OperativeManager.Teardown do
   @typedoc """
   The `:operative` walk's target: the operative, the runner it is bound to (or
   `nil`), whether its state stays on disk (a rescale moving it), and the
-  Entity count its start allocated.
+  Cell count its start allocated.
   """
   @type target :: %{
           namespace: binary(),
           operative_id: binary(),
           runner_id: binary() | nil,
           preserve_state?: boolean(),
-          entity_count: non_neg_integer()
+          cell_count: non_neg_integer()
         }
 
   @impl Flezha.Shutdown.Step
@@ -70,20 +70,20 @@ defmodule Flezha.Service.OperativeManager.Teardown do
   end
 
   # A stop that is a move — a rescale taking the group down to redistribute
-  # its Entities — keeps the files: they are the state about to be handed to
+  # its Cells — keeps the files: they are the state about to be handed to
   # another member, not garbage.
   defp state_dir_step(%{preserve_state?: true}, _budget), do: :ok
 
   defp state_dir_step(%{operative_id: operative_id}, _budget),
     do: delete_operative_state_dir(operative_id)
 
-  # Released symmetrically with the start: the operative, and the Entities its
+  # Released symmetrically with the start: the operative, and the Cells its
   # class declared.
-  defp quota_step(%{namespace: namespace, entity_count: count}, _budget) do
+  defp quota_step(%{namespace: namespace, cell_count: count}, _budget) do
     _ = Quotas.record_deallocation(namespace, :max_operatives, 1)
 
     if count > 0,
-      do: _ = Quotas.record_deallocation(namespace, :max_entities_per_operative, count)
+      do: _ = Quotas.record_deallocation(namespace, :max_cells_per_operative, count)
 
     :ok
   end
@@ -134,7 +134,7 @@ defmodule Flezha.Service.OperativeManager.Teardown do
 
   # On explicit stop, delete the on-disk state directories owned by the
   # operative. The operative_id is used as the operative_class identifier — the SDK
-  # convention is that each operative's entity frames carry the operative_id
+  # convention is that each operative's cell frames carry the operative_id
   # as operative_class. A finished workflow operative keeps its state and
   # completion record for the retention window so the outcome stays
   # inspectable; `Flezha.State.Retention` reclaims it once the window elapses.

@@ -6,7 +6,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
   Two things only a live handshake can show. The peer's DER certificate reaches
   the connect path, which is the input `Flezha.AuthN.Cert` was written for and
   never had; and the certificate this deployment issues carries no SPIFFE `/ns/`
-  entity, so the namespace comes from the presented credential and a runner
+  cell, so the namespace comes from the presented credential and a runner
   holding another namespace's credential is refused on QUIC exactly as on UDS.
   """
   # async: false: writes Application env; Mimic global mode; the live transport.
@@ -69,7 +69,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
       assert is_binary(der), "a QUIC control stream must answer the peer's DER certificate"
 
       # The certificate is the one this deployment issues: a real principal, and
-      # no `/ns/` entity, which is why the credential is what proves the
+      # no `/ns/` cell, which is why the credential is what proves the
       # namespace here.
       assert {:ok, principal} = Cert.principal_from_peer(der)
       assert principal =~ "flezha-runner"

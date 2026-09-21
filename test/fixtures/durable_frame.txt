@@ -81,7 +81,7 @@ lang | 7 | python
 # condition and is identical in both cores, which is what lets a caller match on
 # the text without knowing which runtime refused.
 #
-# `<floor>` is the floor the refusal names: the one the procedure declared, also
+# `<floor>` is the floor the refusal names: the one the tasklet declared, also
 # when it is above the running version, which then reads that version only.
 
 schema | 1 | 1 | 1 | decode

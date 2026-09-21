@@ -67,7 +67,7 @@ The partition function SHALL be `group(key) = fnv1a128(key_bytes) mod 256`, usin
 - **THEN** the members' ranges partition `0..255` with no gap and no overlap
 
 ### Requirement: Partition identity SHALL reach the SDK via additive AddOperative fields
-`AddOperative` SHALL carry `partition_index`, `partition_count`, `key_group_from`, `key_group_to` as additive proto fields whose zero values mean "unpartitioned". Partition identity SHALL NOT ride `init_values` (its stream-side namespace is owned by Procedure names). The migrate-time AddOperative SHALL carry the same fields, closing the existing opts-drop on `Lifecycle.migrate_operative/1` for partition identity.
+`AddOperative` SHALL carry `partition_index`, `partition_count`, `key_group_from`, `key_group_to` as additive proto fields whose zero values mean "unpartitioned". Partition identity SHALL NOT ride `init_values` (its stream-side namespace is owned by Tasklet names). The migrate-time AddOperative SHALL carry the same fields, closing the existing opts-drop on `Lifecycle.migrate_operative/1` for partition identity.
 
 #### Scenario: A partition member's bind carries its range
 - **WHEN** `ohlc#p1` of 3 binds to a runner
@@ -82,29 +82,29 @@ The partition function SHALL be `group(key) = fnv1a128(key_bytes) mod 256`, usin
 - **THEN** the migrate-time AddOperative carries the same partition fields and the guard re-arms on the new runner
 
 ### Requirement: The SDK SHALL refuse a mis-routed key on its first frame
-When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed entity key hashes into the partition's own key-group range. A miss SHALL take the park path with an error naming the key, its group, the owning partition, and the contract ("the routing item / flz.key must equal the key_by result") — before any state for that key is created or modified. When `partition_count < 2` the check SHALL cost no more than one comparison.
+When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed cell key hashes into the partition's own key-group range. A miss SHALL take the park path with an error naming the key, its group, the owning partition, and the contract ("the routing item / flz.key must equal the key_by result") — before any state for that key is created or modified. When `partition_count < 2` the check SHALL cost no more than one comparison.
 
 #### Scenario: Mis-routed frame parks loudly
 - **WHEN** a frame whose key hashes to a group outside the member's range is dispatched
-- **THEN** the input is parked with the named contract error and no entity state is created or modified for it
+- **THEN** the input is parked with the named contract error and no cell state is created or modified for it
 
 #### Scenario: Correctly routed frames are unaffected
 - **WHEN** every arriving key hashes into the member's range
 - **THEN** dispatch behavior and output are identical to an unpartitioned operative
 
 ### Requirement: Partitioning SHALL be refused for a keyless topology
-A class with no keyed procedure (neither `key_by` nor declared entity keys on any entry-fed procedure) SHALL NOT run partitioned: splitting a single unkeyed entity across N members would fold each member's input slice into a private copy of "the one" state — N divergent partial truths, silently. Because the topology is SDK-owned (key closures are compiled code, never on the wire), the authoritative refusal SHALL live in the SDK at the AddOperative boundary: when `partition_count ≥ 2` and the topology has no keyed procedure, the SDK SHALL refuse the AddOperative with an error naming `key_by` (`PartitionsWithoutKeyedProcedure`). The controller SHALL treat that refusal as a member start failure (group rollback, error surfaced to the caller). Additionally, the class SHALL declare its keyedness via the existing `AddOperativeResponse.metadata` → `ClassRegistry` declaration seam, so a later partitioned start of a known-keyless class is refused at the controller before any member starts. A statically keyed topology (declared entity keys, no `key_by`) SHALL be accepted; members' out-of-range static entities simply receive no input.
+A class with no keyed tasklet (neither `key_by` nor declared cell keys on any entry-fed tasklet) SHALL NOT run partitioned: splitting a single unkeyed cell across N members would fold each member's input slice into a private copy of "the one" state — N divergent partial truths, silently. Because the topology is SDK-owned (key closures are compiled code, never on the wire), the authoritative refusal SHALL live in the SDK at the AddOperative boundary: when `partition_count ≥ 2` and the topology has no keyed tasklet, the SDK SHALL refuse the AddOperative with an error naming `key_by` (`PartitionsWithoutKeyedTasklet`). The controller SHALL treat that refusal as a member start failure (group rollback, error surfaced to the caller). Additionally, the class SHALL declare its keyedness via the existing `AddOperativeResponse.metadata` → `ClassRegistry` declaration seam, so a later partitioned start of a known-keyless class is refused at the controller before any member starts. A statically keyed topology (declared cell keys, no `key_by`) SHALL be accepted; members' out-of-range static cells simply receive no input.
 
 #### Scenario: First partitioned start of a keyless class fails at bind, loudly
-- **WHEN** `--partitions 3` is used with a class whose procedures declare no keys and no `key_by`
-- **THEN** the first member's AddOperative is refused with `PartitionsWithoutKeyedProcedure`, any already-started members are stopped, and the CLI receives the SDK's error naming `key_by`
+- **WHEN** `--partitions 3` is used with a class whose tasklets declare no keys and no `key_by`
+- **THEN** the first member's AddOperative is refused with `PartitionsWithoutKeyedTasklet`, any already-started members are stopped, and the CLI receives the SDK's error naming `key_by`
 
 #### Scenario: Repeat start of a known-keyless class fails immediately
 - **WHEN** the same class has bound before (its keyedness declaration is in the ClassRegistry) and a partitioned start is attempted
 - **THEN** the controller refuses before starting any member, with the same named error
 
 #### Scenario: Statically keyed classes partition normally
-- **WHEN** a class declares static entity keys and no `key_by` and is started with `--partitions 2`
+- **WHEN** a class declares static cell keys and no `key_by` and is started with `--partitions 2`
 - **THEN** the start succeeds and each member serves only the declared keys whose groups fall in its range
 
 ### Requirement: Group plugin configs SHALL fan out per member with partition opts injected
@@ -146,7 +146,7 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 - **THEN** the missing member's instance is enabled, the two existing instances are untouched, and the command exits 0 reporting one enabled and two already enabled
 
 ### Requirement: The CLI SHALL present the group as one logical operative
-`flz operative list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operative info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operative stop <group>` SHALL stop all members. `flz state get <group>/<procedure>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; procedure-level and selector-less reads SHALL fan out over members and merge.
+`flz operative list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operative info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operative stop <group>` SHALL stop all members. `flz state get <group>/<tasklet>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; tasklet-level and selector-less reads SHALL fan out over members and merge.
 
 #### Scenario: List shows one row
 - **WHEN** `ohlc` runs with 3 partitions
@@ -157,11 +157,11 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 - **THEN** `flz operative info` reports the exact gap/overlap as a warning rather than silently showing partial data
 
 #### Scenario: Keyed state read resolves the owner
-- **WHEN** `flz state get ohlc/<procedure>/BTC-USD` is issued
-- **THEN** the controller hashes the key, routes to the member owning that group, and returns that member's live entity state
+- **WHEN** `flz state get ohlc/<tasklet>/BTC-USD` is issued
+- **THEN** the controller hashes the key, routes to the member owning that group, and returns that member's live cell state
 
 ### Requirement: One partition's entire state SHALL live on one controller node
-A partition, being one ordinary operative instance, SHALL keep its whole durable state (input log, entity WALs, snapshots, DLQ entries) on the controller node that owns it. No mechanism introduced by this capability may split one member's entities across controller nodes.
+A partition, being one ordinary operative instance, SHALL keep its whole durable state (input log, cell WALs, snapshots, DLQ entries) on the controller node that owns it. No mechanism introduced by this capability may split one member's cells across controller nodes.
 
 #### Scenario: Partition placement moves state atomically per member
 - **WHEN** ProcessHub migrates a member to another controller node
@@ -169,14 +169,14 @@ A partition, being one ordinary operative instance, SHALL keep its whole durable
 
 ### Requirement: A partitioned start over an existing group SHALL converge to N by starting only the missing members
 
-When `flz operative start <factory> --id <id> --partitions N` targets an id whose group already has live members, the start SHALL converge instead of refusing: it SHALL start only the members whose indices are absent, iff every surviving member's cspec-declared identity matches the request: declared `partitions` equals N AND the stored range equals the recomputed `Partition.ranges(N)` slice for that member's index. On any mismatch the command SHALL refuse before starting anything, naming the mismatching member, its declared partition count, and `flz operative scale` as the remedy. Converge SHALL never change N, because changing N moves Entity state and start never does. A newly-started missing member SHALL receive the fan-out of the supplied `--plugins` config exactly as a fresh group start would; surviving members and their live plugin sets SHALL NOT be touched. A missing member racing into existence mid-run (concurrent converge, reconcile, or Convergence bind) SHALL be treated as already present, not as a failure. The command SHALL report started and already-running member ids distinctly; a fully-present group SHALL degenerate to the single-start no-op (exit 0, nothing started). Quota SHALL be preflighted on the missing count only. A fresh start (no live members) SHALL behave byte-identically to a start of a group that never existed, including the all-or-nothing rollback, which in every mode stops only members the current run started.
+When `flz operative start <factory> --id <id> --partitions N` targets an id whose group already has live members, the start SHALL converge instead of refusing: it SHALL start only the members whose indices are absent, iff every surviving member's cspec-declared identity matches the request: declared `partitions` equals N AND the stored range equals the recomputed `Partition.ranges(N)` slice for that member's index. On any mismatch the command SHALL refuse before starting anything, naming the mismatching member, its declared partition count, and `flz operative scale` as the remedy. Converge SHALL never change N, because changing N moves Cell state and start never does. A newly-started missing member SHALL receive the fan-out of the supplied `--plugins` config exactly as a fresh group start would; surviving members and their live plugin sets SHALL NOT be touched. A missing member racing into existence mid-run (concurrent converge, reconcile, or Convergence bind) SHALL be treated as already present, not as a failure. The command SHALL report started and already-running member ids distinctly; a fully-present group SHALL degenerate to the single-start no-op (exit 0, nothing started). Quota SHALL be preflighted on the missing count only. A fresh start (no live members) SHALL behave byte-identically to a start of a group that never existed, including the all-or-nothing rollback, which in every mode stops only members the current run started.
 
 Converging needs the group's id. A partitioned start with no `--id` generates a base that names no existing group, so it SHALL always materialize a fresh group and SHALL never converge one.
 
 #### Scenario: An under-membered group is healed by re-running the start
 
 - **WHEN** a 3-member group has live members `demo#p0` and `demo#p1` (declared `partitions: 3`) and `flz operative start <factory> --id demo --partitions 3` is re-run
-- **THEN** only `demo#p2` is started, it restores its Entity state from its on-disk WAL at bind, the two survivors observe no stop or rebind, and the command exits 0 reporting one started and two already-running members
+- **THEN** only `demo#p2` is started, it restores its Cell state from its on-disk WAL at bind, the two survivors observe no stop or rebind, and the command exits 0 reporting one started and two already-running members
 
 #### Scenario: A fully-present group re-run is a quiet no-op
 
@@ -200,7 +200,7 @@ Converging needs the group's id. A partitioned start with no `--id` generates a 
 
 ### Requirement: Group-base and singleton id collisions SHALL be refused in both directions
 
-A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, procedure-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused.
+A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused.
 
 #### Scenario: A plain start of a group base is refused
 

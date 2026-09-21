@@ -25,27 +25,27 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::flusher::SendFrameFn;
 
-/// A per-Entity change record.
-pub const ENTITY_STATE_CHANGE_PAYLOAD_ID: &str = "entity_state_change";
+/// A per-Cell change record.
+pub const CELL_STATE_CHANGE_PAYLOAD_ID: &str = "cell_state_change";
 
-/// An effect record (effectively-once tier): `entity_state_change`'s frame
+/// An effect record (effectively-once tier): `cell_state_change`'s frame
 /// with a `format_id = 2` header and an `EffectRecordBody`.
-pub const ENTITY_EFFECT_RECORD_PAYLOAD_ID: &str = "entity_effect_record";
+pub const CELL_EFFECT_RECORD_PAYLOAD_ID: &str = "cell_effect_record";
 
-/// The dynamic-mode hard delete; the body is the `entity_id` bytes.
-pub const DELETE_ENTITY_STATE_PAYLOAD_ID: &str = "delete_entity_state";
+/// The dynamic-mode hard delete; the body is the `cell_id` bytes.
+pub const DELETE_CELL_STATE_PAYLOAD_ID: &str = "delete_cell_state";
 
-/// The saga markers: a procedure's completion, and a compensation hook's.
+/// The saga markers: a tasklet's completion, and a compensation hook's.
 pub const COMPENSATION_INTENT_PAYLOAD_ID: &str = "compensation_intent";
 pub const COMPENSATION_DONE_PAYLOAD_ID: &str = "compensation_done";
 
-/// A tier-off park: `entity_state_change`'s frame with a `ParkBody`,
+/// A tier-off park: `cell_state_change`'s frame with a `ParkBody`,
 /// answered by `ParkPayloadAck` once fsynced.
 pub const PARK_PAYLOAD_PAYLOAD_ID: &str = "park_payload";
 
 /// A compaction snapshot at a `change_seq`; the controller truncates the WAL
 /// up to it.
-pub const ENTITY_STATE_SNAPSHOT_PAYLOAD_ID: &str = "entity_state_snapshot";
+pub const CELL_STATE_SNAPSHOT_PAYLOAD_ID: &str = "cell_state_snapshot";
 
 const ENV_RING_CAPACITY: &str = "FLEZHA_RECONNECT_RING_CAPACITY";
 const DEFAULT_RING_CAPACITY: usize = 1024;
@@ -104,7 +104,7 @@ impl SinkState {
         if self.ring.len() >= ring_capacity() && self.ring.pop_front().is_some() {
             // The ring holds the only copy: an eviction is a lost frame, and
             // it is counted where every drop-oldest shed on this wire is.
-            crate::entity::note_dropped_oldest();
+            crate::cell::note_dropped_oldest();
             self.evicted_since_install += 1;
             if self.evicted_since_install == 1 {
                 tracing::warn!(
@@ -174,7 +174,7 @@ pub fn set_secondary_stream(stream: Option<Arc<FlezhaStream>>) {
         .expect("secondary stream lock poisoned") = stream;
 }
 
-/// The live secondary stream; what a restored Entity's timers re-arm on.
+/// The live secondary stream; what a restored Cell's timers re-arm on.
 pub fn secondary_stream() -> Option<Arc<FlezhaStream>> {
     SECONDARY_STREAM
         .lock()
@@ -230,9 +230,7 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
         let outcome = st.sink.as_ref().map(|f| f(payload_id, &frame));
         match outcome {
             Some(Ok(())) => false,
-            Some(Err(ref e)) => {
-                st.hold_failed("entity-state", Pending::record(payload_id, frame), e)
-            }
+            Some(Err(ref e)) => st.hold_failed("cell-state", Pending::record(payload_id, frame), e),
             None => {
                 // Reconnect window: hold the frame, but don't count it as a
                 // broken pipe — the stream is intentionally absent.
@@ -404,10 +402,10 @@ fn replay_held(send_fn: &SendFrameFn, entry: &Pending) -> bool {
     }
 }
 
-/// Ship one saga marker for an Entity: an empty body, the identity and the
+/// Ship one saga marker for a Cell: an empty body, the identity and the
 /// payload id are the record.
-pub fn send_compensation_record(payload_id: &str, entity_identity: &[u8]) {
-    let frame = crate::flusher::build_entity_frame(entity_identity, 0, &[0u8; 16], &[]);
+pub fn send_compensation_record(payload_id: &str, cell_identity: &[u8]) {
+    let frame = crate::flusher::build_cell_frame(cell_identity, 0, &[0u8; 16], &[]);
     send(payload_id, frame);
 }
 
@@ -482,7 +480,7 @@ mod tests {
         (f, seen)
     }
 
-    const PID: &str = super::ENTITY_STATE_CHANGE_PAYLOAD_ID;
+    const PID: &str = super::CELL_STATE_CHANGE_PAYLOAD_ID;
 
     /// A stream whose peer is gone, so every write to it refuses. A pipe takes
     /// EPIPE on the write and not on the close, so one write lands in the void.
@@ -681,12 +679,12 @@ mod tests {
         std::env::set_var(ENV_RING_CAPACITY, "1");
         reset_state();
 
-        let before = crate::entity::drops_oldest_total();
+        let before = crate::cell::drops_oldest_total();
         send(PID, b"first".to_vec());
         send(PID, b"second".to_vec());
 
         assert!(
-            crate::entity::drops_oldest_total() > before,
+            crate::cell::drops_oldest_total() > before,
             "an evicted frame must reach the counter the heartbeat reports"
         );
         assert_eq!(

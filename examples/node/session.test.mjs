@@ -2,12 +2,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ProcedureTestHarness } from '@flezha/sdk/testing';
+import { TaskletTestHarness } from '@flezha/sdk/testing';
 
 import { Session } from './session.mjs';
 
 test('a quiet session closes on its timer and reports what it saw', async () => {
-  const harness = ProcedureTestHarness.of(Session, { entityKey: 'ada', now: 1_000n });
+  const harness = TaskletTestHarness.of(Session, { cellKey: 'ada', now: 1_000n });
 
   const first = await harness.input({ user: 'ada', action: 'login' });
   assert.deepEqual(first.timers, [
@@ -29,12 +29,12 @@ test('a quiet session closes on its timer and reports what it saw', async () => 
   assert.equal(closed.emits[0].closedAt, '40000');
 
   // The gate: the recorded change log rebuilds exactly the state the handler
-  // produced, which is how the engine rebuilds this entity after a restart.
+  // produced, which is how the engine rebuilds this cell after a restart.
   harness.replayEquals();
 });
 
 test('a session that keeps talking is never closed twice', async () => {
-  const harness = ProcedureTestHarness.of(Session, { entityKey: 'grace' });
+  const harness = TaskletTestHarness.of(Session, { cellKey: 'grace' });
   await harness.input({ user: 'grace', action: 'login' });
   const closed = await harness.fireTimer('processing_time', 30_000n);
   assert.equal(closed.emits.length, 1);

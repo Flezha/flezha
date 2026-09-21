@@ -1,11 +1,11 @@
-// A worked operative: one entity per user, journaled state, an idle timer, and
+// A worked operative: one cell per user, journaled state, an idle timer, and
 // an emit on close.
 //
 // Everything the SDK asks an author to know is here — the change fold, the
 // deterministic clock, keying on the wiring, and a timer that closes a session
 // when its user goes quiet.
 
-import { defineOperative, defineProcedure } from '@flezha/sdk';
+import { defineOperative, defineTasklet } from '@flezha/sdk';
 
 /** Milliseconds of silence after which a session is closed. */
 const IDLE_MS = 30_000n;
@@ -18,11 +18,11 @@ const IDLE_MS = 30_000n;
  * then. `ctx.now()` rather than `Date.now()`, because a replay must register
  * the same deadline the live run did.
  */
-export const Session = defineProcedure({
+export const Session = defineTasklet({
   name: 'session',
-  // Entities appear on first sight of a key and are evicted after an idle
+  // Cells appear on first sight of a key and are evicted after an idle
   // spell. The key itself comes from the wiring, below.
-  dynamicEntities: { idleTtlMs: 300_000 },
+  dynamicCells: { idleTtlMs: 300_000 },
 
   initialState: () => ({ events: [], deadline: 0n, closed: false }),
 
@@ -58,7 +58,7 @@ export const Session = defineProcedure({
     // wall clock at firing — which is what makes the emitted summary the same
     // on a replay as it was live.
     ctx.emit({
-      user: ctx.entityKey,
+      user: ctx.cellKey,
       events: ctx.state.events.length,
       closedAt: firing.scheduledAt.toString(),
       id: ctx.stableId(),
@@ -73,7 +73,7 @@ export default defineOperative({
     // the summary object is sent as JSON.
     c.input('activity')
       // Keying is declared on the wiring, which is what makes `Session`
-      // dynamic: one entity per user, created on first sight.
+      // dynamic: one cell per user, created on first sight.
       .keyBy((event) => event.user)
       .into(Session)
       .keyed()

@@ -26,8 +26,8 @@ controller:
 
 Everything else is the deployed machinery, unchanged: the entry channel's
 decode and parse ladder, edge transforms (`map` / `filter` / `flat_map`) and
-keying (`key_by`), one Entity per resolved key with its own mailbox and
-overflow policy, the retry ladder, and inter-procedure delivery performed by
+keying (`key_by`), one Cell per resolved key with its own mailbox and
+overflow policy, the retry ladder, and inter-tasklet delivery performed by
 the runtime.
 
 ## Available in every SDK
@@ -66,7 +66,7 @@ impl StreamOperative for WordCount {
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("lines")
             .into::<Split>()                       // one line -> its words
-            .key_by(|word: &String| word.clone())  // one Entity per word
+            .key_by(|word: &String| word.clone())  // one Cell per word
             .into::<Tally>()                       // counts what it is handed
             .keyed()
             .sink_named("totals");
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`Split` and `Tally` are ordinary procedures with nothing local-mode about
+`Split` and `Tally` are ordinary tasklets with nothing local-mode about
 them. The complete, compiling file is
 [`sdk/rust/examples/local_word_count.rs`](../sdk/rust/examples/local_word_count.rs).
 Run it straight from a checkout:
@@ -126,7 +126,7 @@ The same graph, declared with the Elixir SDK's builder:
 
 ```elixir
 defmodule Normalise do
-  use Flezha.SDK.Procedure, name: "normalise"
+  use Flezha.SDK.Tasklet, name: "normalise"
 
   @impl true
   def run(word, state, ctx) do
@@ -136,7 +136,7 @@ defmodule Normalise do
 end
 
 defmodule Tally do
-  use Flezha.SDK.Procedure, name: "tally"
+  use Flezha.SDK.Tasklet, name: "tally"
 
   state do
     field :count, :integer, default: 0
@@ -204,7 +204,7 @@ deployed runner reads.
 - **`on_sink(channel, callback)`** registers against the sink's **channel**
   name, and a sink names the channel it terminates — which is why the example
   says `.sink_named("totals")` and registers `"totals"`. The no-name form
-  leaves the channel named after the producing procedure.
+  leaves the channel named after the producing tasklet.
 - A channel name the declaration does not carry is refused, naming the channel,
   the operative and the channels that are declared. A value released on a sink
   with no callback is reported rather than discarded. A declaration that needs

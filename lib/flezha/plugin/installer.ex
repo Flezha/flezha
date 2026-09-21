@@ -1,10 +1,10 @@
 defmodule Flezha.Plugin.Installer do
   @moduledoc """
   Public service API for installable plugins. Backed by a GenServer that
-  serializes every mutating procedure (install, upgrade, uninstall,
+  serializes every mutating tasklet (install, upgrade, uninstall,
   enable, disable) so the code server and DETS catalog stay consistent.
 
-  Read-only procedures (`list/0`, `info/1`, `installed_ids/0`) bypass the
+  Read-only tasklets (`list/0`, `info/1`, `installed_ids/0`) bypass the
   GenServer — they only read the Loader's in-memory registry or the Store
   DETS, both of which are safe for concurrent readers.
   """

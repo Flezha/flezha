@@ -1,6 +1,6 @@
 defmodule Flezha.State.RecoveryTest do
   @moduledoc """
-  `Flezha.State.Recovery`: the three ways a desynced Entity is put back on a
+  `Flezha.State.Recovery`: the three ways a desynced Cell is put back on a
   consistent point, and what each one needs to know first.
   """
 
@@ -28,31 +28,31 @@ defmodule Flezha.State.RecoveryTest do
       %{header: TestHelpers.stub_header()}
     end
 
-    test "no persisted state resyncs via CompactEntity pull, never an empty RestoreInitState" do
-      entity_id = TestHelpers.sample_entity_id("nodata_" <> uniq())
+    test "no persisted state resyncs via CompactCell pull, never an empty RestoreInitState" do
+      cell_id = TestHelpers.sample_cell_id("nodata_" <> uniq())
       # The writer's lazily-created zero-byte WAL is not persisted state.
-      {:ok, _} = Supervisor.find_or_start(entity_id)
+      {:ok, _} = Supervisor.find_or_start(cell_id)
 
-      refute Restore.has_persisted_state?(entity_id)
+      refute Restore.has_persisted_state?(cell_id)
 
-      assert {:ok, _ref} = Recovery.resync(entity_id, runner_id: "exec-1", reason: :seq_gap)
+      assert {:ok, _ref} = Recovery.resync(cell_id, runner_id: "exec-1", reason: :seq_gap)
 
-      assert_receive {:control_sent, "exec-1", :compact_entity}, 1_000
+      assert_receive {:control_sent, "exec-1", :compact_cell}, 1_000
       refute_received {:control_sent, _, :restore_init_state}
     end
 
     test "persisted WAL records resync via RestoreInitState push", %{header: header} do
-      entity_id = TestHelpers.sample_entity_id("data_" <> uniq())
-      {:ok, _} = Supervisor.find_or_start(entity_id)
-      {:ok, writer} = Supervisor.lookup(entity_id)
+      cell_id = TestHelpers.sample_cell_id("data_" <> uniq())
+      {:ok, _} = Supervisor.find_or_start(cell_id)
+      {:ok, writer} = Supervisor.lookup(cell_id)
       :ok = WalWriter.append(writer, 0, header, "x")
 
-      assert Restore.has_persisted_state?(entity_id)
+      assert Restore.has_persisted_state?(cell_id)
 
-      assert {:ok, _ref} = Recovery.resync(entity_id, runner_id: "exec-1", reason: :seq_gap)
+      assert {:ok, _ref} = Recovery.resync(cell_id, runner_id: "exec-1", reason: :seq_gap)
 
       assert_receive {:control_sent, "exec-1", :restore_init_state}, 1_000
-      refute_received {:control_sent, _, :compact_entity}
+      refute_received {:control_sent, _, :compact_cell}
     end
   end
 

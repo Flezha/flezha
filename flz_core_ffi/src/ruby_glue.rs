@@ -383,7 +383,7 @@ fn start(namespace: String) -> Result<(), Error> {
 
 /// Start the declared class as a local run: no controller, no socket. The
 /// alternative to [`start`], never an addition. The host keeps driving its own
-/// poll loop, which is what runs the procedures.
+/// poll loop, which is what runs the tasklets.
 fn local_start(factory_id: String, operative_id: String) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
@@ -439,7 +439,7 @@ fn local_run_until_idle(timeout_ms: u64) -> Result<(), Error> {
     without_gvl(move || veneer::local_run_until_idle(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))
 }
 
-/// End the local run and release its Entities. A context holding none is a
+/// End the local run and release its Cells. A context holding none is a
 /// no-op, so a host's close path needs no test of its own.
 fn local_stop() -> Result<(), Error> {
     let ruby = ruby();
@@ -480,7 +480,7 @@ fn complete(result: RHash) -> Result<(), Error> {
 }
 
 /// Abandon a polled activation: re-hand its untouched items and release its
-/// entity. Non-blocking by design — the dispatcher runs it from an `ensure`,
+/// cell. Non-blocking by design — the dispatcher runs it from an `ensure`,
 /// where anything that can park is one more thing that can go wrong.
 fn abandon(token: u64) -> Result<(), Error> {
     let ruby = ruby();

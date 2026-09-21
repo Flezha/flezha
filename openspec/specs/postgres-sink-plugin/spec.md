@@ -10,13 +10,13 @@ effectively-once tier (`Flezha.Plugin.Provider.Postgres`).
 The controller SHALL provide a `postgres` `io_binding` sink plugin
 (`Flezha.Plugin.Provider.Postgres`, backed by `postgrex`) that, per flush batch,
 executes ONE database transaction containing (a) an upsert of every record keyed
-by `flz.key` and (b) an upsert of the per-Entity progress row
-(`flezha_sink_progress`: entity, last outbox seq, epoch). Data and progress
+by `flz.key` and (b) an upsert of the per-Cell progress row
+(`flezha_sink_progress`: cell, last outbox seq, epoch). Data and progress
 SHALL never be committed separately.
 
 #### Scenario: Batch commits atomically
 
-- **WHEN** a flush batch of 3 records for entity S is delivered to the plugin
+- **WHEN** a flush batch of 3 records for cell S is delivered to the plugin
 - **THEN** the 3 row upserts and the `flezha_sink_progress` update for S commit
   in one transaction, or none of them do
 
@@ -48,8 +48,8 @@ advance) SHALL therefore be a no-op.
 ### Requirement: Default schema, opt-in DDL, secure configuration
 
 The plugin SHALL ship a fixed default schema (`flezha_records(key text primary
-key, entity text, seq text, epoch bigint, payload bytea, updated_at
-timestamptz)` and `flezha_sink_progress(entity text primary key, last_seq text,
+key, cell text, seq text, epoch bigint, payload bytea, updated_at
+timestamptz)` and `flezha_sink_progress(cell text primary key, last_seq text,
 epoch bigint)`). Automatic DDL creation SHALL be gated by an `auto_create` config
 flag defaulting to false. Credentials SHALL come from plugin configuration /
 environment and SHALL never appear in logs or telemetry.
@@ -80,7 +80,7 @@ convergence escalation path covers the sink.
 ### Requirement: Record identity is the admission test, not the epoch
 
 A record SHALL be admitted to the identified (guarded) upsert path when it carries a
-**replay-stable identity** — a non-empty `flz.entity` and a numeric dotted
+**replay-stable identity** — a non-empty `flz.cell` and a numeric dotted
 `flz.seq`. The presence of `flz.epoch` SHALL NOT be part of that test.
 
 An absent `flz.epoch` SHALL resolve to epoch `0`. Zero is the base epoch of the
@@ -89,10 +89,10 @@ tier, so a record with no epoch is correctly ordered against every other record 
 its key by `seq` alone under the existing `(epoch, seq)` guard.
 
 This admits records emitted on a `.keyed()` channel **without** the effectively-once
-tier — which the SDK stamps with `flz.entity`, `flz.seq` and `flz.key` but not
+tier — which the SDK stamps with `flz.cell`, `flz.seq` and `flz.key` but not
 `flz.epoch` — into the changelog upsert those stamps exist to enable.
 
-A record carrying neither an entity nor a sequence remains unidentified and SHALL be
+A record carrying neither a cell nor a sequence remains unidentified and SHALL be
 inserted under a unique synthetic key, unchanged.
 
 #### Scenario: A tier-off keyed record updates its row on every emit
@@ -116,19 +116,19 @@ inserted under a unique synthetic key, unchanged.
 
 #### Scenario: A fully unstamped record is still a plain insert
 
-- **WHEN** a record with no `flz.entity` and no `flz.seq` is delivered
+- **WHEN** a record with no `flz.cell` and no `flz.seq` is delivered
 - **THEN** it is inserted under a unique synthetic key and no existing row is
   touched
 
-#### Scenario: An identified record advances its Entity's progress row
+#### Scenario: An identified record advances its Cell's progress row
 
-- **WHEN** a tier-off keyed record carrying `flz.entity` and `flz.seq` is committed
-- **THEN** the `flezha_sink_progress` row for that Entity advances to its
+- **WHEN** a tier-off keyed record carrying `flz.cell` and `flz.seq` is committed
+- **THEN** the `flezha_sink_progress` row for that Cell advances to its
   `(epoch, seq)`, under the same monotonicity guard as the record rows
 
 #### Scenario: A row left degenerate by the epoch gate heals itself
 
-- **WHEN** a row written before this change holds a stable key with an empty entity
+- **WHEN** a row written before this change holds a stable key with an empty cell
   and an empty seq, and a new identified record arrives for that key
 - **THEN** the row is overwritten, because a non-empty sequence outranks an empty
   one — no backfill or migration is required

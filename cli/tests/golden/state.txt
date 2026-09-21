@@ -1,29 +1,29 @@
-flz state - Per-Entity state inspection and time-travel queries
+flz state - Per-Cell state inspection and time-travel queries
 
 USAGE:
     flz state <SUBCOMMAND>
 
 SUBCOMMANDS:
-    get <operative/procedure[/key]>          Current in-memory state of a live Entity, with its change_seq
-    list <operative>                         List Entities under an Operative class
-    at <operative/procedure/key> <seq|ts>    Query state at a point in time
-    rotate <operative/procedure/key>         Force a compaction snapshot
+    get <operative/tasklet[/key]>            Current in-memory state of a live Cell, with its change_seq
+    list <operative>                         List Cells under an Operative class
+    at <operative/tasklet/key> <seq|ts>      Query state at a point in time
+    rotate <operative/tasklet/key>           Force a compaction snapshot
     retention <operative> <hours>            Set time-travel retention
-    delete <operative/procedure/key>         Hard-delete an Entity's persisted state
-    outbox <operative/procedure/key>         Effectively-once outbox status (lag, cursor, watermark)
-    journal <operative/instance>             Workflow instance proc-journal (committed procs, iterations, park)
+    delete <operative/tasklet/key>           Hard-delete a Cell's persisted state
+    outbox <operative/tasklet/key>           Effectively-once outbox status (lag, cursor, watermark)
+    journal <operative/instance>             Workflow instance task-journal (committed tasks, iterations, park)
     inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:
-    flz state get MarketOperative/OhlcProcedure/M1
-    flz state get MarketOperative/OhlcProcedure --output json
+    flz state get MarketOperative/OhlcTasklet/M1
+    flz state get MarketOperative/OhlcTasklet --output json
     flz state list MarketOperative
-    flz state at MarketOperative/OhlcProcedure/M1 12345
-    flz state at MarketOperative/OhlcProcedure/M1 2026-05-01T12:00:00Z
-    flz state rotate MarketOperative/OhlcProcedure/M1
+    flz state at MarketOperative/OhlcTasklet/M1 12345
+    flz state at MarketOperative/OhlcTasklet/M1 2026-05-01T12:00:00Z
+    flz state rotate MarketOperative/OhlcTasklet/M1
     flz state retention MarketOperative 6
-    flz state delete MarketOperative/OhlcProcedure/M1
-    flz state outbox MarketOperative/OhlcProcedure/M1
+    flz state delete MarketOperative/OhlcTasklet/M1
+    flz state outbox MarketOperative/OhlcTasklet/M1
     flz state journal etl-job-42
     flz state inbox chat-session-7

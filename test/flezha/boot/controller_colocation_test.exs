@@ -7,7 +7,7 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
   guards here: a socket directory another controller is listening in, which
   clearing would strip of its control socket and every attached runner's
   stream socket, and a state root another controller is writing, which is two
-  unsynchronised writers over one entity WAL tree.
+  unsynchronised writers over one cell WAL tree.
 
   The third way is quieter and has no guard, only a report: the same
   controller restarted from a different working directory opens a different

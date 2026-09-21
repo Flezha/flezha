@@ -1,6 +1,6 @@
 //! What one invocation ships: [`settle_effects`], the one settlement rule the
 //! typed dispatcher and the erased host both call, and [`EffectBuffer`], the
-//! one per-Entity buffer it settles into, generic over the change type
+//! one per-Cell buffer it settles into, generic over the change type
 //! through a [`Bodies`] marker. The invariant: a park rides the same record
 //! as the consumed-offset advance it acknowledges, and nothing in an open
 //! checkpoint interval is flushable on its own.
@@ -29,7 +29,7 @@ pub struct OutputRecord {
     pub payload: Vec<u8>,
 }
 
-/// Wire body of an `entity_effect_record` frame (`format_id = 2`): one
+/// Wire body of a `cell_effect_record` frame (`format_id = 2`): one
 /// invocation's changes, outputs, consumed offset, park and timer ops, ONE
 /// WAL record under ONE fsync. `event_time` is the declared clock's value —
 /// the correction baseline's lookup key; a firing's removal rides beside its
@@ -261,7 +261,7 @@ impl<C> StagedInterval<C> {
         })
     }
 
-    /// Drop the interval: a restore re-seats the Entity on a past in which
+    /// Drop the interval: a restore re-seats the Cell on a past in which
     /// none of it was applied.
     pub fn clear(&mut self) {
         let _ = self.close();
@@ -293,7 +293,7 @@ impl Bodies for RawBodies {
     }
 }
 
-/// The per-Entity flush buffer. Exactly one of `changes` / `effects` is ever
+/// The per-Cell flush buffer. Exactly one of `changes` / `effects` is ever
 /// populated: plain changes outside the effectively-once tier, effect entries
 /// inside it. `timer_ops` is the tier-off home for timer mutations (their own
 /// `format_id = 3` record); under the tier they ride `EffectEntry::timers`.
@@ -335,7 +335,7 @@ impl<B: Bodies> EffectBuffer<B> {
 impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
     fn drain_to_frames(
         &mut self,
-        entity_identity: &[u8],
+        cell_identity: &[u8],
         change_seq: &AtomicU64,
         header: &HeaderTemplate,
     ) -> (usize, Vec<FlushFrame>) {
@@ -346,7 +346,7 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
         let mut frames = frame_change_bodies(
             bodies,
             std::mem::take(&mut self.timer_ops),
-            entity_identity,
+            cell_identity,
             change_seq,
             header,
         );
@@ -355,9 +355,9 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
         for entry in std::mem::take(&mut self.effects) {
             let seq = change_seq.fetch_add(1, Ordering::Relaxed);
             frames.push(FlushFrame {
-                payload_id: crate::state_sink::ENTITY_EFFECT_RECORD_PAYLOAD_ID,
+                payload_id: crate::state_sink::CELL_EFFECT_RECORD_PAYLOAD_ID,
                 bytes: build_effect_record_frame(
-                    entity_identity,
+                    cell_identity,
                     seq,
                     header,
                     &entry.into_body::<B>(),
@@ -391,7 +391,7 @@ pub struct SettlePolicy {
     pub buffered: bool,
 }
 
-/// Settle one invocation into its Entity's buffer per the tier: under
+/// Settle one invocation into its Cell's buffer per the tier: under
 /// effectively-once everything folds into ONE effect record, park included;
 /// outside it the changes and timer ops are kept for the flusher and the park
 /// is handed back for the caller's blocking tier-off park. A retryable
@@ -437,7 +437,7 @@ pub fn settle_effects<B: Bodies>(
 #[cfg(test)]
 mod effect_buffer_tests {
     use super::*;
-    use crate::flusher::encode_entity_identity;
+    use crate::flusher::encode_cell_identity;
 
     /// The host's bodies are already bytes: the drain moves them, the same
     /// allocation going in and coming out.
@@ -455,7 +455,7 @@ mod effect_buffer_tests {
     /// The generic drain frames exactly as `frame_change_bodies` does.
     #[test]
     fn a_bytes_buffer_drain_is_frame_change_bodies() {
-        let identity = encode_entity_identity("op", "proc", "k");
+        let identity = encode_cell_identity("op", "task", "k");
         let header = HeaderTemplate::new(0x010203, 1);
         let bodies: Vec<Vec<u8>> = vec![vec![1, 2], vec![3], vec![4, 5, 6]];
         let ops = vec![TimerOp::register(

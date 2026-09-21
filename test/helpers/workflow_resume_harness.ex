@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   @moduledoc """
-  What a durable-workflow end-to-end scenario drives: a runner on the cell's
+  What a durable-workflow end-to-end scenario drives: a runner on its
   transport, a workflow operative on it, an output sink that collects into a
   process, and the full SIGKILL-mid-run to respawn to resume flow.
 
@@ -20,7 +20,7 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskJournal
   alias Flezha.SDK.RecordFrame
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -62,13 +62,13 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   # settled.
   def await_outputs(collector, count, operative_id) do
     NodeTestHelper.wait_until(fn -> length(collected(collector)) >= count end, 30_000)
-    assert journal_settled?(operative_id), "the proc journal still owes output"
+    assert journal_settled?(operative_id), "the task journal still owes output"
     collected_with_meta(collector)
   end
 
   def journal_settled?(operative_id),
     do:
-      NodeTestHelper.wait_until(fn -> ProcJournal.pending_entries(operative_id) == [] end, 30_000)
+      NodeTestHelper.wait_until(fn -> TaskJournal.pending_entries(operative_id) == [] end, 30_000)
 
   def boot_runner(namespace, ctx, id_path, opts) do
     env =

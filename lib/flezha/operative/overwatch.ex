@@ -32,12 +32,12 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
   alias Flezha.Transport.LivenessCounters
 
-  # Reply-frame metadata key carrying the `change_seq` a single selected Entity
-  # was serialized at (stamped by both SDKs' `EntityState` handler). Spelled
+  # Reply-frame metadata key carrying the `change_seq` a single selected Cell
+  # was serialized at (stamped by both SDKs' `CellState` handler). Spelled
   # here rather than read from `Flezha.SDK.Wire`, which owns the wire's other
   # `flz.` keys: `operative` ranks below `state`, so naming it would be a new
   # upward reference `scripts/check-layer-direction.sh` refuses.
@@ -109,8 +109,8 @@ defmodule Flezha.Operative.Overwatch do
     # Late-input correction window (ms), declared by the SDK. `nil` = the class
     # never corrects. Gates lateness handling and the event-time-ordered replay.
     correction_window_ms: nil,
-    # Entities with a correction in flight, and the oldest event time each was
-    # asked to correct back to. Concurrent requests for one Entity coalesce
+    # Cells with a correction in flight, and the oldest event time each was
+    # asked to correct back to. Concurrent requests for one Cell coalesce
     # into the one replay that reaches furthest back.
     corrections: %{}
   ]
@@ -122,8 +122,8 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @doc """
-  The operative-class identity used for per-Entity state (defaults to the
-  instance id, per the SDK convention that entity frames carry the operative_id).
+  The operative-class identity used for per-Cell state (defaults to the
+  instance id, per the SDK convention that cell frames carry the operative_id).
   """
   @spec operative_class(t()) :: binary()
   def operative_class(%__MODULE__{} = state),
@@ -173,38 +173,38 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @doc """
-  Time a known-blocking procedure and surface a `[Overwatch] proc_slow` warning
-  when it runs long. The last logged `proc_begin` with no matching `proc_end`
-  pinpoints exactly which procedure wedged the GenServer.
+  Time a known-blocking tasklet and surface a `[Overwatch] task_slow` warning
+  when it runs long. The last logged `task_begin` with no matching `task_end`
+  pinpoints exactly which tasklet wedged the GenServer.
 
   `try/after` (never `catch`) so the span is recorded even on exit/throw while
   the failure still propagates unchanged — `ControlUnit.send_control_await/3`'s
   own `:exit` catch must still fire.
   """
-  @spec with_proc_span(atom(), binary(), (-> result)) :: result when result: term()
-  def with_proc_span(proc, operative_id, fun) do
+  @spec with_task_span(atom(), binary(), (-> result)) :: result when result: term()
+  def with_task_span(task, operative_id, fun) do
     started = System.monotonic_time(:millisecond)
-    Logger.debug("[Overwatch] proc_begin proc=#{proc} operative=#{operative_id}")
+    Logger.debug("[Overwatch] task_begin task=#{task} operative=#{operative_id}")
 
     try do
       fun.()
     after
       ms = System.monotonic_time(:millisecond) - started
 
-      if ms >= proc_warn_ms() do
+      if ms >= task_warn_ms() do
         Logger.warning(
-          "[Overwatch] proc_slow proc=#{proc} operative=#{operative_id} duration_ms=#{ms}"
+          "[Overwatch] task_slow task=#{task} operative=#{operative_id} duration_ms=#{ms}"
         )
       else
         Logger.debug(
-          "[Overwatch] proc_end proc=#{proc} operative=#{operative_id} duration_ms=#{ms}"
+          "[Overwatch] task_end task=#{task} operative=#{operative_id} duration_ms=#{ms}"
         )
       end
     end
   end
 
-  defp proc_warn_ms,
-    do: Durations.get(:overwatch_proc_warn_ms)
+  defp task_warn_ms,
+    do: Durations.get(:overwatch_task_warn_ms)
 
   # ---------------------------------------------------------------
   # Start-up
@@ -268,7 +268,7 @@ defmodule Flezha.Operative.Overwatch do
     # loses their suspension (`workflow-durable-suspension`). An instance with
     # undelivered input is not suspended any more — it binds and consumes it.
     if state.durable_workflow and Migration.suspended_on_disk?(operative.id) do
-      {:noreply, Migration.enter_suspended(state, ProcJournal.restore_state(operative.id)),
+      {:noreply, Migration.enter_suspended(state, TaskJournal.restore_state(operative.id)),
        :hibernate}
     else
       Lifecycle.bind(state, stale_runner_id, operative)
@@ -276,7 +276,7 @@ defmodule Flezha.Operative.Overwatch do
     |> seed_input(operative)
   end
 
-  # A procedure-requested spawn's payload, ingested as the instance's first
+  # A tasklet-requested spawn's payload, ingested as the instance's first
   # input. It runs inside the bind continue, which is what makes it first: no
   # other message in the mailbox — including a concurrent requester's delivery —
   # can be ingested ahead of it. A durable instance whose inbox already holds
@@ -296,7 +296,7 @@ defmodule Flezha.Operative.Overwatch do
   defp seed_input(result, _operative), do: result
 
   defp fresh_inbox?(%__MODULE__{durable_workflow: true, id: id}),
-    do: ProcInbox.last_offset(id) == 0
+    do: TaskInbox.last_offset(id) == 0
 
   defp fresh_inbox?(%__MODULE__{}), do: true
 
@@ -361,15 +361,15 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, state, state}
   end
 
-  # Live read of Entity state, narrowed by `selector` (`%{}` = every Procedure,
+  # Live read of Cell state, narrowed by `selector` (`%{}` = every Tasklet,
   # the migration/handover shape). Always answered as `{:ok, json, change_seq}`
   # — the seq rides the reply frame's metadata, so the JSON body stays the shape
   # the whole-Operative caller already decodes; `OperativeManager` drops the seq
   # for callers that predate it.
   @impl true
-  def handle_call({:get_entity_state, selector}, from, %__MODULE__{} = state)
+  def handle_call({:get_cell_state, selector}, from, %__MODULE__{} = state)
       when is_map(selector) do
-    read_entity_state(state, from, selector)
+    read_cell_state(state, from, selector)
   end
 
   @impl true
@@ -434,8 +434,8 @@ defmodule Flezha.Operative.Overwatch do
     do: {:reply, {:ok, Handover.create_snapshot(state.id, state.runner_id)}, state}
 
   @impl true
-  def handle_call({:replay_from, entity_id, baseline_seq}, _from, %__MODULE__{} = state) do
-    {:reply, Replay.run_replay(state, entity_id, baseline_seq), state}
+  def handle_call({:replay_from, cell_id, baseline_seq}, _from, %__MODULE__{} = state) do
+    {:reply, Replay.run_replay(state, cell_id, baseline_seq), state}
   end
 
   @impl true
@@ -491,8 +491,8 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
-  def handle_cast({:correction_request, entity_id, target}, state) do
-    {:noreply, Replay.note_correction(state, entity_id, target)}
+  def handle_cast({:correction_request, cell_id, target}, state) do
+    {:noreply, Replay.note_correction(state, cell_id, target)}
   end
 
   @impl true
@@ -511,7 +511,7 @@ defmodule Flezha.Operative.Overwatch do
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
   # A handover ships it and the next running migrate seeds from it, until a
   # runner is bound again: that runner's state supersedes it, so the bind drops
-  # it. Cold-boot restart is covered by the per-Entity WAL files instead.
+  # it. Cold-boot restart is covered by the per-Cell WAL files instead.
   @impl true
   def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
       when is_binary(binary) do
@@ -527,7 +527,7 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # External callers (the convergence Loop's rebind heal) trigger a fresh
-  # per-Entity replay against the bound runner without knowing this process's
+  # per-Cell replay against the bound runner without knowing this process's
   # internals. Used by `Flezha.State.Recovery.resync_for_overwatch/2`.
   def handle_cast({:kick_restore, runner_id}, %__MODULE__{} = state) do
     Replay.dispatch_restore(state, state.builder.opts, runner_id)
@@ -553,7 +553,7 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # The operative's data stream bound. Anything its durable logs still hold above
-  # the Entities' consumed offsets was issued onto a stream that could not carry
+  # the Cells' consumed offsets was issued onto a stream that could not carry
   # it — re-forward it now, on the replay path a restore uses. Which channel
   # announced the bind does not matter: the tail is owed either way, and it goes
   # out on whichever channel this operative is bound to now.
@@ -563,7 +563,7 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # A bind-time restore the SDK refused, reported from the off-process replay.
-  # The Entity's durable state never reached the runner, so the operative parks
+  # The Cell's durable state never reached the runner, so the operative parks
   # rather than serving from empty state; the convergence loop rebinds it.
   @impl true
   def handle_info({:restore_refused, reason}, %__MODULE__{} = state) do
@@ -571,14 +571,14 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
-  def handle_info({:run_correction, entity_id}, %__MODULE__{} = state) do
-    {target, corrections} = Map.pop(state.corrections, entity_id)
+  def handle_info({:run_correction, cell_id}, %__MODULE__{} = state) do
+    {target, corrections} = Map.pop(state.corrections, cell_id)
     state = %{state | corrections: corrections}
 
-    # At most one correction per Entity is ever in flight, by construction: the
+    # At most one correction per Cell is ever in flight, by construction: the
     # transaction runs to completion inside this handler, so a request arriving
     # during it simply waits in the mailbox and debounces into the next one.
-    state = if target, do: Replay.run_correction(state, entity_id, target), else: state
+    state = if target, do: Replay.run_correction(state, cell_id, target), else: state
     if state.corrections == %{}, do: Migration.signal_migration_ready(state)
     {:noreply, state}
   end
@@ -597,7 +597,7 @@ defmodule Flezha.Operative.Overwatch do
   # tick.
   @impl true
   def handle_info(:wake_deadline, %__MODULE__{} = state) do
-    _ = ProcInbox.append(state.id, "", %{"flz.wake" => "timer"})
+    _ = TaskInbox.append(state.id, "", %{"flz.wake" => "timer"})
     {:noreply, Migration.rehydrate(timer_fired(state, :wake))}
   end
 
@@ -697,17 +697,17 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # ---------------------------------------------------------------
-  # Live Entity read
+  # Live Cell read
   # ---------------------------------------------------------------
 
-  # One `EntityState` round-trip, off the GenServer loop so a slow reply cannot
+  # One `CellState` round-trip, off the GenServer loop so a slow reply cannot
   # back up the mailbox; `from` is answered when it completes.
   #
-  # An Entity that is not held in memory is refused, never served from the
+  # A Cell that is not held in memory is refused, never served from the
   # durable store: the controller cannot decode the SDK's WAL bytes, and a
-  # fallback would mean binding a runner and restoring an Entity as a side
+  # fallback would mean binding a runner and restoring a Cell as a side
   # effect of a read. `flz state at` is the durable-read path.
-  defp read_entity_state(%__MODULE__{} = state, from, selector) do
+  defp read_cell_state(%__MODULE__{} = state, from, selector) do
     cond do
       not PersistenceResolver.persistent_state?(state.builder.kind, operative_class(state)) ->
         {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, state}
@@ -722,13 +722,13 @@ defmodule Flezha.Operative.Overwatch do
         operative_id = state.id
         runner_id = state.runner_id
 
-        command = %RunnerCommands.EntityState{
+        command = %RunnerCommands.CellState{
           operative_id: operative_id,
-          procedure: Map.get(selector, :procedure) || "",
-          entity_key: Map.get(selector, :entity_key) || ""
+          tasklet: Map.get(selector, :tasklet) || "",
+          cell_key: Map.get(selector, :cell_key) || ""
         }
 
-        spawn(fn -> reply_entity_state(from, runner_id, operative_id, command) end)
+        spawn(fn -> reply_cell_state(from, runner_id, operative_id, command) end)
 
         {:noreply, state}
     end
@@ -736,10 +736,10 @@ defmodule Flezha.Operative.Overwatch do
 
   # Off-process: the read is a runner round-trip and the Overwatch must keep
   # serving its own input while it is in flight.
-  defp reply_entity_state(from, runner_id, operative_id, command) do
+  defp reply_cell_state(from, runner_id, operative_id, command) do
     result =
-      with_proc_span(:entity_state, operative_id, fn ->
-        ControlUnit.send_control_await(runner_id, {:entity_state, command}, metadata: true)
+      with_task_span(:cell_state, operative_id, fn ->
+        ControlUnit.send_control_await(runner_id, {:cell_state, command}, metadata: true)
       end)
 
     GenServer.reply(from, with_change_seq(result))

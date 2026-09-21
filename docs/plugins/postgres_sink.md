@@ -2,7 +2,7 @@
 
 Transactional PostgreSQL sink (`:io_binding`). Per flush batch, ONE database
 transaction upserts every record into `flezha_records`, keyed by `flz.key`, and
-advances the per-Entity `flezha_sink_progress` watermark row. That single
+advances the per-Cell `flezha_sink_progress` watermark row. That single
 transaction is the guarantee: effectively-once into the database for tier
 operatives, plain inserts for everything else. See
 [`../resilience/data_durability.md`](../resilience/data_durability.md),
@@ -56,12 +56,12 @@ Two tables, created for you when `auto_create` is on:
 
 ```sql
 CREATE TABLE flezha_records (
-  key text PRIMARY KEY, entity text, seq text, epoch bigint,
+  key text PRIMARY KEY, cell text, seq text, epoch bigint,
   payload bytea, updated_at timestamptz
 );
 
 CREATE TABLE flezha_sink_progress (
-  entity text PRIMARY KEY, last_seq text, epoch bigint
+  cell text PRIMARY KEY, last_seq text, epoch bigint
 );
 ```
 

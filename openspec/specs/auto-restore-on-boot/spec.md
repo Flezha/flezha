@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Entity WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
+The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Cell WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
@@ -89,46 +89,46 @@ When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub doe
 - **WHEN** ProcessHub fires `pre_recovery_replay` synchronously with no runner connected
 - **THEN** the handler emits `[:flezha, :boot, :pre_recovery_replay]` and returns without polling FleetManager, and replay proceeds
 
-### Requirement: Entity state restoration fires on first stream attach
+### Requirement: Cell state restoration fires on first stream attach
 
-When an Entity's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Entity exactly once per Operative-startup BEFORE allowing input frames to flow.
+When a Cell's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Operative-startup BEFORE allowing input frames to flow.
 
 The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
 This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after runner restart.
 
-#### Scenario: ProcessHub replay + Entity stream attach ships RestoreInitState
+#### Scenario: ProcessHub replay + Cell stream attach ships RestoreInitState
 
 - **GIVEN** ProcessHub's persistent registry is replayed; a Operative is started; a runner connects and is assigned
-- **WHEN** the SDK opens a data stream for an Entity that has on-disk WAL records under `app_data/state/{operative_class}/{procedure_id}/{entity_key}.wal`
-- **THEN** the controller ships `RestoreInitState{entity_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
+- **WHEN** the SDK opens a data stream for a Cell that has on-disk WAL records under `app_data/state/{operative_class}/{tasklet_id}/{cell_key}.wal`
+- **THEN** the controller ships `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
 
-#### Scenario: HotSwap-arrived Entity skips dispatch
+#### Scenario: HotSwap-arrived Cell skips dispatch
 
 - **GIVEN** a Operative arrives via HotSwap carrying a non-empty serialized state; `arrived_via_hotswap? = true`
-- **WHEN** the Entity's data stream attaches
+- **WHEN** the Cell's data stream attaches
 - **THEN** `dispatch_restore_init_state/2` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
 
-#### Scenario: HotSwap-arrived Entity with an EMPTY handover does not skip dispatch
+#### Scenario: HotSwap-arrived Cell with an EMPTY handover does not skip dispatch
 
 - **GIVEN** a Operative migrates while its source runner is already gone, so `prepare_handover_state/1` has no runner to serialize from and ships an empty payload
 - **WHEN** `alter_handover_state/2` runs on the destination
 - **THEN** `arrived_via_hotswap?` SHALL remain `false` — an empty handover carries nothing to double-apply, and the on-disk state is the only surviving copy
 - **AND** neither the bind-time restore nor the `kick_restore` repair SHALL be suppressed
 
-### Requirement: A migration whose handover is empty SHALL pull the source controller's Entity files
+### Requirement: A migration whose handover is empty SHALL pull the source controller's Cell files
 
 `state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, falling back only to the final state a runner handed its Overwatch on a graceful shutdown, which a later bind of the operative to any runner discards. A migration triggered by a runner's death therefore ships an empty payload unless that runner left such a state and no runner has been bound since, and the source controller's disk then holds the only surviving copy.
 
-`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Entity of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then run the ordinary per-Entity replay, both through `Flezha.Operative.Replay.dispatch_restore/3`, the step every bind's restore runs.
+`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Cell of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then run the ordinary per-Cell replay, both through `Flezha.Operative.Replay.dispatch_restore/3`, the step every bind's restore runs.
 
 The pull SHALL be:
 
-1. **Destination-driven.** The source only answers reads (`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
-2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Entity cold — never half-restored.
-3. **Scoped by the Entity's own file set.** A requested name is resolved against `Flezha.State.Paths.entity_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
+1. **Destination-driven.** The source only answers reads (`cells/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
+2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Cell cold — never half-restored.
+3. **Scoped by the Cell's own file set.** A requested name is resolved against `Flezha.State.Paths.cell_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
 4. **Off the Overwatch loop**, since the copy is bounded by file size.
-5. **Non-fatal.** An Entity that cannot be pulled is skipped; the operative keeps the Entities that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
+5. **Non-fatal.** A Cell that cannot be pulled is skipped; the operative keeps the Cells that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 
 Source-side files SHALL NOT be deleted at migration completion; the Retention sweeper reaps orphans.
 
@@ -136,15 +136,15 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 
 #### Scenario: Controller loses all runners — operatives migrate with their state
 
-- **GIVEN** controller A hosting operative `p1` with Entity state on A's local disk and no snapshot of `p1` held by its Overwatch; peer controller B with a runner for `p1`'s factory
+- **GIVEN** controller A hosting operative `p1` with Cell state on A's local disk and no snapshot of `p1` held by its Overwatch; peer controller B with a runner for `p1`'s factory
 - **WHEN** A's last runner disconnects and, after the withdrawal grace, A stops serving `p1`'s factory, so the hub's redistribution assigns `p1` to B
 - **THEN** `p1` migrates to B through the consent gate
-- **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Entity files from A and replays them
+- **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Cell files from A and replays them
 - **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them
 
-#### Scenario: A peer cannot read outside the Entity's file set
+#### Scenario: A peer cannot read outside the Cell's file set
 
-- **GIVEN** a destination requesting file name `../../../etc/passwd` for an Entity
+- **GIVEN** a destination requesting file name `../../../etc/passwd` for a Cell
 - **WHEN** `read_chunk/3` runs on the source
 - **THEN** it SHALL return `{:error, :not_in_manifest}` and read nothing
 
@@ -156,9 +156,9 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 
 ### Requirement: State-directory cleanup ONLY on explicit operative stop
 
-State files under `app_data/state/{operative_class}/{procedure_id}/{entity_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
+State files under `app_data/state/{operative_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
 
-`stop_operative/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operative_class}/{procedure_id}/` for each procedure. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
+`stop_operative/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operative_class}/{tasklet_id}/` for each tasklet. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
 
 The Retention sweeper handles long-term orphans via `time_travel_retention_hours`.
 

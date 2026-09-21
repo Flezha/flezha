@@ -105,7 +105,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
 
     Paths.state_root() == resolved and
       printed =~ "state_root:" and printed =~ resolved and
-      String.starts_with?(Paths.wal_path({"knob_drill", "proc", "k1"}), resolved)
+      String.starts_with?(Paths.wal_path({"knob_drill", "task", "k1"}), resolved)
   end
 
   # The same two halves: status names the folder, and a file plugin's path lands
@@ -131,8 +131,8 @@ defmodule FlezhaTest.System.KnobDrillTest do
     {:ok, entry} =
       Entry.new(%{
         operative_class: "knob_drill",
-        procedure_id: "proc",
-        entity_key: "k1",
+        tasklet_id: "task",
+        cell_key: "k1",
         channel: "input",
         error: "the drill parked this",
         payload: "bytes"

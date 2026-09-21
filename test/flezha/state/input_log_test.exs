@@ -1,7 +1,7 @@
 defmodule Flezha.State.InputLogTest do
   @moduledoc """
   §2.4 `durable-input-log`: offset monotonicity across appends and restarts,
-  torn-tail discard, watermark truncation that respects the slowest Entity,
+  torn-tail discard, watermark truncation that respects the slowest Cell,
   frozen-watermark telemetry, the fsync companion's death, and the tier-off
   cost-free default (no journaling work, no file).
   """
@@ -70,11 +70,11 @@ defmodule Flezha.State.InputLogTest do
     assert offset == 3
   end
 
-  test "truncation removes only offsets below the slowest entity", %{class: class} do
+  test "truncation removes only offsets below the slowest cell", %{class: class} do
     for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
 
-    InputLog.record_consumed(class, {class, "proc", "a"}, 8)
-    InputLog.record_consumed(class, {class, "proc", "b"}, 4)
+    InputLog.record_consumed(class, {class, "task", "a"}, 8)
+    InputLog.record_consumed(class, {class, "task", "b"}, 4)
     assert InputLog.watermark(class) == 4
 
     :ok = Sweep.run(class)
@@ -102,7 +102,7 @@ defmodule Flezha.State.InputLogTest do
 
     test "a consumed record is held until it also ages out of the window", %{class: class} do
       for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-      InputLog.record_consumed(class, {class, "proc", "a"}, 9)
+      InputLog.record_consumed(class, {class, "task", "a"}, 9)
 
       # A correction replays CONSUMED inputs, so the watermark alone must not be
       # allowed to reclaim them. An hour-long window holds everything just written.
@@ -121,8 +121,8 @@ defmodule Flezha.State.InputLogTest do
 
     test "the window never reclaims past the watermark", %{class: class} do
       for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-      # A lagging Entity has only consumed up to 4.
-      InputLog.record_consumed(class, {class, "proc", "b"}, 4)
+      # A lagging Cell has only consumed up to 4.
+      InputLog.record_consumed(class, {class, "task", "b"}, 4)
 
       # Every record has aged out, but an unconsumed input must never be dropped:
       # the floor is min(watermark, aged_out), not the age bound alone.
@@ -145,7 +145,7 @@ defmodule Flezha.State.InputLogTest do
 
   test "a frozen watermark past the size threshold emits telemetry", %{class: class} do
     for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-    InputLog.record_consumed(class, {class, "proc", "slow"}, 1)
+    InputLog.record_consumed(class, {class, "task", "slow"}, 1)
 
     ref = make_ref()
     parent = self()
@@ -171,7 +171,7 @@ defmodule Flezha.State.InputLogTest do
     assert_receive {^ref, %{size_bytes: size}, meta}
     assert size > 0
     assert meta.operative == class
-    assert meta.lagging_entity == {class, "proc", "slow"}
+    assert meta.lagging_cell == {class, "task", "slow"}
   end
 
   # The Overwatch's state as the ingest and replay paths need it: an empty
@@ -242,7 +242,7 @@ defmodule Flezha.State.InputLogTest do
       reqids = InputLog.append_async(class, "m2", %{}, reqids, :m2)
       assert :timeout = :gen_server.wait_response(reqids, 150, true)
 
-      InputLog.record_consumed(class, {class, "proc", "a"}, 0)
+      InputLog.record_consumed(class, {class, "task", "a"}, 0)
       assert {{:reply, {:ok, 1}}, :m1, reqids} = :gen_server.wait_response(reqids, 2_000, true)
       assert {{:reply, {:ok, 2}}, :m2, _} = :gen_server.wait_response(reqids, 2_000, true)
     end
@@ -282,7 +282,7 @@ defmodule Flezha.State.InputLogTest do
 
     test "re-forwards only the tail above the min watermark, offsets intact", %{class: class} do
       for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{"input_type" => "2"})
-      InputLog.record_consumed(class, {class, "proc", "a"}, 2)
+      InputLog.record_consumed(class, {class, "task", "a"}, 2)
 
       state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
       :ok = Replay.replay_journaled_inputs(state)
@@ -322,7 +322,7 @@ defmodule Flezha.State.InputLogTest do
 
       # The watermark advance past offset 0 drains its bytes and mints
       # credit (batched by the low watermark) — the parked append resumes.
-      InputLog.record_consumed(class, {class, "proc", "a"}, 0)
+      InputLog.record_consumed(class, {class, "task", "a"}, 0)
 
       assert {:ok, 1} = Task.await(parked, 2_000)
     end
@@ -336,11 +336,11 @@ defmodule Flezha.State.InputLogTest do
 
       # The healthy operative's ledger is independent: appends keep flowing.
       {:ok, 0} = InputLog.append(healthy, "h0", %{})
-      InputLog.record_consumed(healthy, {healthy, "proc", "a"}, 0)
+      InputLog.record_consumed(healthy, {healthy, "task", "a"}, 0)
       {:ok, 1} = InputLog.append(healthy, "h1", %{})
 
       # Unpark the starved one so no waiter leaks past the test.
-      InputLog.record_consumed(class, {class, "proc", "a"}, 0)
+      InputLog.record_consumed(class, {class, "task", "a"}, 0)
       assert {:ok, 1} = Task.await(starved, 2_000)
     end
   end
@@ -388,7 +388,7 @@ defmodule Flezha.State.InputLogTest do
 
       {:ok, 0} = InputLog.append(class, "i0", %{})
       {:ok, 1} = InputLog.append(class, "i1", %{})
-      InputLog.record_consumed(class, {class, "proc", "a"}, 1)
+      InputLog.record_consumed(class, {class, "task", "a"}, 1)
 
       # Everything is consumed, so the watermark alone would truncate it all —
       # but it is newer than the derived 10-minute window, so it stays.
@@ -411,10 +411,10 @@ defmodule Flezha.State.InputLogTest do
       refute File.exists?(Paths.input_log_path(class))
     end
 
-    test "a live log yields its tail and each Entity's own consumed offset" do
+    test "a live log yields its tail and each Cell's own consumed offset" do
       class = opened_class("cursors")
-      seg_a = {class, "proc", "a"}
-      seg_b = {class, "proc", "b"}
+      seg_a = {class, "task", "a"}
+      seg_b = {class, "task", "b"}
 
       {:ok, 0} = InputLog.append(class, "i0", %{})
       {:ok, 1} = InputLog.append(class, "i1", %{})
@@ -425,8 +425,8 @@ defmodule Flezha.State.InputLogTest do
 
       assert %{tail: 2, consumed: consumed} = InputLog.cursors(class)
 
-      # Per Entity, NOT the min across them — the classifier needs to name the
-      # Entity that is actually lagging, which the min cannot do.
+      # Per Cell, NOT the min across them — the classifier needs to name the
+      # Cell that is actually lagging, which the min cannot do.
       assert consumed[seg_a] == 2
       assert consumed[seg_b] == 1
 
@@ -434,7 +434,7 @@ defmodule Flezha.State.InputLogTest do
       assert InputLog.watermark(class) == 1
     end
 
-    test "an Entity that has reported nothing is absent from consumed" do
+    test "a Cell that has reported nothing is absent from consumed" do
       class = opened_class("cursors-quiet")
       {:ok, 0} = InputLog.append(class, "i0", %{})
 
@@ -470,7 +470,7 @@ defmodule Flezha.State.InputLogTest do
   describe "a truncation costs the tail, not the log" do
     test "a floor past the index samples keeps exactly the tail", %{class: class} do
       for i <- 0..599, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-      InputLog.record_consumed(class, {class, "proc", "a"}, 400)
+      InputLog.record_consumed(class, {class, "task", "a"}, 400)
       :ok = Sweep.run(class)
 
       assert InputLog.read_range(class, 0, 599) |> Enum.map(&elem(&1, 0)) ==
@@ -478,7 +478,7 @@ defmodule Flezha.State.InputLogTest do
 
       # The second cut works against the rebased index, and appends land at the
       # right place afterwards.
-      InputLog.record_consumed(class, {class, "proc", "a"}, 550)
+      InputLog.record_consumed(class, {class, "task", "a"}, 550)
       :ok = Sweep.run(class)
       {:ok, 600} = InputLog.append(class, "m600", %{})
 
@@ -499,7 +499,7 @@ defmodule Flezha.State.InputLogTest do
              )
 
       {:ok, 300} = InputLog.append(class, "m300", %{})
-      InputLog.record_consumed(class, {class, "proc", "a"}, 290)
+      InputLog.record_consumed(class, {class, "task", "a"}, 290)
       :ok = Sweep.run(class)
 
       assert InputLog.read_range(class, 0, 300) |> Enum.map(&elem(&1, 0)) ==
@@ -524,7 +524,7 @@ defmodule Flezha.State.InputLogTest do
 
       log =
         capture_log(fn ->
-          # The log opens through the same reader the per-Entity WAL opens
+          # The log opens through the same reader the per-Cell WAL opens
           # through, so it must give the same answer to the same record.
           assert {:error, {:crc_mismatch, 0, ^second}} = InputLog.last_offset(class)
         end)
@@ -570,7 +570,7 @@ defmodule Flezha.State.InputLogTest do
 
         # A watermark advance and a retention sweep are casts: both are dropped
         # rather than reaching a companion that was never started.
-        InputLog.record_consumed(class, {class, "proc", "a"}, 1)
+        InputLog.record_consumed(class, {class, "task", "a"}, 1)
         :ok = Sweep.run(class)
         assert Process.alive?(pid)
         assert {:error, {:crc_mismatch, 0, ^second}} = GenServer.call(pid, :last_offset)
@@ -582,23 +582,23 @@ defmodule Flezha.State.InputLogTest do
     test "a first report for an absent key stores that offset", %{class: class} do
       refute InputLog.watermark(class)
 
-      InputLog.record_consumed(class, {class, "proc", "a"}, 7)
+      InputLog.record_consumed(class, {class, "task", "a"}, 7)
 
       assert InputLog.watermark(class) == 7
     end
 
     test "two reporters resolve to the higher offset, whichever arrives last", %{class: class} do
       # One class per case: `watermark/1` is the minimum across an operative's
-      # Entities, so a shared class would answer for the slowest of the three.
+      # Cells, so a shared class would answer for the slowest of the three.
       ascending = class <> "_asc"
-      InputLog.record_consumed(ascending, {ascending, "proc", "a"}, 3)
-      InputLog.record_consumed(ascending, {ascending, "proc", "a"}, 5)
+      InputLog.record_consumed(ascending, {ascending, "task", "a"}, 3)
+      InputLog.record_consumed(ascending, {ascending, "task", "a"}, 5)
       assert InputLog.watermark(ascending) == 5
 
       # The direction the unconditional insert got wrong.
       descending = class <> "_desc"
-      InputLog.record_consumed(descending, {descending, "proc", "a"}, 5)
-      InputLog.record_consumed(descending, {descending, "proc", "a"}, 3)
+      InputLog.record_consumed(descending, {descending, "task", "a"}, 5)
+      InputLog.record_consumed(descending, {descending, "task", "a"}, 3)
       assert InputLog.watermark(descending) == 5
 
       # Reporters are separate processes: the compare and the write are one
@@ -608,7 +608,7 @@ defmodule Flezha.State.InputLogTest do
       [5, 3]
       |> Enum.map(
         &Task.async(fn ->
-          InputLog.record_consumed(concurrent, {concurrent, "proc", "a"}, &1)
+          InputLog.record_consumed(concurrent, {concurrent, "task", "a"}, &1)
         end)
       )
       |> Task.await_many(2_000)
@@ -617,17 +617,17 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "an explicit rewind lowers it, and the next report advances it again", %{class: class} do
-      entity = {class, "proc", "a"}
-      InputLog.record_consumed(class, entity, 5)
+      cell = {class, "task", "a"}
+      InputLog.record_consumed(class, cell, 5)
 
       # The correction rewound the WAL to 2: the records that reported 5 are
       # gone, so the watermark must follow them down.
-      InputLog.rewind_consumed(class, entity, 2)
+      InputLog.rewind_consumed(class, cell, 2)
       assert InputLog.watermark(class) == 2
 
       # The guard is against moving BACKWARDS, not against re-reaching a value
       # once held: the replay re-consumes and reports 5 again.
-      InputLog.record_consumed(class, entity, 5)
+      InputLog.record_consumed(class, cell, 5)
       assert InputLog.watermark(class) == 5
     end
 
@@ -635,13 +635,13 @@ defmodule Flezha.State.InputLogTest do
       # Each body encodes to 53 bytes, so a 160-byte window admits exactly
       # three and parks the fourth.
       on_exit(TestHelpers.override_env(:source_credit_window_bytes, 160))
-      entity = {class, "proc", "a"}
+      cell = {class, "task", "a"}
       body = String.duplicate("x", 40)
 
       # Reported before the log exists: the advance reaches the table and no
       # cast reaches the log, so the log seeds this offset at init having
       # drained nothing for it.
-      InputLog.record_consumed(class, entity, 2)
+      InputLog.record_consumed(class, cell, 2)
 
       for i <- 0..2, do: {:ok, ^i} = InputLog.append(class, body, %{})
 
@@ -651,7 +651,7 @@ defmodule Flezha.State.InputLogTest do
 
       # A stale reporter's offset of 1: the write is rejected, and the report
       # still reaches the log, which drains offsets 0..2 and releases the park.
-      InputLog.record_consumed(class, entity, 1)
+      InputLog.record_consumed(class, cell, 1)
 
       assert InputLog.watermark(class) == 2
       assert {{:reply, {:ok, 3}}, :parked, _} = :gen_server.wait_response(reqids, 2_000, true)

@@ -180,45 +180,46 @@ Every verdict, and the two failures that are not verdicts:
 
 ## The building blocks
 
-The hello world has three pieces: a procedure, an operative and a runner. They
+The hello world has three pieces: a tasklet, an operative and a runner. They
 mean the same thing in all seven languages, so they are described once here and
 the code follows in [the next section](#the-code).
 
-### The procedure
+### The tasklet
 
 **A processing stage of your own.** Where a step needs more than a one-line
-transform, the operative hands the message to a procedure: typed input and output
+transform, the operative hands the message to a tasklet: typed input and output
 and, when you need them, per-key state that survives a restart, timers and
 retries.
 
 It emits its result without saying where the result goes. The operative decides
-that, so the same procedure can be rewired without being touched.
+that, so the same tasklet can be rewired without being touched.
 
-Its name is durable. State is stored under that name, so renaming a procedure in
-a new release does not rename anything, it declares a different procedure.
+Its name is durable. State is stored under that name, so renaming a tasklet in
+a new release does not rename anything, it declares a different tasklet.
 Choose it once.
 
-The echo's procedure keeps no state and takes no configuration, which is as
-simple as a procedure gets. State, keys and entities are
+The echo's tasklet keeps no state and takes no configuration, which is as
+simple as a tasklet gets. State, keys and cells are
 [`stream_basics.md`](tradedesk/stream_basics.md).
 
 ### The operative
 
-**What you build.** It declares the graph: the channels data enters on, the
-steps each message passes through, and the channels results leave on.
+**What you write to move data between steps.** It declares the graph: the
+channels data enters on, the steps each message passes through, and the channels
+results leave on.
 
 Some steps live in the graph itself. `map`, `filter`, `flatMap` and `keyBy`
 reshape, drop, split and key messages right where they are declared, with no
 class of their own ([`stream_transforms.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/stream_transforms.md)).
 A step that needs your own processing, or state that has to survive, is a
-procedure the graph routes messages into.
+tasklet the graph routes messages into.
 
-The echo has one procedure, but an operative can chain as many as it needs, the
+The echo has one tasklet, but an operative can chain as many as it needs, the
 output of one feeding the next, and split or join the path between them. A
-stream does that for as long as it runs, and a workflow runs its procedures as
+stream does that for as long as it runs, and a workflow runs its tasklets as
 the steps of a job that ends.
-[`stream_basics.md`](tradedesk/stream_basics.md#several-procedures-in-one-operative) and
-[`workflow_basics.md`](tradedesk/workflow_basics.md#several-procedures-step-by-step) show
+[`stream_basics.md`](tradedesk/stream_basics.md#several-tasklets-in-one-operative) and
+[`workflow_basics.md`](tradedesk/workflow_basics.md#several-tasklets-step-by-step) show
 both.
 
 The operative is the unit everything else works in: what the controller starts,
@@ -271,7 +272,7 @@ particular to that language is explained here; what the parts are for is
 > lets it run inside the controller's own node.
 >
 > The kernel owns **what runs and when**. It picks the next activation, holds
-> per-entity ordering and exclusivity, runs the retry ladder and durability, and
+> per-cell ordering and exclusivity, runs the retry ladder and durability, and
 > caps how much work is underway at once. Each SDK owns **the threads to run it
 > on**, and brings whatever its own runtime provides.
 >
@@ -294,8 +295,8 @@ The whole example:
 [`sdk/java/examples/echo`](https://github.com/flezha/flezha_java_sdk/tree/main/examples/echo).
 
 ```java
-// Echo.java: the procedure. The processing stage the graph routes each message into.
-@Procedure(id = "echo")                      // state is saved under this name, so choose it once
+// Echo.java: the tasklet. The processing stage the graph routes each message into.
+@Tasklet(id = "echo")                        // state is saved under this name, so choose it once
 public final class Echo {
 
     public String run(String input) {
@@ -304,8 +305,8 @@ public final class Echo {
 }
 ```
 
-**`@Procedure` is expanded at compile time.** The SDK's annotation processor
-generates `EchoProcedure` from this class, reading the input and output types
+**`@Tasklet` is expanded at compile time.** The SDK's annotation processor
+generates `EchoTasklet` from this class, reading the input and output types
 from the `run` signature, and the operative names that generated class. `run`
 takes no state parameter, so it keeps nothing between messages and journals
 nothing. A standalone project lists `flezha-sdk-processor` under
@@ -322,13 +323,13 @@ public final class EchoOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoProcedure.class).sink("out");
+        c.input(String.class, "in").into(EchoTasklet.class).sink("out");
     }
 }
 ```
 
 One expression declares the whole data path: an entry channel `in` carrying
-strings, routed into the procedure, whose output channel is named `out` and
+strings, routed into the tasklet, whose output channel is named `out` and
 terminated on the plugin layer. `sink(name)` does both jobs, so naming the
 channel again with `named(...)` is refused at registration rather than resolved.
 
@@ -368,16 +369,16 @@ The whole example:
 [`sdk/rust/examples/echo`](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/echo).
 
 ```rust
-// src/procedure.rs: the procedure. The processing stage the graph routes each message into.
-use flezha_runner::procedure;
+// src/tasklet.rs: the tasklet. The processing stage the graph routes each message into.
+use flezha_runner::tasklet;
 
-#[procedure(id = "echo")]                // state is saved under this name, so choose it once
+#[tasklet(id = "echo")]                  // state is saved under this name, so choose it once
 pub fn echo(input: String) -> String {
     format!("echo: {input}")             // what it returns is emitted
 }
 ```
 
-**`#[procedure]` turns the function into a procedure type**, `Echo`, named after
+**`#[tasklet]` turns the function into a tasklet type**, `Echo`, named after
 the function, and that type is what the operative routes into. The input and
 output types are read from the signature. There is no `&mut` state parameter, so
 it keeps nothing between messages and journals nothing.
@@ -402,7 +403,7 @@ impl StreamOperative for EchoOperative {
 `input::<String>("in")` is the entry channel and the type it carries: a `String`
 or a `Vec<u8>` passes through as its bytes, and any other type is parsed from
 JSON. `sink_named("out")` names the channel it terminates on the plugin layer,
-and `sink()` would leave it the procedure's name. A graph whose types do not
+and `sink()` would leave it the tasklet's name. A graph whose types do not
 line up is refused when the runner declares it.
 
 ```rust
@@ -443,10 +444,10 @@ The whole example:
 [`sdk/node/examples/echo`](https://github.com/flezha/flezha_node_sdk/tree/main/examples/echo).
 
 ```javascript
-// echo_procedure.mjs: the procedure. The processing stage the graph routes each message into.
-import { defineProcedure } from '@flezha/sdk';
+// echo_tasklet.mjs: the tasklet. The processing stage the graph routes each message into.
+import { defineTasklet } from '@flezha/sdk';
 
-export const EchoProcedure = defineProcedure({
+export const EchoTasklet = defineTasklet({
   name: 'echo',                         // state is saved under this name, so choose it once
   run: (input) => `echo: ${input}`,     // what it returns is emitted
 });
@@ -459,21 +460,21 @@ and journals nothing.
 // echo_operative.mjs: the operative. The graph, and the unit the controller schedules.
 import { defineOperative } from '@flezha/sdk';
 
-import { EchoProcedure } from './echo_procedure.mjs';
+import { EchoTasklet } from './echo_tasklet.mjs';
 
 export default defineOperative({
   factoryId: 'echo',
   channels: (c) => {
     c.input('in', { codec: 'text' })
-      .into(EchoProcedure)
+      .into(EchoTasklet)
       .sink('out');
   },
 });
 ```
 
-`{ codec: 'text' }` hands the procedure the bytes `flz operative send --text`
+`{ codec: 'text' }` hands the tasklet the bytes `flz operative send --text`
 delivers as a string; an entry that names no codec reads JSON instead. The sink
-names no codec, so the procedure's string leaves as its UTF-8 bytes, and any
+names no codec, so the tasklet's string leaves as its UTF-8 bytes, and any
 value other than a string or bytes would leave as JSON. The module exports what
 `defineOperative` returned, and that export is what the runner finds.
 
@@ -517,13 +518,13 @@ The whole example:
 [`sdk/python/examples/echo`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo).
 
 ```python
-# echo_procedure.py: the procedure. The processing stage the graph routes each message into.
-@flezha.procedure(name="echo")  # state is saved under this name, so choose it once
+# echo_tasklet.py: the tasklet. The processing stage the graph routes each message into.
+@flezha.tasklet(name="echo")    # state is saved under this name, so choose it once
 def echo(value: str) -> str:
     return f"echo: {value}"  # what it returns is emitted
 ```
 
-A function becomes a procedure through the decorator. It declares no state, so it
+A function becomes a tasklet through the decorator. It declares no state, so it
 keeps nothing between messages, and where its result goes is not its business.
 
 ```python
@@ -533,9 +534,9 @@ def echo_operative(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).sink("out")
 ```
 
-`codec="text"` hands the procedure the bytes `flz operative send --text` delivers
+`codec="text"` hands the tasklet the bytes `flz operative send --text` delivers
 as a string; an entry that names no codec reads JSON instead. The sink names no
-codec, so the procedure's string goes back out as its UTF-8 bytes, and any value
+codec, so the tasklet's string goes back out as its UTF-8 bytes, and any value
 other than a string or bytes would go out as JSON.
 
 ```python
@@ -570,16 +571,16 @@ The whole example:
 [`sdk/ruby/examples/echo`](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/echo).
 
 ```ruby
-# echo_procedure.rb: the procedure. The processing stage the graph routes each message into.
-class EchoProcedure < Flezha::Procedure
-  procedure_name "echo"                          # state is saved under this name, so choose it once
+# echo_tasklet.rb: the tasklet. The processing stage the graph routes each message into.
+class EchoTasklet < Flezha::Tasklet
+  tasklet_name "echo"                            # state is saved under this name, so choose it once
 
   def run(input, _ctx) = "echo: #{input}"        # what it returns is emitted
 end
 ```
 
-Without `procedure_name` the name is the class name in snake case. Which optional
-hooks a procedure has is read from the methods it defines, so with no
+Without `tasklet_name` the name is the class name in snake case. Which optional
+hooks a tasklet has is read from the methods it defines, so with no
 `initial_state` and no `apply_change` it keeps nothing and journals nothing.
 
 ```ruby
@@ -589,15 +590,15 @@ class EchoOperative < Flezha::StreamOperative
 
   channels do |c|
     c.input("in", codec: :text)
-     .into(EchoProcedure)
+     .into(EchoTasklet)
      .sink("out")
   end
 end
 ```
 
-`codec: :text` hands the procedure the bytes `flz operative send --text` delivers
+`codec: :text` hands the tasklet the bytes `flz operative send --text` delivers
 as a String; an entry that names no codec reads JSON instead. The sink names no
-codec, so the procedure's String goes back out as its bytes, and any other value
+codec, so the tasklet's String goes back out as its bytes, and any other value
 would go out as JSON.
 
 ```ruby
@@ -635,9 +636,9 @@ The whole example:
 [`sdk/php/examples/echo`](https://github.com/flezha/flezha_php_sdk/tree/main/examples/echo).
 
 ```php
-// src/EchoProcedure.php: the procedure. The processing stage the graph routes each message into.
-#[Proc(name: 'echo')]                   // state is saved under this name, so choose it once
-final class EchoProcedure extends Procedure
+// src/EchoTasklet.php: the tasklet. The processing stage the graph routes each message into.
+#[Task(name: 'echo')]                   // state is saved under this name, so choose it once
+final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -646,7 +647,7 @@ final class EchoProcedure extends Procedure
 }
 ```
 
-Only `run()` is required. Which optional hooks a procedure has is read from the
+Only `run()` is required. Which optional hooks a tasklet has is read from the
 methods it overrides, so with no `state` and no `applyChange` it keeps nothing and
 journals nothing.
 
@@ -658,15 +659,15 @@ final class EchoOperative extends StreamOperative
     public static function channels(Builder $c): void
     {
         $c->input('in', codec: ChannelCodec::Text)
-            ->into(EchoProcedure::class)
+            ->into(EchoTasklet::class)
             ->sink('out');
     }
 }
 ```
 
-`ChannelCodec::Text` hands the procedure the text `flz operative send --text`
+`ChannelCodec::Text` hands the tasklet the text `flz operative send --text`
 sends, checked as UTF-8; an entry that names no codec reads JSON instead. The
-sink names no codec, so the procedure's string goes out as it is, and any other
+sink names no codec, so the tasklet's string goes out as it is, and any other
 value would go out as JSON. The attribute carries the declaration and the method
 carries the graph.
 
@@ -710,9 +711,9 @@ The whole example:
 [`sdk/elixir/examples/echo`](../../sdk/elixir/examples/echo).
 
 ```elixir
-# lib/echo/procedure.ex: the procedure. The processing stage the graph routes each message into.
-defmodule Echo.Procedure do
-  use Flezha.SDK.Procedure, name: "echo"   # state is saved under this name, so choose it once
+# lib/echo/tasklet.ex: the tasklet. The processing stage the graph routes each message into.
+defmodule Echo.Tasklet do
+  use Flezha.SDK.Tasklet, name: "echo"     # state is saved under this name, so choose it once
 
   @impl true
   def run(input, state, ctx) do
@@ -722,7 +723,7 @@ defmodule Echo.Procedure do
 end
 ```
 
-`use Flezha.SDK.Procedure` declares the procedure and imports what `run/3` calls
+`use Flezha.SDK.Tasklet` declares the tasklet and imports what `run/3` calls
 on the ctx, `emit/2` among them. `run/3` answers `{:ok, state}`, and what it
 emitted is released only then. With no `state` block it keeps nothing between
 messages and journals nothing.
@@ -734,7 +735,7 @@ defmodule Echo.Operative do
 
   @impl true
   def channels(c) do
-    c |> input("in") |> into(Echo.Procedure) |> sink("out")
+    c |> input("in") |> into(Echo.Tasklet) |> sink("out")
   end
 end
 ```
@@ -769,10 +770,10 @@ kind is read from the module, never named by the list.
 
 > #### Concurrency in Elixir {: .info}
 >
-> **The one SDK with a core of its own.** Dispatch, entities and state are
+> **The one SDK with a core of its own.** Dispatch, cells and state are
 > Elixir, sharing no code with `flz_core` and re-expressing the same rules.
 > Concurrency is therefore the BEAM's: lightweight processes on the VM's
-> schedulers, preempted across every core, with an Entity's work ordered through
+> schedulers, preempted across every core, with a Cell's work ordered through
 > its own mailbox (`mailbox_capacity`, 1024 by default).
 >
 > It is also the only SDK that runs two ways. **In-node** (`transport: :native`,

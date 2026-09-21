@@ -1,8 +1,8 @@
 //! The **workflow** operative kind: spawned with `args`, run to an exit
-//! trigger, torn down. It drives the stream building blocks (procedures,
-//! channels, entities, `ctx.emit`) under a lifecycle: a procedure DAG, an
+//! trigger, torn down. It drives the stream building blocks (tasklets,
+//! channels, cells, `ctx.emit`) under a lifecycle: a tasklet DAG, an
 //! inbox for post-start input, and exit triggers (the chain finishing, a
-//! procedure's `complete`, a loop running out of work, `max_duration`, an
+//! tasklet's `complete`, a loop running out of work, `max_duration`, an
 //! external stop) that all converge on one `WorkflowCompleted`.
 
 mod commit;
@@ -39,18 +39,18 @@ pub enum LoopMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollbackMode {
-    /// Any failure undoes every completed procedure in reverse. The default.
+    /// Any failure undoes every completed tasklet in reverse. The default.
     AllOrNothing,
     /// Committed iterations are kept; a failure undoes only the in-flight one.
     KeepProgress,
 }
 
-/// The refusal a procedure outside a workflow earns by calling `complete`.
+/// The refusal a tasklet outside a workflow earns by calling `complete`.
 pub const COMPLETE_OUTSIDE_WORKFLOW: &str =
-    "CompleteOutsideWorkflow: only a procedure running inside a workflow operative can complete it; a stream operative never completes";
+    "CompleteOutsideWorkflow: only a tasklet running inside a workflow operative can complete it; a stream operative never completes";
 
-/// A workflow failure, retryable by default: inside a structured procedure
-/// it climbs the per-entity ladder first.
+/// A workflow failure, retryable by default: inside a structured tasklet
+/// it climbs the per-cell ladder first.
 #[derive(Debug, Clone)]
 pub struct WorkflowError {
     pub message: String,
@@ -58,7 +58,7 @@ pub struct WorkflowError {
 }
 
 impl WorkflowError {
-    /// A permanent failure: no retry, the procedure fails at once.
+    /// A permanent failure: no retry, the tasklet fails at once.
     pub fn non_retryable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -92,9 +92,9 @@ impl From<&str> for WorkflowError {
     }
 }
 
-/// The sink [`crate::entity::ProcedureDispatcher::run_collecting`] drives:
-/// inter-procedure output is collected for the next stage, plugin-bound
-/// output staged for the procedure's outbox.
+/// The sink [`crate::cell::TaskletDispatcher::run_collecting`] drives:
+/// inter-tasklet output is collected for the next stage, plugin-bound
+/// output staged for the tasklet's outbox.
 pub trait WorkflowCollectSink {
     fn collect(&mut self, value: Arc<dyn Any + Send + Sync>);
 
@@ -102,7 +102,7 @@ pub trait WorkflowCollectSink {
     /// barrier for a journaling run, straight to the wire otherwise.
     fn emit_plugin_bytes(&mut self, channel: &str, bytes: Vec<u8>);
 
-    /// The procedure asked to end its instance with `result` once the
+    /// The tasklet asked to end its instance with `result` once the
     /// iteration commits; a later call in the same step replaces it.
     fn complete(&mut self, result: Vec<u8>);
 }

@@ -10,12 +10,12 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     * `sugar_named_input`: the entry channel the author named, `prices`, onto
       `sugar_named_input_sink`;
     * `sugar_store_input`: the same shape with state, whose text inputs are
-      read back off the live Entity;
+      read back off the live Cell;
     * `sugar_workflow`: the workflow short form, a `once` workflow seeded on
       `order` from its start values, whose output reaches
       `sugar_workflow_placed` and which then completes;
     * `sugar_state_only`: a short form with no sink, whose entry `ticks` feeds
-      a procedure that only keeps state, read back off the live Entity since
+      a tasklet that only keeps state, read back off the live Cell since
       no sink frame exists to observe.
 
   Text entries throughout, so the bytes a sink carries are equal across
@@ -135,19 +135,19 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   end
 
   defp state_of(namespace, operative_id) do
-    case OperativeManager.get_entity_state(namespace, operative_id) do
+    case OperativeManager.get_cell_state(namespace, operative_id) do
       {:ok, json} -> Payloader.json_to_map(json)
       _ -> nil
     end
   end
 
   # The text inputs a stateful short form pushed, whatever the SDK spells the
-  # field's container as: every runtime's state is one procedure's, named after
+  # field's container as: every runtime's state is one tasklet's, named after
   # the factory id, and its one list field is what the fixture accumulates.
-  defp stored(namespace, operative_id, procedure) do
+  defp stored(namespace, operative_id, tasklet) do
     case state_of(namespace, operative_id) do
-      %{^procedure => entity} when is_map(entity) ->
-        entity |> Map.values() |> Enum.find(&is_list/1)
+      %{^tasklet => cell} when is_map(cell) ->
+        cell |> Map.values() |> Enum.find(&is_list/1)
 
       _ ->
         nil

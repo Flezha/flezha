@@ -3,8 +3,8 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   The resuming bind's two instance-scoped fields on `AddOperative`, both stamped
   onto the operative's opts by `Flezha.Operative.Lifecycle`.
 
-  `proc_journal` rides the bind rather than a per-Entity `RestoreInitState`
-  because it is instance-scoped: a durable workflow class with no per-Entity
+  `task_journal` rides the bind rather than a per-Cell `RestoreInitState`
+  because it is instance-scoped: a durable workflow class with no per-Cell
   state ships no restore at all, so a journal delivered there would never arrive
   and the driver would resume at iteration 0 on every wake.
   """
@@ -51,23 +51,23 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
     )
   end
 
-  test "a resuming bind carries the proc-journal even with nothing to restore", %{
+  test "a resuming bind carries the task-journal even with nothing to restore", %{
     runner_id: runner_id
   } do
-    journal = %RunnerCommands.ProcJournalState{iter: 7, consumed_offset: 3}
-    start_operative(runner_id, resume_entity_count: 0, proc_journal: journal)
+    journal = %RunnerCommands.TaskJournalState{iter: 7, consumed_offset: 3}
+    start_operative(runner_id, resume_cell_count: 0, task_journal: journal)
 
     assert_receive {:sent, {:add_operative, add}}, 500
-    assert add.resume_entity_count == 0
-    assert add.proc_journal == journal
+    assert add.resume_cell_count == 0
+    assert add.task_journal == journal
   end
 
   test "a fresh bind carries no journal", %{runner_id: runner_id} do
     start_operative(runner_id, [])
 
     assert_receive {:sent, {:add_operative, add}}, 500
-    assert add.resume_entity_count == 0
-    assert add.proc_journal == nil
+    assert add.resume_cell_count == 0
+    assert add.task_journal == nil
   end
 end
 
@@ -220,8 +220,8 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
         factory_id: add.factory_id,
         init_values: add.init_values,
         kind: add.kind,
-        resume_entity_count: add.resume_entity_count,
-        proc_journal: add.proc_journal
+        resume_cell_count: add.resume_cell_count,
+        task_journal: add.task_journal
       })
 
     assert IO.iodata_to_binary(encoded) == IO.iodata_to_binary(reference)
@@ -347,8 +347,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
                effectively_once: false,
                keyless: false,
                checkpoint_ack: false,
-               compensable_procs: nil,
-               leaf_procs: nil,
+               compensable_tasks: nil,
+               leaf_tasks: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil,
                sync_durability: false
@@ -361,8 +361,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
              effectively_once: false,
              keyless: false,
              checkpoint_ack: false,
-             compensable_procs: nil,
-             leaf_procs: nil,
+             compensable_tasks: nil,
+             leaf_tasks: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil,
              sync_durability: false
@@ -371,7 +371,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
 
   test "keyless is declared only when true — a keyed class says nothing" do
     # `partitioned-operatives`: the SDK announces `keyed: "false"` for a class
-    # with no keyed entry-fed procedure, so the controller can refuse a
+    # with no keyed entry-fed tasklet, so the controller can refuse a
     # partitioned start of it before touching a runner. A keyed class declares
     # nothing, which is what keeps its response byte-identical.
     assert declarations(%{"keyed" => "false"}).keyless
@@ -411,24 +411,24 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   end
 
   test "compensable chain positions resolve to a list" do
-    assert declarations(%{"compensable_procs" => "0,2,3"}).compensable_procs == [0, 2, 3]
+    assert declarations(%{"compensable_tasks" => "0,2,3"}).compensable_tasks == [0, 2, 3]
   end
 
   test "a declared-but-empty compensable list is not the same as an absent one" do
-    # "" = a structured chain, none of it compensable (a rewind of an emitting proc
+    # "" = a structured chain, none of it compensable (a rewind of an emitting task
     # is refused); absent = the class declares nothing at all (no information).
-    assert declarations(%{"compensable_procs" => ""}).compensable_procs == []
-    assert declarations(%{"other" => "x"}).compensable_procs == nil
+    assert declarations(%{"compensable_tasks" => ""}).compensable_tasks == []
+    assert declarations(%{"other" => "x"}).compensable_tasks == nil
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do
-    # A→(B,C): the operative is done when procs 1 and 2 have committed.
-    assert declarations(%{"leaf_procs" => "1,2"}).leaf_procs == [1, 2]
+    # A→(B,C): the operative is done when tasks 1 and 2 have committed.
+    assert declarations(%{"leaf_tasks" => "1,2"}).leaf_tasks == [1, 2]
     # A linear chain's single terminal is the degenerate case.
-    assert declarations(%{"leaf_procs" => "1"}).leaf_procs == [1]
+    assert declarations(%{"leaf_tasks" => "1"}).leaf_tasks == [1]
     # Absent = a stream / an SDK that does not declare it — the
     # controller cannot derive completion and must not guess.
-    assert declarations(%{"other" => "x"}).leaf_procs == nil
+    assert declarations(%{"other" => "x"}).leaf_tasks == nil
   end
 
   defp encode(metadata) do

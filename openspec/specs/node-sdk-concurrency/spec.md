@@ -27,13 +27,13 @@ its `wait()` SHALL be asynchronous.
   asserted rather than reviewed
 
 #### Scenario: A full no-drop consumer does not wedge the process
-- **WHEN** a procedure emits onto a full consumer mailbox declared `DropNothing`, with the
+- **WHEN** a tasklet emits onto a full consumer mailbox declared `DropNothing`, with the
   consumer's handler runnable only on an event loop
 - **THEN** the completion SHALL wait off-loop, the consumer's activation SHALL be dispatched and
   drained, and the completion SHALL then return
 
 #### Scenario: Spawn returns on the event loop and waits off it
-- **WHEN** a procedure calls `ctx.spawnWorkflow('worker', payload)` on an event loop and then
+- **WHEN** a tasklet calls `ctx.spawnWorkflow('worker', payload)` on an event loop and then
   awaits `handle.wait()` while the controller is slow to answer
 - **THEN** the spawn call SHALL return the handle without blocking the loop, `tryResult()` SHALL
   answer pending without blocking the loop, and the waiting read SHALL run on a thread that is not
@@ -98,31 +98,31 @@ SHALL be configurable both in code and by environment variable, SHALL default to
 configuration, and SHALL NOT require a different authoring surface, registration form, or dispatch
 path.
 
-The selection SHALL send every activation addressed to an entity to the same loop, and SHALL spread
-only the prepare crossing — the one activation that names no entity, because the key is what it is
+The selection SHALL send every activation addressed to a cell to the same loop, and SHALL spread
+only the prepare crossing — the one activation that names no cell, because the key is what it is
 computing — across loops. A dispatch loop is a separate isolate holding the state its restore fold
-materialized, so an activation for that entity sent elsewhere would find nothing to fold into.
+materialized, so an activation for that cell sent elsewhere would find nothing to fold into.
 Exclusivity makes either selection safe for concurrency; only one of them is safe for state.
 
-An entity that carries no key is still an entity: a single-entity procedure holds state exactly as a
-keyed one does, and an absent key SHALL NOT be read as an absent entity.
+A cell that carries no key is still a cell: a single-cell tasklet holds state exactly as a
+keyed one does, and an absent key SHALL NOT be read as an absent cell.
 
-#### Scenario: An entity's activations reach the loop holding its state
-- **WHEN** an entity's restore fold has run on one dispatch loop under a multi-loop configuration
+#### Scenario: A cell's activations reach the loop holding its state
+- **WHEN** a cell's restore fold has run on one dispatch loop under a multi-loop configuration
 - **THEN** its later activations SHALL be dispatched to that same loop
 
-#### Scenario: A single-entity procedure is not spread across loops
-- **WHEN** successive activations reach a procedure that declares no keys under a multi-loop
+#### Scenario: A single-cell tasklet is not spread across loops
+- **WHEN** successive activations reach a tasklet that declares no keys under a multi-loop
   configuration
-- **THEN** they SHALL all be dispatched to the loop holding that procedure's one entity
+- **THEN** they SHALL all be dispatched to the loop holding that tasklet's one cell
 
 #### Scenario: The tiers share one dispatch path
 - **WHEN** the same handler module is run under the single-loop and multi-loop configurations
 - **THEN** dispatch, completion, ordering and results SHALL be identical, and the handler source
   SHALL be unchanged
 
-#### Scenario: Per-entity ordering holds across loops
-- **WHEN** successive inputs for one entity are dispatched under a multi-loop configuration
+#### Scenario: Per-cell ordering holds across loops
+- **WHEN** successive inputs for one cell are dispatched under a multi-loop configuration
 - **THEN** they SHALL be processed in enqueue order regardless of which loop takes each activation
 
 ### Requirement: Handlers Are Registered by Module Specifier
@@ -159,12 +159,12 @@ through a guard that runs on any exit path, including a thrown error, an unhandl
 rejection, and the termination of the dispatch loop that held it. The guard SHALL NOT be a
 convention applied at each return site.
 
-An unanswered activation retires its entity for the life of the process, so this is a correctness
+An unanswered activation retires its cell for the life of the process, so this is a correctness
 requirement rather than a hygiene one.
 
-#### Scenario: A throwing handler abandons rather than retiring its entity
+#### Scenario: A throwing handler abandons rather than retiring its cell
 - **WHEN** a handler throws, or its returned promise rejects
-- **THEN** the activation SHALL be answered, and the entity SHALL receive subsequent activations
+- **THEN** the activation SHALL be answered, and the cell SHALL receive subsequent activations
 
 #### Scenario: A terminating dispatch loop abandons what it held
 - **WHEN** a dispatch loop terminates with activations outstanding
@@ -188,14 +188,14 @@ this is the reason a multi-loop configuration is the recommended production post
 ### Requirement: Event-Loop Delay Is Observed and Reported
 
 The SDK SHALL observe its dispatch loops' event-loop delay and SHALL report a warning, naming the
-procedure most recently dispatched on that loop, when delay crosses a documented threshold.
+tasklet most recently dispatched on that loop, when delay crosses a documented threshold.
 
 A synchronous compute-bound handler is the one failure this SDK cannot prevent, so it SHALL be
 diagnosable at its source rather than only as a controller-side stall verdict.
 
 #### Scenario: A blocking handler is diagnosed at the host
 - **WHEN** a handler occupies its dispatch loop past the delay threshold
-- **THEN** the SDK SHALL warn naming the procedure and the observed delay, and SHALL point at the
+- **THEN** the SDK SHALL warn naming the tasklet and the observed delay, and SHALL point at the
   multi-loop configuration as the remedy
 
 ### Requirement: Shutdown Drains In-Flight Activations

@@ -21,10 +21,10 @@ mod checkpoint_interval_decl_tests {
     fn tier_class(id: &str, extra: &str) -> String {
         format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,{extra}
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
-                 "procedures":[{{"name":"p0"}}]}}"#
+                 "tasklets":[{{"name":"p0"}}]}}"#
         )
     }
 
@@ -120,8 +120,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_stream");
         let err = decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p0"}}]}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}]}}"#
         ))
         .expect_err("a stream class must not be able to declare sync durability");
 
@@ -137,8 +137,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_wf_transient");
         let err = decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,"sync_durability":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}],"workflow":{{}}}}"#
         ))
         .expect_err("there is no barrier to ship for a class that journals nothing");
 
@@ -150,8 +150,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_wf_ok");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}],"workflow":{{}}}}"#
         ))
         .expect("a durable workflow class declares sync durability");
 
@@ -164,8 +164,8 @@ mod sync_durability_decl_tests {
         let id = factory("sync_wf_default");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}],"workflow":{{}}}}"#
         ))
         .expect("a workflow class declaring nothing registers");
 
@@ -187,11 +187,11 @@ mod dropping_policy_decl_tests {
     fn class(id: &str, overflow: &str, extra: &str) -> String {
         format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,{extra}
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]],
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]],
                                "overflow":"{overflow}"}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
-                 "procedures":[{{"name":"p0","clock":"event_time"}}]}}"#
+                 "tasklets":[{{"name":"p0","clock":"event_time"}}]}}"#
         )
     }
 
@@ -285,9 +285,9 @@ mod sdk_lang_declaration_tests {
     fn class(id: &str, lang: &str) -> String {
         format!(
             r#"{{"factory_id":"{id}",{lang}"sdk_version":"0.1.0","persistent":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                              {{"name":"out","kind":"plugin","producer":0}}],
-                 "procedures":[{{"name":"p0"}}]}}"#
+                 "tasklets":[{{"name":"p0"}}]}}"#
         )
     }
 
@@ -343,7 +343,7 @@ mod sdk_lang_declaration_tests {
 
             let topology = crate::operative::registry::get_class(&id).expect("class registered");
             assert_eq!(topology.sdk_lang, lang);
-            let header = topology.procedures[0]
+            let header = topology.tasklets[0]
                 .host_facts
                 .as_ref()
                 .expect("a host class carries host facts")
@@ -402,7 +402,7 @@ mod declaration_key_tests {
         for (section, struct_name) in [
             ("class", "HostClassDecl"),
             ("channel", "HostChannelDecl"),
-            ("procedure", "HostProcedureDecl"),
+            ("tasklet", "HostTaskletDecl"),
             ("workflow", "HostWorkflowDecl"),
         ] {
             assert_eq!(
@@ -424,28 +424,26 @@ mod declaration_key_tests {
                 (_, "factory_id") | (_, "name") => r#""pinned_decl""#,
                 ("class", "sdk_lang") | ("class", "change_format_id") => "1",
                 ("class", "sdk_version") => r#""0.1.0""#,
-                ("procedure", "schema_version") | ("procedure", "min_readable_schema_version") => {
-                    "1"
-                }
+                ("tasklet", "schema_version") | ("tasklet", "min_readable_schema_version") => "1",
                 ("class", "checkpoint_ack") => "true",
                 ("class", "checkpoint_outputs") => r#""at_checkpoint""#,
                 ("class", "beyond_window_policy") => r#""drop""#,
                 ("class", "channels") => r#"[{"name":"in","kind":"entry","chains":[]}]"#,
-                ("class", "procedures") => r#"[{"name":"p0"}]"#,
+                ("class", "tasklets") => r#"[{"name":"p0"}]"#,
                 ("class", "workflow") => "null",
                 ("channel", "kind") => r#""entry""#,
                 ("channel", "producer") => "null",
-                ("channel", "chains") => r#"[[{"link":"into","procedure":0}]]"#,
+                ("channel", "chains") => r#"[[{"link":"into","tasklet":0}]]"#,
                 ("channel", "overflow") => r#""drop_nothing""#,
-                ("procedure", "entity_mode") => r#""single""#,
-                ("procedure", "entity_keys") => "[]",
-                ("procedure", "clock") => r#""wall""#,
+                ("tasklet", "cell_mode") => r#""single""#,
+                ("tasklet", "cell_keys") => "[]",
+                ("tasklet", "clock") => r#""wall""#,
                 ("workflow", "loop_mode") => r#""once""#,
                 ("workflow", "rollback_mode") => r#""all_or_nothing""#,
                 (_, k) if k.ends_with("_ms") || k.ends_with("_bytes") => "1000",
                 (_, k) if k.ends_with("_every") || k.ends_with("_attempts") => "1",
                 (_, k) if k.ends_with("_max") || k.ends_with("_capacity") => "1",
-                (_, k) if k.ends_with("_entities") => "1",
+                (_, k) if k.ends_with("_cells") => "1",
                 _ => "true",
             }
         };
@@ -466,11 +464,11 @@ mod declaration_key_tests {
                 &format!(r#""factory_id":"{id}""#)
             ),
             format_args!(r#""channels":[{{{}}}]"#, object("channel")),
-            format_args!(r#""procedures":[{{{}}}]"#, object("procedure")),
+            format_args!(r#""tasklets":[{{{}}}]"#, object("tasklet")),
             format_args!(r#""workflow":{{{}}}"#, object("workflow")),
         );
 
-        // The class-level `channels` / `procedures` / `workflow` placeholders
+        // The class-level `channels` / `tasklets` / `workflow` placeholders
         // above are superseded by the fully populated ones appended after them,
         // so strip the placeholders before parsing.
         let json = json
@@ -478,7 +476,7 @@ mod declaration_key_tests {
                 r#""channels":[{"name":"in","kind":"entry","chains":[]}],"#,
                 "",
             )
-            .replace(r#""procedures":[{"name":"p0"}],"#, "")
+            .replace(r#""tasklets":[{"name":"p0"}],"#, "")
             .replace(r#""workflow":null,"#, "");
 
         let decl: crate::host::HostClassDecl = serde_json::from_slice(json.as_bytes())
@@ -486,7 +484,7 @@ mod declaration_key_tests {
 
         assert_eq!(decl.factory_id, id);
         assert_eq!(decl.channels.len(), 1);
-        assert_eq!(decl.procedures.len(), 1);
+        assert_eq!(decl.tasklets.len(), 1);
         assert!(decl.workflow.is_some());
     }
 }
@@ -504,16 +502,16 @@ mod sdk_version_decl_tests {
         let id = factory("host_sdk_version");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"1.2.3",
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p0"}}]}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}]}}"#
         ))
         .expect("the class registers");
 
         let topology = crate::operative::registry::get_class(&id).expect("class registered");
         let facts = topology
-            .procedure(0)
+            .tasklet(0)
             .and_then(|p| p.host_facts.clone())
-            .expect("a host procedure carries its declared facts");
+            .expect("a host tasklet carries its declared facts");
 
         assert_eq!(
             facts.header().sdk_version,
@@ -536,8 +534,8 @@ mod sdk_version_decl_tests {
             let id = factory(name);
             let err = decl(&format!(
                 r#"{{"factory_id":"{id}","sdk_lang":1,{version}
-                     "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                     "procedures":[{{"name":"p0"}}]}}"#
+                     "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                     "tasklets":[{{"name":"p0"}}]}}"#
             ))
             .expect_err("a class that names no SDK version is refused");
 
@@ -556,7 +554,7 @@ mod journal_codec_tests {
     //! A durable chained loop re-seeds iteration N+1 from its terminal handoff,
     //! and `encode_handoff` ships an empty batch for a channel with no codec —
     //! which the resumed loop reads as "converged". So the rule that a codec
-    //! rides an inter-procedure channel and nothing else is what makes the
+    //! rides an inter-tasklet channel and nothing else is what makes the
     //! registration refusal on the typed side decisive, and it is pinned here
     //! rather than left to the one line that implements it.
 
@@ -578,10 +576,10 @@ mod journal_codec_tests {
         format!(
             r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
                  "workflow":{{"loop_mode":"chained"}},
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
-                             {{"name":"out","kind":"inter_proc","producer":0,
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                             {{"name":"out","kind":"inter_task","producer":0,
                                "chains":[{terminal_links}]}}],
-                 "procedures":[{{"name":"p0"}}]}}"#,
+                 "tasklets":[{{"name":"p0"}}]}}"#,
             factory("chained_terminal")
         )
     }
@@ -595,46 +593,46 @@ mod journal_codec_tests {
         let err = super::decl(&chained_loop(r#"[{"link":"sink","name":"s"}]"#))
             .expect_err("a plugin-bound terminal carries no handoff");
         assert!(
-            err.contains("releases no inter-procedure handoff") && err.contains("p0"),
-            "the refusal names the shape and the terminal procedure: {err}"
+            err.contains("releases no inter-tasklet handoff") && err.contains("p0"),
+            "the refusal names the shape and the terminal tasklet: {err}"
         );
     }
 
     /// The same class with a consumer behind the terminal channel keeps the
-    /// channel inter-procedure, so the journal carries it and it registers.
+    /// channel inter-tasklet, so the journal carries it and it registers.
     #[test]
-    fn a_durable_chained_loop_with_an_inter_proc_terminal_registers() {
+    fn a_durable_chained_loop_with_an_inter_task_terminal_registers() {
         let ok = format!(
             r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
                  "workflow":{{"loop_mode":"chained"}},
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
-                             {{"name":"out","kind":"inter_proc","producer":0,
-                               "chains":[[{{"link":"sink","name":"s"}}],[{{"link":"into","procedure":1}}]]}},
-                             {{"name":"tail","kind":"inter_proc","producer":1,"chains":[[]]}}],
-                 "procedures":[{{"name":"p0"}},{{"name":"p1"}}]}}"#,
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                             {{"name":"out","kind":"inter_task","producer":0,
+                               "chains":[[{{"link":"sink","name":"s"}}],[{{"link":"into","tasklet":1}}]]}},
+                             {{"name":"tail","kind":"inter_task","producer":1,"chains":[[]]}}],
+                 "tasklets":[{{"name":"p0"}},{{"name":"p1"}}]}}"#,
             factory("chained_ok")
         );
-        super::decl(&ok).expect("an inter-procedure terminal carries the handoff");
+        super::decl(&ok).expect("an inter-tasklet terminal carries the handoff");
     }
 
     #[test]
-    fn a_codec_rides_an_inter_proc_channel_and_nothing_else() {
+    fn a_codec_rides_an_inter_task_channel_and_nothing_else() {
         let rows = channels(
             r#"{"factory_id":"codec_kinds","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","procedure":0}]]},
-                             {"name":"mid","kind":"inter_proc","producer":0,
-                              "chains":[[{"link":"into","procedure":1}]]},
-                             {"name":"out","kind":"inter_proc","producer":1,
+                 "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","tasklet":0}]]},
+                             {"name":"mid","kind":"inter_task","producer":0,
+                              "chains":[[{"link":"into","tasklet":1}]]},
+                             {"name":"out","kind":"inter_task","producer":1,
                               "chains":[[{"link":"sink","name":"out"}]]}],
-                 "procedures":[{"name":"p0"},{"name":"p1"}]}"#,
+                 "tasklets":[{"name":"p0"},{"name":"p1"}]}"#,
         );
 
         assert_eq!(
             rows,
             vec![
                 (ChannelKind::Entry, false),
-                (ChannelKind::InterProcedure, true),
-                // Declared inter_proc, derived plugin-bound: a sink with no
+                (ChannelKind::InterTasklet, true),
+                // Declared inter_task, derived plugin-bound: a sink with no
                 // consumer behind it IS the terminal, and nothing re-seeds from
                 // it, so the journal does not carry it.
                 (ChannelKind::PluginBound, false),

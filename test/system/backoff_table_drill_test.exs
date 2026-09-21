@@ -8,7 +8,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
 
   A driven row induces the failure at the edge where its site meets the outside
   world — a socket that answers `429`, an endpoint that answers `503`, a
-  refusing backend, an unanswered hub call, a procedure that returns an error —
+  refusing backend, an unanswered hub call, a tasklet that returns an error —
   and asserts the delays announced on `[:flezha, :backoff, :wait]` are the
   row's, that the attempts ascend, and that a success announces
   `[:flezha, :backoff, :reset]`.
@@ -58,8 +58,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   @accounted %{
     park_resend: "test/flezha/sdk/effectively_once_test.exs — a park is resent until acked",
     hub_retry: "test/flezha/schedule/hub_test.exs — the schedule hub retries its start",
-    proc_outbox_retry:
-      "test/flezha/runner/control_channel_commits_test.exs — the proc outbox re-drives",
+    task_outbox_retry:
+      "test/flezha/runner/control_channel_commits_test.exs — the task outbox re-drives",
     port_restart: "no suite drives the crash-loop path",
     kafka_force_replace:
       "test/flezha/plugin/kafka_test.exs — a wedged client is replaced once per window",
@@ -72,8 +72,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     durability_ship: "test/flezha/state/durability_tier_test.exs — a refused ship retries",
     schedule_spawn:
       "test/flezha/schedule/job_test.exs — a failed spawn retries until the next slot",
-    entity_wake_retry:
-      "test/flezha/sdk/entity_timers_test.exs — a due timer that finds no room comes back",
+    cell_wake_retry:
+      "test/flezha/sdk/cell_timers_test.exs — a due timer that finds no room comes back",
     sdk_reconnect:
       "test/flezha/sdk/transport_modes_test.exs — a dropped runner reconnects; the row is pinned to flz_core by backoff_seam_test.exs"
   }
@@ -186,7 +186,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       no_response: {&no_response_device/0, 3, []},
       # A peer that never answers Node.connect/1.
       cluster_reconnect: {&cluster_reconnect_device/0, 3, []},
-      # A procedure that returns an error for every input.
+      # A tasklet that returns an error for every input.
       sdk_retry: {&sdk_retry_device/0, 3, [base: 50]},
       # A socket that answers every upgrade with 429.
       ws_reconnect: {&ws_reconnect_device/0, 3, []},
@@ -208,10 +208,10 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   end
 
   defp compaction_device() do
-    entity_id = {"drill", "proc", "k#{System.unique_integer([:positive])}"}
+    cell_id = {"drill", "task", "k#{System.unique_integer([:positive])}"}
 
     for _ <- 1..3 do
-      GenServer.cast(Watchdog, {:compaction_failed, entity_id})
+      GenServer.cast(Watchdog, {:compaction_failed, cell_id})
       _ = :sys.get_state(Watchdog)
     end
   end
@@ -263,10 +263,10 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     :ok
   end
 
-  defmodule FailingProcedure do
+  defmodule FailingTasklet do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "backoff_drill_procedure"
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "backoff_drill_tasklet"
     def init_state(_), do: %{}
     def apply_change(s, _change), do: s
     def state_from_json(json), do: json
@@ -285,7 +285,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       |> Channels.input("in")
       |> Channels.retry_backoff_ms(50)
       |> Channels.retry_max(4)
-      |> Channels.into(FailingProcedure)
+      |> Channels.into(FailingTasklet)
       |> Channels.sink()
     end
   end

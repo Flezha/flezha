@@ -222,7 +222,7 @@ end
 defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   @moduledoc """
   SDK -> Controller `SpawnWorkflowRequest` dispatch
-  (`procedure-requested-spawn`): the ControlChannel decodes the frame on the
+  (`tasklet-requested-spawn`): the ControlChannel decodes the frame on the
   SDK-initiated-command seam, resolves it off-process against the channel's own
   namespace, and writes one `SpawnWorkflowResponse` back under the request's
   reference id.

@@ -66,7 +66,7 @@ The queue SHALL be bounded by `sink_queue_max` (default `10000`). When the queue
 bound the enqueueing caller SHALL be parked until the queue drains, applying back-pressure
 rather than dropping, which is the policy the other bounded sinks share. A frame whose
 retry budget is permanently exhausted SHALL be parked through the dead-letter store,
-attributed to the output's own entity and channel, and SHALL NOT be silently lost.
+attributed to the output's own cell and channel, and SHALL NOT be silently lost.
 
 On connect, subscription frames SHALL be sent before queued outbound frames, so a server
 that requires a subscription handshake receives it first.
@@ -89,7 +89,7 @@ that requires a subscription handshake receives it first.
 
 #### Scenario: An exhausted frame is parked, not dropped
 - **WHEN** a frame's retry budget is permanently exhausted
-- **THEN** it SHALL be written to the dead-letter store carrying its entity and channel
+- **THEN** it SHALL be written to the dead-letter store carrying its cell and channel
 - **AND** the outbox hold SHALL be answered so the cursor advances past exactly the parked range
 
 ### Requirement: Delivery SHALL be confirmed by a declared acknowledgement mode
@@ -116,7 +116,7 @@ to put an id the upstream can echo, and an acknowledgement a frame cannot ask fo
 guarantee.
 
 A frame SHALL be able to carry the output's durable identity stamps, through the same
-template: `{{entity}}` and `{{seq}}` SHALL be substituted with the output's `flz.entity` and
+template: `{{cell}}` and `{{seq}}` SHALL be substituted with the output's `flz.cell` and
 `flz.seq`. Because a repeat is a normal event under `"required"` and impossible under
 `"none"`, the mode that can repeat is exactly the mode a template is mandatory for, so a
 repeated frame always carries the identity a consumer needs. The specification SHALL state
@@ -146,8 +146,8 @@ and no key to overwrite.
 - **THEN** the enable SHALL be refused, naming the placeholder
 
 #### Scenario: Outputs carry their identity stamps
-- **WHEN** an output is sent through a template carrying the entity and sequence placeholders
-- **THEN** the frame SHALL carry the output's `flz.entity` and `flz.seq` stamps
+- **WHEN** an output is sent through a template carrying the cell and sequence placeholders
+- **THEN** the frame SHALL carry the output's `flz.cell` and `flz.seq` stamps
 - **AND** the published documentation SHALL state that the consumer deduplicates on them
 
 ### Requirement: A websocket sink on an effectively-once operative SHALL warn at enable time

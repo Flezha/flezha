@@ -199,9 +199,9 @@ pub(crate) const DLQ: Help = r#"Dead-letter queue: parked poison payloads (retry
 
 Usage:
   flz dlq list [operative]                       Parked entries, nearest-to-expiry first
-  flz dlq show <operative/procedure/entry-id>    Entry metadata + payload preview
-  flz dlq replay <operative/procedure/entry-id>  Re-dispatch through the normal input path
-  flz dlq drop <operative/procedure/entry-id>    Discard the entry (audited)
+  flz dlq show <operative/tasklet/entry-id>      Entry metadata + payload preview
+  flz dlq replay <operative/tasklet/entry-id>    Re-dispatch through the normal input path
+  flz dlq drop <operative/tasklet/entry-id>      Discard the entry (audited)
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
@@ -218,7 +218,7 @@ COMMANDS:
     runner         Runner management commands
     plugin         Plugin management commands
     boot           Boot/recovery status, await, and legacy snapshot import
-    state          Per-Entity state queries (time-travel, retention, list)
+    state          Per-Cell state queries (time-travel, retention, list)
     reset          Clear Controller durable runtime data on disk (controller must be stopped)
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
@@ -258,7 +258,7 @@ COMMANDS:
     set-quota <name> --X<quota>=<value>  Update quota overrides
     help                                 Show this help message
 
-Quota fields: max_operatives, max_entities_per_operative, max_mailbox_bytes_total,
+Quota fields: max_operatives, max_cells_per_operative, max_mailbox_bytes_total,
               max_message_rate_per_second, max_state_bytes, max_runners
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
@@ -325,11 +325,11 @@ ID:
     prints "<id> is already running, left untouched" and starts nothing.
 
 INIT VALUES:
-    A stream operative's document is keyed by Procedure name, one entry per
-    Procedure to seed. Name only what you want seeded; a Procedure you leave
+    A stream operative's document is keyed by Tasklet name, one entry per
+    Tasklet to seed. Name only what you want seeded; a Tasklet you leave
     out keeps the state its class builds.
 
-        --init-values '{"compare_filter_procedure": {"comparable": "hi"}}'
+        --init-values '{"compare_filter_tasklet": {"comparable": "hi"}}'
         --init-values '{"ohlc": {"1m": {"high": 0}}}'   one state per declared key
 
     A name the class does not carry is ignored, not refused: the runner logs
@@ -357,7 +357,7 @@ OPTIONS:
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
-    keyed sink adds a third field, entity=... seq=... key=..., and a frame
+    keyed sink adds a third field, cell=... seq=... key=..., and a frame
     with no channel prints - in its place. With --json each frame is one
     object carrying channel, payload (payload_base64 for bytes that are not
     text) and the frame's whole metadata map.
@@ -385,7 +385,7 @@ COMMANDS:
     listen      Print the frames an operative emits or ingests
     send        Send a payload to an operative's input stream
     rewind      Rewind a workflow loop to a committed iteration
-    replay      Re-run an Entity's retained inputs from a point in the past
+    replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 
 EXAMPLES:
@@ -462,7 +462,7 @@ DESCRIPTION:
     Controller is up; stop it first with `flz controller stop`.
 
     By default clears:
-        app_data/state/         (per-Entity WAL/snapshot/outbox)
+        app_data/state/         (per-Cell WAL/snapshot/outbox)
         app_data/process_hub/   (ProcessHub durable registry)
 
     Opt-in clears (off by default):
@@ -579,33 +579,33 @@ EXAMPLES:
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
-pub(crate) const STATE: Help = r#"flz state - Per-Entity state inspection and time-travel queries
+pub(crate) const STATE: Help = r#"flz state - Per-Cell state inspection and time-travel queries
 
 USAGE:
     flz state <SUBCOMMAND>
 
 SUBCOMMANDS:
-    get <operative/procedure[/key]>          Current in-memory state of a live Entity, with its change_seq
-    list <operative>                         List Entities under an Operative class
-    at <operative/procedure/key> <seq|ts>    Query state at a point in time
-    rotate <operative/procedure/key>         Force a compaction snapshot
+    get <operative/tasklet[/key]>            Current in-memory state of a live Cell, with its change_seq
+    list <operative>                         List Cells under an Operative class
+    at <operative/tasklet/key> <seq|ts>      Query state at a point in time
+    rotate <operative/tasklet/key>           Force a compaction snapshot
     retention <operative> <hours>            Set time-travel retention
-    delete <operative/procedure/key>         Hard-delete an Entity's persisted state
-    outbox <operative/procedure/key>         Effectively-once outbox status (lag, cursor, watermark)
-    journal <operative/instance>             Workflow instance proc-journal (committed procs, iterations, park)
+    delete <operative/tasklet/key>           Hard-delete a Cell's persisted state
+    outbox <operative/tasklet/key>           Effectively-once outbox status (lag, cursor, watermark)
+    journal <operative/instance>             Workflow instance task-journal (committed tasks, iterations, park)
     inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:
-    flz state get MarketOperative/OhlcProcedure/M1
-    flz state get MarketOperative/OhlcProcedure --output json
+    flz state get MarketOperative/OhlcTasklet/M1
+    flz state get MarketOperative/OhlcTasklet --output json
     flz state list MarketOperative
-    flz state at MarketOperative/OhlcProcedure/M1 12345
-    flz state at MarketOperative/OhlcProcedure/M1 2026-05-01T12:00:00Z
-    flz state rotate MarketOperative/OhlcProcedure/M1
+    flz state at MarketOperative/OhlcTasklet/M1 12345
+    flz state at MarketOperative/OhlcTasklet/M1 2026-05-01T12:00:00Z
+    flz state rotate MarketOperative/OhlcTasklet/M1
     flz state retention MarketOperative 6
-    flz state delete MarketOperative/OhlcProcedure/M1
-    flz state outbox MarketOperative/OhlcProcedure/M1
+    flz state delete MarketOperative/OhlcTasklet/M1
+    flz state outbox MarketOperative/OhlcTasklet/M1
     flz state journal etl-job-42
     flz state inbox chat-session-7"#;
 

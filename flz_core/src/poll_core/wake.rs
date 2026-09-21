@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use flz_transport::transport::FlezhaStream;
 
 use super::PollCore;
-use crate::entity::{EntityItem, EntitySlot};
+use crate::cell::{CellItem, CellSlot};
 use crate::timer::{TimerFire, TimerKind};
 use crate::util::LockRecover;
 
@@ -29,35 +29,35 @@ pub(super) struct WakeKey {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum WakeTiebreak {
-    /// The Entity's identity: arming `(entity, scheduled_at)` is an idempotent
+    /// The Cell's identity: arming `(cell, scheduled_at)` is an idempotent
     /// replace, and the instance id inside it keeps two instances sharing a
-    /// `ProcedureId` from disarming each other's timers.
+    /// `TaskletId` from disarming each other's timers.
     Timer(Arc<Vec<u8>>),
     /// Recording order; a slot's gates stay held across its backoff, so a
-    /// second retry for the same entity cannot exist.
+    /// second retry for the same cell cannot exist.
     Retry(u64),
-    /// The Entity whose open checkpoint interval is due to close; distinct
+    /// The Cell whose open checkpoint interval is due to close; distinct
     /// from `Timer` so the two cannot evict each other on one millisecond.
     Interval(Arc<Vec<u8>>),
 }
 
 pub(super) enum Wake {
     /// Finish a deferred re-arm; the slot's gates are still held.
-    Retry(Arc<EntitySlot>),
+    Retry(Arc<CellSlot>),
     /// Re-attempt a gated producer's pushes: the lost-wake fallback behind the
     /// consumer's wait list. A no-op on a producer that already drained.
-    PushRetry(Arc<EntitySlot>),
-    /// A processing-time deadline. `Weak` so an evicted Entity's timers die
+    PushRetry(Arc<CellSlot>),
+    /// A processing-time deadline. `Weak` so an evicted Cell's timers die
     /// with it; the stream is the one captured at arming. `scheduled_at` is
     /// what the firing is stamped with and what cancels it — the key's due
     /// time is only when to attempt admission.
     Timer {
-        slot: Weak<EntitySlot>,
+        slot: Weak<CellSlot>,
         stream: Arc<FlezhaStream>,
         scheduled_at: u64,
     },
     /// A checkpoint interval's `max_delay_ms` elapsed; `Weak` as a timer is.
-    CloseInterval { slot: Weak<EntitySlot> },
+    CloseInterval { slot: Weak<CellSlot> },
 }
 
 /// The deferred-wake list; recording an entry returns at once.
@@ -88,14 +88,14 @@ impl DeferredWake {
         self.refresh(&entries);
     }
 
-    /// Drop every timer armed for one Entity: eviction is destructive, so
+    /// Drop every timer armed for one Cell: eviction is destructive, so
     /// the timers go with the state.
-    fn discard_entity(&self, entity: &Arc<Vec<u8>>) {
+    fn discard_cell(&self, cell: &Arc<Vec<u8>>) {
         let mut entries = self.entries.lock_recover();
         let doomed: Vec<WakeKey> = entries
             .keys()
             .filter(|k| match &k.tiebreak {
-                WakeTiebreak::Timer(armed) | WakeTiebreak::Interval(armed) => armed == entity,
+                WakeTiebreak::Timer(armed) | WakeTiebreak::Interval(armed) => armed == cell,
                 WakeTiebreak::Retry(_) => false,
             })
             .cloned()
@@ -182,8 +182,8 @@ impl PollCore {
 
     /// What one due wake admits, and the entry to put back if it will not
     /// fit; a re-arm has no item and finishes here, a wake on an evicted
-    /// Entity is dropped.
-    fn wake_target(&self, wake: Wake) -> Option<(Arc<EntitySlot>, EntityItem, Wake)> {
+    /// Cell is dropped.
+    fn wake_target(&self, wake: Wake) -> Option<(Arc<CellSlot>, CellItem, Wake)> {
         match wake {
             Wake::Retry(slot) => {
                 self.release_and_rearm(&slot);
@@ -198,11 +198,7 @@ impl PollCore {
             // prevent.
             Wake::CloseInterval { slot } => {
                 let live = slot.upgrade()?;
-                Some((
-                    live,
-                    EntityItem::CloseInterval,
-                    Wake::CloseInterval { slot },
-                ))
+                Some((live, CellItem::CloseInterval, Wake::CloseInterval { slot }))
             }
             // A timer silently lost is a bug the author cannot see. The
             // firing keeps its armed `scheduled_at` across every deferral:
@@ -214,7 +210,7 @@ impl PollCore {
                 scheduled_at,
             } => {
                 let live = slot.upgrade()?;
-                let fire = EntityItem::Timer(TimerFire {
+                let fire = CellItem::Timer(TimerFire {
                     kind: TimerKind::ProcessingTime,
                     scheduled_at,
                     stream: Arc::clone(&stream),
@@ -245,13 +241,13 @@ impl PollCore {
         );
     }
 
-    /// Arm one processing-time timer; re-arming `(entity, scheduled_at)`
+    /// Arm one processing-time timer; re-arming `(cell, scheduled_at)`
     /// replaces the entry.
-    pub fn arm_timer(&self, slot: &Arc<EntitySlot>, scheduled_at: u64, stream: Arc<FlezhaStream>) {
+    pub fn arm_timer(&self, slot: &Arc<CellSlot>, scheduled_at: u64, stream: Arc<FlezhaStream>) {
         self.wakes.record(
             WakeKey {
                 due_at_ms: scheduled_at,
-                tiebreak: WakeTiebreak::Timer(Arc::clone(&slot.entity_identity)),
+                tiebreak: WakeTiebreak::Timer(Arc::clone(&slot.cell_identity)),
             },
             Wake::Timer {
                 slot: Arc::downgrade(slot),
@@ -262,12 +258,12 @@ impl PollCore {
         self.notify_waiters();
     }
 
-    /// Arm an Entity's interval close; re-arming replaces the entry.
-    pub fn arm_interval_close(&self, slot: &Arc<EntitySlot>, deadline_ms: u64) {
+    /// Arm a Cell's interval close; re-arming replaces the entry.
+    pub fn arm_interval_close(&self, slot: &Arc<CellSlot>, deadline_ms: u64) {
         self.wakes.record(
             WakeKey {
                 due_at_ms: deadline_ms,
-                tiebreak: WakeTiebreak::Interval(Arc::clone(&slot.entity_identity)),
+                tiebreak: WakeTiebreak::Interval(Arc::clone(&slot.cell_identity)),
             },
             Wake::CloseInterval {
                 slot: Arc::downgrade(slot),
@@ -277,25 +273,25 @@ impl PollCore {
     }
 
     /// Disarm an interval close that closed on its own. Idempotent.
-    pub fn disarm_interval_close(&self, entity: &Arc<Vec<u8>>, deadline_ms: u64) {
+    pub fn disarm_interval_close(&self, cell: &Arc<Vec<u8>>, deadline_ms: u64) {
         self.wakes.remove(&WakeKey {
             due_at_ms: deadline_ms,
-            tiebreak: WakeTiebreak::Interval(Arc::clone(entity)),
+            tiebreak: WakeTiebreak::Interval(Arc::clone(cell)),
         });
     }
 
     /// Disarm one timer. Idempotent; no notify, since dropping an entry can
     /// only lengthen a wait, never miss one.
-    pub fn disarm_timer(&self, entity: &Arc<Vec<u8>>, scheduled_at: u64) {
+    pub fn disarm_timer(&self, cell: &Arc<Vec<u8>>, scheduled_at: u64) {
         self.wakes.remove(&WakeKey {
             due_at_ms: scheduled_at,
-            tiebreak: WakeTiebreak::Timer(Arc::clone(entity)),
+            tiebreak: WakeTiebreak::Timer(Arc::clone(cell)),
         });
     }
 
-    /// Drop every timer armed for one Entity, as the reaper evicts it.
-    pub fn discard_entity_timers(&self, entity: &Arc<Vec<u8>>) {
-        self.wakes.discard_entity(entity);
+    /// Drop every timer armed for one Cell, as the reaper evicts it.
+    pub fn discard_cell_timers(&self, cell: &Arc<Vec<u8>>) {
+        self.wakes.discard_cell(cell);
     }
 
     /// Processing-time timers armed — the `timers_armed` heartbeat key.

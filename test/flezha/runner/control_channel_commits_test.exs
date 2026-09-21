@@ -1,9 +1,9 @@
 defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   @moduledoc """
-  SDK -> Controller `ProcCommit` dispatch path (`workflow-proc-journal` +
+  SDK -> Controller `TaskCommit` dispatch path (`workflow-task-journal` +
   `workflow-transactional-outbox`): the ControlChannel appends the
-  `proc_committed` entry — entities, handoff AND the procedure's staged outbox
-  in one record — fsyncs, replies `ProcCommitResponse` under the request's
+  `task_committed` entry — cells, handoff AND the tasklet's staged outbox
+  in one record — fsyncs, replies `TaskCommitResponse` under the request's
   reference_id, and only then flushes the outbox to the bound operative. A
   failed append rides back in `error` and flushes nothing.
 
@@ -21,7 +21,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.SDK.Wire
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{Outbox, Paths, ProcInbox, ProcJournal, TestHelpers}
+  alias Flezha.State.{Outbox, Paths, TaskInbox, TaskJournal, TestHelpers}
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -30,7 +30,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
-  @namespace "ctrl-chan-proc-commit-test"
+  @namespace "ctrl-chan-task-commit-test"
 
   setup do
     ClassRegistry.ensure_table()
@@ -39,25 +39,25 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     :ok
   end
 
-  test "ProcCommit is journaled durably and acked with an empty error" do
+  test "TaskCommit is journaled durably and acked with an empty error" do
     inst = "opc_inst_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("ok")
 
-    seg = Wire.encode_entity_id(inst, "ProcA", "s0")
-    payload = build_proc_commit_payload(inst, 1, [seg], [{4, "handoff"}], "ref-opc-1")
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+    payload = build_task_commit_payload(inst, 1, [seg], [{4, "handoff"}], "ref-opc-1")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
     response = decode_reply(reply)
     assert response.reference_id == "ref-opc-1"
 
-    assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: "", proc_idx: 1}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: "", task_idx: 1}} =
              response.command
 
     # The ack was emitted only after the entry landed in the journal.
-    assert {:ok, [entry]} = ProcJournal.read(inst)
-    assert %{type: :proc_committed, proc_idx: 1, iter: 0} = entry
-    assert entry.payload.entities_ran == [seg]
+    assert {:ok, [entry]} = TaskJournal.read(inst)
+    assert %{type: :task_committed, task_idx: 1, iter: 0} = entry
+    assert entry.payload.cells_ran == [seg]
     assert entry.payload.handoff == [{4, "handoff"}]
   end
 
@@ -66,16 +66,16 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("done")
 
     for payload <- [
-          build_proc_commit_payload(inst, 0, [], [], "ref-done-p", completes_with: "3"),
+          build_task_commit_payload(inst, 0, [], [], "ref-done-p", completes_with: "3"),
           build_iter_commit_payload(inst, 0, 0, [], "ref-done-i", completes_with: "3"),
-          build_proc_commit_payload(inst, 1, [], [], "ref-plain-p")
+          build_task_commit_payload(inst, 1, [], [], "ref-plain-p")
         ] do
       send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
       assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
     end
 
-    assert {:ok, [proc, iter, plain]} = ProcJournal.read(inst)
-    assert {proc.type, proc.payload.completion} == {:proc_committed, "3"}
+    assert {:ok, [task, iter, plain]} = TaskJournal.read(inst)
+    assert {task.type, task.payload.completion} == {:task_committed, "3"}
     assert {iter.type, iter.payload.completion} == {:iter_committed, "3"}
     assert plain.payload.completion == nil
   end
@@ -86,26 +86,26 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     inst = "opc_fat_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("fat")
 
-    fat = :binary.copy(<<0>>, ProcJournal.max_entry_bytes() + 1)
-    payload = build_proc_commit_payload(inst, 0, [], [{1, fat}], "ref-opc-fat")
+    fat = :binary.copy(<<0>>, TaskJournal.max_entry_bytes() + 1)
+    payload = build_task_commit_payload(inst, 0, [], [{1, fat}], "ref-opc-fat")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
     response = decode_reply(reply)
 
-    assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: error}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
              response.command
 
     assert error =~ "oversized_handoff"
-    assert {:ok, []} = ProcJournal.read(inst)
+    assert {:ok, []} = TaskJournal.read(inst)
   end
 
   test "a re-sent barrier under the same reference_id is acked again from the one entry" do
     inst = "opc_resend_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("resend")
 
-    seg = Wire.encode_entity_id(inst, "ProcA", "s0")
-    commit = build_proc_commit_payload(inst, 1, [seg], [{4, "handoff"}], "ref-opc-resend")
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+    commit = build_task_commit_payload(inst, 1, [seg], [{4, "handoff"}], "ref-opc-resend")
     iter = build_iter_commit_payload(inst, 0, 0, [], "ref-iter-resend")
 
     # The SDK's wait expired and it re-sent both barriers; the controller had
@@ -120,7 +120,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
         response = decode_reply(reply)
 
         case response.command do
-          {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: error}} ->
+          {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} ->
             {response.reference_id, error}
 
           {:iter_commit_response, %RunnerCommands.IterCommitResponse{error: error}} ->
@@ -136,8 +136,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
                {"ref-opc-resend", ""}
              ]
 
-    assert {:ok, [%{type: :proc_committed, proc_idx: 1}, %{type: :iter_committed, iter: 0}]} =
-             ProcJournal.read(inst)
+    assert {:ok, [%{type: :task_committed, task_idx: 1}, %{type: :iter_committed, iter: 0}]} =
+             TaskJournal.read(inst)
   end
 
   test "a hundred barriers in flight do not delay a ping on the same channel" do
@@ -150,7 +150,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       TestHelpers.in_one_window(fn ->
         for i <- 1..100 do
           inst = "storm_#{i}_#{System.unique_integer([:positive])}"
-          payload = build_proc_commit_payload(inst, 0, [], [{1, "h"}], "ref-storm-#{i}")
+          payload = build_task_commit_payload(inst, 0, [], [{1, "h"}], "ref-storm-#{i}")
           send(channel, {:flz_data, :stream_id, "control_command", payload, %{}})
         end
 
@@ -164,7 +164,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # The hundred acks follow the sync.
     for _ <- 1..100 do
       assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
-      assert {:proc_commit_response, %{error: ""}} = decode_reply(reply).command
+      assert {:task_commit_response, %{error: ""}} = decode_reply(reply).command
     end
   end
 
@@ -184,7 +184,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   defp await_marker(inst) do
     assert wait_until(
              fn ->
-               {:ok, entries} = ProcJournal.read(inst)
+               {:ok, entries} = TaskJournal.read(inst)
                Enum.any?(entries, &(&1.type == :outbox_flushed))
              end,
              2_000
@@ -199,13 +199,13 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # Stand in as the bound operative: the flush casts `:io_out_batch` at us.
     own(inst, control_channel)
 
-    seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
 
     payload =
-      build_proc_commit_payload(inst, 0, [seg], [], "ref-opc-outbox",
+      build_task_commit_payload(inst, 0, [seg], [], "ref-opc-outbox",
         outbox: [
-          %{entity_id: seg, seq_in_proc: 0, channel: "out", payload: "one"},
-          %{entity_id: seg, seq_in_proc: 1, channel: "out", payload: "two"}
+          %{cell_id: seg, seq_in_task: 0, channel: "out", payload: "one"},
+          %{cell_id: seg, seq_in_task: 1, channel: "out", payload: "two"}
         ]
       )
 
@@ -214,12 +214,12 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # The ack comes first: it IS the durable point past which output may be seen.
     assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
 
-    assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
              decode_reply(reply).command
 
     assert {"one", meta_one, _} = next_output(1_000)
     assert {"two", meta_two, _} = next_output(1_000)
-    assert meta_one["flz.entity"] == "#{inst}/ProcA/s0"
+    assert meta_one["flz.cell"] == "#{inst}/TaskA/s0"
     assert meta_one["flz.seq"] == "0.0"
     assert meta_one["flz.epoch"] == "0"
     assert meta_one["channel"] == "out"
@@ -232,10 +232,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     await_marker(inst)
 
     # Outbox and progress are one record; the flush is recorded separately.
-    assert {:ok, [committed, flushed]} = ProcJournal.read(inst)
+    assert {:ok, [committed, flushed]} = TaskJournal.read(inst)
     assert [%{payload: "one"}, %{payload: "two"}] = committed.payload.outbox
-    assert %{type: :outbox_flushed, proc_idx: 0, payload: %{for_type: :proc_committed}} = flushed
-    assert ProcJournal.pending_entries(inst) == []
+    assert %{type: :outbox_flushed, task_idx: 0, payload: %{for_type: :task_committed}} = flushed
+    assert TaskJournal.pending_entries(inst) == []
   end
 
   describe "synchronous remote durability" do
@@ -250,45 +250,45 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       ClassRegistry.put_sync_durability(inst, true)
       {control_channel, stream_ref} = start_control_channel("sync")
 
-      seg = Wire.encode_entity_id(inst, "ProcA", "s0")
-      payload = build_proc_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-sync-ok")
+      seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+      payload = build_task_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-sync-ok")
       send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
       assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
-      assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
+      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
                decode_reply(reply).command
 
       # The ack means remote-durable: the journal's manifest is in the store.
       assert {:ok, _blob} =
-               Stub.get(Manifest.key({:entity, {inst, inst, Paths.journal_entity_key()}}), [])
+               Stub.get(Manifest.key({:cell, {inst, inst, Paths.journal_cell_key()}}), [])
     end
 
-    test "a failed remote ship withholds the ack's success and re-runs the proc on resume" do
+    test "a failed remote ship withholds the ack's success and re-runs the task on resume" do
       inst = "opc_sync_down_#{System.unique_integer([:positive])}"
       ClassRegistry.put_sync_durability(inst, true)
       {control_channel, stream_ref} = start_control_channel("syncdown")
 
-      seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+      seg = Wire.encode_cell_id(inst, "TaskA", "s0")
       Stub.set_down(true)
-      payload = build_proc_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-sync-down")
+      payload = build_task_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-sync-down")
       send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
       assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
-      assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: error}} =
+      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
                decode_reply(reply).command
 
       assert error =~ "backend_down"
 
       # The local append DID land — that is the crash window the mode is about.
-      # The SDK never saw a successful ack, so it re-runs the procedure on
+      # The SDK never saw a successful ack, so it re-runs the tasklet on
       # resume, and the journal it resumes against is the local one.
-      assert {:ok, [%{type: :proc_committed, proc_idx: 0}]} = ProcJournal.read(inst)
+      assert {:ok, [%{type: :task_committed, task_idx: 0}]} = TaskJournal.read(inst)
 
       refute match?(
                {:ok, _},
-               Stub.get(Manifest.key({:entity, {inst, inst, "_proc_journal"}}), [])
+               Stub.get(Manifest.key({:cell, {inst, inst, "_task_journal"}}), [])
              )
     end
 
@@ -296,14 +296,14 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       inst = "opc_async_#{System.unique_integer([:positive])}"
       {control_channel, stream_ref} = start_control_channel("async")
 
-      seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+      seg = Wire.encode_cell_id(inst, "TaskA", "s0")
       Stub.set_down(true)
-      payload = build_proc_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-async")
+      payload = build_task_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-async")
       send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
       assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
 
-      assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
+      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
                decode_reply(reply).command
     end
   end
@@ -313,19 +313,19 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("comp")
     own(inst, control_channel)
 
-    seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
 
     payload =
-      build_proc_commit_payload(inst, 2, [seg], [], "ref-opc-comp",
+      build_task_commit_payload(inst, 2, [seg], [], "ref-opc-comp",
         compensating: true,
-        outbox: [%{entity_id: seg, seq_in_proc: 0, channel: "mid", payload: "undo"}]
+        outbox: [%{cell_id: seg, seq_in_task: 0, channel: "mid", payload: "undo"}]
       )
 
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
 
-    assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
              decode_reply(reply).command
 
     assert {"undo", meta, _} = next_output(1_000)
@@ -335,8 +335,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     :ok = Outbox.settled(meta)
     await_marker(inst)
 
-    assert {:ok, [compensated, flushed]} = ProcJournal.read(inst)
-    assert %{type: :compensated, proc_idx: 2} = compensated
+    assert {:ok, [compensated, flushed]} = TaskJournal.read(inst)
+    assert %{type: :compensated, task_idx: 2} = compensated
     assert [%{payload: "undo", channel: "mid"}] = compensated.payload.outbox
     assert %{type: :outbox_flushed, payload: %{for_type: :compensated}} = flushed
   end
@@ -348,25 +348,25 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("norefuse")
     own(inst, control_channel)
 
-    seg = Wire.encode_entity_id(inst, "ProcA", "s0")
-    fat = :binary.copy(<<0>>, ProcJournal.max_entry_bytes() + 1)
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+    fat = :binary.copy(<<0>>, TaskJournal.max_entry_bytes() + 1)
 
     payload =
-      build_proc_commit_payload(inst, 0, [seg], [], "ref-opc-norefuse",
-        outbox: [%{entity_id: seg, seq_in_proc: 0, channel: "out", payload: fat}]
+      build_task_commit_payload(inst, 0, [seg], [], "ref-opc-norefuse",
+        outbox: [%{cell_id: seg, seq_in_task: 0, channel: "out", payload: fat}]
       )
 
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
-    assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: error}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
              decode_reply(reply).command
 
     assert error =~ "oversized_handoff"
     # Nothing durable ⇒ nothing delivered.
     refute_dispatched(300)
-    assert {:ok, []} = ProcJournal.read(inst)
+    assert {:ok, []} = TaskJournal.read(inst)
   end
 
   test "IterCommit journals the boundary, acks, then releases the consumed inbox" do
@@ -376,8 +376,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     own(inst, control_channel)
 
     # Two turns are waiting in the durable inbox; iteration 0 consumed the first.
-    {:ok, 1} = ProcInbox.append(inst, "turn-1", %{})
-    {:ok, 2} = ProcInbox.append(inst, "turn-2", %{})
+    {:ok, 1} = TaskInbox.append(inst, "turn-1", %{})
+    {:ok, 2} = TaskInbox.append(inst, "turn-2", %{})
 
     payload = build_iter_commit_payload(inst, 0, 1, [{4, "carry"}], "ref-iter-0")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
@@ -390,25 +390,25 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
              response.command
 
     # The ack was emitted only after the boundary record landed.
-    assert {:ok, [entry]} = ProcJournal.read(inst)
+    assert {:ok, [entry]} = TaskJournal.read(inst)
     assert %{type: :iter_committed, iter: 0} = entry
     assert entry.payload.consumed_offset == 1
     assert entry.payload.handoff == [{4, "carry"}]
-    assert ProcJournal.consumed_offset(inst) == 1
+    assert TaskJournal.consumed_offset(inst) == 1
 
     # Post-ack cleanup runs on the commit worker after the ack.
-    assert wait_until(fn -> Enum.map(ProcInbox.read(inst), & &1.offset) == [2] end, 2_000),
+    assert wait_until(fn -> Enum.map(TaskInbox.read(inst), & &1.offset) == [2] end, 2_000),
            "the consumed turn is released; the undelivered one is kept"
 
-    assert Enum.map(ProcInbox.undelivered(inst), & &1.message) == ["turn-2"]
+    assert Enum.map(TaskInbox.undelivered(inst), & &1.message) == ["turn-2"]
   end
 
-  test "the iteration boundary requests a snapshot for the instance's entities" do
+  test "the iteration boundary requests a snapshot for the instance's cells" do
     inst = "iter_snap_#{System.unique_integer([:positive])}"
 
-    # A persisted Entity of this instance — what the boundary compacts so a
+    # A persisted Cell of this instance — what the boundary compacts so a
     # rehydrate loads iteration-N state instead of replaying the WAL tail.
-    seg_id = {inst, "ProcA", "s0"}
+    seg_id = {inst, "TaskA", "s0"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(seg_id)
     :ok = WalWriter.append(writer, 0, <<0::128>>, "change")
 
@@ -427,10 +427,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
 
-    expected = Wire.encode_entity_id(inst, "ProcA", "s0")
+    expected = Wire.encode_cell_id(inst, "TaskA", "s0")
 
     assert_receive {:control_command,
-                    {:compact_entity, %RunnerCommands.CompactEntity{entity_id: ^expected}}},
+                    {:compact_cell, %RunnerCommands.CompactCell{cell_id: ^expected}}},
                    1_000
   end
 
@@ -452,7 +452,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     # The park is durable BEFORE the eviction, so a controller crash in between
     # still rediscovers the suspension.
-    assert %{parked: true, wake_deadline_ms: 1_800_000_000_000} = ProcJournal.restore_state(inst)
+    assert %{parked: true, wake_deadline_ms: 1_800_000_000_000} = TaskJournal.restore_state(inst)
   end
 
   defp start_control_channel(suffix) do
@@ -494,29 +494,29 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     :exit, _ -> :ok
   end
 
-  defp build_proc_commit_payload(
+  defp build_task_commit_payload(
          operative_id,
-         proc_idx,
-         entities_ran,
+         task_idx,
+         cells_ran,
          handoff,
          reference_id,
          opts \\ []
        ) do
     ControlFrameTestHelper.encode_request(
       reference_id,
-      {:proc_commit,
-       %RunnerCommands.ProcCommit{
+      {:task_commit,
+       %RunnerCommands.TaskCommit{
          operative_id: operative_id,
-         proc_idx: proc_idx,
+         task_idx: task_idx,
          iter: 0,
-         entities_ran: entities_ran,
+         cells_ran: cells_ran,
          handoff:
            Enum.map(handoff, fn {cid, bytes} ->
-             %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes}
+             %RunnerCommands.TaskHandoffItem{channel_id: cid, payload: bytes}
            end),
          outbox:
            Enum.map(Keyword.get(opts, :outbox, []), fn item ->
-             struct!(RunnerCommands.ProcOutboxItem, item)
+             struct!(RunnerCommands.TaskOutboxItem, item)
            end),
          compensating: Keyword.get(opts, :compensating, false),
          completes: Keyword.has_key?(opts, :completes_with),
@@ -541,7 +541,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
         consumed_offset: consumed_offset,
         handoff:
           Enum.map(handoff, fn {cid, bytes} ->
-            %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes}
+            %RunnerCommands.TaskHandoffItem{channel_id: cid, payload: bytes}
           end),
         completes: Keyword.has_key?(opts, :completes_with),
         result: Keyword.get(opts, :completes_with, "")

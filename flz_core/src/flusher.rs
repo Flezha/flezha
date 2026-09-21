@@ -1,8 +1,8 @@
 //! The per-process drain thread and the wire frames it builds: every linger
-//! tick it drains each registered Entity's buffer into `entity_state_change`
-//! / `entity_effect_record` frames (layout in `docs/sdk/state_persistence.md`)
+//! tick it drains each registered Cell's buffer into `cell_state_change`
+//! / `cell_effect_record` frames (layout in `docs/sdk/state_persistence.md`)
 //! and ships them through the state sink. The invariant: a change leaves its
-//! buffer exactly once, under a seq fetched from the Entity's own counter, so
+//! buffer exactly once, under a seq fetched from the Cell's own counter, so
 //! a background drain and an inline flush never gap or duplicate.
 
 use std::any::Any;
@@ -17,7 +17,7 @@ pub use crate::effect::*;
 use crate::header::HeaderTemplate;
 use crate::util::LockRecover;
 
-/// A registered Entity's flusher entry, opaque to callers.
+/// A registered Cell's flusher entry, opaque to callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlusherEntryId(u64);
 
@@ -34,30 +34,26 @@ pub enum SendError {
 pub type SendFrameFn = Arc<dyn Fn(&str, &[u8]) -> Result<(), SendError> + Send + Sync + 'static>;
 
 struct FlusherEntry {
-    entity_identity: Arc<Vec<u8>>,
+    cell_identity: Arc<Vec<u8>>,
     buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
     persistence_enabled: bool,
     change_seq: Arc<AtomicU64>,
     header: HeaderTemplate,
-    /// The Entity's `push_deferred`: while set the drain skips the buffer, or
+    /// The Cell's `push_deferred`: while set the drain skips the buffer, or
     /// a consumed offset could be durable ahead of an undelivered edge output.
     push_deferred: Arc<AtomicBool>,
 }
 
-/// The wire `entity_id_bytes` the controller's `decode_entity_id` reads.
-pub fn encode_entity_identity(
-    operative_class: &str,
-    procedure_id: &str,
-    entity_key: &str,
-) -> Vec<u8> {
+/// The wire `cell_id_bytes` the controller's `decode_cell_id` reads.
+pub fn encode_cell_identity(operative_class: &str, tasklet_id: &str, cell_key: &str) -> Vec<u8> {
     let rc = operative_class.as_bytes();
-    let sh = procedure_id.as_bytes();
-    let pk = entity_key.as_bytes();
+    let sh = tasklet_id.as_bytes();
+    let pk = cell_key.as_bytes();
     assert!(
         rc.len() <= 255 && sh.len() <= 255,
-        "operative_class / procedure_id ≤ 255 bytes"
+        "operative_class / tasklet_id ≤ 255 bytes"
     );
-    assert!(pk.len() <= 0xFFFF, "entity_key ≤ 65535 bytes");
+    assert!(pk.len() <= 0xFFFF, "cell_key ≤ 65535 bytes");
     let mut out = Vec::with_capacity(1 + rc.len() + 1 + sh.len() + 2 + pk.len());
     out.push(rc.len() as u8);
     out.extend_from_slice(rc);
@@ -74,13 +70,13 @@ pub struct FlushFrame {
     pub bytes: Vec<u8>,
 }
 
-/// The erased per-Entity flush buffer as the flusher sees it.
+/// The erased per-Cell flush buffer as the flusher sees it.
 pub trait FlushableBuffer: Send + Any {
     /// Coalesce and frame everything flushable, in emission order, one
     /// `change_seq` fetch per frame; `(post_coalesce_count, frames)`.
     fn drain_to_frames(
         &mut self,
-        entity_identity: &[u8],
+        cell_identity: &[u8],
         change_seq: &AtomicU64,
         header: &HeaderTemplate,
     ) -> (usize, Vec<FlushFrame>);
@@ -95,9 +91,9 @@ pub trait FlushableBuffer: Send + Any {
 }
 
 /// One `format_id = 3` timer-ops record, shipped under the ordinary
-/// `entity_state_change` id; the controller never decodes it.
-pub fn build_entity_timer_ops_frame(
-    entity_identity: &[u8],
+/// `cell_state_change` id; the controller never decodes it.
+pub fn build_cell_timer_ops_frame(
+    cell_identity: &[u8],
     seq: u64,
     header: &HeaderTemplate,
     ops: &[crate::schema::TimerOp],
@@ -108,21 +104,16 @@ pub fn build_entity_timer_ops_frame(
         ..*header
     };
     let header_bytes = timer_header.stamp(&body);
-    build_entity_frame(entity_identity, seq, &header_bytes, &body)
+    build_cell_frame(cell_identity, seq, &header_bytes, &body)
 }
 
 /// One frame from an already-serialized body.
-pub fn build_entity_frame(
-    entity_identity: &[u8],
-    seq: u64,
-    header: &[u8; 16],
-    body: &[u8],
-) -> Vec<u8> {
+pub fn build_cell_frame(cell_identity: &[u8], seq: u64, header: &[u8; 16], body: &[u8]) -> Vec<u8> {
     let crc = crc32fast::hash(body);
-    let pid_len = entity_identity.len();
+    let pid_len = cell_identity.len();
     let mut frame = Vec::with_capacity(2 + pid_len + 8 + 16 + 4 + body.len() + 4);
     frame.extend_from_slice(&(pid_len as u16).to_be_bytes());
-    frame.extend_from_slice(entity_identity);
+    frame.extend_from_slice(cell_identity);
     frame.extend_from_slice(&seq.to_be_bytes());
     frame.extend_from_slice(header);
     frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
@@ -133,24 +124,24 @@ pub fn build_entity_frame(
 
 /// The per-process flusher; its `flezha-flusher` thread starts on the first
 /// registration.
-pub struct EntityFlusher {
+pub struct CellFlusher {
     entries: Arc<DashMap<FlusherEntryId, FlusherEntry>>,
     next_entry_id: AtomicU64,
     shutdown: Arc<AtomicBool>,
     linger_ms: u64,
 }
 
-static FLUSHER: OnceLock<Arc<EntityFlusher>> = OnceLock::new();
+static FLUSHER: OnceLock<Arc<CellFlusher>> = OnceLock::new();
 
 const ENV_LINGER_MS: &str = "FLEZHA_FLUSH_LINGER_MS";
 const DEFAULT_LINGER_MS: u64 = 5;
 
-impl EntityFlusher {
-    pub fn instance() -> Arc<EntityFlusher> {
+impl CellFlusher {
+    pub fn instance() -> Arc<CellFlusher> {
         FLUSHER
             .get_or_init(|| {
                 let linger_ms = crate::util::env_parse(ENV_LINGER_MS, DEFAULT_LINGER_MS);
-                let flusher = Arc::new(EntityFlusher {
+                let flusher = Arc::new(CellFlusher {
                     entries: Arc::new(DashMap::new()),
                     next_entry_id: AtomicU64::new(0),
                     shutdown: Arc::new(AtomicBool::new(false)),
@@ -166,15 +157,15 @@ impl EntityFlusher {
             .clone()
     }
 
-    /// Drop an evicted Entity's entry. Idempotent.
+    /// Drop an evicted Cell's entry. Idempotent.
     pub fn deregister(&self, id: FlusherEntryId) {
         self.entries.remove(&id);
     }
 
-    /// Register an Entity's buffer; the id deregisters it on eviction.
+    /// Register a Cell's buffer; the id deregisters it on eviction.
     pub fn register(
         &self,
-        entity_identity: Arc<Vec<u8>>,
+        cell_identity: Arc<Vec<u8>>,
         buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
         persistence_enabled: bool,
         change_seq: Arc<AtomicU64>,
@@ -185,7 +176,7 @@ impl EntityFlusher {
         self.entries.insert(
             id,
             FlusherEntry {
-                entity_identity,
+                cell_identity,
                 buffer,
                 persistence_enabled,
                 change_seq,
@@ -212,9 +203,9 @@ impl EntityFlusher {
     fn drain_pass(&self) {
         for entry_ref in self.entries.iter() {
             let entry = entry_ref.value();
-            // An Entity owing an undelivered inter-procedure push keeps its
+            // A Cell owing an undelivered inter-tasklet push keeps its
             // records: the offset must not become durable ahead of the edge
-            // delivery it derives from. Bounded — a gated Entity is handed no
+            // delivery it derives from. Bounded — a gated Cell is handed no
             // further work, so at most one item's record waits here.
             if entry.push_deferred.load(Ordering::Acquire) {
                 continue;
@@ -222,7 +213,7 @@ impl EntityFlusher {
             let mut guard = entry.buffer.lock_recover();
             flush_one(
                 &mut **guard,
-                &entry.entity_identity,
+                &entry.cell_identity,
                 &entry.change_seq,
                 &entry.header,
                 entry.persistence_enabled,
@@ -231,11 +222,11 @@ impl EntityFlusher {
     }
 }
 
-/// Drain ONE entity's buffer and ship the frames, for the background pass
+/// Drain ONE cell's buffer and ship the frames, for the background pass
 /// and the inline flush-before-emit alike. The caller holds the buffer lock.
 pub fn flush_one(
     buffer: &mut dyn FlushableBuffer,
-    entity_identity: &[u8],
+    cell_identity: &[u8],
     change_seq: &AtomicU64,
     header: &HeaderTemplate,
     persistence_enabled: bool,
@@ -243,7 +234,7 @@ pub fn flush_one(
     if buffer.is_empty() {
         return;
     }
-    let (_count, frames) = buffer.drain_to_frames(entity_identity, change_seq, header);
+    let (_count, frames) = buffer.drain_to_frames(cell_identity, change_seq, header);
     if !persistence_enabled {
         tracing::trace!(
             target: "flezha::flusher",
@@ -254,7 +245,7 @@ pub fn flush_one(
     }
     for frame in frames {
         // Credit debit-on-send. Parks here (under the caller's buffer lock,
-        // which is what keeps per-Entity seq order across the background and
+        // which is what keeps per-Cell seq order across the background and
         // inline drain paths) when the window is exhausted; a producer pushing
         // into this buffer then blocks on the lock — the emit-path park.
         crate::credit::global().acquire(frame.bytes.len());
@@ -262,10 +253,10 @@ pub fn flush_one(
     }
 }
 
-/// One `entity_effect_record` frame from a serialized body, stamped
+/// One `cell_effect_record` frame from a serialized body, stamped
 /// `format_id = 2`.
 pub fn build_effect_record_frame(
-    entity_identity: &[u8],
+    cell_identity: &[u8],
     seq: u64,
     header: &HeaderTemplate,
     body: &EffectRecordBody,
@@ -277,7 +268,7 @@ pub fn build_effect_record_frame(
         ..*header
     };
     let header_bytes = effect_header.stamp(&body_bytes);
-    build_entity_frame(entity_identity, seq, &header_bytes, &body_bytes)
+    build_cell_frame(cell_identity, seq, &header_bytes, &body_bytes)
 }
 
 /// Frame encoded change bodies plus a trailing timer-ops record — the drain
@@ -285,7 +276,7 @@ pub fn build_effect_record_frame(
 pub fn frame_change_bodies(
     bodies: Vec<Vec<u8>>,
     timer_ops: Vec<crate::schema::TimerOp>,
-    entity_identity: &[u8],
+    cell_identity: &[u8],
     change_seq: &AtomicU64,
     header: &HeaderTemplate,
 ) -> Vec<FlushFrame> {
@@ -294,22 +285,22 @@ pub fn frame_change_bodies(
         let seq = change_seq.fetch_add(1, Ordering::Relaxed);
         let header_bytes = header.stamp(&body);
         frames.push(FlushFrame {
-            payload_id: crate::state_sink::ENTITY_STATE_CHANGE_PAYLOAD_ID,
-            bytes: build_entity_frame(entity_identity, seq, &header_bytes, &body),
+            payload_id: crate::state_sink::CELL_STATE_CHANGE_PAYLOAD_ID,
+            bytes: build_cell_frame(cell_identity, seq, &header_bytes, &body),
         });
     }
     if !timer_ops.is_empty() {
         let seq = change_seq.fetch_add(1, Ordering::Relaxed);
         frames.push(FlushFrame {
-            payload_id: crate::state_sink::ENTITY_STATE_CHANGE_PAYLOAD_ID,
-            bytes: build_entity_timer_ops_frame(entity_identity, seq, header, &timer_ops),
+            payload_id: crate::state_sink::CELL_STATE_CHANGE_PAYLOAD_ID,
+            bytes: build_cell_timer_ops_frame(cell_identity, seq, header, &timer_ops),
         });
     }
     frames
 }
 
-/// The inverse of `flusher::encode_entity_identity`.
-pub(crate) fn decode_entity_identity(bytes: &[u8]) -> Option<(String, String, String)> {
+/// The inverse of `flusher::encode_cell_identity`.
+pub(crate) fn decode_cell_identity(bytes: &[u8]) -> Option<(String, String, String)> {
     let take = |offset: &mut usize, len: usize| -> Option<String> {
         let end = offset.checked_add(len)?;
         let slice = bytes.get(*offset..end)?;
@@ -322,16 +313,16 @@ pub(crate) fn decode_entity_identity(bytes: &[u8]) -> Option<(String, String, St
     offset += 1;
     let class = take(&mut offset, class_len)?;
 
-    let procedure_len = *bytes.get(offset)? as usize;
+    let tasklet_len = *bytes.get(offset)? as usize;
     offset += 1;
-    let procedure = take(&mut offset, procedure_len)?;
+    let tasklet = take(&mut offset, tasklet_len)?;
 
     let key_len = u16::from_be_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]) as usize;
     offset += 2;
     let key = take(&mut offset, key_len)?;
 
     if offset == bytes.len() {
-        Some((class, procedure, key))
+        Some((class, tasklet, key))
     } else {
         None
     }
@@ -339,17 +330,17 @@ pub(crate) fn decode_entity_identity(bytes: &[u8]) -> Option<(String, String, St
 
 #[cfg(test)]
 mod identity_tests {
-    use super::{decode_entity_identity, encode_entity_identity};
+    use super::{decode_cell_identity, encode_cell_identity};
 
     #[test]
     fn round_trips_the_identity_a_restore_names() {
-        let encoded = encode_entity_identity("ohlc#p1", "candle_procedure", "BTC-USD");
+        let encoded = encode_cell_identity("ohlc#p1", "candle_tasklet", "BTC-USD");
 
         assert_eq!(
-            decode_entity_identity(&encoded),
+            decode_cell_identity(&encoded),
             Some((
                 "ohlc#p1".to_string(),
-                "candle_procedure".to_string(),
+                "candle_tasklet".to_string(),
                 "BTC-USD".to_string()
             ))
         );
@@ -357,12 +348,12 @@ mod identity_tests {
 
     #[test]
     fn refuses_a_truncated_or_over_long_identity() {
-        let encoded = encode_entity_identity("class", "procedure", "key");
+        let encoded = encode_cell_identity("class", "tasklet", "key");
 
-        assert_eq!(decode_entity_identity(&encoded[..encoded.len() - 1]), None);
+        assert_eq!(decode_cell_identity(&encoded[..encoded.len() - 1]), None);
 
         let mut trailing = encoded.clone();
         trailing.push(0);
-        assert_eq!(decode_entity_identity(&trailing), None);
+        assert_eq!(decode_cell_identity(&trailing), None);
     }
 }

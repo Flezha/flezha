@@ -8,21 +8,21 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an operator verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
 
 #### Scenario: stall is observed in one place, decision happens in another
-- **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` procedure 0
+- **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` tasklet 0
 - **WHEN** the Watchdog flags the stall
-- **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operative_class, operative_instance, procedure, key}`
+- **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operative_class, operative_instance, tasklet, key}`
 - **AND** the Watchdog performs no heal action of its own — no direct `Recovery.resync`, no dedup bookkeeping
 - **AND** the Convergence Loop holds the declared stall as a fact, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_operative`) under per-target backoff.
 
 #### Scenario: a compaction give-up is declared, not resynced
-- **GIVEN** the Watchdog's strike table reaches its give-up count for an Entity
+- **GIVEN** the Watchdog's strike table reaches its give-up count for a Cell
 - **WHEN** the sweep gives up
-- **THEN** the Watchdog SHALL declare `{:compaction_gave_up, entity_id, runner_id}` and call nothing, and the loop SHALL plan `resync_runner` for that Entity on the `{:compaction_gave_up, entity_id}` key
+- **THEN** the Watchdog SHALL declare `{:compaction_gave_up, cell_id, runner_id}` and call nothing, and the loop SHALL plan `resync_runner` for that Cell on the `{:compaction_gave_up, cell_id}` key
 
 #### Scenario: a seq gap is one latched fact per episode
-- **GIVEN** the WAL admission observes a seq gap for an Entity, then more gaps before the next contiguous append
+- **GIVEN** the WAL admission observes a seq gap for a Cell, then more gaps before the next contiguous append
 - **WHEN** the gaps arrive
-- **THEN** the first SHALL declare `{:seq_gap, entity_id, runner_id}` and the rest SHALL refresh the same key, the loop SHALL plan `resync_runner` for the Entity on its table, and the next contiguous append SHALL declare `{:seq_gap_closed, entity_id}`, which resets the key
+- **THEN** the first SHALL declare `{:seq_gap, cell_id, runner_id}` and the rest SHALL refresh the same key, the loop SHALL plan `resync_runner` for the Cell on its table, and the next contiguous append SHALL declare `{:seq_gap_closed, cell_id}`, which resets the key
 
 #### Scenario: a runner disconnect is a declared fact planned per operative
 - **GIVEN** a runner with thirty bound operatives closes its session while another runner advertising their factory is in the fleet
@@ -36,7 +36,7 @@ The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.
 
 ### Requirement: The reconciler is a pure-function pipeline, not scattered handlers
 
-The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on an operative, a runner, a plugin or an Entity. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose operatives this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
+The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on an operative, a runner, a plugin or a Cell. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose operatives this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
 
 #### Scenario: a new signal enters through the Diff, not around the plan
 - **WHEN** a sensor produces a fact the Loop must heal from (the data-plane classifier verdict, the Watchdog's stalled instances)
@@ -54,7 +54,7 @@ The self-healing decision logic MUST be expressed as a pure-function pipeline un
 
 ### Requirement: A hub stuck in `:recovery_timeout` does not permanently block healing for its namespace
 
-The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal procedures for operatives in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
+The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal tasklets for operatives in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
 
 A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace included in the ready set so operators are alerted to the stuck hub.
 
@@ -65,7 +65,7 @@ A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace includ
 - **THEN** the Loop heals misbound operatives in both `ns_ok` and `ns_timeout`
 - **AND** a `Logger.warning` is emitted naming `ns_timeout` as timed-out
 
-#### Scenario: normal procedure is unchanged for healthy hubs
+#### Scenario: normal tasklet is unchanged for healthy hubs
 
 - **GIVEN** all hubs are in `:normal` or `:skipped`
 - **WHEN** a convergence tick runs
@@ -124,17 +124,17 @@ The wrapper is control-plane-wide, not a convergence concept: it is named by `co
 - **THEN** the twelve waits emitted on `[:flezha, :backoff, :wait]` for ladder `:heal` SHALL be `2_000`, `5_000`, `10_000`, `15_000`, `20_000`, `30_000`, `45_000`, `60_000`, `90_000`, `120_000`, `180_000`, `300_000`, and a thirteenth failure SHALL wait `300_000` again
 
 #### Scenario: compaction keeps its own wall-clock before giving up
-- **WHEN** a compaction of one Entity fails on four consecutive eligible attempts
+- **WHEN** a compaction of one Cell fails on four consecutive eligible attempts
 - **THEN** the waits emitted for ladder `:compaction` SHALL be `5_000`, `30_000`, `60_000`, `300_000` and the Watchdog SHALL give up only after the fourth
 - **AND** a change to the `:heal` rungs SHALL NOT move any of those four values
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
-The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Entity WAL persisted seq always, and, when the operative runs the effectively-once tier, per-Entity durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
+The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Cell WAL persisted seq always, and, when the operative runs the effectively-once tier, per-Cell durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
 
-The tier cursors SHALL be read per Entity. An Entity's durable consumed offset is the offset the controller has fsynced for it, and the minimum across an operative's Entities is that operative's watermark — so a single frozen Entity freezes the operative's verdict while the verdict still names the Entity responsible.
+The tier cursors SHALL be read per Cell. A Cell's durable consumed offset is the offset the controller has fsynced for it, and the minimum across an operative's Cells is that operative's watermark — so a single frozen Cell freezes the operative's verdict while the verdict still names the Cell responsible.
 
-Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while an Entity's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
+Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while a Cell's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
 
 Cursor reads SHALL NOT create or resurrect durable state for an operative that has none: an operative without a live input log SHALL yield no cursor fields, and its classification SHALL degrade to WAL-seq-only rather than fail or default.
 
@@ -152,18 +152,18 @@ All marker reads SHALL be off-path at the convergence tick cadence, reusing coun
 
 #### Scenario: Frozen consumed offset with growing input-log is STUCK (tier on)
 
-- **WHEN** a tier-on operative's input-log tail grows across ticks while one of its Entities' durable consumed offset does not advance past the grace period
-- **THEN** the operative classifies STUCK with a watermark-frozen detail naming that Entity
+- **WHEN** a tier-on operative's input-log tail grows across ticks while one of its Cells' durable consumed offset does not advance past the grace period
+- **THEN** the operative classifies STUCK with a watermark-frozen detail naming that Cell
 
 #### Scenario: A checkpoint-ack operative that stops consuming is STUCK
 
-- **WHEN** a checkpoint-ack operative's input-log tail grows across ticks while its Entities' durable consumed offsets stay flat past the grace period
+- **WHEN** a checkpoint-ack operative's input-log tail grows across ticks while its Cells' durable consumed offsets stay flat past the grace period
 - **THEN** the operative classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the input-silence sweep
 
 #### Scenario: Undrained outbox with accumulating output records is STUCK (tier on)
 
-- **WHEN** output-bearing WAL records accumulate for an Entity across ticks while its `outbox_flushed_seq` stays flat past the grace period
-- **THEN** the operative classifies STUCK with an outbox-flat detail naming that Entity
+- **WHEN** output-bearing WAL records accumulate for a Cell across ticks while its `outbox_flushed_seq` stays flat past the grace period
+- **THEN** the operative classifies STUCK with an outbox-flat detail naming that Cell
 
 #### Scenario: A tier-off operative is classified on the WAL seq alone
 
@@ -176,7 +176,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 #### Scenario: Registry wipe degrades health instead of reporting healthy
 
-- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Operative state directories from prior procedure exist on disk
+- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Operative state directories from prior tasklet exist on disk
 - **THEN** `/healthz` reports `200 degraded` with `reason: intent_mismatch` listing the evidenced operatives, not `200 healthy`
 
 #### Scenario: Deliberate decommission clears the mismatch
@@ -420,9 +420,9 @@ When an SDK runner process restarts and presents `previous_runner_id`, the contr
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
 
-The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its operatives; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `entity_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its operatives; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `cell_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
 
-`entity_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged entity and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
+`cell_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged cell and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
 
 **The precondition is universal, and the two driver-global checks SHALL carry it in their own form.** A verdict is a statement that something which was working has stopped, so a layer SHALL NOT be judged from a baseline that never showed it working:
 
@@ -443,14 +443,14 @@ A close the controller itself initiated SHALL NOT mint an `output_stall` for the
 - **WHEN** both a channel and the runner beneath it are wedged
 - **THEN** the classifier reports only the deeper runner-scoped verdict, that layer is healed first, and any surviving channel wedge surfaces on a later tick
 
-#### Scenario: A single stalled entity is rebound while the runner keeps working
+#### Scenario: A single stalled cell is rebound while the runner keeps working
 - **GIVEN** a runner whose dispatch counter is still advancing and whose operatives are being fed
 - **WHEN** its heartbeat reports an outstanding activation older than the threshold for one operative
-- **THEN** the classifier SHALL report `entity_dispatch_stalled` scoped to that operative, the plan SHALL issue `rebind_operative` for it, and no `evict_runner` SHALL be issued for the runner
+- **THEN** the classifier SHALL report `cell_dispatch_stalled` scoped to that operative, the plan SHALL issue `rebind_operative` for it, and no `evict_runner` SHALL be issued for the runner
 
-#### Scenario: A wedged runner outranks a stalled entity
+#### Scenario: A wedged runner outranks a stalled cell
 - **WHEN** a runner reports both a frozen dispatch counter and an aged outstanding activation
-- **THEN** the classifier SHALL report only `runner_pool_wedged`, and the entity-scoped verdict SHALL surface on a later tick only if it survives the runner-level remedy
+- **THEN** the classifier SHALL report only `runner_pool_wedged`, and the cell-scoped verdict SHALL surface on a later tick only if it survives the runner-level remedy
 
 #### Scenario: A driver that has not started yet is not frozen
 - **GIVEN** a data-stream driver registered moments ago, whose previous sample carries a zero loop-iteration count and no stamped last-loop time
@@ -491,7 +491,7 @@ Periodic sensors SHALL stamp their last completed pass into the convergence Snap
 
 ### Requirement: Operative starts have a single idempotent authority
 
-Every path that starts or binds an operative — the ProcessHub orphan reconcile, the Convergence planner, manager/CLI starts, scheduled spawns, and procedure-requested spawns — SHALL resolve through the registry's duplicate-id claim. On a collision the loser SHALL observe the duplicate verdict, verify the winner is live, and no-op; it SHALL NOT stop, restart, or rebind the winner's instance. The `reconcile_duplicate` telemetry event (upstream: one operative observed on multiple nodes, resolved keep-one/stop-others) SHALL be reclassified alarm-grade carrying the kept/stopped nodes: a firing outside a cross-node partition-recovery window indicates a start-authority violation.
+Every path that starts or binds an operative — the ProcessHub orphan reconcile, the Convergence planner, manager/CLI starts, scheduled spawns, and tasklet-requested spawns — SHALL resolve through the registry's duplicate-id claim. On a collision the loser SHALL observe the duplicate verdict, verify the winner is live, and no-op; it SHALL NOT stop, restart, or rebind the winner's instance. The `reconcile_duplicate` telemetry event (upstream: one operative observed on multiple nodes, resolved keep-one/stop-others) SHALL be reclassified alarm-grade carrying the kept/stopped nodes: a firing outside a cross-node partition-recovery window indicates a start-authority violation.
 
 #### Scenario: Concurrent reconcile and planner starts collapse to one instance
 - **WHEN** the orphan reconcile and the Convergence planner both attempt to start the same operative in the same window on one node
@@ -834,7 +834,7 @@ of a ladder's values can go stale.
 #### Scenario: Every row is observable through its real entry point
 
 - **GIVEN** a ladder row and the failure that walks it induced through the real
-  transport or process (a stopped listener, a failing procedure, a 429 on a websocket
+  transport or process (a stopped listener, a failing tasklet, a 429 on a websocket
   upgrade, an unanswered call)
 - **WHEN** the site retries
 - **THEN** one `[:flezha, :backoff, :wait]` per attempt SHALL carry the row's declared

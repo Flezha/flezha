@@ -29,7 +29,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   @budget_ms 5_000
 
   setup do
-    TestHelpers.reset_all_entities()
+    TestHelpers.reset_all_cells()
     ConvergenceSnapshot.reset_recovery_states()
 
     on_exit(fn ->

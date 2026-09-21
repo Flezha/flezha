@@ -508,7 +508,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
              responses: [
                %{
                  topic: @topic,
-                 entity_responses: [
+                 cell_responses: [
                    %{
                      partition: 0,
                      error_code: 0,

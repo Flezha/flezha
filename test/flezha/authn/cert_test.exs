@@ -43,7 +43,7 @@ defmodule Flezha.AuthN.CertTest do
       assert {:ok, "team-orders"} = Cert.namespace_from_peer(der)
     end
 
-    test "SPIFFE SAN with no /ns/ entity falls back to _system" do
+    test "SPIFFE SAN with no /ns/ cell falls back to _system" do
       der = CertFixtures.self_signed_der(cn: "x", spiffe: "spiffe://flezha.local/admins/alice")
       assert {:ok, "_system"} = Cert.namespace_from_peer(der)
     end

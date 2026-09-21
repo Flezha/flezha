@@ -121,7 +121,7 @@ defmodule Flezha.Service.OperativeManager do
   forward, never a wrong start.
 
   This is the single start-authority seam: every in-cluster starter — the
-  CLI/manager, a schedule's slot, a procedure's `spawn_workflow`, and the
+  CLI/manager, a schedule's slot, a tasklet's `spawn_workflow`, and the
   orphan reconcile through the same durable registry — resolves the id claim
   here. A start that loses the claim answers `:duplicate` and leaves the
   winner strictly alone; it is never reported as a failed start, because the
@@ -235,19 +235,19 @@ defmodule Flezha.Service.OperativeManager do
          :ok <- Admission.refuse_group_base_claim(namespace, operative),
          :ok <- Admission.validate_factory(namespace, operative.factory_id),
          :ok <- Admission.check_operative_quota(namespace),
-         :ok <- Admission.check_entity_quota(namespace, operative),
+         :ok <- Admission.check_cell_quota(namespace, operative),
          :ok <- Admission.check_disk_quota(namespace),
          :ok <- Paths.claim_namespace(operative.id, namespace) do
       case Init.init_operative(&exist?/2, namespace, operative) do
         {:ok, _} = ok ->
           _ = Quotas.record_allocation(namespace, :max_operatives, 1)
-          seg_count = Admission.entity_count(operative)
+          seg_count = Admission.cell_count(operative)
 
           if seg_count > 0 do
             _ =
               Quotas.record_allocation(
                 namespace,
-                :max_entities_per_operative,
+                :max_cells_per_operative,
                 seg_count
               )
           end
@@ -332,18 +332,18 @@ defmodule Flezha.Service.OperativeManager do
 
   defp do_stop_operative(namespace, operative_id, preserve_state?) do
     with_operative_pid(namespace, operative_id, fn _operative_pid ->
-      # Read the binding and the entity count before the stop tears the
+      # Read the binding and the cell count before the stop tears the
       # operative down — the operative is gone afterwards, the flush needs its
       # runner and the quota step needs the count to release
-      # `:max_entities_per_operative` symmetrically with the start.
-      {runner_id, entity_count} = stop_facts(namespace, operative_id)
+      # `:max_cells_per_operative` symmetrically with the start.
+      {runner_id, cell_count} = stop_facts(namespace, operative_id)
 
       target = %{
         namespace: namespace,
         operative_id: operative_id,
         runner_id: runner_id,
         preserve_state?: preserve_state?,
-        entity_count: entity_count
+        cell_count: cell_count
       }
 
       case Shutdown.run(:operative, target, Shutdown.stop_timeout_ms()) do
@@ -357,7 +357,7 @@ defmodule Flezha.Service.OperativeManager do
   defp stop_facts(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
       {:ok, %{builder: builder} = ow} ->
-        {normalize_runner(Map.get(ow, :runner_id)), Admission.entity_count(builder)}
+        {normalize_runner(Map.get(ow, :runner_id)), Admission.cell_count(builder)}
 
       _ ->
         {nil, 0}
@@ -481,7 +481,7 @@ defmodule Flezha.Service.OperativeManager do
   already claimed.
 
   Shared by every in-cluster spawner — a schedule's slot firing and a
-  procedure's `spawn_or_deliver/6`. The duplicate verdict itself is minted by
+  tasklet's `spawn_or_deliver/6`. The duplicate verdict itself is minted by
   `start_operative/3`, the one start-authority seam.
   """
   @spec start_workflow(String.t(), String.t() | nil, String.t(), map(), Keyword.t()) ::
@@ -527,7 +527,7 @@ defmodule Flezha.Service.OperativeManager do
   defp requested_id(id) when is_binary(id) or is_nil(id), do: id
 
   @typedoc """
-  How a procedure-requested spawn resolved. `:spawned` and `:delivered` are
+  How a tasklet-requested spawn resolved. `:spawned` and `:delivered` are
   the two success shapes; the rest report why nothing was spawned. It is
   answered beside the id the request resolved to.
   """
@@ -536,7 +536,7 @@ defmodule Flezha.Service.OperativeManager do
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace`, the controller half of a
-  procedure's `ctx.spawn_workflow`, for the identity `caller_context` names,
+  tasklet's `ctx.spawn_workflow`, for the identity `caller_context` names,
   answering the outcome and the id the request resolved to.
 
   A free id spawns a workflow instance of `factory_id` carrying `payload` as its
@@ -712,32 +712,32 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @doc """
-  Whole-Operative read: every Procedure's Entity state as one JSON blob. The
+  Whole-Operative read: every Tasklet's Cell state as one JSON blob. The
   seq-less shape the migration/handover and introspection callers predate the
   selector with.
   """
-  def get_entity_state(namespace, operative_id) do
-    case get_entity_state(namespace, operative_id, %{}) do
+  def get_cell_state(namespace, operative_id) do
+    case get_cell_state(namespace, operative_id, %{}) do
       {:ok, json, _change_seq} -> {:ok, json}
       err -> err
     end
   end
 
   @doc """
-  Live read narrowed by `selector` (`%{procedure: name}` or
-  `%{procedure: name, entity_key: key}`; `%{}` covers every Procedure). Answers
+  Live read narrowed by `selector` (`%{tasklet: name}` or
+  `%{tasklet: name, cell_key: key}`; `%{}` covers every Tasklet). Answers
   `{:ok, json, change_seq}` — the seq the state was serialized at, which may be
   ahead of what is durable — or `{:error, reason}`, including the
-  `{:not_resident, reason}` refusals for an Entity that is not held in memory.
+  `{:not_resident, reason}` refusals for a Cell that is not held in memory.
   """
-  @spec get_entity_state(binary(), binary(), map()) ::
+  @spec get_cell_state(binary(), binary(), map()) ::
           {:ok, binary(), non_neg_integer() | nil} | {:error, term()}
-  def get_entity_state(namespace, operative_id, selector) when is_map(selector) do
+  def get_cell_state(namespace, operative_id, selector) when is_map(selector) do
     with_operative_pid(namespace, operative_id, fn pid ->
       # Unwrap one level: the operative's own reply is already
       # `{:ok, json, seq} | {:error, reason}`, so collapse `SafeCall`'s outer
       # `{:ok, _}`; a bounded timeout/noproc stays `{:error, reason}`.
-      case SafeCall.bounded(pid, {:get_entity_state, selector}, overwatch_call_timeout_ms()) do
+      case SafeCall.bounded(pid, {:get_cell_state, selector}, overwatch_call_timeout_ms()) do
         {:ok, reply} -> reply
         {:error, _} = err -> err
       end

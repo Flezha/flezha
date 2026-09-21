@@ -2,7 +2,7 @@
 
 The vocabulary every other document assumes, for operative authors, operators and contributors.
 In one sentence: **a Controller orchestrates Operatives across Runners; each Operative contains
-Procedures; each Procedure contains Entities.** Entries are short and point at the document that
+Tasklets; each Tasklet contains Cells.** Entries are short and point at the document that
 owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins.
 
 ## Roles
@@ -19,7 +19,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   controller mints a **session token** per connection (`AssignRunnerId`) and routes on it, while an
   operative's owner is the stable identity, so a reconnect re-points each operative's session
   without moving its ownership. See [`internals/runner_identity.md`](internals/runner_identity.md).
-- **Namespace** — the hard tenancy boundary: every operative, procedure, state path, audit record
+- **Namespace** — the hard tenancy boundary: every operative, tasklet, state path, audit record
   and signal carries one (`Flezha.AuthZ.Namespace`); `_system` is the singleton compatibility
   namespace. A runner connects into one namespace; the CLI selects one with `--namespace`.
 - **Cluster directory** — the `:pg`-backed map of which nodes hold runners for which factories and
@@ -36,34 +36,38 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Operative** — the unit you start and stop (`flz operative start|stop|list|info`), registered
   under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operative` base),
   with a **kind** frozen at start: `stream` (default) or `workflow` (`Flezha.Operative.Kind`).
-- **Stream operative** — the always-on kind: an endless input, no barrier, per-entity recovery.
+- **Stream operative** — the always-on kind: an endless input, no barrier, per-cell recovery.
   Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
-- **Workflow operative** — the terminating kind: a DAG of procedures run level by level behind a
+- **Workflow operative** — the terminating kind: a DAG of tasklets run level by level behind a
   commit barrier, with an inbox, saga compensation, a durable loop and suspension. Implements
-  `WorkflowOperative`; ends on chain completion, a procedure's `ctx.complete(result)`, a loop
+  `WorkflowOperative`; ends on chain completion, a tasklet's `ctx.complete(result)`, a loop
   that runs out of work, `max_duration` or `flz operative stop`. See
   [`architecture/workflow_profile.md`](architecture/workflow_profile.md).
-- **Procedure** — a typed stage inside an operative, declaring `Input`, `Output`, `State`,
-  `Change` and `Clock` types. A procedure has exactly one output channel.
-- **Entity** — the per-key state-bearing slice of a procedure and the unit of durability (one WAL,
-  one snapshot lineage, one outbox cursor), identified by `(operative_class, procedure_id,
-  entity_key)` and stored under `<state_root>/<namespace>/<class>/<procedure_id>/<entity_key>.*`.
-- **Entity mode** — **single** (one unkeyed entity, the default), **static** (a fixed keyset from
-  `entity_keys()`, one input fanning out via `entities_for`) or **dynamic** (one entity per key on
-  a keyed edge, created lazily, evicted after `entity_idle_ttl()`). Workflows refuse dynamic.
-- **Channel** — the typed edge between stages: **entry** (input from outside), **inter-procedure**,
+- **Tasklet** — a typed stage inside an operative, declaring `Input`, `Output`, `State`,
+  `Change` and `Clock` types. A tasklet has exactly one output channel, is wired to the others by
+  channels, and lives as long as its operative: it is fed, never called and returned from.
+- **Cell** — one keyed instance of a tasklet and the unit of durability, idle eviction and
+  compaction: its own mailbox, state, WAL, snapshot lineage and outbox cursor. Identified by
+  `(operative_class, tasklet_id, cell_key)` and stored under
+  `<state_root>/<namespace>/<class>/<tasklet_id>/<cell_key>.*`. A cell exists whether or not its
+  tasklet declares state and whether or not it carries a key: a single-mode tasklet holds one
+  unkeyed cell.
+- **Cell mode** — **single** (one unkeyed cell, the default), **static** (a fixed keyset from
+  `cell_keys()`, one input fanning out via `cells_for`) or **dynamic** (one cell per key on
+  a keyed edge, created lazily, evicted after `cell_idle_ttl()`). Workflows refuse dynamic.
+- **Channel** — the typed edge between stages: **entry** (input from outside), **inter-tasklet**,
   or **plugin-bound** (output to a sink, declared with `.sink(name)`). Terminality is derived from
   the wiring, never declared.
 - **Edge transform** — a `map` / `filter` / `flat_map` on a stream handle between two `.into`
   calls; everything before the closing `.into` fuses into one closure on that consumer edge and
-  costs no procedure, entity, mailbox or hop. See [`sdk/stream_transforms.md`](sdk/stream_transforms.md).
-- **Edge keying (`key_by`)** — the entity key function, declared on the consumer edge rather than
-  on the procedure. A procedure reached by a keyed edge is dynamic-mode; discard inputs with
+  costs no tasklet, cell, mailbox or hop. See [`sdk/stream_transforms.md`](sdk/stream_transforms.md).
+- **Edge keying (`key_by`)** — the cell key function, declared on the consumer edge rather than
+  on the tasklet. A tasklet reached by a keyed edge is dynamic-mode; discard inputs with
   `filter`, never with a keyless return.
-- **Merge** — two or more channels subscribed to one procedure, each with a pure mapping into its
+- **Merge** — two or more channels subscribed to one tasklet, each with a pure mapping into its
   sum-type `Input`. Per-source FIFO is kept, nothing is ordered across sources, and mappings run
-  identically on live delivery and replay. See [`sdk/multi_input_procedures.md`](sdk/multi_input_procedures.md).
-- **`route_latest`** — delivers an operative-wide document to each keyed entity on that key's own
+  identically on live delivery and replay. See [`sdk/multi_input_tasklets.md`](sdk/multi_input_tasklets.md).
+- **`route_latest`** — delivers an operative-wide document to each keyed cell on that key's own
   traffic, never as a remembered-set fan-out.
 - **Partition** — one member of a partitioned stream operative: an ordinary instance `<id>#pK`
   with its own Overwatch, registry row, binding, input log, state tree, plugins and DLQ identity.
@@ -74,11 +78,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `AddOperative`; the SDK **key-group guard** parks the first frame whose key falls outside it.
 - **Group** — the logical operative N partitions make up, named by the base id. No group record is
   stored: the single `flz operative list` row and `info`'s coverage check derive from the members.
-- **Timer (per-entity)** — a deadline a procedure registers on its own entity. An **event-time**
-  timer fires when the entity's event-time high-water crosses it, a **processing-time** timer from
+- **Timer (per-cell)** — a deadline a tasklet registers on its own cell. An **event-time**
+  timer fires when the cell's event-time high-water crosses it, a **processing-time** timer from
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
-  state, so a crash-resume owes exactly the timers it owed. See [`sdk/entity_timers.md`](sdk/entity_timers.md).
+  state, so a crash-resume owes exactly the timers it owed. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed from a
   `.fpz` (`flz plugin install`), attached per operative (`flz plugin enable|disable`).
@@ -105,17 +109,17 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 ## Durability vocabulary
 
-- **WAL** — the per-entity append-only change log of framed, CRC-protected records, owned by one
-  `Flezha.State.WalWriter`; the input log, proc journal and durable inbox share the record
+- **WAL** — the per-cell append-only change log of framed, CRC-protected records, owned by one
+  `Flezha.State.WalWriter`; the input log, task journal and durable inbox share the record
   format. See [`architecture/kernel.md`](architecture/kernel.md).
 - **Snapshot / compaction** — on WAL size or age the controller asks the runner for a full state
-  snapshot (`CompactEntity`) and truncates the log beneath it; a restore (`RestoreInitState`)
+  snapshot (`CompactCell`) and truncates the log beneath it; a restore (`RestoreInitState`)
   ships the latest snapshot plus the whole WAL tail.
 - **Effect record** — under the effectively-once tier, the one WAL record an invocation produces:
   `{changes, outputs, consumed_offset, dlq, event_time}`, appended and fsynced as a unit so
   state, output, progress and a park can never tear apart.
 - **Input log** — the offset-addressable durable log every source is normalised into under the
-  tier (`Flezha.State.InputLog`): append before forward, and each entity recovers from its own
+  tier (`Flezha.State.InputLog`): append before forward, and each cell recovers from its own
   consumed offset.
 - **At-least-once / effectively-once** — the default tier adds no latency and permits a duplicate
   output on replay; `effectively_once()` on the channel builder turns on the input log, the
@@ -125,11 +129,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `ctx.checkpoint()`; the **interval** is the retention floor, the recovery work and the credit
   cadence. A park closes the interval, a restore discards the open one, and
   `outputs_at_checkpoint(max_delay_ms)` holds the interval's outputs with its changes.
-- **Outbox** — the per-entity record of which outputs are durable and which a sink has confirmed
+- **Outbox** — the per-cell record of which outputs are durable and which a sink has confirmed
   (`Flezha.State.Outbox`, the `<key>.outbox.dedup` side-file): `outbox_durable_seq` gates the
   flush, `outbox_flushed_seq` advances on the sink's confirmation of the `flz.ack` token,
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
-- **Output identity** — the replay-stable stamps on a keyed output: `flz.entity`, `flz.seq`,
+- **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
   `flz.key`, and under the tier `flz.epoch`. `flz.` is reserved; a user emit carrying one is rejected.
 - **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
   re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
@@ -138,12 +142,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Owner / fence / realign** — an operative's **owner** is the stable identity its ownership
   record names (the `ClassRegistry` row its Overwatch writes before `AddOperative`); a frame about
   the operative from a runner of any other identity is refused, counted as `foreign_frame_refused`
-  and answered with `RemOperative`. Within that identity exactly one session writes an entity's WAL:
+  and answered with `RemOperative`. Within that identity exactly one session writes a cell's WAL:
   a takeover is newest-wins and unbinds the old session first, so its stream channels flip
   `fenced?` and the WAL writer refuses an append from a superseded session token before any realign
   decision.
   **Realign** is the writer adopting a current runner's non-contiguous sequence and bumping the epoch.
-- **Minimum watermark** — `min(consumed offset)` across an operative's entities, advanced only
+- **Minimum watermark** — `min(consumed offset)` across an operative's cells, advanced only
   from the post-fsync path. It is the input-log retention floor and what mints source credit, so
   a permanently-failing payload must never freeze it.
 - **Credit / credit grant** — byte-credit flow control (`Flezha.State.CreditLedger`): the
@@ -153,20 +157,20 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   which the input log re-drives.
 - **Park** — four senses, all "hold, never drop": a **DLQ park** ships a retry-exhausted payload
   durably to the controller (`park_payload` / `ParkPayloadAck`, or inside the effect record)
-  before the entity advances; a **credit park** waits for a grant; a **key-group park** refuses a
+  before the cell advances; a **credit park** waits for a grant; a **key-group park** refuses a
   mis-routed key; an **`IterPark`** suspends a workflow loop.
 - **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
-  (`Flezha.Dlq.Store`, `app_data/dlq/<operative_class>/<procedure_id>/`): retry, park durably,
+  (`Flezha.Dlq.Store`, `app_data/dlq/<operative_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
   `flz dlq list|show|replay|drop`; workflows abort-and-compensate instead. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
-  high-water mark rewind the entity to a baseline, replay the retained slice in event-time order
+  high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an `EventTimeFrom` clock and keyed plugin
   channels; the window raises the input-log hold window and the snapshot age floor to meet itself.
-- **Live read vs time-travel read** — `flz state get <operative/procedure[/entity_key]>` asks the
-  runner holding the entity for its in-memory value (possibly ahead of what is durable, stamped
-  with its `change_seq`) and refuses when nothing holds it; `flz state at <operative/procedure/
-  entity_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](internals/state_persistence.md).
+- **Live read vs time-travel read** — `flz state get <operative/tasklet[/cell_key]>` asks the
+  runner holding the cell for its in-memory value (possibly ahead of what is durable, stamped
+  with its `change_seq`) and refuses when nothing holds it; `flz state at <operative/tasklet/
+  cell_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](internals/state_persistence.md).
 - **Remote durability tier** — shipping durable artifacts to Postgres or S3 so a controller that
   dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
@@ -188,37 +192,37 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 ## Workflow vocabulary
 
-- **Proc journal** — the per-instance append-only journal of workflow progress
-  (`<state_root>/<namespace>/<instance_id>/<instance_id>/proc.journal`, `Flezha.State.ProcJournal`)
-  on the WAL substrate under a reserved entity key. Its entries (`proc_committed`, `outbox_flushed`,
+- **Task journal** — the per-instance append-only journal of workflow progress
+  (`<state_root>/<namespace>/<instance_id>/<instance_id>/task.journal`, `Flezha.State.TaskJournal`)
+  on the WAL substrate under a reserved cell key. Its entries (`task_committed`, `outbox_flushed`,
   `iter_committed`, `parked`, `compensated`, `rewound`) are folded, never truncated.
-- **Level barrier / `ProcCommit`** — every entity of every procedure in a level joins before the
-  SDK ships one `ProcCommit` per procedure `{entities_ran, handoff, staged outbox}`; the controller
-  journals it and acks, and only then are the children runnable. A committed procedure is never re-run.
-- **Transactional outbox** — inside a structured procedure `ctx.emit` stages rather than sends; the
-  staged outbox rides the `ProcCommit` and is flushed after the journal fsync, stamped
-  `flz.seq = <proc_idx>.<seq_in_proc>`. The journal, not memory, decides what is owed.
-- **Saga compensation** — on an abnormal exit, committed procedures' `compensate` hooks run in
+- **Level barrier / `TaskCommit`** — every cell of every tasklet in a level joins before the
+  SDK ships one `TaskCommit` per tasklet `{cells_ran, handoff, staged outbox}`; the controller
+  journals it and acks, and only then are the children runnable. A committed tasklet is never re-run.
+- **Transactional outbox** — inside a structured tasklet `ctx.emit` stages rather than sends; the
+  staged outbox rides the `TaskCommit` and is flushed after the journal fsync, stamped
+  `flz.seq = <task_idx>.<seq_in_task>`. The journal, not memory, decides what is owed.
+- **Saga compensation** — on an abnormal exit, committed tasklets' `compensate` hooks run in
   reverse-topological order, each journaled with its undo outbox. `RollbackMode::AllOrNothing`
   (default) unwinds every committed iteration, `KeepProgress` only the in-flight one; a hookless
-  procedure is skipped, and an undo handle must live in entity state.
+  tasklet is skipped, and an undo handle must live in cell state.
 - **Durable loop** — `LoopMode::Once` (default), `PerInput` (one iteration per inbox item) or
   `Chained` (iteration N+1 seeded by N's terminal output). The **iteration boundary**
   (`IterCommit`) is where suspension, the keep-progress unit and rewind attach.
-- **Durable inbox** — a workflow instance's input, journaled to `inbox.wal` (`Flezha.State.ProcInbox`)
+- **Durable inbox** — a workflow instance's input, journaled to `inbox.wal` (`Flezha.State.TaskInbox`)
   before it is forwarded and deduplicated by message id or payload hash within the undelivered window.
 - **Suspension / rehydrate** — between iterations the instance is evicted from its runner entirely
   (`IterPark`, journaled first) while the Overwatch and registry entry remain; a new message or a
   durable wake timer rehydrates it through the ordinary bind path.
 - **Rewind** — `flz operative rewind <instance> --to-iteration N` appends a `rewound` marker at
-  epoch + 1, compensates the procedures above N in reverse and resumes waiting. It is
-  undo-and-continue: inputs are not replayed, and a procedure that staged output without a
+  epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
+  undo-and-continue: inputs are not replayed, and a tasklet that staged output without a
   `compensate` hook refuses it. See [`resilience/workflow_operative.md`](resilience/workflow_operative.md).
 
 ## Runner internals
 
 - **Poll core (`flz_core`)** — the one Rust kernel every host SDK drives through
-  `poll() → Activation` / `complete(ActivationResult)`: transport, per-entity ordering, effect
+  `poll() → Activation` / `complete(ActivationResult)`: transport, per-cell ordering, effect
   records, the retry→park ladder, timers, credit, routing and the workflow driver. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
   (`flz_core_ffi`); PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
@@ -228,17 +232,17 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   reached only through activations. Java, Node, Ruby, PHP and Python classes are host classes; typed
   Rust classes are not.
 - **Activation / ActivationResult** — one unit of work the core hands a host, never two at once
-  for the same entity (**per-entity exclusivity**, why user code needs no locks): an input batch
+  for the same cell (**per-cell exclusivity**, why user code needs no locks): an input batch
   with timer firings, one of five host-participating commands (restore fold, snapshot, live read,
   apply-state, migration serialize), a **prepare crossing** (`KeyRequest`, batched keying) or a
   workflow step. The result carries change bytes, outputs, consumed offset, timer ops and a
   verdict (`ok | retryable_error | non_retryable_error`).
-- **Overflow policy** — what a channel discards when the consumer Entity's bounded mailbox is
+- **Overflow policy** — what a channel discards when the consumer Cell's bounded mailbox is
   full, and the only question the enum answers: `DropNothing` (nothing — the producer waits for
   room, the default for every channel kind on every SDK), `DropNewest` (the arriving item) or
   `DropOldest` (the queued head). **How** `DropNothing`'s waiting is realized depends on the
-  channel kind and is not part of the declaration: on an inter-procedure channel the producing
-  Entity is withheld further work until the push lands; on an entry channel the shared transport
+  channel kind and is not part of the declaration: on an inter-tasklet channel the producing
+  Cell is withheld further work until the push lands; on an entry channel the shared transport
   reader stalls, which carries the backpressure to the controller. Neither discards anything,
   which is what the author declared. Declared per channel with `.on_full(...)` / `.onFull(...)`
   and frozen at registration — an authoring declaration, never operator config. Not to be confused
@@ -283,7 +287,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   snapshot, the orchestrator restarts on `/healthz`. `State.Watchdog`, `StallClassifier` and
   `LivenessCounters` emit facts and invoke no remedy; `Convergence.Loop` is the actor.
 - **Producing-liveness** — health asks "is work flowing" with an *is it being fed?* precondition:
-  an idle entity is healthy, a fed-but-flat one is stuck (`wal_frozen`, `watermark_frozen`,
+  an idle cell is healthy, a fed-but-flat one is stuck (`wal_frozen`, `watermark_frozen`,
   `outbox_flat`; the deepest wins). An **intent mismatch** (state on disk for an operative absent
   from the declared set) is `200 degraded`, never `503`: a restart cannot heal a wiped registry.
 - **Stall localization** — `StallClassifier` compares two counter snapshots and returns the deepest
@@ -343,7 +347,7 @@ It never means the SDK process: that is a **Runner**. "Operator intervention" me
 ## See also
 
 - [`architecture/README.md`](architecture/README.md) — roles, the workload model, the eight kernel invariants.
-- [`sdk/rust_operative_architecture.md`](sdk/rust_operative_architecture.md) — Operative/Procedure/Entity authoring.
+- [`sdk/rust_operative_architecture.md`](sdk/rust_operative_architecture.md) — Operative/Tasklet/Cell authoring.
 - [`sdk/protocol_spec.md`](sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
 - [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
 - [`resilience/overview.md`](resilience/overview.md) — what survives what.

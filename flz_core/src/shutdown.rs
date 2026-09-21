@@ -204,11 +204,10 @@ pub fn ask(
 ) -> Result<mpsc::Receiver<AckResult>, NoControlPlane> {
     let rx = register_pending_ack(reference_id.clone());
 
-    let sent =
-        crate::runner::coordinator_try_send(crate::runner::RunnerMessage::EmitControlRequest {
-            reference_id: reference_id.clone(),
-            command,
-        });
+    let sent = crate::runner::coordinator_try_send(crate::runner::RunnerMessage::control_request(
+        reference_id.clone(),
+        command,
+    ));
 
     if sent {
         Ok(rx)

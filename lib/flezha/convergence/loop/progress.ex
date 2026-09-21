@@ -1,11 +1,11 @@
 defmodule Flezha.Convergence.Loop.Progress do
   @moduledoc """
-  The tick's producing-liveness pass: per-Entity fed/advance evidence from the
+  The tick's producing-liveness pass: per-Cell fed/advance evidence from the
   `Watchdog` and `InputLog`, rotated against a grace-window baseline and handed
   to `StallClassifier.classify_producing/3`.
 
   Report-only — healing stays on the output-stall ladder. The input-log read is
-  per OPERATIVE, not per Entity, so an operative with 200 Entities costs one
+  per OPERATIVE, not per Cell, so an operative with 200 Cells costs one
   lookup per tick. A failure here returns the state untouched.
   """
 
@@ -34,8 +34,8 @@ defmodule Flezha.Convergence.Loop.Progress do
 
     stuck =
       for {id, {:stuck, detail, ctx}} <- verdicts, into: %{} do
-        {sh, pk} = ctx.entity
-        {id, %{detail: detail, entity: "#{sh}/#{pk}"}}
+        {sh, pk} = ctx.cell
+        {id, %{detail: detail, cell: "#{sh}/#{pk}"}}
       end
 
     note_stuck_transitions(state.stuck_operatives, stuck)
@@ -48,42 +48,42 @@ defmodule Flezha.Convergence.Loop.Progress do
     _, _ -> state
   end
 
-  # Per-Entity fed/advance evidence from the existing Watchdog/WalWriter state,
+  # Per-Cell fed/advance evidence from the existing Watchdog/WalWriter state,
   # plus the tier cursors when the operative runs the effectively-once tier. The
-  # input-log read is per OPERATIVE, not per Entity — an operative with 200
-  # Entities costs one lookup per tick, not 200. A tier-off operative yields no
+  # input-log read is per OPERATIVE, not per Cell — an operative with 200
+  # Cells costs one lookup per tick, not 200. A tier-off operative yields no
   # cursor fields, and classification degrades to WAL-seq-only.
   @doc false
   def progress_markers() do
-    Watchdog.entity_statuses()
+    Watchdog.cell_statuses()
     |> Enum.group_by(fn {{rc, _sh, _pk}, _s} -> rc end)
     |> Enum.flat_map(fn {rc, statuses} ->
       cursors = InputLog.cursors(rc)
 
-      Enum.map(statuses, fn {{_rc, sh, pk} = entity_id, s} ->
+      Enum.map(statuses, fn {{_rc, sh, pk} = cell_id, s} ->
         %{
           operative_id: rc,
-          entity: {sh, pk},
+          cell: {sh, pk},
           last_change_seen_at: s.last_change_seen_at,
           last_advance_at: s.last_advance_at,
           out_pending_seq: s.out_pending_seq,
           outbox_flushed_seq: s.outbox_flushed_seq,
           outbox_unconfirmed_ms: s.outbox_unconfirmed_ms
         }
-        |> merge_input_cursors(cursors, entity_id)
+        |> merge_input_cursors(cursors, cell_id)
       end)
     end)
   end
 
-  # An Entity that has never reported a consumed offset has no entry, so no key is
-  # merged and the watermark guard stays false — an Entity with no durable progress
+  # A Cell that has never reported a consumed offset has no entry, so no key is
+  # merged and the watermark guard stays false — a Cell with no durable progress
   # has nothing to freeze.
-  defp merge_input_cursors(marker, nil, _entity_id), do: marker
+  defp merge_input_cursors(marker, nil, _cell_id), do: marker
 
-  defp merge_input_cursors(marker, %{tail: tail, consumed: consumed}, entity_id) do
+  defp merge_input_cursors(marker, %{tail: tail, consumed: consumed}, cell_id) do
     marker = Map.put(marker, :input_log_tail, tail)
 
-    case Map.fetch(consumed, entity_id) do
+    case Map.fetch(consumed, cell_id) do
       {:ok, offset} -> Map.put(marker, :consumed_offset, offset)
       :error -> marker
     end
@@ -115,13 +115,13 @@ defmodule Flezha.Convergence.Loop.Progress do
     fresh = Map.drop(new, Map.keys(prev))
     cleared = Map.keys(prev) -- Map.keys(new)
 
-    Enum.each(fresh, fn {id, %{detail: detail, entity: entity}} ->
-      Logger.warning("[convergence] operative stuck: #{id} #{detail} entity=#{entity}")
+    Enum.each(fresh, fn {id, %{detail: detail, cell: cell}} ->
+      Logger.warning("[convergence] operative stuck: #{id} #{detail} cell=#{cell}")
 
       :telemetry.execute(
         [:flezha, :convergence, :operative_stuck],
         %{count: 1},
-        %{operative_id: id, detail: detail, entity: entity}
+        %{operative_id: id, detail: detail, cell: cell}
       )
     end)
 

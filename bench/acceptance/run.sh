@@ -7,7 +7,7 @@
 #                           [--transport uds|quic] [--runtime rust|java]
 #                           [--save-baseline]
 #
-# Runs every cell in cells.<profile>.tsv `--repeat` times, prints each run's
+# Runs every case in cases.<profile>.tsv `--repeat` times, prints each run's
 # result as it lands, then writes a median summary and compares it against
 # baseline.<profile>.tsv (regression = median throughput down >15%, or any
 # non-clean integrity). --save-baseline records the current medians instead.
@@ -34,20 +34,20 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-CELLS="$A/cells.$PROFILE.tsv"
-[ -f "$CELLS" ] || { echo "no such profile: $CELLS" >&2; exit 2; }
+CASES="$A/cases.$PROFILE.tsv"
+[ -f "$CASES" ] || { echo "no such profile: $CASES" >&2; exit 2; }
 # Default repeats per profile: soak runs once (long), others 3.
 [ -n "$REPEAT" ] || REPEAT=$([ "$PROFILE" = soak ] && echo 1 || echo 3)
 
 RESULTS="$A/results.$PROFILE.tsv"
 : > "$RESULTS"
-FILTER='intent mismatch|Connection closed|compact_entity|SignalHandler|authz|Setting up|Started|plugin-degraded|proc_slow'
+FILTER='intent mismatch|Connection closed|compact_cell|SignalHandler|authz|Setting up|Started|plugin-degraded|task_slow'
 
 echo "== acceptance: profile=$PROFILE repeat=$REPEAT runners=$RUNNERS transport=$TRANSPORT runtime=$RUNTIME  $(date '+%F %T') =="
 echo "   (one controller — multi-controller/multi-node is a separate harness; see README)"
 
-grep -vE '^\s*#|^\s*$' "$CELLS" | while IFS=$'\t' read -r name cell_rt args; do
-  rt="$RUNTIME"; [ "$cell_rt" != default ] && rt="$cell_rt"
+grep -vE '^\s*#|^\s*$' "$CASES" | while IFS=$'\t' read -r name case_rt args; do
+  rt="$RUNTIME"; [ "$case_rt" != default ] && rt="$case_rt"
   for r in $(seq 1 "$REPEAT"); do
     printf '[%-14s %d/%d rt=%s] ' "$name" "$r" "$REPEAT" "$rt"
     line=$(FLEZHA_TRANSPORT="$TRANSPORT" timeout 5400 \
@@ -69,4 +69,4 @@ done
 
 echo
 echo "== summary (profile=$PROFILE) =="
-elixir "$A/summarize.exs" "$RESULTS" "$A/cells.$PROFILE.tsv" "$A/baseline.$PROFILE.tsv" "$SAVE"
+elixir "$A/summarize.exs" "$RESULTS" "$A/cases.$PROFILE.tsv" "$A/baseline.$PROFILE.tsv" "$SAVE"

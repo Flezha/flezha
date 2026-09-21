@@ -28,12 +28,12 @@ def rows(path, columns):
     for line in path.read_text().splitlines():
         if not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < columns or set("".join(cells)) <= set("-: "):
+        fields = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(fields) < columns or set("".join(fields)) <= set("-: "):
             continue
-        if cells[0].lower() in ("#", "closed"):
+        if fields[0].lower() in ("#", "closed"):
             continue
-        out.append(cells)
+        out.append(fields)
     return out
 
 

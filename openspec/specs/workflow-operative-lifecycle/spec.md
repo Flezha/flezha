@@ -5,22 +5,22 @@ TBD - created by archiving change workflow-operative-functionality. Update Purpo
 ## Requirements
 ### Requirement: A workflow operative is spawned on demand and terminates on an exit trigger
 
-A workflow operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (entities are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all procedures done**: its chain of procedures has run to the final procedure's completion with no loop active; (b) a procedure calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. A stream operative SHALL never reach a terminal trigger, and a procedure of a stream operative calling `ctx.complete` SHALL fail that input with an error naming `CompleteOutsideWorkflow`.
+A workflow operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (cells are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all tasklets done**: its chain of tasklets has run to the final tasklet's completion with no loop active; (b) a tasklet calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. A stream operative SHALL never reach a terminal trigger, and a tasklet of a stream operative calling `ctx.complete` SHALL fail that input with an error naming `CompleteOutsideWorkflow`.
 
 #### Scenario: The chain running to its end terminates the operative
 
-- **WHEN** a workflow operative's last procedure completes (all its entities finished) and no loop is active
+- **WHEN** a workflow operative's last tasklet completes (all its cells finished) and no loop is active
 - **THEN** the operative SHALL proceed to terminal teardown with status `ok`
 
-#### Scenario: A procedure's completion terminates the operative
+#### Scenario: A tasklet's completion terminates the operative
 
-- **WHEN** a procedure of a workflow operative calls `ctx.complete(result)`
+- **WHEN** a tasklet of a workflow operative calls `ctx.complete(result)`
 - **THEN** the rest of its iteration SHALL run and commit, the operative SHALL accept no further input, tear down terminally, and report `result` in its completion
 
-#### Scenario: A procedure of a stream cannot complete it
+#### Scenario: A tasklet of a stream cannot complete it
 
-- **WHEN** a procedure of a stream operative calls `ctx.complete(result)`
-- **THEN** that input SHALL fail with an error naming `CompleteOutsideWorkflow`, handled as any procedure error, and the stream SHALL keep running
+- **WHEN** a tasklet of a stream operative calls `ctx.complete(result)`
+- **THEN** that input SHALL fail with an error naming `CompleteOutsideWorkflow`, handled as any tasklet error, and the stream SHALL keep running
 
 #### Scenario: Duration elapse terminates the operative
 
@@ -29,12 +29,12 @@ A workflow operative SHALL be spawned on demand with `args` (`init_values`), eac
 
 ### Requirement: A workflow operative may receive input after it starts
 
-A workflow operative MAY declare an entry channel and **receive input after it has started** (an inbox). The SDK dispatch path SHALL route a data frame addressed to a running workflow instance to its current procedure's entry channel/entity, rather than dropping it. For a **durable** workflow instance, post-start input SHALL additionally be journaled to the instance's durable inbox before delivery, so input sent while the instance is suspended, crashed, or migrating SHALL NOT be lost and SHALL be delivered on rehydrate. An operative waiting on its inbox SHALL block/sleep while idle and SHALL NOT busy-spin; a **looping durable** operative waiting at a committed iteration boundary SHALL be suspended (evicted from runner memory) per the `workflow-durable-suspension` capability instead of holding live resources.
+A workflow operative MAY declare an entry channel and **receive input after it has started** (an inbox). The SDK dispatch path SHALL route a data frame addressed to a running workflow instance to its current tasklet's entry channel/cell, rather than dropping it. For a **durable** workflow instance, post-start input SHALL additionally be journaled to the instance's durable inbox before delivery, so input sent while the instance is suspended, crashed, or migrating SHALL NOT be lost and SHALL be delivered on rehydrate. An operative waiting on its inbox SHALL block/sleep while idle and SHALL NOT busy-spin; a **looping durable** operative waiting at a committed iteration boundary SHALL be suspended (evicted from runner memory) per the `workflow-durable-suspension` capability instead of holding live resources.
 
-#### Scenario: Input delivered after start reaches the procedure
+#### Scenario: Input delivered after start reaches the tasklet
 
 - **WHEN** a workflow operative has started and a data frame is sent to it
-- **THEN** the frame SHALL be delivered to the running procedure's entry channel and processed, not dropped
+- **THEN** the frame SHALL be delivered to the running tasklet's entry channel and processed, not dropped
 
 #### Scenario: Input sent while the instance is down is not lost
 
@@ -48,11 +48,11 @@ A workflow operative MAY declare an entry channel and **receive input after it h
 
 ### Requirement: Internal loop with an intrinsic terminal condition
 
-A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iteration per inbox item, or `Chained`, each iteration seeded by the previous one's terminal output), never by a loop written inside a procedure body. Waiting for the next item SHALL happen at a committed iteration boundary, observe the cancellation token (duration or external stop), and block or park while idle. A loop SHALL have at least one **non-timeout** exit: a procedure's `ctx.complete`, a chained loop's empty batch, or external stop. Authoring a workflow operative whose **only** possible exit is external cancellation SHALL be rejected at registration with a clear error directing the author to add a terminal condition. A declared `max_duration` MAY additionally bound any loop as a backstop but SHALL NOT be required when a non-timeout exit exists.
+A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iteration per inbox item, or `Chained`, each iteration seeded by the previous one's terminal output), never by a loop written inside a tasklet body. Waiting for the next item SHALL happen at a committed iteration boundary, observe the cancellation token (duration or external stop), and block or park while idle. A loop SHALL have at least one **non-timeout** exit: a tasklet's `ctx.complete`, a chained loop's empty batch, or external stop. Authoring a workflow operative whose **only** possible exit is external cancellation SHALL be rejected at registration with a clear error directing the author to add a terminal condition. A declared `max_duration` MAY additionally bound any loop as a backstop but SHALL NOT be required when a non-timeout exit exists.
 
-#### Scenario: A loop ends on a procedure's completion
+#### Scenario: A loop ends on a tasklet's completion
 
-- **WHEN** a `PerInput` workflow's procedure calls `ctx.complete(result)` while handling an item
+- **WHEN** a `PerInput` workflow's tasklet calls `ctx.complete(result)` while handling an item
 - **THEN** the loop SHALL NOT wait for another item after that iteration commits, and the operative SHALL proceed toward terminal teardown with status `ok`
 
 #### Scenario: Loop exits on cancellation
@@ -76,7 +76,7 @@ A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iter
 
 ### Requirement: All exit triggers converge on one terminal teardown
 
-Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. A `WorkflowCompleted` from a runner whose stable identity the instance's ownership record does not name is not an exit trigger: it SHALL write no completion record and drive no teardown, and SHALL be refused as `runner-identity-and-session` prescribes. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; before deregistering it the teardown SHALL flush the runner's stream channels synchronously, so every output frame the transport has already delivered is routed and run first, and it SHALL NOT hold the teardown against a count of outputs the runner reports having written.
+Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. A `WorkflowCompleted` from a runner whose stable identity the instance's ownership record does not name is not an exit trigger: it SHALL write no completion record and drive no teardown, and SHALL be refused as `runner-identity-and-session` prescribes. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last tasklet's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; before deregistering it the teardown SHALL flush the runner's stream channels synchronously, so every output frame the transport has already delivered is routed and run first, and it SHALL NOT hold the teardown against a count of outputs the runner reports having written.
 
 #### Scenario: Teardown is identical across triggers
 
@@ -85,7 +85,7 @@ Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown,
 
 #### Scenario: The last output is delivered before the teardown
 
-- **WHEN** a durable chain completes with its final procedure's outbox journaled but not yet flushed
+- **WHEN** a durable chain completes with its final tasklet's outbox journaled but not yet flushed
 - **THEN** the Controller SHALL flush it to the sink before the instance is deregistered
 
 #### Scenario: An opted-out instance's last output is delivered before the teardown

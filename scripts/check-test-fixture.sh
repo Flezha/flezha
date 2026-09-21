@@ -47,8 +47,6 @@ FIXTURE = re.compile(
 )
 DECLARED = re.compile(r"use\s+FlezhaTest\.[A-Za-z.]*Case\b")
 
-baseline = naming_gate.load_baseline(BASELINE)
-hits = set()
 state = {"rel": None, "window": 0}
 
 
@@ -67,14 +65,13 @@ def check(rel, line):
     # One finding per module: the unit the table replaces is the module's own
     # setup, not each line inside it.
     state["window"] = 0
-    hits.add(rel)
-    if rel in baseline:
-        return []
-    return [line.strip()]
+    return [(rel, line.strip())]
 
 
-code = naming_gate.walk(
+sys.exit(naming_gate.walk_baselined(
     check=check,
+    baseline=BASELINE,
+    what="build a fixture by hand",
     source="disk",
     roots=["test"],
     path_filter=lambda rel: rel.endswith("_test.exs"),
@@ -85,9 +82,5 @@ code = naming_gate.walk(
          "See test/helpers/case.ex for the rows.",
     ok_message="test fixture declarations OK",
     noun="module(s)",
-)
-
-# Both halves report: a run with a new module AND a stale entry says so once.
-stale = naming_gate.stale_baseline(BASELINE, baseline, hits, "build a fixture by hand")
-sys.exit(code or stale)
+))
 PY

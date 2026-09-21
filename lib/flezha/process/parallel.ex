@@ -1,7 +1,7 @@
 defmodule Flezha.Parallel do
   @moduledoc """
   Work over independent items, run concurrently: a partition group's members, a
-  plugin fanned over them, a bench's pipelines, an operative's Entities.
+  plugin fanned over them, a bench's pipelines, an operative's Cells.
 
   `map/3` keeps every element in flight and returns results in input order.
   `each/3` is the fire-and-collect-nothing shape, bounded — for work whose

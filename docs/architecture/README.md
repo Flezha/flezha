@@ -16,9 +16,9 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 | --- | --- |
 | **This file** | Roles, the workload model, the eight kernel invariants, process topology, on-disk layout, the failure model |
 | [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
-| [`stream_profile.md`](stream_profile.md) | Streaming: per-entity recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operatives |
-| [`workflow_profile.md`](workflow_profile.md) | Jobs and sessions: the procedure tree, the proc journal, the transactional outbox, saga compensation, the durable loop, suspension, rewind |
-| [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-entity exclusivity, and what each host SDK owns |
+| [`stream_profile.md`](stream_profile.md) | Streaming: per-cell recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operatives |
+| [`workflow_profile.md`](workflow_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the transactional outbox, saga compensation, the durable loop, suspension, rewind |
+| [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-cell exclusivity, and what each host SDK owns |
 
 ---
 
@@ -38,7 +38,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
   pluggable edge, not a core component.
 - **Sink adapter** — where output goes (Kafka, Postgres, anything). Also a pluggable edge.
 
-An **entity's durable state is node-local**. It is not replicated across controller nodes;
+A **cell's durable state is node-local**. It is not replicated across controller nodes;
 cross-node state transfer happens through the live handover an operative migration performs,
 and continuous cross-node WAL replication is a deliberate non-goal. What stands against losing
 a controller *with its disk* is the opt-in
@@ -62,21 +62,21 @@ flowchart LR
         direction TB
         subgraph OPV["Operative — the unit you start and stop"]
             direction LR
-            subgraph P1["Procedure &quot;parse&quot;"]
+            subgraph P1["Tasklet &quot;parse&quot;"]
                 direction TB
-                E1(["Entity — key BTC/USD"]):::leaf
-                E2(["Entity — key ETH/USD"]):::leaf
+                E1(["Cell — key BTC/USD"]):::leaf
+                E2(["Cell — key ETH/USD"]):::leaf
             end
-            subgraph P2["Procedure &quot;aggregate&quot;"]
+            subgraph P2["Tasklet &quot;aggregate&quot;"]
                 direction TB
-                E3(["Entity — single"]):::leaf
+                E3(["Cell — single"]):::leaf
             end
         end
     end
     SINK["📤 Sink"]:::sink
     SRC -->|"entry channel"| ROUTE
     ROUTE --> P1
-    P1 -->|"inter-procedure channel"| P2
+    P1 -->|"inter-tasklet channel"| P2
     P2 -->|"plugin-bound channel"| SINK
     E1 -.->|"one WAL · one snapshot lineage<br/>one outbox cursor"| D[("💾 Durable store")]:::store
     E2 -.-> D
@@ -92,49 +92,50 @@ flowchart LR
   `stream` (default) or `workflow`. A stream operative may be started with `--partitions N`,
   which materializes it as N ordinary instances (`<id>#p0..#p{N-1}`) splitting the key space
   by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operatives).
-- **Procedure** — a typed stage inside an operative. Declares `Input`, `Output`, `State`,
-  `Change`, and `Clock` types.
-- **Entity** — the per-key state-bearing slice of a procedure. Durability is per entity:
-  one WAL, one snapshot lineage, one outbox cursor.
-- **Channel** — the typed edge between stages: entry (input from outside), inter-procedure, or
+- **Tasklet** — a typed stage inside an operative. Declares `Input`, `Output`, `State`,
+  `Change`, and `Clock` types, and lives as long as its operative.
+- **Cell** — one keyed instance of a tasklet. Durability is per cell: one WAL, one snapshot
+  lineage, one outbox cursor. A cell exists whether or not its tasklet declares state and
+  whether or not it carries a key; a single-mode tasklet holds one unkeyed cell.
+- **Channel** — the typed edge between stages: entry (input from outside), inter-tasklet, or
   plugin-bound (output to a sink).
 
-### The three entity modes
+### The three cell modes
 
-A procedure resolves to exactly one of three modes, chosen by what it declares. The mode
-decides how many entities exist and when they are created — nothing else about the procedure
+A tasklet resolves to exactly one of three modes, chosen by what it declares. The mode
+decides how many cells exist and when they are created — nothing else about the tasklet
 changes.
 
 ```mermaid
 flowchart TB
     subgraph S["Single — declares nothing"]
         direction LR
-        SI["input"] --> SE(["Entity (unkeyed)"]):::leaf
+        SI["input"] --> SE(["Cell (unkeyed)"]):::leaf
     end
-    subgraph T["Static — declares entity_keys() + entities_for()"]
+    subgraph T["Static — declares cell_keys() + cells_for()"]
         direction LR
-        TI["input"] --> TF{{"entities_for(input)<br/>fan-out"}}
-        TF --> TA(["Entity &quot;eu&quot;"]):::leaf
-        TF --> TB(["Entity &quot;us&quot;"]):::leaf
-        TC(["Entity &quot;apac&quot;"]):::leaf
+        TI["input"] --> TF{{"cells_for(input)<br/>fan-out"}}
+        TF --> TA(["Cell &quot;eu&quot;"]):::leaf
+        TF --> TB(["Cell &quot;us&quot;"]):::leaf
+        TC(["Cell &quot;apac&quot;"]):::leaf
     end
-    subgraph DY["Dynamic — declares entity_key()"]
+    subgraph DY["Dynamic — reached by a key_by edge"]
         direction LR
-        DI["input"] --> DK{{"entity_key(input)<br/>routes to exactly one"}}
-        DK --> DA(["Entity &quot;BTC&quot;"]):::leaf
-        DK -->|"created on first sight"| DB(["Entity &quot;SOL&quot;"]):::leaf
-        DB -.->|"idle past entity_idle_ttl()<br/>evicted, recreates cold"| DX["∅"]:::gone
+        DI["input"] --> DK{{"key_by(input)<br/>routes to exactly one"}}
+        DK --> DA(["Cell &quot;BTC&quot;"]):::leaf
+        DK -->|"created on first sight"| DB(["Cell &quot;SOL&quot;"]):::leaf
+        DB -.->|"idle past cell_idle_ttl()<br/>evicted, recreates cold"| DX["∅"]:::gone
     end
     classDef leaf fill:#dcfce7,stroke:#166534,color:#111
     classDef gone fill:#e5e7eb,stroke:#374151,color:#111,stroke-dasharray:4 3
 ```
 
-- **Single** — one unkeyed entity. The default when a procedure declares no entity opt-in.
-- **Static** — a fixed keyset from `entity_keys()`; every entity exists from start. One input
-  may fan out to **several** entities, which is why the selector is plural (`entities_for`).
-- **Dynamic** — a stream keyset. `entity_key(input)` routes each input to exactly one
-  entity, created lazily on first sight. Eviction is off unless `entity_idle_ttl()` is
-  declared; when it is, an idle entity is dropped destructively and a later key of the same
+- **Single** — one unkeyed cell. The default when a tasklet declares no cell opt-in.
+- **Static** — a fixed keyset from `cell_keys()`; every cell exists from start. One input
+  may fan out to **several** cells, which is why the selector is plural (`cells_for`).
+- **Dynamic** — a stream keyset. The consumer edge's `key_by(input)` routes each input to
+  exactly one cell, created lazily on first sight. Eviction is off unless `cell_idle_ttl()` is
+  declared; when it is, an idle cell is dropped destructively and a later key of the same
   name cold-starts fresh. Workflow operatives refuse dynamic mode.
 
 Full vocabulary: [`../glossary.md`](../glossary.md). The SDK authoring surface:
@@ -181,8 +182,8 @@ flowchart TB
         direction TB
         INLOG[("💾 Input log<br/>offset-addressable<br/>effectively-once tier only")]:::store
         ROUTE["Routing · mailboxes · credit"]:::ctrl
-        WAL[("💾 Entity WAL<br/>+ snapshots")]:::store
-        JRN[("💾 Proc journal<br/>workflow step progress")]:::store
+        WAL[("💾 Cell WAL<br/>+ snapshots")]:::store
+        JRN[("💾 Task journal<br/>workflow step progress")]:::store
         OBX[("💾 Outbox cursor<br/>key + epoch")]:::store
         REG["Registry — where each operative lives<br/>+ runner ownership"]:::ctrl
     end
@@ -190,11 +191,11 @@ flowchart TB
     subgraph EXEC["⚙️ RUNNER — user code, state in memory"]
         direction TB
         OPV["Operative instance"]:::exec
-        OPA["Procedure A"]:::exec
-        OPB["Procedure B"]:::exec
-        OPC["Procedure C"]:::exec
-        SB1["Entity k1<br/>state in memory"]:::exec
-        SB2["Entity k2<br/>state in memory"]:::exec
+        OPA["Tasklet A"]:::exec
+        OPB["Tasklet B"]:::exec
+        OPC["Tasklet C"]:::exec
+        SB1["Cell k1<br/>state in memory"]:::exec
+        SB2["Cell k2<br/>state in memory"]:::exec
         OPV --> OPA
         OPA -->|"fan-out"| OPB
         OPA -->|"fan-out"| OPC
@@ -208,7 +209,7 @@ flowchart TB
     OPV -->|"4 state change + output — under runner credit"| ROUTE
     ROUTE -->|"5 ONE atomic record, ONE fsync:<br/>state change + outputs + consumed offset"| WAL
     ROUTE -.->|"part of the same record"| OBX
-    ROUTE -->|"6 proc commit — workflow only"| JRN
+    ROUTE -->|"6 task commit — workflow only"| JRN
     OBX -->|"7 flush AFTER the fsync"| SINK
     WAL -.->|"R restore state"| OPV
     JRN -.->|"R resume step"| OPV
@@ -225,8 +226,8 @@ flowchart TB
 runner (3). The runner sends back a state change and any outputs (4), under a byte credit
 it must hold. The controller writes state, outputs, and the consumed input offset as **one
 atomic record under one fsync** (5) — state and emitted effect can never tear apart. Workflow
-operatives additionally commit step progress to a proc journal (6). Outputs reach the sink only
-after that record is durable (7). On a crash, the controller restores the entity's state and
+operatives additionally commit step progress to a task journal (6). Outputs reach the sink only
+after that record is durable (7). On a crash, the controller restores the cell's state and
 the workflow operative's step position (R).
 
 ## One kernel, two profiles
@@ -234,8 +235,8 @@ the workflow operative's step position (R).
 ```mermaid
 flowchart TB
     subgraph PROF["PROFILES — two ways to use it"]
-        UNB["STREAM<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-entity local recovery<br/>effectively-once tier is opt-in"]:::exec
-        BND["WORKFLOW<br/>procedure tree with a level barrier<br/>proc-boundary journal + staged outbox<br/>saga compensation<br/>durable loop and suspension"]:::exec
+        UNB["STREAM<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
+        BND["WORKFLOW<br/>tasklet tree with a level barrier<br/>task-boundary journal + staged outbox<br/>saga compensation<br/>durable loop and suspension"]:::exec
     end
     subgraph KERN["SHARED KERNEL — durable compute"]
         K1[("Durable input log<br/>offset-addressable, adapter-independent")]:::store
@@ -245,7 +246,7 @@ flowchart TB
         K5["Single-owner write path<br/>bind is the fence"]:::ctrl
         K6["Controller as the durable front<br/>evict · rehydrate"]:::ctrl
     end
-    BEXTRA[("workflow only:<br/>proc journal · durable inbox · saga")]:::store
+    BEXTRA[("workflow only:<br/>task journal · durable inbox · saga")]:::store
 
     UNB --> KERN
     BND --> KERN
@@ -256,8 +257,8 @@ flowchart TB
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-The WAL and the snapshot mechanism are **shared** — a workflow operative's entities persist
-exactly like a stream operative's. What is workflow-specific is the proc journal, the durable
+The WAL and the snapshot mechanism are **shared** — a workflow operative's cells persist
+exactly like a stream operative's. What is workflow-specific is the task journal, the durable
 inbox, and saga compensation.
 
 ---
@@ -277,16 +278,16 @@ record is durable. See [`kernel.md`](kernel.md#the-atomic-effect-record).
 **3. The durable input log is opt-in.** Default is at-least-once: no input-log file, no
 outbox, no gating, byte-identical to a build that never heard of the tier. With
 `effectively_once()` declared, every source is normalised into one offset-addressable durable
-log and each entity recovers from its own consumed offset.
+log and each cell recovers from its own consumed offset.
 
 **4. Output identity, and the epoch rule.** Replay-stable output identity is
-`(flz.entity, flz.seq, flz.key)`; the durable outbox identity adds `flz.epoch`. A crash
+`(flz.cell, flz.seq, flz.key)`; the durable outbox identity adds `flz.epoch`. A crash
 retry, a re-drive, or a runner takeover **keeps** the epoch — sink-side dedup absorbs the
 repeat. Only a deliberate correction, an operator replay, or a workflow rewind **bumps** it, so
 the corrected output passes dedup and overwrites the stale row by natural key. See
 [`kernel.md`](kernel.md#the-epoch-rule).
 
-**5. One owner writes an entity's WAL.** Runner identity is two layers — a durable stable
+**5. One owner writes a cell's WAL.** Runner identity is two layers — a durable stable
 identity owned by the SDK, and a controller-minted session token per connection. Takeover is
 newest-wins, and it **unbinds the old session before binding the new one**. The session token
 rides every write and the WAL refuses one from a superseded session, so the owner pays no
@@ -296,22 +297,22 @@ per-write cost and a stale writer can never realign the log onto its own lineage
 **6. Flow control parks, it does not drop.** Runner→controller byte credit is minted on WAL
 **fsync** — durable drain, not append — so the un-fsynced buffer is hard-bounded by the window.
 A sender out of credit parks. Under the tier a second credit loop gates source ingestion on the
-minimum watermark across the operative's entities, so the slowest branch back-pressures the
+minimum watermark across the operative's cells, so the slowest branch back-pressures the
 source instead of growing the input log to disk-full. The controller→runner direction is
 deliberately **not** credit: it drops the newest frame past 8 MiB, because parking there would
 freeze a controller serving thousands of operatives behind one dead runner. See
 [`kernel.md`](kernel.md#flow-control-the-three-loops).
 
 **7. The minimum watermark is the retention signal.** The controller tracks `min(consumed
-offset)` across an operative's entities and truncates the input log below it, subject to the
+offset)` across an operative's cells and truncates the input log below it, subject to the
 correction hold window. A permanently-failing payload must never freeze it: after workflow
-retries the entity parks the payload durably to the dead-letter queue and advances its offset.
+retries the cell parks the payload durably to the dead-letter queue and advances its offset.
 Data is never lost and never silently dropped. See
 [`stream_profile.md`](stream_profile.md#dead-letter-queue).
 
 **8. Health is producing-liveness, not channel-liveness.** `/healthz` and convergence answer
 "is work flowing" — is the WAL sequence advancing — with an *is it being fed?* precondition, so
-an idle entity (no input, flat is correct) is distinguished from a stuck one (fed but not
+an idle cell (no input, flat is correct) is distinguished from a stuck one (fed but not
 advancing). An empty intended set is never vacuously healthy: durable state on disk for an
 operative absent from the live intent degrades health. The detectors are watched too: each
 periodic sensor stamps its own last completed pass, so one that wedges without crashing shows up
@@ -358,7 +359,7 @@ flowchart TB
         EX2["StreamChannel × N — primary (0x01)"]:::exec
         EX3["StreamChannel × N — secondary (0x02)"]:::exec
     end
-    subgraph PERSEG["per entity"]
+    subgraph PERSEG["per cell"]
         WW["State.WalWriter — owns one WAL file,<br/>the outbox cursor, and the owner token"]:::store
     end
 
@@ -374,7 +375,7 @@ flowchart TB
 `Flezha.Operative.Overwatch` is the per-operative-instance GenServer and the pivot of the whole
 control plane: it binds a runner, prepares and activates plugins, journals every inbound
 input, and receives every output on its way to a sink. `Flezha.State.WalWriter` is the
-per-entity durable writer. `Flezha.Convergence.Loop` is the **only** self-healer; it runs
+per-cell durable writer. `Flezha.Convergence.Loop` is the **only** self-healer; it runs
 `Intent → Probe → Diff → Planner → Heal` every 5 s and on declared events.
 
 Placement uses two independent hashes that must not be conflated: ProcessHub's consistent
@@ -407,10 +408,10 @@ sequenceDiagram
     Note over OW: convergence sees an unbound operative and binds it
     OW->>EX: Ping (proves the reply path is intact)
     Note over OW: record this runner's stable identity as the operative's owner, before the start
-    OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_entity_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
+    OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_cell_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
     EX-->>OW: AddOperativeResponse {metadata}
-    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_procs · leaf_procs · compact_after_bytes<br/>keyed (only when false) · durability (sync_remote)
-    OW->>EX: RestoreInitState per persisted entity (snapshot + WAL tail)
+    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_tasks · leaf_tasks · compact_after_bytes<br/>keyed (only when false) · durability (sync_remote)
+    OW->>EX: RestoreInitState per persisted cell (snapshot + WAL tail)
     Note over OW,EX: only now does input flow
 ```
 
@@ -441,14 +442,14 @@ flowchart TB
     CLS["&lt;operative_class&gt;/"]:::store
     IL["input.log<br/><i>durable input log — effectively-once tier</i>"]:::store
     DECL["effectively_once · checkpoint_ack<br/><i>declaration sidecars</i>"]:::store
-    OPID["&lt;procedure_id&gt;/"]:::store
-    SEG["&lt;entity_key&gt;.wal<br/>&lt;entity_key&gt;.snap.&lt;seq&gt;<br/>&lt;entity_key&gt;.outbox.dedup"]:::store
+    OPID["&lt;tasklet_id&gt;/"]:::store
+    SEG["&lt;cell_key&gt;.wal<br/>&lt;cell_key&gt;.snap.&lt;seq&gt;<br/>&lt;cell_key&gt;.outbox.dedup"]:::store
 
     INST["&lt;instance_id&gt;/&lt;instance_id&gt;/"]:::store
-    JRN["proc.journal<br/><i>workflow step progress</i>"]:::store
+    JRN["task.journal<br/><i>workflow step progress</i>"]:::store
     INB["inbox.wal<br/><i>workflow durable inbox</i>"]:::store
 
-    DLQE["&lt;class&gt;/&lt;procedure&gt;/entries.jsonl + &lt;id&gt;.bin"]:::store
+    DLQE["&lt;class&gt;/&lt;tasklet&gt;/entries.jsonl + &lt;id&gt;.bin"]:::store
     PHR["&lt;hub_id&gt;/registry.dets"]:::store
 
     ROOT --> ST
@@ -469,13 +470,13 @@ flowchart TB
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-The path triple `(operative_class, procedure_id, entity_key)` uniquely identifies an entity's
+The path triple `(operative_class, tasklet_id, cell_key)` uniquely identifies a cell's
 state. It does **not** include the runner id — a runner is an addressing concern, not a
 durability one, so a restarted runner pod inherits the state that was already on disk.
 
-The proc journal and the durable inbox ride the *same* WalWriter substrate as an entity, under
-two reserved entity keys (`_proc_journal`, `_proc_inbox`), which is why they sit at
-`<instance_id>/<instance_id>/` and are skipped by the entity scan. Root is configurable
+The task journal and the durable inbox ride the *same* WalWriter substrate as a cell, under
+two reserved cell keys (`_task_journal`, `_task_inbox`), which is why they sit at
+`<instance_id>/<instance_id>/` and are skipped by the cell scan. Root is configurable
 (`:state_root`, default `app_data/state`).
 
 ---
@@ -494,7 +495,7 @@ flowchart LR
         R4["the same input is processed twice after a replay"]:::risk
         R5["the append buffer grows without bound under load"]:::risk
         R6["a poison payload freezes the watermark, or is silently dropped"]:::risk
-        R7["a fresh controller zeroes a live entity with an empty restore"]:::risk
+        R7["a fresh controller zeroes a live cell with an empty restore"]:::risk
         R8["a superseded runner realigns the WAL onto a stale lineage"]:::risk
         R9["/healthz is green while the data plane is dead"]:::risk
         R10["a late input lands after the window it belongs to already closed"]:::risk
@@ -509,7 +510,7 @@ flowchart LR
         P4["deterministic key + dedup at the sink"]:::prot
         P5["credit-grant flow control — park, never drop"]:::prot
         P6["dead-letter queue — retry, park durably, advance"]:::prot
-        P7["baseline pull — CompactEntity instead of an empty push"]:::prot
+        P7["baseline pull — CompactCell instead of an empty push"]:::prot
         P8["single-owner write path — the WAL refuses a superseded session"]:::prot
         P9["producing-liveness — fed AND advancing, plus intent-mismatch,<br/>a 503 on a wedged controller fabric, and stamped sensor freshness"]:::prot
         P10["late-input correction — rewind, replay in event-time order, bump the epoch"]:::prot
@@ -546,7 +547,7 @@ the user's concern there. The effectively-once tier is what closes them.
 | Controller graceful restart with a live peer | none — peer sync | at-least-once |
 | Controller recovery-mode restart, sole node | none — DETS replay | at-least-once |
 | Whole-cluster cold boot | recovered from DETS + the on-disk WAL | n/a |
-| Workflow operative SIGKILL, durable | none past the last committed proc | at-least-once |
+| Workflow operative SIGKILL, durable | none past the last committed task | at-least-once |
 | Workflow operative SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
 | Controller dies with its disk, `backend: none` (default) | that node's operatives: total | n/a |
 | Controller dies with its disk, remote tier enabled | workflow `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |

@@ -2,52 +2,52 @@
 
 ## Purpose
 
-The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared procedure/operative declaration to the existing `StreamOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit entity-mode opt-ins (single/static/dynamic), single-procedure input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared procedures compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
+The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/operative declaration to the existing `StreamOperative`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
 ### Requirement: Sugar expands to existing trait surface
-The authoring sugar in every SDK SHALL be pure expansion over the existing `StreamOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
+The authoring sugar in every SDK SHALL be pure expansion over the existing `StreamOperative`/`Tasklet`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
 #### Scenario: Generated code equals hand-written impl
 
-- **WHEN** a sugared procedure is expanded by any SDK's macro or processor
-- **THEN** the result is a `Procedure`/`StreamOperative` implementation that compiles and runs identically to the equivalent hand-written one
+- **WHEN** a sugared tasklet is expanded by any SDK's macro or processor
+- **THEN** the result is a `Tasklet`/`StreamOperative` implementation that compiles and runs identically to the equivalent hand-written one
 - **AND** no protobuf, controller, or WAL-format change is required for it to run
 
-#### Scenario: Sugared and raw procedures interoperate
+#### Scenario: Sugared and raw tasklets interoperate
 
-- **WHEN** a stream operative contains one sugared procedure and one hand-written procedure wired together
-- **THEN** the operative builds and runs correctly with both procedures participating
+- **WHEN** a stream operative contains one sugared tasklet and one hand-written tasklet wired together
+- **THEN** the operative builds and runs correctly with both tasklets participating
 
 #### Scenario: Eject to full impl is a paste
 
-- **WHEN** a user replaces a sugared procedure with the code its sugar expands to
+- **WHEN** a user replaces a sugared tasklet with the code its sugar expands to
 - **THEN** the operative behaves identically with no other change required
 
 ### Requirement: Canonical signature-to-types inference
-The contract SHALL define one canonical mapping from a sugared `run` declaration to the procedure's associated types, and every SDK MUST implement it identically.
+The contract SHALL define one canonical mapping from a sugared `run` declaration to the tasklet's associated types, and every SDK MUST implement it identically.
 
 #### Scenario: Input and Output inferred from signature
 
 - **WHEN** a `run` declaration takes a first value parameter of type `I` and returns `O` (or `Result<O, _>`)
-- **THEN** the procedure's `Input` is `I` and `Output` is `O`
+- **THEN** the tasklet's `Input` is `I` and `Output` is `O`
 
 #### Scenario: Unit return means no output
 
 - **WHEN** a `run` declaration returns no value (unit)
-- **THEN** the procedure declares no output channel
+- **THEN** the tasklet declares no output channel
 
 #### Scenario: Defaults for unspecified types
 
-- **WHEN** a sugared procedure does not specify clock or config
+- **WHEN** a sugared tasklet does not specify clock or config
 - **THEN** `Clock` defaults to the wall clock and `Config` defaults to the unit type
 
 ### Requirement: State parameter drives stateful inference
-A mutable-state parameter on the `run` declaration SHALL be the single signal that a procedure is stateful, and its type SHALL become the procedure `State`.
+A mutable-state parameter on the `run` declaration SHALL be the single signal that a tasklet is stateful, and its type SHALL become the tasklet `State`.
 
 #### Scenario: Mutable state parameter sets State type
 
 - **WHEN** a `run` declaration includes a mutable reference parameter of type `S`
-- **THEN** the procedure's `State` is `S` and the procedure is treated as stateful
+- **THEN** the tasklet's `State` is `S` and the tasklet is treated as stateful
 
 #### Scenario: No state parameter means stateless
 
@@ -67,75 +67,75 @@ The contract SHALL define how a state type's field mutations derive a `Change` t
 - **WHEN** a mutation is conditional, spans multiple fields atomically, or is computed
 - **THEN** the SDK requires a hand-written `Change` and reports a clear error rather than journaling incorrectly
 
-### Requirement: Entity mode is an explicit opt-in, never inferred
-The contract SHALL express a procedure's entity mode (single, static, dynamic) through explicit declarations that map 1:1 to the existing runtime surface, and SHALL NOT infer the mode from the `run` body. Static and dynamic declarations are mutually exclusive (composite mode is out of scope).
+### Requirement: Cell mode is an explicit opt-in, never inferred
+The contract SHALL express a tasklet's cell mode (single, static, dynamic) through explicit declarations that map 1:1 to the existing runtime surface, and SHALL NOT infer the mode from the `run` body. Static and dynamic declarations are mutually exclusive (composite mode is out of scope).
 
-The declarations are named for the Entity, not the Procedure. Static mode is declared **on the procedure**: the keyset is `entity_keys`, its routing is `entities_for`. Dynamic mode is declared **on the wiring**: the key function is `key_by` / `keyBy` on the consumer edge, and the eviction window remains `entity_idle_ttl` on the procedure. A procedure declaring neither a static keyset nor being reached by a keyed edge is single-mode.
+The declarations are named for the Cell, not the Tasklet. Static mode is declared **on the tasklet**: the keyset is `cell_keys`, its routing is `cells_for`. Dynamic mode is declared **on the wiring**: the key function is `key_by` / `keyBy` on the consumer edge, and the eviction window remains `cell_idle_ttl` on the tasklet. A tasklet declaring neither a static keyset nor being reached by a keyed edge is single-mode.
 
 #### Scenario: Dynamic keying is declared on the wiring
 
-- **WHEN** an operative wires a procedure through an edge declaring a key function, and the procedure declares optional idle-TTL / max-entities
-- **THEN** the SDK SHALL produce a dynamic-mode procedure against the existing runtime surface (lazily created Entities, empty static key list) with no new runtime path and no keying member on the procedure itself
+- **WHEN** an operative wires a tasklet through an edge declaring a key function, and the tasklet declares optional idle-TTL / max-cells
+- **THEN** the SDK SHALL produce a dynamic-mode tasklet against the existing runtime surface (lazily created Cells, empty static key list) with no new runtime path and no keying member on the tasklet itself
 
 #### Scenario: Static and dynamic declarations together are rejected
 
-- **WHEN** a procedure declares a static keyset and is also wired through an edge declaring a key function
-- **THEN** the SDK SHALL report a build-time error that the modes are mutually exclusive, naming the procedure
+- **WHEN** a tasklet declares a static keyset and is also wired through an edge declaring a key function
+- **THEN** the SDK SHALL report a build-time error that the modes are mutually exclusive, naming the tasklet
 
-#### Scenario: Static routing may name several entities
+#### Scenario: Static routing may name several cells
 
-- **WHEN** a static-mode procedure's `entities_for` declaration returns more than one key for one input
-- **THEN** the input MUST be routed to the Entity for each returned key
+- **WHEN** a static-mode tasklet's `cells_for` declaration returns more than one key for one input
+- **THEN** the input MUST be routed to the Cell for each returned key
 
 #### Scenario: The authoring sugar offers no dynamic key hook
 
-- **WHEN** the attribute/annotation sugar is generated for a procedure
-- **THEN** it SHALL offer no `entity_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
+- **WHEN** the attribute/annotation sugar is generated for a tasklet
+- **THEN** it SHALL offer no `cell_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
-### Requirement: Single-procedure auto-wiring and registration
-The contract SHALL define exactly one topology that may be written short, a single procedure from a controller input to at most one sink, and every SDK SHALL carry it for both operative kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operative declaration**, written at the SDK's kind-named operative entry point, and SHALL NOT be a procedure declaration that becomes an operative: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]` in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` / `@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class extending `Flezha\StreamOperative` / `Flezha\WorkflowOperative` in PHP, `use Flezha.SDK.StreamOperative` / `use Flezha.SDK.WorkflowOperative` in Elixir.
+### Requirement: Single-tasklet auto-wiring and registration
+The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both operative kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operative declaration**, written at the SDK's kind-named operative entry point, and SHALL NOT be a tasklet declaration that becomes an operative: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]` in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` / `@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class extending `Flezha\StreamOperative` / `Flezha\WorkflowOperative` in PHP, `use Flezha.SDK.StreamOperative` / `use Flezha.SDK.WorkflowOperative` in Elixir.
 
-An operative declaration SHALL be a short form exactly when it carries its one procedure's body **instead of** a topology body, a topology body being `channels` or `procedures`. The body SHALL be named `run`, as every SDK names a procedure's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operative]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operative's factory id, spelled as that SDK's full-form operative already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
+An operative declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels` or `tasklets`. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operative]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operative's factory id, spelled as that SDK's full-form operative already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
 
-`sink` SHALL be optional. With a `sink`, the generated operative SHALL declare an entry channel, the procedure, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the procedure and no plugin channel, which is the topology a full-form operative already declares when its channel ends at a procedure. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
+`sink` SHALL be optional. With a `sink`, the generated operative SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form operative already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
 
-The generated operative SHALL otherwise be the operative an author would hand-write with that one procedure: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the procedure; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow whose entry channel receives its start values. A class-level setting (loop mode, retry ladder, duration, persistence, the effectively-once tier, a correction window) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. The procedure's own settings (entity keys and `entities_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated procedure. A short-form key (`sink`, `input`, `codec`) or a procedure setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
+The generated operative SHALL otherwise be the operative an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow whose entry channel receives its start values. A class-level setting (loop mode, retry ladder, duration, persistence, the effectively-once tier, a correction window) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
 
-The expansion SHALL produce an ordinary procedure and an ordinary operative, and the generated procedure's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a procedure's name is a durable component of every entity's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operative's, because that is what the declaration declares.
+The expansion SHALL produce an ordinary tasklet and an ordinary operative, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operative's, because that is what the declaration declares.
 
 Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any operative's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
 
-An operative declaration carrying both a procedure body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose procedures declare no output type owes no such refusal and says so in its conformance manifest.
+An operative declaration carrying both a tasklet body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
 
-#### Scenario: A stream short form is the hand-written single-procedure stream
+#### Scenario: A stream short form is the hand-written single-tasklet stream
 
-- **WHEN** a stream operative declaration carries its identity, a `sink` and a procedure body, and the author registers it
-- **THEN** the runner declares a stream operative wiring the controller input to the procedure to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-procedure stream produces
+- **WHEN** a stream operative declaration carries its identity, a `sink` and a tasklet body, and the author registers it
+- **THEN** the runner declares a stream operative wiring the controller input to the tasklet to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
 
 #### Scenario: A workflow short form runs once on its start values
 
-- **WHEN** a workflow operative declaration carries its identity, a `sink` and a procedure body, is registered, and an instance is started with init values
-- **THEN** the entry channel receives the start values, the procedure runs once, its output reaches the sink, and the instance completes
+- **WHEN** a workflow operative declaration carries its identity, a `sink` and a tasklet body, is registered, and an instance is started with init values
+- **THEN** the entry channel receives the start values, the tasklet runs once, its output reaches the sink, and the instance completes
 
-#### Scenario: A short form with no sink declares an entry channel and a procedure
+#### Scenario: A short form with no sink declares an entry channel and a tasklet
 
-- **WHEN** a stream operative declaration carries its identity and a procedure body and no `sink`
-- **THEN** the generated operative SHALL declare the entry channel and the procedure and no plugin channel, and the declaration SHALL be accepted, as a full-form operative whose channel ends at a procedure is accepted
+- **WHEN** a stream operative declaration carries its identity and a tasklet body and no `sink`
+- **THEN** the generated operative SHALL declare the entry channel and the tasklet and no plugin channel, and the declaration SHALL be accepted, as a full-form operative whose channel ends at a tasklet is accepted
 
 #### Scenario: An entry channel name and codec need no sink
 
 - **WHEN** a short form declares `input` or a `codec` and no `sink`
 - **THEN** the declaration SHALL be accepted and the entry channel SHALL take that name and codec
 
-#### Scenario: The generated procedure is named after the factory id
+#### Scenario: The generated tasklet is named after the factory id
 
 - **WHEN** a short form declares the factory id `echo`
-- **THEN** the generated procedure's name SHALL be `echo`, so its entities live at the same state path a hand-written procedure named `echo` uses, and ejecting to the full form moves no entity state
+- **THEN** the generated tasklet's name SHALL be `echo`, so its cells live at the same state path a hand-written tasklet named `echo` uses, and ejecting to the full form moves no cell state
 
-#### Scenario: A procedure setting reaches the generated procedure
+#### Scenario: A tasklet setting reaches the generated tasklet
 
-- **WHEN** a short form declares a procedure setting such as a mailbox capacity or entity keys
-- **THEN** the generated procedure SHALL carry it, as a hand-written procedure declaring it does
+- **WHEN** a short form declares a tasklet setting such as a mailbox capacity or cell keys
+- **THEN** the generated tasklet SHALL carry it, as a hand-written tasklet declaring it does
 
 #### Scenario: A class setting on a short form is refused
 
@@ -144,7 +144,7 @@ An operative declaration carrying both a procedure body and a topology body SHAL
 
 #### Scenario: A short-form key beside a topology body is refused
 
-- **WHEN** an operative declaration carries a `channels` or `procedures` body and also a `sink`, an `input` or a `codec`
+- **WHEN** an operative declaration carries a `channels` or `tasklets` body and also a `sink`, an `input` or a `codec`
 - **THEN** the SDK SHALL refuse the declaration rather than ignore the key
 
 #### Scenario: The kind is read from the entry point, not from a key
@@ -165,7 +165,7 @@ An operative declaration carrying both a procedure body and a topology body SHAL
 #### Scenario: A short form reads text where the builder names codecs
 
 - **WHEN** a Python, Node, Ruby or PHP short form declares the text codec and a frame is sent with `flz operative send --text`
-- **THEN** the procedure receives the text as a string, as the same codec on the builder's `input` delivers it
+- **THEN** the tasklet receives the text as a string, as the same codec on the builder's `input` delivers it
 
 #### Scenario: Registration is written by the author
 
@@ -177,9 +177,9 @@ An operative declaration carrying both a procedure body and a topology body SHAL
 - **WHEN** a short form is registered in any of the seven SDKs
 - **THEN** the argument SHALL be the declaration the author wrote, and no SDK SHALL require the author to name a type, class or module the SDK generated
 
-#### Scenario: A procedure body beside a topology body is refused
+#### Scenario: A tasklet body beside a topology body is refused
 
-- **WHEN** an operative declaration carries a procedure body and also a `channels` or `procedures` body
+- **WHEN** an operative declaration carries a tasklet body and also a `channels` or `tasklets` body
 - **THEN** the SDK SHALL refuse naming `ShortFormWithTopology`, at compile time where the language has one and at declaration or registration otherwise
 
 #### Scenario: A sink on a body with no output is refused
@@ -187,9 +187,9 @@ An operative declaration carrying both a procedure body and a topology body SHAL
 - **WHEN** a short form declares a `sink` and its body is one the SDK can see declares no output
 - **THEN** the SDK SHALL refuse naming `SinkWithoutOutput`
 
-#### Scenario: Multi-procedure topology stays explicit
+#### Scenario: Multi-tasklet topology stays explicit
 
-- **WHEN** an operative has more than one procedure, any fan-out or multi-input edge, a keyed edge, or any class-level setting
+- **WHEN** an operative has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting
 - **THEN** the SDK requires the full form and does not auto-wire
 
 #### Scenario: Duplicate factory id fails fast across kinds
@@ -200,7 +200,7 @@ An operative declaration carrying both a procedure body and a topology body SHAL
 #### Scenario: The same declaration in every SDK
 
 - **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only` are authored in each SDK's test app
-- **THEN** each is one operative declaration carrying its factory id and a procedure body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate procedure declaration and one registration call, and every runtime's declaration equals the reference golden
+- **THEN** each is one operative declaration carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
 
 ### Requirement: Contract binds all current and future SDKs
 The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Operative` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
@@ -235,11 +235,11 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 #### Scenario: The PHP binding is rooted in the shared base
 
 - **WHEN** a PHP stream or workflow operative is authored
-- **THEN** its declaration SHALL expand to the same topology and entity-mode mapping the contract defines for Rust and Java, with no PHP-specific runtime path, protocol message, or WAL change
+- **THEN** its declaration SHALL expand to the same topology and cell-mode mapping the contract defines for Rust and Java, with no PHP-specific runtime path, protocol message, or WAL change
 
 #### Scenario: An attribute-carried declaration is bound by the same rules
 
-- **WHEN** the PHP SDK's `#[Proc]` attribute and override-detected hooks are compared against the contract's inference rules
+- **WHEN** the PHP SDK's `#[Task]` attribute and override-detected hooks are compared against the contract's inference rules
 - **THEN** they SHALL yield the same declaration a Rust macro or a Java annotation yields for the equivalent class, and a divergence SHALL be a defect of the PHP SDK rather than a contract exception
 
 #### Scenario: The Python surface is bound by the contract, not beside it
@@ -248,12 +248,12 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 - **THEN** its decorator-based sugar SHALL expand to the same topology and associated-type mapping as the other SDKs', and a divergence SHALL be a defect of the Python SDK rather than a contract exception
 
 ### Requirement: Keyed and collection state journaling
-The authoring contract SHALL define journaling mutators for per-key map state so a stateful procedure whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
+The authoring contract SHALL define journaling mutators for per-key map state so a stateful tasklet whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
 
 The defined modes are:
 
 - **map-set** — `HashMap<K, V>`: a `set` mutator per field; the change records `(key, value)`; application inserts the value at the key.
-- **map-vec** — `HashMap<K, Vec<U>>`: `push`, `drain-front(n)`, and `replace-last` mutators; the change records the procedure and its argument(s); application performs it on the keyed vector (creating it if absent).
+- **map-vec** — `HashMap<K, Vec<U>>`: `push`, `drain-front(n)`, and `replace-last` mutators; the change records the tasklet and its argument(s); application performs it on the keyed vector (creating it if absent).
 - **map-deque** — `HashMap<K, Deque<U>>`: `push-back` and `pop-front(n)` mutators; application performs them on the keyed deque.
 
 #### Scenario: Map-of-collection field generates per-key mutators
@@ -263,7 +263,7 @@ The defined modes are:
 
 #### Scenario: Map-set is the universal fallback
 
-- **WHEN** a procedure computes a new per-key value and calls the generated `set` mutator
+- **WHEN** a tasklet computes a new per-key value and calls the generated `set` mutator
 - **THEN** the change records the per-key value, and replay re-applies it by insertion — with no hand-written `Change` or `apply_change`
 
 #### Scenario: Inexpressible mutation reports an error
@@ -276,38 +276,38 @@ The authoring contract SHALL define an optional-output return shape for the logi
 
 #### Scenario: Optional output emits on present, skips on absent
 
-- **WHEN** a `@Procedure`/`#[flezha::procedure]` `run` returns an optional `Output`
-- **THEN** the generated procedure emits the value when present and emits nothing when absent, without the author touching the procedure context
+- **WHEN** a `@Tasklet`/`#[flezha::tasklet]` `run` returns an optional `Output`
+- **THEN** the generated tasklet emits the value when present and emits nothing when absent, without the author touching the tasklet context
 
 ### Requirement: Single hand-written path determinism
-The authoring contract SHALL state that a procedure mutating state only through generated journaling mutators has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same mutator definitions. The replay-determinism conformance test remains the gate for all procedures (sugared and hand-written).
+The authoring contract SHALL state that a tasklet mutating state only through generated journaling mutators has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same mutator definitions. The replay-determinism conformance test remains the gate for all tasklets (sugared and hand-written).
 
-#### Scenario: Sugared procedure cannot drift between live and replay
+#### Scenario: Sugared tasklet cannot drift between live and replay
 
-- **WHEN** a procedure mutates state solely through generated journaling mutators
+- **WHEN** a tasklet mutates state solely through generated journaling mutators
 - **THEN** its replay path is generated (not hand-written), so a live-vs-replay mutation divergence is unrepresentable, and the replay-determinism harness passes
 
 #### Scenario: Replay-safety guards are unnecessary for idempotent set journaling
 
-- **WHEN** a procedure that previously hand-wrote an idempotency guard for replay safety migrates to map-set journaling
+- **WHEN** a tasklet that previously hand-wrote an idempotency guard for replay safety migrates to map-set journaling
 - **THEN** the guard is unnecessary because replay re-assigns the computed value rather than re-folding an input, and removing it does not change replay equality
 
-### Requirement: Per-entity state init opt-in
-The procedure authoring sugar SHALL offer an opt-in that maps an entity's key to its initial state, replacing the default `init_state` that returns the state's default value. The opt-in names a function of the entity key returning the state (`fn(Option<&str>) -> State` in Rust; an `@InitState`-annotated `State name(Optional<String> entityKey)` method in Java). The generated `init_state` SHALL delegate to it, passing the entity key — absent in single-entity mode and in the test-harness default construction. The opt-in is pure expansion onto the existing `Procedure::init_state` trait method; it SHALL NOT receive the restore payload, which the runtime continues to apply after `init_state` returns. The opt-in SHALL require a stateful procedure; declaring it on a stateless procedure SHALL be a compile-time error (never silently ignored).
+### Requirement: Per-cell state init opt-in
+The tasklet authoring sugar SHALL offer an opt-in that maps a cell's key to its initial state, replacing the default `init_state` that returns the state's default value. The opt-in names a function of the cell key returning the state (`fn(Option<&str>) -> State` in Rust; an `@InitState`-annotated `State name(Optional<String> cellKey)` method in Java). The generated `init_state` SHALL delegate to it, passing the cell key — absent in single-cell mode and in the test-harness default construction. The opt-in is pure expansion onto the existing `Tasklet::init_state` trait method; it SHALL NOT receive the restore payload, which the runtime continues to apply after `init_state` returns. The opt-in SHALL require a stateful tasklet; declaring it on a stateless tasklet SHALL be a compile-time error (never silently ignored).
 
-#### Scenario: Entity key maps to per-entity state
+#### Scenario: Cell key maps to per-cell state
 
-- **WHEN** a static-mode sugared procedure declares the init opt-in and an Entity is created for a given entity key
+- **WHEN** a static-mode sugared tasklet declares the init opt-in and a Cell is created for a given cell key
 - **THEN** the generated `init_state` returns the state produced by the opt-in function for that key, rather than the state default
 
-#### Scenario: Key absent in single-entity and harness-default construction
+#### Scenario: Key absent in single-cell and harness-default construction
 
-- **WHEN** the init opt-in function is invoked in single-entity mode or by the test harness's default construction
-- **THEN** it receives an absent entity key and returns its key-absent state
+- **WHEN** the init opt-in function is invoked in single-cell mode or by the test harness's default construction
+- **THEN** it receives an absent cell key and returns its key-absent state
 
-#### Scenario: Init opt-in on a stateless procedure is rejected
+#### Scenario: Init opt-in on a stateless tasklet is rejected
 
-- **WHEN** the init opt-in is declared on a procedure with no state
+- **WHEN** the init opt-in is declared on a tasklet with no state
 - **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation
 
 ### Requirement: Each SDK SHALL name the state-mutation enforcement level it actually provides
@@ -344,62 +344,62 @@ The contract is written once and implemented per language, but the languages do 
 
 ### Requirement: Sugared run may declare a context parameter for multi-emit
 
-The authoring sugar (`#[procedure]` in Rust, `@Procedure` in Java) SHALL accept a `run` signature with a trailing procedure-context parameter and a unit/void return: `fn run(input: I, state: …, ctx: &mut ProcedureCtx)` / `void run(I input, StateHandle<S, C> state, ProcedureCtx ctx)` (the state parameter remains optional, driving stateful inference exactly as today; a `Result<(), _>` return is a unit return for this purpose). The generated implementation SHALL pass the invocation's context through, so the body performs any number of `emit` / `emit_keyed` calls itself. Inference of Input, State, and Change from the remaining signature SHALL be unchanged, and the expansion SHALL remain the same code a hand-written implementation would contain.
+The authoring sugar (`#[tasklet]` in Rust, `@Tasklet` in Java) SHALL accept a `run` signature with a trailing tasklet-context parameter and a unit/void return: `fn run(input: I, state: …, ctx: &mut TaskletCtx)` / `void run(I input, StateHandle<S, C> state, TaskletCtx ctx)` (the state parameter remains optional, driving stateful inference exactly as today; a `Result<(), _>` return is a unit return for this purpose). The generated implementation SHALL pass the invocation's context through, so the body performs any number of `emit` / `emit_keyed` calls itself. Inference of Input, State, and Change from the remaining signature SHALL be unchanged, and the expansion SHALL remain the same code a hand-written implementation would contain.
 
-Because the body owns every emit, the return type no longer declares the output type, and an `emits = Type` (Rust) / `emits = Type.class` (Java) attribute SHALL declare it instead; absent, the procedure declares no output channel. Three conflicts SHALL each be rejected with an error naming them: `key = …` together with a context parameter (the body keys its own emits), a non-unit return together with a context parameter (one procedure, one emit path), and `emits` without a context parameter (there the return type already answers).
+Because the body owns every emit, the return type no longer declares the output type, and an `emits = Type` (Rust) / `emits = Type.class` (Java) attribute SHALL declare it instead; absent, the tasklet declares no output channel. Three conflicts SHALL each be rejected with an error naming them: `key = …` together with a context parameter (the body keys its own emits), a non-unit return together with a context parameter (one tasklet, one emit path), and `emits` without a context parameter (there the return type already answers).
 
 #### Scenario: Multi-emit under sugar
 
-- **WHEN** a sugared procedure declares `run(input, state, ctx)` returning unit and its body calls `ctx.emit_keyed` three times for one input
+- **WHEN** a sugared tasklet declares `run(input, state, ctx)` returning unit and its body calls `ctx.emit_keyed` three times for one input
 - **THEN** three keyed values SHALL be emitted for that invocation, identically to a hand-written implementation with the same body
 
 #### Scenario: key attribute is rejected on the context shape
 
-- **WHEN** a sugared procedure declares both a context parameter and a `key = …` attribute
+- **WHEN** a sugared tasklet declares both a context parameter and a `key = …` attribute
 - **THEN** macro expansion / annotation processing SHALL fail with an error naming the conflict
 
 #### Scenario: the output type of a context-parameter run
 
-- **WHEN** a sugared procedure declares a context parameter and `emits = Candle`
-- **THEN** the generated implementation SHALL declare `Output = Candle`, so the wiring types that procedure's output channel exactly as a return-typed one would
+- **WHEN** a sugared tasklet declares a context parameter and `emits = Candle`
+- **THEN** the generated implementation SHALL declare `Output = Candle`, so the wiring types that tasklet's output channel exactly as a return-typed one would
 
 #### Scenario: emits without a context parameter is rejected
 
-- **WHEN** a sugared procedure declares `emits` but no context parameter
+- **WHEN** a sugared tasklet declares `emits` but no context parameter
 - **THEN** macro expansion / annotation processing SHALL fail with an error naming the conflict, since the return type already declares the output type
 
 ### Requirement: Hand-written implementations receive inferable defaults
 
-Hand-written procedure implementations SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
+Hand-written tasklet implementations SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
 
-- **Java**: the five type-token methods (`inputType`, `outputType`, `changeType`, `clockType`, `configType`) SHALL have default implementations resolving the type arguments from the implementing class's generic supertype chain (direct `implements Procedure<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When a token cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter — never guess. `kryoTypes()` SHALL default to the resolved change and state classes when both are resolvable and the change type is not `NoChange` — a `NoChange` procedure persists nothing, so it keeps the empty-list default, which is also what keeps every existing declaration's meaning unchanged. An explicit override SHALL always win.
-- **Rust**: a `SimpleProcedure` trait SHALL declare only `Input`, `Output`, `State` plus `name`, `init_state`, and `run`; a blanket implementation SHALL lift every `SimpleProcedure` to `Procedure` with `Clock = WallClock`, `Config = ()`, and the `State` type's derived change type. Implementing `Procedure` directly SHALL remain fully supported, and a type SHALL NOT implement both.
+- **Java**: the five type-token methods (`inputType`, `outputType`, `changeType`, `clockType`, `configType`) SHALL have default implementations resolving the type arguments from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When a token cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter — never guess. `kryoTypes()` SHALL default to the resolved change and state classes when both are resolvable and the change type is not `NoChange` — a `NoChange` tasklet persists nothing, so it keeps the empty-list default, which is also what keeps every existing declaration's meaning unchanged. An explicit override SHALL always win.
+- **Rust**: a `SimpleTasklet` trait SHALL declare only `Input`, `Output`, `State` plus `name`, `init_state`, and `run`; a blanket implementation SHALL lift every `SimpleTasklet` to `Tasklet` with `Clock = WallClock`, `Config = ()`, and the `State` type's derived change type. Implementing `Tasklet` directly SHALL remain fully supported, and a type SHALL NOT implement both.
 
 The mandatory authoring surface for the common hand-written case therefore reduces to name, state initialization, and `run` in both SDKs.
 
 #### Scenario: Java tokens resolved from the implements clause
 
-- **WHEN** a class declares `implements Procedure<Trade, EntityState, Candle, EntityStateChange, WallClock, Void>` and overrides none of the token methods
+- **WHEN** a class declares `implements Tasklet<Trade, CellState, Candle, CellStateChange, WallClock, Void>` and overrides none of the token methods
 - **THEN** registration SHALL succeed with the six types resolved exactly as written in the clause
 
 #### Scenario: Unresolvable token fails registration by name
 
-- **WHEN** a class implements `Procedure` with a type argument still generic at the concrete class and does not override the corresponding token method
+- **WHEN** a class implements `Tasklet` with a type argument still generic at the concrete class and does not override the corresponding token method
 - **THEN** registration SHALL fail with an error naming the class and the unresolved type parameter, and nothing SHALL be registered
 
 #### Scenario: Rust simplified tier defaults the tail types
 
-- **WHEN** a type implements `SimpleProcedure` with `Input = Trade`, `Output = Candle`, `State = EntityState`
-- **THEN** it SHALL be registrable wherever a `Procedure` is accepted, with `Clock = WallClock`, `Config = ()`, and the derived change type of `EntityState`
+- **WHEN** a type implements `SimpleTasklet` with `Input = Trade`, `Output = Candle`, `State = CellState`
+- **THEN** it SHALL be registrable wherever a `Tasklet` is accepted, with `Clock = WallClock`, `Config = ()`, and the derived change type of `CellState`
 
 #### Scenario: Explicit override wins
 
-- **WHEN** a Java implementation overrides `clockType()` (or a Rust implementation implements `Procedure` directly with a non-default `Clock`)
+- **WHEN** a Java implementation overrides `clockType()` (or a Rust implementation implements `Tasklet` directly with a non-default `Clock`)
 - **THEN** the explicit declaration SHALL be used, defaults notwithstanding
 
 ### Requirement: Every SDK binding passes the shared conformance suite
 
-Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-operative equivalence (§6 `static_entity`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
+Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-operative equivalence (§6 `static_cell`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
 
 #### Scenario: A new binding is admitted by the suite, not by review
 - **WHEN** a new SDK's test app and manifest are added and `FLEZHA_E2E_RUNTIME=<sdk> mix test --include system` passes with every non-deferred capability green
@@ -418,7 +418,7 @@ Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a c
 The authoring contract SHALL document, in lockstep across every SDK that
 persists state, that:
 
-- `SCHEMA_VERSION` is bumped on any non-additive edit to the Procedure's `State`
+- `SCHEMA_VERSION` is bumped on any non-additive edit to the Tasklet's `State`
   **or** its `Change` type — not to the `Change` type alone;
 - the codecs are positional and not self-describing, so an unbumped edit that
   changes field order or field count is a silent corruption, not a compatibility
@@ -426,13 +426,13 @@ persists state, that:
 - `MIN_READABLE_SCHEMA_VERSION` plus the migration entry points are how an
   author reads what an earlier version wrote, and their default is to refuse.
 
-The authoring test harness SHALL be able to restore a Procedure from bytes
+The authoring test harness SHALL be able to restore a Tasklet from bytes
 stamped at an older schema version, so a migration is testable without a running
 controller.
 
 #### Scenario: a migration is proven at the authoring seam
 
-- **GIVEN** a Procedure at `SCHEMA_VERSION = 2` with a declared migration from version 1
+- **GIVEN** a Tasklet at `SCHEMA_VERSION = 2` with a declared migration from version 1
 - **WHEN** the author restores a harness from a payload stamped version 1
 - **THEN** the harness SHALL apply the migration and expose the migrated state for assertion
 
@@ -460,7 +460,7 @@ statically typed SDK cannot demote it to a runtime check by omission.
 
 Every SDK's builder SHALL submit the topology it was given, as a record of the authoring
 calls (the channels, the ordered links of each chain — transform, key, sink, name,
-consumer — the merges and branches, the class flags and the procedure facts), to one
+consumer — the merges and branches, the class flags and the tasklet facts), to one
 reference check that holds every named refusal once: `flz_core::host::register::check`
 for the Rust, Java, Node, Python, Ruby and PHP SDKs, and the Elixir SDK's re-expression of
 the same check, written from the same fixture, since it inherits nothing from the core.
@@ -504,7 +504,7 @@ sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
 `Operative<StreamKind>`) and every `WorkflowOperative` (as `Operative<WorkflowKind>`), so
 an author implements only the kind trait. The base's shared member SHALL be
 `factory_id()`, the one method both authoring traits already share; the kind-divergent
-surface (`channels` and the persistence opt-in on one side, `run` and `procedures` on the
+surface (`channels` and the persistence opt-in on one side, `run` and `tasklets` on the
 other) SHALL remain on the per-kind traits.
 
 Every SDK's runner handle SHALL register an operative of either kind through one method,
@@ -546,7 +546,7 @@ that the grouping states the taxonomy the vocabulary already uses.
 
 #### Scenario: An operative of both kinds is refused
 
-- **WHEN** a Java class implementing both `StreamOperative` and `WorkflowOperative`, or an Elixir module exporting both `channels/1` and `procedures/1`, is handed to `registerFactory` or `register_factory/2`
+- **WHEN** a Java class implementing both `StreamOperative` and `WorkflowOperative`, or an Elixir module exporting both `channels/1` and `tasklets/1`, is handed to `registerFactory` or `register_factory/2`
 - **THEN** registration SHALL fail with an error beginning `AmbiguousOperativeKind` naming the class or module, and nothing SHALL be declared
 
 #### Scenario: A new kind is added without editing the existing surfaces
@@ -574,7 +574,7 @@ The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWitho
 
 #### Scenario: A refusal is recognisable across languages
 
-- **WHEN** an author writes a procedure body beside a topology body in any of the seven SDKs
+- **WHEN** an author writes a tasklet body beside a topology body in any of the seven SDKs
 - **THEN** the error they see contains `ShortFormWithTopology`, whatever else that SDK's error carries
 
 #### Scenario: The duplicate-id error is named, not only described

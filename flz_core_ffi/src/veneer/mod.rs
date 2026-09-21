@@ -265,7 +265,7 @@ pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
 }
 
 /// Start the declared class as a local run: no controller, no socket. The
-/// host keeps its own poll loop, which is what runs the procedures.
+/// host keeps its own poll loop, which is what runs the tasklets.
 pub fn local_start(ctx: CtxPtr, factory_id: &CStr, operative_id: &CStr) -> Result<(), Refusal> {
     verdict(ctx, unsafe {
         crate::flz_core_local_start(ctx.get(), factory_id.as_ptr(), operative_id.as_ptr())

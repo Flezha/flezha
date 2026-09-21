@@ -75,7 +75,7 @@ defmodule Flezha.Convergence.Facts do
     },
     compaction_gave_up: %{
       holds: true,
-      diff: :resync_entities,
+      diff: :resync_cells,
       reason: :compaction_gave_up,
       reset: :evidence,
       grace: false,
@@ -84,7 +84,7 @@ defmodule Flezha.Convergence.Facts do
     },
     seq_gap: %{
       holds: true,
-      diff: :resync_entities,
+      diff: :resync_cells,
       reason: :seq_gap,
       reset: :evidence,
       grace: false,
@@ -357,12 +357,12 @@ defmodule Flezha.Convergence.Facts do
     end
   end
 
-  # An Entity fact is cleared by its counter-fact; a writer that is gone has no
+  # A Cell fact is cleared by its counter-fact; a writer that is gone has no
   # gap left to close.
-  defp repaired?(kind, entity_id, _args, reality) when kind in [:seq_gap, :compaction_gave_up] do
+  defp repaired?(kind, cell_id, _args, reality) when kind in [:seq_gap, :compaction_gave_up] do
     case Map.get(reality, :writers, :unknown) do
       :unknown -> false
-      writers -> not MapSet.member?(writers, entity_id)
+      writers -> not MapSet.member?(writers, cell_id)
     end
   end
 

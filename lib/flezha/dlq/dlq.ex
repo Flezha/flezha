@@ -58,17 +58,17 @@ defmodule Flezha.Service.Dlq do
     {:ok, located.entry, located.payload}
   end
 
-  @doc "Entry and byte counts per parked procedure."
+  @doc "Entry and byte counts per parked tasklet."
   @spec stats(caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb stats(caller_context), verb: :dlq_stats do
     {:ok, Store.stats()}
   end
 
-  @doc "The `{operative_class, procedure_id}` pairs that hold parked entries."
-  @spec procedures(String.t() | nil, caller_context()) ::
+  @doc "The `{operative_class, tasklet_id}` pairs that hold parked entries."
+  @spec tasklets(String.t() | nil, caller_context()) ::
           {:ok, [{String.t(), String.t()}]} | {:error, term()}
-  verb procedures(operative_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
-    {:ok, Store.procedures(operative_class)}
+  verb tasklets(operative_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
+    {:ok, Store.tasklets(operative_class)}
   end
 
   # ---------- Mutations ----------

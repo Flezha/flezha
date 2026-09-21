@@ -25,16 +25,16 @@ defmodule Flezha.State.Restore do
           terminal_seq_hint: non_neg_integer()
         }
 
-  @spec assemble_payload(Paths.entity_id()) :: {:ok, payload()} | {:error, binary()}
-  def assemble_payload(entity_id) do
+  @spec assemble_payload(Paths.cell_id()) :: {:ok, payload()} | {:error, binary()}
+  def assemble_payload(cell_id) do
     # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
     # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
     # drop the very first change record. `-1` includes seq 0.
     # The header travels with the body: it carries the schema_version the
-    # snapshot was written at, and stripping it left every compacted Entity
+    # snapshot was written at, and stripping it left every compacted Cell
     # unverifiable on the SDK side.
     {snapshot_bytes, snapshot_header, snapshot_seq} =
-      case Snapshot.latest_snapshot(entity_id) do
+      case Snapshot.latest_snapshot(cell_id) do
         nil ->
           {<<>>, <<>>, -1}
 
@@ -45,7 +45,7 @@ defmodule Flezha.State.Restore do
           end
       end
 
-    with {:ok, {change_log_bytes, terminal_seq}} <- read_tail_wal(entity_id, snapshot_seq) do
+    with {:ok, {change_log_bytes, terminal_seq}} <- read_tail_wal(cell_id, snapshot_seq) do
       {:ok,
        %{
          snapshot_bytes: snapshot_bytes,
@@ -57,38 +57,38 @@ defmodule Flezha.State.Restore do
   end
 
   @doc """
-  Whether the Entity has any persisted state to restore. A zero-byte WAL
+  Whether the Cell has any persisted state to restore. A zero-byte WAL
   (lazily created by the writer before any record landed) is no state: an
-  assembled payload from it would be empty and rebuild a live Entity to
+  assembled payload from it would be empty and rebuild a live Cell to
   `init_state`.
   """
-  @spec has_persisted_state?(Paths.entity_id()) :: boolean()
-  def has_persisted_state?(entity_id) do
-    Snapshot.latest_snapshot(entity_id) != nil or
+  @spec has_persisted_state?(Paths.cell_id()) :: boolean()
+  def has_persisted_state?(cell_id) do
+    Snapshot.latest_snapshot(cell_id) != nil or
       match?(
         {:ok, %{size: size}} when size > 0,
-        File.stat(Paths.wal_path(entity_id))
+        File.stat(Paths.wal_path(cell_id))
       )
   end
 
   @doc """
-  The SDK language byte stamped in this Entity's durable state, or `nil` when
+  The SDK language byte stamped in this Cell's durable state, or `nil` when
   it has none.
 
   Byte 0 of the newest snapshot header, else of the first WAL record's. The
-  authority on which SDK wrote an Entity's state, and what the placement guard
+  authority on which SDK wrote a Cell's state, and what the placement guard
   resolves a factory's established language from. A routing decision, not a
   validation: the body is never touched and an unknown value is reported as
   found.
   """
-  @spec sdk_lang(Paths.entity_id()) :: byte() | nil
-  def sdk_lang(entity_id) do
-    with {_seq, path} <- Snapshot.latest_snapshot(entity_id),
+  @spec sdk_lang(Paths.cell_id()) :: byte() | nil
+  def sdk_lang(cell_id) do
+    with {_seq, path} <- Snapshot.latest_snapshot(cell_id),
          {:ok, header, _bytes} <- Snapshot.read_snapshot(path),
          {:ok, %{sdk_lang: lang}} <- RecordFrame.decode_header(header) do
       lang
     else
-      _ -> first_wal_lang(entity_id)
+      _ -> first_wal_lang(cell_id)
     end
   end
 
@@ -96,20 +96,20 @@ defmodule Flezha.State.Restore do
   The SDK language stamped across `operative_class`'s durable state, or `nil`
   when the class has none on disk.
 
-  The first Entity that answers wins: a class is written by one SDK, so a
+  The first Cell that answers wins: a class is written by one SDK, so a
   second read would only confirm the first.
   """
   @spec class_sdk_lang(binary()) :: byte() | nil
   def class_sdk_lang(operative_class) when is_binary(operative_class) do
     operative_class
-    |> Paths.entities_of()
+    |> Paths.cells_of()
     |> Enum.find_value(&sdk_lang/1)
   end
 
   # The WAL's first record carries the same header the snapshot does; the frame
   # seam cuts both, so neither layout is restated here.
-  defp first_wal_lang(entity_id) do
-    with {:ok, data} <- :file.read_file(Paths.wal_path(entity_id)),
+  defp first_wal_lang(cell_id) do
+    with {:ok, data} <- :file.read_file(Paths.wal_path(cell_id)),
          {:ok, _seq, header, _body, _raw, _consumed} <- RecordFrame.decode_bytes(data),
          {:ok, %{sdk_lang: lang}} <- RecordFrame.decode_header(header) do
       lang
@@ -121,8 +121,8 @@ defmodule Flezha.State.Restore do
   # Read the WAL once and fold the records in memory; a per-record
   # `:file.pread` churns small transient refc binaries that fragment the binary
   # allocator.
-  defp read_tail_wal(entity_id, snapshot_seq) do
-    path = Paths.wal_path(entity_id)
+  defp read_tail_wal(cell_id, snapshot_seq) do
+    path = Paths.wal_path(cell_id)
 
     case :file.read_file(path) do
       {:ok, data} ->

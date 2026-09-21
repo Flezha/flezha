@@ -58,8 +58,8 @@ fn entry_less_instance(id: &'static str) -> Arc<StreamInstance> {
         sdk_lang: 1,
         channels: Vec::new(),
         name_to_id: HashMap::new(),
-        procedures: Vec::new(),
-        procedure_name_to_id: HashMap::new(),
+        tasklets: Vec::new(),
+        tasklet_name_to_id: HashMap::new(),
         factory_id: id,
         persistence_enabled_const: false,
         effectively_once: false,
@@ -70,15 +70,15 @@ fn entry_less_instance(id: &'static str) -> Arc<StreamInstance> {
 }
 
 fn queued(instance: &Arc<StreamInstance>) -> usize {
-    instance.entities[0][0].mailbox.len()
+    instance.cells[0][0].mailbox.len()
 }
 
 /// The entry channel the one queued frame resolved to: the host wrapper
 /// records the channel it was parsed for, so the mailbox itself says which
 /// entry channel took the frame.
 fn queued_channel(instance: &Arc<StreamInstance>) -> Option<u32> {
-    match instance.entities[0][0].mailbox.pop()? {
-        crate::entity::EntityItem::Input(payload) => payload
+    match instance.cells[0][0].mailbox.pop()? {
+        crate::cell::CellItem::Input(payload) => payload
             .value
             .downcast_ref::<crate::host::HostPayload>()
             .map(|host| host.channel),
@@ -119,7 +119,7 @@ fn a_frame_naming_an_undeclared_entry_channel_is_parked_with_the_name_it_asked_f
         park.identity.1, "_unresolved",
         "the identity slot the controller makes a directory is this side's own"
     );
-    assert_eq!(queued(&instance), 0, "no procedure received the frame");
+    assert_eq!(queued(&instance), 0, "no tasklet received the frame");
     state_sink::reset_for_test();
 }
 
@@ -165,8 +165,8 @@ fn a_frame_naming_a_declared_entry_channel_is_delivered_to_it() {
 }
 
 /// A class with no entry channel cannot be DECLARED — `register` refuses a
-/// class with no procedure, and refuses a procedure no entry channel reaches
-/// (`UnreachableProcedure`) — but a topology can hold that shape, and
+/// class with no tasklet, and refuses a tasklet no entry channel reaches
+/// (`UnreachableTasklet`) — but a topology can hold that shape, and
 /// `dispatch` takes topologies. So the branch is driven, not argued.
 #[test]
 fn an_operative_declaring_no_entry_channel_parks_with_its_own_reason() {
@@ -204,7 +204,7 @@ fn a_frame_naming_a_declared_channel_of_another_kind_is_parked_too() {
     let parks = capture_parks();
     let instance = host_class::instance("q2_wrong_kind", &["q2_in"], &[], &[1]);
 
-    // `out` is the class's plugin-bound sink; `mid` its inter-procedure channel.
+    // `out` is the class's plugin-bound sink; `mid` its inter-tasklet channel.
     feed(&instance, Some("out"), b"payload-bytes");
 
     crate::test_support::spin_until("the sink name to be parked", || {
@@ -218,7 +218,7 @@ fn a_frame_naming_a_declared_channel_of_another_kind_is_parked_too() {
         "no entry channel `out`; the operative declares: q2_in"
     );
     assert_eq!(body.entry.payload.as_deref(), Some(&b"payload-bytes"[..]));
-    assert_eq!(queued(&instance), 0, "no procedure received the frame");
+    assert_eq!(queued(&instance), 0, "no tasklet received the frame");
     state_sink::reset_for_test();
 }
 
@@ -246,7 +246,7 @@ fn the_declared_set_is_the_entry_channels_in_one_order() {
 }
 
 /// The requested name is attacker-influenced and the controller turns the
-/// identity's procedure slot into a directory under the dead-letter root. A
+/// identity's tasklet slot into a directory under the dead-letter root. A
 /// name that would climb out of it must reach the row's `channel` field and
 /// nothing else.
 #[test]
@@ -344,21 +344,21 @@ fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
     state_sink::reset_for_test();
 }
 
-/// A host class whose one entry is keyed into a dynamic procedure, the shape a
+/// A host class whose one entry is keyed into a dynamic tasklet, the shape a
 /// `key_by` behind a fanning `flat_map` declares.
 fn keyed_dynamic_instance(id: &str) -> Arc<StreamInstance> {
     let json = format!(
         r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
              "channels":[{{"name":"in","kind":"entry",
-                           "chains":[[{{"link":"key"}},{{"link":"into","procedure":0}}]]}}],
-             "procedures":[{{"name":"p0","entity_mode":"dynamic"}}]}}"#
+                           "chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
+             "tasklets":[{{"name":"p0","cell_mode":"dynamic"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
 }
 
 #[test]
-fn a_host_payload_fanned_across_keys_reaches_every_keyed_entity() {
+fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
     let instance = keyed_dynamic_instance("fanned_host_keys");
     let channel = instance.topology.channel(0).expect("the entry channel");
     let value: Arc<dyn Any + Send + Sync> = Arc::new(crate::host::HostPayload {
@@ -383,9 +383,10 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_entity() {
         .as_ref()
         .expect("a dynamic consumer has a registry");
     for key in ["A", "B"] {
-        let slot = registry.entities.get(key).unwrap_or_else(|| {
-            panic!("the fan answered key {key}, and no Entity was minted for it")
-        });
+        let slot = registry
+            .cells
+            .get(key)
+            .unwrap_or_else(|| panic!("the fan answered key {key}, and no Cell was minted for it"));
         assert_eq!(slot.mailbox.len(), 1, "key {key} receives the payload once");
     }
 }

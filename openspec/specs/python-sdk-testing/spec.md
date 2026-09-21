@@ -29,9 +29,9 @@ The Python test app SHALL terminate when its standard input reaches end of file,
 - **WHEN** the harness closes the runner's standard input
 - **THEN** the runner SHALL drain its in-flight activations and exit without requiring a signal
 
-### Requirement: A Procedure Test Harness at Parity With the Other SDKs
+### Requirement: A Tasklet Test Harness at Parity With the Other SDKs
 
-The SDK SHALL ship a procedure test harness at parity with those the Rust and Java SDKs already provide: construction from an initial state or from a restore payload, application of inputs, timer firing, event-time advance, inspection of recorded changes and emits, and a replay-equality gate that folds the recorded change log against a freshly constructed initial state and reports a mismatch with both states for inspection.
+The SDK SHALL ship a tasklet test harness at parity with those the Rust and Java SDKs already provide: construction from an initial state or from a restore payload, application of inputs, timer firing, event-time advance, inspection of recorded changes and emits, and a replay-equality gate that folds the recorded change log against a freshly constructed initial state and reports a mismatch with both states for inspection.
 
 A handler SHALL remain an ordinary callable that a plain unit test can invoke with no runtime present and no controller running.
 

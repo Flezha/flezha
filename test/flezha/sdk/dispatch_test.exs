@@ -1,6 +1,6 @@
 defmodule Flezha.SDK.DispatchTest do
   @moduledoc """
-  Exercises the SDK dispatch runtime (Operative router + Entity mailbox/ladder)
+  Exercises the SDK dispatch runtime (Operative router + Cell mailbox/ladder)
   in isolation — no controller, no real transport. Sink output is captured on a
   native `LocalStream` whose controller side the test owns; `run/3` runs in the
   test's BEAM so it can also probe directly.
@@ -8,7 +8,7 @@ defmodule Flezha.SDK.DispatchTest do
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup}
+  alias Flezha.SDK.{Channels, Counters, Cell, KeyGroup}
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.Wire
@@ -16,8 +16,8 @@ defmodule Flezha.SDK.DispatchTest do
 
   # --- fixtures ---
 
-  defmodule EchoProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule EchoTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "echo"
     def init_state(_), do: nil
 
@@ -37,13 +37,13 @@ defmodule Flezha.SDK.DispatchTest do
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(EchoProc)
+        |> Channels.into(EchoTask)
         |> Channels.named("e")
         |> Channels.sink()
   end
 
-  defmodule MetaEchoProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule MetaEchoTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "meta_echo"
     def init_state(_), do: nil
 
@@ -58,11 +58,11 @@ defmodule Flezha.SDK.DispatchTest do
     def factory_id, do: "unnamed_meta_op"
 
     def channels(c),
-      do: c |> Channels.input("in") |> Channels.into(MetaEchoProc) |> Channels.sink()
+      do: c |> Channels.input("in") |> Channels.into(MetaEchoTask) |> Channels.sink()
   end
 
-  defmodule OrderedProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule OrderedTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "ordered"
     def init_state(_), do: nil
 
@@ -80,7 +80,7 @@ defmodule Flezha.SDK.DispatchTest do
       c
       |> Channels.input("in")
       |> Channels.key_by(fn _ -> "k" end)
-      |> Channels.into(OrderedProc)
+      |> Channels.into(OrderedTask)
       |> Channels.named("o")
       |> Channels.sink()
     end
@@ -94,14 +94,14 @@ defmodule Flezha.SDK.DispatchTest do
       c
       |> Channels.input("in")
       |> Channels.key_by(fn v -> v end)
-      |> Channels.into(OrderedProc)
+      |> Channels.into(OrderedTask)
       |> Channels.named("o")
       |> Channels.sink()
     end
   end
 
-  defmodule FlakyProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule FlakyTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "flaky"
     def init_state(_), do: nil
 
@@ -128,20 +128,20 @@ defmodule Flezha.SDK.DispatchTest do
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(FlakyProc)
+        |> Channels.into(FlakyTask)
         |> Channels.named("f")
         |> Channels.sink()
   end
 
-  defmodule PoisonProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule PoisonTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "poison"
     def init_state(_), do: nil
     def run(_input, _s, _ctx), do: {:error, {:non_retryable, "always"}}
   end
 
-  defmodule RaiserProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule RaiserTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "raiser"
     def init_state(_), do: nil
     def run(_input, _s, _ctx), do: raise("boom")
@@ -157,7 +157,7 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.input("in")
         |> Channels.retry_max(3)
         |> Channels.retry_backoff_ms(1)
-        |> Channels.into(RaiserProc)
+        |> Channels.into(RaiserTask)
         |> Channels.named("r")
         |> Channels.sink()
   end
@@ -170,15 +170,15 @@ defmodule Flezha.SDK.DispatchTest do
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(PoisonProc)
+        |> Channels.into(PoisonTask)
         |> Channels.named("p")
         |> Channels.sink()
   end
 
   # Blocks until released, so a dispatch can be observed mid-flight; the input
-  # `kill` ends the Entity process untrappably, which no `after` can cover.
-  defmodule GatedProc do
-    @behaviour Flezha.SDK.Procedure
+  # `kill` ends the Cell process untrappably, which no `after` can cover.
+  defmodule GatedTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "gated"
     def init_state(_), do: nil
 
@@ -205,12 +205,12 @@ defmodule Flezha.SDK.DispatchTest do
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(GatedProc)
+        |> Channels.into(GatedTask)
         |> Channels.named("g")
         |> Channels.sink()
   end
 
-  # Two entries merged into one procedure, each source's mapping tagging its
+  # Two entries merged into one tasklet, each source's mapping tagging its
   # value, keyed on the symbol after the tag: an unmapped value keys elsewhere.
   defmodule MergeOp do
     @behaviour Flezha.SDK.StreamOperative
@@ -225,7 +225,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.from(ticks, &"ticks:#{&1}")
       |> Channels.from(quotes, &"quotes:#{&1}")
       |> Channels.key_by(&(&1 |> String.split(":") |> Enum.at(1)))
-      |> Channels.into(EchoProc)
+      |> Channels.into(EchoTask)
       |> Channels.named("labels")
       |> Channels.sink()
     end
@@ -240,7 +240,7 @@ defmodule Flezha.SDK.DispatchTest do
       |> Channels.input("in")
       |> Channels.flat_map(&String.split(&1, ",", trim: true))
       |> Channels.key_by(&(&1 |> String.split(":") |> hd()))
-      |> Channels.into(EchoProc)
+      |> Channels.into(EchoTask)
       |> Channels.named("fanned")
       |> Channels.sink()
     end
@@ -249,7 +249,7 @@ defmodule Flezha.SDK.DispatchTest do
   # --- helpers ---
 
   defdelegate start_operative(op_module, opts \\ []), to: SdkOperativeHarness
-  defdelegate entity!(op, procedure, key), to: SdkOperativeHarness
+  defdelegate cell!(op, tasklet, key), to: SdkOperativeHarness
   defdelegate rebind_secondary(op), to: SdkOperativeHarness
   defdelegate close_secondary(handle), to: SdkOperativeHarness
 
@@ -269,7 +269,7 @@ defmodule Flezha.SDK.DispatchTest do
     :ok = close_secondary(sdk)
     for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
 
-    # An input reaches the hold only once its Entity reports the dispatch back,
+    # An input reaches the hold only once its Cell reports the dispatch back,
     # which is a round trip the five casts do not wait for. Three sheds is the
     # signal that all five are in: a rebind before that replays a short ring and
     # then delivers the rest live, which is the opposite of what this asserts.
@@ -285,14 +285,14 @@ defmodule Flezha.SDK.DispatchTest do
     assert Counters.drops_oldest(counters) == 3
   end
 
-  test "an unnamed node's frame carries its procedure name, and user metadata rides it" do
+  test "an unnamed node's frame carries its tasklet name, and user metadata rides it" do
     %{op: op} = start_operative(UnnamedMetaOp)
     Inbox.input(op, "in", "hello", %{})
     assert_receive {:flz_data, _id, "op-1", "hello", meta}, 1_000
     assert meta == %{"channel" => "meta_echo", "tag" => "x"}
   end
 
-  test "per-Entity inputs are processed in arrival order" do
+  test "per-Cell inputs are processed in arrival order" do
     Process.register(self(), :dispatch_probe)
 
     on_exit(fn ->
@@ -308,13 +308,13 @@ defmodule Flezha.SDK.DispatchTest do
     end
   end
 
-  test "two merged entries reach one procedure under their own mappings, keyed on the mapped value" do
+  test "two merged entries reach one tasklet under their own mappings, keyed on the mapped value" do
     %{op: op} = start_operative(MergeOp)
     Inbox.input(op, "ticks", "AAPL:1", %{})
     Inbox.input(op, "quotes", "AAPL:2", %{})
 
     assert Enum.sort(payloads(2)) == ["quotes:AAPL:2", "ticks:AAPL:1"]
-    assert is_pid(entity!(op, "echo", "AAPL"))
+    assert is_pid(cell!(op, "echo", "AAPL"))
   end
 
   test "each merged source keeps its own order" do
@@ -334,14 +334,14 @@ defmodule Flezha.SDK.DispatchTest do
              ~w(quotes:MSFT:1 quotes:MSFT:2 quotes:MSFT:3)
   end
 
-  test "a fan of three runs the procedure three times under three keys, and a fan of none is a drop" do
+  test "a fan of three runs the tasklet three times under three keys, and a fan of none is a drop" do
     %{op: op, counters: counters} = start_operative(FanOp)
     Inbox.input(op, "in", "", %{})
     Inbox.input(op, "in", "a:1,b:2,c:3", %{})
 
     assert Enum.sort(payloads(3)) == ["a:1", "b:2", "c:3"]
     assert NodeTestHelper.wait_until(fn -> Counters.dispatches(counters) == 3 end, 1_000)
-    for key <- ~w(a b c), do: assert(is_pid(entity!(op, "echo", key)))
+    for key <- ~w(a b c), do: assert(is_pid(cell!(op, "echo", key)))
     refute_receive {:flz_data, _id, "op-1", _payload, _meta}, 200
     assert Counters.dispatches(counters) == 3
   end
@@ -358,42 +358,42 @@ defmodule Flezha.SDK.DispatchTest do
     assert Counters.dispatches(counters) == 1
   end
 
-  test "a non-retryable failure parks immediately and the ack releases the Entity" do
+  test "a non-retryable failure parks immediately and the ack releases the Cell" do
     %{op: op} = start_operative(PoisonOp, runner: self())
     Inbox.input(op, "in", "poison", %{})
 
     # Operative forwards the park to its runner (this test process).
-    assert_receive {:"$gen_cast", {:park, entity_pid, identity, body}}, 1_000
+    assert_receive {:"$gen_cast", {:park, cell_pid, identity, body}}, 1_000
     assert body.error =~ "always"
     assert body.payload == "poison"
 
-    # The park is keyed by the Entity the controller must file it under.
-    assert {:ok, {"op-1", "poison", ""}} = Wire.decode_entity_id(identity)
+    # The park is keyed by the Cell the controller must file it under.
+    assert {:ok, {"op-1", "poison", ""}} = Wire.decode_cell_id(identity)
 
-    # releasing lets the Entity resume (a fresh input dispatches)
-    Entity.release_park(entity_pid, body.park_id)
+    # releasing lets the Cell resume (a fresh input dispatches)
+    Cell.release_park(cell_pid, body.park_id)
     Inbox.input(op, "in", "poison2", %{})
-    assert_receive {:"$gen_cast", {:park, ^entity_pid, _identity2, _body2}}, 1_000
+    assert_receive {:"$gen_cast", {:park, ^cell_pid, _identity2, _body2}}, 1_000
   end
 
-  test "a raised invocation leaves no ctx of its own in the Entity's dictionary" do
+  test "a raised invocation leaves no ctx of its own in the Cell's dictionary" do
     %{op: op} = start_operative(RaiserOp, runner: self())
     Inbox.input(op, "in", "boom", %{})
 
     # The park is the positive settle: every attempt of the ladder has run and
-    # the Entity is idle, so what the dictionary holds now is what it keeps.
-    assert_receive {:"$gen_cast", {:park, entity_pid, _identity, body}}, 2_000
+    # the Cell is idle, so what the dictionary holds now is what it keeps.
+    assert_receive {:"$gen_cast", {:park, cell_pid, _identity, body}}, 2_000
     assert body.attempts == 3
 
-    {:dictionary, dict} = Process.info(entity_pid, :dictionary)
+    {:dictionary, dict} = Process.info(cell_pid, :dictionary)
     assert Enum.filter(dict, fn {k, _} -> is_tuple(k) and elem(k, 0) == Ctx end) == []
   end
 
-  # `GatedProc` with a one-item mailbox: each run is held until the test
+  # `GatedTask` with a one-item mailbox: each run is held until the test
   # releases it, so a burst finds the mailbox full for as long as the test
   # wants rather than for as long as a sleep lasts.
-  defmodule SlowProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule SlowTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "slow"
     def init_state(_), do: nil
 
@@ -417,7 +417,7 @@ defmodule Flezha.SDK.DispatchTest do
           c
           |> Channels.input("in")
           |> Channels.on_full(:drop_newest)
-          |> Channels.into(SlowProc)
+          |> Channels.into(SlowTask)
           |> Channels.named("s")
           |> Channels.sink()
     end
@@ -444,8 +444,8 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "the undeclared default discards nothing; every input arrives" do
-    defmodule DefaultSlowProc do
-      @behaviour Flezha.SDK.Procedure
+    defmodule DefaultSlowTask do
+      @behaviour Flezha.SDK.Tasklet
       def name, do: "default_slow"
       def init_state(_), do: nil
 
@@ -469,7 +469,7 @@ defmodule Flezha.SDK.DispatchTest do
         do:
           c
           |> Channels.input("in")
-          |> Channels.into(DefaultSlowProc)
+          |> Channels.into(DefaultSlowTask)
           |> Channels.named("s")
           |> Channels.sink()
     end
@@ -486,12 +486,12 @@ defmodule Flezha.SDK.DispatchTest do
     assert length(collect_outputs(10)) == 10
   end
 
-  test "a mis-routed dynamic key parks with the contract error before any Entity state" do
+  test "a mis-routed dynamic key parks with the contract error before any Cell state" do
     range = KeyGroup.decode(0, 2, 0, 127)
     %{op: op} = start_operative(IdentityKeyOp, range: range, runner: self())
     # "BTC-USD" hashes to key group 129 — outside this partition's 0..127 range.
     Inbox.input(op, "in", "BTC-USD", %{})
-    assert_receive {:"$gen_cast", {:park, _entity, _identity, body}}, 1_000
+    assert_receive {:"$gen_cast", {:park, _cell, _identity, body}}, 1_000
     assert body.error =~ "does not own"
   end
 
@@ -506,16 +506,16 @@ defmodule Flezha.SDK.DispatchTest do
       :ok
     end
 
-    # The self-report every SDK carries: one wedged Entity is invisible to
+    # The self-report every SDK carries: one wedged Cell is invisible to
     # `dispatches` while the runner as a whole keeps completing work.
     test "a dispatch in flight is reported, and an idle runner reports zero" do
       %{op: op, counters: counters} = start_operative(GatedOp)
       assert Counters.handout_liveness(counters) == {0, 0}
 
       Inbox.input(op, "in", "slow", %{})
-      assert_receive {:running, "slow", entity}, 1_000
+      assert_receive {:running, "slow", cell}, 1_000
 
-      # The handout ages on the clock while the Entity holds it.
+      # The handout ages on the clock while the Cell holds it.
       assert NodeTestHelper.wait_until(
                fn ->
                  match?({1, oldest_ms} when oldest_ms >= 30, Counters.handout_liveness(counters))
@@ -524,7 +524,7 @@ defmodule Flezha.SDK.DispatchTest do
                5
              )
 
-      send(entity, :release)
+      send(cell, :release)
       assert_receive {:flz_data, _id, "op-1", "slow", _}, 2_000
 
       assert NodeTestHelper.wait_until(
@@ -535,29 +535,29 @@ defmodule Flezha.SDK.DispatchTest do
     end
 
     # `after` cannot run for an untrappable kill, so the Operative releases the
-    # dead Entity's slot — otherwise the runner would report a stall forever.
-    test "an Entity killed mid-dispatch releases its slot, and its key is routable again" do
+    # dead Cell's slot — otherwise the runner would report a stall forever.
+    test "a Cell killed mid-dispatch releases its slot, and its key is routable again" do
       %{op: op, counters: counters} = start_operative(GatedOp)
 
       Inbox.input(op, "in", "kill", %{})
-      assert_receive {:running, "kill", entity}, 1_000
+      assert_receive {:running, "kill", cell}, 1_000
       assert {1, _} = Counters.handout_liveness(counters)
 
-      ref = Process.monitor(entity)
+      ref = Process.monitor(cell)
       # `:noproc` when the kill landed before the monitor did — either way the
-      # Entity is gone, which is what the slot release hangs off.
-      assert_receive {:DOWN, ^ref, :process, ^entity, _reason}, 1_000
+      # Cell is gone, which is what the slot release hangs off.
+      assert_receive {:DOWN, ^ref, :process, ^cell, _reason}, 1_000
 
       assert NodeTestHelper.wait_until(
                fn -> Counters.handout_liveness(counters) == {0, 0} end,
                2_000,
                10
              ),
-             "a killed Entity left its in-flight slot claimed"
+             "a killed Cell left its in-flight slot claimed"
 
-      assert Process.alive?(op), "a crashed Entity must not take its Operative down"
+      assert Process.alive?(op), "a crashed Cell must not take its Operative down"
 
-      # The key is routable again: a fresh Entity is started on the next input.
+      # The key is routable again: a fresh Cell is started on the next input.
       Inbox.input(op, "in", "after", %{})
       assert_receive {:running, "after", fresh}, 1_000
       send(fresh, :release)
@@ -569,7 +569,7 @@ defmodule Flezha.SDK.DispatchTest do
   # Operative's mailbox. When the input wins, a `:block` enqueue is a
   # `GenServer.call` into a pid that is already dead — which took the Operative
   # down with it, leaving the key permanently unroutable.
-  test "an input that beats a killed Entity's exit signal is still served" do
+  test "an input that beats a killed Cell's exit signal is still served" do
     Process.register(self(), :dispatch_probe)
 
     on_exit(fn ->
@@ -578,24 +578,24 @@ defmodule Flezha.SDK.DispatchTest do
 
     %{op: op} = start_operative(GatedOp)
     Inbox.input(op, "in", "first", %{})
-    assert_receive {:running, "first", entity}, 1_000
-    send(entity, :release)
+    assert_receive {:running, "first", cell}, 1_000
+    send(cell, :release)
     assert_receive {:flz_data, _id, "op-1", "first", _}, 2_000
 
     # Force the losing order: the input is queued before the exit signal.
     :sys.suspend(op)
     Inbox.input(op, "in", "second", %{})
-    Process.exit(entity, :kill)
+    Process.exit(cell, :kill)
     :sys.resume(op)
 
     assert_receive {:running, "second", fresh}, 2_000
-    assert fresh != entity, "the input was handed to the dead Entity"
+    assert fresh != cell, "the input was handed to the dead Cell"
     send(fresh, :release)
     assert_receive {:flz_data, _id, "op-1", "second", _}, 2_000
-    assert Process.alive?(op), "a dead Entity took its Operative down"
+    assert Process.alive?(op), "a dead Cell took its Operative down"
   end
 
-  # This process is where a gated Procedure reports in.
+  # This process is where a gated Tasklet reports in.
   defp probe!() do
     Process.register(self(), :dispatch_probe)
 
@@ -610,8 +610,8 @@ defmodule Flezha.SDK.DispatchTest do
     if NodeTestHelper.wait_until(fn -> done?.(runs) end, 200, 5) do
       runs
     else
-      assert_receive {:running, _input, entity}, 1_000
-      send(entity, :release)
+      assert_receive {:running, _input, cell}, 1_000
+      send(cell, :release)
       release_runs_until(done?, runs + 1)
     end
   end

@@ -8,11 +8,11 @@ use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+use super::cell::HostPayload;
 use super::decl::HostClock;
-use super::entity::HostPayload;
 use crate::channel::{ChannelDescriptor, ChannelKind};
 use crate::operative::instance::StreamInstance;
-use crate::operative::topology::{EntityMode, OperativeTopology};
+use crate::operative::topology::{CellMode, OperativeTopology};
 use crate::poll_core::EnginePayload;
 use crate::schema;
 use crate::util::LockRecover;
@@ -73,15 +73,15 @@ pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) 
     let mut want_keys = false;
     let mut want_event_time = false;
     for edge in &channel.consumers {
-        let Some(desc) = topology.procedure(edge.procedure) else {
+        let Some(desc) = topology.tasklet(edge.tasklet) else {
             continue;
         };
         let Some(facts) = desc.host_facts.as_ref() else {
             continue;
         };
         match desc.mode {
-            EntityMode::Dynamic => want_keys = true,
-            EntityMode::Static if desc.entities_for_overridden => want_keys = true,
+            CellMode::Dynamic => want_keys = true,
+            CellMode::Static if desc.cells_for_overridden => want_keys = true,
             _ => {}
         }
         if facts.clock == HostClock::EventTime {

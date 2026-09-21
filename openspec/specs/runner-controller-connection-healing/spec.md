@@ -21,7 +21,7 @@ The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOpera
 - **AND** the new Controller process reaches ready
 - **AND** the Runner's reconnect loop opens a new control channel within its existing backoff window
 - **THEN** within 5 s of the Controller reaching ready, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
-- **AND** the test SHALL NOT have called `flz operative start`, restarted the Runner container, or issued any other re-assignment procedure between the restart and the assertion
+- **AND** the test SHALL NOT have called `flz operative start`, restarted the Runner container, or issued any other re-assignment tasklet between the restart and the assertion
 
 #### Scenario: StreamChannel rebinds to a fresh stream_ref instead of dropping traffic
 - **GIVEN** a `StreamChannel` for Operative `r1` was bound to `stream_ref_old`
@@ -107,7 +107,7 @@ Note: the `market-executor` container/PID-file name above is owned by the separa
 
 For any byte sequence the SDK reads from the control socket — including 0-byte reads, truncated frames, frames with unknown command variants, frames whose `reference_id` is empty, frames whose `Command` oneof is `None` — the SDK SHALL surface a typed `Result::Err` to its caller and SHALL NOT `panic!`, `.unwrap()`, or `.expect()` from within a runtime thread. The error path SHALL drive the existing reconnect loop (clean transport restart) for transport-edge events (clean close, truncated read) and structured logging plus reconnect for protocol-edge events (unknown variant, missing oneof).
 
-The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateResponse`, and `Command::CompactEntityResponse` clauses (currently `CommandActionType::NotificationIgnore`) demonstrate the desired pattern for protocol-edge events: log and drop. The decode-edge event class (this requirement) extends the same defensive posture one layer below the variant match.
+The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateResponse`, and `Command::CompactCellResponse` clauses (currently `CommandActionType::NotificationIgnore`) demonstrate the desired pattern for protocol-edge events: log and drop. The decode-edge event class (this requirement) extends the same defensive posture one layer below the variant match.
 
 #### Scenario: `Command` oneof is None and SDK does not panic
 - **GIVEN** the SDK receives a well-formed `CommandRequest` whose `command` field is `None` (a future protocol contract violation or a defensive serialization bug)
@@ -165,7 +165,7 @@ The SDK SHALL wait at most 2 s per operative for the ack (with parallelism acros
 #### Scenario: The Elixir runner's supervisor shutdown ships the notification
 - **GIVEN** an Elixir runner running operative `p1`, booted runner-only so the BEAM's default `sigterm` handling is `init:stop`
 - **WHEN** the runner receives SIGTERM
-- **THEN** the application stop reaches the RunnerServer's `terminate/2`, which SHALL serialize `p1` through its live Entities and emit `RunnerShutdownNotification{operative_id: "p1", ...}` before the control connection is closed
+- **THEN** the application stop reaches the RunnerServer's `terminate/2`, which SHALL serialize `p1` through its live Cells and emit `RunnerShutdownNotification{operative_id: "p1", ...}` before the control connection is closed
 - **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=elixir` SHALL see `Overwatch.state.snapshot` populated within its window
 
 #### Scenario: A stopping runner does not re-register
@@ -444,7 +444,7 @@ on any control-socket transport-edge event" requirement.
 
 The guard protects a runner that is merely *observed* healthy against a stale snapshot. It SHALL NOT protect one the data-plane classifier PROVED wedged: an eviction carrying `proved_wedged: true` SHALL proceed despite the open connection. A pool-wedged runner heartbeats and holds its socket while processing nothing, so its connection being open is exactly what would otherwise make it unevictable forever.
 
-#### Scenario: a reconnected runner survives a stale eviction proc
+#### Scenario: a reconnected runner survives a stale eviction
 - **GIVEN** the Diff snapshot queued `default_X` for eviction but `default_X` reconnected before the heal ran
 - **WHEN** `evict_runner(default_X)` executes with no proved-wedge reason
 - **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its operatives producing.
@@ -658,26 +658,26 @@ the line SHALL also name the listen address.
 - **WHEN** a controller boots successfully
 - **THEN** its log contains the resolved absolute socket directory and the `FLEZHA_SOCKET_FILES_PATH` assignment that attaches a runner to it
 
-### Requirement: A graceful ship waits at most the gate bound for an Entity inside an activation
+### Requirement: A graceful ship waits at most the gate bound for a Cell inside an activation
 
-The per-Entity serialize a graceful shutdown runs SHALL wait at most 5 s for the Entity's handout exclusivity; an Entity still inside an activation at that bound SHALL be omitted from the `RunnerShutdownNotification`, with a log line naming the Entity and the bound, and the notification SHALL still carry every other Entity's state. The bound applies to every path that runs the ship — SIGTERM, `Drop` of the runner handle, the host's own stop entry, and the controller-ordered terminal disconnect — and to a live state read of the same Entity, so that no command interaction can hold the runner's control thread for the life of the process. A controller-ordered terminal disconnect SHALL therefore end the process with the non-zero terminal status whatever the host's loops are doing: the exit is the core's, from its own thread.
+The per-Cell serialize a graceful shutdown runs SHALL wait at most 5 s for the Cell's handout exclusivity; a Cell still inside an activation at that bound SHALL be omitted from the `RunnerShutdownNotification`, with a log line naming the Cell and the bound, and the notification SHALL still carry every other Cell's state. The bound applies to every path that runs the ship — SIGTERM, `Drop` of the runner handle, the host's own stop entry, and the controller-ordered terminal disconnect — and to a live state read of the same Cell, so that no command interaction can hold the runner's control thread for the life of the process. A controller-ordered terminal disconnect SHALL therefore end the process with the non-zero terminal status whatever the host's loops are doing: the exit is the core's, from its own thread.
 
-An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its own means — its application shutdown ends a wedged Entity process — and exit with the same status.
+An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its own means — its application shutdown ends a wedged Cell process — and exit with the same status.
 
 #### Scenario: A terminal disconnect ordered to a wedged runner ends it
-- **GIVEN** a runner one of whose Entities is inside an activation that never returns
+- **GIVEN** a runner one of whose Cells is inside an activation that never returns
 - **WHEN** the controller orders a terminal disconnect
-- **THEN** the runner SHALL acknowledge, ship the state of every other Entity, log the busy Entity as omitted, and exit with a non-zero status within the bound plus the ack wait
+- **THEN** the runner SHALL acknowledge, ship the state of every other Cell, log the busy Cell as omitted, and exit with a non-zero status within the bound plus the ack wait
 - **AND** its session SHALL close and its operatives SHALL be rerouted by the existing disconnect path
 
-#### Scenario: The omitted Entity's state is at most one activation stale
-- **GIVEN** the busy Entity's last completed activation left state `S`
+#### Scenario: The omitted Cell's state is at most one activation stale
+- **GIVEN** the busy Cell's last completed activation left state `S`
 - **WHEN** the notification ships without it
 - **THEN** the controller's snapshot for that operative SHALL hold `S` from the periodic snapshot or the WAL, exactly as it would after a crash, and nothing newer existed to ship
 
-#### Scenario: A live read of a wedged Entity is refused, not held
-- **WHEN** a live state read names an Entity inside an activation older than the bound
-- **THEN** the runner SHALL answer with an error naming the Entity as busy after the bound, and the control thread SHALL go on serving later commands
+#### Scenario: A live read of a wedged Cell is refused, not held
+- **WHEN** a live state read names a Cell inside an activation older than the bound
+- **THEN** the runner SHALL answer with an error naming the Cell as busy after the bound, and the control thread SHALL go on serving later commands
 
 ### Requirement: A per-runner data socket name SHALL be bounded and composed by one implementation
 

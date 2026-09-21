@@ -14,9 +14,9 @@ defmodule Flezha.SDK.RunnerBootTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.RunnerServer
 
-  defmodule BootProc do
+  defmodule BootTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "boot_probe"
     def init_state(_key), do: nil
 
@@ -33,7 +33,7 @@ defmodule Flezha.SDK.RunnerBootTest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(BootProc) |> sink("probe")
+      c |> input("in") |> into(BootTask) |> sink("probe")
     end
   end
 

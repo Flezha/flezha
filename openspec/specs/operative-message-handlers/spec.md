@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operative-message-handlers capability enables typed request/reply messaging to a running operative from any cluster-reachable caller — including other operatives — routed by the operative's Overwatch to a per-operative handler plugin selected by an atom `handler_key`. Plugins are represented as `%Flezha.Plugin{}` entries subscribing to the `:on_message` extension point and are enabled per operative via `Flezha.Service.PluginManager.enable_plugin/2`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side operative factory via a new `OperativeMessage` / `OperativeMessageResponse` control-channel command pair, mirroring the existing `EntityState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive operative migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
+The operative-message-handlers capability enables typed request/reply messaging to a running operative from any cluster-reachable caller — including other operatives — routed by the operative's Overwatch to a per-operative handler plugin selected by an atom `handler_key`. Plugins are represented as `%Flezha.Plugin{}` entries subscribing to the `:on_message` extension point and are enabled per operative via `Flezha.Service.PluginManager.enable_plugin/2`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side operative factory via a new `OperativeMessage` / `OperativeMessageResponse` control-channel command pair, mirroring the existing `CellState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive operative migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
 ## Requirements
 ### Requirement: Per-operative message handler plugin configuration
 
@@ -41,8 +41,8 @@ The system SHALL route incoming messages of the shape `{:flezha_request, handler
 The system SHALL invoke the matched subscriber's `on_message/2` callback with a `%Flezha.Plugin.Extension.Ctx.Msg{}` struct containing exactly these fields: `key` (atom), `payload` (binary), `reply_to` (pid), `ref` (reference), `operative_id` (string), `namespace` (string), and `runner_id` (string). The second argument MUST be the subscriber's `opts` map.
 
 #### Scenario: Handler receives full context
-- **WHEN** a handler is invoked for a request on operative `"proc-1"` in namespace `"tenant-a"` from caller pid `P`
-- **THEN** the `on_message/2` callback MUST be invoked with `(ctx, opts)` where `ctx.operative_id == "proc-1"`, `ctx.namespace == "tenant-a"`, `ctx.reply_to == P`, and `opts` equals the subscriber's configured `opts` map
+- **WHEN** a handler is invoked for a request on operative `"op-1"` in namespace `"tenant-a"` from caller pid `P`
+- **THEN** the `on_message/2` callback MUST be invoked with `(ctx, opts)` where `ctx.operative_id == "op-1"`, `ctx.namespace == "tenant-a"`, `ctx.reply_to == P`, and `opts` equals the subscriber's configured `opts` map
 
 #### Scenario: Handler returns an error result
 - **WHEN** the handler's `on_message/2` returns `{:error, reason}`
@@ -78,13 +78,13 @@ The system SHALL provide a synchronous request path for callers to send an envel
 
 ### Requirement: New control-channel command `OperativeMessage`
 
-The system SHALL extend `protobufs/runner_commands.proto` with two messages: `OperativeMessage { string operative_id = 1; bytes payload = 2; }` and `OperativeMessageResponse { bytes payload = 1; string error = 2; }`. `OperativeMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `EntityState`.
+The system SHALL extend `protobufs/runner_commands.proto` with two messages: `OperativeMessage { string operative_id = 1; bytes payload = 2; }` and `OperativeMessageResponse { bytes payload = 1; string error = 2; }`. `OperativeMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `CellState`.
 
-The message is named for the Operative because it addresses one: it carries `operative_id` and no procedure or entity identifier. The former name asserted a level it never targeted.
+The message is named for the Operative because it addresses one: it carries `operative_id` and no tasklet or cell identifier. The former name asserted a level it never targeted.
 
 #### Scenario: Command travels on control channel
-- **WHEN** the Elixir agent sends an `OperativeMessage` for operative `"proc-1"` with payload `P`
-- **THEN** the SDK MUST receive it on the control channel with `operative_id == "proc-1"` and `payload == P`
+- **WHEN** the Elixir agent sends an `OperativeMessage` for operative `"op-1"` with payload `P`
+- **THEN** the SDK MUST receive it on the control channel with `operative_id == "op-1"` and `payload == P`
 
 #### Scenario: Response carries empty error on success
 - **WHEN** the SDK factory successfully handles the message and returns bytes `B`

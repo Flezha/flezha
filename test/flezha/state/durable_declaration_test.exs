@@ -14,7 +14,7 @@ defmodule Flezha.State.DurableDeclarationTest do
   # The record frame lives in the Elixir SDK's frame module, and the device walk
   # over it here reads a record's length before its frame. `wire.ex` is the
   # third file allowed to carry the shape because it frames a DIFFERENT thing:
-  # the wire envelope carries an entity id and crcs the body alone.
+  # the wire envelope carries a cell id and crcs the body alone.
   @sdk_frame "sdk/elixir/lib/flezha/sdk/record_frame.ex"
   @frame_allowed [
     @sdk_frame,
@@ -67,11 +67,11 @@ defmodule Flezha.State.DurableDeclarationTest do
 
     test "the derived exclusion recognises every declared suffix and nothing else" do
       for {id, row} <- Durable.all() do
-        assert Durable.in_progress?("entity.wal" <> row.in_progress_suffix), "#{id}"
+        assert Durable.in_progress?("cell.wal" <> row.in_progress_suffix), "#{id}"
       end
 
-      refute Durable.in_progress?("entity.wal")
-      refute Durable.in_progress?("entity.snap.7")
+      refute Durable.in_progress?("cell.wal")
+      refute Durable.in_progress?("cell.snap.7")
       refute Durable.in_progress?("object.claim")
     end
   end

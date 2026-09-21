@@ -129,7 +129,7 @@ Under `commit: "rename"` the sink SHALL write records into a hidden temp file in
 `path` names, syncing each batch as it flushes. It SHALL close a roll when `roll_after_ms`
 (default 10 000) or `roll_bytes` (default 64 MiB) is reached, whichever first, by renaming the
 temp file to `part-<N>` with `N` zero-padded and strictly increasing, then writing a sidecar
-`.progress` temp-then-rename carrying `N` and the per-Entity `(epoch, seq)` watermark of every
+`.progress` temp-then-rename carrying `N` and the per-Cell `(epoch, seq)` watermark of every
 part up to `N`, and only then confirming every hold the part carries. A temp file SHALL NOT be
 visible under a final name.
 
@@ -137,7 +137,7 @@ On start the sink SHALL delete every temp file and every part whose number is gr
 sidecar's, because their records were never confirmed and the outbox re-drive returns them. A
 part more than one ahead of the sidecar SHALL refuse the start naming both numbers, and SHALL
 delete nothing. A guaranteed record whose `(epoch, seq)` is at or below the sidecar's watermark
-for its Entity SHALL NOT be written and its hold SHALL be confirmed; one at or below the open
+for its Cell SHALL NOT be written and its hold SHALL be confirmed; one at or below the open
 roll's watermark SHALL NOT be written and its hold SHALL be confirmed with the roll. Only a
 record carrying an outbox confirmation token is judged, because any other record's seq may
 repeat. The identity a record carries SHALL be read by the same function the Postgres sink
@@ -184,7 +184,7 @@ reads it with.
 
 #### Scenario: A record the outbox does not guarantee is still written
 
-- **WHEN** a record carrying no `flz.entity`, and two keyed records sharing one `flz.seq` and
+- **WHEN** a record carrying no `flz.cell`, and two keyed records sharing one `flz.seq` and
   carrying no confirmation token, are flushed under `rename`
 - **THEN** all three SHALL be written, and the watermark SHALL NOT mention them
 

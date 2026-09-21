@@ -60,25 +60,25 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
   test "list is prefix-scoped and treats underscores literally", %{opts: opts} do
     # `_` is a LIKE wildcard and appears in every reserved and base64-encoded
     # identity, so a LIKE-based prefix match would silently over-match here.
-    assert :ok = Backend.put("manifest/e/cls/proc/_key", "a", opts)
-    assert :ok = Backend.put("manifest/e/cls/proc/xkey", "b", opts)
-    assert :ok = Backend.put("manifest/e/other/proc/k", "c", opts)
+    assert :ok = Backend.put("manifest/e/cls/task/_key", "a", opts)
+    assert :ok = Backend.put("manifest/e/cls/task/xkey", "b", opts)
+    assert :ok = Backend.put("manifest/e/other/task/k", "c", opts)
 
     assert {:ok, entries} = Backend.list("manifest/e/cls/", opts)
 
     assert entries |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
-             ["manifest/e/cls/proc/_key", "manifest/e/cls/proc/xkey"]
+             ["manifest/e/cls/task/_key", "manifest/e/cls/task/xkey"]
 
     # The age is computed by the database, so it is a real elapsed value rather
     # than something this process timed.
     assert Enum.all?(entries, fn {_key, age} -> is_integer(age) and age >= 0 end)
 
-    assert {:ok, [{"manifest/e/cls/proc/_key", _}]} =
-             Backend.list("manifest/e/cls/proc/_key", opts)
+    assert {:ok, [{"manifest/e/cls/task/_key", _}]} =
+             Backend.list("manifest/e/cls/task/_key", opts)
   end
 
   test "put_if extends an owned lineage and refuses a bid that is not ahead", %{opts: opts} do
-    key = "manifest/e/cls/proc/k"
+    key = "manifest/e/cls/task/k"
 
     assert :ok = Backend.put_if(key, "claim-1", {:claim, 1}, opts)
     assert {:ok, "claim-1"} = Backend.get(key, opts)

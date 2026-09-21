@@ -109,7 +109,7 @@ defmodule Flezha.Config.DurationRows do
     {:operative_call_timeout_ms, :ms, 1_000, []},
     {:overwatch_call_timeout_ms, :ms, 5_000, key: true},
     {:overwatch_ping_timeout_ms, :ms, 2_000, key: true, env: "FLEZHA_OVERWATCH_PING_TIMEOUT_MS"},
-    {:overwatch_proc_warn_ms, :ms, 2_000, key: true},
+    {:overwatch_task_warn_ms, :ms, 2_000, key: true},
     {:overwatch_runner_wait_ms, :ms, 30_000, key: true},
     {:partition_peer_call_ms, :ms, 30_000, []},
     {:partition_quiesce_poll_ms, :ms, 250, []},
@@ -124,8 +124,8 @@ defmodule Flezha.Config.DurationRows do
     {:stream_bind_wait_ms, :ms, 30_000, key: true},
 
     # ---- convergence -------------------------------------------------------
-    {:convergence_entity_stall_ms, :ms, 300_000,
-     key: true, env: "FLEZHA_CONVERGENCE_ENTITY_STALL_MS"},
+    {:convergence_cell_stall_ms, :ms, 300_000,
+     key: true, env: "FLEZHA_CONVERGENCE_CELL_STALL_MS"},
     {:convergence_output_stall_grace_ms, :ms, 60_000,
      key: true, env: "FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS"},
     {:convergence_tick_ms, :ms, 5_000, key: true, env: "FLEZHA_CONVERGENCE_TICK_MS"},
@@ -254,21 +254,21 @@ defmodule Flezha.Config.DurationRows do
     # an Operative, a local run. None of them runs author code on the answering
     # clause, so a wait here is a wedged process rather than a busy one.
     {:sdk_control_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
-    # A call into an Entity that answers from its queue rather than from its
+    # A call into a Cell that answers from its queue rather than from its
     # state — the same question the serialise wait asks, kept as a row of its
     # own because a state read and a lifecycle call move apart the moment either
     # is tuned.
-    {:sdk_entity_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
+    {:sdk_cell_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # The three calls whose duration grows with the state, not with the queue in
-    # front of them. A refused call is not a cancelled one — the Entity finishes
+    # front of them. A refused call is not a cancelled one — the Cell finishes
     # the work either way — so each waits inside the Controller surface that
     # asked, and never the flat control bound. An inner bound equal to the outer
     # is no bound at all.
-    {:sdk_entity_restore_ms, :ms, nil,
+    {:sdk_cell_restore_ms, :ms, nil,
      derived: {:headroom, :restore_await_timeout_ms, -5_000}, runtimes: [:elixir_sdk]},
-    {:sdk_entity_snapshot_ms, :ms, nil,
+    {:sdk_cell_snapshot_ms, :ms, nil,
      derived: {:headroom, :compaction_timeout_ms, -5_000}, runtimes: [:elixir_sdk]},
-    {:sdk_entity_apply_ms, :ms, nil,
+    {:sdk_cell_apply_ms, :ms, nil,
      derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}, runtimes: [:elixir_sdk]},
     {:sdk_idle_probe_ms, :ms, 50, runtimes: [:elixir_sdk]},
     {:sdk_max_reap_interval_ms, :ms, 30_000, runtimes: [:elixir_sdk]},
@@ -276,12 +276,12 @@ defmodule Flezha.Config.DurationRows do
     # bind still owes before it may park: a park there would drop the tail.
     {:sdk_owed_inbox_wait_ms, :ms, 60_000, runtimes: [:elixir_sdk]},
     {:sdk_serialize_wait_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
-    # The task yield outlasts the read it awaits, so a wedged Entity answers the
+    # The task yield outlasts the read it awaits, so a wedged Cell answers the
     # read's own bound rather than the yield's.
     {:sdk_serialize_yield_ms, :ms, nil,
      derived: {:headroom, :sdk_serialize_wait_ms, 1_000}, runtimes: [:elixir_sdk]},
     {:sdk_shutdown_ack_ms, :ms, 2_000, runtimes: [:elixir_sdk]},
-    # How long a procedure's spawn request waits for the controller's answer.
+    # How long a tasklet's spawn request waits for the controller's answer.
     {:sdk_spawn_reply_ms, :ms, 30_000, runtimes: [:elixir_sdk]}
   ]
 

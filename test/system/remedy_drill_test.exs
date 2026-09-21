@@ -131,14 +131,14 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end
   end
 
-  # `resync_runner` needs an Entity with persisted state, so it drives the
+  # `resync_runner` needs a Cell with persisted state, so it drives the
   # `store_input` fixture.
   describe "resync_runner" do
     @describetag capability: :state_persistence,
                  skip: FlezhaTest.SystemCase.deferral(:state_persistence)
     @describetag timeout: 120_000
 
-    test "the loop plans and executes it from every fault that names an Entity", %{
+    test "the loop plans and executes it from every fault that names a Cell", %{
       namespace: namespace
     } do
       row(:resync_runner, namespace)
@@ -273,34 +273,34 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   defp row(:resync_runner, namespace) do
     {_port, runner} = boot_runner(namespace, unique_id_path("drill"), [])
     id = start_operative(namespace, "resynced", factory: "store_input")
-    entity = {id, "store_input_procedure", ""}
+    cell = {id, "store_input_tasklet", ""}
     feed(namespace, id, 5)
-    {:ok, writer} = wait_for_writer(entity)
+    {:ok, writer} = wait_for_writer(cell)
     start_loop()
 
     # --- a frame dropped on the secondary stream: the WAL sees a gap --------
     last = WalWriter.last_persisted_seq(writer)
     WalWriter.append_async(writer, last + 100, TestHelpers.stub_header(), "gap", runner)
-    assert_receive {:heal, %{primitive: :resync_runner, target: ^entity}}, 30_000
-    assert wait_until(fn -> attempt({:seq_gap, entity}) >= 1 end, 10_000)
+    assert_receive {:heal, %{primitive: :resync_runner, target: ^cell}}, 30_000
+    assert wait_until(fn -> attempt({:seq_gap, cell}) >= 1 end, 10_000)
     # The next contiguous append closes the episode.
     feed(namespace, id, 1)
-    assert wait_until(fn -> attempt({:seq_gap, entity}) == 0 end, 30_000)
+    assert wait_until(fn -> attempt({:seq_gap, cell}) == 0 end, 30_000)
 
     # --- a compaction request never answered for four sweeps ----------------
     on_exit(TestHelpers.override_env(:compaction_timeout_ms, 50))
 
     for _ <- 1..4 do
-      Watchdog.compaction_started(entity, runner)
-      age_compaction(entity, 200)
+      Watchdog.compaction_started(cell, runner)
+      age_compaction(cell, 200)
       :ok = Watchdog.sweep_now()
     end
 
-    assert_receive {:heal, %{primitive: :resync_runner, target: ^entity}}, 30_000
-    assert wait_until(fn -> attempt({:compaction_gave_up, entity}) >= 1 end, 10_000)
+    assert_receive {:heal, %{primitive: :resync_runner, target: ^cell}}, 30_000
+    assert wait_until(fn -> attempt({:compaction_gave_up, cell}) >= 1 end, 10_000)
     # A real compaction completing is the counter-fact.
-    {:ok, _ref} = Commands.dispatch_compact_entity(runner, entity)
-    assert wait_until(fn -> attempt({:compaction_gave_up, entity}) == 0 end, 30_000)
+    {:ok, _ref} = Commands.dispatch_compact_cell(runner, cell)
+    assert wait_until(fn -> attempt({:compaction_gave_up, cell}) == 0 end, 30_000)
 
     # --- the persisted seq stops advancing under input -----------------------
     on_exit(TestHelpers.override_env(:default_output_stall_timeout_ms, 200))
@@ -577,16 +577,16 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end
   end
 
-  defp wait_for_writer(entity) do
-    wait_until(fn -> match?({:ok, _}, WriterRegistry.lookup(entity)) end, 30_000)
-    WriterRegistry.lookup(entity)
+  defp wait_for_writer(cell) do
+    wait_until(fn -> match?({:ok, _}, WriterRegistry.lookup(cell)) end, 30_000)
+    WriterRegistry.lookup(cell)
   end
 
-  defp age_compaction(entity_id, ms) do
+  defp age_compaction(cell_id, ms) do
     :sys.replace_state(Watchdog, fn state ->
-      case Map.get(state.compactions, entity_id) do
+      case Map.get(state.compactions, cell_id) do
         {started_at, runner} ->
-          %{state | compactions: Map.put(state.compactions, entity_id, {started_at - ms, runner})}
+          %{state | compactions: Map.put(state.compactions, cell_id, {started_at - ms, runner})}
 
         nil ->
           state

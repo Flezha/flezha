@@ -15,7 +15,7 @@ Transport configuration SHALL ride the same environment the other poll hosts rea
 #### Scenario: A runner connects and serves
 - **WHEN** a runner is started with a declared stream operative
 - **THEN** it SHALL connect, advertise its factories, receive activations and process inputs in
-  per-entity order
+  per-cell order
 
 #### Scenario: The SDK adds no kernel behaviour
 - **WHEN** the package source is inspected for dispatch, retry, overflow or durability logic
@@ -23,31 +23,31 @@ Transport configuration SHALL ride the same environment the other poll hosts rea
 
 ### Requirement: Factory-Function Authoring With Type-Driven Wiring
 
-The SDK SHALL provide a factory-function authoring surface — a procedure definition, a stream
+The SDK SHALL provide a factory-function authoring surface — a tasklet definition, a stream
 operative definition, a workflow operative definition — wired by a fluent channel builder carrying
-entry channels, inter-procedure edges, keying and edge transforms. Handler input and output types
-SHALL drive graph wiring. A procedure's body SHALL be the definition's `run` field, the name every
-SDK gives a procedure's body; a definition carrying a `handle` field SHALL throw `DeclarationError`
+entry channels, inter-tasklet edges, keying and edge transforms. Handler input and output types
+SHALL drive graph wiring. A tasklet's body SHALL be the definition's `run` field, the name every
+SDK gives a tasklet's body; a definition carrying a `handle` field SHALL throw `DeclarationError`
 naming `run`.
 
 Decorators SHALL NOT be required, and the surface SHALL be usable from plain JavaScript with no
 build step.
 
 #### Scenario: A graph is declared and built
-- **WHEN** an operative declares an entry channel, a keying function and a procedure
-- **THEN** the topology SHALL build, and the procedure's entities SHALL be addressable by the
+- **WHEN** an operative declares an entry channel, a keying function and a tasklet
+- **THEN** the topology SHALL build, and the tasklet's cells SHALL be addressable by the
   declared key
 
 #### Scenario: Plain JavaScript authors without a build step
 - **WHEN** an operative is declared from a plain JavaScript module
 - **THEN** it SHALL register and run with no transpilation
 
-#### Scenario: A procedure's body is its run field
-- **WHEN** a module calls `defineProcedure({ name: 'upcase', run: (s) => s.toUpperCase() })` and an operative wires it
-- **THEN** each input SHALL reach `run`, and its return value SHALL be the procedure's output
+#### Scenario: A tasklet's body is its run field
+- **WHEN** a module calls `defineTasklet({ name: 'upcase', run: (s) => s.toUpperCase() })` and an operative wires it
+- **THEN** each input SHALL reach `run`, and its return value SHALL be the tasklet's output
 
 #### Scenario: The old body field is refused
-- **WHEN** a module calls `defineProcedure({ name: 'upcase', handle: (s) => s })`
+- **WHEN** a module calls `defineTasklet({ name: 'upcase', handle: (s) => s })`
 - **THEN** loading it SHALL throw `DeclarationError` naming `run`
 
 ### Requirement: A Mismatched Edge Is a Compile Error, and the Refusal Is Pinned
@@ -61,14 +61,14 @@ This is the SDK's counterpart to the compile-fail tests the Rust SDK pins, and i
 demoted to a registration-time check.
 
 #### Scenario: A wrong edge type fails to compile
-- **WHEN** a procedure is wired to consume a type its declared input does not accept
+- **WHEN** a tasklet is wired to consume a type its declared input does not accept
 - **THEN** type checking SHALL fail, and a fixture asserting that failure SHALL be part of the test
   suite
 
 ### Requirement: Registration-Time Refusals Name the Defect
 
 The SDK SHALL refuse, at registration, every defect class the authoring contract names that static
-typing cannot see: a missing or duplicated entry channel, a cycle, an unreachable procedure, an
+typing cannot see: a missing or duplicated entry channel, a cycle, an unreachable tasklet, an
 identity collision, a missing or unservable clock extractor, a keyed channel without a plugin wire,
 a tier channel that is not keyed, checkpoint acknowledgement without the tier, a correction window
 without its preconditions, branch arity violations, and a duplicate plugin sink. The verdict SHALL
@@ -80,14 +80,14 @@ Every refusal SHALL name the offending handler and the specific defect.
 
 #### Scenario: A cyclic graph is refused by name
 - **WHEN** a declared topology contains a cycle
-- **THEN** registration SHALL fail naming the participating procedures
+- **THEN** registration SHALL fail naming the participating tasklets
 
 #### Scenario: A reference refusal the builder never carried is refused
-- **WHEN** a procedure declares `mailboxCapacity(0)`
-- **THEN** registration SHALL fail with `MailboxCapacityZero` naming the procedure, where the
+- **WHEN** a tasklet declares `mailboxCapacity(0)`
+- **THEN** registration SHALL fail with `MailboxCapacityZero` naming the tasklet, where the
   core accepted the declaration before the check read the record
 
-### Requirement: A Procedure Context at Parity With the Other SDKs
+### Requirement: A Tasklet Context at Parity With the Other SDKs
 
 The SDK SHALL provide the invocation context the authoring contract defines: plain, channel-selected
 and keyed emits with metadata, the deterministic clock read, the stable identifier, timer
@@ -161,9 +161,9 @@ the defaults the other SDKs ship, and SHALL NOT require an observability depende
 
 ### Requirement: The channel builder carries merge, the latest-document router and flatMap
 
-The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(procedure)` and `into(procedure, nodeName)`, with the `multi-input-procedures` semantics: a source is an entry stream or an inter-procedure stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged procedure's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "procedure", "group"}`) under one group per merge and SHALL take the merge refusals (`MergeTooFewSources`, `DuplicateMergeSource`, `EdgeAlreadyWired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-entity procedure with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
+The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(tasklet)` and `into(tasklet, nodeName)`, with the `multi-input-tasklets` semantics: a source is an entry stream or an inter-tasklet stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "tasklet", "group"}`) under one group per merge and SHALL take the merge refusals (`MergeTooFewSources`, `DuplicateMergeSource`, `EdgeAlreadyWired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
 
-#### Scenario: Two channels merge into one procedure
+#### Scenario: Two channels merge into one tasklet
 - **WHEN** an operative declares `c.merge().from(ticks, (t) => ({kind: 'tick', ...t})).from(quotes, (q) => ({kind: 'quote', ...q})).keyBy((v) => v.symbol).into(Detector)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each edge SHALL apply its own mapping, and a value from either entry SHALL reach Detector's handler as the mapped object keyed by `symbol`
 
@@ -172,24 +172,24 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** registration SHALL refuse with `DuplicateMergeSource` naming the channel, and a merge with one source SHALL refuse with `MergeTooFewSources`
 
 #### Scenario: One input becomes three deliveries
-- **WHEN** an edge declares `.flatMap((line) => line.split(',').filter(Boolean))` into a procedure and the dispatcher is handed `a,b,c`
+- **WHEN** an edge declares `.flatMap((line) => line.split(',').filter(Boolean))` into a tasklet and the dispatcher is handed `a,b,c`
 - **THEN** the handler SHALL run three times, once per element, under one consumed offset, and a line the closure answers `[]` for SHALL run it zero times
 
 #### Scenario: The router delivers on a key's own traffic
 - **WHEN** `c.routeLatest(config, trades, (t) => t.symbol)` is declared and the harness feeds a document, then trades for `A` and `B`, then the same document, then a trade for `A`
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
-### Requirement: The single-procedure short form is four definition fields
-The short form SHALL be declared with `defineOperative` or `defineWorkflow`, the same functions that declare a full-form operative, and SHALL NOT be declared with `defineProcedure`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `DeclarationError` naming the field and the operative function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the procedure fields it already reads; the kind is the function's own name and SHALL NOT be a field.
+### Requirement: The single-tasklet short form is four definition fields
+The short form SHALL be declared with `defineOperative` or `defineWorkflow`, the same functions that declare a full-form operative, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `DeclarationError` naming the field and the operative function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; the kind is the function's own name and SHALL NOT be a field.
 
-A definition SHALL be a short form exactly when it carries `run` and not `channels` or `procedures`; carrying both SHALL throw `DeclarationError` naming `ShortFormWithTopology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated procedure named `factoryId` and that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
+A definition SHALL be a short form exactly when it carries `run` and not `channels` or `tasklets`; carrying both SHALL throw `DeclarationError` naming `ShortFormWithTopology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
 An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. Whether `SinkWithoutOutput` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
 #### Scenario: A module exporting one definition is a whole stream operative
 
 - **WHEN** `./upcase.mjs` default-exports `defineOperative({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and the module calls no `defineProcedure`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
 
 #### Scenario: A module exporting one definition is a whole workflow operative
 
@@ -199,7 +199,7 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 #### Scenario: A short form with no sink is declared
 
 - **WHEN** a module exports `defineOperative({ factoryId: 'counter', input: 'ticks', codec: 'text', initialState, applyChange, run })`
-- **THEN** the operative declares `ticks` into the generated procedure and no plugin channel
+- **THEN** the operative declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: A codec needs no sink
 
@@ -216,9 +216,9 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 - **WHEN** a module calls `defineOperative({ factoryId: 'x' })`
 - **THEN** loading it throws `DeclarationError` naming the missing `run` or `channels`
 
-#### Scenario: An operative field on a procedure is refused
+#### Scenario: An operative field on a tasklet is refused
 
-- **WHEN** a module calls `defineProcedure({ name: 'upcase', sink: 'out', run })`
+- **WHEN** a module calls `defineTasklet({ name: 'upcase', sink: 'out', run })`
 - **THEN** loading it throws `DeclarationError` naming `sink` and `defineOperative`
 
 #### Scenario: A definition with no factory id is refused
@@ -232,7 +232,7 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 - **THEN** it registers and runs with no transpilation
 
 ### Requirement: A Node runner registers a factory with one awaited call
-The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide `defineStream`, `defineWorkflow` or `declare`. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operatives (stream, workflow or short form, the kind read from each), rejecting with an error naming the specifier when the import fails or the module exports no operative; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operative against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions `defineProcedure`, `defineOperative` and `defineWorkflow` SHALL keep their names, because they declare a class.
+The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide `defineStream`, `defineWorkflow` or `declare`. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operatives (stream, workflow or short form, the kind read from each), rejecting with an error naming the specifier when the import fails or the module exports no operative; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operative against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions `defineTasklet`, `defineOperative` and `defineWorkflow` SHALL keep their names, because they declare a class.
 
 #### Scenario: Registration is awaited before run
 

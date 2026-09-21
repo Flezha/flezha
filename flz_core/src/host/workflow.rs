@@ -5,14 +5,14 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-use super::entity::{BytesBuffer, HostPayload};
+use super::cell::{BytesBuffer, HostPayload};
 use crate::flusher::FlushableBuffer;
 use crate::schema;
 use crate::util::LockRecover;
 use crate::workflow::{WorkflowCollectSink, WorkflowError};
 
 /// Map one workflow step's work outcome into the driver's collect sink: changes
-/// into that entity's flush buffer, edge outputs collected for the next stage,
+/// into that cell's flush buffer, edge outputs collected for the next stage,
 /// plugin outputs staged/forwarded by the sink. Runs on the thread that
 /// completed the step, with its driver parked at the barrier the fold's result
 /// answers.

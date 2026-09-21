@@ -21,19 +21,19 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
   describe "delivery-guaranteed output" do
     setup do
       rc = "kw_" <> Integer.to_string(System.unique_integer([:positive]))
-      entity_id = {rc, "proc", "k1"}
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
-      %{rc: rc, entity_id: entity_id}
+      cell_id = {rc, "task", "k1"}
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
+      %{rc: rc, cell_id: cell_id}
     end
 
-    test "an acked batch confirms its outbox range", %{entity_id: entity_id} do
+    test "an acked batch confirms its outbox range", %{cell_id: cell_id} do
       {pid, _} = start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
 
       :ok =
         ProducerWorker.cast_enqueue(
           pid,
           "v",
-          TestHelpers.guaranteed_metadata(entity_id, 7)
+          TestHelpers.guaranteed_metadata(cell_id, 7)
         )
 
       assert_receive {:send_called, _request, _ns}, 1_000
@@ -42,7 +42,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
 
     test "a permanently failed batch parks the record instead of dropping it", %{
       rc: rc,
-      entity_id: entity_id,
+      cell_id: cell_id,
       tmp: dir
     } do
       original = Application.get_env(:flezha, :dlq, [])
@@ -59,7 +59,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
             ProducerWorker.cast_enqueue(
               pid,
               "poison",
-              TestHelpers.guaranteed_metadata(entity_id, 3)
+              TestHelpers.guaranteed_metadata(cell_id, 3)
             )
 
           # Parked, then the hold is answered so the cursor may pass the parked range.
@@ -70,13 +70,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
       assert log =~ "record_list_too_large"
 
       assert [entry] = DlqStore.list(rc)
-      assert entry["entity_key"] == "k1"
+      assert entry["cell_key"] == "k1"
       assert entry["channel"] == "out"
       assert entry["error"] =~ "record_list_too_large"
     end
 
     test "with no configured overflow policy a guaranteed record waits instead of evicting", %{
-      entity_id: entity_id
+      cell_id: cell_id
     } do
       {pid, script_pid} =
         start_worker(queue_max: 1, queue_overflow: :drop_nothing, linger_ms: 1)
@@ -90,7 +90,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
           ProducerWorker.cast_enqueue(
             pid,
             "v#{seq}",
-            TestHelpers.guaranteed_metadata(entity_id, seq)
+            TestHelpers.guaranteed_metadata(cell_id, seq)
           )
       end
 
@@ -106,7 +106,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
     end
 
     test "an explicitly configured drop of a guaranteed record is alarm-grade", %{
-      entity_id: entity_id
+      cell_id: cell_id
     } do
       {pid, script_pid} =
         start_worker(queue_max: 1, queue_overflow: :drop_oldest, linger_ms: 1)
@@ -122,7 +122,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
               ProducerWorker.cast_enqueue(
                 pid,
                 "v#{seq}",
-                TestHelpers.guaranteed_metadata(entity_id, seq)
+                TestHelpers.guaranteed_metadata(cell_id, seq)
               )
           end
 
@@ -295,8 +295,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
 
     test "a completed batch confirms each of its records exactly once" do
       rc = "kw_" <> Integer.to_string(System.unique_integer([:positive]))
-      entity_id = {rc, "proc", "k1"}
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      cell_id = {rc, "task", "k1"}
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
 
       pid = start_relay_worker([])
 
@@ -305,7 +305,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
           ProducerWorker.cast_enqueue(
             pid,
             "v#{seq}",
-            TestHelpers.guaranteed_metadata(entity_id, seq)
+            TestHelpers.guaranteed_metadata(cell_id, seq)
           )
 
         assert_receive {:dispatched, ref, _request}, 1_000

@@ -117,7 +117,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       end
 
       # One emit, two destinations, on the shape the one-output-channel-per-
-      # procedure model exists for. Registration alone has always passed: a
+      # tasklet model exists for. Registration alone has always passed: a
       # per-edge model declares a second channel for the sink, so the plugin
       # frame names the SINK rather than the producing channel and the durable
       # handoff a workflow journals is the wrong one. The channel name on the
@@ -162,13 +162,13 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
         assert metadata["channel"] == "hybrid_indicator",
                "the plugin frame names #{inspect(metadata["channel"])}; one output channel per " <>
-                 "producing procedure, and the sink names it — `sink_named(\"hybrid_indicator\")` " <>
+                 "producing tasklet, and the sink names it — `sink_named(\"hybrid_indicator\")` " <>
                  "is the only naming call in the fixture, so this string is what a plugin filters on"
 
-        said = runner_said(port, "hybrid_consumer_procedure: received 42")
+        said = runner_said(port, "hybrid_consumer_tasklet: received 42")
 
-        assert said =~ "hybrid_consumer_procedure: received 42",
-               "the inter-procedure consumer never ran, so the emit reached only the sink; " <>
+        assert said =~ "hybrid_consumer_tasklet: received 42",
+               "the inter-tasklet consumer never ran, so the emit reached only the sink; " <>
                  "the runner printed #{inspect(said)}"
       end
 
@@ -267,7 +267,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   end
 
   # The runner's stdout until `needle` appears. A hybrid channel's consumer
-  # procedure holds no state and answers nothing, so what it prints is its only
+  # tasklet holds no state and answers nothing, so what it prints is its only
   # observable effect — and every SDK's fixture prints the same line.
   defp runner_said(port, needle, budget \\ 30_000) do
     NodeTestHelper.read_port(port, &String.contains?(&1, needle), budget)

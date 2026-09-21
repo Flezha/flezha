@@ -134,7 +134,7 @@ fn naming_declarations(channel_decl: &HostChannelDecl) -> (Option<&String>, Opti
     (named, sink)
 }
 
-/// Where in the record the walk is: the class it reads procedure names from,
+/// Where in the record the walk is: the class it reads tasklet names from,
 /// the channel it is on, the chain it is in, and the merge groups it fills.
 /// Carried together because every step of the walk needs all four.
 struct Walk<'a> {
@@ -235,16 +235,16 @@ fn close_chain(
                 derived.sink = Some(channel);
             }
         }
-        HostLink::Into { procedure } => {
-            wire_consumer(walk, &channel, *procedure, shape, derived, issues)
+        HostLink::Into { tasklet } => {
+            wire_consumer(walk, &channel, *tasklet, shape, derived, issues)
         }
-        HostLink::Merge { procedure, group } => {
+        HostLink::Merge { tasklet, group } => {
             walk.merges
                 .entry(*group)
-                .or_insert_with(|| (*procedure, vec![]))
+                .or_insert_with(|| (*tasklet, vec![]))
                 .1
                 .push(walk.index);
-            wire_consumer(walk, &channel, *procedure, shape, derived, issues);
+            wire_consumer(walk, &channel, *tasklet, shape, derived, issues);
         }
         HostLink::Branch { arms } => {
             if *arms < 2 {
@@ -263,28 +263,28 @@ fn close_chain(
 fn wire_consumer(
     walk: &Walk<'_>,
     channel: &str,
-    procedure: u32,
+    tasklet: u32,
     shape: &Shape,
     derived: &mut Chains,
     issues: &mut Vec<TopologyIssue>,
 ) {
-    let Some(proc_decl) = walk.decl.procedures.get(procedure as usize) else {
+    let Some(task_decl) = walk.decl.tasklets.get(tasklet as usize) else {
         issues.push(TopologyIssue::Declaration(format!(
-            "channel `{channel}` names consumer {procedure} but the class declares {} procedure(s)",
-            walk.decl.procedures.len()
+            "channel `{channel}` names consumer {tasklet} but the class declares {} tasklet(s)",
+            walk.decl.tasklets.len()
         )));
         return;
     };
-    match derived.consumers.iter().find(|e| e.procedure == procedure) {
+    match derived.consumers.iter().find(|e| e.tasklet == tasklet) {
         Some(existing) if existing.transform || existing.key || shape.transform || shape.key => {
             issues.push(TopologyIssue::EdgeAlreadyWired {
                 channel: channel.to_string(),
-                procedure: proc_decl.name.clone(),
+                tasklet: task_decl.name.clone(),
             });
         }
         Some(_) => {}
         None => derived.consumers.push(DerivedEdge {
-            procedure,
+            tasklet,
             chain: walk.chain,
             transform: shape.transform,
             key: shape.key,
@@ -302,7 +302,7 @@ fn refuse_merges(
 ) {
     let mut groups: Vec<_> = merges.iter().collect();
     groups.sort_by_key(|(group, _)| **group);
-    for (_, (procedure, sources)) in groups {
+    for (_, (tasklet, sources)) in groups {
         let mut seen = HashSet::new();
         for &source in sources {
             if !seen.insert(source) {
@@ -313,9 +313,9 @@ fn refuse_merges(
         }
         if seen.len() < 2 {
             issues.push(TopologyIssue::MergeTooFewSources {
-                procedure: decl
-                    .procedures
-                    .get(*procedure as usize)
+                tasklet: decl
+                    .tasklets
+                    .get(*tasklet as usize)
                     .map(|p| p.name.clone())
                     .unwrap_or_default(),
                 sources: seen.len(),

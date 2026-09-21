@@ -1,9 +1,9 @@
-//! Procedure-requested spawn of a workflow operative
-//! (`procedure-requested-spawn`).
+//! Tasklet-requested spawn of a workflow operative
+//! (`tasklet-requested-spawn`).
 //!
 //! [`request`] ships one `SpawnWorkflowRequest` on the control plane and hands
 //! the caller a [`SpawnHandle`] at once. The request never blocks the
-//! procedure and its failure is never the procedure's failure: everything the
+//! tasklet and its failure is never the tasklet's failure: everything the
 //! controller decides comes back through the handle, and a handle nobody reads
 //! reports a failure to the log instead of vanishing. The Rust SDK holds the
 //! handle directly; every other host reaches the same one through
@@ -106,7 +106,7 @@ pub struct SpawnResult {
 }
 
 /// Why a spawn request reached no instance. None of these fault the requesting
-/// procedure: they resolve its handle.
+/// tasklet: they resolve its handle.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SpawnError {
     #[error("an instance of `{0}` is already running and if_running was Error")]

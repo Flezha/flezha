@@ -207,7 +207,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       data_plane_layer: :runner_pool_wedged
     },
     unbound_operatives: %Diff{unbound_operatives: [{:ns, "r"}]},
-    resync_entities: %Diff{resync_entities: [{{"c", "p", "k"}, "e1", :seq_gap}]},
+    resync_cells: %Diff{resync_cells: [{{"c", "p", "k"}, "e1", :seq_gap}]},
     missing_plugins: %Diff{missing_plugins: [{{:ns, "r"}, "p1", @plugin}]},
     extra_plugins: %Diff{extra_plugins: [{{:ns, "r"}, "p1", nil}]},
     unhealthy_plugins: %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", @plugin, :owned_pid_dead}]},

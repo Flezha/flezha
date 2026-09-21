@@ -17,6 +17,7 @@ pub mod admission;
 #[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub mod bench_support;
+pub mod cell;
 pub mod channel;
 #[doc(hidden)]
 pub mod command;
@@ -32,7 +33,6 @@ pub mod credit;
 pub mod dynamic;
 #[doc(hidden)]
 pub mod effect;
-pub mod entity;
 pub mod error;
 #[doc(hidden)]
 pub mod flusher;

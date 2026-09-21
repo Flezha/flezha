@@ -20,8 +20,8 @@ defmodule Flezha.Dlq.Entry do
   """
   @type t() :: %__MODULE__{
           operative_class: binary(),
-          procedure_id: binary(),
-          entity_key: binary(),
+          tasklet_id: binary(),
+          cell_key: binary(),
           channel: binary(),
           origin_offset: integer() | nil,
           error: binary(),
@@ -32,8 +32,8 @@ defmodule Flezha.Dlq.Entry do
 
   defstruct [
     :operative_class,
-    :procedure_id,
-    :entity_key,
+    :tasklet_id,
+    :cell_key,
     :channel,
     :origin_offset,
     :error,
@@ -44,7 +44,7 @@ defmodule Flezha.Dlq.Entry do
 
   # The identity of the parked payload. Without all four an entry cannot be
   # listed, replayed or attributed, so it is refused rather than written.
-  @required [:operative_class, :procedure_id, :entity_key, :channel]
+  @required [:operative_class, :tasklet_id, :cell_key, :channel]
 
   @doc """
   Build one entry, refusing a missing required field. `:error` is stringified

@@ -5,11 +5,11 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   back.
 
   **Seq-addressed** references are read as a range of WAL records —
-  `{:entity, entity_id}` (an Entity's WAL and snapshots; a workflow instance's
-  proc-journal and inbox are this shape too, under `Paths`'s reserved entity
+  `{:cell, cell_id}` (a Cell's WAL and snapshots; a workflow instance's
+  task-journal and inbox are this shape too, under `Paths`'s reserved cell
   keys) and `{:input_log, operative_class}`. **Whole-payload** ones are the
   files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
-  {operative_class, procedure_id}}` and `{:control, {store, writer}}`, each
+  {operative_class, tasklet_id}}` and `{:control, {store, writer}}`, each
   keyed by its writer or claim-fenced because their replicas are per-node.
 
   Record bundles are read at ship time and re-framed, never copied as file byte
@@ -46,24 +46,24 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @control_subtrees %{"authz" => :auth, "schedules" => :schedules}
 
   @doc """
-  Every Entity reference of `operative_class` that has local durable files —
-  Entities, and (for a workflow instance) its reserved proc-journal and inbox
-  identities, which `Paths.all_entities/0` does not surface.
+  Every Cell reference of `operative_class` that has local durable files —
+  Cells, and (for a workflow instance) its reserved task-journal and inbox
+  identities, which `Paths.all_cells/0` does not surface.
   """
-  @spec entity_refs(binary()) :: [ref()]
-  def entity_refs(operative_class) do
+  @spec cell_refs(binary()) :: [ref()]
+  def cell_refs(operative_class) do
     reserved =
-      Enum.map(Paths.reserved_entity_keys(), &{operative_class, operative_class, &1})
+      Enum.map(Paths.reserved_cell_keys(), &{operative_class, operative_class, &1})
 
-    (Paths.entities_of(operative_class) ++ reserved)
+    (Paths.cells_of(operative_class) ++ reserved)
     |> Enum.uniq()
-    |> Enum.filter(&has_local_state?({:entity, &1}))
-    |> Enum.map(&{:entity, &1})
+    |> Enum.filter(&has_local_state?({:cell, &1}))
+    |> Enum.map(&{:cell, &1})
   end
 
   @doc "Local WAL path of `ref`, or `nil` for a whole-file reference."
   @spec wal_path(ref()) :: binary() | nil
-  def wal_path({:entity, entity_id}), do: Paths.wal_path(entity_id)
+  def wal_path({:cell, cell_id}), do: Paths.wal_path(cell_id)
   def wal_path({:input_log, operative_class}), do: Paths.input_log_path(operative_class)
   def wal_path(_ref), do: nil
 
@@ -85,8 +85,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def payload_files({:cspec, {hub_id, _writer}}),
     do: present(Layout.file(:process_hub, hub_id), [Layout.hub_registry_file()])
 
-  def payload_files({:dlq, {operative_class, procedure_id}}) do
-    root = Dlq.Store.proc_dir(operative_class, procedure_id)
+  def payload_files({:dlq, {operative_class, tasklet_id}}) do
+    root = Dlq.Store.task_dir(operative_class, tasklet_id)
 
     case File.ls(root) do
       {:ok, names} -> present(root, names)
@@ -137,18 +137,18 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec dlq_refs(binary()) :: [ref()]
   def dlq_refs(operative_class) when is_binary(operative_class),
-    do: operative_class |> Dlq.Store.procedures() |> Enum.map(&{:dlq, &1})
+    do: operative_class |> Dlq.Store.tasklets() |> Enum.map(&{:dlq, &1})
 
   @doc """
   Every operative class with parked failures on this node.
 
-  Unioned with the classes that have Entity state, because the two sets differ:
+  Unioned with the classes that have Cell state, because the two sets differ:
   a stopped operative keeps its parked failures, and losing them on a disk death
   is exactly what shipping them prevents.
   """
   @spec dlq_classes() :: [binary()]
   def dlq_classes(),
-    do: Dlq.Store.procedures() |> Enum.map(fn {class, _procedure} -> class end) |> Enum.uniq()
+    do: Dlq.Store.tasklets() |> Enum.map(fn {class, _tasklet} -> class end) |> Enum.uniq()
 
   @doc """
   Every control-plane store with local files, stamped with `writer`.
@@ -171,17 +171,17 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   adopted as.
   """
   @spec state_key(ref()) :: binary()
-  def state_key({:entity, {class, _procedure, _entity_key}}), do: class
+  def state_key({:cell, {class, _tasklet, _cell_key}}), do: class
   def state_key({:input_log, class}), do: class
   def state_key({:cspec, {hub_id, _writer}}), do: hub_id
-  def state_key({:dlq, {class, _procedure}}), do: class
+  def state_key({:dlq, {class, _tasklet}}), do: class
   def state_key({:control, {store, _writer}}), do: store
 
   defp cspec_root(), do: Layout.dir(:process_hub)
 
-  @doc "Local snapshot files of `ref`, oldest first. Only Entities have them."
+  @doc "Local snapshot files of `ref`, oldest first. Only Cells have them."
   @spec snapshots(ref()) :: [{non_neg_integer(), binary()}]
-  def snapshots({:entity, entity_id}), do: Paths.snapshot_files(entity_id)
+  def snapshots({:cell, cell_id}), do: Paths.snapshot_files(cell_id)
   def snapshots(_ref), do: []
 
   @doc """
@@ -194,7 +194,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   is exactly the reach the local epoch machinery already has.
   """
   @spec epoch(ref()) :: non_neg_integer()
-  def epoch({:entity, entity_id}), do: Outbox.read(entity_id).epoch
+  def epoch({:cell, cell_id}), do: Outbox.read(cell_id).epoch
   def epoch(_ref), do: 0
 
   @doc """
@@ -208,17 +208,17 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   rather than as blobs.
   """
   @spec markers(ref()) :: Manifest.markers()
-  def markers({:entity, entity_id}), do: Paths.compensation_markers(entity_id)
+  def markers({:cell, cell_id}), do: Paths.compensation_markers(cell_id)
   def markers(_ref), do: %{intent: false, done: false}
 
   @doc """
-  Whether `ref` has anything durable on disk right now. For an Entity this is
+  Whether `ref` has anything durable on disk right now. For a Cell this is
   `Restore.has_persisted_state?/1` — the same predicate the bind-time restore
   filters on, so the tier and the restore path can never disagree about which
-  Entities exist.
+  Cells exist.
   """
   @spec has_local_state?(ref()) :: boolean()
-  def has_local_state?({:entity, entity_id}), do: Restore.has_persisted_state?(entity_id)
+  def has_local_state?({:cell, cell_id}), do: Restore.has_persisted_state?(cell_id)
 
   def has_local_state?(ref) do
     case payload_files(ref) do
@@ -255,7 +255,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   `source_offsets` carries `consumed_offset` — the input-log position the
   shipped state cut is consistent with, read out of the effect records in the
-  bundle itself. That is what lets a hydrated Entity resume replay at the cut
+  bundle itself. That is what lets a hydrated Cell resume replay at the cut
   instead of from the beginning.
   """
   @spec read_range(ref(), non_neg_integer(), non_neg_integer()) ::
@@ -321,8 +321,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   @spec write_snapshot(ref(), non_neg_integer(), binary()) :: :ok | {:error, term()}
-  def write_snapshot({:entity, entity_id}, seq, bytes),
-    do: atomic_write(Paths.snapshot_path(entity_id, seq), bytes)
+  def write_snapshot({:cell, cell_id}, seq, bytes),
+    do: atomic_write(Paths.snapshot_path(cell_id, seq), bytes)
 
   def write_snapshot(_ref, _seq, _bytes), do: {:error, :not_snapshotted}
 

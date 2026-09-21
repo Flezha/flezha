@@ -1,53 +1,53 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operative/Procedure/Entity dispatch path: sticky per-Entity ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Entity flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the workflow `state.apply` hot-path cost, drain-time coalescing, the public `ProcedureTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operative/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the workflow `state.apply` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
-### Requirement: Sticky Per-Entity Ordering Under ThreadPool Dispatch
+### Requirement: Sticky Per-Cell Ordering Under ThreadPool Dispatch
 
-Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(operative_instance, procedure, entity)` triple, two invocations of that Procedure's `run(...)` method on that Entity never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Entity's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operative instances, number of Entities per Procedure, or transport (UDS/QUIC).
+Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(operative_instance, tasklet, cell)` triple, two invocations of that Tasklet's `run(...)` method on that Cell never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Cell's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operative instances, number of Cells per Tasklet, or transport (UDS/QUIC).
 
-#### Scenario: Same entity never runs concurrently under load
-- **WHEN** 10,000 inputs targeting the same `(operative_instance, procedure, entity_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
-- **THEN** at any wall-clock instant, at most one thread SHALL be inside that Entity's `run(...)` method
+#### Scenario: Same cell never runs concurrently under load
+- **WHEN** 10,000 inputs targeting the same `(operative_instance, tasklet, cell_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
+- **THEN** at any wall-clock instant, at most one thread SHALL be inside that Cell's `run(...)` method
 
-#### Scenario: Different entities of same procedure may run concurrently
-- **WHEN** inputs arrive simultaneously for two distinct entities of the same Procedure (for example `("ohlc", "1m")` and `("ohlc", "1h")`) and the worker pool has ≥ 2 threads
-- **THEN** the two Entities' `run(...)` methods MAY execute concurrently on different threads
+#### Scenario: Different cells of same tasklet may run concurrently
+- **WHEN** inputs arrive simultaneously for two distinct cells of the same Tasklet (for example `("ohlc", "1m")` and `("ohlc", "1h")`) and the worker pool has ≥ 2 threads
+- **THEN** the two Cells' `run(...)` methods MAY execute concurrently on different threads
 
-#### Scenario: Per-entity inputs delivered in arrival order
-- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued onto one Entity's mailbox in that order with an append-to-state Procedure
-- **THEN** the Entity's State SHALL end with `["a", "b", "c"]` in exactly that order
+#### Scenario: Per-cell inputs delivered in arrival order
+- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued onto one Cell's mailbox in that order with an append-to-state Tasklet
+- **THEN** the Cell's State SHALL end with `["a", "b", "c"]` in exactly that order
 
 #### Scenario: Ordering holds across multiple entry streams
-- **WHEN** the agent opens 4 entry connections for a single Operative instance and the same Entity receives interleaved inputs from all 4
-- **THEN** `run(...)` calls for that Entity SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
+- **WHEN** the agent opens 4 entry connections for a single Operative instance and the same Cell receives interleaved inputs from all 4
+- **THEN** `run(...)` calls for that Cell SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
 
 ### Requirement: Per-Message Dispatch-Overhead Budget
 
-The Rust SDK's dispatch hot path — from a completed frame being delivered by the transport layer to the targeted Entity's `Procedure::run(...)` being entered — SHALL consume no more than **4 synchronization operations per message** (where a synchronization operation is a mutex lock, atomic CAS, channel send, or equivalent memory-ordering primitive). Counted under single-threaded contention on a Procedure with `entity_keys() == []` (single-entity mode), exercising the entry-channel → registry → mailbox → drain path.
+The Rust SDK's dispatch hot path — from a completed frame being delivered by the transport layer to the targeted Cell's `Tasklet::run(...)` being entered — SHALL consume no more than **4 synchronization operations per message** (where a synchronization operation is a mutex lock, atomic CAS, channel send, or equivalent memory-ordering primitive). Counted under single-threaded contention on a Tasklet with `cell_keys() == []` (single-cell mode), exercising the entry-channel → registry → mailbox → drain path.
 
-The 4-op budget covers: (1) registry / topology lookup for the entry channel ID → Operative instance pointer (one DashMap read or equivalent); (2) mailbox enqueue (`crossbeam::queue::ArrayQueue::try_push`, one logical step counted as one proc even though its lock-free implementation may use a CAS on the tail plus a release-store on the slot); (3) `pushes_total` counter increment (one Relaxed atomic); (4) inflight CAS (one atomic compare-exchange).
+The 4-op budget covers: (1) registry / topology lookup for the entry channel ID → Operative instance pointer (one DashMap read or equivalent); (2) mailbox enqueue (`crossbeam::queue::ArrayQueue::try_push`, one logical step counted as one op even though its lock-free implementation may use a CAS on the tail plus a release-store on the slot); (3) `pushes_total` counter increment (one Relaxed atomic); (4) inflight CAS (one atomic compare-exchange).
 
-The budget rises from 3 to 4 procs compared with the prior unbounded-mailbox shape (`crossbeam::queue::SegQueue` push without success counter). The added proc is the success counter introduced by `operative-bounded-mailbox`; the underlying push transition from SegQueue to ArrayQueue is counted as the same logical step (one mailbox enqueue) and does not on its own raise the budget.
+The budget rises from 3 to 4 ops compared with the prior unbounded-mailbox shape (`crossbeam::queue::SegQueue` push without success counter). The added op is the success counter introduced by `operative-bounded-mailbox`; the underlying push transition from SegQueue to ArrayQueue is counted as the same logical step (one mailbox enqueue) and does not on its own raise the budget.
 
-For static-mode procedures, the additional per-input cost of entity fan-out (HashMap lookup per entity key, one mailbox enqueue + one counter increment + one inflight CAS per target entity) is intrinsic to the workload and counted separately — it is not part of the per-message budget. The fan-out formula updates from `3 + N × 2` to `4 + N × 3` where N is the entity fan-out width.
+For static-mode tasklets, the additional per-input cost of cell fan-out (HashMap lookup per cell key, one mailbox enqueue + one counter increment + one inflight CAS per target cell) is intrinsic to the workload and counted separately — it is not part of the per-message budget. The fan-out formula updates from `3 + N × 2` to `4 + N × 3` where N is the cell fan-out width.
 
-The 4-op invariant is an analytical bound enforced by code review, consistent with the convention in `sdk/rust/benches/correctness.rs:13-19`. The microbench reports raw msg/s for diagnostic comparison against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md`; it does not assert the sync-op count programmatically.
+The 4-op invariant is an analytical bound enforced by code review, consistent with the convention in `sdk/rust/benches/correctness.rs:13-19`. The microbench reports raw msg/s for diagnostic comparison against the recorded `SINGLE_CELL_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md`; it does not assert the sync-op count programmatically.
 
-#### Scenario: Single-entity microbench confirms the budget
-- **WHEN** the `throughput_single_entity` Criterion bench function in `sdk/rust/benches/correctness.rs` runs with contention pinned to one thread, single-entity Procedure, no fan-out (invoked via `cargo bench --bench correctness -- throughput_single_entity`)
-- **THEN** the analytical sync-op count per message SHALL be ≤ 4 procedures on the hot path (registry lookup, mailbox enqueue, success counter, inflight CAS)
-- **AND** the bench SHALL emit a `Throughput:` line in its Criterion output that callers can compare against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md`
+#### Scenario: Single-cell microbench confirms the budget
+- **WHEN** the `throughput_single_cell` Criterion bench function in `sdk/rust/benches/correctness.rs` runs with contention pinned to one thread, single-cell Tasklet, no fan-out (invoked via `cargo bench --bench correctness -- throughput_single_cell`)
+- **THEN** the analytical sync-op count per message SHALL be ≤ 4 tasklets on the hot path (registry lookup, mailbox enqueue, success counter, inflight CAS)
+- **AND** the bench SHALL emit a `Throughput:` line in its Criterion output that callers can compare against the recorded `SINGLE_CELL_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md`
 
-#### Scenario: Static-mode entity fan-out cost is proportional to entity count
-- **WHEN** the `throughput_static_fanout` Criterion bench function in `sdk/rust/benches/correctness.rs` is run against a Procedure with `entity_keys()` of length 4 and `entities_for` returning all four keys per input (invoked via `cargo bench --bench correctness -- throughput_static_fanout`)
-- **THEN** the per-input sync-op count SHALL be approximately `4 + 4 × 3 = 16` (one registry lookup + 4 entities × (mailbox enqueue + success counter + inflight CAS)), and SHALL NOT exceed `4 + N × 3` where N is the entity fan-out width
-- **AND** the bench SHALL emit a `Throughput:` line whose value, divided by the single-entity floor, SHALL be approximately `1 / (1 + 4 × 3 / 4) = 0.25` ± 30% (the analytical bound is approximate; the bench reports raw msg/s for sanity checking, not as a strict gate)
+#### Scenario: Static-mode cell fan-out cost is proportional to cell count
+- **WHEN** the `throughput_static_fanout` Criterion bench function in `sdk/rust/benches/correctness.rs` is run against a Tasklet with `cell_keys()` of length 4 and `cells_for` returning all four keys per input (invoked via `cargo bench --bench correctness -- throughput_static_fanout`)
+- **THEN** the per-input sync-op count SHALL be approximately `4 + 4 × 3 = 16` (one registry lookup + 4 cells × (mailbox enqueue + success counter + inflight CAS)), and SHALL NOT exceed `4 + N × 3` where N is the cell fan-out width
+- **AND** the bench SHALL emit a `Throughput:` line whose value, divided by the single-cell floor, SHALL be approximately `1 / (1 + 4 × 3 / 4) = 0.25` ± 30% (the analytical bound is approximate; the bench reports raw msg/s for sanity checking, not as a strict gate)
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single procedure's critical section. Operative classes are declared via `FlezhaRunner::register_factory(operative)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<StreamInstance>` or equivalent handle. Workflow instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single tasklet's critical section. Operative classes are declared via `FlezhaRunner::register_factory(operative)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<StreamInstance>` or equivalent handle. Workflow instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
@@ -57,7 +57,7 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 #### Scenario: Registry preserves the declaration contract
 - **WHEN** user code calls `.register_factory(R)` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
-- **THEN** the resulting `StreamInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-procedure-entity-model` capability's scenarios
+- **THEN** the resulting `StreamInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-tasklet-cell-model` capability's scenarios
 
 #### Scenario: Post-start removal is serialized with AddOperative
 - **WHEN** an `unregister_factory` request and an `AddOperative` command for the same factory race
@@ -67,8 +67,8 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_registry`, shared I/O streams, and `runner_id` (no clear-and-reassign window where frames are dropped). In addition:
 
-1. **Live-sink resolution** — the per-Entity state send path (`EntityStateSink`) SHALL resolve the *live* secondary stream on every call rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Entities.
-2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), **every frame the runner writes on the data plane** SHALL be buffered in one bounded ring (drop-oldest on overflow) and replayed when the fresh stream is wired, so nothing produced mid-reconnect is silently lost. This covers the durable records the flusher ships and the plugin outputs an operative emits: a plugin output arrives already framed with metadata that identifies its channel and its Entity, so it is replayed onto the live secondary as it stands rather than re-framed.
+1. **Live-sink resolution** — the per-Cell state send path (`CellStateSink`) SHALL resolve the *live* secondary stream on every call rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Cells.
+2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), **every frame the runner writes on the data plane** SHALL be buffered in one bounded ring (drop-oldest on overflow) and replayed when the fresh stream is wired, so nothing produced mid-reconnect is silently lost. This covers the durable records the flusher ships and the plugin outputs an operative emits: a plugin output arrives already framed with metadata that identifies its channel and its Cell, so it is replayed onto the live secondary as it stands rather than re-framed.
 3. **Broken-pipe flood → control reconnect** — sustained write failures (a flood within a short window) SHALL trigger a full control-channel reconnect via the coordinator rather than spinning on a dead stream, whichever writer saw them.
 4. **A shed frame is counted** — when the ring is full and drops its oldest entry, the runner SHALL count it on the process-wide drop-oldest counter its heartbeat already reports, and report the number lost when the stream recovers. A frame that is ultimately not delivered is never silent.
 
@@ -96,13 +96,13 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 
 Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `RunnerDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-`EntityState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<procedure_name>": <state>}` (or, for static-mode procedures, `{"<procedure_name>": {"<entity_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk/protocol_spec.md`.
+`CellState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<tasklet_name>": <state>}` (or, for static-mode tasklets, `{"<tasklet_name>": {"<cell_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk/protocol_spec.md`.
 
-`OperativeMessage` and `OperativeMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Procedure `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
+`OperativeMessage` and `OperativeMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Tasklet `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
 
 #### Scenario: AddOperative with init_values produces same response shape
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_stream::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
-- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Procedure, see the `operative-procedure-entity-model` capability)
+- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Tasklet, see the `operative-tasklet-cell-model` capability)
 
 #### Scenario: RunnerDisconnect closes sockets identically
 - **WHEN** `RunnerDisconnect{}` is sent under both implementations
@@ -112,60 +112,60 @@ Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `Con
 - **WHEN** an agent sends `OperativeMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
 - **THEN** the SDK SHALL respond with `OperativeMessageResponse{ payload: "", error: "operative does not support handle_message" }`
 
-### Requirement: Per-Entity flusher single-thread linger drain
+### Requirement: Per-Cell flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `EntityFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::register_factory(operative)` call that declares a Procedure with a non-`NoChange` Change type. Programs that declare only `NoChange` Procedures SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `CellFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::register_factory(operative)` call that declares a Tasklet with a non-`NoChange` Change type. Programs that declare only `NoChange` Tasklets SHALL NOT spawn a flusher thread.
 
-The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Entities; (c) for each Entity, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Entity's `send_frame` function pointer.
+The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Cells; (c) for each Cell, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Cell's `send_frame` function pointer.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process calls `.register_factory(R)` for an Operative whose Procedures all have `Change = NoChange`
-- **THEN** no `EntityFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
+- **WHEN** a Rust process calls `.register_factory(R)` for an Operative whose Tasklets all have `Change = NoChange`
+- **THEN** no `CellFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
 #### Scenario: First non-NoChange declaration starts the flusher
 
-- **WHEN** a Rust process calls `.register_factory(R)` for an Operative containing a Procedure with `Change = MyChange`
+- **WHEN** a Rust process calls `.register_factory(R)` for an Operative containing a Tasklet with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
 ### Requirement: Toggle-aware drain semantics for persistence_enabled = false
 
-The Rust SDK's `EntityFlusher` SHALL inspect each registered Entity's `persistence_enabled` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Entity's `change_seq` counter SHALL still advance through the discarded frames.
+The Rust SDK's `CellFlusher` SHALL inspect each registered Cell's `persistence_enabled` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Cell's `change_seq` counter SHALL still advance through the discarded frames.
 
 When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate any `Err(SendError)` by decrementing the seq counter so the next drain re-sends from the right point (no gaps in the agent's WAL view).
 
 #### Scenario: Toggle-off drain discards without wire I/O
 
 - **WHEN** an Operative with `persistence_enabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger elapses
-- **THEN** the Entity's flush buffer SHALL be empty after the tick AND the Entity's `send_frame` function SHALL NOT have been invoked AND the Entity's `change_seq` SHALL have advanced by the post-coalesce record count
+- **THEN** the Cell's flush buffer SHALL be empty after the tick AND the Cell's `send_frame` function SHALL NOT have been invoked AND the Cell's `change_seq` SHALL have advanced by the post-coalesce record count
 
 #### Scenario: Toggle-on drain invokes send_frame per frame
 
 - **WHEN** an Operative with `persistence_enabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
-- **THEN** the Entity's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[entity_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
+- **THEN** the Cell's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[cell_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
 
 #### Scenario: send_frame failure preserves seq monotonicity
 
-- **WHEN** the Entity's `send_frame` returns `Err(SendError::TransportDown)` for the third frame in a 10-frame batch
+- **WHEN** the Cell's `send_frame` returns `Err(SendError::TransportDown)` for the third frame in a 10-frame batch
 - **THEN** the flusher SHALL stop the batch at that frame, decrement `change_seq` to undo the failed-and-following advances (the first two frames' seq advances stay), and SHALL retain the un-sent Changes in the buffer for the next drain (records 3-10 are re-pushed via a side channel that preserves their post-coalesce order)
 
 ### Requirement: Hot-path cost is bounded to one Vec::push per state.apply
 
-The Rust SDK's `state.apply(change)` SHALL pay exactly: one `Procedure::apply_change(state, &change)` call (user-supplied; cost varies) plus one `Vec::push(change)` procedure. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Entity sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the entity's buffer for the duration of `Procedure::run`).
+The Rust SDK's `state.apply(change)` SHALL pay exactly: one `Tasklet::apply_change(state, &change)` call (user-supplied; cost varies) plus one `Vec::push(change)` tasklet. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the cell's buffer for the duration of `Tasklet::run`).
 
 The microbench `state_apply_throughput` (`sdk/rust/benches/state.rs`) SHALL exercise this requirement and report nanoseconds per `state.apply(...)` call across change-payload-size and coalesce-key dimensions; CI SHALL fail the build if any dimension regresses >50% from the recorded baseline.
 
 #### Scenario: No serialization on state.apply
 
-- **WHEN** a Procedure's `run` calls `state.apply(MyChange::Foo)` 100 times in a tight loop
+- **WHEN** a Tasklet's `run` calls `state.apply(MyChange::Foo)` 100 times in a tight loop
 - **THEN** zero serialization calls (`serde::Serialize::serialize`, `postcard::to_allocvec`, `bincode::serialize`, etc.) SHALL be issued from the runner thread during these 100 calls
 
 #### Scenario: No I/O on state.apply
 
-- **WHEN** a Procedure's `run` calls `state.apply(MyChange::Foo)` 100 times
+- **WHEN** a Tasklet's `run` calls `state.apply(MyChange::Foo)` 100 times
 - **THEN** zero `write`, `send`, `fsync`, `fdatasync`, or NIF-call syscalls SHALL be issued from the runner thread during these 100 calls
 
-#### Scenario: state_apply_throughput microbench reports < 200 ns/proc for SmallChange + NoCoalesceKey
+#### Scenario: state_apply_throughput microbench reports < 200 ns/op for SmallChange + NoCoalesceKey
 
 - **WHEN** the `state_apply_throughput` Criterion bench runs with `change_kind = SmallChange (8B)` and `coalesce_kind = NoCoalesceKey` and the buffer is preallocated to capacity 1024
 - **THEN** the reported median time per `state.apply(...)` SHALL be < 200 ns on the reference host
@@ -178,26 +178,26 @@ The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usi
 
 #### Scenario: Same-key records collapse to latest
 
-- **WHEN** a Procedure records 50 `BarTick { interval: M1, ts: T }` Changes via `state.apply(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
+- **WHEN** a Tasklet records 50 `BarTick { interval: M1, ts: T }` Changes via `state.apply(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
 - **THEN** the flusher's drain SHALL emit exactly one frame whose Change is the 50th `BarTick`
 
 #### Scenario: No-key records are preserved verbatim
 
-- **WHEN** a Procedure records 10 Changes whose `coalesce_key() == None` within one linger window
+- **WHEN** a Tasklet records 10 Changes whose `coalesce_key() == None` within one linger window
 - **THEN** the flusher's drain SHALL emit 10 frames in the same order they were pushed
 
 #### Scenario: Mixed coalesce-key and no-key records
 
-- **WHEN** a Procedure records, in order: A (no key), B (key=K1), C (key=K1), D (no key), E (key=K2)
+- **WHEN** a Tasklet records, in order: A (no key), B (key=K1), C (key=K1), D (no key), E (key=K2)
 - **THEN** the flusher's drain SHALL emit frames in order: A, C, D, E (B is collapsed to C; A and D are preserved verbatim; E is retained)
 
-### Requirement: ProcedureTestHarness in public API surface (Rust SDK)
+### Requirement: TaskletTestHarness in public API surface (Rust SDK)
 
-The Rust SDK SHALL export `ProcedureTestHarness::<S: Procedure>` under `flezha_runner::testing::ProcedureTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
+The Rust SDK SHALL export `TaskletTestHarness::<S: Tasklet>` under `flezha_runner::testing::TaskletTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
 
-- `ProcedureTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
-- `ProcedureTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
-- `ProcedureTestHarness::<S>::with_payload(entity_key, payload)` — replicates the runtime's snapshot+changelog restoration flow.
+- `TaskletTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
+- `TaskletTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
+- `TaskletTestHarness::<S>::with_payload(cell_key, payload)` — replicates the runtime's snapshot+changelog restoration flow.
 - `apply_inputs(iter: impl IntoIterator<Item = S::Input>) -> &mut Self` — invokes `S::run` for each input on the harness's owned state, recording emits and Changes.
 - `expect_changes(self, expected: &[S::Change]) -> Self` (consuming) — asserts equality, requires `S::Change: PartialEq + Debug`.
 - `expect_emits<C>(self, expected: &[C]) -> Self` (consuming) — asserts emits of type `C` equal expected.
@@ -207,23 +207,23 @@ The Rust SDK SHALL export `ProcedureTestHarness::<S: Procedure>` under `flezha_r
 
 #### Scenario: Harness asserts on recorded Changes
 
-- **WHEN** a test runs `ProcedureTestHarness::<CounterProcedure>::new().apply_inputs(vec![Input::Add(5), Input::Add(3)]).expect_changes(&[CounterChange { delta: 5 }, CounterChange { delta: 3 }])`
+- **WHEN** a test runs `TaskletTestHarness::<CounterTasklet>::new().apply_inputs(vec![Input::Add(5), Input::Add(3)]).expect_changes(&[CounterChange { delta: 5 }, CounterChange { delta: 3 }])`
 - **THEN** the chain SHALL succeed and produce a harness whose `recorded_changes` equals the expected slice
 
 #### Scenario: Harness replays for determinism check
 
-- **WHEN** a test runs `ProcedureTestHarness::<CounterProcedure>::new().apply_inputs(inputs).replay_equals()`
-- **THEN** the result SHALL be `Ok(())` because `CounterProcedure::apply_change` is deterministic
+- **WHEN** a test runs `TaskletTestHarness::<CounterTasklet>::new().apply_inputs(inputs).replay_equals()`
+- **THEN** the result SHALL be `Ok(())` because `CounterTasklet::apply_change` is deterministic
 
 #### Scenario: Harness detects non-deterministic apply_change
 
-- **WHEN** a Procedure's `apply_change` reads `SystemTime::now()` and uses it to seed a state field, AND the harness runs `replay_equals()`
+- **WHEN** a Tasklet's `apply_change` reads `SystemTime::now()` and uses it to seed a state field, AND the harness runs `replay_equals()`
 - **THEN** the result SHALL be `Err(ReplayMismatch { expected_serialized, actual_serialized })` whose `Display` impl renders a hex-diff identifying the divergent state field
 
 #### Scenario: Harness compiled-out without testing feature
 
 - **WHEN** a downstream crate depends on `flezha_runner` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
-- **THEN** `flezha_runner::testing` SHALL NOT be visible and references to `ProcedureTestHarness` SHALL fail to compile
+- **THEN** `flezha_runner::testing` SHALL NOT be visible and references to `TaskletTestHarness` SHALL fail to compile
 
 ### Requirement: 16-byte version header stamped on persisted Changes
 
@@ -231,7 +231,7 @@ The Rust SDK SHALL stamp a 16-byte header on every Change record emitted to the 
 
 - bytes 0:1 — `sdk_lang: u8` SHALL equal `1` (Rust).
 - bytes 1:5 — `sdk_version: u32 BE` SHALL be the **Rust SDK crate's** own version, read from `env!("CARGO_PKG_VERSION")` expanded inside that crate, packed as `(major << 16) | (minor << 8) | patch`. It SHALL NOT be the version of any crate the SDK depends on: a macro that reads a package version expands where it is written, so the reading SHALL happen in the SDK crate and the packing SHALL take the string as an argument.
-- bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Procedure owning the Change.
+- bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Tasklet owning the Change.
 - bytes 9:10 — `format_id: u8` SHALL equal `1` (postcard) in v1.
 - bytes 10:12 — reserved, MUST be zero.
 - bytes 12:16 — `crc32: u32 BE` SHALL be `crc32fast::hash(&change_bytes)`. This field is stamped and carried; it is NOT the value the restore path compares. The WAL frame carries its own trailing crc32 over the header and the body together, and that is the one a fold checks.
@@ -240,13 +240,13 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 #### Scenario: Header bytes match the umbrella spec
 
-- **WHEN** a Rust SDK at `version 0.5.3` and Procedure `SCHEMA_VERSION = 1` stamps a header for change_bytes `&[0x01, 0x02, 0x03]`
+- **WHEN** a Rust SDK at `version 0.5.3` and Tasklet `SCHEMA_VERSION = 1` stamps a header for change_bytes `&[0x01, 0x02, 0x03]`
 - **THEN** the resulting 16-byte header SHALL equal `[0x01, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, <crc32 BE bytes of [0x01, 0x02, 0x03]>]`
 
 #### Scenario: The stamped version follows the SDK crate, not the kernel
 
 - **GIVEN** the SDK crate's manifest declaring a version the kernel crate's manifest does not
-- **WHEN** a Procedure stamps a header
+- **WHEN** a Tasklet stamps a header
 - **THEN** bytes 1:5 SHALL carry the SDK crate's version
 
 #### Scenario: An unparseable header is refused by the parser
@@ -261,18 +261,18 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 #### Scenario: A schema older than the readable floor fails loud
 
-- **WHEN** the Rust SDK restores a record whose header carries a `schema_version` below the Procedure's readable floor
+- **WHEN** the Rust SDK restores a record whose header carries a `schema_version` below the Tasklet's readable floor
 - **THEN** the schema decision SHALL return `Err(RestoreError::SchemaTooOld { .. })` and SHALL NOT proceed to deserialization
 
 #### Scenario: A schema newer than this build fails loud
 
-- **WHEN** the Rust SDK at Procedure `SCHEMA_VERSION = 1` restores a record whose header carries `schema_version = 2`
+- **WHEN** the Rust SDK at Tasklet `SCHEMA_VERSION = 1` restores a record whose header carries `schema_version = 2`
 - **THEN** the schema decision SHALL return `Err(RestoreError::SchemaFromTheFuture { .. })` and SHALL NOT proceed to deserialization
 
 #### Scenario: crc32 mismatch fails loud
 
 - **WHEN** the Rust SDK folds a change-log record whose trailing crc32 does not match a crc32 recomputed over that record's header and change bytes
-- **THEN** the fold SHALL return `Err(RestoreError::CrcMismatch { entity, seq })` before the header is decoded, and SHALL NOT proceed to deserialization
+- **THEN** the fold SHALL return `Err(RestoreError::CrcMismatch { cell, seq })` before the header is decoded, and SHALL NOT proceed to deserialization
 
 #### Scenario: Every error variant a scenario names is declared by the crate
 
@@ -281,7 +281,7 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 ### Requirement: Public Rust SDK API uses canonical Operative/Runner vocabulary
 
-The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperative`, `RemOperative`, `EntityState`, `EntityApplyState`, `OperativeMessage`, `OperativeMessageResponse`, plus existing `RestoreInitState`, `CompactEntity`, `EntityMailboxStatus`.
+The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperative`, `RemOperative`, `CellState`, `CellApplyState`, `OperativeMessage`, `OperativeMessageResponse`, plus existing `RestoreInitState`, `CompactCell`, `CellMailboxStatus`.
 
 #### Scenario: Public types compile under new names
 - **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::runner::RunnerNode;`
@@ -293,20 +293,20 @@ The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNo
 
 ### Requirement: Generated payload-id constants use canonical names
 
-The Rust SDK's payload-id constants (those that map to the binary framing's `payload_id(32)` byte slot) SHALL be named consistent with the canonical vocabulary: `ENTITY_STATE_CHANGE`, `ENTITY_STATE_SNAPSHOT`, `RESTORE_INIT_STATE`, `COMPACT_ENTITY`, `ENTITY_MAILBOX_STATUS`, `CONNECT_CONTROL_CHANNEL`, `CONTROL_COMMAND`. The previous `PROCESSOR_*` family SHALL be removed.
+The Rust SDK's payload-id constants (those that map to the binary framing's `payload_id(32)` byte slot) SHALL be named consistent with the canonical vocabulary: `CELL_STATE_CHANGE`, `CELL_STATE_SNAPSHOT`, `RESTORE_INIT_STATE`, `COMPACT_CELL`, `CELL_MAILBOX_STATUS`, `CONNECT_CONTROL_CHANNEL`, `CONTROL_COMMAND`. The previous `PROCESSOR_*` family SHALL be removed.
 
 #### Scenario: Payload-id constants compile and resolve
 - **WHEN** the Rust SDK is built
-- **THEN** the constants `ENTITY_STATE_CHANGE` and `ENTITY_STATE_SNAPSHOT` MUST be defined and exported; references to `PROCESSOR_STATE_CHANGE` MUST not exist
+- **THEN** the constants `CELL_STATE_CHANGE` and `CELL_STATE_SNAPSHOT` MUST be defined and exported; references to `PROCESSOR_STATE_CHANGE` MUST not exist
 
-### Requirement: Test fixtures' Procedures exercise the output channel path
+### Requirement: Test fixtures' Tasklets exercise the output channel path
 
-The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `ProcedureCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
+The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `TaskletCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
 
-- `StoreInputOperative::StoreInputProcedure::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
-- `CompareFilterOperative::CompareFilterProcedure::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
+- `StoreInputOperative::StoreInputTasklet::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
+- `CompareFilterOperative::CompareFilterTasklet::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
 
-This requirement covers fixture behavior only; it does not change the SDK's `Procedure` trait, the dispatch contract, or any wire format. A future production Operative may emit no outputs and remain conformant to the SDK's other requirements.
+This requirement covers fixture behavior only; it does not change the SDK's `Tasklet` trait, the dispatch contract, or any wire format. A future production Operative may emit no outputs and remain conformant to the SDK's other requirements.
 
 #### Scenario: StoreInputOperative round-trips input via :on_output
 
@@ -358,7 +358,7 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `cells_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
 `operatives()` SHALL return `Result<HashMap<String, Arc<StreamInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
@@ -367,7 +367,7 @@ Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError
 - **THEN** `.register_factory(ThatOperative)` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::DuplicateChannel` diagnosis naming the channel — the call SHALL NOT panic
 
 #### Scenario: A payload type mismatch is a compile error
-- **WHEN** user code wires a consumer whose `Procedure::Input` is not the channel's payload type
+- **WHEN** user code wires a consumer whose `Tasklet::Input` is not the channel's payload type
 - **THEN** the `.into::<S>()` call SHALL fail to compile at the call site, and no `TopologyIssue` variant SHALL exist to report it at registration time
 
 #### Scenario: A connection failure at start() is a Result, not a panic
@@ -390,7 +390,7 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 - **GIVEN** a process where a runner for `"ns1"` created via `Flezha::create_runner("ns1")?` has been started
 - **WHEN** code in the same process starts a second runner for `"ns2"`
 - **THEN** the call SHALL return `Err(FlezhaError::AlreadyRunning { namespace: "ns1".into() })`
-- **AND** no connection SHALL be attempted for `"ns2"`, and the process's `STABLE_ID`, `entity_state_sink`, and `credit::global()` state SHALL remain exclusively `"ns1"`'s
+- **AND** no connection SHALL be attempted for `"ns2"`, and the process's `STABLE_ID`, `cell_state_sink`, and `credit::global()` state SHALL remain exclusively `"ns1"`'s
 
 #### Scenario: Creating runners never claims the slot
 - **GIVEN** a process where a runner for `"ns1"` is already started
@@ -464,22 +464,22 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 ### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
 
-A restore SHALL discard an Entity's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
+A restore SHALL discard a Cell's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
 
 `restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Ingest.journal_input/2` journals for the effectively-once tier and for durable workflow instances, and passes every other operative through untouched. A plain stateful stream operative, which is the default configuration, has no such log.
 
 #### Scenario: Journaled input may be discarded
-- **GIVEN** an Entity whose class journals its inputs before forwarding
-- **WHEN** a restore rebuilds that Entity
+- **GIVEN** a Cell whose class journals its inputs before forwarding
+- **WHEN** a restore rebuilds that Cell
 - **THEN** the queued input MAY be discarded, because the Controller re-forwards it from the durable log
 
 #### Scenario: Un-journaled input is not silently destroyed
-- **GIVEN** an Entity whose class does not journal its inputs
-- **WHEN** a restore rebuilds that Entity
+- **GIVEN** a Cell whose class does not journal its inputs
+- **WHEN** a restore rebuilds that Cell
 - **THEN** its queued input SHALL NOT be silently discarded
 
 #### Scenario: The replay buffer and open interval clears are unchanged
-- **WHEN** a restore rebuilds an Entity
+- **WHEN** a restore rebuilds a Cell
 - **THEN** the replay buffer, replay flags, and any open checkpoint interval SHALL continue to be cleared as they are today, on every class
 
 ### Requirement: Input discarded by a restore SHALL be counted
@@ -487,67 +487,67 @@ A restore SHALL discard an Entity's queued input only where the Controller will 
 `Mailbox::clear` is a bare drain loop with no counter, telemetry, or log line, so a discard leaves no trace and the loss can only be inferred by reading the code. Any input discarded on the restore path SHALL be observable.
 
 #### Scenario: A discard emits a count
-- **WHEN** a restore discards queued input for an Entity
-- **THEN** the number of discarded items SHALL be recorded and exposed, naming the Entity
+- **WHEN** a restore discards queued input for a Cell
+- **THEN** the number of discarded items SHALL be recorded and exposed, naming the Cell
 
 ### Requirement: The two SDKs SHALL agree on restore-time mailbox handling
 
 The Rust SDK clears the mailbox on restore; the Java SDK does not, clearing only its staged changes. Neither behaviour is documented as the intended one. Both SDKs SHALL implement the same documented behaviour.
 
 #### Scenario: Equivalent restores behave equivalently
-- **GIVEN** equivalent Entities of the same class on a Rust runner and a Java runner, each with queued input
+- **GIVEN** equivalent Cells of the same class on a Rust runner and a Java runner, each with queued input
 - **WHEN** each is restored
 - **THEN** the fate of the queued input SHALL be the same on both
 
-### Requirement: The Rust SDK SHALL emit an entity_state_snapshot on CompactEntity
+### Requirement: The Rust SDK SHALL emit a cell_state_snapshot on CompactCell
 
-`flz_core/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactEntityResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Entity, capture its state, ship an `entity_state_snapshot` data frame, and answer with the seq it actually captured.
+`flz_core/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactCellResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Cell, capture its state, ship a `cell_state_snapshot` data frame, and answer with the seq it actually captured.
 
-The snapshot body SHALL be encoded with the same codec the restore path decodes — postcard, per `entity/restore.rs`. The JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
+The snapshot body SHALL be encoded with the same codec the restore path decodes — postcard, per `cell/restore.rs`. The JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
 
 The frame SHALL carry a payload-id constant defined alongside the sink's other payload-ids, and SHALL be shipped through the existing reliable sink rather than a separate transport path.
 
-#### Scenario: A live Entity produces a snapshot at its current seq
+#### Scenario: A live Cell produces a snapshot at its current seq
 
-- **GIVEN** a live Entity with persisted Changes and a current `change_seq`
-- **WHEN** the SDK receives `CompactEntity` addressing that Entity
-- **THEN** the SDK SHALL ship one `entity_state_snapshot` frame carrying the Entity's serialized state stamped with a seq the Entity has reached
-- **AND** SHALL answer `CompactEntityResponse` reporting that same seq and the body's byte size
+- **GIVEN** a live Cell with persisted Changes and a current `change_seq`
+- **WHEN** the SDK receives `CompactCell` addressing that Cell
+- **THEN** the SDK SHALL ship one `cell_state_snapshot` frame carrying the Cell's serialized state stamped with a seq the Cell has reached
+- **AND** SHALL answer `CompactCellResponse` reporting that same seq and the body's byte size
 
 #### Scenario: The snapshot body round-trips through the restore path
 
-- **GIVEN** a snapshot produced by the SDK for an Entity
+- **GIVEN** a snapshot produced by the SDK for a Cell
 - **WHEN** that snapshot is later shipped back to the SDK as `RestoreInitState.snapshot_bytes`
-- **THEN** the restore path SHALL decode it without error and SHALL reconstruct the state the Entity held when the snapshot was taken
+- **THEN** the restore path SHALL decode it without error and SHALL reconstruct the state the Cell held when the snapshot was taken
 
 #### Scenario: The seq and the state are captured together
 
 - **WHEN** the SDK captures state and seq for a snapshot
 - **THEN** the pair SHALL be captured such that the Controller may truncate the WAL up to that seq without discarding a record the snapshot does not already contain
 
-#### Scenario: An unaddressable Entity reports an error
+#### Scenario: An unaddressable Cell reports an error
 
-- **WHEN** the SDK receives `CompactEntity` for an `entity_id` matching no live Entity
+- **WHEN** the SDK receives `CompactCell` for a `cell_id` matching no live Cell
 - **THEN** the handler SHALL report an error rather than answering as though compaction succeeded
 
-### Requirement: The Rust SDK SHALL take the proc-journal from the bind
+### Requirement: The Rust SDK SHALL take the task-journal from the bind
 
-`start_workflow_resumable` SHALL accept the instance's proc-journal alongside the
+`start_workflow_resumable` SHALL accept the instance's task-journal alongside the
 restore count and SHALL pass it to `WorkflowInstance::new`, so the resume state is
 present before the driver is spawned. The `RestoreInitState` handler SHALL NOT
-carry the journal — that frame is per-Entity and is not shipped for a class with
-no persisted Entity.
+carry the journal — that frame is per-Cell and is not shipped for a class with
+no persisted Cell.
 
-#### Scenario: A resuming bind with no Entity restores still resumes at its iteration
+#### Scenario: A resuming bind with no Cell restores still resumes at its iteration
 
-- **GIVEN** a durable workflow class whose procedures hold no per-Entity state, so no `RestoreInitState` is shipped
-- **WHEN** the controller binds it with `AddOperative.proc_journal`
-- **THEN** the driver SHALL enter the journaled iteration and skip the procedures committed in it
+- **GIVEN** a durable workflow class whose tasklets hold no per-Cell state, so no `RestoreInitState` is shipped
+- **WHEN** the controller binds it with `AddOperative.task_journal`
+- **THEN** the driver SHALL enter the journaled iteration and skip the tasklets committed in it
 
 #### Scenario: A fresh bind carries no journal
 
-- **WHEN** `AddOperative` arrives with no `proc_journal`
-- **THEN** `proc_journal_resume()` SHALL be `None` and the chain SHALL run from the top
+- **WHEN** `AddOperative` arrives with no `task_journal`
+- **THEN** `task_journal_resume()` SHALL be `None` and the chain SHALL run from the top
 
 ### Requirement: The worker pool grows under starvation and shrinks when idle
 
@@ -570,12 +570,12 @@ crash is visible.
 
 Every poll worker SHALL answer each activation it takes exactly once — complete,
 fail, or abandon — through a guard that runs on unwind, so a panic escaping the
-dispatcher's own guards re-hands the activation instead of retiring its entity.
+dispatcher's own guards re-hands the activation instead of retiring its cell.
 
 #### Scenario: Blocking user code no longer halts the runner
 
 - **WHEN** activations blocking longer than the starvation detection interval
-  occupy every base worker while work for other entities is queued
+  occupy every base worker while work for other cells is queued
 - **THEN** additional workers SHALL be spawned (one per starvation signal, up
   to the ceiling) and the queued work SHALL be served without waiting for the
   blocked activations to finish
@@ -605,10 +605,10 @@ dispatcher's own guards re-hands the activation instead of retiring its entity.
 - **THEN** growth SHALL be measured against the live worker count, and the
   ceiling SHALL NOT be reached earlier because of the departed worker
 
-#### Scenario: An escaping panic re-hands rather than retiring the entity
+#### Scenario: An escaping panic re-hands rather than retiring the cell
 
 - **WHEN** a panic escapes the dispatcher's own guards while a worker holds an
-  activation for entity E
+  activation for cell E
 - **THEN** the activation SHALL be abandoned by the worker's guard, E SHALL be
   pollable again with its items intact, and the replacement worker SHALL serve it
 
@@ -624,7 +624,7 @@ consumer.
 #### Scenario: An inline-served round counts as an activation
 
 - **WHEN** a worker blocked on a full consumer serves that consumer's round
-  inline, and a procedure in that round emits under `DropNothing` into another
+  inline, and a tasklet in that round emits under `DropNothing` into another
   full consumer
 - **THEN** the nested push also serves inline, because the thread is still
   inside an activation
@@ -634,7 +634,7 @@ consumer.
 - **WHEN** the stream reader's push into an entry mailbox finds it full under
   `DropNothing`
 - **THEN** the reader parks on the consumer's parker until the pool pops a
-  slot, and no procedure runs on the reader thread
+  slot, and no tasklet runs on the reader thread
 
 ### Requirement: A workflow output whose write fails SHALL be held for the reconnect ring
 
@@ -678,7 +678,7 @@ compile-time edge refusals and their `tests/ui` fixtures SHALL stay as they are.
 
 ### Requirement: Dispatch Throughput Reported on Reference Workload
 
-The regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it, and no CI job fails because a rate is low.
+The regression bench (`100 operatives × 1 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it, and no CI job fails because a rate is low.
 
 The bench SHALL report the **end-to-end** window (first input dispatched to last response received) as its headline throughput and the **receive** window (send loop returning to last response received) beside it, and SHALL name the window on every rate it reports. The two are not interchangeable, since they differ by the send window, and a figure quoted without its window is not attributable. Both SHALL be written to the run's structured report, as `metrics.throughput_msg_per_sec` and `metrics.receive_window_msg_per_sec`.
 
@@ -697,7 +697,7 @@ The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both 
 - **WHEN** a PR's `bench-regression` job runs a bench that exits non-zero, writes no report, or writes a report missing either rate
 - **THEN** the job SHALL fail
 
-#### Scenario: Entity-stress bench scales with worker pool size
-- **WHEN** the entity-stress bench (`8 operatives × 4 procedures × 8 entities × 20K msg/operative`, fan-out per input to all 8 entities of the entry procedure; invoked via `mix bench --shape entity --pool-sizes 1,8`) is run on an 8-core host
-- **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that entity-mode dispatch is not the bottleneck
-- **AND** the `bench-entity-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)
+#### Scenario: Cell-stress bench scales with worker pool size
+- **WHEN** the cell-stress bench (`8 operatives × 4 tasklets × 8 cells × 20K msg/operative`, fan-out per input to all 8 cells of the entry tasklet; invoked via `mix bench --shape cell --pool-sizes 1,8`) is run on an 8-core host
+- **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that cell-mode dispatch is not the bottleneck
+- **AND** the `bench-cell-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)

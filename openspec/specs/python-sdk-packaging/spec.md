@@ -59,7 +59,7 @@ The binding SHALL expose an activation's user payload to the codec as a borrowed
 
 ### Requirement: Errors and Panics Cross the Boundary Intact
 
-An exception raised by a Python handler SHALL be surfaced to the engine as a procedure error carrying the exception type, message and traceback, and SHALL be subject to the same retry policy as a Rust handler error; an exception marked non-retryable SHALL skip the remaining retry budget and park exactly as its Rust counterpart does. An error originating in the engine and surfaced to Python SHALL preserve the engine's specific detail rather than a generic failure. The boundary SHALL NOT allow a Python exception to unwind into Rust as a panic, nor a Rust panic to reach Python as an opaque failure.
+An exception raised by a Python handler SHALL be surfaced to the engine as a tasklet error carrying the exception type, message and traceback, and SHALL be subject to the same retry policy as a Rust handler error; an exception marked non-retryable SHALL skip the remaining retry budget and park exactly as its Rust counterpart does. An error originating in the engine and surfaced to Python SHALL preserve the engine's specific detail rather than a generic failure. The boundary SHALL NOT allow a Python exception to unwind into Rust as a panic, nor a Rust panic to reach Python as an opaque failure.
 
 #### Scenario: A handler exception is retried then parked
 - **WHEN** a Python handler raises on every attempt and the channel's retry budget is three

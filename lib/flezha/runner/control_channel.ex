@@ -263,7 +263,7 @@ defmodule Flezha.Runner.ControlChannel do
       {:workflow_completed, %{} = completed, _reference_id} ->
         Requests.workflow_completed(state, completed)
 
-      {barrier, %{} = commit, reference_id} when barrier in [:proc_commit, :iter_commit] ->
+      {barrier, %{} = commit, reference_id} when barrier in [:task_commit, :iter_commit] ->
         Requests.barrier(state, barrier, commit, reference_id)
 
       {:iter_park, %{} = park, _reference_id} ->
@@ -420,7 +420,7 @@ defmodule Flezha.Runner.ControlChannel do
   @sdk_initiated_commands [
     :runner_shutdown_notification,
     :workflow_completed,
-    :proc_commit,
+    :task_commit,
     :iter_commit,
     :iter_park,
     :update_factories,

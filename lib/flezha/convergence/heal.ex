@@ -21,7 +21,7 @@ defmodule Flezha.Convergence.Heal do
       not yet bound, or parked) onto an available one: flip the registry tag,
       fan its pid into the new runner's stream channels, replay the WAL.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
-      operative against the runner it is already bound to, or for ONE Entity
+      operative against the runner it is already bound to, or for ONE Cell
       against the runner a declared gap named. The rung below
       `rebind_operative`: no placement decision, no migration, no handover —
       the remedy for a binding that is intact but has stopped agreeing.
@@ -121,20 +121,20 @@ defmodule Flezha.Convergence.Heal do
     on_operative(namespace, operative_id, &rebind_operative(op, &1))
   end
 
-  # One Entity, against the runner the declared gap or give-up named: the
+  # One Cell, against the runner the declared gap or give-up named: the
   # dispatch reads `{:ok, ref}` when the handshake left; the repair is proved
   # later, by the gap closing.
   defp apply_primitive(:resync_runner, %{
-         args: %{entity_id: entity_id, runner_id: runner_id} = args
+         args: %{cell_id: cell_id, runner_id: runner_id} = args
        })
-       when is_tuple(entity_id) and is_binary(runner_id) do
-    case Recovery.resync(entity_id, runner_id: runner_id, reason: Map.get(args, :reason)) do
+       when is_tuple(cell_id) and is_binary(runner_id) do
+    case Recovery.resync(cell_id, runner_id: runner_id, reason: Map.get(args, :reason)) do
       {:ok, _} -> :ok
       _ -> :error
     end
   end
 
-  # Re-issue `RestoreInitState` for every persisted Entity of a operative against
+  # Re-issue `RestoreInitState` for every persisted Cell of a operative against
   # the runner it is ALREADY bound to — the same replay a rebind performs after
   # migrating, without the migration. A operative with no live pid or no binding
   # has nothing to resync; that is a failed heal, and the next tick reaches it
@@ -245,13 +245,13 @@ defmodule Flezha.Convergence.Heal do
          {:ok, target} <- placed(OperativeManager.assign_runner(namespace, factory, operative_id)),
          {:ok, :ok} <-
            SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
-      # Replay the per-Entity WAL into the new binding. The `runner_migrate`
+      # Replay the per-Cell WAL into the new binding. The `runner_migrate`
       # above is a HotSwap handover, which only carries state when the previous
       # runner is alive to serialise it; when the previous runner died (the
-      # common rebind trigger) the new runner's procedure would otherwise init
+      # common rebind trigger) the new runner's tasklet would otherwise init
       # empty and the operative's persisted state is lost (state resets to 0).
       # resync routes a `RestoreInitState` handshake for each persisted
-      # entity to `target`, rebuilding state from the durable WAL.
+      # cell to `target`, rebuilding state from the durable WAL.
       _ = Recovery.resync_for_overwatch(pid, target)
 
       emit_reconnected(namespace, operative_id, prev, target)

@@ -29,8 +29,8 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @relay_procedure "partition_relay_procedure"
-  @dynamic_procedure "dynamic_entity_procedure"
+  @relay_tasklet "partition_relay_tasklet"
+  @dynamic_tasklet "dynamic_cell_tasklet"
 
   # Key groups under `ranges(3)` = [{0,84},{85,169},{170,255}]: SOL-USD hashes
   # to 60, BTC-USD to 129, ETH-USD to 213 — one key per member, and the same
@@ -66,9 +66,9 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   end
 
   defp live_state(namespace, member, key) do
-    case OperativeManager.get_entity_state(namespace, member, %{
-           procedure: @relay_procedure,
-           entity_key: key
+    case OperativeManager.get_cell_state(namespace, member, %{
+           tasklet: @relay_tasklet,
+           cell_key: key
          }) do
       {:ok, json, _seq} -> json
       other -> inspect(other)
@@ -110,16 +110,16 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
       assert NodeTestHelper.wait_until(
                fn ->
-                 File.exists?(Paths.wal_path({member, @relay_procedure, key}))
+                 File.exists?(Paths.wal_path({member, @relay_tasklet, key}))
                end,
                20_000
              ),
              "#{key} never produced durable state under its owner #{member}"
     end
 
-    # No member holds another member's Entity — the whole point of the split.
+    # No member holds another member's Cell — the whole point of the split.
     for key <- @keys, member <- Enum.map(members, & &1.id), member != owner(group, 3, key) do
-      refute File.exists?(Paths.wal_path({member, @relay_procedure, key})),
+      refute File.exists?(Paths.wal_path({member, @relay_tasklet, key})),
              "#{member} must not hold #{key}, which it does not own"
     end
 
@@ -151,7 +151,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     assert info_out =~ "all 256 key groups owned exactly once"
 
     state_out =
-      capture_io(fn -> CliManager.state_get("#{group}/#{@relay_procedure}/BTC-USD") end)
+      capture_io(fn -> CliManager.state_get("#{group}/#{@relay_tasklet}/BTC-USD") end)
 
     assert state_out =~ "BTC-USD:one",
            "a keyed read against the GROUP must resolve the owning member"
@@ -162,7 +162,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     assert refusal =~ victim
 
     :ok =
-      DlqStore.drop("#{parked["operative_class"]}/#{parked["procedure_id"]}/#{parked["id"]}")
+      DlqStore.drop("#{parked["operative_class"]}/#{parked["tasklet_id"]}/#{parked["id"]}")
 
     # --- rescale: every key keeps its history under its new owner ---
     assert {:ok, rescaled} = PartitionGroup.rescale(namespace, group, 2)
@@ -175,7 +175,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
       assert NodeTestHelper.wait_until(
                fn ->
-                 File.exists?(Paths.wal_path({new_owner, @relay_procedure, key}))
+                 File.exists?(Paths.wal_path({new_owner, @relay_tasklet, key}))
                end,
                20_000
              ),
@@ -199,7 +199,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
              end,
              20_000
            ),
-           "the new owner never restored the Entity it inherited: " <>
+           "the new owner never restored the Cell it inherited: " <>
              inspect(live_state(namespace, new_owner, moved_key))
 
     # And it still serves: a fresh input folds onto the restored state.
@@ -212,7 +212,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
              end,
              20_000
            ),
-           "the moved Entity must continue from its pre-rescale state, not restart empty"
+           "the moved Cell must continue from its pre-rescale state, not restart empty"
   end
 
   # The forward resolves the downstream member from the output's key, so this
@@ -231,7 +231,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     assert {:ok, _} =
              PartitionGroup.start(
                namespace,
-               builder(downstream, "dynamic_entity"),
+               builder(downstream, "dynamic_cell"),
                2
              )
 
@@ -264,7 +264,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
       assert NodeTestHelper.wait_until(
                fn ->
-                 File.exists?(Paths.wal_path({target, @dynamic_procedure, key}))
+                 File.exists?(Paths.wal_path({target, @dynamic_tasklet, key}))
                end,
                20_000
              ),
@@ -276,7 +276,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
       member = Partition.member_id(downstream, index)
 
       if member != owner(downstream, 2, key) do
-        refute File.exists?(Paths.wal_path({member, @dynamic_procedure, key})),
+        refute File.exists?(Paths.wal_path({member, @dynamic_tasklet, key})),
                "#{member} received #{key}, which belongs to another partition"
       end
     end
@@ -298,7 +298,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
     assert NodeTestHelper.wait_until(
              fn ->
-               File.exists?(Paths.wal_path({new_target, @dynamic_procedure, moved_key}))
+               File.exists?(Paths.wal_path({new_target, @dynamic_tasklet, moved_key}))
              end,
              20_000
            ),

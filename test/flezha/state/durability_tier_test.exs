@@ -31,11 +31,11 @@ defmodule Flezha.State.DurabilityTierTest do
     Application.put_env(:flezha, :process_hub_registry_root, hub_root)
 
     class = "dur_" <> Integer.to_string(System.unique_integer([:positive]))
-    entity_id = {class, "proc", "k1"}
+    cell_id = {class, "task", "k1"}
 
     on_exit(&Stub.uninstall/0)
 
-    %{hub_root: hub_root, class: class, entity_id: entity_id}
+    %{hub_root: hub_root, class: class, cell_id: cell_id}
   end
 
   # ---------- default off ----------
@@ -46,7 +46,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
       assert DurabilityTier.children() == []
       refute DurabilityTier.enabled?()
-      assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
+      assert DurabilityTier.ship({:cell, ctx.cell_id}) == :ok
       assert DurabilityTier.hydrate_operative(ctx.class) == :ok
       assert Hydrator.hydrate_cspecs() == :ok
       assert DurabilityTier.breaches() == []
@@ -65,7 +65,7 @@ defmodule Flezha.State.DurabilityTierTest do
       # is running and it is not.
       assert warning =~ "postgress"
       assert warning =~ "none, postgres, s3, local_path"
-      assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
+      assert DurabilityTier.ship({:cell, ctx.cell_id}) == :ok
     end
 
     test "the config translation keeps an unrecognised name rather than refusing the boot" do
@@ -119,7 +119,7 @@ defmodule Flezha.State.DurabilityTierTest do
       refute DurabilityTier.unconfigured?()
       assert DurabilityTier.children() == []
       assert DurabilityTier.posture() == :local_only
-      assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
+      assert DurabilityTier.ship({:cell, ctx.cell_id}) == :ok
     end
 
     test "a configured backend reports the remote posture" do
@@ -187,54 +187,54 @@ defmodule Flezha.State.DurabilityTierTest do
   describe "shipping a seq-addressed artifact" do
     setup ctx do
       Stub.install()
-      TestHelpers.write_wal(ctx.entity_id, 0..4)
+      TestHelpers.write_wal(ctx.cell_id, 0..4)
       start_shipper()
       ctx
     end
 
     test "the shipped manifest reproduces the local WAL byte for byte", ctx do
-      before = File.read!(Paths.wal_path(ctx.entity_id))
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      before = File.read!(Paths.wal_path(ctx.cell_id))
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      TestHelpers.wipe_entity(ctx.entity_id)
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert File.read!(Paths.wal_path(ctx.entity_id)) == before
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == before
     end
 
     test "a second ship uploads only the records above the shipped cut", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      manifest = Stub.stored_manifest({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      manifest = Stub.stored_manifest({:cell, ctx.cell_id})
       assert [%{from: 0, to: 4}] = Enum.map(manifest.ranges, &Map.take(&1, [:from, :to]))
 
-      TestHelpers.append_wal(ctx.entity_id, 5..6)
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      TestHelpers.append_wal(ctx.cell_id, 5..6)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
       assert [%{from: 0, to: 4}, %{from: 5, to: 6}] =
-               Stub.stored_manifest({:entity, ctx.entity_id}).ranges
+               Stub.stored_manifest({:cell, ctx.cell_id}).ranges
                |> Enum.map(&Map.take(&1, [:from, :to]))
     end
 
     test "an unchanged artifact re-ships nothing", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
       writes = Stub.writes()
 
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
       assert Stub.writes() == writes
     end
 
     test "hydration never overwrites local state", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      File.write!(Paths.wal_path(ctx.entity_id), local_only_record())
+      File.write!(Paths.wal_path(ctx.cell_id), local_only_record())
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert File.read!(Paths.wal_path(ctx.entity_id)) == local_only_record()
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == local_only_record()
     end
 
-    test "the class-level input log ships and hydrates with its Entities", ctx do
-      # It sits outside the per-Entity manifest prefix, so hydration has to ask
-      # for it by name. Missing it is silent and fatal: the Entity comes back
+    test "the class-level input log ships and hydrates with its Cells", ctx do
+      # It sits outside the per-Cell manifest prefix, so hydration has to ask
+      # for it by name. Missing it is silent and fatal: the Cell comes back
       # with its consumed floor intact and no log to replay from, so the next
       # input lands at offset 0, below the floor, and is skipped as consumed.
       log_path = Paths.input_log_path(ctx.class)
@@ -250,18 +250,18 @@ defmodule Flezha.State.DurabilityTierTest do
       assert File.dir?(Path.dirname(log_path)), "hydration must not replace the class dir"
     end
 
-    test "a subset request fetches only the entity keys it names", ctx do
-      other = {ctx.class, "proc", "k2"}
+    test "a subset request fetches only the cell keys it names", ctx do
+      other = {ctx.class, "task", "k2"}
       TestHelpers.write_wal(other, 0..2)
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      assert :ok = Shipper.ship_now({:entity, other})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      assert :ok = Shipper.ship_now({:cell, other})
 
-      TestHelpers.wipe_entity(ctx.entity_id)
-      TestHelpers.wipe_entity(other)
+      TestHelpers.wipe_cell(ctx.cell_id)
+      TestHelpers.wipe_cell(other)
 
-      assert :ok = DurabilityTier.hydrate_entities(ctx.class, "proc", ["k1"])
+      assert :ok = DurabilityTier.hydrate_cells(ctx.class, "task", ["k1"])
 
-      assert File.exists?(Paths.wal_path(ctx.entity_id))
+      assert File.exists?(Paths.wal_path(ctx.cell_id))
       refute File.exists?(Paths.wal_path(other))
     end
   end
@@ -271,123 +271,123 @@ defmodule Flezha.State.DurabilityTierTest do
   describe "supersession" do
     setup ctx do
       Stub.install()
-      TestHelpers.write_wal(ctx.entity_id, 0..5)
+      TestHelpers.write_wal(ctx.cell_id, 0..5)
       start_shipper()
       ctx
     end
 
     test "a compaction snapshot supersedes the ranges below the WAL's new floor", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
       # What compaction leaves behind: a snapshot at 3 and a WAL holding 4..5.
-      File.write!(Paths.snapshot_path(ctx.entity_id, 3), "snapshot-at-3")
-      TestHelpers.write_wal(ctx.entity_id, 4..5)
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      File.write!(Paths.snapshot_path(ctx.cell_id, 3), "snapshot-at-3")
+      TestHelpers.write_wal(ctx.cell_id, 4..5)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      manifest = Stub.stored_manifest({:entity, ctx.entity_id})
+      manifest = Stub.stored_manifest({:cell, ctx.cell_id})
       assert [%{seq: 3}] = Enum.map(manifest.snapshots, &Map.take(&1, [:seq]))
       refute Enum.any?(manifest.ranges, &(&1.to <= 3))
 
-      TestHelpers.wipe_entity(ctx.entity_id)
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
-      assert File.read!(Paths.snapshot_path(ctx.entity_id, 3)) == "snapshot-at-3"
-      assert seqs_in_wal(ctx.entity_id) == [4, 5]
+      assert File.read!(Paths.snapshot_path(ctx.cell_id, 3)) == "snapshot-at-3"
+      assert seqs_in_wal(ctx.cell_id) == [4, 5]
     end
 
     test "a correction rewind supersedes the shipped ranges above it at a higher epoch", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      assert Stub.stored_manifest({:entity, ctx.entity_id}).epoch == 0
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      assert Stub.stored_manifest({:cell, ctx.cell_id}).epoch == 0
 
       # What `WalWriter.rewind_to(2, 1)` leaves behind: records 0..2 and a
       # bumped epoch. The records above the rewind are gone locally, and must
       # stop being referenced remotely.
-      TestHelpers.write_wal(ctx.entity_id, 0..2)
-      set_epoch(ctx.entity_id, 1)
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      TestHelpers.write_wal(ctx.cell_id, 0..2)
+      set_epoch(ctx.cell_id, 1)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      manifest = Stub.stored_manifest({:entity, ctx.entity_id})
+      manifest = Stub.stored_manifest({:cell, ctx.cell_id})
       assert manifest.epoch == 1
       assert Enum.all?(manifest.ranges, &(&1.to <= 2))
 
-      TestHelpers.wipe_entity(ctx.entity_id)
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
-      assert seqs_in_wal(ctx.entity_id) == [0, 1, 2]
+      assert seqs_in_wal(ctx.cell_id) == [0, 1, 2]
     end
   end
 
   # ---------- what a recovery has to put back besides the data ----------
 
-  describe "recovery restores an Entity's local facts" do
+  describe "recovery restores a Cell's local facts" do
     setup ctx do
       Stub.install()
-      TestHelpers.write_wal(ctx.entity_id, 0..3)
-      # A runner restart realigned this Entity, which is the ordinary case: the
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      # A runner restart realigned this Cell, which is the ordinary case: the
       # epoch is bumped by `WalWriter.realign_epoch/4`, not only by a rewind.
-      set_epoch(ctx.entity_id, 2)
+      set_epoch(ctx.cell_id, 2)
       start_shipper()
       ctx
     end
 
-    test "a recovered Entity keeps shipping instead of stopping on its own lineage", ctx do
-      ref = {:entity, ctx.entity_id}
+    test "a recovered Cell keeps shipping instead of stopping on its own lineage", ctx do
+      ref = {:cell, ctx.cell_id}
       assert :ok = Shipper.ship_now(ref)
 
-      TestHelpers.wipe_entity(ctx.entity_id)
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
       # The epoch's only home on disk is the dedup cache, which is not an
       # artifact. It does not gate the manifest write, but it is still
-      # the supersession fact the manifest algebra reads, so a recovered Entity
+      # the supersession fact the manifest algebra reads, so a recovered Cell
       # that came back at epoch 0 would mis-order its own cuts.
-      assert Outbox.read(ctx.entity_id).epoch == 2
+      assert Outbox.read(ctx.cell_id).epoch == 2
       assert :ok = Shipper.ship_now(ref)
       refute Enum.any?(Shipper.status(), &(&1.ref == ref and &1.superseded_by != nil))
     end
 
     test "the restored flush cursor lags rather than leads", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      TestHelpers.wipe_entity(ctx.entity_id)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
       # A cursor restored ahead of the restored WAL would drop those effect
       # records from the boot re-drive (`seq > cursor`) and never dispatch their
       # outputs. `-1` re-drives everything, which sink dedup absorbs.
-      assert Outbox.read(ctx.entity_id).outbox_flushed_seq == -1
+      assert Outbox.read(ctx.cell_id).outbox_flushed_seq == -1
     end
 
     test "the saga compensation markers survive a recovery", ctx do
       # Without these the resumed driver never takes its compensation branch and
       # resumes FORWARD, silently skipping a rollback it owes.
-      :ok = Paths.write_compensation_marker(ctx.entity_id, :intent)
-      :ok = Paths.write_compensation_marker(ctx.entity_id, :done)
+      :ok = Paths.write_compensation_marker(ctx.cell_id, :intent)
+      :ok = Paths.write_compensation_marker(ctx.cell_id, :done)
 
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      TestHelpers.wipe_entity(ctx.entity_id)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert %{intent: true, done: true} = Paths.compensation_markers(ctx.entity_id)
+      assert %{intent: true, done: true} = Paths.compensation_markers(ctx.cell_id)
     end
 
     test "an unset marker is not resurrected by a recovery", ctx do
-      :ok = Paths.write_compensation_marker(ctx.entity_id, :intent)
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      :ok = Paths.write_compensation_marker(ctx.cell_id, :intent)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      TestHelpers.wipe_entity(ctx.entity_id)
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert %{intent: true, done: false} = Paths.compensation_markers(ctx.entity_id)
+      assert %{intent: true, done: false} = Paths.compensation_markers(ctx.cell_id)
     end
 
     test "a marker appearing rewrites an otherwise unchanged manifest", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      assert Stub.stored_manifest({:entity, ctx.entity_id}).markers.done == false
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      assert Stub.stored_manifest({:cell, ctx.cell_id}).markers.done == false
 
       # No new records — only the marker. A cut comparison that ignored it would
       # skip the write and the marker would never ship.
-      :ok = Paths.write_compensation_marker(ctx.entity_id, :done)
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      :ok = Paths.write_compensation_marker(ctx.cell_id, :done)
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      assert Stub.stored_manifest({:entity, ctx.entity_id}).markers.done
+      assert Stub.stored_manifest({:cell, ctx.cell_id}).markers.done
     end
   end
 
@@ -396,35 +396,35 @@ defmodule Flezha.State.DurabilityTierTest do
   describe "failure handling" do
     setup ctx do
       Stub.install()
-      TestHelpers.write_wal(ctx.entity_id, 0..3)
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
       start_shipper()
       ctx
     end
 
     test "a crash between the blobs and the manifest leaves the previous entry authoritative",
          ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      first = Stub.stored_manifest({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      first = Stub.stored_manifest({:cell, ctx.cell_id})
 
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.fail_next_manifest()
-      assert {:error, :manifest_write_lost} = Shipper.ship_now({:entity, ctx.entity_id})
+      assert {:error, :manifest_write_lost} = Shipper.ship_now({:cell, ctx.cell_id})
 
       # The manifest still describes the first cut; the blobs uploaded for the
       # second are present but unreferenced, so a hydration cannot see them.
-      assert Stub.stored_manifest({:entity, ctx.entity_id}).ranges == first.ranges
-      TestHelpers.wipe_entity(ctx.entity_id)
+      assert Stub.stored_manifest({:cell, ctx.cell_id}).ranges == first.ranges
+      TestHelpers.wipe_cell(ctx.cell_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
-      assert seqs_in_wal(ctx.entity_id) == [0, 1, 2, 3]
+      assert seqs_in_wal(ctx.cell_id) == [0, 1, 2, 3]
     end
 
     test "garbage collection removes the orphans and never a referenced blob", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
-      referenced = Manifest.blob_keys(Stub.stored_manifest({:entity, ctx.entity_id}))
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      referenced = Manifest.blob_keys(Stub.stored_manifest({:cell, ctx.cell_id}))
 
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.fail_next_manifest()
-      assert {:error, :manifest_write_lost} = Shipper.ship_now({:entity, ctx.entity_id})
+      assert {:error, :manifest_write_lost} = Shipper.ship_now({:cell, ctx.cell_id})
 
       # Past the grace, so the torn upload is genuinely orphaned rather than
       # possibly still in flight.
@@ -436,16 +436,16 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "an orphan younger than the grace is left for a later pass", ctx do
-      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.fail_next_manifest()
-      assert {:error, :manifest_write_lost} = Shipper.ship_now({:entity, ctx.entity_id})
+      assert {:error, :manifest_write_lost} = Shipper.ship_now({:cell, ctx.cell_id})
 
       # Derived from the store rather than constructed, so the case says nothing
       # about how a blob is named.
-      referenced = Manifest.blob_keys(Stub.stored_manifest({:entity, ctx.entity_id}))
-      prefix = Manifest.blob_key({:entity, ctx.entity_id}, "")
+      referenced = Manifest.blob_keys(Stub.stored_manifest({:cell, ctx.cell_id}))
+      prefix = Manifest.blob_key({:cell, ctx.cell_id}, "")
       blobs = Enum.filter(Stub.keys(), &String.starts_with?(&1, prefix))
       assert [orphan] = blobs -- referenced
 
@@ -456,9 +456,9 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "a claim held elsewhere stops shipping without raising an alarm", ctx do
-      ref = {:entity, ctx.entity_id}
+      ref = {:cell, ctx.cell_id}
       :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :claim_superseded]])
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.fence_at(9)
 
       assert {:error, {:superseded, _holder}} = Shipper.ship_now(ref)
@@ -471,7 +471,7 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "losing a claim does not leave a permanent RPO breach behind", ctx do
-      ref = {:entity, ctx.entity_id}
+      ref = {:cell, ctx.cell_id}
 
       Application.put_env(
         :flezha,
@@ -480,7 +480,7 @@ defmodule Flezha.State.DurabilityTierTest do
       )
 
       # Unshipped local progress, so the reference is genuinely pending...
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.set_down(true)
       assert {:error, :backend_down} = Shipper.ship_now(ref)
       # The breach is a millisecond past the failed ship.
@@ -503,8 +503,8 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "a backend outage retries with backoff and reports the reference as pending", ctx do
-      ref = {:entity, ctx.entity_id}
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      ref = {:cell, ctx.cell_id}
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.set_down(true)
 
       assert {:error, :backend_down} = Shipper.ship_now(ref)
@@ -517,7 +517,7 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "an RPO breach is reported once the target is exceeded", ctx do
-      ref = {:entity, ctx.entity_id}
+      ref = {:cell, ctx.cell_id}
 
       Application.put_env(
         :flezha,
@@ -525,7 +525,7 @@ defmodule Flezha.State.DurabilityTierTest do
         Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
       )
 
-      TestHelpers.append_wal(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.set_down(true)
       assert {:error, :backend_down} = Shipper.ship_now(ref)
       # The breach is a millisecond past the failed ship.
@@ -622,7 +622,7 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "its operatives, its parked failures and its security state all come back", ctx do
-      TestHelpers.write_wal(ctx.entity_id, 0..3)
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, entry_ref} = Dlq.Store.append(ctx.dlq, park(ctx, "poison-bytes"))
       :ok = RoleStore.bind("alice", "_system", :admin)
       {:ok, raw_token, _entry} = TokenStore.issue("alice", "_system", :admin, 3600)
@@ -642,14 +642,14 @@ defmodule Flezha.State.DurabilityTierTest do
         QuotaCounters
       ])
 
-      TestHelpers.wipe_entity(ctx.entity_id)
+      TestHelpers.wipe_cell(ctx.cell_id)
       File.rm_rf!(ctx.dlq_dir)
       File.rm_rf!(ctx.auth_dir)
 
       assert :ignore = Hydrator.hydrate_on_boot()
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert seqs_in_wal(ctx.entity_id) == [0, 1, 2, 3]
+      assert seqs_in_wal(ctx.cell_id) == [0, 1, 2, 3]
       assert [%{"id" => _}] = Dlq.Store.list(ctx.dlq, ctx.class)
       assert {:ok, _entry, "poison-bytes"} = Dlq.Store.get(ctx.dlq, entry_ref)
 
@@ -725,19 +725,19 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "the synchronous barrier ships both key spaces, not half of them", ctx do
-      # The Entity WAL and the input log live under the resolved CLASS...
-      entity = {ctx.class, "proc", "k1"}
-      TestHelpers.write_wal(entity, 0..3)
-      # ...while the proc-journal lives under the INSTANCE id.
+      # The Cell WAL and the input log live under the resolved CLASS...
+      cell = {ctx.class, "task", "k1"}
+      TestHelpers.write_wal(cell, 0..3)
+      # ...while the task-journal lives under the INSTANCE id.
       journal = Paths.journal_id(ctx.instance)
       TestHelpers.write_wal(journal, 0..1)
 
       assert :ok = DurabilityTier.commit_sync(ctx.instance)
 
-      assert Manifest.key({:entity, journal}) in Stub.keys()
+      assert Manifest.key({:cell, journal}) in Stub.keys()
 
-      assert Manifest.key({:entity, entity}) in Stub.keys(),
-             "RPO 0 must not answer :ok having shipped no Entity state"
+      assert Manifest.key({:cell, cell}) in Stub.keys(),
+             "RPO 0 must not answer :ok having shipped no Cell state"
     end
 
     test "the RPO-0 gate arms on the class an instance resolves to", ctx do
@@ -760,8 +760,8 @@ defmodule Flezha.State.DurabilityTierTest do
   defp park(ctx, payload) do
     %{
       operative_class: ctx.class,
-      procedure_id: "proc",
-      entity_key: "k1",
+      tasklet_id: "task",
+      cell_key: "k1",
       channel: "input",
       origin_offset: nil,
       error: "boom",
@@ -787,15 +787,15 @@ defmodule Flezha.State.DurabilityTierTest do
 
   defp local_only_record(), do: TestHelpers.build_wal_record(99, "local-only")
 
-  defp set_epoch(entity_id, epoch) do
+  defp set_epoch(cell_id, epoch) do
     :ok =
-      Outbox.write(entity_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: epoch})
+      Outbox.write(cell_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: epoch})
   end
 
   defp status_of(ref), do: Enum.find(Shipper.status(), &(&1.ref == ref))
 
-  defp seqs_in_wal(entity_id) do
-    {lo, hi} = Artifact.seq_bounds({:entity, entity_id})
+  defp seqs_in_wal(cell_id) do
+    {lo, hi} = Artifact.seq_bounds({:cell, cell_id})
     Enum.to_list(lo..hi)
   end
 

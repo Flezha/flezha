@@ -17,8 +17,8 @@ defmodule Flezha.Dlq.StoreTest do
     Map.merge(
       %{
         operative_class: "MarketOperative",
-        procedure_id: "ohlc",
-        entity_key: "BTC",
+        tasklet_id: "ohlc",
+        cell_key: "BTC",
         channel: "input",
         origin_offset: nil,
         error: "boom",
@@ -83,16 +83,16 @@ defmodule Flezha.Dlq.StoreTest do
   # The park a frame naming no declared entry channel writes: the identity slot
   # is `_unresolved`, chosen by the SDK, and the requested name is in the row's
   # channel field where nothing joins it to a path.
-  test "an unresolved park lands in a listed procedure directory", %{store: store} do
+  test "an unresolved park lands in a listed tasklet directory", %{store: store} do
     assert {:ok, ref} =
              Store.append(
                store,
-               entry(%{procedure_id: "_unresolved", channel: "../../../../etc"})
+               entry(%{tasklet_id: "_unresolved", channel: "../../../../etc"})
              )
 
     assert [listed] = Store.list(store, nil)
     assert listed["channel"] == "../../../../etc"
-    assert {"MarketOperative", "_unresolved"} in Store.procedures("MarketOperative")
+    assert {"MarketOperative", "_unresolved"} in Store.tasklets("MarketOperative")
     assert {:ok, _entry, "poison-bytes"} = Store.get(store, ref)
   end
 
@@ -107,7 +107,7 @@ defmodule Flezha.Dlq.StoreTest do
     assert length(Store.list(store, nil)) == 1
   end
 
-  test "tier-on parks dedup on entity@offset identity", %{store: store} do
+  test "tier-on parks dedup on cell@offset identity", %{store: store} do
     e = entry(%{origin_offset: 42, park_id: nil})
     assert {:ok, ref} = Store.append(store, e)
     assert {:ok, ^ref} = Store.append(store, e)
@@ -178,7 +178,7 @@ defmodule Flezha.Dlq.StoreTest do
     assert wait_until(fn -> System.system_time(:millisecond) > ts_ms end, 1_000, 1)
     assert :ok = Store.sweep(store)
 
-    assert_receive {:dropped, %{count: 1}, %{procedure_id: "ohlc", reason: :age}}, 2_000
+    assert_receive {:dropped, %{count: 1}, %{tasklet_id: "ohlc", reason: :age}}, 2_000
     assert Store.list(store, nil) == []
   end
 

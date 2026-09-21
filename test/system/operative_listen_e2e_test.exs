@@ -53,13 +53,13 @@ defmodule FlezhaTest.System.OperativeListenE2ETest do
 
     @tag capability: :state_persistence,
          skip: FlezhaTest.SystemCase.deferral(:state_persistence)
-    test "a keyed sink's frame carries its entity, seq and key", %{namespace: ns} do
+    test "a keyed sink's frame carries its cell, seq and key", %{namespace: ns} do
       id = start!(ns, "bench_keyed")
       listener = listen(ns, id)
 
       deliver!(ns, id, "k1:v1")
 
-      assert printed_line(listener, &(&1 =~ ~r/^sink\tk1=v1\tentity=\S+ seq=\S+ key=k1$/))
+      assert printed_line(listener, &(&1 =~ ~r/^sink\tk1=v1\tcell=\S+ seq=\S+ key=k1$/))
       end_by_exit(ns, listener, [id])
     end
 
@@ -76,7 +76,7 @@ defmodule FlezhaTest.System.OperativeListenE2ETest do
       assert %{"channel" => "sink", "payload" => "k2=v2", "metadata" => metadata} =
                Jason.decode!(line)
 
-      assert %{"channel" => "sink", "flz.key" => "k2", "flz.entity" => _, "flz.seq" => _} =
+      assert %{"channel" => "sink", "flz.key" => "k2", "flz.cell" => _, "flz.seq" => _} =
                metadata
 
       end_by_exit(ns, listener, [id])
@@ -107,7 +107,7 @@ defmodule FlezhaTest.System.OperativeListenE2ETest do
       for {key, member} <- owners, do: deliver!(ns, member, "#{key}:listened")
 
       for key <- Map.keys(owners) do
-        assert printed_line(listener, &String.starts_with?(&1, "input\t#{key}:listened\tentity="))
+        assert printed_line(listener, &String.starts_with?(&1, "input\t#{key}:listened\tcell="))
       end
 
       # Each member holds a heartbeat of its own, so releasing one stops nothing

@@ -263,13 +263,13 @@ defmodule Flezha.Load.MemoryDriftTest do
         opts: %{
           hosts: [{@kafka_host, @kafka_port}],
           topic: topic,
-          entity: 0,
+          cell: 0,
           linger_ms: 10,
           queue_max: 10_000,
           # Dev brokers default to RF=1; the plugin default of 2 would
           # fail topic auto-creation on a single-broker cluster.
           auto_create_replication_factor: 1,
-          auto_create_entities: 1,
+          auto_create_cells: 1,
           required_acks: -1,
           idempotent: true,
           delivery_timeout_ms: 30_000

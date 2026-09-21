@@ -48,7 +48,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
 
           forward("k1=v1", %{
             "channel" => "sink",
-            "flz.entity" => "op/p/k1",
+            "flz.cell" => "op/p/k1",
             "flz.seq" => "3.0",
             "flz.key" => "k1"
           })
@@ -59,7 +59,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
 
       assert out ==
                "echo\thello\n" <>
-                 "sink\tk1=v1\tentity=op/p/k1 seq=3.0 key=k1\n" <>
+                 "sink\tk1=v1\tcell=op/p/k1 seq=3.0 key=k1\n" <>
                  "-\tagain\n"
     end
 

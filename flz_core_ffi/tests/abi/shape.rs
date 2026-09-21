@@ -173,7 +173,7 @@ where
     );
     put(
         &mut map,
-        shape::PROCEDURE,
+        shape::TASKLET,
         shape::Sink::u32(s, 7).expect("a u32"),
     );
     put(
@@ -210,7 +210,7 @@ where
         u64::MAX
     );
     assert_eq!(
-        shape::Source::u32(s, &want(shape::PROCEDURE)).expect("a u32"),
+        shape::Source::u32(s, &want(shape::TASKLET)).expect("a u32"),
         7
     );
     assert!(shape::Source::bool(s, &want(shape::REPLAY)).expect("a bool"));
@@ -228,7 +228,7 @@ where
         ("k".to_string(), "v".to_string())
     );
     // An absent key reads as absent, not as the language's nil.
-    assert!(shape::Source::get(s, &map, shape::ENTITY_KEY)
+    assert!(shape::Source::get(s, &map, shape::CELL_KEY)
         .expect("an absent key reads")
         .is_none());
 }
@@ -390,8 +390,8 @@ pub fn assert_activation_maps(act: &schema::Activation) {
     let h = obj(&recorded);
     assert_eq!(num(h, "token"), act.token);
     assert_eq!(text(h, "operative"), act.target.operative);
-    assert_eq!(num(h, "procedure") as u32, act.target.procedure);
-    assert_eq!(opt_text(h, "entity_key"), act.target.entity_key);
+    assert_eq!(num(h, "tasklet") as u32, act.target.tasklet);
+    assert_eq!(opt_text(h, "cell_key"), act.target.cell_key);
     assert_eq!(num(h, "change_seq"), act.change_seq);
     assert_eq!(text(h, "factory"), act.factory);
     assert_kind_maps(h, &act.kind);

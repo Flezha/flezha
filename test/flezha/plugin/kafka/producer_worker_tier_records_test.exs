@@ -19,7 +19,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
   describe "effectively-once tier records" do
     @tier_metadata %{
       "channel" => "out",
-      "flz.entity" => "MarketOperative/s1/k1",
+      "flz.cell" => "MarketOperative/s1/k1",
       "flz.seq" => "42.0",
       "flz.epoch" => "1",
       "flz.key" => "BTC/1m/1720000000"
@@ -84,14 +84,14 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
     test "a keyed channel outside the tier still partitions by its natural key" do
       {pid, _} = start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
 
-      # What an ordinary `.keyed()` hybrid channel stamps: entity + seq + key,
+      # What an ordinary `.keyed()` hybrid channel stamps: cell + seq + key,
       # but no `flz.epoch` — only the effectively-once tier stamps that. A nil
-      # key here scatters one entity's records across partitions, losing the
+      # key here scatters one cell's records across partitions, losing the
       # ordering `.keyed()` was declared for.
       assert :ok =
                ProducerWorker.enqueue(pid, "candle", %{
                  "channel" => "ohlc_out",
-                 "flz.entity" => "MarketOperative/ohlc/BTC-USD",
+                 "flz.cell" => "MarketOperative/ohlc/BTC-USD",
                  "flz.seq" => "42.0",
                  "flz.key" => "BTC/USD"
                })

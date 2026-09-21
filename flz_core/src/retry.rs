@@ -22,15 +22,15 @@ use crate::routing::{deliver_edge, route_to_consumers};
 /// What a park is attributed to, and how hard the ladder tries first.
 ///
 /// `channel` is the row's attribution and may be a name off the wire, while
-/// `procedure_id` is the identity slot the controller turns into a DIRECTORY
+/// `tasklet_id` is the identity slot the controller turns into a DIRECTORY
 /// and is always a value this side chose. They are one string for every
 /// declared channel and differ only where there is no channel, which is why
 /// the pairing is decided here rather than at each of the four call sites.
 #[derive(Clone, Copy)]
 pub(crate) struct ParkTarget<'a> {
     channel: &'a str,
-    procedure_id: &'a str,
-    entity_suffix: &'a str,
+    tasklet_id: &'a str,
+    cell_suffix: &'a str,
     retry: RetryPolicy,
 }
 
@@ -52,8 +52,8 @@ impl<'a> ParkTarget<'a> {
     pub(crate) fn unresolved(requested: &'a str) -> Self {
         Self {
             channel: requested,
-            procedure_id: "_unresolved",
-            entity_suffix: "_entry",
+            tasklet_id: "_unresolved",
+            cell_suffix: "_entry",
             retry: RetryPolicy {
                 max_attempts: 1,
                 backoff_base_ms: 0,
@@ -61,11 +61,11 @@ impl<'a> ParkTarget<'a> {
         }
     }
 
-    fn declared(channel: &'a ChannelDescriptor, entity_suffix: &'a str) -> Self {
+    fn declared(channel: &'a ChannelDescriptor, cell_suffix: &'a str) -> Self {
         Self {
             channel: &channel.name,
-            procedure_id: &channel.name,
-            entity_suffix,
+            tasklet_id: &channel.name,
+            cell_suffix,
             retry: channel.retry,
         }
     }
@@ -174,8 +174,8 @@ pub(crate) fn run_retry_park_ladder(
 ) {
     let ParkTarget {
         channel,
-        procedure_id,
-        entity_suffix,
+        tasklet_id,
+        cell_suffix,
         retry,
     } = target;
     let mut attempt: u32 = 1; // the routing-thread run was attempt 1
@@ -195,11 +195,11 @@ pub(crate) fn run_retry_park_ladder(
         "[flezha] {} parking payload to DLQ after {} attempt(s): {}",
         label, attempt, error
     );
-    let identity = crate::flusher::encode_entity_identity(instance_id, procedure_id, entity_suffix);
+    let identity = crate::flusher::encode_cell_identity(instance_id, tasklet_id, cell_suffix);
     let body = crate::park::ParkBody {
         park_id: crate::park::mint_park_id(&format!(
             "{}/{}/{}",
-            instance_id, procedure_id, entity_suffix
+            instance_id, tasklet_id, cell_suffix
         )),
         origin_offset: consumed_offset,
         entry: crate::flusher::DlqEntryBody {
@@ -297,14 +297,14 @@ fn run_edge_ladder(ladder: EdgeLadder) {
         .topology
         .channel(ladder.channel_id)
         .expect("channel present in topology");
-    let procedure = ladder
+    let tasklet = ladder
         .instance
         .topology
-        .procedure(ladder.edge.procedure)
+        .tasklet(ladder.edge.tasklet)
         .map(|p| p.name.to_string())
         .unwrap_or_default();
     run_retry_park_ladder(
-        &format!("channel `{}` edge into `{}`", channel.name, procedure),
+        &format!("channel `{}` edge into `{}`", channel.name, tasklet),
         ParkTarget::edge(channel),
         &ladder.instance.instance_id,
         ladder.consumed_offset,
@@ -312,7 +312,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
         ladder.first_error,
         || {
             // The ladder re-attempt runs off the routing thread with no
-            // producing Entity in hand, so it takes the entry form: the
+            // producing Cell in hand, so it takes the entry form: the
             // producer that emitted this value is long since released.
             deliver_edge(
                 &ladder.instance,
@@ -352,8 +352,8 @@ mod tests {
             // what the ladder reads, which is the target and nothing else.
             ParkTarget {
                 channel: "late",
-                procedure_id: "late",
-                entity_suffix: "_entry",
+                tasklet_id: "late",
+                cell_suffix: "_entry",
                 retry: RetryPolicy {
                     max_attempts: 3,
                     backoff_base_ms: 1,

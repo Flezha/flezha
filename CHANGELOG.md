@@ -2,47 +2,63 @@
 
 ## Unreleased
 
-### Changed: the single-procedure short form is an operative declaration; every procedure body is `run`
+### Changed: the workload levels are Operative → Tasklet → Cell
 
-The short form moves from the procedure declaration to each SDK's kind-named operative entry
+<!-- tasklet-cell-naming-record:begin -->Procedure is now Tasklet and Entity is now Cell<!-- tasklet-cell-naming-record:end -->,
+and the `Proc*` abbreviation is `Task*`, in the controller, the CLI, all seven SDKs, the wire
+protocol and the on-disk layout, with no alias. The authoring surface is `#[flezha::tasklet]` and
+`TaskletCtx` in Rust, `@Tasklet` in Java, `defineTasklet` in Node, `flezha.tasklet` in Python,
+`Flezha::Tasklet` in Ruby, a `Tasklet` subclass under `#[Task]` in PHP and `use Flezha.SDK.Tasklet`
+in Elixir; the keying declarations are `cell_keys`, `cells_for`, `cell_idle_ttl` and
+`ctx.cell_key()`. On the wire the control messages are `CellState`, `CellApplyState`, `CompactCell`
+and `CellMailboxStatus`, the payload ids `cell_state_change`, `cell_state_snapshot`,
+`delete_cell_state` and `compact_cell`, and a sink's metadata key is `flz.cell`, so anything
+reading sink output reads the new key. A cell's state lives at
+`state/<namespace>/<operative>/<tasklet_id>/<cell_key>.*` and a workflow's journal is
+`task.journal`. State written under the old names is not read: stop the controller and run
+`flz reset --yes` before starting the new build.
+
+### Changed: the single-tasklet short form is an operative declaration; every tasklet body is `run`
+
+The short form moves from the tasklet declaration to each SDK's kind-named operative entry
 point in all seven SDKs, with no alias: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]`
 in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` /
 `@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a
 `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class
 extending `StreamOperative` / `WorkflowOperative` in PHP, and `use Flezha.SDK.StreamOperative` /
 `use Flezha.SDK.WorkflowOperative` in Elixir. A declaration is a short form when it carries its
-procedure's `run` body instead of a topology body; the kind is the entry point's name, the identity
-is the operative's factory id, and the generated procedure is named after it, so growing into the
-full form keeps every entity's state. `sink` is optional: with none, the entry channel feeds the
-procedure and no plugin channel is declared. The refusals are `ShortFormWithTopology`,
+tasklet's `run` body instead of a topology body; the kind is the entry point's name, the identity
+is the operative's factory id, and the generated tasklet is named after it, so growing into the
+full form keeps every cell's state. `sink` is optional: with none, the entry channel feeds the
+tasklet and no plugin channel is declared. The refusals are `ShortFormWithTopology`,
 `SinkWithoutOutput` and `DuplicateFactoryId`; the three that policed the old `sink` switch are gone.
-Node's `handle` and the `process` method of Ruby's and Python's class procedures are renamed `run`,
-the name every SDK now gives a procedure's body. The conformance suite gains `sugar_state_only`, a
-short form with no sink proven by its entity state.
+Node's `handle` and the `process` method of Ruby's and Python's class tasklets are renamed `run`,
+the name every SDK now gives a tasklet's body. The conformance suite gains `sugar_state_only`, a
+short form with no sink proven by its cell state.
 
-### Removed: the one-function workflow body; a procedure ends its instance
+### Removed: the one-function workflow body; a tasklet ends its instance
 
-A workflow always runs procedures. The one-function body `run(ctx, args)` and its context
+A workflow always runs tasklets. The one-function body `run(ctx, args)` and its context
 (`emit`, `recv`, `loop_until`, `complete`, `is_cancelled`) are deleted in all seven SDKs with no
 alias, together with the C ABI's `flz_core_workflow_emit`, `_recv` and `_cancelled`, the
 `WorkflowRun` activation and the `WorkflowDone` outcome; a workflow class that declares no
-procedure is refused at registration. A chat agent is a `PerInput` workflow whose procedure keeps
-the conversation in entity state, so a crash loses no turn.
+tasklet is refused at registration. A chat agent is a `PerInput` workflow whose tasklet keeps
+the conversation in cell state, so a crash loses no turn.
 
-Every procedure context gains `complete(result)`: once the iteration commits, the instance ends
+Every tasklet context gains `complete(result)`: once the iteration commits, the instance ends
 with status `ok` and `result` instead of waiting for its next input. The rest of the iteration
-still runs; several completions resolve to the procedure latest in the chain and, within it, the
-entity whose key sorts last; a failed iteration discards its completion; a stream procedure
+still runs; several completions resolve to the tasklet latest in the chain and, within it, the
+cell whose key sorts last; a failed iteration discards its completion; a stream tasklet
 calling it fails its input, non-retryable, naming `CompleteOutsideWorkflow`. The result is
 encoded the way a sink naming no codec encodes a value: bytes as they are, a string as UTF-8,
-anything else as JSON. The completion rides `ProcCommit` and `IterCommit`, is journaled in
-`proc_committed` and `iter_committed` (an entry written before this change reads as not
+anything else as JSON. The completion rides `TaskCommit` and `IterCommit`, is journaled in
+`task_committed` and `iter_committed` (an entry written before this change reads as not
 completing), comes back on a rebind, and `flz state journal` shows a completing entry.
 
 ### Changed: an operative starts without a name, and every start answers its id
 
 The id is optional at every start. `flz operative start <factory>` takes the id as
-`--id` / `-i`, the consumer surface's `Operative.start` takes a spec with no `id`, a procedure's
+`--id` / `-i`, the consumer surface's `Operative.start` takes a spec with no `id`, a tasklet's
 spawn takes none, and a partitioned start generates its group base. The controller then
 generates `<factory>-<16 characters>`, trimmed to the 32-byte limit, checks it with the same
 atomic claim a named start uses, counts a leftover state folder as taken, and draws again at
@@ -60,7 +76,7 @@ The SDK calls take the factory first and the id as an optional named argument:
 Rust, `OperativeSpec.of("echo").id(..)` and `SpawnOptions.id(..)` in Java, keyword options in
 Elixir, keyword arguments in Python and Ruby, named arguments in PHP and an options object in
 Node. A spawn now returns a handle at once in all seven SDKs: Python, Ruby and PHP no longer
-wait for the controller or raise its refusal into the procedure, Node's `spawnWorkflow` is no
+wait for the controller or raise its refusal into the tasklet, Node's `spawnWorkflow` is no
 longer `async`, and a refusal is read from the handle (`wait` / `await` and `try_result` /
 `tryResult`). The C ABI replaces `flz_core_spawn_workflow` with `flz_core_spawn_request` and
 `flz_core_spawn_result`, and the spawn handle lives once in `flz_core`.
@@ -73,10 +89,10 @@ The CLI spellings change: `flz operative start <operative_id> <factory_id>` beco
 
 ### Added: `merge`, the latest-document router and `flat_map` in every SDK
 
-Node, Python, Ruby, PHP and Elixir can now merge several channels into one procedure, as
+Node, Python, Ruby, PHP and Elixir can now merge several channels into one tasklet, as
 Rust and Java could: each source brings the mapping that turns its values into the one value
-the procedure reads, the key is declared once on the merge, and a merge of one source, of the
-same source twice, or of a source already wired into the procedure is refused by the same
+the tasklet reads, the key is declared once on the merge, and a merge of one source, of the
+same source twice, or of a source already wired into the tasklet is refused by the same
 names (`MergeTooFewSources`, `DuplicateMergeSource`, `EdgeAlreadyWired`). The spellings are
 `c.merge().from(s, f).keyBy(k).into(P)` in Node, `c.merge().from_(s, f).key_by(k).into(P)`
 in Python, `c.merge.from(s) { }.key_by { }.into(P)` in Ruby,
@@ -87,8 +103,8 @@ Every SDK's test app carries two new fixtures, `merged_input` and `transform_cha
 end to end by `test/system/stream_graph_e2e_test.exs` on whichever runtime is selected.
 
 An input fanned by `flat_map` across several keys now reaches every one of them in the
-Java, Node, Python, Ruby and PHP runners; it used to reach the first key only. Each Entity
-runs only the values keyed to it, and a static consumer whose `entities_for` answers no key
+Java, Node, Python, Ruby and PHP runners; it used to reach the first key only. Each Cell
+runs only the values keyed to it, and a static consumer whose `cells_for` answers no key
 runs nowhere, as in Rust.
 
 The Elixir SDK's `Channels.sealed/1` is removed: it sealed nothing. Drop the call; the
@@ -210,7 +226,7 @@ already did. In all four a sink with no codec and no encoder sends bytes
 unchanged, a string as its UTF-8 bytes and any other value as JSON, the rule Java,
 Rust and Elixir already follow, so a PHP sink no longer quotes a string and the
 other three no longer send MessagePack. `msgpack` restores the previous format in
-one word. Payloads between procedures of one operative, and state and change
+one word. Payloads between tasklets of one operative, and state and change
 bodies, keep their formats.
 
 ### Added: a Ruby runner can do work between starting and waiting
@@ -325,9 +341,9 @@ old words:
 options an operator can write. A plugin provider's `help/0` callback becomes
 `help/1`, taking that id.
 
-### Fixed: Java `@Procedure` strings may hold quotes and backslashes
+### Fixed: Java `@Tasklet` strings may hold quotes and backslashes
 
-The `id`, `sink`, `input` and `keys` of a Java `@Procedure` may hold quotes,
+The `id`, `sink`, `input` and `keys` of a Java `@Tasklet` may hold quotes,
 backslashes and control characters; the generated source now carries them
 exactly instead of failing to compile.
 
@@ -344,7 +360,7 @@ the start's own error in its log lines and in the
 
 ### Fixed: a Java constructor that throws is reported as its own error
 
-A Java operative, workflow or procedure whose constructor throws reports that
+A Java operative, workflow or tasklet whose constructor throws reports that
 exception instead of claiming it has no public no-arg constructor.
 
 ### Fixed: two controllers started at once on a fresh state directory agree on their cookie
@@ -454,7 +470,7 @@ flz plugin enable writer operative_file_sink --operative_id=op1 \
 what the operative emits; `--input` listens to what it ingests instead.
 
 Every frame prints the metadata it carries: the channel, a tab and the payload,
-and on a keyed sink a third field with its entity, seq and key. `--json` prints
+and on a keyed sink a third field with its cell, seq and key. `--json` prints
 one object per line carrying the whole metadata map. The listener runs for
 `--duration-ms` (30 seconds unless given) and Ctrl-C ends it; the plugin it
 attaches is detached however it ends, on every member of a partition group.
@@ -517,7 +533,7 @@ written.
 
 ### Changed: a host SDK reuses its encode buffer instead of allocating one per value
 
-Every value crossing between two procedures is encoded to bytes, because the
+Every value crossing between two tasklets is encoded to bytes, because the
 core owns the queue between them and cannot hold a JVM or a JavaScript object.
 The encode is unavoidable; the work three SDKs piled on top of it was not.
 
@@ -576,7 +592,7 @@ inside a websocket's `payload_metadata` alongside any channel option. The bag on
 its own keeps working unchanged. `http_poll` still requires an entry channel and
 either spelling satisfies it.
 
-### Added: the single-procedure shorthand names its entry channel
+### Added: the single-tasklet shorthand names its entry channel
 
 The shorthand's entry channel used to be the literal string `input`, and that
 string is not private: it is the address an operator types into a plugin option
@@ -585,8 +601,8 @@ operative. An author who needed to choose it had to abandon the shorthand and
 write the whole topology by hand.
 
 All three spellings now take an optional name. Java is an annotation element,
-`@Procedure(id = "…", sink = "…", input = "prices")`. Rust is an attribute key,
-`#[flezha::procedure(id = "…", sink = "…", input = "prices")]`, and an optional
+`@Tasklet(id = "…", sink = "…", input = "prices")`. Rust is an attribute key,
+`#[flezha::tasklet(id = "…", sink = "…", input = "prices")]`, and an optional
 name on the `flezha::operative!` pipeline head,
 `input::<String>("prices") -> … -> plugin::<Vec<u8>>("k")`, written in the same
 position the `plugin` terminator already takes its own name.
@@ -607,8 +623,8 @@ address.
 ### Changed: `sink("x")` names the channel `x`, in every SDK
 
 **Breaking for every SDK.** A sink used to name a plugin attachment point and
-leave the channel named after the producing procedure, so `sink("items_output")`
-shipped frames stamped `channel = "accumulator_procedure"` while its author read
+leave the channel named after the producing tasklet, so `sink("items_output")`
+shipped frames stamped `channel = "accumulator_tasklet"` while its author read
 `items_output` in the source. The string an author writes on a sink is now the
 channel's name, everywhere a channel name appears: wire metadata, journals,
 diagnostics, the address a plugin filter matches, and the name a local-mode
@@ -616,7 +632,7 @@ callback registers under.
 
 `sink()` with no name is available in every SDK and changes nothing: the channel
 keeps the name it would have had without a sink at all — a `named(...)` override
-if the declaration carries one, else the producing procedure's identity. Java
+if the declaration carries one, else the producing tasklet's identity. Java
 takes an overload; Node tells a string from a function in the first position;
 Python, Ruby, PHP and Elixir default the argument; Rust, which has neither
 overloading nor default arguments, spells the four combinations `sink()`,
@@ -641,7 +657,7 @@ disagreement is what this change exists to close.
 **Migrating.** A declaration reading `.named("x").sink("y")` keeps the channel
 name it has today by becoming `.sink("x")` — the sink's own string was read by
 nothing. One reading `.sink("y")` alone renames its channel from the producing
-procedure to `y`; write `.sink()` to keep the old name. The compiler cannot help
+tasklet to `y`; write `.sink()` to keep the old name. The compiler cannot help
 with the second case in any SDK, and a plugin filtering on the old derived name
 stops matching, so sweep every `sink(...)` in a codebase before deploying.
 
@@ -651,14 +667,14 @@ only for a channel whose name actually moves:
 
 - A dead-letter entry outside the effectively-once tier is keyed on
   `channel:sha256(payload)`, where the channel is the one that fed the parking
-  procedure. Rename that channel and a payload parked before the upgrade,
+  tasklet. Rename that channel and a payload parked before the upgrade,
   re-sent or re-parked after it, computes a different entry id and lands as a
   second row instead of deduplicating against the first. Drain the dead-letter
-  queue for the affected procedures before upgrading. Under the tier the key is
-  `entity_key@origin_offset` and carries no channel name, so it is unaffected.
+  queue for the affected tasklets before upgrading. Under the tier the key is
+  `cell_key@origin_offset` and carries no channel name, so it is unaffected.
 - A workflow instance that straddles the upgrade has both names in the staged
   output set its rewind guard reads back from the journal. The guard's verdict
-  is unaffected — it decides by procedure index, and the names are only what
+  is unaffected — it decides by tasklet index, and the names are only what
   the refusal reports — but a refusal spanning the upgrade names channels under
   both spellings.
 - A plugin filtering by channel sees nothing for replayed records under the old
@@ -674,16 +690,16 @@ gone from the Rust stream handle, `codec()` and `codecWith(...)` from the Java
 one. A chain that calls any of them no longer compiles: there is no shim and no
 deprecation window. Delete the calls; nothing replaces them.
 
-The runtime derives the journal codec for every inter-procedure channel now,
+The runtime derives the journal codec for every inter-tasklet channel now,
 which is what every host over the erased poll core already did. In Java the
 methods never did anything at all — the handoff bytes have always come from the
 instance's own Kryo codec, and the declared encoder was written down and never
-read back. In Rust the codec is derived from the producing procedure's declared
+read back. In Rust the codec is derived from the producing tasklet's declared
 `Output` type, at the moment the channel is created.
 
-That makes the Rust `Procedure::Output` and `SimpleProcedure::Output` types
+That makes the Rust `Tasklet::Output` and `SimpleTasklet::Output` types
 **writable to bytes and readable back**, unconditionally, the way `State`
-already was. A procedure whose output has no serde derives stops compiling, with
+already was. A tasklet whose output has no serde derives stops compiling, with
 a message naming the type and the journal rather than serde. The bound cannot be
 narrowed to workflows: whether a class journals is an operator's setting at
 deploy time, not a fact the compiler has. Three types in this repository failed
@@ -692,15 +708,15 @@ fixtures — and nothing else moved. (Two more, in a compile-fail fixture, gaine
 them so that its snapshot stays about the input-type mismatch it is there to
 pin.)
 
-Two registration refusals change with it. `MissingInterProcCodec` is deleted —
+Two registration refusals change with it. `MissingInterTaskCodec` is deleted —
 no channel can be missing a codec now — and `LoopTerminalWithoutCodec` becomes
 `LoopTerminalWithoutHandoff`, which asks the question that is left: a durable
-chained loop seeds each iteration from its terminal procedure's journaled
-handoff, and only an **inter-procedure** channel carries one.
+chained loop seeds each iteration from its terminal tasklet's journaled
+handoff, and only an **inter-tasklet** channel carries one.
 
 **One shape stops registering.** A durable `Chained` loop whose terminal
-procedure's only output is a plugin sink is now refused in every SDK. The
-runtime attaches a journal codec to inter-procedure channels and to nothing
+tasklet's only output is a plugin sink is now refused in every SDK. The
+runtime attaches a journal codec to inter-tasklet channels and to nothing
 else, so that loop shipped an empty handoff at its iteration commit and a
 crash-resumed run read the empty seed as convergence and stopped — truncating
 the run with no error. In Java, Node, Python, Ruby and PHP that was already the
@@ -709,11 +725,11 @@ worked if the author had written `.codec()` on that channel.
 
 Two ways out. Take the sink off the terminal's own channel — a channel with a
 producer and no consumer is legal, and is exactly what a retained loop output
-already is — or declare `PerInput`. Simply wiring another procedure behind the
-sink does not help by itself: that procedure becomes the new terminal and the
+already is — or declare `PerInput`. Simply wiring another tasklet behind the
+sink does not help by itself: that tasklet becomes the new terminal and the
 same rule applies to it.
 
-Nothing else about the journal moves: the codec still rides an inter-procedure
+Nothing else about the journal moves: the codec still rides an inter-tasklet
 channel and no other kind, and the same value produces the same postcard bytes,
 so a journal written before this change re-seeds after it. There is no wire
 change. The Node, Python, Ruby, PHP and Elixir SDKs never offered the method and
@@ -753,7 +769,7 @@ an operative that has never persisted a change is never watched at all, since
 the sweep only considers a class whose `last_persisted_seq` has moved; and only
 stream operatives are swept, because a workflow is quiet between stages by
 design and a checkpoint-acknowledging class is quiet between checkpoints. If you need
-per-channel silence, you now have to observe it in your own procedure, from the
+per-channel silence, you now have to observe it in your own tasklet, from the
 frames it receives.
 
 Plugin providers keep their own silence handling: the websocket's
@@ -763,7 +779,7 @@ Plugin providers keep their own silence handling: the websocket's
 
 An input frame whose `channel` metadata names something that is not one of the
 operative's entry channels — a name it declares nowhere, or one that is really a
-sink or an inter-procedure channel — used to be thrown away with one line on the
+sink or an inter-tasklet channel — used to be thrown away with one line on the
 runner's stderr, and, on the Elixir SDK, delivered to whichever entry channel
 happened to be first. It is now parked in the dead-letter store with its payload
 bytes, under the name it asked for, and an error naming the entry channels the
@@ -792,7 +808,7 @@ what `flz dlq replay` re-injects on.
 The dead-letter store also stops taking `.`, `..` or an empty identity component
 as a directory move: each becomes underscores. No parked entry written by a
 released version is affected, because until now every one of those components was
-an author-declared channel or procedure name.
+an author-declared channel or tasklet name.
 
 The park is only as good as the transport under it, and that has not changed:
 with no controller transport installed the core logs the payload and drops it,
@@ -911,14 +927,14 @@ already bound in that round. A UDS or QUIC Elixir runner refused part-way
 through the same round now closes the streams it had opened too, instead of
 leaving them open.
 
-### Fixed: the Elixir SDK's schema refusal names the floor the Procedure declared
+### Fixed: the Elixir SDK's schema refusal names the floor the Tasklet declared
 
-An Elixir Procedure whose `min_readable_schema_version/0` is above its own
+An Elixir Tasklet whose `min_readable_schema_version/0` is above its own
 `schema_version/0` reads only that version, and a record below it was refused
 naming the version instead of the declared floor. It now names the declared
-floor, as Rust and Java already did: a Procedure at version 2 declaring floor 5
+floor, as Rust and Java already did: a Tasklet at version 2 declaring floor 5
 refuses a record stamped 1 with `record stamped schema_version 1 is below the
-readable floor 5 the running procedure declares`. What is refused is unchanged.
+readable floor 5 the running tasklet declares`. What is refused is unchanged.
 
 ### Removed: the merge-gated bench no longer fails on a throughput number
 
@@ -1009,12 +1025,12 @@ bytes.
 
 ### Added: a `spawner` role, so a namespace can spawn workflows without the rest of `app`
 
-With authorization on, a procedure's `ctx.spawn_workflow` needs the runner's
+With authorization on, a tasklet's `ctx.spawn_workflow` needs the runner's
 `runner@<namespace>` principal to hold the start and the delivery a spawn performs.
 Until now the only role that held them was `app`, which also lets the namespace's
 application code stop operatives and enable or disable plugins. A `spawner` binding lets
 the runner's own connection start and send to operatives in its namespace, through a
-procedure's spawn and through `Operative.start` and `Operative.send` on the SDK's
+tasklet's spawn and through `Operative.start` and `Operative.send` on the SDK's
 administration surface, and nothing else: no stop, no plugins, no schedules, no other
 namespace and no token:
 
@@ -1055,7 +1071,7 @@ a missing file, is still reported as `could not import handler module ...` namin
 module, with the original error chained.
 
 The one refusal the Node, Python, Ruby and PHP builders raise under a name from the
-core's vocabulary, `NodeIdentityCollision` for two different procedures claiming one
+core's vocabulary, `NodeIdentityCollision` for two different tasklets claiming one
 node name, carried its name only in the error's `refusals` list. Its message now reads the way the core's
 refusals do, for example `dup_node: plain: topology rejected [NodeIdentityCollision]:`
 followed by the sentence on its own line, so a Ruby or PHP runner that dies on it
@@ -1105,7 +1121,7 @@ the partition identity the start had put there. Input forwarded to the group wen
 base id, and a plain start could take a running group's id. A replay now keeps every key
 of the row it replaces. The fix is in process_hub 0.7.1, which this release needs.
 
-### Changed: a spawn a procedure requests is judged like any other start
+### Changed: a spawn a tasklet requests is judged like any other start
 
 `ctx.spawn_workflow` started a workflow instance, or fed a running one, without asking
 whether the runner's namespace was allowed to, and left no audit record of who asked.
@@ -1115,10 +1131,10 @@ way `flz operative start` is and writes the same `start` record, naming
 `flz operative send` is but recorded only when refused, because it happens once per
 event.
 
-With authorization on, the default in a release, a namespace whose procedures spawn
+With authorization on, the default in a release, a namespace whose tasklets spawn
 workflows now needs `flz role bind runner@<namespace> spawner <namespace>` (or `app`,
 which adds stop and plugin enable and disable). Until it has one, every start or delivery
-a procedure asks for resolves `Refused`, with the refusal as its reason. With
+a tasklet asks for resolves `Refused`, with the refusal as its reason. With
 authorization disabled nothing is refused, and a start is still recorded, as every
 other start is.
 
@@ -1408,7 +1424,7 @@ Whole durable files also land one way. Each one declares how it is written, what
 makes its bytes durable and the name it wears while it is being written, and one
 install performs that ceremony; the scanners that must ignore a file being
 written derive what to skip from those declarations instead of listing suffixes,
-so a new durable file cannot show up as a phantom Entity because a scanner was
+so a new durable file cannot show up as a phantom Cell because a scanner was
 not edited.
 
 An Elixir-hosted runner now reports how much queued input a restore threw away,
@@ -1584,7 +1600,7 @@ is what every SDK's conformance run is measured against, so a new refusal is one
 variant and one row rather than an edit to seven builders.
 
 The record changed shape: `channel.consumers` became `channel.chains`,
-`class.ack_granularity` became the raw `class.checkpoint_ack`, and procedures
+`class.ack_granularity` became the raw `class.checkpoint_ack`, and tasklets
 carry `change_is_nochange`. Any checkpoint knob now implies the checkpoint
 granularity, stated once in the core instead of once per SDK.
 
@@ -1613,9 +1629,9 @@ declared entry channel and enters where a frame off the wire enters, so the
 channel's decode, the parse ladder and admission all run; feeding blocks while
 the consumer's mailbox is full, exactly as the deployed entry path does.
 
-What runs is the deployed machinery: edge transforms and keying, one Entity per
+What runs is the deployed machinery: edge transforms and keying, one Cell per
 resolved key with its own mailbox and overflow policy, the retry ladder, and
-inter-procedure delivery performed by the runtime through the same routing seam
+inter-tasklet delivery performed by the runtime through the same routing seam
 live delivery and replay travel. Local mode installs a different outbound sink
 rather than branching anything: a new `FlezhaStream::Local` variant takes what
 production writes and delivers it in process, and a null durable sink discards
@@ -1660,9 +1676,9 @@ verdict-state transition.
 
 ### Fixed — three frames the Elixir SDK wrote to nothing are now held and replayed
 
-An Entity evicted while no secondary stream was bound lost its
-`delete_entity_state`, so the controller kept state for an Entity the runner had
-already destroyed. The same eviction lost every change record that Entity was
+A Cell evicted while no secondary stream was bound lost its
+`delete_cell_state`, so the controller kept state for a Cell the runner had
+already destroyed. The same eviction lost every change record that Cell was
 still holding, while the output of the very dispatch that produced them was
 replayed by the Operative — the controller saw a result whose cause it never
 heard about. And the workflow driver's two writes relayed through the runner, a
@@ -1672,14 +1688,14 @@ the write was refused: one behind a log line, one behind a discarded verdict.
 All three are now held and replayed on the next bound stream, on the terms every
 hold on this wire already used — bounded by `FLEZHA_RECONNECT_RING_CAPACITY`,
 oldest dropped past that and counted as a drop-oldest shed. Because a hold that
-dies with the process that owned it is not a hold, an Entity that stops in an
+dies with the process that owned it is not a hold, a Cell that stops in an
 orderly way hands what it could not ship to its Operative, which outlives it and
 replays those frames first: ahead of the outputs of the same dispatch, and ahead
-of anything a replacement Entity for the same key writes.
+of anything a replacement Cell for the same key writes.
 
 This is the Elixir SDK only. It is its own core and inherits nothing from the
 shared `flz_core`, where the workflow writes were already held; the one matching
-hole there, an evicted Entity's delete, is recorded for a follow-up.
+hole there, an evicted Cell's delete, is recorded for a follow-up.
 
 ### Fixed — the Kubernetes readiness probe stops reporting a booting controller ready
 
@@ -1725,7 +1741,7 @@ behind it: the bytes are left untouched, the process that owns the file stays
 alive and refuses to serve rather than being restarted into the same file, and
 one error line plus one `[:flezha, :state, :record_frame, :refused]` telemetry
 event name the file, the last seq that verified and the byte offset. The
-Entity's restore is refused the same way, so the operative is left unbound
+Cell's restore is refused the same way, so the operative is left unbound
 rather than binding on a partial history — the behaviour a refused restore
 already had. Recovery stays an operator decision with the bytes still in hand.
 
@@ -1899,10 +1915,10 @@ runner's value once per runner, summed across runners; a per-channel counter
   convergence stall classifier both read it, and which slots are runner-global
   is derived from the layout rather than listed.
 
-### Fixed — an Elixir Entity holds a change record the wire refused (`hold-a-failed-record-in-the-elixir-sdk`)
+### Fixed — an Elixir Cell holds a change record the wire refused (`hold-a-failed-record-in-the-elixir-sdk`)
 
 The Elixir SDK already held a plugin-bound output no stream would take and
-replayed it on the next bound one. The Entity's change records were still lost
+replayed it on the next bound one. The Cell's change records were still lost
 outright, on both arms — the write refused, and no stream bound at all — so
 after a reconnect the controller could receive an output with no record of the
 change that produced it, and nothing counted the loss.
@@ -1913,7 +1929,7 @@ change that produced it, and nothing counted the loss.
   oldest past it, and counts the shed as `drops_oldest` — the same terms and the
   same knob the output hold uses. That counter now moves for records too.
 - **A dispatch's records still reach the wire before its output frame**, on a
-  replay as on a live stream: the Operative rebinds every Entity and waits before
+  replay as on a live stream: the Operative rebinds every Cell and waits before
   replaying its own outputs.
 - **The credit window is unchanged**: a frame is debited when it is written, not
   when it is held, so a held record does not consume the window and a replay
@@ -1952,12 +1968,12 @@ and per-version free-threaded wheels from `cp314t` (PyO3 refuses the
 free-threaded build below 3.14). Both tiers build from one source with one API,
 and the runner names the tier it is running in its startup line.
 
-The authoring surface is decorators — `@flezha.procedure`, `@flezha.state`,
+The authoring surface is decorators — `@flezha.tasklet`, `@flezha.state`,
 `@flezha.stream_operative`, `@flezha.workflow_operative` — over a handler that
 is a plain function when it is a transform and a class when it has hooks. **Type
 hints are the declaration**: the input, output, state and change types all come
 from the annotations, and the package ships `py.typed` with generic `Edge[T]` /
-`Procedure[I, O]`, so a wrong edge is a pyright error before it is a
+`Tasklet[I, O]`, so a wrong edge is a pyright error before it is a
 registration refusal. That pairing is what Python has in place of Rust's
 `tests/ui` compile-fail pins, and both halves are pinned — by a fixture that
 must fail type-checking and by a refusal that names the handler and the defect.
@@ -1984,9 +2000,9 @@ core call after a fork, naming the rule.
 
 `test/apps/python_runner/` claims seven of the eight capability families every
 other veneer SDK defers — the persistence family, the effectively-once tier,
-timers, correction windows, keyed channels, dynamic-entity eviction and schema
+timers, correction windows, keyed channels, dynamic-cell eviction and schema
 evolution — each proved by the live suite over UDS and QUIC.
-Claiming `keyed_channels` required minting the `flz.entity` / `flz.seq` /
+Claiming `keyed_channels` required minting the `flz.cell` / `flz.seq` /
 `flz.key` identity stamps in the SDK, which Java does and Node, Ruby and PHP do
 not. `workflow` is deferred by name to `sdk-durable-fixture-parity`.
 `mix bench.roundtrip --runtime python` lands with the change.
@@ -2004,9 +2020,9 @@ grows with every release; `ext-ffi` needs one library per platform — the five
 that already ship for Java.
 
 `composer require flezha/sdk` pulls nothing: `php >= 8.4` and `ext-ffi`, and
-that is the whole requirement. The authoring surface is a `#[Proc]` attribute
+that is the whole requirement. The authoring surface is a `#[Task]` attribute
 for the scalar declarations and a fluent `channels()` builder for the graph,
-with the optional hooks read from the methods a procedure **overrides** so a
+with the optional hooks read from the methods a tasklet **overrides** so a
 declaration and its implementation cannot disagree. Durable `State` and
 `Change` serialize as JSON through author-declared `toArray()` / `fromArray()`
 — never PHP's `serialize()`, whose embedded class names and mangled property
@@ -2043,13 +2059,13 @@ the C ABI and no FFI host ever had it. Measured with the hook claimed by a
 no-op, exactly the state a C-ABI host leaves it in: **0 of 20 payloads
 delivered, wedged 15 s** on a one-worker host.
 
-A push a producing Entity cannot deliver is now appended to that Entity's
+A push a producing Cell cannot deliver is now appended to that Cell's
 **push holdback**, its handout gates stay held until the holdback drains, and
 the producing thread returns immediately — the state
-`PollCore::retry_after_failure` already put an entity in during a backoff
+`PollCore::retry_after_failure` already put a cell in during a backoff
 window, re-armed by the consumer's own wait list. Ordering is preserved by
-construction: a gated Entity is handed no further activation, and a push made
-while its holdback is non-empty appends rather than attempting. While an Entity
+construction: a gated Cell is handed no further activation, and a push made
+while its holdback is non-empty appends rather than attempting. While a Cell
 owes a push the flusher holds its durable records, so a consumed offset can
 never become durable ahead of an edge output derived from it.
 
@@ -2072,7 +2088,7 @@ SDKs; a gated producer holds no handout, so `inflight` is blind to it.
 not a fourth policy: nothing an author declared changes either way. With the
 flag off the producer parks as before, minus the inline serve, and the
 starvation supervisor is the rescue. The entry-path transport reader keeps
-parking in both: it has no producing Entity, and its stalling is what carries
+parking in both: it has no producing Cell, and its stalling is what carries
 ingress backpressure to the controller.
 
 **In plain terms, for whoever meets this at 3am.** A `DropNothing` channel
@@ -2081,7 +2097,7 @@ change moves *what* waits. Flag off (the default): the pushing thread parks
 until room appears, and if that thread was the only one that could have run the
 consumer, nothing ever frees the slot. Flag on: the value goes onto a
 per-producer holdback queue, the thread returns immediately, and the producing
-Entity is handed no further work until the queue drains. Nothing is discarded
+Cell is handed no further work until the queue drains. Nothing is discarded
 and order is preserved either way. **The default is off; nothing changes until
 someone sets it.** Turn it on where a thread cannot be spared — a PHP
 `SyncExecutor`, a Node host on the event loop, where the park is not a risk but
@@ -2155,7 +2171,7 @@ until every consumer's push has landed.
 ### Added — every overflow outcome is observable (`close-overflow-silent-failures`)
 
 `drops_newest_total`, `drops_oldest_total` and `pushes_blocked_total` were
-written by the kernel and read by nothing: `EntitySlot::counters()` had zero
+written by the kernel and read by nothing: `CellSlot::counters()` had zero
 production callers, so no heartbeat, export or log ever carried a drop.
 
 - **Three counters ride the data heartbeat.** Process-wide aggregates beside
@@ -2201,7 +2217,7 @@ formerly spelled `Block` is now `DropNothing` — searching for `Block`,
 - **Every surface moves together**: Rust `OverflowPolicy::DropNothing`, Java
   `OverflowPolicy.DROP_NOTHING`, Elixir `:drop_nothing`, the `HostClassDecl`
   wire literal `"drop_nothing"`, and `on_full = "drop_nothing"` /
-  `onFull = "drop_nothing"` in the procedure attribute. An unrecognised
+  `onFull = "drop_nothing"` in the tasklet attribute. An unrecognised
   spelling is refused at declaration; there is no compatibility alias.
 - **The parking mechanism keeps its own names.** `block_parker`,
   `BLOCK_PARK_TIMEOUT` and `pushes_blocked_total` name the entry-side park,
@@ -2223,7 +2239,7 @@ every health surface green.
   `.on_full(OverflowPolicy::DropNewest)` / `.onFull(OverflowPolicy.DROP_NEWEST)`
   — and the loss is a stated intent at the declaration site. The cost: a
   blocked entry parks the shared wire reader, so siblings on the same
-  connection wait with it. Inter-procedure channels already blocked.
+  connection wait with it. Inter-tasklet channels already blocked.
 - **The Kafka producer defaults to `:queue_overflow = :drop_nothing`** for every
   record, not only delivery-guaranteed ones. `:drop_oldest` / `:drop_newest`
   remain available and must be chosen. `Producer.stats/1` now reports
@@ -2231,7 +2247,7 @@ every health surface green.
   telemetry.
 - **A cold-takeover baseline pull retries** on the resync interval
   (`:wal_resync_retry_interval_ms`, default 1 s) instead of latching: a pull
-  that failed to dispatch no longer strands the Entity in permanent shed.
+  that failed to dispatch no longer strands the Cell in permanent shed.
 - **Removed** the producer's inert `:partitioner` option and the documented
   but unimplemented `kafka_msg_partition` metadata override. One plugin
   instance serves one `(topic, partition)`.
@@ -2255,7 +2271,7 @@ prints the two valid moves; dev and test are unchanged.
 - **The tier now ships the platform stores too.** A controller that dies with
   its disk used to lose its parked failures and its security state even with the
   tier on. Dead-letter parked records ship as one claim-fenced artifact per
-  procedure — on every park, drop, replay-mark and retention drop, so a resolved
+  tasklet — on every park, drop, replay-mark and retention drop, so a resolved
   entry disappears from the backend rather than being resurrected — and hydrate
   with the operative that owns them. The control-plane stores (authz roles,
   tokens, namespaces, quota counters and the durable enabled flag; the schedule
@@ -2352,17 +2368,17 @@ Operator runbook (cookie, certs, k8s manifests, break-glass):
 boot, claim the bootstrap, issue tokens; rollback is
 `FLEZHA_AUTHZ_ENABLED=false` + the previous release.
 
-### Added — tiered procedure authoring: defaults you can always override but never must (`add-tiered-procedure-authoring`)
+### Added — tiered tasklet authoring: defaults you can always override but never must (`add-tiered-tasklet-authoring`)
 
-Procedure authoring had two tiers with a gap between them. The sugar
-(`#[flezha::procedure]` / `@Procedure`) inferred everything from the `run`
-signature but could not express multi-emit, so the most common real procedures —
+Tasklet authoring had two tiers with a gap between them. The sugar
+(`#[flezha::tasklet]` / `@Tasklet`) inferred everything from the `run`
+signature but could not express multi-emit, so the most common real tasklets —
 an OHLC aggregator closing one candle and opening the next, an SMA emitting per
 window — fell off the sugar cliff straight into full ceremony. Three changes
 close it, each tier a strict superset of the one above and explicit always
 winning:
 
-**Sugar covers multi-emit.** A sugared `run` may take a trailing procedure
+**Sugar covers multi-emit.** A sugared `run` may take a trailing tasklet
 context and return unit; the body then performs any number of emits, and
 `emits = Type` (Rust) / `emits = Type.class` (Java) declares the output type the
 return value no longer can. The expansion stays exactly the code a hand-written
@@ -2373,17 +2389,17 @@ are each refused by name rather than silently accepted.
 **Java stops charging for erasure.** `inputType()`, `outputType()`,
 `changeType()`, `clockType()` and `configType()` now default to the type
 arguments read off the implementing class's generic supertype chain — a direct
-`implements Procedure<…>`, or a concrete subclass of a generic intermediate
+`implements Tasklet<…>`, or a concrete subclass of a generic intermediate
 class. `kryoTypes()` defaults to the resolved Change and State. That is ~24
-lines of pure type-erasure tax removed from every hand-written Java procedure.
+lines of pure type-erasure tax removed from every hand-written Java tasklet.
 An argument still generic at the concrete class is **never guessed**:
 `defineStream` / `defineWorkflow` fails naming the class and the parameter, and
 nothing is registered — a startup error, not a dispatch error far from its cause.
 
-**Rust gets a simplified tier.** `SimpleProcedure` declares only `Input`,
+**Rust gets a simplified tier.** `SimpleTasklet` declares only `Input`,
 `Output`, `State` plus `name` / `init_state` / `run`; a blanket impl lifts it to
-`Procedure` with `Clock = WallClock`, `Config = ()` and the state's derived
-change type. Implementing `Procedure` directly stays fully supported and is the
+`Tasklet` with `Clock = WallClock`, `Config = ()` and the state's derived
+change type. Implementing `Tasklet` directly stays fully supported and is the
 way to declare anything non-default; a type cannot sit in both tiers, because
 the impls overlap and the compiler refuses it.
 
@@ -2399,7 +2415,7 @@ traffic stream receives each distinct document exactly once, on that key's own
 next traffic item. Rust returns a stream of `(key, document)` pairs, Java a
 stream of `RoutedDocument<D>`; the consumer keys by that key.
 
-It exists because a keyed procedure cannot receive a broadcast — every keying
+It exists because a keyed tasklet cannot receive a broadcast — every keying
 declaration is total, and inside a partitioned member the computed key is
 admitted against that member's key-group range — so this shape was being
 re-derived by every application that hit the wall. The subtle part is the one
@@ -2412,13 +2428,13 @@ Deliver-on-own-traffic makes over-delivery impossible by construction.
 The price, documented and deliberate: **one tick of latency per key** — a key
 learns of a new document on its next traffic item, and a key whose traffic has
 stopped is never delivered to. A full broadcast primitive (retained documents,
-delivery to late-born Entities, rescale-time replay) was considered and
+delivery to late-born Cells, rescale-time replay) was considered and
 rejected: it would add machinery to exactly the recovery paths with the worst
 incident history, and the deliver-on-own-traffic construction covers those cases
 without it.
 
 Sugar, not a runtime feature: the block expands to a merge into one packaged
-single-entity procedure whose `{document, version, delivered}` state rides the
+single-cell tasklet whose `{document, version, delivered}` state rides the
 standard change journal and passes the replay-determinism harness. No new
 runtime semantics, no wire change, no new replay path. A document equal to the
 retained one is inert (so a document source's re-poll after a reconnect is
@@ -2427,9 +2443,9 @@ delivery again. The document is never parsed — parsing stays with the consumer
 
 Java-side notes: the document `Class` token is required because the router
 retains the document in journaled state and only the wiring knows its type; the
-Kryo state codec is now built from the procedure *descriptor*'s type list (which
+Kryo state codec is now built from the tasklet *descriptor*'s type list (which
 starts as a copy of `kryoTypes()`, so nothing else changes) rather than from a
-freshly instantiated Procedure, which is what lets the wiring register that
+freshly instantiated Tasklet, which is what lets the wiring register that
 type.
 
 ### BREAKING — one plugin-sink method: `sink` + `sealed` (`unify-plugin-sink-api`)
@@ -2472,7 +2488,7 @@ as before.
     by design, so "uploaded but not yet referenced" — a state every ship passes
     through — was indistinguishable from an orphan. The victim then wrote a
     manifest naming a deleted blob, never re-uploaded it (`from =
-    shipped_through + 1`), and at recovery the Entity came back **empty** while
+    shipped_through + 1`), and at recovery the Cell came back **empty** while
     hydration returned `:ok`. Collection is now scoped to the references a node
     holds local state for AND refuses anything younger than `gc_grace_ms`
     (default 1 h); artifacts of a reference no node holds any more are still
@@ -2480,7 +2496,7 @@ as before.
     leak. Neither property alone is the safety argument.
   - **Blob names were position-addressed, so two writers overwrote each other's
     bytes.** An ordinary migration leaves the source node holding a full copy
-    (`pull_operative/3` copies; only `move_entity/3` deletes), so two nodes
+    (`pull_operative/3` copies; only `move_cell/3` deletes), so two nodes
     legitimately held one reference at the same WAL epoch and wrote
     `r-<epoch>-<from>-<to>` with different records. Names now carry the content
     hash, as the registry cspec already did.
@@ -2498,7 +2514,7 @@ as before.
     erase the record of which operatives exist. The key now carries the writer;
     hydration picks the newest replica.
   - **`commit_sync/1` conflated operative id and class**, so a class declaring
-    RPO 0 could have its barrier answer `:ok` having shipped neither the Entity
+    RPO 0 could have its barrier answer `:ok` having shipped neither the Cell
     WAL nor the input log, and `sync_class?/1` never armed the gate at all.
 
   Also: a manifest naming an artifact the backend does not hold is now an
@@ -2582,9 +2598,9 @@ as before.
 
 ### Changed
 
-- **A keyed channel's plain emit carries the Entity's own key**
-  (`default-emit-to-entity-key`). In a keyed Entity — the OHLC entity for
-  `BTC/USD`, the SMA entity for `BTC/USD` — the natural key of essentially
+- **A keyed channel's plain emit carries the Cell's own key**
+  (`default-emit-to-cell-key`). In a keyed Cell — the OHLC cell for
+  `BTC/USD`, the SMA cell for `BTC/USD` — the natural key of essentially
   every output *is* the key the input routed by, and the SDK already holds
   it. `ctx.emit(value)` / `emit_with_meta` on a `.keyed()` channel (Java:
   `emit` / `emitWithMeta`) now stamp `flz.key` with that key instead of
@@ -2593,11 +2609,11 @@ as before.
   never a local error: it ships as the record key and, inside a partitioned
   group, hashes into an arbitrary key-group and parks at the downstream
   partition guard. `emit_keyed(key, value)` is unchanged and remains the way
-  to emit under a key that differs from the Entity's; both spellings share
+  to emit under a key that differs from the Cell's; both spellings share
   one stamping path. Both SDKs also expose the key directly
-  (`ctx.entity_key()` / `ctx.entityKey()`). Unchanged refusals: a
-  single-entity Procedure's key-less emit on a keyed channel (there is no
-  Entity key to default to) and `emit_keyed` on a channel not declared
+  (`ctx.cell_key()` / `ctx.cellKey()`). Unchanged refusals: a
+  single-cell Tasklet's key-less emit on a keyed channel (there is no
+  Cell key to default to) and `emit_keyed` on a channel not declared
   `.keyed()`. Backwards compatible — every currently-legal call keeps its
   behaviour; one error case became the safe default.
 
@@ -2666,7 +2682,7 @@ as before.
   off.
 
   Start authority is one claim: `OperativeManager.start_operative/3` now mints
-  the `:duplicate` verdict itself (the CLI, schedules, procedure-requested
+  the `:duplicate` verdict itself (the CLI, schedules, tasklet-requested
   spawns and the ProcessHub orphan reconcile all resolve through the same
   registry check), and a start that loses it verifies the winner is live and
   does nothing to it. Previously the loser took the generic failure path, which
@@ -2687,13 +2703,13 @@ as before.
   onto a second, core-owned thread pool, and a Java step cost TWO threads: one
   of those pool threads submitted the crossing and then blocked on the reply
   while a Java thread ran the code. Both are gone. The driver now hands each
-  entity partition out as a **step activation** on the poll seam's direct
+  cell partition out as a **step activation** on the poll seam's direct
   queue — a typed class runs it on its poll workers, a C-ABI host receives the
   same ordinary `Work` (or `CompensateRun`) activation it already knew — and
   collects the answers at the stage barrier it already owned. Every step
   therefore costs exactly one thread, no core-owned thread runs or waits on
   user code, and workflow work inherits the adaptive pool / virtual threads
-  from `sdk-owned-concurrency`. The entity-retry ladder moves with it: a step
+  from `sdk-owned-concurrency`. The cell-retry ladder moves with it: a step
   runs ONE attempt and releases its worker, and the driver times the
   re-submission at its barrier, so a backoff window no longer occupies a
   worker (policy, classification, exhaustion, telemetry and stop
@@ -2722,15 +2738,15 @@ as before.
 
 - **Neither a retry backoff nor a processing-time timer holds a thread**
   (`sdk-deferred-wake`). One deferred-wake list inside the poll core now
-  answers "do something with this entity at time T", serviced by the threads
+  answers "do something with this cell at time T", serviced by the threads
   already waiting in `poll` — no thread of its own. A retryable failure
   records its backoff and returns the completing worker immediately (it used
-  to sleep there, so a dependency outage that failed every entity could put
+  to sleep there, so a dependency outage that failed every cell could put
   every worker to sleep at once, and the sleep also delayed shutdown); the
-  entity's exclusivity gates stay held across the window, so ordering and the
+  cell's exclusivity gates stay held across the window, so ordering and the
   head-of-line holdback are unchanged. The per-Operative timer wheel thread is
-  deleted: an Operative registering timers across any number of Entities now
-  costs no thread. Firing semantics are unchanged — onto the Entity's mailbox,
+  deleted: an Operative registering timers across any number of Cells now
+  costs no thread. Firing semantics are unchanged — onto the Cell's mailbox,
   serialized against `run`, ascending scheduled order, `fired_at` still the
   scheduled timestamp — except that a deadline passing while every worker is
   inside user code is promoted when the first one re-polls. Both SDKs get this
@@ -2739,16 +2755,16 @@ as before.
 ### Added
 
 - **The authoring sugar can now feed a `.keyed()` channel.** A keyed output
-  channel accepts only `emit_keyed`, but `#[flezha::procedure]` / `@Procedure`
-  always generated a plain `emit` — so every procedure with a keyed sink had to
-  be hand-written as a full `Procedure` impl, and a partitioned operative wants
+  channel accepts only `emit_keyed`, but `#[flezha::tasklet]` / `@Tasklet`
+  always generated a plain `emit` — so every tasklet with a keyed sink had to
+  be hand-written as a full `Tasklet` impl, and a partitioned operative wants
   keyed sinks on *all* of its outputs. Both SDKs gain a `key` opt-in naming a
   function from the output to its natural key: Rust
-  `#[flezha::procedure(key = my_fn)]` with `fn(&Output) -> String`, Java
-  `@Procedure(key = "myMethod")` with `static String myMethod(Output)`. The
+  `#[flezha::tasklet(key = my_fn)]` with `fn(&Output) -> String`, Java
+  `@Tasklet(key = "myMethod")` with `static String myMethod(Output)`. The
   generated emit then carries the key and the runtime stamps `flz.key`.
-  Declaring `key` on a procedure with no output is a compile-time /
-  annotation-processing error. Nothing changes for a procedure that does not
+  Declaring `key` on a tasklet with no output is a compile-time /
+  annotation-processing error. Nothing changes for a tasklet that does not
   declare it.
 
 - **The testnet WS server speaks Kraken-v2 subscriptions.** It understood only
@@ -2769,7 +2785,7 @@ as before.
   runner, so a single logical stream could never use more than one machine —
   the only way past that box was hand-sharding into N unrelated operatives with
   hand-split source configs, no routing-correctness check, no unified view, and
-  no way to change N later without orphaning entity state.
+  no way to change N later without orphaning cell state.
 
   `flz operative start ohlc candles --partitions 3` materializes one logical
   operative as three **ordinary** instances (`ohlc#p0` … `ohlc#p2`), each with
@@ -2798,17 +2814,17 @@ as before.
     its key group, the owning partition and the contract, before any state for
     that key exists. Additive `AddOperative` fields (`partition_index`,
     `partition_count`, `key_group_from`, `key_group_to`) carry the range; a
-    class with no keyed entry-fed procedure is refused with
-    `PartitionsWithoutKeyedProcedure`.
+    class with no keyed entry-fed tasklet is refused with
+    `PartitionsWithoutKeyedTasklet`.
   - **`flz operative scale <group> M`** rescales under an explicit quiesce
-    (sources off, input logs consumed, DLQs empty), moves every Entity whose
+    (sources off, input logs consumed, DLQs empty), moves every Cell whose
     key group changes owner (rename on one controller, `WalTransfer` pull
     across controllers), then starts M members with the recomputed ranges. A
     refusal changes nothing; a crash mid-move is re-runnable.
   - **CLI**: `flz operative list` shows one row per group with per-member
     placement, `info` validates that all 256 key groups are owned exactly once
     and renders gaps/overlaps as warnings, `stop <group>` fans out, and
-    `flz state get <group>/<procedure>/<key>` resolves the owning member by
+    `flz state get <group>/<tasklet>/<key>` resolves the owning member by
     hash. `flz plugin enable/disable <group>` fans out with partition opts
     injected and `#pK`-suffixed plugin ids.
 
@@ -2818,8 +2834,8 @@ as before.
 
 - **A controller can now survive dying with its disk**
   (`add-remote-durability-tier`). Every durable byte flezha owned lived on the
-  owning controller's local disk — Entity WALs and snapshots, workflow
-  proc-journals, durable inboxes, the effectively-once input log, and the
+  owning controller's local disk — Cell WALs and snapshots, workflow
+  task-journals, durable inboxes, the effectively-once input log, and the
   ProcessHub registry cspec that records which operatives exist at all — and
   `WalTransfer` moves a subset only at migration time. Losing the disk lost all
   of it. The new `Flezha.State.DurabilityTier` ships those as immutable
@@ -2834,8 +2850,8 @@ as before.
   WAL semantics.
 
   Shipping reuses the boundaries that already existed — compaction completion,
-  checkpoint-interval close, workflow `ProcCommit`/`IterCommit` — plus one
-  backstop sweep (`ship_interval_ms`, default 30 s) for entities that reach
+  checkpoint-interval close, workflow `TaskCommit`/`IterCommit` — plus one
+  backstop sweep (`ship_interval_ms`, default 30 s) for cells that reach
   none of them. A shipped WAL artifact is a **seq-addressed record bundle** read
   at ship time, never a file byte range, because compaction and correction
   rewrite the live WAL in place. The per-reference manifest is written **last**
@@ -2881,9 +2897,9 @@ as before.
   schema-negotiated at context creation). The core's host layer grew from
   v1 to full capability for this: the five command activation kinds
   (restore fold, snapshot, live read, apply-state, migration serialize),
-  the prepare crossing for keys/event times, static/dynamic entity modes,
-  producer-evaluated inter-procedure edges, the effectively-once and
-  checkpoint ack-granularity tiers, late-input correction, per-entity
+  the prepare crossing for keys/event times, static/dynamic cell modes,
+  producer-evaluated inter-tasklet edges, the effectively-once and
+  checkpoint ack-granularity tiers, late-input correction, per-cell
   timers, and workflow lifecycles (run-sugar sessions + structured chains)
   — all reachable through the C ABI and pinned by the ABI scenario suite.
   Activation schema bumped to v2 (prepare answers, `change_seq`,
@@ -2939,35 +2955,35 @@ as before.
   `subscription_url` there is no poll timer, no applied set, and no subscription
   state on the per-frame path. See `docs/plugins/websocket_subscription.md`.
 
-- **An Entity's current value is readable without a serving tier**
-  (`entity-state-live-query`). `flz state get <operative/procedure[/entity_key]>`
-  returns one live Entity's in-memory state as JSON together with the
+- **A Cell's current value is readable without a serving tier**
+  (`cell-state-live-query`). `flz state get <operative/tasklet[/cell_key]>`
+  returns one live Cell's in-memory state as JSON together with the
   `change_seq` it was serialized at. Until now the only read was
   `flz state at`, which serves the controller's WAL at a point in the *past*, so
   anything needing the current value had to wait for it to reach a sink and read
   that copy — a second source of truth, always behind, free to diverge.
 
-  The value is the freshest one there is: the SDK serializes under the Entity's
+  The value is the freshest one there is: the SDK serializes under the Cell's
   state lock and does **not** drain pending changes, so the reply includes
   changes applied but not yet flushed, and is therefore at or ahead of what is
   durable. The seq is how a caller tells versions apart and sees how far ahead of
   durability it is. A read triggers no compaction, snapshot or WAL truncation.
 
-  An Entity that is not held in memory is **refused naming why** — idle-evicted,
-  instance suspended, no Entity by that key, or Operative unbound — and points at
+  A Cell that is not held in memory is **refused naming why** — idle-evicted,
+  instance suspended, no Cell by that key, or Operative unbound — and points at
   `flz state at` as the durable path. There is deliberately no durable fallback:
   dynamic-mode eviction is destructive (the recreate cold-starts), the controller
   cannot decode the SDK's WAL bytes, and a fallback would mean binding a runner
-  and restoring an Entity as a side effect of a read. `entity_evicted` and
-  `entity_not_found` are distinguished by a bounded per-SDK trace of what the
+  and restoring a Cell as a side effect of a read. `cell_evicted` and
+  `cell_not_found` are distinguished by a bounded per-SDK trace of what the
   reaper evicted, since eviction otherwise leaves nothing behind.
 
   The reply is bounded by the existing `:wal_high_watermark_bytes`; over it the
   read is refused with the byte count and the selector that would narrow it. No
-  new configuration key, no new control command, no new payload-id: `EntityState`
+  new configuration key, no new control command, no new payload-id: `CellState`
   gained two optional selector fields, and an unset selector encodes
   byte-identically, so the migration/handover caller is untouched. Dynamic-mode
-  Entities are covered on both runtimes, closing a gap in the serialization
+  Cells are covered on both runtimes, closing a gap in the serialization
   requirement. Authorized as `:"state.get"` (viewer). Docs:
   `docs/internals/state_persistence.md`; examples:
   `sdk/rust/examples/live_state_read.rs`, Java `E11_LiveStateRead`.
@@ -3005,20 +3021,20 @@ as before.
   **Controller-only**: no SDK, wire, or journal change. See
   `docs/plugins/http_poll.md`.
 
-- **A procedure can consume more than one channel**
-  (`add-multi-input-procedures`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
-  (Java) subscribes two or more source channels to one procedure whose `Input`
+- **A tasklet can consume more than one channel**
+  (`add-multi-input-tasklets`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
+  (Java) subscribes two or more source channels to one tasklet whose `Input`
   is an author-declared sum type, each subscription supplying a pure mapping
-  from its payload into that type. Entry channels and inter-procedure channels
+  from its payload into that type. Entry channels and inter-tasklet channels
   are both valid sources on a stream operative, freely mixed, so a detector
   can take its data feed and
   a live config channel without the operative being restarted with new
   environment. Per-source FIFO is preserved and nothing is ordered across
-  sources; `entities_for` sees the mapped value; the mappings run identically on
+  sources; `cells_for` sees the mapped value; the mappings run identically on
   live delivery and WAL replay, so a warm restart restores the same state.
   Fewer than two sources, the same channel subscribed twice, or a source that
   would re-wire an already-declared edge all fail operative definition with a
-  named topology error. A **workflow** operative merges its procedures' output
+  named topology error. A **workflow** operative merges its tasklets' output
   streams — its entry channel seeds the root from the spawn args and names no
   channel, so an entry channel as a workflow merge source is refused by name.
   Single-input wiring is unchanged.
@@ -3026,22 +3042,22 @@ as before.
   **No wire change and no controller change**: the merge is a subscription-time
   construct in the SDK, frames are still journaled per source channel, and the
   controller has no model of a channel's consumers. See
-  `docs/sdk/multi_input_procedures.md`.
+  `docs/sdk/multi_input_tasklets.md`.
 
-- **A procedure can ask for a workflow operative**
-  (`add-procedure-requested-spawn`). `ctx.spawn_workflow` (Rust) /
+- **A tasklet can ask for a workflow operative**
+  (`add-tasklet-requested-spawn`). `ctx.spawn_workflow` (Rust) /
   `ctx.spawnWorkflow` (Java) spawns-or-delivers a workflow instance on one
-  `(namespace, instance_id)` from inside any procedure: a free id starts the
+  `(namespace, instance_id)` from inside any tasklet: a free id starts the
   factory with the payload as its first input, a taken id receives the payload
   as one more input (`if_running: deliver`) or refuses (`error`). Concurrent
   requests race-resolve at the operative registry to exactly one instance.
   Failures — quota, unknown factory, unreachable controller — resolve the
-  caller's async handle and never fault the requesting procedure; an
+  caller's async handle and never fault the requesting tasklet; an
   uninspected handle logs the failure once. Spawning is a live-processing side
   effect: a replayed invocation issues nothing. Until now a workflow operative
   could only be started from outside the cluster, so every pipeline that needed
   one grew its own external dispatcher. See
-  `docs/sdk/procedure_requested_spawn.md`.
+  `docs/sdk/tasklet_requested_spawn.md`.
 
   **Wire**: two additive `CommandRequest` variants, `SpawnWorkflowRequest`
   (tag 34, SDK → controller) and `SpawnWorkflowResponse` (tag 35,
@@ -3152,16 +3168,16 @@ as before.
   stopped. The stop now waits for the same uniqueness predicate the restart
   checks, and gives up before anything durable has moved.
 
-- **A dynamic Entity never restored its durable state on a rebind**
+- **A dynamic Cell never restored its durable state on a rebind**
   (found implementing `add-partitioned-operatives`). The SDK's restore handler
-  resolved the named Entity by walking `instance.entities` — the static and
-  single slots — while a dynamic Entity lives in its Procedure's registry and
+  resolved the named Cell by walking `instance.cells` — the static and
+  single slots — while a dynamic Cell lives in its Tasklet's registry and
   has no slot until its first input. Every `RestoreInitState` for one was
   therefore acked with its terminal seq and discarded, and the next input
-  cold-started the Entity on top of its own WAL. The handler now materializes
-  the named dynamic Entity and folds the state into it. Eviction is unchanged
+  cold-started the Cell on top of its own WAL. The handler now materializes
+  the named dynamic Cell and folds the state into it. Eviction is unchanged
   and does not conflict: it deletes the files, so no restore is ever shipped for
-  an evicted Entity. This is also what carries a key across a partition
+  an evicted Cell. This is also what carries a key across a partition
   rescale, where its state moved into another member's tree before that member
   ever saw the key.
 
@@ -3181,26 +3197,26 @@ as before.
   (`HubManager.drain_hub/2`, the seam graceful shutdown already used) so
   operatives leave through a live HotSwap handover. New
   `Flezha.State.WalTransfer` moves what the handover cannot: a
-  destination-pulled, chunked `:erpc` copy of the Entity's durable files,
+  destination-pulled, chunked `:erpc` copy of the Cell's durable files,
   written to a `.transferring` sibling that is fsynced and atomically renamed,
-  with names resolved through the Entity's own file set so a peer cannot read
+  with names resolved through the Cell's own file set so a peer cannot read
   arbitrary paths. `state_root` stays node-local and is never assumed shared.
   One-shot at migration time, not replication — a controller that dies together
   with its disk still takes its state with it.
 
-- A durable workflow operative whose procedures hold **no per-Entity state**
-  went silent after its first turn. The proc-journal is instance-scoped but rode
-  `RestoreInitState.proc_journal`, a per-Entity frame — and such a class has no
-  Entity WAL, so the controller shipped no restore at all. Every wake resumed
+- A durable workflow operative whose tasklets hold **no per-Cell state**
+  went silent after its first turn. The task-journal is instance-scoped but rode
+  `RestoreInitState.task_journal`, a per-Cell frame — and such a class has no
+  Cell WAL, so the controller shipped no restore at all. Every wake resumed
   at iteration 0, and each turn's commit collided with iteration 0's
-  `outbox_flushed` marker (the flush marker is keyed `{type, proc_idx, iter}`),
+  `outbox_flushed` marker (the flush marker is keyed `{type, task_idx, iter}`),
   so its staged output was journaled and never delivered. Only the first turn
   of such an operative was ever emitted; it bit any instance that parked
   between turns, on both SDKs.
-  `ProcJournalState` moves from `RestoreInitState` (field 6, removed) to
+  `TaskJournalState` moves from `RestoreInitState` (field 6, removed) to
   `AddOperative` (field 6, added) — instance-scoped state on the bind, beside
-  `resume_entity_count`, delivered once per bind instead of once per persisted
-  Entity and before the driver spawns. No compatibility shim: an SDK and a
+  `resume_cell_count`, delivered once per bind instead of once per persisted
+  Cell and before the driver spawns. No compatibility shim: an SDK and a
   controller must be upgraded together.
 
 ### Changed
@@ -3231,7 +3247,7 @@ as before.
   Operatives whose plugins were enabled dynamically before this
   upgrade have an empty `opts[:plugins]` in the cspec. They keep
   working as long as no Overwatch (re)start happens before the next
-  `flz plugin enable` / `flz plugin disable` proc, which canonicalises
+  `flz plugin enable` / `flz plugin disable` call, which canonicalises
   the cspec. Runners who want to canonicalise immediately can run
   `flz plugin disable <id> && flz plugin enable <id>` for each
   plugin. No automatic migration job is shipped.
@@ -3349,7 +3365,7 @@ along with the SYSMODE coordinator GenServer that drove it.
 - New top-level CLI commands `flz cluster snapshot <file>` and
   `flz cluster restore <file>` for explicit, runner-driven cluster-wide
   state capture and restore. Both commands accept `--namespace NS` for
-  per-namespace procedures; default behaviour without the flag is
+  per-namespace tasklets; default behaviour without the flag is
   cluster-wide. (Both verbs were later removed; `flz boot
   import-legacy-snapshot` reads the format they produced.)
 - `Flezha.Cluster.Snapshot` and `Flezha.Cluster.Snapshot.Coordinator`
@@ -3358,10 +3374,10 @@ along with the SYSMODE coordinator GenServer that drove it.
 - `Flezha.Cluster.Snapshot.PluginRecoverability` predicate that decides
   which plugins survive a snapshot/restore cycle.
 - `Flezha.Operative.Builder` now recognises `:initial_state_binary` in
-  opts; `Flezha.Operative.Overwatch` sends a new `EntityApplyState`
+  opts; `Flezha.Operative.Overwatch` sends a new `CellApplyState`
   control command to the compute engine before the first input is
   forwarded so a re-spawned operative begins with primed state.
-- New protobuf message `EntityApplyState` and corresponding handler
+- New protobuf message `CellApplyState` and corresponding handler
   in the Rust and Java SDKs. Default impl returns the canonical
   `apply_state_not_supported` error so older SDK builds are detectable;
   the agent logs once per operative on apply failure.

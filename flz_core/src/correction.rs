@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::flusher::build_entity_frame;
+use crate::flusher::build_cell_frame;
 use crate::state_sink;
 
 /// A correction request: `park_payload`'s frame shape with a postcard body.
@@ -46,14 +46,14 @@ pub fn classify(event_time: u64, high_water: i64, window_ms: u64) -> Lateness {
 /// Ship a correction request, fire-and-forget: the controller coalesces
 /// duplicates and a lost one is re-raised on re-delivery. `false` in a
 /// transport-less run, where the caller dispatches the input as an arrival.
-pub fn request(entity_identity: &[u8], target_event_time: u64) -> bool {
+pub fn request(cell_identity: &[u8], target_event_time: u64) -> bool {
     if !state_sink::sink_installed() {
         return false;
     }
     let body = CorrectionRequestBody { target_event_time };
     let body_bytes = postcard::to_allocvec(&body)
         .expect("postcard serialization of CorrectionRequestBody cannot fail");
-    let frame = build_entity_frame(entity_identity, 0, &[0u8; 16], &body_bytes);
+    let frame = build_cell_frame(cell_identity, 0, &[0u8; 16], &body_bytes);
     state_sink::send(CORRECTION_REQUEST_PAYLOAD_ID, frame);
     true
 }
@@ -65,7 +65,7 @@ mod tests {
     const WINDOW: u64 = 600_000;
 
     #[test]
-    fn a_fresh_entity_has_no_late_inputs() {
+    fn a_fresh_cell_has_no_late_inputs() {
         assert_eq!(classify(1_000, -1, WINDOW), Lateness::OnTime);
     }
 

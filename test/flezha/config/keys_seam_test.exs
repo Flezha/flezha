@@ -149,17 +149,17 @@ defmodule Flezha.Config.KeysSeamTest do
   end
 
   describe "a default is written down once" do
-    test "the published default cell carries the row's own" do
+    test "the published default field carries the row's own" do
       drifted =
-        for {number, var, cell} <- documented_defaults(),
+        for {number, var, field} <- documented_defaults(),
             row = Keys.by_env(var),
             row != nil,
             comparable?(row),
-            plain = String.replace(cell, "`", ""),
+            plain = String.replace(field, "`", ""),
             renderings = renderings(row),
             not Enum.any?(renderings, &String.contains?(plain, &1)),
             rendered = Enum.join(renderings, " or "),
-            do: "#{number}: #{var} is published as #{cell}, and the row says #{rendered}"
+            do: "#{number}: #{var} is published as #{field}, and the row says #{rendered}"
 
       assert drifted == []
     end
@@ -211,18 +211,18 @@ defmodule Flezha.Config.KeysSeamTest do
 
       understated =
         for row <- per_reader,
-            {where, var, cell} <- documented_defaults(),
+            {where, var, field} <- documented_defaults(),
             String.starts_with?(where, "docs/configuration.md"),
             var == row.env,
             side <- Keyword.values(row.default),
-            not String.contains?(cell, to_string(side)),
+            not String.contains?(field, to_string(side)),
             do: "#{where}: #{var} does not state #{side}"
 
       assert understated == []
     end
 
     test "every variable the published table names is a row, and every operator row is published" do
-      published = for {_where, var, _cell} <- documented_defaults(), into: MapSet.new(), do: var
+      published = for {_where, var, _field} <- documented_defaults(), into: MapSet.new(), do: var
 
       # Layer 1 of the published table is what `config/runtime.exs` translates:
       # every row a controller reads. An SDK's, the CLI's and the shell
@@ -313,8 +313,8 @@ defmodule Flezha.Config.KeysSeamTest do
     for path <- Path.wildcard("docs/**/*.md"),
         not String.starts_with?(path, "docs/refactor/"),
         not String.starts_with?(path, "docs/dev_notes/"),
-        {number, var, cell} <- documented_defaults(path),
-        do: {"#{path}:#{number}", var, cell}
+        {number, var, field} <- documented_defaults(path),
+        do: {"#{path}:#{number}", var, field}
   end
 
   defp documented_defaults(path) do
@@ -334,13 +334,13 @@ defmodule Flezha.Config.KeysSeamTest do
     cond do
       table_header?(line) -> {default_column(line), found}
       column == nil -> {column, found}
-      true -> {column, cell_at(line, column, number) ++ found}
+      true -> {column, field_at(line, column, number) ++ found}
     end
   end
 
-  defp cell_at(line, column, number) do
-    case row_cells(line) do
-      [var | _] = cells when length(cells) > column -> [{number, var, Enum.at(cells, column)}]
+  defp field_at(line, column, number) do
+    case row_fields(line) do
+      [var | _] = fields when length(fields) > column -> [{number, var, Enum.at(fields, column)}]
       _ -> []
     end
   end
@@ -349,18 +349,18 @@ defmodule Flezha.Config.KeysSeamTest do
   # when nobody sets it — `nil` for a table that states no default, which ends
   # the previous table's reading rather than continuing it.
   defp table_header?(line) do
-    cells = cells(line)
-    cells != [] and Enum.any?(cells, &(&1 in ["Variable", "Knob", "Setting"]))
+    fields = fields(line)
+    fields != [] and Enum.any?(fields, &(&1 in ["Variable", "Knob", "Setting"]))
   end
 
   defp default_column(line) do
     line
-    |> cells()
+    |> fields()
     |> Enum.find_index(&(String.downcase(&1) == "default"))
   end
 
-  defp row_cells(line) do
-    case cells(line) do
+  defp row_fields(line) do
+    case fields(line) do
       [first | _] = all ->
         case Regex.run(~r/^`(FLEZHA_[A-Z0-9_]+)`$/, first) do
           [_, var] -> [var | tl(all)]
@@ -372,7 +372,7 @@ defmodule Flezha.Config.KeysSeamTest do
     end
   end
 
-  defp cells(line) do
+  defp fields(line) do
     case String.trim(line) do
       "|" <> rest -> rest |> String.split("|") |> Enum.map(&String.trim/1) |> Enum.drop(-1)
       _ -> []

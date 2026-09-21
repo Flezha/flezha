@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriterProgressTest do
   @moduledoc """
-  The Entity's durable cursors as one value, and the ordering they hold.
+  The Cell's durable cursors as one value, and the ordering they hold.
 
   The invariant was written down twice and enforced nowhere
   (`fix-outbox-watermark-overwrite`). It lives at the value now — one accessor,
@@ -33,8 +33,8 @@ defmodule Flezha.State.WalWriterProgressTest do
   end
 
   describe "the ordering the cursors assume" do
-    test "holds at every step a real writer takes", %{rc: rc, entity_id: entity_id} do
-      pid = armed_writer(rc, entity_id)
+    test "holds at every step a real writer takes", %{rc: rc, cell_id: cell_id} do
+      pid = armed_writer(rc, cell_id)
       boot = assert_ordered(pid, "at boot")
 
       :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("out", "p1")], 0))
@@ -61,24 +61,24 @@ defmodule Flezha.State.WalWriterProgressTest do
 
     test "an out-of-order record is refused rather than persisted", %{
       rc: rc,
-      entity_id: entity_id
+      cell_id: cell_id
     } do
       # The predicate is not decoration: the writer's own dedup write asks it
       # and keeps the older consistent record when the answer is no. A flush
       # cursor persisted ahead of what is durable would drop the outputs behind
       # it for good, so the safe direction is to leave the file lagging.
-      pid = armed_writer(rc, entity_id)
+      pid = armed_writer(rc, cell_id)
       :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("out", "p1")], 0))
       :ok = WalWriter.fsync(pid)
 
-      before = Outbox.read(entity_id)
+      before = Outbox.read(cell_id)
       writer = :sys.get_state(pid)
       ahead = %{writer | outbox_flushed_seq: writer.outbox_durable_seq + 99}
 
       log = capture_log(fn -> Settlement.persist_dedup(ahead) end)
 
       assert log =~ "refusing to persist an out-of-order cursor record"
-      assert Outbox.read(entity_id) == before
+      assert Outbox.read(cell_id) == before
     end
 
     test "is one predicate over the record, not a rule each reader restates" do
@@ -98,9 +98,9 @@ defmodule Flezha.State.WalWriterProgressTest do
 
     test "a writer with nothing in it starts ordered at the empty-log floor", %{
       rc: rc,
-      entity_id: entity_id
+      cell_id: cell_id
     } do
-      pid = armed_writer(rc, entity_id)
+      pid = armed_writer(rc, cell_id)
       cursors = progress(pid)
 
       assert State.ordered?(cursors)

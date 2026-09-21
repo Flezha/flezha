@@ -10,11 +10,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam::channel::RecvTimeoutError;
 
-use super::compensation::{EntityRun, StageRecord};
+use super::compensation::{CellRun, StageRecord};
 use super::driver::{
     extend_mapped, ChainCtx, Completion, RunOutcome, Runnable, Value, CANCEL_POLL_CHUNK,
 };
-use super::instance::{CommittedProc, InboxItem, JournalResume};
+use super::instance::{CommittedTask, InboxItem, JournalResume};
 use super::{LoopMode, WorkflowError};
 use crate::channel::{ChannelId, ChannelKind};
 use crate::operative::topology::OperativeTopology;
@@ -36,7 +36,7 @@ pub(super) struct IterationStart {
     /// Batches of nodes with producers still outstanding.
     pub(super) pending: HashMap<usize, Vec<Value>>,
     pub(super) waiting: HashMap<usize, usize>,
-    /// On a resume, what the skipped committed procedures asked for; they
+    /// On a resume, what the skipped committed tasklets asked for; they
     /// never run again to ask twice.
     pub(super) completion: Completion,
 }
@@ -59,10 +59,10 @@ fn resumed_start(
     committed: &[usize],
 ) -> Result<IterationStart, WorkflowError> {
     let mut start = IterationStart::default();
-    for proc in &resume.committed_procs {
-        let node = proc.proc_idx as usize;
-        if proc.iter == resume.iter && committed.contains(&node) {
-            start.completion.note(node, proc.completion.clone());
+    for task in &resume.committed_tasks {
+        let node = task.task_idx as usize;
+        if task.iter == resume.iter && committed.contains(&node) {
+            start.completion.note(node, task.completion.clone());
         }
     }
     for node in 0..ctx.dag.len() {
@@ -84,12 +84,12 @@ fn resumed_start(
         let mut batch: Vec<Value> = Vec::new();
         for parent in &committed_parents {
             let handoff = resume
-                .proc_handoffs
+                .task_handoffs
                 .iter()
-                .find(|edge| edge.proc_idx as usize == *parent)
+                .find(|edge| edge.task_idx as usize == *parent)
                 .map(|edge| edge.handoff.as_slice())
                 .unwrap_or_default();
-            let seeded = seed_from_journal(ctx, handoff, ctx.proc(*parent).output_channel_id)?;
+            let seeded = seed_from_journal(ctx, handoff, ctx.task(*parent).output_channel_id)?;
             extend_mapped(&mut batch, ctx.edge(*parent, node), seeded.into_iter())?;
         }
         let outstanding = parents.len() - committed_parents.len();
@@ -284,8 +284,8 @@ fn seed_from_journal(
             .and_then(|c| c.codec.as_ref())
             .ok_or_else(|| {
                 WorkflowError::from(format!(
-                    "journaled handoff references channel id {channel_id} without an inter-proc \
-                     codec; cannot re-seed the resumed procedure"
+                    "journaled handoff references channel id {channel_id} without an inter-task \
+                     codec; cannot re-seed the resumed tasklet"
                 ))
             })?;
         let value = (codec.decode)(bytes.clone()).map_err(|e| {
@@ -305,7 +305,7 @@ pub(super) fn journaled_stages(
     ctx: &ChainCtx,
     resume: &JournalResume,
 ) -> (Vec<Vec<StageRecord>>, Vec<StageRecord>) {
-    let mut by_iter = stages_by_iter(ctx, &resume.committed_procs);
+    let mut by_iter = stages_by_iter(ctx, &resume.committed_tasks);
     // The resume point splits the two: everything below it is committed progress.
     let in_flight = by_iter
         .split_off(&resume.iter)
@@ -318,12 +318,12 @@ pub(super) fn journaled_stages(
 /// chain position; shared by the forward resume and the rewind undo.
 pub(super) fn stages_by_iter(
     ctx: &ChainCtx,
-    procs: &[CommittedProc],
+    tasks: &[CommittedTask],
 ) -> BTreeMap<u32, Vec<StageRecord>> {
     let mut by_iter: BTreeMap<u32, Vec<StageRecord>> = BTreeMap::new();
-    for proc in procs {
-        if let Some(record) = stage_record(ctx, proc.proc_idx, proc.iter, &proc.entities_ran) {
-            by_iter.entry(proc.iter).or_default().push(record);
+    for task in tasks {
+        if let Some(record) = stage_record(ctx, task.task_idx, task.iter, &task.cells_ran) {
+            by_iter.entry(task.iter).or_default().push(record);
         }
     }
     for stages in by_iter.values_mut() {
@@ -333,25 +333,25 @@ pub(super) fn stages_by_iter(
     by_iter
 }
 
-/// One journaled commit as a `StageRecord`; `None` when the procedure is not
+/// One journaled commit as a `StageRecord`; `None` when the tasklet is not
 /// in this build's chain.
 fn stage_record(
     ctx: &ChainCtx,
-    proc_idx: u32,
+    task_idx: u32,
     iter: u32,
-    entities_ran: &[Vec<u8>],
+    cells_ran: &[Vec<u8>],
 ) -> Option<StageRecord> {
-    let stage_idx = proc_idx as usize;
-    let slots = ctx.stage_entities.get(stage_idx)?;
-    let entities = entities_ran
+    let stage_idx = task_idx as usize;
+    let slots = ctx.stage_cells.get(stage_idx)?;
+    let cells = cells_ran
         .iter()
         .filter_map(|id| {
             slots
                 .iter()
-                .position(|slot| slot.entity_identity.as_slice() == id.as_slice())
+                .position(|slot| slot.cell_identity.as_slice() == id.as_slice())
         })
-        .map(|entity_index| EntityRun {
-            entity_index,
+        .map(|cell_index| CellRun {
+            cell_index,
             outputs: Vec::new(),
             staged: Vec::new(),
             completion: None,
@@ -360,6 +360,6 @@ fn stage_record(
     Some(StageRecord {
         stage_idx,
         iter,
-        entities,
+        cells,
     })
 }

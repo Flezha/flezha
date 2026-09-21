@@ -100,14 +100,14 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
 
     test "append writes a batch again when its confirmation was lost in a crash", %{out: file} do
-      {entity_id, records} = unconfirmed_batch()
+      {cell_id, records} = unconfirmed_batch()
       {opts, sink} = start_sink()
       hand_over(opts, records)
       assert wait_until(fn -> File.read(file) == {:ok, "a\nb\n"} end, 2_000)
 
       crash(opts, sink)
       activate(opts)
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -175,14 +175,14 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
     test "a crash before the part rename writes the records once", %{root: root} do
       dir = Path.join(root, "out")
-      {entity_id, records} = unconfirmed_batch()
+      {cell_id, records} = unconfirmed_batch()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
       hand_over(opts, records)
       assert wait_until(fn -> open_roll(dir) == "a\nb\n" end, 2_000)
 
       crash(opts, sink)
       activate(%{opts | roll_after_ms: 1})
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -193,7 +193,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     test "a crash between the part rename and the sidecar writes the records once",
          %{root: root} do
       dir = Path.join(root, "out")
-      {entity_id, [first, second]} = unconfirmed_batch()
+      {cell_id, [first, second]} = unconfirmed_batch()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 1}))
       hand_over(opts, [first])
       assert wait_until(fn -> committed(dir) == "a\n" end, 2_000)
@@ -207,7 +207,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       activate(opts)
       assert wait_until(fn -> not File.exists?(Path.join(dir, "part-00000002")) end, 2_000)
 
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
       hand_over(opts, [first, second])
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -218,14 +218,14 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     test "a crash after the sidecar, before the confirmation, writes the records once",
          %{root: root} do
       dir = Path.join(root, "out")
-      {entity_id, records} = unconfirmed_batch()
+      {cell_id, records} = unconfirmed_batch()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 1}))
       hand_over(opts, records)
       assert wait_until(fn -> committed(dir) == "a\nb\n" end, 2_000)
 
       crash(opts, sink)
       activate(opts)
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -261,9 +261,9 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
          %{root: root} do
       dir = Path.join(root, "out")
       {opts, _sink} = start_sink(rename(%{roll_after_ms: 1}))
-      # Keyed off the tier: an Entity and a seq but no confirmation token, so one
+      # Keyed off the tier: a Cell and a seq but no confirmation token, so one
       # seq may name two records.
-      keyed = %{"channel" => "out", "flz.entity" => "op/proc/k1", "flz.seq" => "7.0"}
+      keyed = %{"channel" => "out", "flz.cell" => "op/task/k1", "flz.seq" => "7.0"}
       release(opts, "plain")
       release(opts, "first", keyed)
       release(opts, "second", keyed)
@@ -353,7 +353,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
 
     test "a crash between the part and the sidecar writes the records once", %{s3: s3} do
-      {entity_id, records} = unconfirmed_batch()
+      {cell_id, records} = unconfirmed_batch()
       {opts, sink} = start_sink(rename(%{roll_after_ms: 60_000}))
       hand_over(opts, records)
       assert wait_until(fn -> :sys.get_state(sink).roll.bytes == 4 end, 2_000)
@@ -367,7 +367,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       activate(%{opts | roll_after_ms: 1})
       assert wait_until(fn -> keys(s3, "out") == [] end, 5_000)
 
-      :ok = TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(cell_id)
       hand_over(opts, records)
 
       assert_confirmed([{:cursor, 1}, {:cursor, 2}])
@@ -515,23 +515,23 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
   # The test process stands in for the writer owning the record's entry.
   defp owner do
-    entity_id = entity_id()
-    :ok = TestHelpers.stub_outbox_owner(entity_id)
-    entity_id
+    cell_id = cell_id()
+    :ok = TestHelpers.stub_outbox_owner(cell_id)
+    cell_id
   end
 
-  defp entity_id, do: {"file_sink_#{System.unique_integer([:positive])}", "proc", "k1"}
+  defp cell_id, do: {"file_sink_#{System.unique_integer([:positive])}", "task", "k1"}
 
   # Two guaranteed records whose owner is not registered yet, so the first
   # confirmation reaches nobody: what the outbox sees of a controller that died
   # between the sync and the report. Handing them over again is the re-drive.
   defp unconfirmed_batch do
-    entity_id = entity_id()
+    cell_id = cell_id()
 
-    {entity_id,
+    {cell_id,
      [
-       {"a", TestHelpers.guaranteed_metadata(entity_id, 1)},
-       {"b", TestHelpers.guaranteed_metadata(entity_id, 2)}
+       {"a", TestHelpers.guaranteed_metadata(cell_id, 1)},
+       {"b", TestHelpers.guaranteed_metadata(cell_id, 2)}
      ]}
   end
 

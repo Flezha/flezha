@@ -114,7 +114,7 @@ spec:
               protocol: TCP
           # Starting points, not tuned numbers. The BEAM's steady-state
           # footprint scales with the number of bound operatives and the
-          # per-Entity WAL write rate — tune to your workload and watch for
+          # per-Cell WAL write rate — tune to your workload and watch for
           # the symptoms documented in README "Resources".
           resources:
             requests:
@@ -208,7 +208,7 @@ spec:
               # Must contain every durable path the ConfigMap sets:
               # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT=/var/lib/flezha/process_hub`
               # (ProcessHub's persistent registry),
-              # `FLEZHA_STATE_DIR=/var/lib/flezha/state` (per-Entity WAL and
+              # `FLEZHA_STATE_DIR=/var/lib/flezha/state` (per-Cell WAL and
               # snapshot files) and `FLEZHA_DLQ_DIR=/var/lib/flezha/dlq`. Point
               # the plugin install root here too if you enable the installer.
               # Losing this volume reverts controllers to empty recovery on
@@ -241,7 +241,7 @@ spec:
             path: /opt/flezha-logs
             type: DirectoryOrCreate
         - name: flezha-recovery
-          # Persistent controller state: ProcessHub's registry, per-Entity WAL
+          # Persistent controller state: ProcessHub's registry, per-Cell WAL
           # files, the DLQ store. A DaemonSet pins each pod to a node, so a
           # node-local volume is sufficient — the pod comes back to the same
           # node and reads the files it wrote before going down.

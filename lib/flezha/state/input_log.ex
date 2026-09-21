@@ -9,12 +9,12 @@ defmodule Flezha.State.InputLog do
   server registers in the `WriterRegistry` under `{operative_class, :input_log}`
   and answers the same `:fsync` call, so the batcher drains it unchanged.
 
-  Retention is watermark-driven: each Entity's durable consumed-offset is
+  Retention is watermark-driven: each Cell's durable consumed-offset is
   reported into a public ETS table (`record_consumed/3`) and `sweep/1` truncates
-  strictly below `min(watermark, now - hold_window)`. An Entity that consumed
+  strictly below `min(watermark, now - hold_window)`. A Cell that consumed
   nothing holds the watermark at the log start; a frozen watermark over a
   growing log emits `[:flezha, :state, :input_log_frozen_watermark]` naming the
-  lagging Entity instead of silently accumulating.
+  lagging Cell instead of silently accumulating.
   """
 
   use GenServer
@@ -46,7 +46,7 @@ defmodule Flezha.State.InputLog do
   #   8      version u8    — 0 = pre-timestamp record ("unknown time")
   #   9..15  zero
   #
-  # Byte 9 stays zero on purpose: it is the entity WAL's `format_id`, so a
+  # Byte 9 stays zero on purpose: it is the cell WAL's `format_id`, so a
   # zero there means an input record can never decode as an effect record if
   # one is ever fed to the wrong reader.
   @header_version 1
@@ -66,7 +66,7 @@ defmodule Flezha.State.InputLog do
   # reply, which the Overwatch holds open on the source's call
   # (`Flezha.Operative.Ingest`) — the websocket stops reading its socket until
   # credit mints, while the host keeps running the chains that mint it.
-  # `consumed` is the log's own copy of its Entities' durable consumed-offsets:
+  # `consumed` is the log's own copy of its Cells' durable consumed-offsets:
   # the min-watermark that drains source credit is taken from it, so an advance
   # never scans the shared table. The table stays the published view.
   # `positions` (a `Flezha.State.SeqIndex`) lets a truncation find its floor
@@ -114,7 +114,7 @@ defmodule Flezha.State.InputLog do
   Journal one inbound payload, returning its assigned offset. Starts the
   operative's log server on first use. The append (write syscall) completes
   before this returns, so the caller forwards only journaled payloads;
-  durability is fsync-batched like the per-Entity WAL. At zero source
+  durability is fsync-batched like the per-Cell WAL. At zero source
   credit the call parks (deferred reply) until the min-watermark advance
   mints credit — the intended source back-pressure, hence `:infinity`.
 
@@ -184,7 +184,7 @@ defmodule Flezha.State.InputLog do
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
 
   @doc """
-  Report an Entity's durable consumed-offset (called when an effect record
+  Report a Cell's durable consumed-offset (called when an effect record
   carrying `consumed_offset` becomes durable, and on boot repopulation from
   the WAL tail).
 
@@ -200,9 +200,9 @@ defmodule Flezha.State.InputLog do
   value they all report into sees both.
   """
   @spec record_consumed(binary(), tuple(), non_neg_integer()) :: :ok
-  def record_consumed(operative_class, entity_id, offset) do
+  def record_consumed(operative_class, cell_id, offset) do
     ensure_watermark_table()
-    stored = advance_stored_offset({operative_class, entity_id}, offset)
+    stored = advance_stored_offset({operative_class, cell_id}, offset)
 
     # A watermark advance may free source credit; the log server drains the
     # ledger and unparks waiting appends. Async — this runs on the WalWriter's
@@ -210,7 +210,7 @@ defmodule Flezha.State.InputLog do
     # which reporter arrived last would decide whether parked appends are
     # released; it carries the offset now STORED, so the log's own copy of the
     # value tracks the value rather than the request.
-    notify_consumed(operative_class, entity_id, stored)
+    notify_consumed(operative_class, cell_id, stored)
   end
 
   # The offset now stored for `key` after applying `offset` to it. Reporters are
@@ -227,7 +227,7 @@ defmodule Flezha.State.InputLog do
 
       # Nothing matched: either a row already stands at or past `offset`, and
       # whoever wrote it is the authority its report drains against, or there
-      # is no row for this Entity yet.
+      # is no row for this Cell yet.
       0 ->
         case :ets.lookup(@watermarks, key) do
           [{_, stored}] -> stored
@@ -236,7 +236,7 @@ defmodule Flezha.State.InputLog do
     end
   end
 
-  # First offset for an Entity: claim the row, or re-decide against whoever
+  # First offset for a Cell: claim the row, or re-decide against whoever
   # claimed it first.
   defp claim_stored_offset(key, offset) do
     if :ets.insert_new(@watermarks, {key, offset}),
@@ -244,15 +244,15 @@ defmodule Flezha.State.InputLog do
       else: advance_stored_offset(key, offset)
   end
 
-  defp notify_consumed(operative_class, entity_id, offset) do
+  defp notify_consumed(operative_class, cell_id, offset) do
     case Supervisor.lookup({operative_class, :input_log}) do
-      {:ok, pid} -> GenServer.cast(pid, {:consumed, entity_id, offset})
+      {:ok, pid} -> GenServer.cast(pid, {:consumed, cell_id, offset})
       :error -> :ok
     end
   end
 
   @doc """
-  Move an Entity's consumed-offset *backwards* after a correction rewound its
+  Move a Cell's consumed-offset *backwards* after a correction rewound its
   WAL — the records that reported the higher offset are gone.
 
   Distinct from `record_consumed/3` only in intent, and that is the point: a
@@ -261,16 +261,16 @@ defmodule Flezha.State.InputLog do
   truncate the very inputs the correction is about to replay.
   """
   @spec rewind_consumed(binary(), tuple(), non_neg_integer() | -1) :: :ok
-  def rewind_consumed(operative_class, entity_id, offset) do
+  def rewind_consumed(operative_class, cell_id, offset) do
     ensure_watermark_table()
 
     if offset < 0 do
-      :ets.delete(@watermarks, {operative_class, entity_id})
+      :ets.delete(@watermarks, {operative_class, cell_id})
     else
-      :ets.insert(@watermarks, {{operative_class, entity_id}, offset})
+      :ets.insert(@watermarks, {{operative_class, cell_id}, offset})
     end
 
-    notify_consumed(operative_class, entity_id, offset)
+    notify_consumed(operative_class, cell_id, offset)
   end
 
   @doc """
@@ -284,22 +284,22 @@ defmodule Flezha.State.InputLog do
     call(pid, {:offset_before_time, ts_ms})
   end
 
-  @doc "Drop a hard-deleted Entity's watermark entry so it stops holding truncation."
-  @spec forget_entity(binary(), tuple()) :: :ok
-  def forget_entity(operative_class, entity_id) do
+  @doc "Drop a hard-deleted Cell's watermark entry so it stops holding truncation."
+  @spec forget_cell(binary(), tuple()) :: :ok
+  def forget_cell(operative_class, cell_id) do
     ensure_watermark_table()
-    :ets.delete(@watermarks, {operative_class, entity_id})
-    notify_consumed(operative_class, entity_id, -1)
+    :ets.delete(@watermarks, {operative_class, cell_id})
+    notify_consumed(operative_class, cell_id, -1)
   end
 
   @doc """
-  Minimum durable consumed-offset across the operative's reporting Entities,
-  or `nil` when no Entity has reported (the watermark then holds at the log
+  Minimum durable consumed-offset across the operative's reporting Cells,
+  or `nil` when no Cell has reported (the watermark then holds at the log
   start and nothing truncates).
   """
   @spec watermark(binary()) :: non_neg_integer() | nil
   def watermark(operative_class) do
-    case entity_offsets(operative_class) do
+    case cell_offsets(operative_class) do
       [] -> nil
       offsets -> offsets |> Enum.map(&elem(&1, 1)) |> Enum.min()
     end
@@ -307,7 +307,7 @@ defmodule Flezha.State.InputLog do
 
   @doc """
   Producing-liveness cursors: the log's last offset and the durable consumed
-  offset of every Entity that has reported one. `nil` when no log is live —
+  offset of every Cell that has reported one. `nil` when no log is live —
   the operative is not on the effectively-once tier and has none.
 
   Lookup-only on purpose. `last_offset/1` goes through `find_or_start/1`, and
@@ -325,7 +325,7 @@ defmodule Flezha.State.InputLog do
         # a tier-off operative gets, rather than reporting a cursor that lies.
         case call(pid, :last_offset) do
           tail when is_integer(tail) ->
-            %{tail: tail, consumed: Map.new(entity_offsets(operative_class))}
+            %{tail: tail, consumed: Map.new(cell_offsets(operative_class))}
 
           {:error, _refusal} ->
             nil
@@ -386,7 +386,7 @@ defmodule Flezha.State.InputLog do
     {:ok, size} = :file.position(file, :eof)
 
     # Offsets reported before this log (re)started are in the published table.
-    consumed = Map.new(entity_offsets(state.operative_class))
+    consumed = Map.new(cell_offsets(state.operative_class))
 
     # Records written before this (re)start are not indexed: the first
     # truncation after a restart locates its floor from the start of the file,
@@ -466,15 +466,15 @@ defmodule Flezha.State.InputLog do
     {:noreply, state}
   end
 
-  # An Entity's durable consumed-offset moved (an effect record became durable,
-  # a correction rewound it, or the Entity was deleted: `-1`). Fold in every
+  # A Cell's durable consumed-offset moved (an effect record became durable,
+  # a correction rewound it, or the Cell was deleted: `-1`). Fold in every
   # advance already queued, then drain the freed bytes from the source ledger
   # once and, when the batched grant lands, unpark waiting appends in arrival
   # order.
-  def handle_cast({:consumed, entity_id, offset}, state) do
+  def handle_cast({:consumed, cell_id, offset}, state) do
     state =
       state
-      |> note_consumed(entity_id, offset)
+      |> note_consumed(cell_id, offset)
       |> collect_consumed(@max_append_batch - 1)
 
     {:noreply, advance_watermark(state)}
@@ -588,18 +588,18 @@ defmodule Flezha.State.InputLog do
 
   # ---------- Internals ----------
 
-  defp note_consumed(state, entity_id, offset) when offset < 0,
-    do: %{state | consumed: Map.delete(state.consumed, entity_id)}
+  defp note_consumed(state, cell_id, offset) when offset < 0,
+    do: %{state | consumed: Map.delete(state.consumed, cell_id)}
 
-  defp note_consumed(state, entity_id, offset),
-    do: %{state | consumed: Map.put(state.consumed, entity_id, offset)}
+  defp note_consumed(state, cell_id, offset),
+    do: %{state | consumed: Map.put(state.consumed, cell_id, offset)}
 
   defp collect_consumed(state, 0), do: state
 
   defp collect_consumed(state, remaining) do
     receive do
-      {:"$gen_cast", {:consumed, entity_id, offset}} ->
-        collect_consumed(note_consumed(state, entity_id, offset), remaining - 1)
+      {:"$gen_cast", {:consumed, cell_id, offset}} ->
+        collect_consumed(note_consumed(state, cell_id, offset), remaining - 1)
     after
       0 -> state
     end
@@ -792,14 +792,14 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc false
-  @spec entity_offsets(binary()) :: [{tuple(), integer()}]
-  def entity_offsets(operative_class) do
+  @spec cell_offsets(binary()) :: [{tuple(), integer()}]
+  def cell_offsets(operative_class) do
     ensure_watermark_table()
 
     @watermarks
     |> :ets.match({{operative_class, :"$1"}, :"$2"})
-    |> Enum.filter(fn [entity_id, _offset] -> is_tuple(entity_id) end)
-    |> Enum.map(fn [entity_id, offset] -> {entity_id, offset} end)
+    |> Enum.filter(fn [cell_id, _offset] -> is_tuple(cell_id) end)
+    |> Enum.map(fn [cell_id, offset] -> {cell_id, offset} end)
   end
 
   @doc false

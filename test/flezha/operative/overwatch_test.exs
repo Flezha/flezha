@@ -41,9 +41,9 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   end
 
   setup do
-    # Clean per-Entity state so a cold-start test sees no leftover WAL to
+    # Clean per-Cell state so a cold-start test sees no leftover WAL to
     # restore (restore now rehydrates on bind).
-    TestHelpers.reset_all_entities()
+    TestHelpers.reset_all_cells()
     on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
     :ok
   end
@@ -57,7 +57,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       opts: %{
         report_to: self(),
         return: %{
-          "store_input_procedure" => %{
+          "store_input_tasklet" => %{
             "binary_inputs" => [],
             "text_inputs" => ["seeded_by_plugin"]
           }
@@ -76,10 +76,10 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     assert_receive {:probe, :called}, 500
 
     {:ok, json_state} =
-      OperativeManager.get_entity_state(@namespace, operative_id)
+      OperativeManager.get_cell_state(@namespace, operative_id)
 
     assert Payloader.json_to_map(json_state) == %{
-             "store_input_procedure" => %{
+             "store_input_tasklet" => %{
                "binary_inputs" => [],
                "text_inputs" => ["seeded_by_plugin"]
              }
@@ -103,7 +103,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       id: operative_id,
       factory_id: @factory,
       init_values: %{
-        "store_input_procedure" => %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]}
+        "store_input_tasklet" => %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]}
       },
       opts: [plugins: [plugin]]
     }
@@ -116,10 +116,10 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     refute_received {:probe, :called}
 
     {:ok, json_state} =
-      OperativeManager.get_entity_state(@namespace, operative_id)
+      OperativeManager.get_cell_state(@namespace, operative_id)
 
     assert Payloader.json_to_map(json_state) == %{
-             "store_input_procedure" => %{
+             "store_input_tasklet" => %{
                "binary_inputs" => [],
                "text_inputs" => ["FROM_INLINE"]
              }
@@ -135,7 +135,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       opts: %{
         report_to: self(),
         return: %{
-          "store_input_procedure" => %{"binary_inputs" => [], "text_inputs" => ["x"]}
+          "store_input_tasklet" => %{"binary_inputs" => [], "text_inputs" => ["x"]}
         }
       },
       hooks: [{:on_operative_init, []}]
@@ -184,7 +184,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   end
 end
 
-defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
+defmodule FlezhaTest.Operative.OverwatchCellStateGateTest do
   use Flezha.Plugin.ProviderBehaviour,
     options: [
       report_to: [type: :any, internal: true],
@@ -193,7 +193,7 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
     ]
 
   @moduledoc """
-  §5b.2: `:get_entity_state` is gated on `persistent_state?` (kind+class).
+  §5b.2: `:get_cell_state` is gated on `persistent_state?` (kind+class).
   `:stream` and a durable-by-default `:workflow` class proceed to query the
   runner exactly as before; a `:workflow` class that opted out of persistence —
   or any stateless kind — is rejected with
@@ -223,14 +223,14 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
     # {:noreply, state} == the gate passed and the handler went on to contact
     # the runner off-loop (replies later via GenServer.reply), as it does today.
     assert {:noreply, ^state} =
-             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "a durable :workflow kind proceeds to query the runner" do
     state = state_for(:workflow)
 
     assert {:noreply, ^state} =
-             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "an opted-out :workflow class is rejected and does not contact the runner" do
@@ -240,14 +240,14 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
     # A synchronous {:reply, error, state} (no spawn) proves the runner was not
     # contacted for state.
     assert {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, ^state} =
-             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "a stateless kind is rejected and does not contact the runner" do
     state = state_for(:made_up_kind)
 
     assert {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, ^state} =
-             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 end
 
@@ -260,7 +260,7 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
     ]
 
   @moduledoc """
-  Output-identity pass-through: the SDK stamps `flz.entity` / `flz.seq` /
+  Output-identity pass-through: the SDK stamps `flz.cell` / `flz.seq` /
   `flz.key` on keyed-channel frames, and the controller must deliver them
   to the `:on_output` plugin chain unchanged — StreamChannel routes the
   frame's metadata as-is and Overwatch hands it to the plugin ctx as-is.
@@ -294,7 +294,7 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
 
   @stamped_metadata %{
     "channel" => "out",
-    "flz.entity" => "operative-1/ohlc_procedure/BTC",
+    "flz.cell" => "operative-1/ohlc_tasklet/BTC",
     "flz.seq" => "42.1",
     "flz.key" => "BTC/1m/1720000000",
     "user_key" => "user_value"
@@ -368,10 +368,10 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
     ]
 
   @moduledoc """
-  §5b.2 crash-resume gate (controller half): `Flezha.Operative.Replay.resume_entity_count/2`
-  is the number of persisted Entities the bind-time restore path will ship a
-  `RestoreInitState` for, threaded onto `AddOperative.resume_entity_count` so a
-  durable workflow driver holds its first Procedure until that many restores land.
+  §5b.2 crash-resume gate (controller half): `Flezha.Operative.Replay.resume_cell_count/2`
+  is the number of persisted Cells the bind-time restore path will ship a
+  `RestoreInitState` for, threaded onto `AddOperative.resume_cell_count` so a
+  durable workflow driver holds its first Tasklet until that many restores land.
 
   Non-zero only for a durable `:workflow` class with WAL on disk; `0` for a fresh
   spawn, a stream operative, or an opted-out workflow one.
@@ -382,38 +382,38 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   alias Flezha.Operative.Replay
   alias Flezha.State.{Paths, TestHelpers}
 
-  # Drop a minimal WAL file on disk for an Entity so `all_entities/0` enumerates
+  # Drop a minimal WAL file on disk for a Cell so `all_cells/0` enumerates
   # it and `has_persisted_state?/1` returns true (as after a real durable run).
-  defp seed_entity(operative_class, procedure_id, entity_key) do
-    entity_id = {operative_class, procedure_id, entity_key}
-    path = Paths.wal_path(entity_id)
+  defp seed_cell(operative_class, tasklet_id, cell_key) do
+    cell_id = {operative_class, tasklet_id, cell_key}
+    path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, TestHelpers.build_wal_record(1, <<>>))
-    entity_id
+    cell_id
   end
 
-  test "a durable workflow operative counts its persisted Entities" do
-    seed_entity("resume_class", "proc", "even")
-    seed_entity("resume_class", "proc", "odd")
+  test "a durable workflow operative counts its persisted Cells" do
+    seed_cell("resume_class", "task", "even")
+    seed_cell("resume_class", "task", "odd")
 
-    assert Replay.resume_entity_count(:workflow, "resume_class") == 2
+    assert Replay.resume_cell_count(:workflow, "resume_class") == 2
   end
 
   test "a fresh durable workflow operative (no WAL) waits for nothing" do
-    assert Replay.resume_entity_count(:workflow, "unseeded_class") == 0
+    assert Replay.resume_cell_count(:workflow, "unseeded_class") == 0
   end
 
   test "a stream operative never waits for a workflow-style restore gate" do
-    seed_entity("cont_class", "proc", "s")
+    seed_cell("cont_class", "task", "s")
 
-    assert Replay.resume_entity_count(:stream, "cont_class") == 0
+    assert Replay.resume_cell_count(:stream, "cont_class") == 0
   end
 
   test "an opted-out workflow class counts zero even with WAL on disk" do
     Application.put_env(:flezha, :operative_persistence, %{"optout_class" => false})
-    seed_entity("optout_class", "proc", "s")
+    seed_cell("optout_class", "task", "s")
 
-    assert Replay.resume_entity_count(:workflow, "optout_class") == 0
+    assert Replay.resume_cell_count(:workflow, "optout_class") == 0
   end
 end
 

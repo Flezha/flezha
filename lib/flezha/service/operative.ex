@@ -101,15 +101,15 @@ defmodule Flezha.Service.Operative do
   end
 
   @doc """
-  One Entity's live state and the change sequence it was read at.
+  One Cell's live state and the change sequence it was read at.
 
   The sequence is part of the answer because a caller that renders state next
   to a position needs both, and reading them separately cannot pair them.
   """
-  @spec entity_state(String.t(), String.t(), String.t(), caller_context()) ::
+  @spec cell_state(String.t(), String.t(), String.t(), caller_context()) ::
           {:ok, term()} | {:error, term()}
-  verb entity_state(namespace, operative_id, entity_key, caller_context) do
-    OperativeManager.get_entity_state(namespace, operative_id, entity_key)
+  verb cell_state(namespace, operative_id, cell_key, caller_context) do
+    OperativeManager.get_cell_state(namespace, operative_id, cell_key)
   end
 
   @doc "One operative's Overwatch state."

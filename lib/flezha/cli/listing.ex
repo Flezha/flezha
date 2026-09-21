@@ -53,10 +53,10 @@ defmodule Flezha.Service.Cli.Listing do
   defp render_list(rows, _format, %{header: header, columns: columns}) do
     IO.puts(header)
     IO.puts("")
-    IO.puts(line(columns, fn {title, _width, _cell} -> title end))
+    IO.puts(line(columns, fn {title, _width, _render} -> title end))
 
     Enum.each(rows, fn row ->
-      IO.puts(line(columns, fn {_title, _width, cell} -> cell.(row) end))
+      IO.puts(line(columns, fn {_title, _width, render} -> render.(row) end))
     end)
   end
 
@@ -65,7 +65,7 @@ defmodule Flezha.Service.Cli.Listing do
   defp line(columns, text) do
     [
       "  "
-      | Enum.map(columns, fn {_title, width, _cell} = column ->
+      | Enum.map(columns, fn {_title, width, _render} = column ->
           String.pad_trailing(text.(column), width)
         end)
     ]

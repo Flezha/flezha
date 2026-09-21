@@ -4,7 +4,7 @@ defmodule Flezha.Boot.StateRootLock do
 
   Several controllers may share a host, each owning its own directory tree
   (`docs/operations/deployment/bare_metal.md`). Two of them sharing one state root are two
-  unsynchronised writers over the same entity WAL trees, and until this claim
+  unsynchronised writers over the same cell WAL trees, and until this claim
   nothing but configuration kept them apart — a shape reached by copying a unit
   file and forgetting one variable.
 
@@ -36,7 +36,7 @@ defmodule Flezha.Boot.StateRootLock do
 
       {:error, holder} ->
         raise "state root #{root} is already claimed (#{holder}): two controllers " <>
-                "writing one entity WAL tree corrupt it, so this one will not start. " <>
+                "writing one cell WAL tree corrupt it, so this one will not start. " <>
                 "Set #{@var} to a state root of this controller's own — one directory " <>
                 "tree per controller — or stop the holder."
     end

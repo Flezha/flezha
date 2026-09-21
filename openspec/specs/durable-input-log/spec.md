@@ -39,7 +39,7 @@ resulting atomic effect record carries the same offset as its consumed-offset.
 ### Requirement: Crash-safe, replayable log records
 
 Input-log records SHALL be crc-protected appends (same durability class as the
-per-Entity WAL, fsync-batched). On restart the controller SHALL be able to read
+per-Cell WAL, fsync-batched). On restart the controller SHALL be able to read
 back any retained offset range in order; a torn tail record SHALL be discarded
 without affecting earlier records.
 
@@ -47,15 +47,15 @@ A record that fails its crc32 with complete records behind it SHALL NOT be
 discarded as a torn tail. The log SHALL refuse to serve the class, naming the
 path, the last offset that verified and the byte offset of the failure, and
 SHALL leave the file on disk. The input log opens through the same reader the
-per-Entity WAL opens through, so the two SHALL give the same answer to the same
+per-Cell WAL opens through, so the two SHALL give the same answer to the same
 corrupt record; an input the Controller acknowledged is as durable as a change
 it persisted, and neither is deleted to make a log parse.
 
 #### Scenario: Replay after crash
 
-- **WHEN** the controller restarts after a crash and an Entity's durable
+- **WHEN** the controller restarts after a crash and a Cell's durable
   consumed-offset is 4700 while the log holds offsets up to 4720
-- **THEN** the controller re-forwards offsets 4701..4720 to the restored Entity
+- **THEN** the controller re-forwards offsets 4701..4720 to the restored Cell
   in order
 
 #### Scenario: Torn tail discarded
@@ -76,8 +76,8 @@ it persisted, and neither is deleted to make a log parse.
 ### Requirement: Min-watermark retention
 
 The controller SHALL track the minimum durable consumed-offset across all
-Entities of the operative (the watermark) and SHALL truncate the input-log only
-strictly below `min(watermark, now − hold_window)`. An Entity that has consumed
+Cells of the operative (the watermark) and SHALL truncate the input-log only
+strictly below `min(watermark, now − hold_window)`. A Cell that has consumed
 nothing holds the watermark at the log start.
 
 `hold_window` SHALL resolve **per operative** as the greater of the operator-configured
@@ -86,14 +86,14 @@ for an operative that declares no correction window and for which the operator h
 configured none, so a non-correcting operative truncates at its watermark exactly as it
 does with no hold window at all.
 
-#### Scenario: Truncation respects the slowest entity
+#### Scenario: Truncation respects the slowest cell
 
-- **WHEN** entity A has durably consumed to offset 4711 and entity B to 4710
+- **WHEN** cell A has durably consumed to offset 4711 and cell B to 4710
 - **THEN** truncation removes only offsets below 4710
 
 #### Scenario: A declared correction window holds the log
 
-- **WHEN** an operative declares `correction_window(60_000)`, every Entity has
+- **WHEN** an operative declares `correction_window(60_000)`, every Cell has
   consumed to offset 4711, and offset 4711 was appended 10 s ago
 - **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold
   window
@@ -101,12 +101,12 @@ does with no hold window at all.
 #### Scenario: An operative with no correction window has no hold
 
 - **WHEN** an operative declares no correction window, the operator configures no hold
-  window, and every Entity has consumed to offset 4711
+  window, and every Cell has consumed to offset 4711
 - **THEN** truncation removes every offset below 4711 immediately
 
 ### Requirement: The log owns its watermark
 
-The input-log process SHALL keep each Entity's durable consumed-offset itself
+The input-log process SHALL keep each Cell's durable consumed-offset itself
 and derive the operative's min-watermark from that map; a consumed-offset
 report SHALL update the log's copy and SHALL NOT scan any shared table. A
 burst of reports SHALL fold into one watermark recompute and one credit drain.
@@ -118,7 +118,7 @@ monotonically, so the bytes a watermark advance frees SHALL be taken as a
 prefix of the tracked offsets, costing the number freed rather than the number
 still in flight.
 
-An Entity's stored consumed-offset SHALL be monotonically non-decreasing. A
+A Cell's stored consumed-offset SHALL be monotonically non-decreasing. A
 reported advance SHALL take effect only when it is strictly greater than the
 stored offset, and SHALL otherwise leave the stored offset unchanged; the
 comparison and the write SHALL be atomic with respect to concurrent reporters,
@@ -126,19 +126,19 @@ so two reporters racing resolve to the higher offset rather than to whichever
 wrote last. A report that does not move the offset SHALL still trigger the
 credit drain and unpark, so which reporter arrives last cannot determine
 whether waiting appends are released, and SHALL carry the offset now stored
-rather than the one reported, so the log's own copy of an Entity's
+rather than the one reported, so the log's own copy of a Cell's
 consumed-offset cannot be taken backwards either.
 
 The single exception SHALL be an explicit rewind, used only after a correction
-has rewound an Entity's WAL and the records reporting the higher offset no
+has rewound a Cell's WAL and the records reporting the higher offset no
 longer exist. No other path SHALL lower a stored consumed-offset.
 
 #### Scenario: A restarted log recovers its watermark
 
-- **WHEN** the input-log process restarts while its Entities' last
+- **WHEN** the input-log process restarts while its Cells' last
   consumed-offsets are in the published table
 - **THEN** the reopened log computes the same min-watermark as before the
-  restart without waiting for a fresh report from every Entity
+  restart without waiting for a fresh report from every Cell
 
 #### Scenario: The table survives its reporters
 
@@ -148,28 +148,28 @@ longer exist. No other path SHALL lower a stored consumed-offset.
 
 #### Scenario: A burst of advances recomputes once
 
-- **WHEN** N Entities report consumed-offset advances within one scheduling
+- **WHEN** N Cells report consumed-offset advances within one scheduling
   window of the log
 - **THEN** the log recomputes its min-watermark and drains source credit once
   for the burst, not once per report
 
 #### Scenario: A lower report does not move the watermark back
 
-- **GIVEN** an Entity whose stored consumed-offset is 2
-- **WHEN** a consumed-offset of 1 is reported for that Entity
+- **GIVEN** a Cell whose stored consumed-offset is 2
+- **WHEN** a consumed-offset of 1 is reported for that Cell
 - **THEN** the stored offset SHALL remain 2
 
 #### Scenario: A nested window's advance survives the outer window closing
 
 - **GIVEN** an outbox window whose completion re-enters dispatch and closes a
-  nested window that advances the Entity's consumed-offset to 2
+  nested window that advances the Cell's consumed-offset to 2
 - **WHEN** the outer window then reports its own furthest offset of 1
-- **THEN** the Entity's stored consumed-offset SHALL be 2, and the input-log
+- **THEN** the Cell's stored consumed-offset SHALL be 2, and the input-log
   retention floor and credit accounting SHALL reflect 2
 
 #### Scenario: A rejected report still drains credit
 
-- **GIVEN** an Entity whose stored consumed-offset is 2 and a source parked on
+- **GIVEN** a Cell whose stored consumed-offset is 2 and a source parked on
   credit
 - **WHEN** a consumed-offset of 1 is reported
 - **THEN** the stored offset SHALL remain 2 and the credit drain and unpark
@@ -177,7 +177,7 @@ longer exist. No other path SHALL lower a stored consumed-offset.
 
 #### Scenario: An explicit rewind still lowers the offset
 
-- **GIVEN** an Entity whose stored consumed-offset is 5 and a correction that
+- **GIVEN** a Cell whose stored consumed-offset is 5 and a correction that
   has rewound its WAL to 2
 - **WHEN** the rewind path reports 2
 - **THEN** the stored offset SHALL become 2, so the next sweep cannot truncate

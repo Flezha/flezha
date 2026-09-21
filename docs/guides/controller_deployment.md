@@ -12,7 +12,7 @@ its alone:
   is, on a tick, and closes the gap: rebinding an operative whose runner went
   away, retrying on a backoff ladder, and parking what cannot proceed instead
   of losing it.
-- **Durable state.** The per-Entity write-ahead log, the snapshots and the dead
+- **Durable state.** The per-Cell write-ahead log, the snapshots and the dead
   letter queue. This is what turns a restart into a resume, and what
   effectively-once delivery is built on.
 - **The registry.** The record of which operatives exist and what they were

@@ -1,14 +1,14 @@
 defmodule Flezha.Service.Cli.Journal do
   @moduledoc """
-  `flz state journal | inbox` — a workflow instance's proc-journal entries and
+  `flz state journal | inbox` — a workflow instance's task-journal entries and
   its durable inbox.
   """
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
 
   @doc "The row both reads are judged by: the instance's class namespace."
   def instance_row([instance_id | _]),
@@ -16,15 +16,15 @@ defmodule Flezha.Service.Cli.Journal do
 
   @doc """
   `flz state journal <operative/instance>` — render a workflow instance's
-  proc-journal entries (`workflow-proc-journal`) in append order: seq, type,
-  proc index, iteration, the entities that ran, and the handoff batch size.
+  task-journal entries (`workflow-task-journal`) in append order: seq, type,
+  task index, iteration, the cells that ran, and the handoff batch size.
   """
   def state_journal(instance_id, output_format, _call) do
-    {:ok, entries} = ProcJournal.read(instance_id)
+    {:ok, entries} = TaskJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
-    leaf_procs = ClassRegistry.leaf_procs(instance_id)
-    complete = ProcJournal.complete?(instance_id, leaf_procs)
+    leaf_tasks = ClassRegistry.leaf_tasks(instance_id)
+    complete = TaskJournal.complete?(instance_id, leaf_tasks)
 
     case output_format do
       "json" ->
@@ -32,18 +32,18 @@ defmodule Flezha.Service.Cli.Journal do
           Jason.encode!(%{
             instance: instance_id,
             entries: rows,
-            leaf_procs: leaf_procs,
+            leaf_tasks: leaf_tasks,
             complete: complete
           })
         )
 
       _ ->
         if rows == [] do
-          IO.puts("no proc-journal for instance #{instance_id}")
+          IO.puts("no task-journal for instance #{instance_id}")
         else
-          IO.puts("proc-journal for instance #{instance_id}:\n")
+          IO.puts("task-journal for instance #{instance_id}:\n")
           Enum.each(rows, &print_journal_row/1)
-          print_journal_completion(leaf_procs, complete)
+          print_journal_completion(leaf_tasks, complete)
         end
     end
   end
@@ -52,17 +52,17 @@ defmodule Flezha.Service.Cli.Journal do
   # complete when the in-flight iteration has committed every leaf. A class that
   # declared none (a stream, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
-    do: IO.puts("\n  complete: unknown (class declares no leaf procedures)")
+    do: IO.puts("\n  complete: unknown (class declares no leaf tasklets)")
 
-  defp print_journal_completion(leaf_procs, complete),
-    do: IO.puts("\n  leaves: #{Enum.join(leaf_procs, ",")}  complete: #{complete}")
+  defp print_journal_completion(leaf_tasks, complete),
+    do: IO.puts("\n  leaves: #{Enum.join(leaf_tasks, ",")}  complete: #{complete}")
 
-  defp journal_row(%{type: :proc_committed, payload: payload} = entry) do
+  defp journal_row(%{type: :task_committed, payload: payload} = entry) do
     entry
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
     |> Map.merge(%{
-      entities_ran: Enum.map(payload.entities_ran, &Outbox.entity_label/1),
+      cells_ran: Enum.map(payload.cells_ran, &Outbox.cell_label/1),
       outbox: journal_outbox(payload.outbox)
     })
     |> journal_completion(payload.completion)
@@ -88,8 +88,8 @@ defmodule Flezha.Service.Cli.Journal do
     |> Map.put(:wake_deadline_ms, payload.wake_deadline_ms)
   end
 
-  # `for_type` names which entry's outbox this marks delivered — a procedure
-  # can have both a forward `proc_committed` outbox and a `compensated` undo one.
+  # `for_type` names which entry's outbox this marks delivered — a tasklet
+  # can have both a forward `task_committed` outbox and a `compensated` undo one.
   defp journal_row(%{type: :outbox_flushed, payload: %{for_type: for_type}} = entry) do
     entry
     |> base_journal_row()
@@ -110,7 +110,7 @@ defmodule Flezha.Service.Cli.Journal do
     %{
       seq: entry.seq,
       type: Atom.to_string(entry.type),
-      proc_idx: entry.proc_idx,
+      task_idx: entry.task_idx,
       iter: entry.iter,
       epoch: entry.epoch
     }
@@ -143,8 +143,8 @@ defmodule Flezha.Service.Cli.Journal do
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
-        entity: Outbox.entity_label(item.entity_id),
-        seq_in_proc: item.seq_in_proc,
+        cell: Outbox.cell_label(item.cell_id),
+        seq_in_task: item.seq_in_task,
         channel: item.channel,
         bytes: byte_size(item.payload)
       }
@@ -153,10 +153,10 @@ defmodule Flezha.Service.Cli.Journal do
 
   defp print_journal_row(row) do
     IO.puts(
-      "  seq=#{row.seq} #{row.type} proc_idx=#{row.proc_idx} iter=#{row.iter} epoch=#{row.epoch}"
+      "  seq=#{row.seq} #{row.type} task_idx=#{row.task_idx} iter=#{row.iter} epoch=#{row.epoch}"
     )
 
-    Enum.each(Map.get(row, :entities_ran, []), fn seg -> IO.puts("    ran: #{seg}") end)
+    Enum.each(Map.get(row, :cells_ran, []), fn seg -> IO.puts("    ran: #{seg}") end)
 
     if Map.has_key?(row, :handoff_items) do
       IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
@@ -170,7 +170,7 @@ defmodule Flezha.Service.Cli.Journal do
 
     Enum.each(Map.get(row, :outbox, []), fn item ->
       IO.puts(
-        "    outbox: #{item.entity} seq_in_proc=#{item.seq_in_proc} " <>
+        "    outbox: #{item.cell} seq_in_task=#{item.seq_in_task} " <>
           "channel=#{item.channel} #{item.bytes} byte(s)"
       )
     end)
@@ -205,8 +205,8 @@ defmodule Flezha.Service.Cli.Journal do
   iteration recorded).
   """
   def state_inbox(instance_id, output_format, _call) do
-    entries = ProcInbox.read(instance_id)
-    consumed = ProcJournal.consumed_offset(instance_id)
+    entries = TaskInbox.read(instance_id)
+    consumed = TaskJournal.consumed_offset(instance_id)
 
     rows =
       Enum.map(entries, fn entry ->

@@ -1,6 +1,6 @@
 defmodule Flezha.AuthZ.Namespace do
   @moduledoc """
-  Namespace is a hard entity: every Operative, every Procedure, every
+  Namespace is a hard cell: every Operative, every Tasklet, every
   persisted-state path, every audit record, and every observability
   signal carries one.
 
@@ -21,7 +21,7 @@ defmodule Flezha.AuthZ.Namespace do
 
   @default_quotas %{
     max_operatives: 100,
-    max_entities_per_operative: 1_024,
+    max_cells_per_operative: 1_024,
     max_mailbox_bytes_total: 268_435_456,
     max_message_rate_per_second: 100_000,
     max_state_bytes: 107_374_182_400,
@@ -31,7 +31,7 @@ defmodule Flezha.AuthZ.Namespace do
   @type name :: binary()
   @type quotas :: %{
           required(:max_operatives) => non_neg_integer(),
-          required(:max_entities_per_operative) => non_neg_integer(),
+          required(:max_cells_per_operative) => non_neg_integer(),
           required(:max_mailbox_bytes_total) => non_neg_integer(),
           required(:max_message_rate_per_second) => non_neg_integer(),
           required(:max_state_bytes) => non_neg_integer(),

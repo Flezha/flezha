@@ -3,7 +3,7 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   `Replay.dispatch_restore/3` adopting an operative's durable state from
   another controller node.
 
-  A partition rescale gathers the whole group's Entities onto the node that ran
+  A partition rescale gathers the whole group's Cells onto the node that ran
   it and stamps that node on every new member's opts. ProcessHub then places the
   members wherever it likes, so a member that lands elsewhere has to pull its
   class tree across before it restores — otherwise it cold-starts on top of
@@ -42,12 +42,12 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
     end)
   end
 
-  # The restore enumerates the class's Entities only after any pull: the
+  # The restore enumerates the class's Cells only after any pull: the
   # message this returns marks that point.
   defp expect_scan(reply_to) do
     scanned = {:scanned, make_ref()}
 
-    stub(Flezha.State.Paths, :entities_of, fn _operative_class ->
+    stub(Flezha.State.Paths, :cells_of, fn _operative_class ->
       send(reply_to, scanned)
       []
     end)
@@ -101,16 +101,16 @@ end
 
 defmodule FlezhaTest.Operative.RestoreRefusalTest do
   @moduledoc """
-  A refused restore fails the bind instead of cold-starting the Entity
+  A refused restore fails the bind instead of cold-starting the Cell
   (`guard-cross-sdk-placement`).
 
   `RestoreInitState` is an awaited control round trip and the controller acts
   on its answer. Every way an SDK can refuse a fold — a language mismatch, a
   schema mismatch, a CRC failure, a truncated change log, an apply error —
-  means the same thing here: the Entity's durable state did not reach the
+  means the same thing here: the Cell's durable state did not reach the
   runner, so folding new inputs on top of empty state would lose it silently.
 
-  A genuinely empty Entity is a SUCCESS, not a refusal, and must still bind.
+  A genuinely empty Cell is a SUCCESS, not a refusal, and must still bind.
   """
 
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
@@ -135,21 +135,21 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
   # carries it back: the diagnostic is what they test, not noise they emit.
   @refusal "sdk_lang mismatch: this SDK is rust (1), the record was written by java (2)"
 
-  defp entity(base) do
+  defp cell(base) do
     {"#{base}_#{System.unique_integer([:positive])}", "p0", "k"}
   end
 
-  defp assert_refusal_logged(log, entity_id) do
+  defp assert_refusal_logged(log, cell_id) do
     assert log =~ "restore REFUSED"
-    assert log =~ inspect(entity_id)
+    assert log =~ inspect(cell_id)
     assert log =~ @refusal
   end
 
   describe "await_restore/2" do
-    test "reports the SDK's refusal, with telemetry naming the entity and reason" do
-      id = entity("refused")
+    test "reports the SDK's refusal, with telemetry naming the cell and reason" do
+      id = cell("refused")
 
-      stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _entity ->
+      stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _cell ->
         {:error, @refusal}
       end)
 
@@ -167,7 +167,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
       {result, log} = with_log(fn -> Replay.await_restore("runner_1", id) end)
 
       assert result == {:error, @refusal}
-      assert_receive {:refused, %{count: 1}, %{entity: ^id, runner: "runner_1", reason: @refusal}}
+      assert_receive {:refused, %{count: 1}, %{cell: ^id, runner: "runner_1", reason: @refusal}}
       assert_refusal_logged(log, id)
     end
 
@@ -177,31 +177,31 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
       # would turn ordinary teardown churn into stuck operatives.
       for reason <- [:timeout, :no_control_unit, {:control_unit_exit, {:shutdown, :normal}}] do
         stub(Flezha.State.Commands, :await_restore_init_state, fn _r, _e -> {:error, reason} end)
-        assert Replay.await_restore("runner_1", entity("unanswered")) == :ok
+        assert Replay.await_restore("runner_1", cell("unanswered")) == :ok
       end
     end
 
     test "a successful restore is plain :ok" do
-      stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _entity ->
+      stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _cell ->
         {:ok, <<>>}
       end)
 
-      assert Replay.await_restore("runner_1", entity("fine")) == :ok
+      assert Replay.await_restore("runner_1", cell("fine")) == :ok
     end
   end
 
   describe "the tier bind" do
     test "a refused restore stops before the journal replay" do
-      id = entity("tier_refused")
+      id = cell("tier_refused")
       TestHelpers.write_wal_of_lang(id, @java)
 
-      stub(Flezha.State.Supervisor, :find_or_start, fn _entity -> {:ok, self()} end)
+      stub(Flezha.State.Supervisor, :find_or_start, fn _cell -> {:ok, self()} end)
 
-      stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _entity ->
+      stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _cell ->
         {:error, @refusal}
       end)
 
-      # Re-forwarding the input tail onto an Entity whose baseline never landed
+      # Re-forwarding the input tail onto a Cell whose baseline never landed
       # is the silent loss this guards, so it must not be reached.
       stub(Flezha.State.InputLog, :last_offset, fn _class ->
         flunk("the journal replay ran after a refused restore")
@@ -213,32 +213,32 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
       assert_refusal_logged(log, id)
     end
 
-    test "an Entity with no state binds: it is never restored in the first place" do
-      id = entity("empty")
+    test "a Cell with no state binds: it is never restored in the first place" do
+      id = cell("empty")
       path = Paths.wal_path(id)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, "")
 
       refute Restore.has_persisted_state?(id),
              "a zero-length WAL is no state — an assembled payload from it would " <>
-               "rebuild a live Entity to init_state"
+               "rebuild a live Cell to init_state"
     end
   end
 
   describe "Restore.sdk_lang/1" do
     test "reads byte 0 of the first WAL record when there is no snapshot" do
-      id = entity("wal_only")
+      id = cell("wal_only")
       TestHelpers.write_wal_of_lang(id, @java)
 
       assert Restore.sdk_lang(id) == @java
     end
 
-    test "is nil for an Entity with no durable state" do
-      assert Restore.sdk_lang(entity("nothing")) == nil
+    test "is nil for a Cell with no durable state" do
+      assert Restore.sdk_lang(cell("nothing")) == nil
     end
 
     test "is nil for a truncated WAL rather than a guess" do
-      id = entity("truncated")
+      id = cell("truncated")
       path = Paths.wal_path(id)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, <<0::64, 4::32>>)
@@ -249,7 +249,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
   describe "a durable log the controller's own reader refused" do
     test "journaled inputs are not re-forwarded from the prefix that verified" do
-      id = entity("il_refused")
+      id = cell("il_refused")
       {class, _, _} = id
 
       path = Paths.input_log_path(class)
@@ -266,7 +266,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
     end
 
     test "a correction refuses rather than replaying over a WAL that did not decode" do
-      id = entity("corr_refused")
+      id = cell("corr_refused")
       header = TestHelpers.stub_header()
       {:ok, writer} = Flezha.State.Supervisor.find_or_start(id)
 
@@ -418,9 +418,9 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
       assert_receive {:flz_data, _, _, "m2", %{"flz.offset" => "2"}}
     end
 
-    test "forwards only the tail above the Entity's consumed offset", ctx do
+    test "forwards only the tail above the Cell's consumed offset", ctx do
       for i <- 0..3, do: {:ok, _} = InputLog.append(ctx.class, "m#{i}", %{"input_type" => "2"})
-      InputLog.record_consumed(ctx.class, {ctx.class, "proc", "a"}, 2)
+      InputLog.record_consumed(ctx.class, {ctx.class, "task", "a"}, 2)
 
       state = overwatch(ctx, effectively_once: true)
       assert :ok = Replay.replay_journaled_inputs(state)
@@ -448,7 +448,7 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
           frames
         end)
 
-      # Three binds with no Entity progress deliver the same two inputs each
+      # Three binds with no Cell progress deliver the same two inputs each
       # time; the DISTINCT count is the size of the tail, which is what the
       # effectively-once identity absorbs.
       assert delivered |> Enum.uniq() |> Enum.sort() == ["m0", "m1"]
@@ -554,7 +554,7 @@ end
 
 defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
   @moduledoc """
-  The per-Entity restore replay must run off the Overwatch process so its
+  The per-Cell restore replay must run off the Overwatch process so its
   blocking disk reads cannot freeze the GenServer mailbox.
   """
   use ExUnit.Case, async: true
@@ -568,7 +568,7 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
     # Private stub bites only the in-process (regression) path; the spawned
     # worker calls through to the real (fast) scan. A regression therefore
     # hangs here rather than returning late.
-    stub(Flezha.State.Paths, :all_entities, fn ->
+    stub(Flezha.State.Paths, :all_cells, fn ->
       NodeTestHelper.park()
       []
     end)

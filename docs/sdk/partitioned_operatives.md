@@ -45,10 +45,10 @@ shipped on `AddOperative`** (`key_group_from` / `key_group_to`), never re-derive
 > For a partitioned operative, the routing item — the source's subscription string, an
 > emitter's `flz.key` — must equal the value `key_by` extracts.
 
-A plain `emit` on a keyed channel holds it by construction (the stamped key is the Entity's
+A plain `emit` on a keyed channel holds it by construction (the stamped key is the Cell's
 own). What is left to get wrong is the source's subscription string and an explicit
 `emit_keyed` under a key of the author's choosing. With `partition_count >= 2`, dispatch checks
-every computed entity key against the member's range; a miss parks **before any state for
+every computed cell key against the member's range; a miss parks **before any state for
 that key is created**:
 
 ```text
@@ -58,9 +58,9 @@ key 'BTC-USD' hashes to key group 129, which partition 0 of 3 does not own
 
 Below `partition_count = 2` the check is one integer comparison.
 
-**Keyless topologies are refused.** A class with no keyed entry-fed procedure — neither
-`key_by` nor declared entity keys — cannot be partitioned: the SDK refuses the `AddOperative`
-with `PartitionsWithoutKeyedProcedure` (only the SDK can tell; key closures are compiled
+**Keyless topologies are refused.** A class with no keyed entry-fed tasklet — neither
+`key_by` nor declared cell keys — cannot be partitioned: the SDK refuses the `AddOperative`
+with `PartitionsWithoutKeyedTasklet` (only the SDK can tell; key closures are compiled
 code), the controller treats that as a member start failure and rolls the group back. The
 class also reports `keyed: false` in its `AddOperative` response metadata, so a later
 partitioned start of a known-keyless class is refused before any runner is touched. A
@@ -111,14 +111,14 @@ One `list` row per group, showing the **worst** member's health. Coverage is rec
 the member rows on every read; a missing member or an overlapping range is rendered as a
 warning naming the exact gap or the contested key group. Membership is a metadata match over
 the registry rows (`ProcessHub.metadata_query/2` on `:partition`), never a registry decode.
-`flz operative stop <group>` stops every member. `flz state get <group>/<procedure>/<key>`
-reads from the member owning the key; a procedure-level read fans out and merges.
+`flz operative stop <group>` stops every member. `flz state get <group>/<tasklet>/<key>`
+reads from the member owning the key; a tasklet-level read fans out and merges.
 
 ## Re-running the start: converge
 
 `flz operative start <factory> --id <id> --partitions N` against a group with live members **converges**: it
 starts only the members whose indices are missing and leaves every survivor untouched. A
-restarted member restores its Entity state from its WAL at bind, so the cold-start command is
+restarted member restores its Cell state from its WAL at bind, so the cold-start command is
 also the heal for an under-membered group.
 
 ```text
@@ -157,9 +157,9 @@ flz operative scale ohlc 5 --timeout 60000     # quiesce timeout in ms, default 
    running.
 3. **Stop.** Members stop with state preserved; the command waits up to 15 s for each id to be
    released before reusing it.
-4. **Move.** Every Entity whose key group changes owner has its whole durable file set moved
+4. **Move.** Every Cell whose key group changes owner has its whole durable file set moved
    into the new owner's tree — an atomic rename on the same controller, the `WalTransfer`
-   chunked pull (fsync, then rename, then drop the source) across controllers. Entity identity
+   chunked pull (fsync, then rename, then drop the source) across controllers. Cell identity
    contains the key and no runner, so no file format changes.
 5. **Start.** The M members start with the new ranges and restore through the ordinary bind —
    a cold working-set rebuild, the same cost class as crash-resume.
@@ -168,7 +168,7 @@ flz operative scale ohlc 5 --timeout 60000     # quiesce timeout in ms, default 
    so an absent node can never resurrect one.
 
 A crash mid-rescale is recoverable: before step 4 nothing durable has moved, each move is
-atomic per Entity, and re-running `flz operative scale` re-derives the remaining moves from
+atomic per Cell, and re-running `flz operative scale` re-derives the remaining moves from
 what is on disk. **One rescale of a group runs at a time, cluster-wide** — a second command
 is refused, and the lock is released if the controller holding it dies. **Forwards into the
 group follow it**: a forwarding plugin whose resolved members no longer match the group reports
@@ -178,21 +178,21 @@ the new owner). The rescale command itself reports the move, not the forwards.
 
 ## Hot keys: two-stage aggregation
 
-Per-key ordering means one key is served by one Entity on one machine; a key hot enough to
+Per-key ordering means one key is served by one Cell on one machine; a key hot enough to
 saturate a core cannot be split by partitioning. Split it in the topology instead:
 
 ```rust
 // Stage 1 — partitioned: fan one symbol across 8 sub-keys, aggregate locally.
 c.input::<Trade>("trades")
     .key_by(|t: &Trade| format!("{}#{}", t.symbol, t.trade_id % 8))
-    .into::<PartialCandleProcedure>()
+    .into::<PartialCandleTasklet>()
     .keyed()
     .sink_named("partials");
 
-// Stage 2 — a single-partition merger, fed by forward: one Entity per symbol.
+// Stage 2 — a single-partition merger, fed by forward: one Cell per symbol.
 c.input::<PartialCandle>("partials")
     .key_by(|p: &PartialCandle| p.symbol.clone())
-    .into::<CandleProcedure>()
+    .into::<CandleTasklet>()
     .sink_named("candles");
 ```
 

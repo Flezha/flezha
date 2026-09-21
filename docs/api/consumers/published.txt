@@ -43,7 +43,7 @@ Flezha.Service.Controller.shutdown_status/1
 Flezha.Service.Dlq.drop/2
 Flezha.Service.Dlq.get/2
 Flezha.Service.Dlq.list/2
-Flezha.Service.Dlq.procedures/2
+Flezha.Service.Dlq.tasklets/2
 Flezha.Service.Dlq.replay/2
 Flezha.Service.Dlq.stats/1
 Flezha.Service.Fleet.factories/2
@@ -69,7 +69,7 @@ Flezha.Service.Observability.query/2
 Flezha.Service.Observability.subscribe/2
 Flezha.Service.Observability.tail/2
 Flezha.Service.Observability.unsubscribe/2
-Flezha.Service.Operative.entity_state/4
+Flezha.Service.Operative.cell_state/4
 Flezha.Service.Operative.kind_capabilities/2
 Flezha.Service.Operative.kind_known?/2
 Flezha.Service.Operative.list_namespaces/1

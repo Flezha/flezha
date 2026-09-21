@@ -36,7 +36,7 @@ defmodule Flezha.Runner.FleetManager.Marks do
   # correctness, this decides only what gets reported.
   @retiring_table :flezha_retiring_runners
   # Each live session's stable identity, keyed by the session token, and one
-  # `{session, subject}` row per operative or Entity the session was refused for.
+  # `{session, subject}` row per operative or Cell the session was refused for.
   @identity_table :flezha_session_identities
 
   @doc """
@@ -76,8 +76,8 @@ defmodule Flezha.Runner.FleetManager.Marks do
   end
 
   @doc """
-  Whether this is `session`'s first refusal for `subject`, an operative or an
-  Entity: true once per session and subject, across every channel of the
+  Whether this is `session`'s first refusal for `subject`, an operative or a
+  Cell: true once per session and subject, across every channel of the
   session, so a refusal is reported once however many frames repeat it.
   """
   @spec first_refusal?(binary(), term()) :: boolean()

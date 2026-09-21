@@ -16,7 +16,7 @@ defmodule Flezha.State.WalWriterTest do
   alias Flezha.State.WalWriter.State, as: WriterState
 
   setup do
-    %{entity_id: TestHelpers.sample_entity_id("p_" <> uniq())}
+    %{cell_id: TestHelpers.sample_cell_id("p_" <> uniq())}
   end
 
   describe "encode/decode round-trip" do
@@ -107,33 +107,33 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "append" do
-    test "appends sequential records and updates metrics", %{entity_id: pid} do
+    test "appends sequential records and updates metrics", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
-      # Per-Entity seq is 0-based (the SDK's change_seq starts at 0).
+      # Per-Cell seq is 0-based (the SDK's change_seq starts at 0).
       assert :ok = WalWriter.append(srv, 0, header, "a")
       assert :ok = WalWriter.append(srv, 1, header, "bb")
       assert :ok = WalWriter.append(srv, 2, header, "ccc")
       assert WalWriter.last_persisted_seq(srv) == 2
 
-      m = Metrics.to_map(Metrics.for_entity(pid))
+      m = Metrics.to_map(Metrics.for_cell(pid))
       assert m.persisted_changes_total == 3
       assert m.wal_seq == 2
       assert m.persisted_bytes_total > 0
     end
 
-    test "rejects duplicate seq with :duplicate", %{entity_id: pid} do
+    test "rejects duplicate seq with :duplicate", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
 
       assert :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
       assert :duplicate = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
-      assert Metrics.get(Metrics.for_entity(pid), :dedup_drops_total) == 1
+      assert Metrics.get(Metrics.for_cell(pid), :dedup_drops_total) == 1
     end
 
-    test "detects gaps", %{entity_id: pid} do
+    test "detects gaps", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -151,7 +151,7 @@ defmodule Flezha.State.WalWriterTest do
       :ok
     end
 
-    test "a gap flood sheds every frame and declares one gap per episode", %{entity_id: pid} do
+    test "a gap flood sheds every frame and declares one gap per episode", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -167,11 +167,11 @@ defmodule Flezha.State.WalWriterTest do
       refute_receive {:declare, :seq_gap, ^pid, _}, 50
 
       assert WalWriter.last_persisted_seq(srv) == -1
-      assert Metrics.get(Metrics.for_entity(pid), :wal_shed_total) == 50
+      assert Metrics.get(Metrics.for_cell(pid), :wal_shed_total) == 50
     end
 
     test "the pulled snapshot establishes the baseline, closes the episode, and appends resume",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -179,7 +179,7 @@ defmodule Flezha.State.WalWriterTest do
       assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
       assert_receive {:declare, :seq_gap, ^pid, _}, 1_000
 
-      # The CompactEntity round-trip lands as a snapshot at the runner's seq.
+      # The CompactCell round-trip lands as a snapshot at the runner's seq.
       assert {:ok, _path} = StateSnapshot.write_snapshot(pid, 5005, header, "full-state")
 
       assert WalWriter.last_persisted_seq(srv) == 5005
@@ -188,14 +188,14 @@ defmodule Flezha.State.WalWriterTest do
       assert :ok = WalWriter.append(srv, 5006, header, "d3", "exec-cold")
       assert WalWriter.last_persisted_seq(srv) == 5006
 
-      # A healed Entity declares nothing more.
+      # A healed Cell declares nothing more.
       assert :ok = WalWriter.append(srv, 5007, header, "d4", "exec-cold")
       refute_receive {:declare, :seq_gap, ^pid, _}, 50
     end
   end
 
   describe "scan_for_last_valid_seq" do
-    test "recovers last seq across a re-open", %{entity_id: pid} do
+    test "recovers last seq across a re-open", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -213,7 +213,7 @@ defmodule Flezha.State.WalWriterTest do
     end
 
     test "a corrupt record mid-WAL is refused, and the records after it stay on disk",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -230,7 +230,7 @@ defmodule Flezha.State.WalWriterTest do
       # A value no scan produces: it survives only if the refused open reported
       # no seq at all. The size assertion below is on the same counters ref, so
       # it is the proof this one is reading the ref the writer writes.
-      metrics = Metrics.for_entity(pid)
+      metrics = Metrics.for_cell(pid)
       Metrics.put(metrics, :wal_seq, -1)
 
       handler =
@@ -269,7 +269,7 @@ defmodule Flezha.State.WalWriterTest do
     end
 
     test "a rewind refuses rather than cutting at a corrupt record below its boundary",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       {:ok, srv} = Supervisor.find_or_start(pid)
       header = TestHelpers.stub_header()
       for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
@@ -291,7 +291,7 @@ defmodule Flezha.State.WalWriterTest do
     end
 
     test "a prefix cut refuses rather than cutting past a corrupt record",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       {:ok, srv} = Supervisor.find_or_start(pid)
       header = TestHelpers.stub_header()
       for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
@@ -315,7 +315,7 @@ defmodule Flezha.State.WalWriterTest do
     end
 
     test "a cut whose file went away answers the error its @spec always promised",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       {:ok, srv} = Supervisor.find_or_start(pid)
       header = TestHelpers.stub_header()
       for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
@@ -331,7 +331,7 @@ defmodule Flezha.State.WalWriterTest do
     end
 
     test "a repaired torn tail is reported with the byte count it discarded",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -365,7 +365,7 @@ defmodule Flezha.State.WalWriterTest do
       assert RecordFrame.file_size(path) == kept
     end
 
-    test "truncates partial-write tail past last valid record", %{entity_id: pid} do
+    test "truncates partial-write tail past last valid record", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -389,7 +389,7 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "truncate_up_to" do
-    test "drops records with seq <= target", %{entity_id: pid} do
+    test "drops records with seq <= target", %{cell_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -408,14 +408,14 @@ defmodule Flezha.State.WalWriterTest do
 
   describe "non-blocking init" do
     test "init/1 returns instantly with the disk scan deferred to handle_continue",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       # Run in a child so init's `trap_exit` flag doesn't leak onto the test process.
       assert {:ok, %WriterState{file_handle: nil}, {:continue, :open}} =
                Task.async(fn -> WalWriter.init(pid) end) |> Task.await()
     end
 
     test "an append issued immediately after start lands after the deferred scan",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       header = TestHelpers.stub_header()
 
       # Pre-seed a WAL up to seq 2 so the deferred scan has records to recover.
@@ -444,8 +444,8 @@ defmodule Flezha.State.WalWriterTest do
       assert WalWriter.last_persisted_seq(srv2) == 3
     end
 
-    test "writers for distinct entities are independent processes", %{entity_id: pid} do
-      other = TestHelpers.sample_entity_id("p_" <> uniq())
+    test "writers for distinct cells are independent processes", %{cell_id: pid} do
+      other = TestHelpers.sample_cell_id("p_" <> uniq())
 
       {:ok, a} = Supervisor.find_or_start(pid)
       {:ok, b} = Supervisor.find_or_start(other)
@@ -466,7 +466,7 @@ defmodule Flezha.State.WalWriterTest do
     # bytes grow without bound. Past the hard bound, async appends are shed
     # (dropped + counted) and the resulting seq gap drives resync.
     test "sheds appends past the hard bound, declaring the gap that drives the resync",
-         %{entity_id: pid} do
+         %{cell_id: pid} do
       cap = 50
       Application.put_env(:flezha, :wal_pending_msg_cap, cap)
       become_loop()
@@ -494,12 +494,12 @@ defmodule Flezha.State.WalWriterTest do
       # A sync call drains behind every queued cast.
       last = WalWriter.last_persisted_seq(srv)
 
-      shed = Metrics.get(Metrics.for_entity(pid), :wal_shed_total)
+      shed = Metrics.get(Metrics.for_cell(pid), :wal_shed_total)
       assert shed > 0
       # The WAL never advanced to k — shed Changes were dropped, not written.
       assert last < k
       # The shed gap is declared once for the episode; the loop plans the
-      # resync (the SDK is authoritative for entity state).
+      # resync (the SDK is authoritative for cell state).
       assert_receive {:declare, :seq_gap, ^pid, %{trigger: :shed}}, 1_000
     end
   end
@@ -508,10 +508,10 @@ defmodule Flezha.State.WalWriterTest do
     # The writer marks the application's batcher dirty, so every case freezes it
     # (`in_one_window`) to hold the records un-synced for as long as it needs.
     test "appends landing in one window share one fsync and answer only after it",
-         %{entity_id: id} do
+         %{cell_id: id} do
       {:ok, srv} = Supervisor.find_or_start(id)
       header = TestHelpers.stub_header()
-      before = Metrics.get(Metrics.for_entity(id), :fsync_total)
+      before = Metrics.get(Metrics.for_cell(id), :fsync_total)
 
       reqids =
         TestHelpers.in_one_window(fn ->
@@ -527,10 +527,10 @@ defmodule Flezha.State.WalWriterTest do
         end)
 
       assert Enum.sort(collect(reqids)) == for(i <- 0..9, do: {i, {:ok, i}})
-      assert Metrics.get(Metrics.for_entity(id), :fsync_total) == before + 1
+      assert Metrics.get(Metrics.for_cell(id), :fsync_total) == before + 1
     end
 
-    test "a prefix cut answers the appends it made durable", %{entity_id: id} do
+    test "a prefix cut answers the appends it made durable", %{cell_id: id} do
       {:ok, srv} = Supervisor.find_or_start(id)
       header = TestHelpers.stub_header()
 
@@ -551,7 +551,7 @@ defmodule Flezha.State.WalWriterTest do
       end)
     end
 
-    test "a clean close answers the appends it holds", %{entity_id: id} do
+    test "a clean close answers the appends it holds", %{cell_id: id} do
       {:ok, srv} = Supervisor.find_or_start(id)
       header = TestHelpers.stub_header()
 
@@ -575,7 +575,7 @@ defmodule Flezha.State.WalWriterTest do
     # The kill leaves a supervisor crash report; captured, and the transient
     # restart it announces is awaited so the report lands inside the capture.
     @tag capture_log: true
-    test "a writer that dies before the sync fails the waiter", %{entity_id: id} do
+    test "a writer that dies before the sync fails the waiter", %{cell_id: id} do
       {:ok, srv} = Supervisor.find_or_start(id)
       header = TestHelpers.stub_header()
 
@@ -612,7 +612,7 @@ defmodule Flezha.State.WalWriterTest do
 
   describe "header dedup" do
     test "a keyed append refuses a header still in the file, until a cut releases it",
-         %{entity_id: id} do
+         %{cell_id: id} do
       {:ok, srv} = Supervisor.find_or_start(id)
       h1 = <<1::128>>
       h2 = <<2::128>>
@@ -637,9 +637,9 @@ defmodule Flezha.State.WalWriterTest do
   defp ok!({:ok, x}), do: {:ok, x}
 
   describe "close_writers/1" do
-    test "stops every live writer of the class and leaves its files", %{entity_id: entity_id} do
-      {class, _, _} = entity_id
-      {:ok, pid} = Supervisor.find_or_start(entity_id)
+    test "stops every live writer of the class and leaves its files", %{cell_id: cell_id} do
+      {class, _, _} = cell_id
+      {:ok, pid} = Supervisor.find_or_start(cell_id)
 
       :ok =
         WalWriter.append_next(pid, TestHelpers.stub_header(), "one")
@@ -654,7 +654,7 @@ defmodule Flezha.State.WalWriterTest do
       # dead process on its own `:DOWN` — so it leaves the list after it dies,
       # not with it.
       assert wait_until(fn -> Supervisor.live_writers(class) == [] end, 2_000)
-      assert File.exists?(Paths.wal_path(entity_id))
+      assert File.exists?(Paths.wal_path(cell_id))
     end
   end
 end

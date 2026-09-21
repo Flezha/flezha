@@ -2,7 +2,7 @@ defmodule Flezha.State.GapRecoveryTest do
   @moduledoc """
   Defect B / `operative-state-persistence`: a persistence seq gap must
   trigger a `RestoreInitState` resync (and let the WAL advance again)
-  rather than wedge the Entity forever with `{:error, {:gap}}`.
+  rather than wedge the Cell forever with `{:error, {:gap}}`.
 
   Drives the production signature end-to-end: WAL frozen at
   `last_persisted_seq`, a gap arrives, the resync rewinds the SDK, and
@@ -24,9 +24,9 @@ defmodule Flezha.State.GapRecoveryTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup %{base: base} do
-    entity_id = TestHelpers.sample_entity_id("gap_" <> uniq())
-    {:ok, _} = Supervisor.find_or_start(entity_id)
-    {:ok, writer} = Supervisor.lookup(entity_id)
+    cell_id = TestHelpers.sample_cell_id("gap_" <> uniq())
+    {:ok, _} = Supervisor.find_or_start(cell_id)
+    {:ok, writer} = Supervisor.lookup(cell_id)
     header = TestHelpers.stub_header()
 
     :ok = WalWriter.append(writer, 0, header, "z")
@@ -50,25 +50,25 @@ defmodule Flezha.State.GapRecoveryTest do
       # Close the writer and drop its fsync mark before deleting the dir,
       # else the app's 5 ms batcher fsyncs a now-missing file and the writer
       # crashes (the resync leaves seq 4/5 dirty and unflushed).
-      Supervisor.delete_entity(entity_id)
+      Supervisor.delete_cell(cell_id)
       Application.delete_env(:flezha, :state_resync_fun)
       File.rm_rf!(base)
     end)
 
-    %{entity_id: entity_id, writer: writer, header: header, parent: parent}
+    %{cell_id: cell_id, writer: writer, header: header, parent: parent}
   end
 
   defp simulate_sdk_resync(parent, header) do
     # The real SDK rewinds and resends from terminal_seq + 1; here we
     # append the next contiguous seq directly so the WAL resumes.
-    fn entity_id, opts ->
+    fn cell_id, opts ->
       result =
-        case Supervisor.lookup(entity_id) do
+        case Supervisor.lookup(cell_id) do
           {:ok, w} -> WalWriter.append(w, WalWriter.last_persisted_seq(w) + 1, header, "resync")
           _ -> :no_writer
         end
 
-      send(parent, {:resync_called, entity_id, opts, result})
+      send(parent, {:resync_called, cell_id, opts, result})
       {:ok, make_ref()}
     end
   end
@@ -80,7 +80,7 @@ defmodule Flezha.State.GapRecoveryTest do
   end
 
   defp frame({rc, sh, pk}, seq, header, body) do
-    pid_bytes = Wire.encode_entity_id(rc, sh, pk)
+    pid_bytes = Wire.encode_cell_id(rc, sh, pk)
 
     <<byte_size(pid_bytes)::16-big, pid_bytes::binary, seq::64-big, header::binary,
       byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>
@@ -93,7 +93,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
     send(
       sc,
-      {:flz_data, 0, "entity_state_change", frame(ctx.entity_id, 37, ctx.header, "z"), %{}}
+      {:flz_data, 0, "cell_state_change", frame(ctx.cell_id, 37, ctx.header, "z"), %{}}
     )
 
     # Gap is detected (expected 4, got 37) and telemetry is emitted.
@@ -101,9 +101,9 @@ defmodule Flezha.State.GapRecoveryTest do
     assert meta.operative == "TestOperative"
 
     # The writer declares the gap once, naming the runner; it resyncs nothing.
-    entity_id = ctx.entity_id
+    cell_id = ctx.cell_id
 
-    assert_receive {:declare, :seq_gap, ^entity_id, %{runner_id: "exec-gap", trigger: :seq_gap}},
+    assert_receive {:declare, :seq_gap, ^cell_id, %{runner_id: "exec-gap", trigger: :seq_gap}},
                    1_000
 
     refute_received {:resync_called, _, _, _}
@@ -113,16 +113,16 @@ defmodule Flezha.State.GapRecoveryTest do
              Heal.execute(%{
                primitive: :resync_runner,
                namespace: nil,
-               target: entity_id,
-               args: %{reason: :seq_gap, entity_id: entity_id, runner_id: "exec-gap"}
+               target: cell_id,
+               args: %{reason: :seq_gap, cell_id: cell_id, runner_id: "exec-gap"}
              })
 
-    # Resync ran for the Entity; the simulated SDK resend advances the WAL
+    # Resync ran for the Cell; the simulated SDK resend advances the WAL
     # past the frozen seq 3, and the contiguous append closes the episode.
-    assert_receive {:resync_called, ^entity_id, opts, :ok}, 1_000
+    assert_receive {:resync_called, ^cell_id, opts, :ok}, 1_000
     assert opts[:runner_id] == "exec-gap"
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
-    assert_receive {:declare, :seq_gap_closed, ^entity_id, %{}}, 1_000
+    assert_receive {:declare, :seq_gap_closed, ^cell_id, %{}}, 1_000
 
     # And subsequent contiguous Changes are accepted (no permanent wedge).
     assert :ok = WalWriter.append(ctx.writer, 5, ctx.header, "e")
@@ -136,13 +136,13 @@ defmodule Flezha.State.GapRecoveryTest do
     # Contiguous (seq 4) — accepted, no gap.
     send(
       sc,
-      {:flz_data, 0, "entity_state_change", frame(ctx.entity_id, 4, ctx.header, "d"), %{}}
+      {:flz_data, 0, "cell_state_change", frame(ctx.cell_id, 4, ctx.header, "d"), %{}}
     )
 
     # Stale (seq 2) — deduped, no gap.
     send(
       sc,
-      {:flz_data, 0, "entity_state_change", frame(ctx.entity_id, 2, ctx.header, "x"), %{}}
+      {:flz_data, 0, "cell_state_change", frame(ctx.cell_id, 2, ctx.header, "x"), %{}}
     )
 
     # Both frames are through the channel and the writer once the channel answers.
@@ -157,12 +157,12 @@ defmodule Flezha.State.GapRecoveryTest do
   test "a fresh controller declares a baseline pull from a live runner instead of wiping it",
        ctx do
     become_loop()
-    # Cold takeover: this controller has no WAL/snapshot for the Entity,
+    # Cold takeover: this controller has no WAL/snapshot for the Cell,
     # while the live runner keeps streaming deltas from seq 5001.
-    cold_id = TestHelpers.sample_entity_id("cold_" <> uniq())
+    cold_id = TestHelpers.sample_cell_id("cold_" <> uniq())
     {:ok, _} = Supervisor.find_or_start(cold_id)
     {:ok, writer} = Supervisor.lookup(cold_id)
-    on_exit(fn -> Supervisor.delete_entity(cold_id) end)
+    on_exit(fn -> Supervisor.delete_cell(cold_id) end)
 
     sc = start_channel("exec-cold")
 
@@ -170,8 +170,8 @@ defmodule Flezha.State.GapRecoveryTest do
       send(sc, {:flz_data, 0, payload_id, frame(cold_id, seq, ctx.header, body), %{}})
     end
 
-    deliver.("entity_state_change", 5001, "d1")
-    deliver.("entity_state_change", 5002, "d2")
+    deliver.("cell_state_change", 5001, "d1")
+    deliver.("cell_state_change", 5002, "d2")
 
     # The pull is declared exactly once, as a gap episode; no fatal seq_gap fires.
     assert_receive {:declare, :seq_gap, ^cold_id,
@@ -183,8 +183,8 @@ defmodule Flezha.State.GapRecoveryTest do
     refute_received {:seq_gap, _, _}
 
     # The pulled full-state snapshot lands via the real data-plane handler
-    # and becomes the Entity's baseline.
-    deliver.("entity_state_snapshot", 5005, "full")
+    # and becomes the Cell's baseline.
+    deliver.("cell_state_snapshot", 5005, "full")
 
     assert NodeTestHelper.wait_until(
              fn -> WalWriter.last_persisted_seq(writer) == 5005 end,
@@ -195,7 +195,7 @@ defmodule Flezha.State.GapRecoveryTest do
     # The baseline closes the episode; the runner's next delta appends
     # contiguously past it.
     assert_receive {:declare, :seq_gap_closed, ^cold_id, %{}}, 1_000
-    deliver.("entity_state_change", 5006, "d3")
+    deliver.("cell_state_change", 5006, "d3")
 
     assert NodeTestHelper.wait_until(
              fn -> WalWriter.last_persisted_seq(writer) == 5006 end,
@@ -218,12 +218,12 @@ defmodule Flezha.State.GapRecoveryTest do
 
     send(
       sc,
-      {:flz_data, 0, "entity_state_snapshot", frame(ctx.entity_id, 3, ctx.header, "snap"), %{}}
+      {:flz_data, 0, "cell_state_snapshot", frame(ctx.cell_id, 3, ctx.header, "snap"), %{}}
     )
 
     # The snapshot write runs in a spawned process; poll until it lands.
     assert NodeTestHelper.wait_until(
-             fn -> StateSnapshot.latest_snapshot(ctx.entity_id) != nil end,
+             fn -> StateSnapshot.latest_snapshot(ctx.cell_id) != nil end,
              500,
              10
            )

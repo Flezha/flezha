@@ -1,40 +1,40 @@
 # operative-output-identity Specification
 
 ## Purpose
-Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_keyed`, the `flz.entity`/`flz.seq`/`flz.key` reserved stamps, the protected `flz.` metadata namespace, and the `flz.seq` exactness boundary. Non-keyed channels stay byte-identical and cost-free.
+Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_keyed`, the `flz.cell`/`flz.seq`/`flz.key` reserved stamps, the protected `flz.` metadata namespace, and the `flz.seq` exactness boundary. Non-keyed channels stay byte-identical and cost-free.
 ## Requirements
 ### Requirement: Keyed channel declaration
 
 The channel builder SHALL support a `.keyed()` declaration on plugin-bound
 (a `sink` with no consumers) and hybrid (a `sink` with consumers) channels, recorded on
-the channel entry. Declaring `.keyed()` on a pure inter-procedure channel (no
+the channel entry. Declaring `.keyed()` on a pure inter-tasklet channel (no
 plugin wire) SHALL be a build error. The channel declaration is the single
 source of truth for whether output identity exists on that channel.
 
 #### Scenario: Keyed plugin channel accepted
 
 - **WHEN** a topology declares `.sink_with("kafka", ser).keyed()` on an
-  `OhlcProc` output stream
+  `OhlcTask` output stream
 - **THEN** the operative builds and the channel entry is marked keyed
 
-#### Scenario: Keyed inter-procedure channel rejected
+#### Scenario: Keyed inter-tasklet channel rejected
 
 - **WHEN** a topology declares `.keyed()` on a channel with no plugin sink
 - **THEN** the build fails with a typed error naming the channel
 
 ### Requirement: `emit_keyed` supplies the natural key on keyed channels
 
-`ProcedureCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
+`TaskletCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
 the caller-supplied natural key. On a keyed channel, plain `emit` /
-`emit_with_meta` (no key) SHALL default to the invoking entity's own key whenever
-the entity has one — a dynamically keyed entity or one of a declared static
+`emit_with_meta` (no key) SHALL default to the invoking cell's own key whenever
+the cell has one — a dynamically keyed cell or one of a declared static
 keyset — so the stamped key SHALL equal the routing key by construction; it SHALL
-fail with a typed error in a single-entity procedure, which has no entity key to
+fail with a typed error in a single-cell tasklet, which has no cell key to
 default to. On a non-keyed channel,
 `emit_keyed` SHALL fail with a typed error. Explicitly supplied keys SHALL be
 replay-stable by the determinism contract (derived from input/state/ctx, never
-from ambient sources); the entity-key default is replay-stable inherently, the
-entity key being part of the invocation's identity.
+from ambient sources); the cell-key default is replay-stable inherently, the
+cell key being part of the invocation's identity.
 
 #### Scenario: Keyed emit on keyed channel
 
@@ -42,30 +42,30 @@ entity key being part of the invocation's identity.
   channel
 - **THEN** the output is emitted and carries the supplied key
 
-#### Scenario: Un-keyed emit in a keyed entity defaults to the entity key
+#### Scenario: Un-keyed emit in a keyed cell defaults to the cell key
 
-- **WHEN** the entity keyed `"BTC/USD"` calls `ctx.emit(candle)` on a keyed
+- **WHEN** the cell keyed `"BTC/USD"` calls `ctx.emit(candle)` on a keyed
   channel
 - **THEN** the output is emitted carrying the key `"BTC/USD"`, byte-identical
   (including `flz.key` stamping and record keying) to
   `ctx.emit_keyed("BTC/USD", candle)`
 
-#### Scenario: Un-keyed emit in a single-entity procedure rejected
+#### Scenario: Un-keyed emit in a single-cell tasklet rejected
 
-- **WHEN** a single-entity procedure calls `ctx.emit(value)` on a keyed channel
-- **THEN** the call returns a typed `ProcedureError` and nothing is emitted
+- **WHEN** a single-cell tasklet calls `ctx.emit(value)` on a keyed channel
+- **THEN** the call returns a typed `TaskletError` and nothing is emitted
 
 #### Scenario: Keyed emit on non-keyed channel rejected
 
 - **WHEN** `run` calls `ctx.emit_keyed(key, value)` on a channel not declared
   `.keyed()`
-- **THEN** the call returns a typed `ProcedureError` and nothing is emitted
+- **THEN** the call returns a typed `TaskletError` and nothing is emitted
 
 ### Requirement: Identity stamps on keyed-channel output frames
 
 Every plugin-wire emit on a keyed channel SHALL carry reserved metadata stamps:
-`flz.entity` (the emitting Entity's identity as
-`operative_class/procedure_id/entity_key`), `flz.seq` (the current durable change
+`flz.cell` (the emitting Cell's identity as
+`operative_class/tasklet_id/cell_key`), `flz.seq` (the current durable change
 sequence plus the emit ordinal within the invocation, formatted
 `<change_seq>.<emit_ordinal>`), and `flz.key` (the natural key from `emit_keyed`).
 Stamps SHALL be appended after user metadata so they cannot be clobbered. The
@@ -76,7 +76,7 @@ state reproduces identical stamp values.
 
 - **WHEN** a keyed-channel emit is produced, the runner crashes, state is
   restored, and the same input is replayed
-- **THEN** the re-emitted frame carries `flz.entity`, `flz.seq`, and `flz.key`
+- **THEN** the re-emitted frame carries `flz.cell`, `flz.seq`, and `flz.key`
   values identical to the original emission
 
 #### Scenario: Controller passes stamps through to the plugin chain
@@ -95,7 +95,7 @@ building append-only dedup on `flz.seq` alone.
 
 #### Scenario: Collision case is documented and detectable
 
-- **WHEN** two consecutive invocations of an Entity emit without applying any
+- **WHEN** two consecutive invocations of a Cell emit without applying any
   state change
 - **THEN** their `flz.seq` stamps may collide, and the documented guidance directs
   exact append-dedup consumers to the effectively-once outbox capability
@@ -109,7 +109,7 @@ clobbered by operative code.
 #### Scenario: Spoofed stamp rejected
 
 - **WHEN** `run` calls `ctx.emit_with_meta(value, {"flz.seq": "999.0"})`
-- **THEN** the call returns a typed `ProcedureError` and nothing is emitted
+- **THEN** the call returns a typed `TaskletError` and nothing is emitted
 
 ### Requirement: Non-keyed channels are unchanged and cost-free
 
@@ -131,7 +131,7 @@ SHALL show no regression on non-keyed emit paths.
 
 ### Requirement: Every host mints the identity stamps, and the ordinal rule is one rule
 
-An SDK whose procedures run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class does not declare effectively-once; under the tier the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.entity` SHALL be spelled `<operative>/<procedure>/<entity_key or empty>`, matching the label the core derives for the same Entity, and `flz.seq` SHALL read the change sequence the activation carried at handout.
+An SDK whose tasklets run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class does not declare effectively-once; under the tier the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.cell` SHALL be spelled `<operative>/<tasklet>/<cell_key or empty>`, matching the label the core derives for the same Cell, and `flz.seq` SHALL read the change sequence the activation carried at handout.
 
 An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK — not a poll host, inheriting nothing from `flz_core` — mints them in its own core at the routing seam where a sink frame is built: the same three keys, the seq the invocation started at, the ordinal advancing per plugin output of the invocation, appended after the user's metadata; under the effectively-once tier it stamps nothing and captures the sink frame into the invocation's effect record, the controller deriving the identity at flush.
 
@@ -153,7 +153,7 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 #### Scenario: A host writes no stamps under the effectively-once tier
 
 - **WHEN** a class declaring effectively-once emits on its keyed plugin channel
-- **THEN** the output the host hands the core carries no `flz.entity`, `flz.seq` or `flz.key`
+- **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`
 
 #### Scenario: An SDK that defers the capability says so in its manifest
 
@@ -162,10 +162,10 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 
 #### Scenario: The Elixir SDK mints the same stamps in its own core
 
-- **WHEN** a dynamic Entity on an Elixir runner emits twice on a sink declared `keyed/1` in one invocation that started at change sequence 5
-- **THEN** the two frames carry `flz.entity` as `<operative>/<procedure>/<key>`, `flz.seq` `"5.0"` then `"5.1"`, and `flz.key` as the Entity's key, after the user's metadata
+- **WHEN** a dynamic Cell on an Elixir runner emits twice on a sink declared `keyed/1` in one invocation that started at change sequence 5
+- **THEN** the two frames carry `flz.cell` as `<operative>/<tasklet>/<key>`, `flz.seq` `"5.0"` then `"5.1"`, and `flz.key` as the Cell's key, after the user's metadata
 
 #### Scenario: The Elixir SDK writes no stamps under the tier
 - **WHEN** a class declaring `effectively_once/1` on an Elixir runner emits on its keyed sink
-- **THEN** the effect record's output carries no `flz.entity`, `flz.seq` or `flz.key`, and the sink receives them from the controller's flush
+- **THEN** the effect record's output carries no `flz.cell`, `flz.seq` or `flz.key`, and the sink receives them from the controller's flush
 

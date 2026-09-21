@@ -271,7 +271,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
 
     # An SDK that has not shipped the self-report sends neither key. Absent
-    # must read as zero — never as a stalled entity.
+    # must read as zero — never as a stalled cell.
     test "a heartbeat without the handout keys reads as zeros", %{pid: pid, name: name} do
       send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{"dispatches" => "42"}})
       _ = GenServer.call(pid, :stream_ref_status)
@@ -369,18 +369,18 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       refute_received {:output_stall, "bnd_op"}
     end
 
-    test "delete_entity_state is ignored for a workflow (non-dynamic) class", %{pid: pid} do
+    test "delete_cell_state is ignored for a workflow (non-dynamic) class", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
       ClassRegistry.put(class, :workflow)
       on_exit(fn -> ClassRegistry.delete(class) end)
 
-      seg = {class, "proc", "seg"}
+      seg = {class, "task", "seg"}
       wal = Paths.wal_path(seg)
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "dummy")
 
-      frame = Wire.encode_entity_id(class, "proc", "seg")
-      send(pid, {:flz_data, :ref_z, "delete_entity_state", frame, %{}})
+      frame = Wire.encode_cell_id(class, "task", "seg")
+      send(pid, {:flz_data, :ref_z, "delete_cell_state", frame, %{}})
       # Flush the frame through the channel: the gate is decided inside the
       # handler, so a delete it did not spawn there is never spawned.
       _ = GenServer.call(pid, :stream_ref_status)
@@ -584,7 +584,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
   @moduledoc """
   Reproduction of a production incident: the IO data stream silently severs and
   NEVER self-heals — WS ingest keeps flowing, the runner goes idle, all
-  procedure WALs/topics freeze, and only a operative recreate restores it.
+  tasklet WALs/topics freeze, and only a operative recreate restores it.
 
   Root cause under test: the IO `StreamChannel` can hold a STALE non-nil
   `stream_ref` after its NIF stream dies WITHOUT emitting `{:flz_closed, ...}`.
@@ -620,7 +620,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
     name: name
   } do
     # 1. HEALTHY: a live NIF stream is bound — this is the 10:15→13:50 window
-    #    where data flowed and all procedure WALs advanced every minute.
+    #    where data flowed and all tasklet WALs advanced every minute.
     :ok = GenServer.call(pid, {:bind, :stream_ref_live})
     assert GenServer.call(pid, :stream_ref_status) == :stream_ref_live
 

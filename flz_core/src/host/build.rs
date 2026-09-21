@@ -10,33 +10,33 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::decl::{
-    HostAckGranularity, HostBeyondWindow, HostChannelDecl, HostChannelKind, HostCheckpointOutputs,
-    HostClassDecl, HostClock, HostEntityModeDecl, HostOverflow, HostProcedureDecl,
-    HostRollbackMode, HostWorkflowDecl,
+use super::cell::{
+    build_host_cell_slot, host_deserialize_unreachable, host_payload_codec,
+    host_serialize_unreachable, HostPayload, HostTaskletFacts,
 };
-use super::entity::{
-    build_host_entity_slot, host_deserialize_unreachable, host_payload_codec,
-    host_serialize_unreachable, HostPayload, HostProcedureFacts,
+use super::decl::{
+    HostAckGranularity, HostBeyondWindow, HostCellModeDecl, HostChannelDecl, HostChannelKind,
+    HostCheckpointOutputs, HostClassDecl, HostClock, HostOverflow, HostRollbackMode,
+    HostTaskletDecl, HostWorkflowDecl,
 };
 use super::register::DerivedChannel;
 use crate::channel::{
-    ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, ProcedureId, RetryPolicy,
+    ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy, TaskletId,
 };
 use crate::error::Error;
 use crate::operative::topology::{
-    AckGranularity, BeyondWindowPolicy, CheckpointOutputs, CheckpointPolicy, CorrectionPolicy,
-    EntityMode, OperativeTopology, ProcedureDescriptor,
+    AckGranularity, BeyondWindowPolicy, CellMode, CheckpointOutputs, CheckpointPolicy,
+    CorrectionPolicy, OperativeTopology, TaskletDescriptor,
 };
-use crate::workflow::spec::{graph_order, GraphOrder, GraphSeed, ProcDag, WorkflowSpec};
+use crate::workflow::spec::{graph_order, GraphOrder, GraphSeed, TaskDag, WorkflowSpec};
 use crate::workflow::{LoopMode, RollbackMode};
 
-/// The class facts every procedure and the topology read, resolved once so
+/// The class facts every tasklet and the topology read, resolved once so
 /// they agree.
 pub(super) struct ClassFacts {
     pub(super) factory_id: &'static str,
     /// The declared version packed as the durable header carries it, resolved
-    /// once so every procedure of the class stamps the same bytes.
+    /// once so every tasklet of the class stamps the same bytes.
     pub(super) sdk_version: u32,
     pub(super) correction: Option<CorrectionPolicy>,
     pub(super) ack_granularity: AckGranularity,
@@ -95,25 +95,25 @@ pub(super) fn build_channels(
     (channels, name_to_id)
 }
 
-/// Every procedure descriptor and its name index, built after the channels
-/// because a procedure's retry ladder is its first input channel's.
-pub(super) fn build_procedures(
+/// Every tasklet descriptor and its name index, built after the channels
+/// because a tasklet's retry ladder is its first input channel's.
+pub(super) fn build_tasklets(
     decl: &HostClassDecl,
     class: &ClassFacts,
     channels: &[ChannelDescriptor],
     derived: &[DerivedChannel],
-) -> (Vec<ProcedureDescriptor>, HashMap<&'static str, u32>) {
-    let mut procedures = Vec::with_capacity(decl.procedures.len());
+) -> (Vec<TaskletDescriptor>, HashMap<&'static str, u32>) {
+    let mut tasklets = Vec::with_capacity(decl.tasklets.len());
     let mut name_to_id = HashMap::new();
-    for (proc_id, proc_decl) in decl.procedures.iter().enumerate() {
-        let proc_id = proc_id as u32;
-        let proc_name: &'static str = Box::leak(proc_decl.name.clone().into_boxed_str());
-        procedures.push(build_procedure(
-            derived, class, channels, proc_id, proc_name, proc_decl, decl,
+    for (task_id, task_decl) in decl.tasklets.iter().enumerate() {
+        let task_id = task_id as u32;
+        let task_name: &'static str = Box::leak(task_decl.name.clone().into_boxed_str());
+        tasklets.push(build_tasklet(
+            derived, class, channels, task_id, task_name, task_decl, decl,
         ));
-        name_to_id.insert(proc_name, proc_id);
+        name_to_id.insert(task_name, task_id);
     }
-    (procedures, name_to_id)
+    (tasklets, name_to_id)
 }
 
 fn build_channel(
@@ -124,7 +124,7 @@ fn build_channel(
 ) -> ChannelDescriptor {
     let kind = match derived.kind {
         HostChannelKind::Entry => ChannelKind::Entry,
-        HostChannelKind::InterProc => ChannelKind::InterProcedure,
+        HostChannelKind::InterTask => ChannelKind::InterTasklet,
         HostChannelKind::Plugin => ChannelKind::PluginBound,
     };
     ChannelDescriptor {
@@ -135,7 +135,7 @@ fn build_channel(
             .consumers
             .iter()
             .map(|edge| crate::channel::ConsumerEdge {
-                procedure: edge.procedure,
+                tasklet: edge.tasklet,
                 transform: None,
                 key: None,
             })
@@ -159,10 +159,10 @@ fn build_channel(
             max_attempts: channel_decl.retry_max,
             backoff_base_ms: channel_decl.retry_backoff_ms,
         },
-        // Host inter-proc values are bytes already; the journal codec is
+        // Host inter-task values are bytes already; the journal codec is
         // the lossless HostPayload wrapper, so a durable chained loop
         // can re-seed exactly what the live handoff carried.
-        codec: (derived.kind == HostChannelKind::InterProc).then(|| host_payload_codec(channel_id)),
+        codec: (derived.kind == HostChannelKind::InterTask).then(|| host_payload_codec(channel_id)),
     }
 }
 
@@ -179,65 +179,65 @@ fn entry_wrap(channel_id: u32) -> EntryWrapFn {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_procedure(
+fn build_tasklet(
     derived_channels: &[DerivedChannel],
     class: &ClassFacts,
     channels: &[ChannelDescriptor],
-    proc_id: u32,
-    proc_name: &'static str,
-    proc_decl: &HostProcedureDecl,
+    task_id: u32,
+    task_name: &'static str,
+    task_decl: &HostTaskletDecl,
     decl: &HostClassDecl,
-) -> ProcedureDescriptor {
-    let (input_channel_ids, output_channel_id) = procedure_wiring(derived_channels, proc_id);
+) -> TaskletDescriptor {
+    let (input_channel_ids, output_channel_id) = tasklet_wiring(derived_channels, task_id);
     let retry = input_channel_ids
         .first()
         .and_then(|&id| channels.get(id as usize))
         .map(|c| c.retry)
         .unwrap_or_default();
-    let facts = Arc::new(host_facts(decl, class, proc_name, proc_decl, retry));
-    ProcedureDescriptor {
-        name: Arc::from(proc_name),
-        entity_keys: proc_decl
-            .entity_keys
+    let facts = Arc::new(host_facts(decl, class, task_name, task_decl, retry));
+    TaskletDescriptor {
+        name: Arc::from(task_name),
+        cell_keys: task_decl
+            .cell_keys
             .iter()
             .map(|k| Box::leak(k.clone().into_boxed_str()) as &'static str)
             .collect(),
-        entities_for_overridden: proc_decl.entities_for_overridden,
-        compensate_overridden: proc_decl.compensate_overridden,
-        mode: match proc_decl.entity_mode {
-            HostEntityModeDecl::Single => EntityMode::Single,
-            HostEntityModeDecl::Static => EntityMode::Static,
-            HostEntityModeDecl::Dynamic => EntityMode::Dynamic,
+        cells_for_overridden: task_decl.cells_for_overridden,
+        compensate_overridden: task_decl.compensate_overridden,
+        mode: match task_decl.cell_mode {
+            HostCellModeDecl::Single => CellMode::Single,
+            HostCellModeDecl::Static => CellMode::Static,
+            HostCellModeDecl::Dynamic => CellMode::Dynamic,
         },
-        idle_ttl: proc_decl.idle_ttl_ms.map(std::time::Duration::from_millis),
-        max_entities: proc_decl.max_entities.unwrap_or(usize::MAX),
+        idle_ttl: task_decl.idle_ttl_ms.map(std::time::Duration::from_millis),
+        max_cells: task_decl.max_cells.unwrap_or(usize::MAX),
         input_channel_ids,
         output_channel_id,
         input_type_id: TypeId::of::<HostPayload>(),
         output_type_id: TypeId::of::<HostPayload>(),
-        mailbox_capacity: proc_decl.mailbox_capacity,
+        mailbox_capacity: task_decl.mailbox_capacity,
         mailbox_capacity_overridden: false,
         compact_after_bytes: class.compact_after_bytes,
         host_facts: Some(Arc::clone(&facts)),
-        build_entity: Box::new(move |args: crate::channel::BuildEntityArgs<'_>| {
-            build_host_entity_slot(args, Arc::clone(&facts))
+        build_cell: Box::new(move |args: crate::channel::BuildCellArgs<'_>| {
+            build_host_cell_slot(args, Arc::clone(&facts))
         }),
-        entities_for_erased: Arc::new(|_| Vec::new()),
+        cells_for_erased: Arc::new(|_| Vec::new()),
         serialize_state: Arc::new(host_serialize_unreachable),
         deserialize_state: Arc::new(host_deserialize_unreachable),
     }
 }
 
-/// The channels a procedure consumes and the one it produces.
-fn procedure_wiring(channels: &[DerivedChannel], proc_id: u32) -> (Vec<u32>, Option<u32>) {
+/// The channels a tasklet consumes and the one it produces.
+fn tasklet_wiring(channels: &[DerivedChannel], task_id: u32) -> (Vec<u32>, Option<u32>) {
     let input_channel_ids = channels
         .iter()
-        .filter(|c| c.consumers.iter().any(|e| e.procedure == proc_id))
+        .filter(|c| c.consumers.iter().any(|e| e.tasklet == task_id))
         .map(|c| c.index)
         .collect();
     let output_channel_id = channels
         .iter()
-        .find(|c| c.producer == Some(proc_id))
+        .find(|c| c.producer == Some(task_id))
         .map(|c| c.index);
     (input_channel_ids, output_channel_id)
 }
@@ -245,26 +245,26 @@ fn procedure_wiring(channels: &[DerivedChannel], proc_id: u32) -> (Vec<u32>, Opt
 fn host_facts(
     decl: &HostClassDecl,
     class: &ClassFacts,
-    proc_name: &'static str,
-    proc_decl: &HostProcedureDecl,
+    task_name: &'static str,
+    task_decl: &HostTaskletDecl,
     retry: RetryPolicy,
-) -> HostProcedureFacts {
-    HostProcedureFacts {
-        name: proc_name,
+) -> HostTaskletFacts {
+    HostTaskletFacts {
+        name: task_name,
         factory: class.factory_id,
         retry,
-        schema_version: proc_decl.schema_version,
-        min_readable_schema_version: proc_decl
+        schema_version: task_decl.schema_version,
+        min_readable_schema_version: task_decl
             .min_readable_schema_version
-            .unwrap_or(proc_decl.schema_version),
+            .unwrap_or(task_decl.schema_version),
         persistent: decl.persistent,
         effectively_once: decl.effectively_once,
         checkpoint: class.ack_granularity.checkpoint(),
-        clock: proc_decl.clock,
+        clock: task_decl.clock,
         sdk_lang: decl.sdk_lang,
         sdk_version: class.sdk_version,
         change_format_id: decl.change_format_id,
-        correction: if proc_decl.clock == HostClock::EventTime {
+        correction: if task_decl.clock == HostClock::EventTime {
             class.correction
         } else {
             None
@@ -277,7 +277,7 @@ pub(super) fn register_workflow_class(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
     topology: Arc<OperativeTopology>,
-    dag: ProcDag,
+    dag: TaskDag,
     loop_mode: LoopMode,
 ) {
     crate::workflow::registry::register_class(
@@ -311,10 +311,10 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
 
 /// Kahn toposort from the entry root, refusing what the typed builder
 /// refuses: several entry consumers, several outputs, cycles, disconnected
-/// procedures.
-pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, Error> {
+/// tasklets.
+pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<TaskDag, Error> {
     let root = refuse_dag_shape(topology)?;
-    let n = topology.procedures.len();
+    let n = topology.tasklets.len();
     let GraphOrder {
         order,
         parents,
@@ -323,16 +323,16 @@ pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, Er
         ..
     } = graph_order(
         n,
-        &inter_proc_edges(topology),
-        &[root as ProcedureId],
+        &inter_task_edges(topology),
+        &[root as TaskletId],
         GraphSeed::Roots,
     );
     if order.len() != n {
         let missing = on_cycle
-            .map(|i| topology.procedures[i as usize].name.to_string())
+            .map(|i| topology.tasklets[i as usize].name.to_string())
             .unwrap_or_default();
         return Err(Error::Declaration(format!(
-            "procedure `{missing}` is on a cycle or not reachable from the entry channel"
+            "tasklet `{missing}` is on a cycle or not reachable from the entry channel"
         )));
     }
     // Re-index parents/children positionally by order (the driver's shape).
@@ -349,33 +349,33 @@ pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, Er
         .iter()
         .map(|&p| children[p as usize].iter().map(|cc| index_of[cc]).collect())
         .collect();
-    Ok(ProcDag {
+    Ok(TaskDag {
         order,
         parents: dag_parents,
         children: dag_children,
     })
 }
 
-/// Producer → consumer pairs over the inter-proc channels only: a workflow's
+/// Producer → consumer pairs over the inter-task channels only: a workflow's
 /// stages are wired to each other, never through the entry channel.
-fn inter_proc_edges(topology: &OperativeTopology) -> Vec<(ProcedureId, ProcedureId)> {
+fn inter_task_edges(topology: &OperativeTopology) -> Vec<(TaskletId, TaskletId)> {
     let mut edges = Vec::new();
     for channel in &topology.channels {
-        if channel.kind != ChannelKind::InterProcedure {
+        if channel.kind != ChannelKind::InterTasklet {
             continue;
         }
         let Some(producer) = channel.producer else {
             continue;
         };
         for edge in &channel.consumers {
-            edges.push((producer, edge.procedure));
+            edges.push((producer, edge.tasklet));
         }
     }
     edges
 }
 
-/// The root of a well-shaped chain: one entry channel feeding one procedure,
-/// no procedure producing two channels.
+/// The root of a well-shaped chain: one entry channel feeding one tasklet,
+/// no tasklet producing two channels.
 fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, Error> {
     let entry = topology
         .channels
@@ -386,24 +386,24 @@ fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, Error> {
         })?;
     if entry.consumers.len() != 1 {
         return Err(Error::Declaration(format!(
-            "a bounded topology has a single root; entry channel `{}` feeds {} procedures",
+            "a bounded topology has a single root; entry channel `{}` feeds {} tasklets",
             entry.name,
             entry.consumers.len()
         )));
     }
-    for (proc_id, _) in topology.procedures.iter().enumerate() {
+    for (task_id, _) in topology.tasklets.iter().enumerate() {
         let produced = topology
             .channels
             .iter()
-            .filter(|c| c.producer == Some(proc_id as u32))
+            .filter(|c| c.producer == Some(task_id as u32))
             .count();
         if produced > 1 {
             return Err(Error::Declaration(format!(
-                "procedure `{}` produces more than one channel; a procedure emits on exactly \
+                "tasklet `{}` produces more than one channel; a tasklet emits on exactly \
                  one output channel",
-                topology.procedures[proc_id].name
+                topology.tasklets[task_id].name
             )));
         }
     }
-    Ok(entry.consumers[0].procedure as usize)
+    Ok(entry.consumers[0].tasklet as usize)
 }

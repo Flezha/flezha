@@ -2,7 +2,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
   @moduledoc """
   In-node end-to-end: the Elixir SDK boots over the native transport against the
   same-BEAM controller, FleetManager lists it, an operative is placed, and an
-  io_in frame drives `run/3` (observed directly, since the Entity runs in this
+  io_in frame drives `run/3` (observed directly, since the Cell runs in this
   BEAM). Exercises the full path — handshake, AssignRunnerId, ConnectSocket,
   AddOperative, primary-stream io_in routing — with no external process.
   """
@@ -17,8 +17,8 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
   @probe :sdk_in_node_probe
 
-  defmodule ProbeProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule ProbeTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "probe"
     def init_state(_), do: nil
 
@@ -39,7 +39,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ProbeProc) |> sink("probe")
+      c |> input("in") |> into(ProbeTask) |> sink("probe")
     end
   end
 
@@ -154,8 +154,8 @@ defmodule Flezha.SDK.SocketRoundtripTest do
 
   @probe :sdk_socket_probe
 
-  defmodule ProbeProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule ProbeTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "probe"
     def init_state(_), do: nil
 
@@ -176,7 +176,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ProbeProc) |> sink("probe")
+      c |> input("in") |> into(ProbeTask) |> sink("probe")
     end
   end
 
@@ -320,8 +320,8 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   alias Flezha.Transport.Server, as: TransportServer
   alias FlezhaTest.Helper.NodeTestHelper
 
-  defmodule EchoProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule EchoTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "echo"
     def init_state(_), do: nil
 
@@ -339,7 +339,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoProc) |> sink("echo")
+      c |> input("in") |> into(EchoTask) |> sink("echo")
     end
   end
 
@@ -349,13 +349,13 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoProc) |> sink("echo")
+      c |> input("in") |> into(EchoTask) |> sink("echo")
     end
   end
 
-  defmodule StoreProc do
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "lr_store_procedure"
+  defmodule StoreTask do
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "lr_store_tasklet"
     def init_state(_), do: %{inputs: []}
     def apply_change(s, {:push, v}), do: %{s | inputs: s.inputs ++ [v]}
     def run(input, s, ctx), do: {:ok, Ctx.apply(ctx, s, {:push, input})}
@@ -367,7 +367,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(StoreProc) |> sink("store")
+      c |> input("in") |> into(StoreTask) |> sink("store")
     end
   end
 
@@ -621,21 +621,21 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
       OperativeManager.send_io(operative_id, ns, input, %{"channel" => "in", "input_type" => "2"})
     end
 
-    # The live read is the residency signal, and the EntityState command end to end.
+    # The live read is the residency signal, and the CellState command end to end.
     assert NodeTestHelper.wait_until(
              fn ->
                live_state(ns, operative_id) ==
-                 %{"lr_store_procedure" => %{"inputs" => ["alpha", "beta", "gamma"]}}
+                 %{"lr_store_tasklet" => %{"inputs" => ["alpha", "beta", "gamma"]}}
              end,
              15_000
            )
 
     assert {:ok, _json, seq} =
-             OperativeManager.get_entity_state(ns, operative_id, %{
-               procedure: "lr_store_procedure"
+             OperativeManager.get_cell_state(ns, operative_id, %{
+               tasklet: "lr_store_tasklet"
              })
 
-    assert seq == 3, "three records shipped, so the one Entity read at change_seq 3"
+    assert seq == 3, "three records shipped, so the one Cell read at change_seq 3"
 
     # A close is a graceful stop: terminate/2 ships the notification and the
     # controller's Overwatch keeps the state the runner held.
@@ -648,11 +648,11 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
            "no RunnerShutdownNotification reached the Overwatch"
 
     assert Jason.decode!(:sys.get_state(overwatch).snapshot) ==
-             %{"lr_store_procedure" => %{"inputs" => ["alpha", "beta", "gamma"]}}
+             %{"lr_store_tasklet" => %{"inputs" => ["alpha", "beta", "gamma"]}}
   end
 
   defp live_state(ns, operative_id) do
-    case OperativeManager.get_entity_state(ns, operative_id) do
+    case OperativeManager.get_cell_state(ns, operative_id) do
       {:ok, json} -> Jason.decode!(json)
       _ -> nil
     end
@@ -683,8 +683,8 @@ end
 
 defmodule Flezha.SDK.SpawnWorkflowE2ETest do
   @moduledoc """
-  Procedure-requested spawn against the same-BEAM controller: a stream
-  procedure on an in-node runner spawns an instance of a workflow class the same
+  Tasklet-requested spawn against the same-BEAM controller: a stream
+  tasklet on an in-node runner spawns an instance of a workflow class the same
   runner offers, delivers to it under the same id, and is answered
   `already_running` under the error policy. The request, the controller's
   resolution and the runner server's waiter run end to end.
@@ -703,7 +703,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
   # One spawn per `<instance id>:<policy>:<payload>` input, read inside the
   # invocation that made it. An empty instance id spawns without one.
   defmodule Requester do
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "requester"
     def init_state(_), do: nil
 
@@ -737,7 +737,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
 
   # What the spawned instance consumes, one iteration per input.
   defmodule Received do
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "received"
     def init_state(_), do: nil
 
@@ -758,7 +758,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
     def self_terminating?, do: false
     def max_duration_ms, do: 60_000
 
-    def procedures(c) do
+    def tasklets(c) do
       import Flezha.SDK.Channels
       c |> input("in") |> into(Received)
     end
@@ -789,7 +789,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
     {:ok, ns: ns}
   end
 
-  test "a procedure spawns a workflow instance, delivers to it, is refused under the error policy, and spawns another without an id",
+  test "a tasklet spawns a workflow instance, delivers to it, is refused under the error policy, and spawns another without an id",
        %{ns: ns} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
 

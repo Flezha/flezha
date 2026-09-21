@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Cli.Operative do
   @moduledoc """
   `flz operative start | stop | scale | rewind | send | listen` and
-  `flz operative entity-state`.
+  `flz operative cell-state`.
   """
 
   alias Flezha.AuthZ.Namespace
@@ -218,7 +218,7 @@ defmodule Flezha.Service.Cli.Operative do
   `flz operative scale <group> <M>` — rescale a partition group to M members.
 
   Quiesces the group (sources off, input logs consumed, DLQs empty), moves
-  every Entity whose key group changes owner, then starts M members with the
+  every Cell whose key group changes owner, then starts M members with the
   recomputed ranges. Refuses — changing nothing — when the quiesce cannot be
   reached or the new member set fails preflight.
   """
@@ -244,7 +244,7 @@ defmodule Flezha.Service.Cli.Operative do
 
         IO.puts(
           "Operative #{group_id} rescaled #{result.from} -> #{result.to} " <>
-            "(#{result.entities_moved} entities moved, #{length(result.vacated)} trees removed):"
+            "(#{result.cells_moved} cells moved, #{length(result.vacated)} trees removed):"
         )
 
         Enum.each(result.members, &IO.puts("  #{&1}"))
@@ -262,7 +262,7 @@ defmodule Flezha.Service.Cli.Operative do
   re-delivered.
 
   Refused, changing nothing, when the target has not committed or when an unwound
-  procedure emitted plugin output it cannot compensate.
+  tasklet emitted plugin output it cannot compensate.
   """
   def operative_rewind(namespace, operative_id, to_iter, _call) do
     namespace = Namespace.or_default(namespace)
@@ -297,7 +297,7 @@ defmodule Flezha.Service.Cli.Operative do
   defp print_rewind(_operative_id, _to_iter, {:error, {:uncovered, channels}}) do
     Context.fail!(
       "Error: refusing to rewind — these channels were written by an unwound " <>
-        "procedure that declares no `compensate` hook, so the output cannot be " <>
+        "tasklet that declares no `compensate` hook, so the output cannot be " <>
         "undone: #{Enum.join(channels, ", ")}"
     )
   end
@@ -364,10 +364,10 @@ defmodule Flezha.Service.Cli.Operative do
   end
 
   @doc "Get operative state."
-  def entity_state(namespace, operative_id, _call) do
+  def cell_state(namespace, operative_id, _call) do
     namespace_display = Namespace.or_default(namespace)
 
-    case OperativeManager.get_entity_state(namespace_display, operative_id) do
+    case OperativeManager.get_cell_state(namespace_display, operative_id) do
       {:ok, json_state} when is_binary(json_state) ->
         IO.puts("State for operative '#{operative_id}' in namespace '#{namespace_display}':")
         IO.puts(json_state)
@@ -381,7 +381,7 @@ defmodule Flezha.Service.Cli.Operative do
 
       {:error, {:unsupported_for_kind, :persistent_state}} ->
         Context.fail!(
-          "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-entity state: " <>
+          "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-cell state: " <>
             "its kind does not support state introspection."
         )
 
@@ -479,7 +479,7 @@ defmodule Flezha.Service.Cli.Operative do
   defp listen_message({:EXIT, _pid, reason}, _caller, _format) when reason != :normal, do: :done
   defp listen_message(_message, _caller, _format), do: :continue
 
-  @stamps [{"flz.entity", "entity"}, {"flz.seq", "seq"}, {"flz.key", "key"}]
+  @stamps [{"flz.cell", "cell"}, {"flz.seq", "seq"}, {"flz.key", "key"}]
 
   defp print_frame(payload, metadata, :text) do
     stamps =

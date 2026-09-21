@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work a Runner runs at a Controller's direction), its two kinds today — **Stream** (runs-forever) and **Workflow** (runs-to-completion) — and the per-Operative concepts of **Procedure** (a typed stage) and **Entity** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface) and the sparse, default-`false` capability descriptor model that lets new kinds and capabilities be added additively without touching existing kinds. Capabilities attach to the kind, not to user computation code; `persistent_state?` gates per-Entity state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
+The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work a Runner runs at a Controller's direction), its two kinds today — **Stream** (runs-forever) and **Workflow** (runs-to-completion) — and the per-Operative concepts of **Tasklet** (a typed stage) and **Cell** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface) and the sparse, default-`false` capability descriptor model that lets new kinds and capabilities be added additively without touching existing kinds. Capabilities attach to the kind, not to user computation code; `persistent_state?` gates per-Cell state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
 ## Requirements
 
 <!-- kind-naming-record:begin -->
@@ -14,8 +14,8 @@ The system SHALL use exactly these terms for compute workloads, and code, module
 - **Operative** — the generic top-level unit of work that a Runner runs at a Controller's direction; the thing operators start and stop. Every Operative has a `kind`.
 - **Stream Operative** — the operative kind that runs with no inherent end, folding an ongoing stream of input until it is stopped. Formerly called "Unbounded Operative", and before that "Relay".
 - **Workflow Operative** — the operative kind that runs an ordered, journaled workflow to a terminal state, with saga compensation on abort. It may iterate — once, per inbox item, or chained — and may park between iterations. Formerly called "Bounded Operative", and before that "Task".
-- **Procedure** — a typed stage within an Operative that processes inputs from a Channel. Formerly "Shard".
-- **Entity** — the per-key, state-bearing slice of a Procedure; durable state lives at the Entity level. Formerly "Partition".
+- **Tasklet** — a typed stage within an Operative that processes inputs from a Channel. Formerly "Shard".
+- **Cell** — the per-key, state-bearing slice of a Tasklet; durable state lives at the Cell level. Formerly "Partition".
 - **Controller**, **Runner**, and **Channel** are unchanged. "Operator" remains reserved for ProcessHub-internal ring-node jargon and is never used for an Operative.
 
 The prohibition on `bounded` and `unbounded` applies to the **kind sense only**. Both words remain correct English for describing a run — a workflow operative runs a *bounded* iteration; a stream operative folds an *unbounded* input — and remain correct for unrelated capacity concepts such as a bounded mailbox. See the `operative-kind-naming` capability for the sense-disambiguation rule.
@@ -23,7 +23,7 @@ The prohibition on `bounded` and `unbounded` applies to the **kind sense only**.
 #### Scenario: Documentation and glossary use operative vocabulary
 
 - **WHEN** any spec, doc under `docs/`, `docs/glossary.md`, or `CLAUDE.md` references the top-level unit of work, its stage, or its per-key slice
-- **THEN** it SHALL use "Operative" (with kind "Stream" or "Workflow"), "Procedure", and "Entity" respectively, and SHALL NOT use "Relay", "Shard", "Partition", "Task", "Continuous", or "Bounded"/"Unbounded" as a kind name
+- **THEN** it SHALL use "Operative" (with kind "Stream" or "Workflow"), "Tasklet", and "Cell" respectively, and SHALL NOT use "Relay", "Shard", "Partition", "Task", "Continuous", or "Bounded"/"Unbounded" as a kind name
 
 #### Scenario: No synonym survives in shipped surfaces
 
@@ -50,7 +50,7 @@ Every Operative SHALL carry a `kind` atom. The kind SHALL be set when the operat
 #### Scenario: Kind is frozen for the operative's lifetime
 
 - **WHEN** an operative is running with a given kind
-- **THEN** there SHALL be no procedure that mutates the kind of a running operative; changing kind requires stopping and re-starting it
+- **THEN** there SHALL be no tasklet that mutates the kind of a running operative; changing kind requires stopping and re-starting it
 
 #### Scenario: Unknown kind is rejected at start
 
@@ -67,22 +67,22 @@ Every Operative SHALL carry a `kind` atom. The kind SHALL be set when the operat
 
 There SHALL be a single source of truth mapping a kind to a **sparse** capability descriptor — a map declaring only the capabilities the kind *has* (as `true`). The control plane SHALL read every capability with a default of `false`. Capabilities SHALL attach to the kind, not to user-authored computation code.
 
-The previously-coarse `persistent_state?` capability SHALL be **split** so that it means exactly "has durable per-Entity WAL state + restore", and the stream-only behaviors that previously rode on it SHALL each have their own default-`false` flag:
+The previously-coarse `persistent_state?` capability SHALL be **split** so that it means exactly "has durable per-Cell WAL state + restore", and the stream-only behaviors that previously rode on it SHALL each have their own default-`false` flag:
 
-- `persistent_state?` — durable per-Entity WAL + snapshot + restore. Resolved per kind+class: `:stream` declares it, and `:workflow` declares it **by default** unless its class opts out of persistence (see `workflow-operative-durability`).
+- `persistent_state?` — durable per-Cell WAL + snapshot + restore. Resolved per kind+class: `:stream` declares it, and `:workflow` declares it **by default** unless its class opts out of persistence (see `workflow-operative-durability`).
 - `time_travel?` — point-in-time queries and retention beyond the latest snapshot (gates `flz state at`). Declared by `:stream` only.
-- `dynamic_entities?` — lazy per-key Entity creation and destructive idle eviction with cold-start-fresh. Declared by `:stream` only.
-- `output_stall_watch?` — the per-Entity output-staleness watchdog that forces a rebind. Declared by `:stream` only.
+- `dynamic_cells?` — lazy per-key Cell creation and destructive idle eviction with cold-start-fresh. Declared by `:stream` only.
+- `output_stall_watch?` — the per-Cell output-staleness watchdog that forces a rebind. Declared by `:stream` only.
 
 #### Scenario: Stream declares the full persistence surface
 
 - **WHEN** the capability descriptor for kind `:stream` is requested
-- **THEN** `persistent_state?`, `time_travel?`, `dynamic_entities?`, and `output_stall_watch?` SHALL all read `true`
+- **THEN** `persistent_state?`, `time_travel?`, `dynamic_cells?`, and `output_stall_watch?` SHALL all read `true`
 
 #### Scenario: A durable workflow operative has durable state without stream-only behaviors
 
 - **WHEN** a `:workflow` class that has not opted out of persistence is read
-- **THEN** `persistent_state?` SHALL read `true` while `time_travel?`, `dynamic_entities?`, and `output_stall_watch?` SHALL each read `false`
+- **THEN** `persistent_state?` SHALL read `true` while `time_travel?`, `dynamic_cells?`, and `output_stall_watch?` SHALL each read `false`
 
 #### Scenario: An opted-out workflow operative declares no durable state
 
@@ -113,18 +113,18 @@ Introducing a new operative kind OR a new capability flag SHALL be additive: it 
 - **WHEN** a third operative kind is introduced
 - **THEN** `:stream` and `:workflow` SHALL keep their names, and no shared naming pattern SHALL have to be extended or abandoned to accommodate it
 
-### Requirement: Entity-state introspection is gated by `persistent_state?`
+### Requirement: Cell-state introspection is gated by `persistent_state?`
 
-A request for an operative's per-Entity state SHALL succeed only when the operative's kind+class reads `persistent_state?` as `true` (true for `:stream`, and for a `:workflow` class that has not opted out of persistence). When the capability is absent, the request SHALL fail with the structured error `{:error, {:unsupported_for_kind, :persistent_state}}` rather than querying a computation that has no durable state. Point-in-time `flz state at` queries SHALL additionally require `time_travel?`, so a durable workflow operative (which does not declare `time_travel?`) SHALL expose current Entity state but SHALL reject time-travel queries.
+A request for an operative's per-Cell state SHALL succeed only when the operative's kind+class reads `persistent_state?` as `true` (true for `:stream`, and for a `:workflow` class that has not opted out of persistence). When the capability is absent, the request SHALL fail with the structured error `{:error, {:unsupported_for_kind, :persistent_state}}` rather than querying a computation that has no durable state. Point-in-time `flz state at` queries SHALL additionally require `time_travel?`, so a durable workflow operative (which does not declare `time_travel?`) SHALL expose current Cell state but SHALL reject time-travel queries.
 
-#### Scenario: Entity-state query succeeds for a durable operative
+#### Scenario: Cell-state query succeeds for a durable operative
 
-- **WHEN** the per-Entity state of an operative whose kind+class declares `persistent_state? = true` is requested
+- **WHEN** the per-Cell state of an operative whose kind+class declares `persistent_state? = true` is requested
 - **THEN** the request SHALL return the serialized current state
 
-#### Scenario: Entity-state query is rejected for a stateless operative
+#### Scenario: Cell-state query is rejected for a stateless operative
 
-- **WHEN** the per-Entity state of an operative whose kind+class reads `persistent_state? = false` is requested
+- **WHEN** the per-Cell state of an operative whose kind+class reads `persistent_state? = false` is requested
 - **THEN** the request SHALL return `{:error, {:unsupported_for_kind, :persistent_state}}` and SHALL NOT contact the computation
 
 #### Scenario: Time-travel is rejected for a kind lacking `time_travel?`
@@ -176,7 +176,7 @@ The CLI SHALL expose a single `flz operative` verb tree for lifecycle management
 
 ### Requirement: Operative start requests SHALL be location-transparent across controller nodes
 
-A workflow operative start request (`flz operative start`/`add`, a schedule fire, or a procedure-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A request that carries no id SHALL be given its generated id on the receiving node before capable nodes are resolved, so the forwarded call carries that id and the executing node generates none of its own. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node: a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
+A workflow operative start request (`flz operative start`/`add`, a schedule fire, or a tasklet-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A request that carries no id SHALL be given its generated id on the receiving node before capable nodes are resolved, so the forwarded call carries that id and the executing node generates none of its own. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node: a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
 
 #### Scenario: CLI start against a runner-less controller node
 
@@ -205,7 +205,7 @@ A workflow operative start request (`flz operative start`/`add`, a schedule fire
 
 ### Requirement: Operative commands SHALL be location-transparent across controller nodes
 
-Every controller node SHALL be a valid entry point for every namespace-scoped operative command — sending input, requesting a stop, reading live entity state, reading overwatch info, creating a snapshot, resolving an operative's pid or namespace, and re-injecting a dead-letter payload. When the receiving node is not a member of the target namespace's hub, the controller SHALL forward the command once to a hub-member node resolved against membership current at request time, and SHALL return that node's verdict unchanged. A forwarded command SHALL NOT be forwarded again. Commands with node-local side effects (plugin disable, state-directory deletion, quota release) SHALL execute those side effects on the node hosting the operative, never on the receiving node. When no cluster node holds the namespace, the existing local refusal SHALL stand. Namespace and operative enumeration SHALL include namespaces hosted only on peer nodes. The local fast path SHALL be unchanged: a node that is a member of the namespace's hub SHALL perform no forwarding.
+Every controller node SHALL be a valid entry point for every namespace-scoped operative command — sending input, requesting a stop, reading live cell state, reading overwatch info, creating a snapshot, resolving an operative's pid or namespace, and re-injecting a dead-letter payload. When the receiving node is not a member of the target namespace's hub, the controller SHALL forward the command once to a hub-member node resolved against membership current at request time, and SHALL return that node's verdict unchanged. A forwarded command SHALL NOT be forwarded again. Commands with node-local side effects (plugin disable, state-directory deletion, quota release) SHALL execute those side effects on the node hosting the operative, never on the receiving node. When no cluster node holds the namespace, the existing local refusal SHALL stand. Namespace and operative enumeration SHALL include namespaces hosted only on peer nodes. The local fast path SHALL be unchanged: a node that is a member of the namespace's hub SHALL perform no forwarding.
 
 #### Scenario: Sending input through a non-member controller node
 
@@ -219,7 +219,7 @@ Every controller node SHALL be a valid entry point for every namespace-scoped op
 
 #### Scenario: Live state read from any node
 
-- **WHEN** `flz state get` is issued against a non-member node for a live entity on a peer node
+- **WHEN** `flz state get` is issued against a non-member node for a live cell on a peer node
 - **THEN** the state JSON and its change seq SHALL be returned exactly as a member-node read would return them
 
 #### Scenario: A forwarded command is not forwarded twice

@@ -14,7 +14,7 @@ defmodule Flezha.State.Durable do
   reads a row for the suffix it writes under and the sync it owes, so a new
   durable file is a row rather than a fourth copy of the ceremony. Every scanner
   that must ignore a file being written asks `in_progress?/1`, so a new suffix
-  cannot leave one scanner surfacing crash residue as an Entity.
+  cannot leave one scanner surfacing crash residue as a Cell.
 
   `file` is the source that owns the bytes. It is a path and not a module
   because the table sits in `state/` and two of its owners are ranked above it
@@ -53,7 +53,7 @@ defmodule Flezha.State.Durable do
   # race the same key there, and a shared in-progress path would let one
   # truncate the other's bytes and the loser rename them into place.
   # `create_dir?` is false where the directory's existence is the signal that
-  # the Entity is alive: an install that made the directory would resurrect one
+  # the Cell is alive: an install that made the directory would resurrect one
   # a teardown had removed.
   #
   # The outbox dedup file is `:batched` and not `:inline` on purpose: the WAL is
@@ -65,9 +65,9 @@ defmodule Flezha.State.Durable do
   @table [
     {:wal, "lib/flezha/state/wal_writer.ex", :record, :batched, ".rewriting", false, true},
     {:input_log, "lib/flezha/state/input_log.ex", :record, :batched, ".rewriting", false, true},
-    {:proc_journal, "lib/flezha/state/proc_journal.ex", :record, :batched, ".rewriting", false,
+    {:task_journal, "lib/flezha/state/task_journal.ex", :record, :batched, ".rewriting", false,
      true},
-    {:proc_inbox, "lib/flezha/state/proc_inbox.ex", :record, :batched, ".rewriting", false, true},
+    {:task_inbox, "lib/flezha/state/task_inbox.ex", :record, :batched, ".rewriting", false, true},
     {:snapshot, "lib/flezha/state/snapshot.ex", :whole, :inline, ".tmp", false, true},
     {:outbox_dedup, "lib/flezha/state/outbox.ex", :whole, :batched, ".tmp", false, false},
     {:completion, "lib/flezha/state/completion.ex", :whole, :inline, ".tmp", false, true},
@@ -151,7 +151,7 @@ defmodule Flezha.State.Durable do
   Whether `name` is a file being written rather than one to read.
 
   The one exclusion rule every directory scanner asks, so a durable file added
-  to the table can never be surfaced as a phantom Entity by a scanner that was
+  to the table can never be surfaced as a phantom Cell by a scanner that was
   not edited.
 
   A `.claim` sidecar is not in-progress and is not declared here: it is the

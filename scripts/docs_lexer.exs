@@ -55,7 +55,7 @@ defmodule Flezha.Docs.Lexer do
 
   defp syntect(code, opts), do: MakeupSyntect.Lexer.lex(code, opts)
 
-  defp class_name({:name_entity, meta, value}), do: {:name_class, meta, value}
+  defp class_name({:name_cell, meta, value}), do: {:name_class, meta, value}
 
   defp class_name({:name_constant, meta, value} = token) do
     if value |> List.wrap() |> IO.iodata_to_binary() |> String.match?(~r/^[A-Z]/),

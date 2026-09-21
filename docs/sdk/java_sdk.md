@@ -5,9 +5,9 @@ A Java 21 binding hosted on the shared `flz_core` kernel through
 dispatch, overflow, the retry→park ladder, the partition guard, timers and the
 effectively-once tier are one implementation, not two.
 
-Authoring surface: `@Procedure` classes, with `@State` for their state, wired by
+Authoring surface: `@Tasklet` classes, with `@State` for their state, wired by
 a `StreamOperative` / `WorkflowOperative` through `ChannelBuilder`; the
-`Procedure` interface the annotation processor implements for them; and the
+`Tasklet` interface the annotation processor implements for them; and the
 `@StreamOperative` / `@WorkflowOperative` short form. See
 [`authoring_contract.md`](authoring_contract.md) for what each tier expands to
 and [`state_persistence.md`](state_persistence.md) for the `StateHandle` / Kryo
@@ -32,8 +32,8 @@ buy is a thread against user code that never returns — that is the conformance
 
 **With `FLEZHA_DROP_NOTHING_NONPARKING` on, `complete` does not park on a full
 consumer** (the switch is off by default during rollout). The kernel holds an
-undeliverable inter-procedure output in the producing Entity's push holdback
-and withholds work from that Entity instead, so the completion returns and the
+undeliverable inter-tasklet output in the producing Cell's push holdback
+and withholds work from that Cell instead, so the completion returns and the
 virtual thread — and the carrier it pinned — is released. This SDK carries **no
 Java-side code for it**: `flz_core_complete` is the seam, so the behaviour lives
 below it. The `pending_pushes` / `pending_push_oldest_ms` heartbeat keys it adds
@@ -84,7 +84,7 @@ A class annotated `@StreamOperative` or `@WorkflowOperative` is a whole
 operative: one class with one `run`, no hand-written operative beside it. The
 annotation names the kind, and the class you wrote is what you register:
 `registerFactory` resolves the `<Class>StreamOperative` or
-`<Class>WorkflowOperative` the processor generates beside `<Class>Procedure`.
+`<Class>WorkflowOperative` the processor generates beside `<Class>Tasklet`.
 
 ```java
 @StreamOperative(id = "upcase", sink = "out")
@@ -108,17 +108,17 @@ Flezha.createRunner("default")
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input`, or the `input` element's
-value; the procedure; a plugin sink named by `sink` when one is written; a
+single tasklet: an entry channel named `input`, or the `input` element's
+value; the tasklet; a plugin sink named by `sink` when one is written; a
 `factoryId()` equal to `id`; and every other operative method at its interface
 default. A workflow short form is a `once` workflow, seeded on its entry channel
 from `flz operative start --kind workflow --init-values`. Both annotations also
-carry the procedure's own elements, spelled as on `@Procedure`: `key`, `emits`,
-`keys` with an `@EntitiesFor` method and `capacity`; and `onFull` for the entry
+carry the tasklet's own elements, spelled as on `@Tasklet`: `key`, `emits`,
+`keys` with an `@CellsFor` method and `capacity`; and `onFull` for the entry
 channel.
 
 `sink` is optional. With none, the operative declares the entry channel and the
-procedure and no plugin channel: the operative that only keeps state.
+tasklet and no plugin channel: the operative that only keeps state.
 
 ```java
 @State
@@ -134,16 +134,16 @@ public class Counter {
 }
 ```
 
-Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window. Java names no entry codec — an entry decodes by its declared type — so
 the short form takes no `codec` element.
 
 `id` must be written: the factory id is an address an operator types, and a
-class rename must not move it. The written `id` also names the procedure, so a
-Java procedure's state is saved under the same name its Rust twin uses. An
+class rename must not move it. The written `id` also names the tasklet, so a
+Java tasklet's state is saved under the same name its Rust twin uses. An
 absent `id` fails compilation naming it, as does `kind`, `sink`, `input` or
-`onFull` written on a `@Procedure`, which declares a procedure only. Two refusals fail
+`onFull` written on a `@Tasklet`, which declares a tasklet only. Two refusals fail
 compilation, each message beginning with its own name: `ShortFormWithTopology`
 (an annotated class that also implements `StreamOperative` or
 `WorkflowOperative`) and `SinkWithoutOutput` (a `sink` on a `void` `run` with no
@@ -165,8 +165,8 @@ that scope is declared is the manifest —
 restate it. See [`conformance.md`](conformance.md).
 
 The one behavioural gap that is not a capability: a lazily-created dynamic
-Entity is not registered with the flusher, so its state does not reach disk.
-Dynamic-entity scenarios assert against live state for this runtime.
+Cell is not registered with the flusher, so its state does not reach disk.
+Dynamic-cell scenarios assert against live state for this runtime.
 
 ## Packaging
 

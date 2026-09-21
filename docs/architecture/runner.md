@@ -23,7 +23,7 @@ itself: [`rust_operative_architecture.md`](../sdk/rust_operative_architecture.md
 flowchart TB
     subgraph HOST["⚙️ HOST SDK — per language, ~3–5k lines"]
         direction TB
-        AUTH["Authoring surface<br/>Procedure traits · the graph DSL · State and channel codecs"]:::exec
+        AUTH["Authoring surface<br/>Tasklet traits · the graph DSL · State and channel codecs"]:::exec
         THREADS["Threads<br/>whatever the runtime does best"]:::exec
         TEST["Idiomatic errors · test harness"]:::exec
     end
@@ -31,7 +31,7 @@ flowchart TB
     subgraph CORE["🧠 flz_core — ONE Rust kernel, every host"]
         direction TB
         C1["transport · framing · control commands"]:::ctrl
-        C2["per-entity ordering + exclusivity · mailboxes"]:::ctrl
+        C2["per-cell ordering + exclusivity · mailboxes"]:::ctrl
         C3["durability: effect records · flusher · restore · compaction"]:::ctrl
         C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
         C5["routing · edge keys · the key-group guard · the workflow driver"]:::ctrl
@@ -67,12 +67,12 @@ sequenceDiagram
 
     loop forever, until shutdown
         W->>CORE: poll(timeout) — BLOCKS inside the core
-        Note over CORE: pick the next activation:<br/>respect per-entity exclusivity,<br/>the jobs-underway cap, and the deferred-wake list
+        Note over CORE: pick the next activation:<br/>respect per-cell exclusivity,<br/>the jobs-underway cap, and the deferred-wake list
         CORE-->>W: Activation (or: timed out / shutting down)
         W->>USER: run it — host threads, host semantics
         USER-->>W: changes · outputs · verdict
         W->>CORE: complete(result)
-        Note over CORE: build the effect record, route the outputs,<br/>drive the ladder, release the entity
+        Note over CORE: build the effect record, route the outputs,<br/>drive the ladder, release the cell
     end
 ```
 
@@ -86,7 +86,7 @@ Two properties are worth stating outright, because the next SDK author depends o
 
 ## What crosses the seam
 
-An **Activation** always targets exactly one entity.
+An **Activation** always targets exactly one cell.
 
 ```mermaid
 flowchart LR
@@ -94,7 +94,7 @@ flowchart LR
 
     subgraph WORK["Work — the ordinary case"]
         direction TB
-        W1["an ordered per-entity batch of Inputs<br/>payload · metadata · consumed_offset · replay flag · core-evaluated now"]:::exec
+        W1["an ordered per-cell batch of Inputs<br/>payload · metadata · consumed_offset · replay flag · core-evaluated now"]:::exec
         W2["Timer firings<br/>validated against the pending set at assembly —<br/>a stale entry fires nothing"]:::exec
     end
 
@@ -106,7 +106,7 @@ flowchart LR
     end
 
     KR["KeyRequest — batched keying for unkeyed<br/>entry payloads bound for a keyed edge"]:::exec
-    BS["Workflow step — one per entity of the stage<br/>(or CompensateRun for an undo)"]:::exec
+    BS["Workflow step — one per cell of the stage<br/>(or CompensateRun for an undo)"]:::exec
 
     POLL --> WORK
     POLL --> CMD
@@ -130,7 +130,7 @@ bytes in a result are **opaque to the core**: postcard from a Rust host, Kryo fr
 That is the same property that lets the controller store them without decoding.
 
 The [key-group guard](stream_profile.md#partitioned-operatives) also lives below the seam:
-`AddOperative` carries a partition member's owned range, and a computed entity key that hashes
+`AddOperative` carries a partition member's owned range, and a computed cell key that hashes
 outside it takes the park exit on the first frame — so every host gets the mis-route refusal
 without writing a line of it.
 
@@ -139,7 +139,7 @@ without writing a line of it.
 This is the governing rule of the boundary.
 
 **The core decides what runs and how much of it.** It picks the next activation, holds
-per-entity ordering and exclusivity, owns the retry ladder and durability, and caps how many
+per-cell ordering and exclusivity, owns the retry ladder and durability, and caps how many
 work activations may be underway at once. The cap is enforced at handout: at the ceiling `poll`
 blocks as if nothing were ready, and the completion that drops below it releases the next one.
 
@@ -190,13 +190,13 @@ core calls no host code, and a host that cannot starve simply never calls it.
 
 **Direct activations are exempt from the cap** — restore folds, snapshot requests and workflow
 steps answer a caller already blocked on a rendezvous or a stage barrier, so holding one behind
-capped entity work would deadlock that caller. They are also what a queued direct activation
+capped cell work would deadlock that caller. They are also what a queued direct activation
 with no thread inside `poll` reports as starvation: a blocked driver must be able to buy a
 thread.
 
-## Per-entity exclusivity
+## Per-cell exclusivity
 
-The core never hands out two activations for the same entity concurrently. This is the
+The core never hands out two activations for the same cell concurrently. This is the
 single-active-drainer gate, expressed at the boundary — and it is why user code needs no locks
 around its own State.
 
@@ -207,11 +207,11 @@ sequenceDiagram
     participant CORE as 🧠 flz_core
 
     T1->>CORE: poll()
-    CORE-->>T1: Work — entity "BTC", inputs [1,2]
+    CORE-->>T1: Work — cell "BTC", inputs [1,2]
     T2->>CORE: poll()
     Note over CORE: "BTC" has an outstanding activation —<br/>it is not a candidate, no matter how much it has queued
-    CORE-->>T2: Work — entity "ETH", inputs [7]
-    Note over T1,T2: different entities run in parallel, always
+    CORE-->>T2: Work — cell "ETH", inputs [7]
+    Note over T1,T2: different cells run in parallel, always
     T1->>CORE: complete("BTC")
     Note over CORE: only NOW is "BTC" a candidate again,<br/>its inputs are delivered in enqueue order across activations
 ```
@@ -232,7 +232,7 @@ A completion verdict drives the escape ladder. Nothing about it blocks a thread.
 flowchart TB
     C(["complete(result)"]):::ctrl
     V{"verdict?"}:::ctrl
-    OK["ok → effect record, outputs routed, entity released"]:::prot
+    OK["ok → effect record, outputs routed, cell released"]:::prot
     RE["retryable_error"]:::risk
     NR["non_retryable_error<br/>— or a failing final attempt"]:::risk
 
@@ -256,7 +256,7 @@ flowchart TB
 ```
 
 **The backoff blocks no thread.** Reporting the failure returns the completing thread
-immediately; the entity's exclusivity gates stay held across the window — nothing else could
+immediately; the cell's exclusivity gates stay held across the window — nothing else could
 drain it during a backoff anyway — and the release-then-reclaim runs when the delay comes due.
 
 That matters under correlated failure: with workers sized to the CPU count, a backoff that
@@ -271,7 +271,7 @@ which is how a host that grows threads gets one there in time to promote the fir
 ## A workflow step
 
 The workflow driver is the core's. What the host contributes is the thread that runs one stage
-of one entity.
+of one cell.
 
 ```mermaid
 sequenceDiagram
@@ -280,21 +280,21 @@ sequenceDiagram
     participant W as ⚙️ Host thread
     participant CTRL as 🧠 Controller
 
-    Note over DRV: level N — enqueue one step activation per entity of the stage
+    Note over DRV: level N — enqueue one step activation per cell of the stage
     DRV->>CORE: step activations (direct — exempt from the cap)
     W->>CORE: poll()
     CORE-->>W: Work batch for this partition
-    W->>W: run the procedure body
+    W->>W: run the tasklet body
     W->>CORE: complete — changes, staged outputs, verdict
     CORE-->>DRV: the answer, at the stage barrier
     Note over DRV: BARRIER — the whole level joins
-    DRV->>CTRL: ProcCommit {entities_ran, handoff, staged outbox}
+    DRV->>CTRL: TaskCommit {cells_ran, handoff, staged outbox}
     CTRL-->>DRV: ack — durable
     Note over DRV: only now are the level's children runnable
 ```
 
 A step therefore costs exactly **one** thread — the SDK's — and no core thread waits on a host.
-The driver is the only waiter, and its retry timing lives there too. Barriers, the proc
+The driver is the only waiter, and its retry timing lives there too. Barriers, the task
 journal, loop modes, suspension and rewind are unchanged driver machinery; see
 [`workflow_profile.md`](workflow_profile.md).
 
@@ -326,7 +326,7 @@ flowchart LR
 ```
 
 Silent runtime skew is impossible by construction. `flz_core_declare_class` takes the
-**complete** host-class declaration — the channel graph, entity modes, clock kinds, the
+**complete** host-class declaration — the channel graph, cell modes, clock kinds, the
 effectively-once tier and its ack granularity, the correction window, the record-header
 lang/format bytes, and the workflow lifecycle facts — so a field the core never learned is a
 refusal, not a silent degrade.
@@ -336,7 +336,7 @@ Ownership is "whoever allocates frees"; activation buffers the core hands out ar
 
 ## What stays per-language, forever
 
-The authoring surface (Procedure traits, the graph DSL), State and channel codecs, the poll
+The authoring surface (Tasklet traits, the graph DSL), State and channel codecs, the poll
 loop's integration with the host's concurrency primitives, idiomatic errors, and the testing
 harness. An estimated 3–5k lines per SDK — the code that *should* feel native.
 
@@ -347,10 +347,10 @@ documented in-process forms of what the byte boundary removes for FFI hosts.
 
 ## Running the graph without a controller
 
-A runner does not need a controller to execute a graph. Everything a procedure
+A runner does not need a controller to execute a graph. Everything a tasklet
 does to a value is runner-side: the entry channel's decode and parse ladder,
-edge transforms and keying, one Entity per resolved key with its mailbox and
-overflow policy, the retry ladder, and the inter-procedure hop —
+edge transforms and keying, one Cell per resolved key with its mailbox and
+overflow policy, the retry ladder, and the inter-tasklet hop —
 `route_to_consumers` is a mailbox push, and nothing about it crosses the wire.
 
 **Local mode** is that fact made reachable. It builds the same `StreamInstance`
@@ -359,7 +359,7 @@ reader uses, and differs in exactly one thing: the outbound sink. A
 `FlezhaStream::Local` takes what production writes and hands it to a callback in
 process, and a null `state_sink` discards every durable record at the outbound
 edge — so the record path still runs and still costs what it costs. There is no
-second routing path and no second entity implementation; the difference is
+second routing path and no second cell implementation; the difference is
 supplied, never branched on.
 
 What is on the controller's side of that line, and therefore absent locally:
@@ -374,7 +374,7 @@ multi-runner scale.
 
 Local mode ships in every SDK. The four that reach the kernel through the C ABI
 rather than the JNI glue bind the same six entry points and drive their own poll
-loop, which is what runs the procedures; a host with one thread drives that loop
+loop, which is what runs the tasklets; a host with one thread drives that loop
 from `runUntilIdle` rather than parking in the core. User-facing walk-through:
 [`../quickstart.md`](../quickstart.md).
 
@@ -408,11 +408,11 @@ The rule, normative for every binding:
   same conformance run. The rule still binds; what it now rides on is a fixture rather than
   seven diffs.
 - **A host that brings its own workers brings their replacement.** Whatever a host's unit of
-  work is — a poll thread, a fetcher, a per-Entity process — one that leaves for any reason
+  work is — a poll thread, a fetcher, a per-Cell process — one that leaves for any reason
   other than shutdown is replaced without operator action, and its departure never consumes
   capacity the host budgets for. Every activation a host takes is answered exactly once
   (complete, fail, or abandon) through a guard that runs on an unwind, never a discipline at
-  each return site: per-entity exclusivity means an unanswered activation retires its entity
+  each return site: per-cell exclusivity means an unanswered activation retires its cell
   for the life of the process. **And it brings a starvation supervisor**: one thread parked in
   `wait_starvation` that starts one more worker per observation, up to a declared ceiling. A
   fixed worker count with no supervisor is a defect of that SDK, not a configuration choice —
@@ -428,10 +428,10 @@ The rule, normative for every binding:
   one loop and no worker set to grow, and its replaceable unit is the process — which the
   orchestrator already owns and the SDK deliberately does not
   ([`../sdk/php_sdk.md`](../sdk/php_sdk.md#choosing-an-executor)). The Elixir SDK is exempt for
-  the same reason it is exempt from the seam — a BEAM process per Entity has no worker set to
+  the same reason it is exempt from the seam — a BEAM process per Cell has no worker set to
   starve. And every host reports handout liveness — `inflight` and
   `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
-  wedged Entity visible while the runner keeps completing work; likewise every overflow outcome
+  wedged Cell visible while the runner keeps completing work; likewise every overflow outcome
   (`blocked_parks`, `drops_newest`, `drops_oldest`, and the deferred-push pair `pending_pushes`
   / `pending_push_oldest_ms`) rides the same heartbeat, because a drop no operator can count is
   a silent data loss — and neither is backpressure that withholds work, which holds no handout
@@ -448,10 +448,10 @@ The rule, normative for every binding:
   overflow policy it parks until the consumer's mailbox drains, and the consumer drains only
   when its handler runs, so a host that parks the one thread able to run that handler cannot
   recover. The single exception is the
-  transport reader's park on the entry path — a core-owned thread with no producing Entity,
+  transport reader's park on the entry path — a core-owned thread with no producing Cell,
   whose stalling is what carries ingress backpressure to the controller. This one reaches Rust
   and Java **below the seam**, because both complete through `flz_core`; the **Elixir SDK needs
-  nothing, and that blank is a decision, not an oversight** — `Flezha.SDK.Entity` already
+  nothing, and that blank is a decision, not an oversight** — `Flezha.SDK.Cell` already
   defers the caller's reply into a `waiters` FIFO instead of blocking a scheduler, which is the
   design `flz_core` was brought up to. Elixir did take the reporting half (`pending_pushes`),
   because that is a heartbeat key and heartbeat keys are a cross-SDK contract.
@@ -466,7 +466,7 @@ The rule, normative for every binding:
   the Rust runner is not a number for Java or Elixir until the same bench has run on them.
 - **Every SDK holds one allocated language byte, and a factory is homogeneous in it.** Durable
   `State` and `Change` bodies are per-SDK below the shared 16-byte envelope, and a restore ships
-  those bodies verbatim to whichever runner bound the Entity — so an operative is placed only on
+  those bodies verbatim to whichever runner bound the Cell — so an operative is placed only on
   a runner of its factory's language. The byte is an allocated identifier with one table of
   record in `flz_core/src/header.rs`:
 
@@ -501,19 +501,19 @@ Today: **every FFI SDK carries the whole vocabulary** — Rust, Java, Node, Pyth
 PHP. The Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
 the reference every other is checked against, and no veneer manifest defers a capability.
-An inter-procedure `codec()` is owed to nobody: no SDK declares one. The runtime derives
+An inter-tasklet `codec()` is owed to nobody: no SDK declares one. The runtime derives
 the journal codec — from the channel's kind for a host that ships bytes
 (`flz_core/src/host/register.rs`), from the declared `Output` type in Rust — and the
 declaration carries no codec key. The Elixir SDK is its own core: it carries `state_persistence`,
-`keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers` and
+`keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers` and
 `effectively_once` as re-expressions of the kernel's rules — the record header and the
 External Term Format body, the fold, compaction, the live read, the credit window, the
 shutdown notification, the identity stamps at its routing seam, the idle reaper with its cap
-and eviction trace, the per-Procedure schema declaration with its migrations, the
+and eviction trace, the per-Tasklet schema declaration with its migrations, the
 pending-timer set with its two firing paths and the clock kinds, the effect record with its
 staged interval, its consumed-offset floor and its park — and defers correction windows and
 the workflow kind, each owed to a re-expression in Elixir.
-`state_persistence`, `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`
+`state_persistence`, `keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers`
 and `effectively_once` are carried by all seven and sit in the required set: their mechanisms
 live once in the shared core for the six `flz_core` hosts and are re-expressed in the Elixir
 SDK.

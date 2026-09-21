@@ -185,7 +185,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     {:ok, ref} = DlqStore.append(parked("WalkRowClass"))
 
     for token_opts <- [[], [token: ctx.viewer_sys]] do
-      {_out, err} = refusal(fn -> CliManager.dlq_drop("nope/proc/1", token_opts) end)
+      {_out, err} = refusal(fn -> CliManager.dlq_drop("nope/task/1", token_opts) end)
       assert err =~ "dlq.drop: refused"
       refute err =~ "not found", "the row was read before the refusal: #{err}"
     end
@@ -254,8 +254,8 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
   defp parked(operative_class) do
     %{
       operative_class: operative_class,
-      procedure_id: "proc",
-      entity_key: "k",
+      tasklet_id: "task",
+      cell_key: "k",
       channel: "input",
       origin_offset: nil,
       error: "boom",

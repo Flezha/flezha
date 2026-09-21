@@ -27,11 +27,13 @@ because its finding is a set difference and not a line, but it shares the list
 format and the rule that goes with it: `load_baseline`.
 """
 
+import contextlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 # ---------------------------------------------------------------------------
 # The exit contract every gate in this repository answers on.
@@ -214,6 +216,61 @@ def stale_baseline(path, baseline, hits, what):
     return FINDING
 
 
+def walk_baselined(*, check, baseline, what, **walk_args):
+    """`walk` for a gate that reads a recorded-debt list (`load_baseline`).
+
+    `check(rel, line)` returns `(entry, message)` pairs. Every entry is a hit; a
+    hit the list records is not reported, and an entry the list carries that no
+    line produced is stale (`stale_baseline`, whose `what` this is). Both halves
+    report, so a run with a new finding AND a stale entry says so once. Returns an
+    exit code.
+    """
+    recorded = load_baseline(baseline)
+    hits = set()
+
+    def unrecorded(rel, line):
+        found = []
+        for entry, message in check(rel, line):
+            hits.add(entry)
+            if entry not in recorded:
+                found.append(message)
+        return found
+
+    code = walk(check=unrecorded, **walk_args)
+    stale = stale_baseline(baseline, recorded, hits, what)
+    return code or stale
+
+
+def put(rel, body):
+    """Write `rel` (creating its directories) and stage it, in a scratch tree."""
+    os.makedirs(os.path.dirname(rel) or ".", exist_ok=True)
+    with open(rel, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    subprocess.run(["git", "add", "--", rel], check=True, stdout=subprocess.DEVNULL)
+
+
+@contextlib.contextmanager
+def scratch_tree(files):
+    """A throwaway git tree holding `files` (`{path: body}`, every one staged),
+    entered as the working directory and removed on exit.
+
+    A gate's self-test runs the real gate against it: `walk` reads `git ls-files`,
+    so a fixture has to be in an index, and one written under this repository
+    would be judged by every other gate.
+    """
+    root = tempfile.mkdtemp(prefix="naming-gate-selftest-")
+    cwd = os.getcwd()
+    try:
+        subprocess.run(["git", "init", "-q", root], check=True)
+        os.chdir(root)
+        for rel, body in files.items():
+            put(rel, body)
+        yield root
+    finally:
+        os.chdir(cwd)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def report(failures, *, headline, hint, noun="finding(s)", ok_message=None):
     """Print a findings list in the house shape and return an exit code.
 
@@ -346,6 +403,8 @@ GATES = (
      "argv": ["scripts/check-kind-naming.sh"]},
     {"id": "overflow-naming", "group": "naming",
      "argv": ["scripts/check-overflow-naming.sh"]},
+    {"id": "tasklet-cell-naming", "group": "naming",
+     "argv": ["scripts/check-tasklet-cell-naming.sh"]},
     {"id": "local-mode-naming", "group": "naming",
      "argv": ["scripts/check-local-mode-naming.sh"]},
     {"id": "module-naming", "group": "naming",
@@ -380,6 +439,8 @@ GATES = (
      "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
     {"id": "openspec-scenarios-self-test", "group": "naming",
      "argv": ["scripts/check-openspec-scenarios.sh", "--self-test"]},
+    {"id": "tasklet-cell-naming-self-test", "group": "naming",
+     "argv": ["scripts/check-tasklet-cell-naming.sh", "--self-test"]},
     # The publication-readiness record's SHAPE. Its content arm is the row
     # below, in its own group, because every blocking entry is open until the
     # day of the release and a gate that lands red stops being read.
@@ -553,7 +614,6 @@ def _contract_self_test():
     tool is absent must leave the loop running, because ending it is the defect
     this contract removed.
     """
-    import contextlib
     import io
 
     def sh(script):
@@ -676,10 +736,7 @@ def _self_test():
     `walk` reads `git ls-files`, so the fixtures live in a throwaway git tree.
     Each fixture pairs a body with the lines the walk is expected to flag.
     """
-    import contextlib
     import io
-    import shutil
-    import tempfile
 
     tag = "selftest-record"
     cases = {
@@ -695,27 +752,16 @@ def _self_test():
     }
     expected = sorted(hit for _, hits in cases.values() for hit in hits)
 
-    root = tempfile.mkdtemp(prefix="naming-gate-selftest-")
-    cwd = os.getcwd()
-    try:
-        for name, (body, _) in cases.items():
-            with open(os.path.join(root, name), "w", encoding="utf-8") as fh:
-                fh.write(body)
-        subprocess.run(["git", "init", "-q", root], check=True)
-        os.chdir(root)
-        subprocess.run(["git", "add", "-A"], check=True)
-        report = io.StringIO()
-        with contextlib.redirect_stderr(report), contextlib.redirect_stdout(io.StringIO()):
-            code = walk(
-                check=pattern_check([re.compile("PROBE")]),
-                record_tag=tag,
-                headline="self-test probe found:",
-                hint="",
-                ok_message="self-test clean",
-            )
-    finally:
-        os.chdir(cwd)
-        shutil.rmtree(root, ignore_errors=True)
+    report = io.StringIO()
+    with scratch_tree({name: body for name, (body, _) in cases.items()}), \
+            contextlib.redirect_stderr(report), contextlib.redirect_stdout(io.StringIO()):
+        code = walk(
+            check=pattern_check([re.compile("PROBE")]),
+            record_tag=tag,
+            headline="self-test probe found:",
+            hint="",
+            ok_message="self-test clean",
+        )
 
     found = sorted(re.findall(r"^  (\S+:\d+):", report.getvalue(), re.M))
     if code == 0 or found != expected:

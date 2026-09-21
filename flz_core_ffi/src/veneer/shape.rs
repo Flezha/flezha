@@ -43,8 +43,8 @@ impl Key {
 
 pub const TOKEN: Key = Key::flat("token");
 pub const OPERATIVE: Key = Key::flat("operative");
-pub const PROCEDURE: Key = Key::flat("procedure");
-pub const ENTITY_KEY: Key = Key::of("entity_key", "entityKey");
+pub const TASKLET: Key = Key::flat("tasklet");
+pub const CELL_KEY: Key = Key::of("cell_key", "cellKey");
 pub const CHANGE_SEQ: Key = Key::of("change_seq", "changeSeq");
 pub const FACTORY: Key = Key::flat("factory");
 pub const KIND: Key = Key::flat("kind");
@@ -100,8 +100,8 @@ pub mod record {
     pub const ACTIVATION: &[Key] = &[
         TOKEN,
         OPERATIVE,
-        PROCEDURE,
-        ENTITY_KEY,
+        TASKLET,
+        CELL_KEY,
         CHANGE_SEQ,
         FACTORY,
         KIND,
@@ -286,11 +286,11 @@ pub fn activation<S: Sink>(s: &S, act: schema::Activation) -> Result<S::Value, S
     s.set(&mut out, TOKEN, token)?;
     let operative = s.text(act.target.operative)?;
     s.set(&mut out, OPERATIVE, operative)?;
-    let procedure = s.u32(act.target.procedure)?;
-    s.set(&mut out, PROCEDURE, procedure)?;
-    if let Some(key) = act.target.entity_key {
+    let tasklet = s.u32(act.target.tasklet)?;
+    s.set(&mut out, TASKLET, tasklet)?;
+    if let Some(key) = act.target.cell_key {
         let key = s.text(key)?;
-        s.set(&mut out, ENTITY_KEY, key)?;
+        s.set(&mut out, CELL_KEY, key)?;
     }
     let change_seq = s.u64(act.change_seq)?;
     s.set(&mut out, CHANGE_SEQ, change_seq)?;

@@ -1,7 +1,7 @@
 # Ruby SDK
 
 The `flezha` gem is a poll host over `flz_core`, the runner kernel the Rust,
-Java and Node SDKs also drive. The kernel owns transport, ordering, per-entity
+Java and Node SDKs also drive. The kernel owns transport, ordering, per-cell
 exclusivity, durability, retries, timers, credit, routing and the workflow
 driver. This gem supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
@@ -43,8 +43,8 @@ package scan: what runs is what you named.
 ```ruby
 require "flezha"
 
-class Upcase < Flezha::Procedure
-  def initial_state(_entity_key) = { seen: 0 }
+class Upcase < Flezha::Tasklet
+  def initial_state(_cell_key) = { seen: 0 }
   def apply_change(state, change) = state[:seen] += change[:by]
 
   def run(input, ctx)
@@ -65,9 +65,9 @@ end
 Flezha.create_runner("default").register_factory(UpcaseOperative).run
 ```
 
-Which optional hooks a procedure declares is read from the methods it defines —
+Which optional hooks a tasklet declares is read from the methods it defines —
 `apply_change` present means it folds changes, `on_timer` present means it may
-register timers, `entities_for` present means it fans out over a static key set
+register timers, `cells_for` present means it fans out over a static key set
 — so a declaration and its implementation cannot disagree.
 
 Everything a type system would have caught is refused at registration instead,
@@ -78,10 +78,10 @@ same reasons, as the Rust builder's `TopologyIssue`.
 
 A `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass that
 defines `run` instead of `channels` is a whole operative: the class carries its
-one procedure's body, and no `Flezha::Procedure` stands beside it. The base
+one tasklet's body, and no `Flezha::Tasklet` stands beside it. The base
 class is the kind. `factory_id` is required; `sink`, `input` and `codec` are
 optional, each its own call, and `codec` is the entry codec the builder's
-`input` takes. A `sink` written on a `Flezha::Procedure` is refused, naming the
+`input` takes. A `sink` written on a `Flezha::Tasklet` is refused, naming the
 two operative bases.
 
 ```ruby
@@ -106,15 +106,15 @@ Flezha.create_runner("default").register_factory(Upcase).register_factory(Place)
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input`, or the `input` value,
-decoded by `codec`, the procedure, a plugin sink named by `sink` when one is
+single tasklet: an entry channel named `input`, or the `input` value,
+decoded by `codec`, the tasklet, a plugin sink named by `sink` when one is
 written, a factory id equal to `factory_id`, and every class-level setting at
-its default. The procedure is named after the factory id, so a full form that
-names its procedure the same keeps every entity where it was. A workflow short
+its default. The tasklet is named after the factory id, so a full form that
+names its tasklet the same keeps every cell where it was. A workflow short
 form is a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
 
-With no `sink`, the operative declares the entry channel and the procedure and
+With no `sink`, the operative declares the entry channel and the tasklet and
 no plugin channel: the operative that only keeps state.
 
 ```ruby
@@ -123,7 +123,7 @@ class Counter < Flezha::StreamOperative
   input "ticks"
   codec :text
 
-  def initial_state(_entity_key) = { seen: [] }
+  def initial_state(_cell_key) = { seen: [] }
   def apply_change(state, change) = state[:seen] << change[:push]
 
   def run(tick, ctx)
@@ -133,16 +133,16 @@ class Counter < Flezha::StreamOperative
 end
 ```
 
-The procedure's settings and hooks are written on the class and handed to the
-generated procedure: settings such as `entity_keys`, `dynamic_entities`,
+The tasklet's settings and hooks are written on the class and handed to the
+generated tasklet: settings such as `cell_keys`, `dynamic_cells`,
 `clock`, `mailbox_capacity`, `schema_version` and `state_type`, the ones a
-`Flezha::Procedure` class body declares, and hook methods such as
-`initial_state`, `apply_change` and `entities_for`.
+`Flezha::Tasklet` class body declares, and hook methods such as
+`initial_state`, `apply_change` and `cells_for`.
 
-Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window. A class setting written on a short form is refused rather than
-ignored, and so is a `sink`, `input`, `codec` or procedure setting written
+ignored, and so is a `sink`, `input`, `codec` or tasklet setting written
 beside `channels`.
 
 `factory_id` must be written: the factory id is an address an operator types,
@@ -161,7 +161,7 @@ classes.
 A channel names the format of its payload with `codec:` on `input` and on
 `sink`, as a symbol:
 
-| Codec | An entry hands the procedure | A sink sends |
+| Codec | An entry hands the tasklet | A sink sends |
 | --- | --- | --- |
 | `:text` | a UTF-8 `String`; invalid UTF-8 fails the decode | a `String` as its bytes if it is valid UTF-8; any other value fails the emit |
 | `:bytes` | a binary `String`, the bytes unchanged | any `String` unchanged; any other value fails the emit |
@@ -182,9 +182,9 @@ Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
 or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
 naming the channel.
 
-A value passed between two procedures of one operative never crosses a channel
+A value passed between two tasklets of one operative never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
-procedure the binary instead, since an Elixir string is its binary, so the same
+tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are a `Hash` here and a string there.
 
 ### State and Change
@@ -193,7 +193,7 @@ State and Change serialize as MessagePack. A plain `Hash` needs nothing; a
 class declares `state_type` / `change_type` and supplies `to_h` and `.from_h`:
 
 ```ruby
-class Basket < Flezha::Procedure
+class Basket < Flezha::Tasklet
   state_type Cart          # Cart#to_h and Cart.from_h
   change_type Added
 end
@@ -258,8 +258,8 @@ end
 ```
 
 `on_sink` registers against the sink's **channel** name, which is the producing
-procedure's name unless the declaration named it. The run brings the same
-thread executor a booted runner brings, so the procedures run on its workers
+tasklet's name unless the declaration named it. The run brings the same
+thread executor a booted runner brings, so the tasklets run on its workers
 while the caller waits in `run_until_idle`; `close` stops those workers on the
 executor's own flag rather than by shutting the core, so a process may start
 another local run afterwards. Worked example:
@@ -357,8 +357,8 @@ serves — and hands activations to fibers through a `Thread::Queue`, which is
 scheduler-aware. It needs a `Fiber::Scheduler`: add the `async` gem, or pass
 `executor(:fibers, scheduler: -> { MyScheduler.new })`.
 
-**No executor may observe or affect per-entity ordering.** Exclusivity is the
-core's handout guarantee — one outstanding activation per Entity — and an
+**No executor may observe or affect per-cell ordering.** Exclusivity is the
+core's handout guarantee — one outstanding activation per Cell — and an
 activation is completed only after its dispatch has returned, so ordering holds
 for any executor that does not complete early. That invariant is the seam's
 entire contract, and the gem's unit suite asserts it under both members.

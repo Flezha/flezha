@@ -13,7 +13,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   Durable `State` and `Change` bodies are per-SDK below the shared 16-byte
   envelope (serde-postcard in Rust, Kryo in Java), and a restore ships them
-  verbatim to whichever runner bound the Entity. So: an operative of a factory
+  verbatim to whichever runner bound the Cell. So: an operative of a factory
   established at one language is placed only on a runner of that language, and
   killing that runner leaves it unbound with a language reason rather than
   rerouting onto the other runtime.

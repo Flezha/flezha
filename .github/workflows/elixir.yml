@@ -109,7 +109,7 @@ jobs:
       - name: Run Rust tests
         # The only place the flz_core, flz_transport, flz_nif, flz (the CLI) and
         # flezha_runner crates' own unit and integration tests run in CI.
-        # `entity_timers`, `sugar_emit` and `simple_procedure` require the
+        # `cell_timers`, `sugar_emit` and `simple_tasklet` require the
         # `testing` feature, and without it cargo skips them silently.
         run: |
           cargo test --quiet -p flz_core -p flz_transport -p flz_nif -p flz

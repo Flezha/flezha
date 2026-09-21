@@ -10,11 +10,11 @@ use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
 
+mod cell_apply_state;
+pub mod cell_state;
+mod cell_status;
 mod compact;
 mod credit;
-mod entity_apply_state;
-pub mod entity_state;
-mod entity_status;
 mod migration_deserialization;
 mod migration_serialization;
 mod operative_message;
@@ -121,13 +121,13 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::RemOperative(c)) => regular(c),
         Some(Command::MigrationSerialization(c)) => regular(c),
         Some(Command::MigrationDeserialization(c)) => regular(c),
-        Some(Command::EntityState(c)) => regular(c),
+        Some(Command::CellState(c)) => regular(c),
         Some(Command::RunnerDisconnect(c)) => CommandActionType::RunnerDisconnect(Box::new(c)),
         Some(Command::OperativeMessage(c)) => regular(c),
-        Some(Command::EntityApplyState(c)) => regular(c),
+        Some(Command::CellApplyState(c)) => regular(c),
         Some(Command::RestoreInitState(c)) => regular(c),
-        Some(Command::CompactEntity(c)) => regular(c),
-        Some(Command::EntityMailboxStatus(c)) => regular(c),
+        Some(Command::CompactCell(c)) => regular(c),
+        Some(Command::CellMailboxStatus(c)) => regular(c),
         Some(Command::Ping(c)) => regular(c),
         Some(Command::WorkflowStop(c)) => regular(c),
         Some(Command::CreditWindowInit(c)) => regular(c),
@@ -135,12 +135,12 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::ParkPayloadAck(c)) => regular(c),
         Some(Command::RunnerShutdownNotification(_))
         | Some(Command::RestoreInitStateResponse(_))
-        | Some(Command::CompactEntityResponse(_))
+        | Some(Command::CompactCellResponse(_))
         | Some(Command::RunnerReconnected(_))
         | Some(Command::ReassignRunnerId(_))
         | Some(Command::WorkflowCompleted(_))
         | Some(Command::CreditWindowAck(_))
-        | Some(Command::ProcCommit(_))
+        | Some(Command::TaskCommit(_))
         | Some(Command::IterCommit(_))
         | Some(Command::IterPark(_))
         | Some(Command::UpdateFactories(_))
@@ -154,7 +154,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::AdminResponse(reply)) => {
             CommandActionType::AckSignal(ack_result(reply.result, reply.error))
         }
-        Some(Command::ProcCommitResponse(crate::pb::ProcCommitResponse { error, .. }))
+        Some(Command::TaskCommitResponse(crate::pb::TaskCommitResponse { error, .. }))
         | Some(Command::IterCommitResponse(crate::pb::IterCommitResponse { error, .. })) => {
             CommandActionType::AckSignal(ack_result(String::new(), error))
         }

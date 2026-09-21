@@ -106,7 +106,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
       sink_template: [
         type: :string,
         doc:
-          "Frame template carrying the output; {{payload}} required, {{req_id}}/{{entity}}/{{seq}} available"
+          "Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available"
       ],
       sink_queue_max: [
         type: :int,

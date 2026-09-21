@@ -100,18 +100,18 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire do
   # the Kafka message key — stable partitioning across replays, upsert
   # semantics on compacted/changelog topics — and the full durable identity
   # travels as the `flezha.dedup_key` header
-  # (`<flz.entity>/<outbox_seq>/<epoch>`) for consumer-side exact dedup on
+  # (`<flz.cell>/<outbox_seq>/<epoch>`) for consumer-side exact dedup on
   # append-only topics. Re-driven entries carry identical identity.
   def record_identity(
-        %{"flz.epoch" => epoch, "flz.entity" => entity, "flz.seq" => outbox_seq} = metadata
+        %{"flz.epoch" => epoch, "flz.cell" => cell, "flz.seq" => outbox_seq} = metadata
       ) do
-    {Map.get(metadata, "flz.key"), "#{entity}/#{outbox_seq}/#{epoch}"}
+    {Map.get(metadata, "flz.key"), "#{cell}/#{outbox_seq}/#{epoch}"}
   end
 
   # At-least-once records: no identity header, but a `.keyed()` channel's
   # natural key still partitions. Only the effectively-once tier stamps
   # `flz.epoch`, so requiring it here would ship every ordinary keyed emit
-  # with a nil key — and a nil key scatters one entity's records across
+  # with a nil key — and a nil key scatters one cell's records across
   # partitions, losing exactly the ordering `.keyed()` was declared for.
   def record_identity(metadata) do
     key =

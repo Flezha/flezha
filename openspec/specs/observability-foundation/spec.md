@@ -9,7 +9,7 @@ The observability-foundation capability provides the Flezha Controller's first-c
 The observability subsystem SHALL define exactly one signal envelope structure used by all producers and all consumers. The structure SHALL include the fields `kind`, `source`, `name`, `measurements`, `metadata`, and `ts`. The field `kind` SHALL be one of the atoms `:metric`, `:event`, `:log`, or `:trace_span`. The structure SHALL be exposed as a module struct under the foundation namespace and SHALL be the only on-bus signal shape.
 
 #### Scenario: Constructing a metric signal
-- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{operative: "orders", procedure: 3}`
+- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{operative: "orders", tasklet: 3}`
 - **THEN** the resulting struct SHALL be accepted by the bus without error and SHALL carry a monotonic-time `ts` field set automatically when not supplied
 
 #### Scenario: Rejecting an unknown signal kind
@@ -181,8 +181,8 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://ws.kraken.com"` SHALL appear on the bus
 
 #### Scenario: Persistence stall/gap events are bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operative: "btc_kraken", procedure: "ohlc", key: "1m"})`
-- **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Entity metadata SHALL appear on the bus
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operative: "btc_kraken", tasklet: "ohlc", key: "1m"})`
+- **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Cell metadata SHALL appear on the bus
 - **AND** the same bridging SHALL hold for `[:flezha, :state, :seq_gap]` and `[:flezha, :state, :compaction_timeout]`
 
 #### Scenario: Bridge failure does not crash producer
@@ -215,7 +215,7 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 
 ### Requirement: Service-API surface
 
-The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `subscribe/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read procedures (`list_sources`, `list_sinks`, `query`, `subscribe`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate procedures (`enable_source`, `disable_source`) SHALL require at least `operator`. Read procedures SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
+The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `subscribe/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `subscribe`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `operator`. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
 
 #### Scenario: CLI calls service API through CliManager
 - **WHEN** the CLI invokes a `list_sources` request that reaches `Flezha.Service.CliManager`
@@ -274,7 +274,7 @@ Every Sink SHALL declare a `config_schema/0` callback. At sink registration time
 The foundation SHALL accept `:trace_span` signals carrying `trace_id`, `span_id`, and `parent_span_id` fields and SHALL deliver them to attached sinks. The foundation SHALL NOT propagate trace context across the binary transport in this change; cross-transport propagation is deferred to a future change. The schema for `:trace_span` signals SHALL include the propagation fields so that future change does not require a schema migration.
 
 #### Scenario: In-process span is recorded
-- **WHEN** code emits a `:trace_span` signal with `measurements: %{duration_us: 1234}`, `metadata: %{trace_id: "abcd", span_id: "ef01", parent_span_id: nil, procedure: "wal.append"}`
+- **WHEN** code emits a `:trace_span` signal with `measurements: %{duration_us: 1234}`, `metadata: %{trace_id: "abcd", span_id: "ef01", parent_span_id: nil, tasklet: "wal.append"}`
 - **THEN** the signal SHALL be delivered to attached sinks with all fields preserved
 
 #### Scenario: Cross-transport propagation is explicitly out of scope
@@ -375,7 +375,7 @@ counter that is a durable ledger read by policy, rather than instrumentation
 that changes no behaviour, is not a counter table under this requirement and
 SHALL NOT be folded into one.
 
-A single-cell reference — a sequence, an index, an occupancy flag — has no layout
+A single-counter reference — a sequence, an index, an occupancy flag — has no layout
 to declare and is exempt; the exemption SHALL be written down beside the
 reference rather than left to be inferred.
 

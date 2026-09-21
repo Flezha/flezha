@@ -1,14 +1,14 @@
 //! Mailbox admission under the channel's overflow policy: the entry path's
 //! form, which parks the transport reader while `DropNothing` has nowhere to
-//! put an item, and the producing Entity's form, which holds the push in
-//! that Entity's holdback and withholds work from it instead. The invariant:
+//! put an item, and the producing Cell's form, which holds the push in
+//! that Cell's holdback and withholds work from it instead. The invariant:
 //! a producer's pushes land in emit order, whichever form admitted them.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::cell::{CellItem, CellSlot};
 use crate::channel::OverflowPolicy;
-use crate::entity::{EntityItem, EntitySlot};
 use crate::util::LockRecover;
 
 /// Bounded park per `DropNothing` retry on the entry path, so a lost wake
@@ -22,21 +22,21 @@ const BLOCK_WARN_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 /// Admit one item without waiting for room; `Err` hands it back as
 /// [`crate::mailbox::Mailbox::try_push`] does. Shared with the wake list's
 /// promotion pass, which must never hold a poller.
-pub(crate) fn try_admit(slot: &Arc<EntitySlot>, item: EntityItem) -> Result<(), EntityItem> {
+pub(crate) fn try_admit(slot: &Arc<CellSlot>, item: CellItem) -> Result<(), CellItem> {
     slot.mailbox.try_push(item)?;
     note_admitted(slot);
     Ok(())
 }
 
 /// What every admission owes: the count, the reaper's activity stamp, and
-/// the round claim that schedules the entity when nobody is draining it.
-fn note_admitted(slot: &Arc<EntitySlot>) {
+/// the round claim that schedules the cell when nobody is draining it.
+fn note_admitted(slot: &Arc<CellSlot>) {
     slot.mailbox
         .counters()
         .pushes_total
         .fetch_add(1, Ordering::Relaxed);
     // Activity stamp for the dynamic-mode reaper (one atomic store; inert for
-    // single/static Entities that are never reaped).
+    // single/static Cells that are never reaped).
     slot.last_activity_ms
         .store(crate::util::monotonic_ms(), Ordering::Relaxed);
     if slot.mailbox.claim_inflight() {
@@ -46,16 +46,16 @@ fn note_admitted(slot: &Arc<EntitySlot>) {
 
 /// Admit one item under the channel's policy, PARKING the calling thread
 /// while `DropNothing` has nowhere to put it. The entry path's form only: the
-/// transport reader has no Entity to withhold work from, and its stalling is
-/// the ingress backpressure. A producing Entity takes [`admit_from_entity`].
-pub fn admit_from_reader(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy) {
+/// transport reader has no Cell to withhold work from, and its stalling is
+/// the ingress backpressure. A producing Cell takes [`admit_from_cell`].
+pub fn admit_from_reader(slot: &Arc<CellSlot>, item: CellItem, policy: OverflowPolicy) {
     // Open the slice here, on the frame-handling thread, rather than in the
     // drain: the controller's end-of-slice broadcast arrives on this same thread
     // after every slice frame, so opening here guarantees the close can never
     // overtake a member it was meant to include. Opening in the drain would race
     // — a slow drain could see the close first and then buffer members nobody
     // would ever flush.
-    let replay = matches!(&item, EntityItem::Input(p) if p.replay);
+    let replay = matches!(&item, CellItem::Input(p) if p.replay);
     if replay {
         slot.replay_open.store(true, Ordering::Release);
     }
@@ -101,7 +101,7 @@ pub fn admit_from_reader(slot: &Arc<EntitySlot>, item: EntityItem, policy: Overf
 
 /// One `DropNothing` wait on the entry path, warned once per episode past
 /// [`BLOCK_WARN_AFTER`].
-fn wait_for_room(slot: &Arc<EntitySlot>, since: std::time::Instant, warned: &mut bool) {
+fn wait_for_room(slot: &Arc<CellSlot>, since: std::time::Instant, warned: &mut bool) {
     slot.note_blocked();
     if slot.mailbox.is_full() {
         // A live drainer on another thread owns progress;
@@ -114,9 +114,9 @@ fn wait_for_room(slot: &Arc<EntitySlot>, since: std::time::Instant, warned: &mut
         *warned = true;
         tracing::warn!(
             target: "flezha::mailbox",
-            procedure_id = slot.procedure_id,
-            entity_key = ?slot.entity_key,
-            "DropNothing-policy producer stalled >{:?} on a full entity mailbox; consumer procedure wedged or far behind",
+            tasklet_id = slot.tasklet_id,
+            cell_key = ?slot.cell_key,
+            "DropNothing-policy producer stalled >{:?} on a full cell mailbox; consumer tasklet wedged or far behind",
             BLOCK_WARN_AFTER
         );
     }
@@ -126,7 +126,7 @@ fn wait_for_room(slot: &Arc<EntitySlot>, since: std::time::Instant, warned: &mut
 /// switch, not a fourth policy: the guarantee is identical either way.
 const ENV_NONPARKING: &str = "FLEZHA_DROP_NOTHING_NONPARKING";
 
-/// How many undelivered pushes one Entity may hold before its emit parks.
+/// How many undelivered pushes one Cell may hold before its emit parks.
 /// Only the in-process typed host can reach it: an FFI host's holdback is
 /// bounded by one completion's output count.
 const ENV_HOLDBACK_MAX: &str = "FLEZHA_PUSH_HOLDBACK_MAX";
@@ -170,19 +170,19 @@ pub fn set_holdback_max_for_tests(max: usize) {
     HOLDBACK_MAX.store(max.max(1), Ordering::Relaxed);
 }
 
-/// Admit one item produced BY an Entity, withholding work from it instead of
+/// Admit one item produced BY a Cell, withholding work from it instead of
 /// holding its thread. Two rules keep emit order total: a push made while the
-/// producer already owes one appends behind it, and an Entity owing a push is
+/// producer already owes one appends behind it, and a Cell owing a push is
 /// handed no further activation. `true` when the push was deferred, which
 /// tells a typed batch to hand its tail back.
-pub(crate) fn admit_from_entity(
-    producer: &Arc<EntitySlot>,
-    consumer: &Arc<EntitySlot>,
-    item: EntityItem,
+pub(crate) fn admit_from_cell(
+    producer: &Arc<CellSlot>,
+    consumer: &Arc<CellSlot>,
+    item: CellItem,
     policy: OverflowPolicy,
 ) -> bool {
     // A shedding policy has nothing to hold — it admits or discards on the
-    // first pass, holding no thread either way. A self-emit into an Entity's
+    // first pass, holding no thread either way. A self-emit into a Cell's
     // OWN full mailbox has nothing to withhold work from: gating it would gate
     // the only round that could drain it, so it keeps the pre-existing
     // behaviour (which wedges the same way the park did, and is why a topology
@@ -205,7 +205,7 @@ pub(crate) fn admit_from_entity(
             break;
         }
         if held.len() < holdback_max() {
-            held.push_back(crate::entity::PendingPush {
+            held.push_back(crate::cell::PendingPush {
                 consumer: Arc::clone(consumer),
                 item,
             });
@@ -230,7 +230,7 @@ pub(crate) fn admit_from_entity(
 
 /// Park until this producer's holdback has room again — the one park an emit
 /// path keeps, reached only by an invocation that emitted past the bound.
-fn wait_for_holdback_room(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) {
+fn wait_for_holdback_room(producer: &Arc<CellSlot>, consumer: &Arc<CellSlot>) {
     report_holdback_full(producer, consumer);
     producer.note_blocked();
     if consumer.mailbox.is_full() {
@@ -245,16 +245,16 @@ fn wait_for_holdback_room(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>
 /// appeared meanwhile — the recheck a parking waiter makes, for the same
 /// reason. Called with no holdback lock held: the consumer's drain takes its
 /// wait list on every pop, and the two must never nest.
-fn owe_room(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) -> bool {
+fn owe_room(producer: &Arc<CellSlot>, consumer: &Arc<CellSlot>) -> bool {
     consumer.waiters.wait_producer(producer);
     !consumer.mailbox.is_full()
 }
 
 /// Hold one undelivered push and stand the producer down until room appears.
-fn defer_push(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>, item: EntityItem) {
+fn defer_push(producer: &Arc<CellSlot>, consumer: &Arc<CellSlot>, item: CellItem) {
     {
         let mut held = producer.push_holdback.lock_recover();
-        held.push_back(crate::entity::PendingPush {
+        held.push_back(crate::cell::PendingPush {
             consumer: Arc::clone(consumer),
             item,
         });
@@ -269,7 +269,7 @@ fn defer_push(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>, item: Enti
 /// first, stopping at the first refusal so a partial drain never reorders.
 /// Says nothing about the gates, so any thread may call it any number of
 /// times.
-pub(crate) fn drain_push_holdback(producer: &Arc<EntitySlot>) {
+pub(crate) fn drain_push_holdback(producer: &Arc<CellSlot>) {
     // At most one retry: the recheck answers "room appeared while I was
     // registering", and anything past that is another producer winning the
     // slot — which is the consumer's next pop to resolve, not a spin here.
@@ -285,13 +285,13 @@ pub(crate) fn drain_push_holdback(producer: &Arc<EntitySlot>) {
 
 /// One drain pass: `Some(consumer)` refused and the rest waits behind it;
 /// `None` emptied the holdback and cleared the flag.
-fn admit_held(producer: &Arc<EntitySlot>) -> Option<Arc<EntitySlot>> {
+fn admit_held(producer: &Arc<CellSlot>) -> Option<Arc<CellSlot>> {
     let mut held = producer.push_holdback.lock_recover();
     while let Some(pending) = held.pop_front() {
         let consumer = Arc::clone(&pending.consumer);
         if let Err(returned) = try_admit(&consumer, pending.item) {
             consumer.note_blocked();
-            held.push_front(crate::entity::PendingPush {
+            held.push_front(crate::cell::PendingPush {
                 consumer: Arc::clone(&consumer),
                 item: returned,
             });
@@ -307,7 +307,7 @@ fn admit_held(producer: &Arc<EntitySlot>) -> Option<Arc<EntitySlot>> {
 /// One line per [`HOLDBACK_WARN_EVERY_MS`] however many producers are at
 /// the bound, naming both ends: the producer looks stuck, the consumer is the
 /// one behind, and the heartbeat counters cannot carry that identity.
-fn report_holdback_full(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) {
+fn report_holdback_full(producer: &Arc<CellSlot>, consumer: &Arc<CellSlot>) {
     const HOLDBACK_WARN_EVERY_MS: u64 = 5_000;
     static LAST_WARN_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let now = crate::util::wall_now_ms();
@@ -321,8 +321,8 @@ fn report_holdback_full(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) 
     }
     tracing::warn!(
         target: "flezha::mailbox",
-        producer = producer.dispatcher.entity_label(),
-        consumer = consumer.dispatcher.entity_label(),
+        producer = producer.dispatcher.cell_label(),
+        consumer = consumer.dispatcher.cell_label(),
         holdback_max = holdback_max(),
         "producer filled its push holdback; falling back to parking until the consumer catches up"
     );

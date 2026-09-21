@@ -41,7 +41,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
   @namespace "durable_frame_e2e"
   @factory "store_input"
-  @procedure "store_input_procedure"
+  @tasklet "store_input_tasklet"
 
   setup do
     on_exit(fn ->
@@ -63,7 +63,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
   @tag timeout: 300_000
   test "the frame a runner writes is the frame every reader folds" do
-    {entity_id, path} = drive_a_wal(10)
+    {cell_id, path} = drive_a_wal(10)
 
     # Row: clean. The byte walk and the device walk over the SAME file, which is
     # the substitutability the seam exists to make testable.
@@ -96,14 +96,14 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
       assert Frame.sdk_lang_name(decoded.sdk_lang) != "unallocated"
     end
 
-    assert {:ok, payload} = Restore.assemble_payload(entity_id)
+    assert {:ok, payload} = Restore.assemble_payload(cell_id)
     assert byte_size(payload.change_log_bytes) > 0
     assert payload.terminal_seq_hint == List.last(seqs)
   end
 
   @tag timeout: 300_000
   test "a torn tail is repaired and a corrupt record is refused, with the file left on disk" do
-    {entity_id, path} = drive_a_wal(10)
+    {cell_id, path} = drive_a_wal(10)
 
     # Read the live file first, then stop: the writer holds the handle, so the
     # bytes are taken while they are being appended and trimmed to the last
@@ -120,7 +120,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     # the records before it are complete and must survive.
     File.write!(path, whole <> binary_part(whole, 0, 20))
 
-    assert {:ok, repaired} = Restore.assemble_payload(entity_id)
+    assert {:ok, repaired} = Restore.assemble_payload(cell_id)
     assert byte_size(repaired.change_log_bytes) == byte_size(whole)
 
     # Row: corrupt record. One flipped bit in a MIDDLE record's body: the
@@ -145,7 +145,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
     log =
       capture_log(fn ->
-        assert {:error, reason} = Restore.assemble_payload(entity_id)
+        assert {:error, reason} = Restore.assemble_payload(cell_id)
         assert reason =~ "durable record refused (crc_mismatch)"
         assert reason =~ path
       end)
@@ -173,13 +173,13 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   end
 
   # Boot a runner, register a changeful operative, push `n` inputs and wait for
-  # its WAL to hold bytes. Answers the Entity and its WAL path.
+  # its WAL to hold bytes. Answers the Cell and its WAL path.
   defp drive_a_wal(n) do
     {port, ce_id} = NodeTestHelper.start_runner_port(@namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     operative_id = "durable_frame_e2e_#{System.unique_integer([:positive])}"
-    entity_id = {operative_id, @procedure, ""}
+    cell_id = {operative_id, @tasklet, ""}
 
     builder = %Builder{
       id: operative_id,
@@ -199,8 +199,8 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
       })
     end
 
-    assert CA.wait_for_wal_bytes(entity_id, 10_000) > 0
+    assert CA.wait_for_wal_bytes(cell_id, 10_000) > 0
 
-    {entity_id, Paths.wal_path(entity_id)}
+    {cell_id, Paths.wal_path(cell_id)}
   end
 end

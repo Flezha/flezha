@@ -3,7 +3,7 @@ use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 
-const ENTRY_REF: &[Positional] = &[Positional::required("<operative/procedure/entry-id>")];
+const ENTRY_REF: &[Positional] = &[Positional::required("<operative/tasklet/entry-id>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz dlq",

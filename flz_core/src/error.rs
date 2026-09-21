@@ -33,9 +33,9 @@ pub enum Error {
     /// The transport's refusal: the socket ladder or the QUIC list.
     #[error(transparent)]
     Transport(#[from] flz_transport::Error),
-    /// The per-procedure `max_entities` cap is reached; the new-key input is
+    /// The per-tasklet `max_cells` cap is reached; the new-key input is
     /// dropped (`inputs_dropped_capped_total` bumped).
-    #[error("max_entities reached: the new-key input is dropped")]
+    #[error("max_cells reached: the new-key input is dropped")]
     Capped,
 }
 
@@ -61,17 +61,17 @@ mod tests {
     // the veneer suites match on the text alone.
     #[test]
     fn every_variant_renders_the_text_it_replaced() {
-        let declaration = "a host class declares at least one procedure";
+        let declaration = "a host class declares at least one tasklet";
         let crossing = "snapshot_request: runner is shutting down";
         let answer = "completion carries more effects than items";
         let routing = "edge output names unknown channel 7";
         let partition = "key 'k' hashes to key group 3, which partition 0 of 2 does not own";
-        let state = "entity_not_found: procedure `p` holds no Entity keyed `k`";
+        let state = "cell_not_found: tasklet `p` holds no Cell keyed `k`";
         let connect = "Failed to connect to a QUIC controller — 127.0.0.1:4433: refused";
         let socket_dir = SocketDirError::Ambiguous { live: Vec::new() };
         let quic_list = QuicListError::NoEndpoint;
 
-        let snapshot_state = "snapshot_frame: state type mismatch for procedure";
+        let snapshot_state = "snapshot_frame: state type mismatch for tasklet";
         let snapshot_encode = "snapshot_frame: postcard state encode failed: bad";
 
         let rendered: Vec<(Error, String)> = vec![
@@ -88,7 +88,7 @@ mod tests {
             (Error::from(quic_list.clone()), quic_list.to_string()),
             (
                 Error::Capped,
-                "max_entities reached: the new-key input is dropped".into(),
+                "max_cells reached: the new-key input is dropped".into(),
             ),
         ];
         for (error, text) in rendered {

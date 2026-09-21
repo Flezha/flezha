@@ -1,6 +1,6 @@
 defmodule Flezha.Service.CliManagerStateGetTest do
   @moduledoc """
-  `flz state get <operative/procedure[/entity_key]>` operator surface: the live
+  `flz state get <operative/tasklet[/cell_key]>` operator surface: the live
   read, and every refusal it can report. The SDK-side selector and its
   token-prefixed refusals are covered by `state_serialize.rs` and
   `StreamOperativeStateSerializerTest`; here we pin how each verdict reaches
@@ -24,9 +24,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   defp stub_read(operative, verdict) do
     stub(Flezha.Service.OperativeManager, :namespace_of, fn ^operative -> {:ok, "trading"} end)
 
-    stub(Flezha.Service.OperativeManager, :get_entity_state, fn "trading",
-                                                                ^operative,
-                                                                _selector ->
+    stub(Flezha.Service.OperativeManager, :get_cell_state, fn "trading", ^operative, _selector ->
       verdict
     end)
   end
@@ -54,7 +52,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
     end
   end
 
-  test "a live Entity is printed with the seq it was read at" do
+  test "a live Cell is printed with the seq it was read at" do
     operative = operative_id()
     stub_read(operative, {:ok, ~s({"candle":{"BTCUSD@1m":{"high":42}}}), 17})
 
@@ -76,7 +74,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
     assert decoded["path"] == "#{operative}/candle/BTCUSD@1m"
   end
 
-  test "a whole-Procedure read needs no entity key and reports no single version" do
+  test "a whole-Tasklet read needs no cell key and reports no single version" do
     operative = operative_id()
     stub_read(operative, {:ok, ~s({"candle":{"a":{},"b":{}}}), nil})
 
@@ -85,19 +83,19 @@ defmodule Flezha.Service.CliManagerStateGetTest do
     assert out =~ "change_seq: -"
   end
 
-  test "an idle-evicted Entity is refused naming eviction and the durable path" do
+  test "an idle-evicted Cell is refused naming eviction and the durable path" do
     operative = operative_id()
 
     stub_read(
       operative,
       {:error,
-       "entity_evicted: Entity `BTCUSD@1m` of procedure `candle` was idle-evicted; " <>
+       "cell_evicted: Cell `BTCUSD@1m` of tasklet `candle` was idle-evicted; " <>
          "eviction is destructive, so there is no durable value to serve"}
     )
 
     out = get("#{operative}/candle/BTCUSD@1m")
 
-    assert out =~ "entity_evicted"
+    assert out =~ "cell_evicted"
     assert out =~ "flz state at"
   end
 
@@ -106,13 +104,13 @@ defmodule Flezha.Service.CliManagerStateGetTest do
 
     stub_read(
       operative,
-      {:error, "entity_not_found: procedure `candle` holds no Entity keyed `X`"}
+      {:error, "cell_not_found: tasklet `candle` holds no Cell keyed `X`"}
     )
 
     out = get("#{operative}/candle/X")
 
-    assert out =~ "entity_not_found"
-    refute out =~ "entity_evicted"
+    assert out =~ "cell_not_found"
+    refute out =~ "cell_evicted"
     assert out =~ "flz state at"
   end
 
@@ -160,6 +158,6 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   test "a malformed path is refused naming the shape it expects" do
     out = get("just-an-operative")
 
-    assert out =~ "expected <operative>/<procedure>[/<entity_key>]"
+    assert out =~ "expected <operative>/<tasklet>[/<cell_key>]"
   end
 end

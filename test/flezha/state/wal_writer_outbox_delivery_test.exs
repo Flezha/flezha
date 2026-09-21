@@ -9,15 +9,15 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "stall_status reports the outbox cursors producing-liveness compares", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     assert %{out_pending_seq: -1, outbox_flushed_seq: -1} = WalWriter.stall_status(pid)
 
     # An effect record carrying NO outputs must not move out_pending_seq. This is
     # the whole reason it exists rather than reusing outbox_durable_seq, which
-    # advances on every fsynced record: an Entity that persists state but emits
+    # advances on every fsynced record: a Cell that persists state but emits
     # nothing would otherwise read as an outbox frozen forever.
     append_effect(pid, 0, [], 100)
 
@@ -37,7 +37,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "stall_status cursors survive a restart re-drive without a phantom jump", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     ClassRegistry.put_overwatch(rc, self(), nil)
 
@@ -46,11 +46,11 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     plain = RecordFrame.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
     second = RecordFrame.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
 
-    wal_path = Paths.wal_path(entity_id)
+    wal_path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(wal_path))
     File.write!(wal_path, plain <> second)
 
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
 
     # Seeded from what the re-drive owes, NOT from -1 — otherwise the first tick
     # after a restart would read as an outbox that suddenly grew from nothing.
@@ -63,9 +63,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a held output holds the cursor until the sink confirms", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     append_effect(pid, 0, [output("k", "held")], 1)
 
@@ -82,14 +82,14 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
 
     assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
-    assert Outbox.read(entity_id).outbox_flushed_seq == 0
+    assert Outbox.read(cell_id).outbox_flushed_seq == 0
   end
 
   test "an unconfirmed entry blocks the cursor behind a later confirmed one", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     stage_effect(pid, 0, [output("k", "first")], 1)
     append_effect(pid, 1, [output("k", "second")], 2)
@@ -114,11 +114,11 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a permanently failed output parks and advances exactly its range", %{
     rc: rc,
-    entity_id: entity_id,
+    cell_id: cell_id,
     base: base
   } do
     redirect_dlq_dir(base)
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     stage_effect(pid, 0, [output("k", "doomed")], 1)
     append_effect(pid, 1, [output("k", "fine")], 2)
@@ -146,21 +146,21 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
 
     assert [entry] = DlqStore.list(rc)
-    assert entry["entity_key"] == "k1"
+    assert entry["cell_key"] == "k1"
     assert entry["channel"] == "out"
     assert entry["attempts"] == 6
     assert entry["error"] =~ "broker_gone"
-    assert {:ok, _entry, "doomed"} = DlqStore.get("#{rc}/proc/#{entry["id"]}")
+    assert {:ok, _entry, "doomed"} = DlqStore.get("#{rc}/task/#{entry["id"]}")
   end
 
   test "the in-flight window back-pressures the flush instead of dropping", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     Application.put_env(:flezha, :outbox_inflight_max, 1)
     on_exit(fn -> Application.delete_env(:flezha, :outbox_inflight_max) end)
 
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     stage_effect(pid, 0, [output("k", "one")], 1)
     append_effect(pid, 1, [output("k", "two")], 2)
@@ -181,12 +181,12 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a chain run that never reports back is re-dispatched, not wedged", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     Application.put_env(:flezha, :outbox_resettle_ms, 50)
     on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
 
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     append_effect(pid, 0, [output("k", "lost")], 1)
 
@@ -206,9 +206,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "one settlement and one confirmation report complete a whole batch", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     in_one_window(fn ->
       for seq <- 0..9 do
@@ -241,14 +241,14 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
 
     assert %{outbox_flushed_seq: 9, awaiting: 0} = WalWriter.outbox_status(pid)
-    assert Outbox.read(entity_id).outbox_flushed_seq == 9
+    assert Outbox.read(cell_id).outbox_flushed_seq == 9
   end
 
   test "an out-of-order batch report cannot carry the cursor past an unconfirmed entry", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     append_effect(pid, 0, [output("k", "early")], 1)
     early = assert_batch(2_000)
@@ -272,12 +272,12 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a crashed batch run settles none of its entries and the resettle re-drives them", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     Application.put_env(:flezha, :outbox_resettle_ms, 50)
     on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
 
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     in_one_window(fn ->
       stage_effect(pid, 0, [output("k", "a")], 1)
@@ -320,9 +320,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a checkpoint record's outputs flush as one batch with sequential ordinals", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     # What an `outputs: :at_checkpoint` interval ships: ONE record carrying the
     # whole interval's outputs and the offset of the input that closed it.
@@ -351,9 +351,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a re-drive re-sends a checkpoint record's outputs under identical identity", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     :ok =
       WalWriter.append(
@@ -367,10 +367,10 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     first = assert_batch(2_000)
     run_batch(first)
-    close_writer(pid, entity_id)
+    close_writer(pid, cell_id)
 
     # Crash before the cursor write: the re-drive owes the whole record again.
-    pid = reopen_with_stale_cursor(entity_id)
+    pid = reopen_with_stale_cursor(cell_id)
 
     again = assert_batch(3_000)
 
@@ -383,9 +383,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
   test "a batch report naming entries the writer no longer owes changes nothing", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     append_effect(pid, 0, [output("k", "done")], 1)
 

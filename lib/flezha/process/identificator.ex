@@ -163,7 +163,7 @@ defmodule Flezha.Identificator do
   def start_link(_) do
     Registry.start_link(
       keys: :unique,
-      entities: 1,
+      cells: 1,
       name: __MODULE__
     )
   end

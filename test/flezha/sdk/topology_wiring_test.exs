@@ -22,8 +22,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
   alias Flezha.SDK.{Channels, Ctx, Topology}
 
-  defmodule EchoProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule EchoTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "echo"
     def init_state(_), do: nil
 
@@ -33,8 +33,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
     end
   end
 
-  defmodule KeyedProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule KeyedTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "keyed"
     def init_state(_), do: 0
     def run(_input, state, _ctx), do: {:ok, state + 1}
@@ -44,7 +44,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "p"
 
     def channels(c) do
-      s = c |> Channels.input("in") |> Channels.into(EchoProc)
+      s = c |> Channels.input("in") |> Channels.into(EchoTask)
       Channels.sink(s, "same")
       Channels.sink(s, "same")
     end
@@ -54,7 +54,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "mp"
 
     def channels(c) do
-      s = c |> Channels.input("in") |> Channels.into(EchoProc)
+      s = c |> Channels.input("in") |> Channels.into(EchoTask)
       Channels.sink(s, "a")
       Channels.sink(s, "b")
     end
@@ -66,7 +66,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def channels(c) do
       c
       |> Channels.input("in")
-      |> Channels.into(EchoProc)
+      |> Channels.into(EchoTask)
       |> Channels.named("same")
       |> Channels.sink("same")
     end
@@ -76,7 +76,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "kbp"
 
     def channels(c) do
-      node = c |> Channels.input("in") |> Channels.into(EchoProc)
+      node = c |> Channels.input("in") |> Channels.into(EchoTask)
       node |> Channels.keyed() |> Channels.sink("stamped")
       node |> Channels.sink()
     end
@@ -88,9 +88,9 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def channels(c) do
       c
       |> Channels.input("in")
-      |> Channels.into(EchoProc)
+      |> Channels.into(EchoTask)
       |> Channels.sink("shared")
-      |> Channels.into(KeyedProc)
+      |> Channels.into(KeyedTask)
       |> Channels.sink("shared")
     end
   end
@@ -99,8 +99,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "nasc"
 
     def channels(c) do
-      s = c |> Channels.input("in") |> Channels.into(EchoProc)
-      s |> Channels.named("shared") |> Channels.into(KeyedProc) |> Channels.sink("shared")
+      s = c |> Channels.input("in") |> Channels.into(EchoTask)
+      s |> Channels.named("shared") |> Channels.into(KeyedTask) |> Channels.sink("shared")
     end
   end
 
@@ -108,7 +108,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "snc"
 
     def channels(c) do
-      c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.sink("items_output")
+      c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink("items_output")
     end
   end
 
@@ -116,7 +116,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def factory_id, do: "ns"
 
     def channels(c) do
-      c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.sink()
+      c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink()
     end
   end
 
@@ -172,7 +172,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def channels(c) do
       ticks = Channels.input(c, "ticks")
       quotes = c |> Channels.input("quotes") |> Channels.map(&String.upcase/1)
-      fills = c |> Channels.input("orders") |> Channels.into(EchoProc)
+      fills = c |> Channels.input("orders") |> Channels.into(EchoTask)
 
       c
       |> Channels.merge()
@@ -180,7 +180,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
       |> Channels.from(quotes, &{:quote, &1})
       |> Channels.from(fills, &{:fill, &1})
       |> Channels.key_by(fn {_source, value} -> value |> String.split(":") |> hd() end)
-      |> Channels.into(KeyedProc)
+      |> Channels.into(KeyedTask)
       |> Channels.sink("merged")
     end
   end
@@ -190,7 +190,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
     def channels(c) do
       ticks = Channels.input(c, "ticks")
-      c |> Channels.merge() |> Channels.from(ticks, & &1) |> Channels.into_named(KeyedProc, "m")
+      c |> Channels.merge() |> Channels.from(ticks, & &1) |> Channels.into_named(KeyedTask, "m")
     end
   end
 
@@ -204,7 +204,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
       |> Channels.merge()
       |> Channels.from(ticks, & &1)
       |> Channels.from(ticks, & &1)
-      |> Channels.into(KeyedProc)
+      |> Channels.into(KeyedTask)
     end
   end
 
@@ -214,13 +214,13 @@ defmodule Flezha.SDK.TopologyWiringTest do
     def channels(c) do
       ticks = Channels.input(c, "ticks")
       quotes = Channels.input(c, "quotes")
-      Channels.into(ticks, KeyedProc)
+      Channels.into(ticks, KeyedTask)
 
       c
       |> Channels.merge()
       |> Channels.from(ticks, & &1)
       |> Channels.from(quotes, & &1)
-      |> Channels.into(KeyedProc)
+      |> Channels.into(KeyedTask)
     end
   end
 
@@ -257,7 +257,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
   end
 
   test "DuplicateMergeSource: one source merged twice, whose second edge is a re-declaration" do
-    label = inspect(KeyedProc)
+    label = inspect(KeyedTask)
 
     assert {:error, {:invalid_topology, issues}} = Topology.build(SameSourceTwice)
 
@@ -272,7 +272,7 @@ defmodule Flezha.SDK.TopologyWiringTest do
     assert {:error, {:invalid_topology, [{:EdgeAlreadyWired, "ticks", label}]}} =
              Topology.build(MergeOverBareEdge)
 
-    assert label == inspect(KeyedProc)
+    assert label == inspect(KeyedTask)
   end
 
   defp sink_channels(topo),

@@ -30,7 +30,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   # drive are raised; the byte and rate ceilings keep their defaults.
   @bench_quotas %{
     max_operatives: 1_000_000,
-    max_entities_per_operative: 1_000_000,
+    max_cells_per_operative: 1_000_000,
     max_runners: 1_024
   }
 

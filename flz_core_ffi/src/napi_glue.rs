@@ -366,7 +366,7 @@ pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
 
 /// Start the declared class as a local run: no controller, no socket. The
 /// alternative to [`start`], never an addition. The host keeps driving its
-/// own fetchers, which is what runs the procedures.
+/// own fetchers, which is what runs the tasklets.
 #[napi]
 pub fn local_start(factory_id: String, operative_id: String) -> Result<()> {
     let ctx = context()?;
@@ -428,7 +428,7 @@ pub fn local_run_until_idle<'a>(env: &'a Env, timeout_ms: u32) -> Result<Object<
     })
 }
 
-/// End the local run and release its Entities. A context holding none is a
+/// End the local run and release its Cells. A context holding none is a
 /// no-op, so a host's close path needs no test of its own.
 #[napi]
 pub fn local_stop() -> Result<()> {
@@ -452,7 +452,7 @@ pub fn complete<'a>(env: &'a Env, result: Object<'a>) -> Result<Object<'a>> {
 }
 
 /// Abandon a polled activation: re-hand its untouched items and release its
-/// entity. Synchronous by design — the answer guard runs it from a `finally`
+/// cell. Synchronous by design — the answer guard runs it from a `finally`
 /// and from a dying worker's cleanup, where a promise would be one more thing
 /// that can be dropped.
 #[napi]

@@ -112,7 +112,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     # / `z_` prefixes pin which child is reached with budget left and which is
     # reached after it is spent. Both must end up on a live pid.
     placeable = "a_batch_placeable_op"
-    unplaceable = for i <- 1..3, do: "z_batch_unplaceable_proc_#{i}"
+    unplaceable = for i <- 1..3, do: "z_batch_unplaceable_task_#{i}"
 
     seed_runner(@seeded_runner, "market")
 
@@ -349,7 +349,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     for i <- 1..5 do
       # `:timeout`, not `:unavailable` — the budget was gone, the fleet unasked.
-      assert OperativeManager.await_runner(@namespace, "market", "spent_budget_proc_#{i}", 0) ==
+      assert OperativeManager.await_runner(@namespace, "market", "spent_budget_task_#{i}", 0) ==
                {:error, :timeout}
     end
 

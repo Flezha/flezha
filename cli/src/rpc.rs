@@ -267,7 +267,7 @@ pub(crate) fn window(read: &Reading) -> Opt<'static> {
 }
 
 /// The verbs that name one thing and do one thing to it: a dead-letter entry,
-/// an Entity path, a schedule, a plugin, a namespace, an observability source.
+/// a Cell path, a schedule, a plugin, a namespace, an observability source.
 /// They differ in the slot's name and in what a refusal costs, and in nothing
 /// else.
 pub(crate) fn one_arg(read: &Reading, slot: &str, rpc_fun: &str, failure: Failure) {

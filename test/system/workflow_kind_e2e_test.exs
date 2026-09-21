@@ -75,11 +75,11 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
            "task was never deregistered after completion"
   end
 
-  # A procedure spawns the `stateless_loop_workflow` loop once with no id and
+  # A tasklet spawns the `stateless_loop_workflow` loop once with no id and
   # once with its input as the id, then prints each handle's result as
   # `spawn_result <unnamed|named> <id> <outcome>`. The runner's stdout is the
   # only place those results are observable, so the scenario owns its runner.
-  test "a procedure's spawn without an id gets a new generated id; one with an id spawns, then delivers" do
+  test "a tasklet's spawn without an id gets a new generated id; one with an id spawns, then delivers" do
     namespace = "spawn_ids_e2e"
     {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
 

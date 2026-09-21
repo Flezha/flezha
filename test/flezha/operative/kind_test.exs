@@ -11,7 +11,7 @@ defmodule FlezhaTest.Operative.KindTest do
   alias Flezha.Service.OperativeManager.Admission
   alias Flezha.Service.Validator
 
-  @persistence_flags [:persistent_state?, :time_travel?, :dynamic_entities?, :output_stall_watch?]
+  @persistence_flags [:persistent_state?, :time_travel?, :dynamic_cells?, :output_stall_watch?]
 
   describe "capabilities" do
     test ":stream declares the full persistence surface" do
@@ -20,7 +20,7 @@ defmodule FlezhaTest.Operative.KindTest do
       assert Kind.capabilities(:stream) == %{
                persistent_state?: true,
                time_travel?: true,
-               dynamic_entities?: true,
+               dynamic_cells?: true,
                output_stall_watch?: true
              }
     end

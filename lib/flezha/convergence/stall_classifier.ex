@@ -44,10 +44,10 @@ defmodule Flezha.Convergence.StallClassifier do
       heartbeat counts only what reached the runner before it
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
-    * `:entity_dispatch_stalled` — the runner is completing work, but one
+    * `:cell_dispatch_stalled` — the runner is completing work, but one
       activation it took has been outstanding past the threshold: a handout its
-      host lost, which per-entity exclusivity would otherwise retire silently
-    * `:producer_push_stalled` — an Entity has been withheld work past the
+      host lost, which per-cell exclusivity would otherwise retire silently
+    * `:producer_push_stalled` — a Cell has been withheld work past the
       threshold because a consumer will not take its output. Detection only:
       it declares NO scope, so it mints no heal op, because the thing that is
       behind is the CONSUMER and the remedy for a wedged producer (a rebind)
@@ -72,21 +72,21 @@ defmodule Flezha.Convergence.StallClassifier do
   @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
   @type verdict :: {atom(), map()} | :ok
 
-  # `entity_stall_ms` is deliberately far above the longest activation any
+  # `cell_stall_ms` is deliberately far above the longest activation any
   # bench-fleet fixture produces (a chained workflow turn is milliseconds; the
-  # slowest e2e Procedure sleeps seconds), because from the runner an activation
+  # slowest e2e Tasklet sleeps seconds), because from the runner an activation
   # that is merely slow and one whose handout was lost look identical. Override
-  # with `FLEZHA_CONVERGENCE_ENTITY_STALL_MS` where real Procedures run longer.
+  # with `FLEZHA_CONVERGENCE_CELL_STALL_MS` where real Tasklets run longer.
   @defaults %{
     driver_freeze_ms: 5_000,
     stall_ms: 30_000,
     queue_high: 256,
-    entity_stall_ms: 300_000
+    cell_stall_ms: 300_000
   }
 
   # What KIND of thing each layer says is wedged. This is the taxonomy half of
   # a verdict and belongs beside the checks that mint them: the Diff resolves a
-  # scope to the live entity that can be healed, the Planner picks the remedy,
+  # scope to the live cell that can be healed, the Planner picks the remedy,
   # and `/healthz` owns `:fabric`. Adding a verdict therefore declares its scope
   # here and nowhere else.
   #
@@ -105,7 +105,7 @@ defmodule Flezha.Convergence.StallClassifier do
     runner_pool_wedged: :runner,
     channel_not_sending: :connection,
     operative_not_forwarding: :operative,
-    entity_dispatch_stalled: :operative,
+    cell_dispatch_stalled: :operative,
     # Declared with no scope on purpose: a producer withheld work is evidence
     # about the consumer, and every scope here resolves to a heal op.
     producer_push_stalled: nil
@@ -181,7 +181,7 @@ defmodule Flezha.Convergence.StallClassifier do
       runner_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
       operative_not_forwarding(current, previous) ||
-      entity_dispatch_stalled(current, previous, o) ||
+      cell_dispatch_stalled(current, previous, o) ||
       producer_push_stalled(current, previous, o)
   end
 
@@ -285,7 +285,7 @@ defmodule Flezha.Convergence.StallClassifier do
   # Heartbeat metadata carries a dispatch-progress counter; flag the runner when
   # that counter is frozen.
   #
-  # Unless its block counter is climbing. A producer held on a full entity
+  # Unless its block counter is climbing. A producer held on a full cell
   # mailbox freezes `dispatches` exactly as a wedge does — the two pictures were
   # byte-for-byte identical — but it is the system working: the consumer is
   # behind, backpressure is propagating, and the remedy for a wedge (a rebind)
@@ -316,18 +316,18 @@ defmodule Flezha.Convergence.StallClassifier do
 
   # One activation the runner took and never answered. Invisible to
   # `runner_pool_wedged` by construction: the runner-wide dispatch counter keeps
-  # climbing on every other Entity, and per-entity exclusivity means the stalled
+  # climbing on every other Cell, and per-cell exclusivity means the stalled
   # one simply never appears in a poll result again.
   #
   # Ranked shallower than every runner-scoped verdict — a wedged runner explains
-  # a wedged Entity and not the reverse — and it carries the reported age, so a
-  # false positive (a legitimately long Procedure) is diagnosable from the log
+  # a wedged Cell and not the reverse — and it carries the reported age, so a
+  # false positive (a legitimately long Tasklet) is diagnosable from the log
   # line alone. The verdict names the runner; resolving it to the operatives
   # that can actually be rebound is the Diff's job.
-  defp entity_dispatch_stalled(current, previous, o) do
+  defp cell_dispatch_stalled(current, previous, o) do
     find_runner(current, previous, fn runner_id, cur, _prev ->
-      if cur.hb_inflight > 0 and cur.hb_inflight_oldest_ms > o.entity_stall_ms do
-        {:entity_dispatch_stalled,
+      if cur.hb_inflight > 0 and cur.hb_inflight_oldest_ms > o.cell_stall_ms do
+        {:cell_dispatch_stalled,
          %{
            runner_id: runner_id,
            inflight: cur.hb_inflight,
@@ -339,16 +339,16 @@ defmodule Flezha.Convergence.StallClassifier do
 
   # A producer that cannot deliver holds no thread — it holds its own
   # round and is handed no further work — so it is invisible to every check
-  # above: it owns no handout for `entity_dispatch_stalled` to age, and the
-  # runner's dispatch counter keeps climbing on every other Entity.
+  # above: it owns no handout for `cell_dispatch_stalled` to age, and the
+  # runner's dispatch counter keeps climbing on every other Cell.
   #
   # Ranked last, and scope-less, because it is a report rather than a fault:
-  # the Entity named here is WAITING, and the one to look at is whatever is
-  # downstream of it. Shares `entity_stall_ms` with the handout check — a push
+  # the Cell named here is WAITING, and the one to look at is whatever is
+  # downstream of it. Shares `cell_stall_ms` with the handout check — a push
   # held that long is the same order of pathology.
   defp producer_push_stalled(current, previous, o) do
     find_runner(current, previous, fn runner_id, cur, _prev ->
-      if cur.hb_pending_pushes > 0 and cur.hb_pending_push_oldest_ms > o.entity_stall_ms do
+      if cur.hb_pending_pushes > 0 and cur.hb_pending_push_oldest_ms > o.cell_stall_ms do
         {:producer_push_stalled,
          %{
            runner_id: runner_id,
@@ -410,13 +410,13 @@ defmodule Flezha.Convergence.StallClassifier do
   Per-operative producing-liveness from durable progress markers, compared at
   the convergence tick cadence.
 
-  `current` is one map per live Entity (built by the Loop from
-  `Flezha.State.Watchdog.entity_statuses/0`): always `:operative_id`,
-  `:entity`, `:last_change_seen_at`, `:last_advance_at` (the WAL
+  `current` is one map per live Cell (built by the Loop from
+  `Flezha.State.Watchdog.cell_statuses/0`): always `:operative_id`,
+  `:cell`, `:last_change_seen_at`, `:last_advance_at` (the WAL
   fed/advance evidence), `:out_pending_seq`, `:outbox_flushed_seq` and
   `:outbox_unconfirmed_ms` (how long the oldest dispatched output has gone
   unconfirmed by its sink), plus —
-  when the effectively-once tier runs — `:input_log_tail` and this Entity's
+  when the effectively-once tier runs — `:input_log_tail` and this Cell's
   durable `:consumed_offset`. `baseline` is a snapshot taken at least one grace
   window earlier (`nil` before one has aged enough); cursor checks compare
   against it and are skipped when it or the cursor fields are absent, so
@@ -425,7 +425,7 @@ defmodule Flezha.Convergence.StallClassifier do
   Every verdict carries the fed precondition: input-side evidence advancing
   while the progress marker is flat past the grace window is `{:stuck,
   detail, ctx}` (detail ∈ `:wal_frozen | :watermark_frozen | :outbox_flat`,
-  ctx naming the lagging Entity); flat markers with no input is `:idle`
+  ctx naming the lagging Cell); flat markers with no input is `:idle`
   (producing-healthy). Per operative the single deepest verdict wins.
   """
   @spec classify_producing([map()], [map()] | nil, map()) :: %{
@@ -434,14 +434,14 @@ defmodule Flezha.Convergence.StallClassifier do
   def classify_producing(current, baseline, opts \\ %{}) do
     o = Map.merge(@producing_defaults, opts)
     now = Map.get_lazy(o, :now, fn -> System.monotonic_time(:millisecond) end)
-    base = index_by(baseline || [], fn m -> {m.operative_id, m.entity} end)
+    base = index_by(baseline || [], fn m -> {m.operative_id, m.cell} end)
 
     current
     |> Enum.group_by(& &1.operative_id)
     |> Map.new(fn {operative_id, markers} ->
       verdicts =
         Enum.map(markers, fn m ->
-          marker_verdict(m, Map.get(base, {m.operative_id, m.entity}), now, o.grace_ms)
+          marker_verdict(m, Map.get(base, {m.operative_id, m.cell}), now, o.grace_ms)
         end)
 
       {operative_id, Enum.max_by(verdicts, &Verdict.producing_rank/1)}
@@ -453,19 +453,19 @@ defmodule Flezha.Convergence.StallClassifier do
     advanced? = now - m.last_advance_at < grace_ms
 
     cond do
-      fed? and not advanced? -> {:stuck, :wal_frozen, %{entity: m.entity}}
-      watermark_frozen?(m, base) -> {:stuck, :watermark_frozen, %{entity: m.entity}}
-      outbox_flat?(m, base, grace_ms) -> {:stuck, :outbox_flat, %{entity: m.entity}}
+      fed? and not advanced? -> {:stuck, :wal_frozen, %{cell: m.cell}}
+      watermark_frozen?(m, base) -> {:stuck, :watermark_frozen, %{cell: m.cell}}
+      outbox_flat?(m, base, grace_ms) -> {:stuck, :outbox_flat, %{cell: m.cell}}
       advanced? -> :advancing
       true -> :idle
     end
   end
 
-  # Tier-on: the input-log tail grew over the grace window while THIS Entity's
-  # durable consumed offset did not advance. Read per Entity, not as the
-  # operative's min-watermark: the minimum across Entities IS that watermark, so
-  # any frozen Entity still freezes the operative's verdict — and the verdict
-  # names the Entity actually responsible, which a class-wide scalar cannot.
+  # Tier-on: the input-log tail grew over the grace window while THIS Cell's
+  # durable consumed offset did not advance. Read per Cell, not as the
+  # operative's min-watermark: the minimum across Cells IS that watermark, so
+  # any frozen Cell still freezes the operative's verdict — and the verdict
+  # names the Cell actually responsible, which a class-wide scalar cannot.
   defp watermark_frozen?(m, base) when is_map(base) do
     is_integer(m[:input_log_tail]) and is_integer(base[:input_log_tail]) and
       is_integer(m[:consumed_offset]) and is_integer(base[:consumed_offset]) and
@@ -477,7 +477,7 @@ defmodule Flezha.Convergence.StallClassifier do
   # Tier-on: output-bearing WAL records accumulated while the outbox flush
   # cursor stayed flat — or output already handed to the plugin chain has gone
   # unconfirmed past the grace window. The second half is what catches a sink
-  # that stopped answering on an Entity quiet enough to emit nothing new, which
+  # that stopped answering on a Cell quiet enough to emit nothing new, which
   # no comparison against a baseline can see.
   defp outbox_flat?(m, base, grace_ms) do
     unconfirmed_stalled?(m, grace_ms) or accumulating?(m, base)

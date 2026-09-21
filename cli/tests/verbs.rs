@@ -39,7 +39,7 @@ const CASES: &[(&[&str], &str)] = &[
     ),
     (
         &["operative", "state", "--namespace=prod", "op1"],
-        r#"Flezha.Service.CliManager.entity_state("prod", "op1", [])"#,
+        r#"Flezha.Service.CliManager.cell_state("prod", "op1", [])"#,
     ),
     (
         &["state", "get", "--output", "json", "a/b/c"],

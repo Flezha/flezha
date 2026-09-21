@@ -1,0 +1,255 @@
+# tasklet-requested-spawn Specification
+
+## Purpose
+
+The tasklet-requested-spawn capability lets a running tasklet ask the cluster for a workflow operative, closing the gap that made a workflow instance startable only from outside the cluster (`flz operative start`, `flz schedule`) and forced every pipeline needing a worker to bolt an external dispatcher onto the controller. One SDK call — `ctx.spawn_workflow` (Rust) / `ctx.spawnWorkflow` (Java) — spawns-or-delivers on a single `(namespace, instance_id)` in the requester's own namespace: a free id starts the factory with the payload as its first input, a taken id receives the payload as one more input or refuses. Concurrent requests race-resolve at the operative registry to exactly one instance. The call is fire-and-forget with an async result: quota, transport, and controller failures resolve the caller's handle and never fault the requesting tasklet, its emit path, or its journaling. Spawning is a side effect of live processing only, so a replay never doubles the workers a run created. Everything else — quota, the durable inbox, exit triggers, `WorkflowCompleted` teardown, retention, `flz operative list` — is the existing workflow lifecycle, inherited unchanged.
+## Requirements
+### Requirement: A tasklet SHALL be able to request spawn-or-deliver of a workflow operative
+
+Every SDK SHALL expose a context call that takes a workflow `factory_id` and a `payload` first,
+and an optional `id` and an optional `if_running` as named arguments in the form its language
+has, usable from inside any tasklet: Rust, Java, Node, Python, Ruby and PHP through the shared
+core, and Elixir in its own core. The call shapes SHALL be:
+
+- Rust: `ctx.spawn_workflow(factory_id, payload)` and
+  `ctx.spawn_workflow_with(factory_id, payload, SpawnOptions::id(id).if_running(IfRunning::Error))`
+- Java: `ctx.spawnWorkflow(factoryId, payload)` and
+  `ctx.spawnWorkflow(factoryId, payload, SpawnOptions.id(id).ifRunning(IfRunning.ERROR))`
+- Elixir: `Flezha.SDK.Ctx.spawn_workflow(ctx, factory_id, payload, id: id, if_running: :error)`
+- Python: `ctx.spawn_workflow(factory_id, payload, id=id, if_running="error")`
+- Ruby: `ctx.spawn_workflow(factory_id, payload, id: id, if_running: "error")`
+- PHP: `$ctx->spawnWorkflow($factoryId, $payload, id: $id, ifRunning: 'error')`
+- Node: `ctx.spawnWorkflow(factoryId, payload, { id, ifRunning: 'error' })`
+
+With an `id` and `if_running: deliver` (the default when an `id` is given), the controller SHALL
+spawn a workflow instance of `factory_id` under that id if absent, or deliver `payload` to the
+existing instance's inbox if present. With an `id` and `if_running: error`, an existing instance
+SHALL yield an `already_running` result to the requester. Without an `id`, the controller SHALL
+generate one as the `generated-operative-ids` capability defines and SHALL always spawn a new
+instance: there is no running instance to deliver to, so `if_running` has no meaning. Rust and
+Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an `id` cannot be
+written there; Elixir, Python, Ruby, PHP and Node SHALL raise an argument error at the call when
+`if_running` is given without an `id`, and SHALL send nothing.
+
+The spawned instance SHALL receive `payload` as its first inbox frame and SHALL follow all
+existing workflow lifecycle semantics (quota, exit triggers, `WorkflowCompleted`, teardown,
+retention). The handle SHALL resolve to a result carrying `id`, the instance id the request
+resolved to (the caller's or the generated one), and `outcome`, one of `spawned`, `delivered`
+or `skipped_on_replay`.
+
+The request SHALL NOT carry a namespace: the controller resolves it against the control channel the request arrived on, so a request cannot reach another namespace.
+
+Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time.
+
+#### Scenario: First request spawns, second delivers
+
+- **WHEN** two tasklets issue a spawn of factory `worker` with id `w1` and `deliver`, carrying `p1` then `p2`, in sequence
+- **THEN** exactly one workflow instance `w1` SHALL exist, its inbox SHALL have received `p1` then `p2`, and the two results SHALL be `{id: "w1", outcome: spawned}` and `{id: "w1", outcome: delivered}`
+
+#### Scenario: error policy reports instead of delivering
+
+- **WHEN** a spawn of factory `worker` with id `w1` and `error` is issued while `w1` runs
+- **THEN** no delivery SHALL occur and the requester's async result SHALL be `already_running`
+
+#### Scenario: A spawn without an id starts a new instance every time
+
+- **WHEN** a tasklet issues `ctx.spawn_workflow("worker", p1)` and then `ctx.spawn_workflow("worker", p2)` with no id
+- **THEN** two workflow instances SHALL exist, each with a generated id beginning `worker-`, the first holding `p1` and the second `p2`, and both results SHALL have outcome `spawned` and differing ids
+
+#### Scenario: if_running without an id is refused at the call
+
+- **WHEN** a Python tasklet calls `ctx.spawn_workflow("worker", p, if_running="error")` with no id
+- **THEN** the call SHALL raise an argument error naming `if_running` and `id`, and no request SHALL leave the runner
+
+#### Scenario: Factory on a different runner than the requester
+
+- **WHEN** a tasklet on the streaming runner requests spawn of a factory registered only by a separate analyzer runner (each runner holds its own sealed operative registry)
+- **THEN** the controller SHALL route the spawn to a runner that has registered `factory_id`, and SHALL yield a `factory_unknown` async result if no connected runner registers it
+
+#### Scenario: Factory on a runner connected to a different controller node
+
+- **WHEN** a tasklet whose runner is connected to controller node A requests spawn of a factory whose only runner is connected to controller node B
+- **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `factory_unknown`
+
+#### Scenario: Every SDK exposes the call with one meaning
+
+- **WHEN** the capability ships in an SDK
+- **THEN** that SDK SHALL expose the call in the shape listed above with the semantics above, and its own suite SHALL cover the outcomes with and without an id, the error policy, `if_running` without an id, the refusal, the timeout, the replay skip and the no-control-plane case
+
+### Requirement: Spawn requests SHALL be idempotent under concurrency on (namespace, instance_id)
+
+Concurrent `deliver`-mode requests that carry the same `(namespace, instance_id)` SHALL resolve to exactly one spawned instance, with every other request's payload delivered to it. A completed (torn-down) instance id SHALL count as absent for subsequent requests. A request that carries no id SHALL never be merged with another request: each such request SHALL spawn its own instance.
+
+#### Scenario: Concurrent burst yields one instance
+
+- **WHEN** N tasklets across different runners request a spawn of factory `worker` with id `w1` and `deliver`, each carrying its own payload, concurrently
+- **THEN** exactly one `w1` SHALL spawn and all N payloads SHALL reach its inbox exactly once each
+
+#### Scenario: Concurrent requests without an id are not merged
+
+- **WHEN** N tasklets request a spawn of factory `worker` with no id concurrently
+- **THEN** N instances SHALL spawn, each with its own generated id, and each result SHALL be `spawned`
+
+#### Scenario: Id reuse after completion
+
+- **WHEN** `w1` completes teardown and a new request for `w1` arrives
+- **THEN** a fresh instance SHALL spawn (no delivery to the finished run)
+
+### Requirement: Spawn failures SHALL be isolated from the requesting tasklet
+
+The call SHALL return immediately with a local async result handle in every SDK. Transport, quota, or controller failures SHALL surface only via that handle (or one warning log if unobserved) and SHALL NOT fault the requesting tasklet's `run`, block its emit path, or affect its journaling/replay. No SDK SHALL wait for the controller's answer inside the call or raise a controller refusal from it.
+
+A replayed invocation SHALL issue no request and its handle SHALL resolve at once with outcome `skipped_on_replay`. Its `id` SHALL be the caller's id when the call gave one, and empty when it did not, because a generated id exists only in the controller's answer to the live run.
+
+#### Scenario: Controller unreachable
+
+- **WHEN** a tasklet calls the spawn while the control plane is down
+- **THEN** the tasklet's `run` SHALL complete normally and the failure SHALL appear only on the async result / warning log
+
+#### Scenario: Replay does not re-issue side effects unexpectedly
+
+- **WHEN** a tasklet that called the spawn is replayed from the WAL
+- **THEN** no spawn request SHALL be issued during replay, and the handle SHALL resolve with outcome `skipped_on_replay`
+
+#### Scenario: A replayed spawn without an id answers an empty id
+
+- **WHEN** a tasklet that called `ctx.spawn_workflow("worker", p)` with no id is replayed, after the live run's result was `{id: "worker-<suffix>", outcome: spawned}`
+- **THEN** the replayed handle SHALL resolve to `{id: "", outcome: skipped_on_replay}` and no second instance SHALL spawn
+
+#### Scenario: A replayed spawn with an id answers that id
+
+- **WHEN** a tasklet that spawned with id `w1` is replayed
+- **THEN** the replayed handle SHALL resolve to `{id: "w1", outcome: skipped_on_replay}`
+
+### Requirement: A spawn request SHALL be judged as the act it performs
+
+The controller SHALL judge each act a spawn request performs as the identity the request's connection proved, at the same policy point as the operator-issued equivalent and in the connection's namespace: a start as `operative.start` through the `operative_start` row, and a delivery to a running instance as `operative.send`, the right the `operative_send` row judges. A permitted start SHALL write the `operative_start` row's audit record naming the connection's principal, the SDK as the surface, and the instance id the start resolved to, which for a request that carried no id is the generated one. A permitted delivery SHALL write no record of its own, because a delivery happens once per event. A refused act SHALL start nothing and deliver nothing, its denial SHALL be audited, and the requester's result SHALL be `refused` with the refusal as its detail.
+
+The judgment SHALL be made on the controller node that received the request, and no start and no delivery SHALL be forwarded to another node or performed before it. While authorization is disabled every act SHALL be permitted, and a start SHALL still write its record, as every other start does.
+
+#### Scenario: A spawn by an identity that may not start is refused
+
+- **WHEN** authorization is enforced and a tasklet on a runner whose
+  `runner@<namespace>` principal has no role binding requests
+  a spawn of factory `worker` with id `w1` and `deliver` while `w1` is free
+- **THEN** no instance SHALL start, the requester's result SHALL be `refused`
+  naming the refusal, and the denial SHALL be audited
+
+#### Scenario: A delivery by an identity that may not send is refused
+
+- **WHEN** authorization is enforced and the same unbound runner's request names
+  `w1` while it runs
+- **THEN** the payload SHALL NOT be delivered, the requester's result SHALL be
+  `refused`, and the denial SHALL be audited
+
+#### Scenario: A permitted spawn is recorded like an operator's start
+
+- **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and a
+  tasklet on that connection spawns `w1`
+- **THEN** `w1` SHALL start, and a `start` record on `operative_service` SHALL name
+  `w1`, the namespace `team-orders`, the principal `runner@team-orders` and the
+  surface `sdk`
+
+#### Scenario: A permitted spawn without an id is recorded under the generated id
+
+- **WHEN** the same bound runner's tasklet spawns factory `worker` with no id and
+  the result is `{id: "worker-<suffix>", outcome: spawned}`
+- **THEN** the `start` record on `operative_service` SHALL name `worker-<suffix>`,
+  the same id the result carries
+
+#### Scenario: A permitted delivery is judged and writes no record
+
+- **WHEN** the same bound runner's request names `w1` while it runs
+- **THEN** the payload SHALL be delivered, and no `send` record SHALL be written
+  on `operative_service`
+
+#### Scenario: A start another node would run is judged where it was asked
+
+- **WHEN** the only runner registering the factory is connected to another
+  controller node and the requesting identity may not start an operative
+- **THEN** the request SHALL be refused on the node that received it, and no start
+  SHALL be forwarded
+
+#### Scenario: Authorization disabled
+
+- **WHEN** authorization is disabled and a runner whose principal has no role
+  binding requests a spawn of a free id
+- **THEN** the instance SHALL start and its `start` record SHALL be written
+
+### Requirement: Every SDK SHALL return the spawn handle at once and read it under its own names
+
+Every SDK's spawn call SHALL return a handle before the controller answers, and SHALL offer one
+read that waits for the answer and one that never waits. The read names SHALL be: Rust `wait()` and
+`try_result()`; Java `await()` and `tryResult()`; Elixir `Flezha.SDK.Spawn.await/2` and
+`Flezha.SDK.Spawn.try_result/1`; Python and Ruby `wait` and `try_result`; PHP and Node `wait()` and
+`tryResult()`. Node's `spawnWorkflow` SHALL NOT be `async`: it SHALL return the handle
+synchronously, and its `wait()` SHALL return a promise. A read that never waits SHALL answer that
+the result is pending until the answer has arrived. A controller refusal, a timeout or an unavailable
+control plane SHALL be reported by a read, in the form that SDK reports an error (a returned error,
+a thrown exception or a rejected promise), and never by the spawn call itself. A handle SHALL be
+read inside the invocation that made it; a failure no read collected by the end of that invocation
+SHALL be logged once as a warning naming the instance id (empty when none was given), the factory id
+and the reason.
+
+#### Scenario: Python returns before the controller answers
+
+- **WHEN** a Python tasklet calls `ctx.spawn_workflow("worker", p)` and the controller has not answered
+- **THEN** the call SHALL have returned a handle, and `try_result()` SHALL answer pending
+
+#### Scenario: A Ruby refusal does not fault run
+
+- **WHEN** the controller refuses a spawn a Ruby tasklet issued, and the tasklet emits a value and returns without reading the handle
+- **THEN** the emit SHALL ship, the invocation SHALL NOT be retried, and one warning SHALL name the refusal
+
+#### Scenario: PHP reads the refusal only when it asks
+
+- **WHEN** a PHP tasklet calls `$ctx->spawnWorkflow('worker', $p)`, the controller refuses it, and the tasklet then calls `wait()` on the handle
+- **THEN** the spawn call SHALL have returned normally, and `wait()` SHALL raise the refusal
+
+#### Scenario: Node spawn is synchronous and its wait is a promise
+
+- **WHEN** a Node tasklet calls `const h = ctx.spawnWorkflow('worker', p)` without `await`
+- **THEN** `h` SHALL be a handle rather than a promise, `h.tryResult()` SHALL answer pending until the answer arrives, and `await h.wait()` SHALL resolve to `{ id, outcome }`
+
+#### Scenario: A successful read carries the id
+
+- **WHEN** any SDK's waiting read resolves a spawn that carried no id
+- **THEN** the result SHALL carry the generated id and the outcome `spawned`
+
+### Requirement: A spawn's wire exchange SHALL carry the id it resolved to
+
+`SpawnWorkflowRequest.instance_id` SHALL be empty when the call gave no id, and the controller SHALL
+read an empty id as a request to generate one and SHALL ignore `if_running` for it.
+`SpawnWorkflowResponse` SHALL carry `instance_id`, the id the request resolved to, beside `outcome`
+and `error`, on every answer that names an instance: the caller's id for a named request, the
+generated id for a spawn without one. A refusal that started nothing SHALL carry the caller's id, or
+an empty id when the request carried none.
+
+#### Scenario: A request without an id is answered with the generated id
+
+- **WHEN** a runner sends `SpawnWorkflowRequest{instance_id: "", factory_id: "worker"}`
+- **THEN** the controller SHALL start one instance under a generated id and answer `SpawnWorkflowResponse{outcome: "spawned", instance_id: <that id>}`
+
+#### Scenario: if_running is ignored without an id
+
+- **WHEN** a runner sends `SpawnWorkflowRequest{instance_id: "", factory_id: "worker", if_running: "error"}`
+- **THEN** the controller SHALL start a new instance and SHALL NOT answer `already_running`
+
+### Requirement: The dangers of a spawn without an id SHALL be documented
+
+`docs/sdk/tasklet_requested_spawn.md` and every SDK page that shows the spawn call SHALL state, next
+to the call, that a spawn without an id always starts a new instance and can never deliver into a
+running one; that a caller who reissues a spawn without an id after a lost or timed-out answer starts
+a second instance; that a spawn without an id skipped on replay answers an empty id; and that a caller
+who needs at most one instance, or the id on replay, passes its own id.
+
+#### Scenario: The contract page states the dangers
+
+- **WHEN** a reader opens `docs/sdk/tasklet_requested_spawn.md`
+- **THEN** it SHALL state each of the three dangers and that passing an id avoids them
+
+#### Scenario: Every SDK page carries the same warning
+
+- **WHEN** a reader opens any SDK page that shows `spawn_workflow` or `spawnWorkflow`
+- **THEN** the page SHALL carry the same three dangers beside the example
+

@@ -12,14 +12,14 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Entity}
+  alias Flezha.SDK.{Channels, Ctx, Cell}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.Wire
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  defmodule ProcA do
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "proc_a"
+  defmodule TaskA do
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "task_a"
     def init_state(_), do: nil
 
     def run(input, state, ctx) do
@@ -28,9 +28,9 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     end
   end
 
-  defmodule ProcB do
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "proc_b"
+  defmodule TaskB do
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "task_b"
     def init_state(_), do: nil
 
     def run(input, state, ctx) do
@@ -48,13 +48,13 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     def channels(c) do
       c
       |> Channels.input("prices")
-      |> Channels.into(ProcA)
+      |> Channels.into(TaskA)
       |> Channels.named("a")
       |> Channels.sink()
 
       c
       |> Channels.input("volumes")
-      |> Channels.into(ProcB)
+      |> Channels.into(TaskB)
       |> Channels.named("b")
       |> Channels.sink()
     end
@@ -70,13 +70,13 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     def channels(c) do
       c
       |> Channels.input("volumes")
-      |> Channels.into(ProcB)
+      |> Channels.into(TaskB)
       |> Channels.named("b")
       |> Channels.sink()
 
       c
       |> Channels.input("prices")
-      |> Channels.into(ProcA)
+      |> Channels.into(TaskA)
       |> Channels.named("a")
       |> Channels.sink()
     end
@@ -90,24 +90,24 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     def channels(c), do: c
   end
 
-  # Every input this Entity was given has been answered: a read replies only
+  # Every input this Cell was given has been answered: a read replies only
   # behind the casts already in its mailbox, so an output a reroute would have
   # produced is in this process's mailbox by the time this returns.
-  defp settled(op, procedure),
-    do: assert({:ok, _state, _seq} = Entity.read(entity!(op, procedure), 1_000))
+  defp settled(op, tasklet),
+    do: assert({:ok, _state, _seq} = Cell.read(cell!(op, tasklet), 1_000))
 
   defp park(op, channel, message) do
     Inbox.input(op, channel, message, %{})
 
-    assert_receive {:"$gen_cast", {:park, _entity_pid, identity, body}},
+    assert_receive {:"$gen_cast", {:park, _cell_pid, identity, body}},
                    1_000,
                    "expected an unresolved channel name to be parked"
 
-    assert {:ok, {_class, procedure_id, ""}} = Wire.decode_entity_id(identity)
+    assert {:ok, {_class, tasklet_id, ""}} = Wire.decode_cell_id(identity)
 
-    # The controller turns the procedure slot into a directory under the
+    # The controller turns the tasklet slot into a directory under the
     # dead-letter root, so a name off the wire must never reach it.
-    assert procedure_id == "_unresolved",
+    assert tasklet_id == "_unresolved",
            "the identity slot is this side's own, not the name the frame asked for"
 
     body
@@ -126,11 +126,11 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     assert body.payload == "misrouted-bytes", "the payload bytes are kept"
     assert body.attempts == 1, "the park is immediate"
 
-    settled(op, "proc_a")
+    settled(op, "task_a")
     refute_received {:flz_data, _id, _payload_id, _frame, _meta}
   end
 
-  # `named/2` gives ProcA's output channel the name "a". It is a declared name
+  # `named/2` gives TaskA's output channel the name "a". It is a declared name
   # of this operative, and it is not an entry channel, so a frame asking for it
   # parks exactly as an undeclared name does — the same answer `flz_core` gives
   # through its kind-aware lookup.
@@ -142,7 +142,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     assert body.channel == "a"
     assert body.error == "no entry channel `a`; the operative declares: prices, volumes"
 
-    settled(op, "proc_a")
+    settled(op, "task_a")
     refute_received {:flz_data, _id, _payload_id, _frame, _meta}
   end
 
@@ -173,7 +173,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   end
 
   # A metadata value is capped at 255 bytes on the wire, and that is exactly
-  # what `Flezha.SDK.Wire.encode_entity_id/3` will take for the slot the
+  # what `Flezha.SDK.Wire.encode_cell_id/3` will take for the slot the
   # requested name rides in. The longest name a frame can carry must park
   # rather than raise there.
   # `flz_core::first_of_kind` walks the channels in declaration order, so the

@@ -24,8 +24,8 @@ defmodule Flezha.Operative.ClassRegistry do
   @default_kind :stream
   @sidecar "kind"
   @tier_sidecar "effectively_once"
-  @compensable_sidecar "compensable_procs"
-  @leaf_sidecar "leaf_procs"
+  @compensable_sidecar "compensable_tasks"
+  @leaf_sidecar "leaf_tasks"
   @checkpoint_sidecar "checkpoint_ack"
   @correction_sidecar "correction_window_ms"
   @compact_bytes_sidecar "compact_after_bytes"
@@ -37,8 +37,8 @@ defmodule Flezha.Operative.ClassRegistry do
   @declaration_keys [
     :effectively_once,
     :checkpoint_ack,
-    :compensable_procs,
-    :leaf_procs,
+    :compensable_tasks,
+    :leaf_tasks,
     :correction_window_ms,
     :compact_after_bytes,
     :sync_durability
@@ -84,7 +84,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @typedoc """
   A class's SDK-side declarations, as resolved from the `AddOperative` response.
 
-  `compensable_procs` is the chain positions whose procedure declares a `compensate`
+  `compensable_tasks` is the chain positions whose tasklet declares a `compensate`
   hook, or `nil` when the class declares nothing (a stream, or a Java runner) —
   which a rewind reads as "no coverage information", not as "nothing is
   compensable".
@@ -93,8 +93,8 @@ defmodule Flezha.Operative.ClassRegistry do
           effectively_once: boolean(),
           keyless: boolean(),
           checkpoint_ack: boolean(),
-          compensable_procs: [non_neg_integer()] | nil,
-          leaf_procs: [non_neg_integer()] | nil,
+          compensable_tasks: [non_neg_integer()] | nil,
+          leaf_tasks: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil,
           compact_after_bytes: pos_integer() | nil,
           sync_durability: boolean()
@@ -114,11 +114,11 @@ defmodule Flezha.Operative.ClassRegistry do
     %{
       effectively_once: Map.get(metadata, "effectively_once") == "true",
       # The SDK declares `keyed` only when it is false — a class with no keyed
-      # entry-fed procedure, which cannot be partitioned.
+      # entry-fed tasklet, which cannot be partitioned.
       keyless: Map.get(metadata, "keyed") == "false",
       checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
-      compensable_procs: parse_ops(Map.get(metadata, "compensable_procs")),
-      leaf_procs: parse_ops(Map.get(metadata, "leaf_procs")),
+      compensable_tasks: parse_ops(Map.get(metadata, "compensable_tasks")),
+      leaf_tasks: parse_ops(Map.get(metadata, "leaf_tasks")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms")),
       compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
       sync_durability: Map.get(metadata, "durability") == "sync_remote"
@@ -167,15 +167,15 @@ defmodule Flezha.Operative.ClassRegistry do
   def put_declarations(operative_class, declarations) when is_binary(operative_class) do
     put_effectively_once(operative_class, declarations.effectively_once)
     put_checkpoint_ack(operative_class, declarations.checkpoint_ack)
-    put_compensable_ops(operative_class, declarations.compensable_procs)
-    put_leaf_ops(operative_class, declarations.leaf_procs)
+    put_compensable_ops(operative_class, declarations.compensable_tasks)
+    put_leaf_ops(operative_class, declarations.leaf_tasks)
     put_correction_window(operative_class, declarations.correction_window_ms)
     put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
     put_sync_durability(operative_class, declarations.sync_durability)
   end
 
   @doc """
-  Record whether `factory_id`'s topology has no keyed entry-fed procedure.
+  Record whether `factory_id`'s topology has no keyed entry-fed tasklet.
 
   The one declaration keyed by FACTORY rather than operative class:
   partitionability is a property of the class's code, and every instance of a
@@ -191,7 +191,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
-  Whether `factory_id` is known to have no keyed entry-fed procedure. `false`
+  Whether `factory_id` is known to have no keyed entry-fed tasklet. `false`
   for a class that has never bound — the bind itself then refuses.
   """
   @spec keyless?(binary()) :: boolean()
@@ -256,8 +256,8 @@ defmodule Flezha.Operative.ClassRegistry do
   Record that `instance_id` resolves to `operative_class` on disk.
 
   These are two different key spaces, not two names for one thing. A workflow
-  instance's proc-journal and durable inbox live under its INSTANCE id
-  (`Paths.journal_id/1`), while its Entities and input log live under the
+  instance's task-journal and durable inbox live under its INSTANCE id
+  (`Paths.journal_id/1`), while its Cells and input log live under the
   resolved CLASS (`:operative_class`, defaulting to the instance id). They
   coincide unless an operator sets that option — and where they diverge, asking
   for one and getting the other returns half an operative's artifacts with no
@@ -315,7 +315,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
-  Record `operative_class`'s declared per-Entity WAL compaction size threshold
+  Record `operative_class`'s declared per-Cell WAL compaction size threshold
   in bytes, or `nil` when it declares none (then the global default governs).
 
   Durable in the same sidecar shape as the correction window, because the
@@ -364,7 +364,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
-  Record which of `operative_class`'s chain procedures declare a `compensate`
+  Record which of `operative_class`'s chain tasklets declare a `compensate`
   hook, as declared by the SDK in the `AddOperative` response metadata. `nil`
   clears it (a class that declares nothing).
 
@@ -373,37 +373,37 @@ defmodule Flezha.Operative.ClassRegistry do
   to ask.
   """
   @spec put_compensable_ops(binary(), [non_neg_integer()] | nil) :: :ok
-  def put_compensable_ops(operative_class, procs) when is_binary(operative_class) do
-    put_declaration(operative_class, :compensable_procs, @compensable_sidecar, procs)
+  def put_compensable_ops(operative_class, tasks) when is_binary(operative_class) do
+    put_declaration(operative_class, :compensable_tasks, @compensable_sidecar, tasks)
   end
 
   @doc """
-  Record which of `operative_class`'s tree procedures are **leaves** — the set
+  Record which of `operative_class`'s tree tasklets are **leaves** — the set
   whose commits mean the operative is done (`workflow-branching`). Same ETS +
   durable-sidecar shape as the compensable set, and read on the same evidence:
   the journal answers "complete?" with no runner to ask.
   """
   @spec put_leaf_ops(binary(), [non_neg_integer()] | nil) :: :ok
-  def put_leaf_ops(operative_class, procs) when is_binary(operative_class) do
-    put_declaration(operative_class, :leaf_procs, @leaf_sidecar, procs)
+  def put_leaf_ops(operative_class, tasks) when is_binary(operative_class) do
+    put_declaration(operative_class, :leaf_tasks, @leaf_sidecar, tasks)
   end
 
   @doc """
-  Resolve which of `operative_class`'s chain procedures declare a `compensate`
+  Resolve which of `operative_class`'s chain tasklets declare a `compensate`
   hook: ETS → durable sidecar → `nil` (the class declared nothing).
   """
-  @spec compensable_procs(binary()) :: [non_neg_integer()] | nil
-  def compensable_procs(operative_class) when is_binary(operative_class) do
-    declaration(operative_class, :compensable_procs, @compensable_sidecar, &parse_ops/1)
+  @spec compensable_tasks(binary()) :: [non_neg_integer()] | nil
+  def compensable_tasks(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :compensable_tasks, @compensable_sidecar, &parse_ops/1)
   end
 
   @doc """
-  Resolve `operative_class`'s leaf procedures: ETS → durable sidecar → `nil`
+  Resolve `operative_class`'s leaf tasklets: ETS → durable sidecar → `nil`
   (the class declared nothing — a stream, or an SDK without the declaration).
   """
-  @spec leaf_procs(binary()) :: [non_neg_integer()] | nil
-  def leaf_procs(operative_class) when is_binary(operative_class) do
-    declaration(operative_class, :leaf_procs, @leaf_sidecar, &parse_ops/1)
+  @spec leaf_tasks(binary()) :: [non_neg_integer()] | nil
+  def leaf_tasks(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :leaf_tasks, @leaf_sidecar, &parse_ops/1)
   end
 
   @doc """
@@ -543,7 +543,7 @@ defmodule Flezha.Operative.ClassRegistry do
   # unchanged, and one that drops the declaration reverts on the next bind).
   # ONE shape for every SDK declaration: an ETS entry plus a durable sidecar that
   # outlives the process. An undeclared capability — `false` for a flag, `nil` for
-  # a procedure set — CLEARS both, so a class that rebinds having dropped a
+  # a tasklet set — CLEARS both, so a class that rebinds having dropped a
   # declaration can never read the previous bind's, and a flag-off class's on-disk
   # layout stays exactly as it was before the flag existed. The only
   # per-capability code is the codec pair.
@@ -564,7 +564,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   # ETS → durable sidecar → `nil` (undeclared). `decode` turns the sidecar's text
-  # back into the declared value; an empty procedure set decodes to `[]`, which is
+  # back into the declared value; an empty tasklet set decodes to `[]`, which is
   # meaningful ("a tree, none of it selected") and is NOT undeclared.
   defp declaration(operative_class, key, sidecar, decode) do
     case ets_lookup({operative_class, key}) do
@@ -580,7 +580,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   defp encode_declaration(true), do: "true"
-  defp encode_declaration(procs) when is_list(procs), do: Enum.join(procs, ",")
+  defp encode_declaration(tasks) when is_list(tasks), do: Enum.join(tasks, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
 
   defp ets_lookup(operative_class) do

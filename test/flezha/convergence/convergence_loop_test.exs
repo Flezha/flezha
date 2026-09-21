@@ -273,8 +273,8 @@ defmodule Flezha.Convergence.LoopTest do
       {:ok, root: root}
     end
 
-    defp seed_entity(root, operative, procedure, key) do
-      dir = Path.join([root, "_system", operative, procedure])
+    defp seed_cell(root, operative, tasklet, key) do
+      dir = Path.join([root, "_system", operative, tasklet])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "#{key}.wal"), <<1, 2, 3>>)
     end
@@ -293,8 +293,8 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "wiped registry with on-disk evidence → mismatch names the operatives", %{root: root} do
-      seed_entity(root, "btc_kraken", "op", "k1")
-      seed_entity(root, "eth_kraken", "op", "k1")
+      seed_cell(root, "btc_kraken", "op", "k1")
+      seed_cell(root, "eth_kraken", "op", "k1")
 
       assert {["btc_kraken", "eth_kraken"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
@@ -303,8 +303,8 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "a finished workflow retained for inspection is not evidence", %{root: root} do
-      seed_entity(root, "btc_kraken", "op", "k1")
-      seed_entity(root, "done_workflow", "op", "k1")
+      seed_cell(root, "btc_kraken", "op", "k1")
+      seed_cell(root, "done_workflow", "op", "k1")
 
       :ok =
         Completion.write("done_workflow", %{
@@ -325,11 +325,11 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "flz state delete clears the entry", %{root: root} do
-      seed_entity(root, "btc_kraken", "op", "k1")
+      seed_cell(root, "btc_kraken", "op", "k1")
       assert {["btc_kraken"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
       # The CLI `flz state delete btc_kraken/op/k1` path.
-      {:ok, _} = Flezha.State.Supervisor.delete_entity({"btc_kraken", "op", "k1"})
+      {:ok, _} = Flezha.State.Supervisor.delete_cell({"btc_kraken", "op", "k1"})
 
       assert {[], _} = Intent.intent_mismatch(intent_for([]), cache)
     end
@@ -363,7 +363,7 @@ defmodule Flezha.Convergence.LoopTest do
 
     defp effect_hdr(), do: <<1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0>>
 
-    test "a tier-on Entity's markers carry its OWN consumed offset and the log tail" do
+    test "a tier-on Cell's markers carry its OWN consumed offset and the log tail" do
       rc = "tiered-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "k1"}
       ClassRegistry.put_overwatch(rc, self(), nil)
@@ -377,21 +377,21 @@ defmodule Flezha.Convergence.LoopTest do
 
       marker = Enum.find(Progress.progress_markers(), &(&1.operative_id == rc))
 
-      assert marker.entity == {"op", "k1"}
+      assert marker.cell == {"op", "k1"}
       assert marker.input_log_tail == 1
-      assert marker.consumed_offset == 0, "the Entity's own offset, not the class-wide min"
+      assert marker.consumed_offset == 0, "the Cell's own offset, not the class-wide min"
 
       # The record was dispatched (its consumed offset landed), so the flush cursor
       # advanced past it — but it bore no outputs, so out_pending_seq did NOT move.
       # That asymmetry is precisely what keeps `outbox_flat?` from firing on a
-      # Entity that persists state and emits nothing.
+      # Cell that persists state and emits nothing.
       assert marker.out_pending_seq == -1
       assert marker.outbox_flushed_seq == 0
 
       :ok = WalWriter.close(pid)
     end
 
-    test "a tier-off Entity gets no cursor fields and no input log is created" do
+    test "a tier-off Cell gets no cursor fields and no input log is created" do
       rc = "plain-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "k1"}
 
@@ -410,7 +410,7 @@ defmodule Flezha.Convergence.LoopTest do
       :ok = WalWriter.close(pid)
     end
 
-    test "an Entity that stops consuming while the log grows classifies STUCK, naming it" do
+    test "a Cell that stops consuming while the log grows classifies STUCK, naming it" do
       rc = "stalling-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "poisoned"}
       ClassRegistry.put_overwatch(rc, self(), nil)
@@ -422,14 +422,14 @@ defmodule Flezha.Convergence.LoopTest do
 
       baseline = Enum.filter(Progress.progress_markers(), &(&1.operative_id == rc))
 
-      # The source keeps feeding, but this Entity never consumes another offset —
-      # a poison payload mid-retry, or a procedure wedged on it.
+      # The source keeps feeding, but this Cell never consumes another offset —
+      # a poison payload mid-retry, or a tasklet wedged on it.
       {:ok, 1} = InputLog.append(rc, "i1", %{})
       {:ok, 2} = InputLog.append(rc, "i2", %{})
 
       current = Enum.filter(Progress.progress_markers(), &(&1.operative_id == rc))
 
-      assert %{^rc => {:stuck, :watermark_frozen, %{entity: {"op", "poisoned"}}}} =
+      assert %{^rc => {:stuck, :watermark_frozen, %{cell: {"op", "poisoned"}}}} =
                StallClassifier.classify_producing(current, baseline, %{
                  now: System.monotonic_time(:millisecond),
                  grace_ms: 60_000
@@ -484,12 +484,12 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "freshly-stuck operatives emit operative_stuck once, not on steady state", %{ref: ref} do
-      stuck = %{"btc" => %{detail: :wal_frozen, entity: "op/k1"}}
+      stuck = %{"btc" => %{detail: :wal_frozen, cell: "op/k1"}}
 
       Progress.note_stuck_transitions(%{}, stuck)
 
       assert_receive {^ref, [:flezha, :convergence, :operative_stuck], %{count: 1},
-                      %{operative_id: "btc", detail: :wal_frozen, entity: "op/k1"}}
+                      %{operative_id: "btc", detail: :wal_frozen, cell: "op/k1"}}
 
       Progress.note_stuck_transitions(stuck, stuck)
       refute_received {^ref, [:flezha, :convergence, :operative_stuck], _, _}

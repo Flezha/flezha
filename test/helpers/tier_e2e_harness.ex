@@ -34,14 +34,14 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Brutally kill the Entity's writers (bypassing `terminate/2` — the cursor
+  Brutally kill the Cell's writers (bypassing `terminate/2` — the cursor
   persist at shutdown must not run) and reset the durable cursor to
   "nothing flushed": the crash-after-flush-before-cursor window at e2e
   scale. The restart must re-drive every durable output with its original
   identity.
   """
-  def stale_cursor_and_crash_writers(operative_id, entity_id) do
-    case Flezha.State.Supervisor.lookup(entity_id) do
+  def stale_cursor_and_crash_writers(operative_id, cell_id) do
+    case Flezha.State.Supervisor.lookup(cell_id) do
       {:ok, pid} -> Process.exit(pid, :kill)
       :error -> :ok
     end
@@ -51,8 +51,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       :error -> :ok
     end
 
-    dedup = Outbox.read(entity_id)
-    :ok = Outbox.write(entity_id, %{dedup | outbox_flushed_seq: -1})
+    dedup = Outbox.read(cell_id)
+    :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
   end
 
   def boot_runner(namespace, id_path, opts \\ []) do
@@ -142,8 +142,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Destroy every local durable byte one operative owns — its Entity WALs,
-  snapshots, proc-journal, durable inbox, input log and class sidecars — and
+  Destroy every local durable byte one operative owns — its Cell WALs,
+  snapshots, task-journal, durable inbox, input log and class sidecars — and
   evict its in-memory class declarations.
 
   Scoped to the operative's own class directory rather than the whole state
@@ -155,17 +155,17 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   def destroy_local_state(operative_id) do
     reserved =
       Enum.map(
-        Paths.reserved_entity_keys(),
+        Paths.reserved_cell_keys(),
         &{operative_id, operative_id, &1}
       )
 
-    # `delete_entity/1` is the existing hard-delete: it stops the writer, drops
+    # `delete_cell/1` is the existing hard-delete: it stops the writer, drops
     # its fsync mark, unlinks the files and forgets the watermark. The stop must
     # be graceful — a killed writer is transient-restarted, and the replacement
     # would hold an open handle to the unlinked file while hydration writes a
     # new one underneath it.
-    for entity_id <- Paths.entities_of(operative_id) ++ reserved do
-      Flezha.State.Supervisor.delete_entity(entity_id)
+    for cell_id <- Paths.cells_of(operative_id) ++ reserved do
+      Flezha.State.Supervisor.delete_cell(cell_id)
     end
 
     case Flezha.State.Supervisor.lookup({operative_id, :input_log}) do
@@ -261,7 +261,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Return once every Entity of `operative_id` has a transactional outbox that
+  Return once every Cell of `operative_id` has a transactional outbox that
   owes nothing: each durable entry dispatched and confirmed by its sinks.
   Everything the sink will ever forward for the inputs so far is in the
   caller's mailbox after this.
@@ -269,17 +269,17 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   def await_outbox_drained(operative_id, timeout_ms \\ 30_000) do
     NodeTestHelper.wait_until(
       fn ->
-        case Paths.entities_of(operative_id) do
+        case Paths.cells_of(operative_id) do
           [] -> false
-          entities -> Enum.all?(entities, &outbox_drained?/1)
+          cells -> Enum.all?(cells, &outbox_drained?/1)
         end
       end,
       timeout_ms
     )
   end
 
-  defp outbox_drained?(entity_id) do
-    case Flezha.State.Supervisor.lookup(entity_id) do
+  defp outbox_drained?(cell_id) do
+    case Flezha.State.Supervisor.lookup(cell_id) do
       {:ok, writer} ->
         state = :sys.get_state(writer)
         state.outbox_awaiting == %{} and :queue.is_empty(state.pending_outbox)
@@ -358,14 +358,14 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Group outputs by their durable output identity `(flz.entity, flz.seq,
+  Group outputs by their durable output identity `(flz.cell, flz.seq,
   flz.epoch)`. The tier's dedup contract is that one identity never carries two
   different payloads — a controller re-drive repeats an identity byte-for-byte.
   """
   def by_identity(outputs) do
     Enum.group_by(
       outputs,
-      fn {_msg, md} -> {md["flz.entity"], md["flz.seq"], md["flz.epoch"]} end,
+      fn {_msg, md} -> {md["flz.cell"], md["flz.seq"], md["flz.epoch"]} end,
       fn {msg, _md} -> msg end
     )
   end

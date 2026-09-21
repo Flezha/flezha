@@ -214,8 +214,8 @@ proof depends on how it connected:
 
 | Connection | What proves the namespace |
 | --- | --- |
-| QUIC, client certificate carrying a SPIFFE `/ns/<name>` entity | the certificate |
-| QUIC, certificate with no `/ns/` entity (the pair `flz` generates) | the presented credential |
+| QUIC, client certificate carrying a SPIFFE `/ns/<name>` cell | the certificate |
+| QUIC, certificate with no `/ns/` cell (the pair `flz` generates) | the presented credential |
 | UDS | the presented credential |
 | in-node (the Elixir SDK inside the Controller) | co-residence in the Controller's BEAM |
 
@@ -253,7 +253,7 @@ flz token revoke <old-id>                                           # 4. retire 
 ```
 
 Step 4 closes any session still on the old credential, which is why step 2 comes
-first. A QUIC deployment whose certificates carry `/ns/` entities needs no
+first. A QUIC deployment whose certificates carry `/ns/` cells needs no
 credential at all; its expiry is the PKI's to manage.
 
 ## Namespaces and quotas
@@ -297,7 +297,7 @@ or a negative value is refused.
 | Quota | Default | Enforced at |
 | --- | --- | --- |
 | `max_operatives` | `100` | `OperativeManager.start_operative/2` |
-| `max_entities_per_operative` | `1_024` | `OperativeManager.start_operative/2` |
+| `max_cells_per_operative` | `1_024` | `OperativeManager.start_operative/2` |
 | `max_mailbox_bytes_total` | `268_435_456` (256 MiB) | caps the per-Operative credit window (`PersistenceResolver.credit_window_bytes/2`) |
 | `max_message_rate_per_second` | `100_000` | stored, not enforced |
 | `max_state_bytes` | `107_374_182_400` (100 GiB) | `start_operative` refuses new allocation while over; `State.Watchdog` raises a latched `[:flezha, :state, :disk_quota_breach]` alarm for a running namespace — writes are never interrupted |
@@ -334,12 +334,12 @@ a role the principal does not hold changes nothing.
 
 | Role | What it adds |
 | --- | --- |
-| `viewer` | the reads: operatives, plugins, entity state, audit, observability, the schedule registry |
-| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, including the start and the delivery a procedure's `ctx.spawn_workflow` asks for, listen to what an operative ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
+| `viewer` | the reads: operatives, plugins, cell state, audit, observability, the schedule registry |
+| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, including the start and the delivery a tasklet's `ctx.spawn_workflow` asks for, listen to what an operative ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
 | `operator` | app plus the rest of the operative and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
 | `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
-| `spawner` | runner plus the two rights a procedure's `ctx.spawn_workflow` needs in its own namespace, `operative.start` and `operative.send`, and nothing else. Those rights also open `Operative.start` and `Operative.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
+| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_workflow` needs in its own namespace, `operative.start` and `operative.send`, and nothing else. Those rights also open `Operative.start` and `Operative.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 | `stopper` | runner plus `operative.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 
 `app`, `spawner` and `stopper` also carry `runner.connect`, because the only
@@ -382,7 +382,7 @@ list` shows for it. That is what keeps the administration surface's namespace
 and quota mutations out of reach of runner code: an identity holding `spawner`
 and `admin` connects as `spawner` alone.
 
-A namespace whose procedures spawn workflows, and that needs nothing else from
+A namespace whose tasklets spawn workflows, and that needs nothing else from
 this surface, is bound to `spawner` instead. It grants the start and the
 delivery a `ctx.spawn_workflow` asks for, and not the stop or the plugin enable
 and disable that `app` adds:
@@ -423,7 +423,7 @@ any one of them grants it. `public` rows are served to any caller; `none` rows a
 names that are not verbs.
 
 A row whose scope is a stored row's field (a DLQ entry's namespace, a
-schedule's, an Entity's class) reads that row only for a caller that is bound
+schedule's, a Cell's class) reads that row only for a caller that is bound
 and whose role grants the action, so an unbound or under-privileged caller is
 told nothing about whether the name exists.
 
@@ -476,7 +476,7 @@ told nothing about whether the name exists.
 | `spawn_deliver` | runner session only | `operative.send` | spawner | argument 1 (the namespace named) | - |
 | `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
 | `operative_listen` | `operative_listen` | `operative.listen` | app | argument 1 (the namespace named) | after on `plugin_service` |
-| `entity_state` | `entity_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
+| `cell_state` | `cell_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
 | `schedule_run` | `schedule_run` | `operative.start` | spawner | the stored row's `namespace` | after on `operative_service` |
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
 | `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
@@ -522,7 +522,7 @@ Four of those choices are worth stating plainly.
 
 **A parked payload is business data.** `dlq list` and `dlq show` are the
 operator's, not the viewer's, because a DLQ entry holds the record that failed —
-verbatim, with its entity key and its error. Reading one is at least as
+verbatim, with its cell key and its error. Reading one is at least as
 privileged as the drop that destroys it, and no viewer workflow needs it. The
 same rule places `state inbox`, `state journal` and `state outbox`, which read
 records in flight, under `state.records` beside `operative.rewind` and
@@ -542,7 +542,7 @@ credential above for managing schedules — can add, list and remove a schedule
 but cannot run one; a token bound to the schedule's namespace with
 `operative.start` (an `operator` or `admin` there), or `admin@_system`, can.
 
-**A spawn's delivery is judged and not recorded.** A procedure's `ctx.spawn_workflow`
+**A spawn's delivery is judged and not recorded.** A tasklet's `ctx.spawn_workflow`
 that names a running instance feeds it, and that delivery is judged as
 `operative.send` through the `spawn_deliver` row, which writes no record of a
 permitted delivery because it happens once per event. A refused one is audited as
@@ -608,7 +608,7 @@ app_data/auth/               # mode 0700; DETS files are 0600
 ```
 
 Every mutation is written with `:dets.sync/1` before it is acknowledged. Back up
-`<auth_dir>` together with `app_data/state/` and `app_data/audit/`. Entity state
+`<auth_dir>` together with `app_data/state/` and `app_data/audit/`. Cell state
 lives at `app_data/state/<namespace>/...`; a pre-namespace tree is moved under
 `_system` once at boot by `Flezha.Boot.StatePathMigrator`.
 

@@ -1,4 +1,4 @@
 {
-  "compensable_procs": "0,1",
-  "leaf_procs": "2"
+  "compensable_tasks": "0,1",
+  "leaf_tasks": "2"
 }

@@ -25,7 +25,7 @@ defmodule Flezha.AuthZ.RunnerProof do
   `_system`.
 
   The certificate reading is `Flezha.AuthN.Cert.namespace_from_peer/1`, which
-  answers `_system` for a certificate with no SPIFFE `/ns/` entity — and
+  answers `_system` for a certificate with no SPIFFE `/ns/` cell — and
   `_system` is exactly what a runner may not be, so that answer is read as "this
   certificate names no namespace" and the secret is asked instead. The secret is
   a `:runner` entry of `Flezha.AuthZ.TokenStore`: the registry that already
@@ -96,7 +96,7 @@ defmodule Flezha.AuthZ.RunnerProof do
   # The certificate first, the secret second, and only QUIC is asked for a
   # certificate — a UDS peer completed no handshake, so there is nothing to
   # read. A deployment with SPIFFE naming distributes nothing; one with a CA but
-  # no `/ns/` entity falls back rather than being refused for a naming
+  # no `/ns/` cell falls back rather than being refused for a naming
   # convention it never adopted.
   defp proven_namespace(handle, init_payload, :quic) do
     case certificate_namespace(TStream.peer_certificate(handle)) do
@@ -113,7 +113,7 @@ defmodule Flezha.AuthZ.RunnerProof do
   The namespace a peer certificate names, or `:none` when it names none.
 
   `Flezha.AuthN.Cert.namespace_from_peer/1` answers `_system` for a certificate
-  with no SPIFFE `/ns/` entity, for one with no SAN at all, and for input it
+  with no SPIFFE `/ns/` cell, for one with no SAN at all, and for input it
   cannot decode. A runner may not be `_system`, so every one of those answers
   reads here as "this certificate proves no namespace" and the secret is asked
   instead — the settled reading of the design's first open question, which is

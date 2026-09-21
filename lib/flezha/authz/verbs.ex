@@ -162,7 +162,7 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :operative_service},
       target: [:_, :operative]
     ],
-    # A procedure's `ctx.spawn_workflow` feeding a running instance: the right
+    # A tasklet's `ctx.spawn_workflow` feeding a running instance: the right
     # `operative_send` judges, with no record of its own because it runs once per
     # event. A refusal is still audited, by the policy point.
     spawn_deliver: [action: :"operative.send", scope: {:argument, 1}],
@@ -170,7 +170,7 @@ defmodule Flezha.AuthZ.Verbs do
       action: :"operative.replay",
       scope: {:row, :namespace},
       audit: {:after, :operative_service},
-      target: [:_, :entity]
+      target: [:_, :cell]
     ],
     operative_listen: [
       action: :"operative.listen",
@@ -178,7 +178,7 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :plugin_service},
       target: [:_, :operative]
     ],
-    entity_state: [action: :"state.get", scope: {:argument, 1}],
+    cell_state: [action: :"state.get", scope: {:argument, 1}],
     schedule_run: [
       action: :"operative.start",
       scope: {:row, :namespace},
@@ -313,7 +313,7 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :schedule_service},
       target: [:schedule]
     ],
-    # Durable state: an Entity's namespace is its class's.
+    # Durable state: a Cell's namespace is its class's.
     state_get: [action: :"state.get", scope: {:row, :namespace}],
     state_list: [action: :"state.list", scope: {:row, :namespace}],
     state_at: [action: :"state.at", scope: {:row, :namespace}],
@@ -321,13 +321,13 @@ defmodule Flezha.AuthZ.Verbs do
       action: :"state.rotate",
       scope: {:row, :namespace},
       audit: {:after, :state_service},
-      target: [:entity]
+      target: [:cell]
     ],
     state_delete: [
       action: :"state.delete",
       scope: {:row, :namespace},
       audit: {:after, :state_service},
-      target: [:entity]
+      target: [:cell]
     ],
     state_retention: [
       action: :"state.retention",

@@ -38,9 +38,9 @@ defmodule FlezhaTest do
 
   setup _context do
     # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
-    # per-Entity state from an earlier test that reused the same operative_id
-    # would leak in. Start each test from empty entities.
-    TestHelpers.reset_all_entities()
+    # per-Cell state from an earlier test that reused the same operative_id
+    # would leak in. Start each test from empty cells.
+    TestHelpers.reset_all_cells()
 
     on_exit(fn ->
       OperativeManager.stop_all_operatives(@default_namespace)
@@ -178,7 +178,7 @@ defmodule FlezhaTest do
       id: operative_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{
-        "compare_filter_procedure" => %{"comparable" => "hello world", "inverted" => false}
+        "compare_filter_tasklet" => %{"comparable" => "hello world", "inverted" => false}
       }
     }
 
@@ -220,7 +220,7 @@ defmodule FlezhaTest do
     end
   end
 
-  @tag :get_entity_state
+  @tag :get_cell_state
   test "get operative state" do
     operative_id = "get_state_test"
 
@@ -234,12 +234,12 @@ defmodule FlezhaTest do
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      OperativeManager.get_entity_state(@default_namespace, operative_id)
+      OperativeManager.get_cell_state(@default_namespace, operative_id)
 
-    entity_state = Payloader.json_to_map(json_state)
+    cell_state = Payloader.json_to_map(json_state)
 
-    assert entity_state === %{
-             "store_input_procedure" => %{
+    assert cell_state === %{
+             "store_input_tasklet" => %{
                "binary_inputs" => [],
                "text_inputs" => ["state_1", "state_2"]
              }
@@ -262,7 +262,7 @@ defmodule FlezhaTest do
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
-      "store_input_procedure" => %{
+      "store_input_tasklet" => %{
         "binary_inputs" => [],
         "text_inputs" => ["test_state_1", "test_state_2"]
       }
@@ -278,14 +278,14 @@ defmodule FlezhaTest do
     })
 
     {:ok, json_state} =
-      OperativeManager.get_entity_state(@default_namespace, operative_id)
+      OperativeManager.get_cell_state(@default_namespace, operative_id)
 
     {:ok, old_overwatch_state} =
       OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    entity_state = Payloader.json_to_map(json_state)
+    cell_state = Payloader.json_to_map(json_state)
 
-    assert entity_state === test_state
+    assert cell_state === test_state
 
     test_pid = self()
 
@@ -319,14 +319,14 @@ defmodule FlezhaTest do
     )
 
     {:ok, json_state} =
-      OperativeManager.get_entity_state(@default_namespace, operative_id)
+      OperativeManager.get_cell_state(@default_namespace, operative_id)
 
     {:ok, new_overwatch_state} =
       OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    entity_state = Payloader.json_to_map(json_state)
+    cell_state = Payloader.json_to_map(json_state)
 
-    assert entity_state === test_state
+    assert cell_state === test_state
 
     old_plugins = Map.keys(old_overwatch_state.extensions.plugins) |> Enum.sort()
     new_plugins = Map.keys(new_overwatch_state.extensions.plugins) |> Enum.sort()

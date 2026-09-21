@@ -28,7 +28,7 @@ defmodule Flezha.Config.BackoffSeamTest do
   # The two shapes of the seam, as Erlang regular expressions: every spelling
   # the tree used for a backoff ladder and for a named duration before each was
   # folded into one place. Enforced on every run of the suite.
-  @ladder_shape ~r/ProviderBehaviour\.retry_backoff_ms\(|backoff_with_jitter\(|wait_with_jitter\(|Integer\.pow\(2, ?(?:retries|attempt)|Bitwise\.bsl\(1, ?(?:min\(attempt|min\(n|attempt)|@backoffs_ms|@schedule_ms|@retry_base_ms|@retry_cap_ms|@retry_max_ms|@max_retry_delay_ms|@retry_base_delay_ms|Jitter\.jitter\(|@no_response_retry_initial_ms|@reconnect_cap_ms|@retry_backoff_cap_ms|@default_retry_backoff_ms|@stable_uptime_ms|@force_replace_throttle_ms|@park_resend_ms|@hub_retry_ms|@proc_outbox_retry_ms|@backoff_ms|jitter_fn\.\(/
+  @ladder_shape ~r/ProviderBehaviour\.retry_backoff_ms\(|backoff_with_jitter\(|wait_with_jitter\(|Integer\.pow\(2, ?(?:retries|attempt)|Bitwise\.bsl\(1, ?(?:min\(attempt|min\(n|attempt)|@backoffs_ms|@schedule_ms|@retry_base_ms|@retry_cap_ms|@retry_max_ms|@max_retry_delay_ms|@retry_base_delay_ms|Jitter\.jitter\(|@no_response_retry_initial_ms|@reconnect_cap_ms|@retry_backoff_cap_ms|@default_retry_backoff_ms|@stable_uptime_ms|@force_replace_throttle_ms|@park_resend_ms|@hub_retry_ms|@task_outbox_retry_ms|@backoff_ms|jitter_fn\.\(/
   @duration_shape ~r/^\s*@[a-z_]+_ms\s+[0-9_]+|get_env\(:flezha, :[a-z_]+_ms, [0-9_]+\)/m
 
   defp lib_files(), do: SourceWalk.files(["lib/flezha"], [".ex"])

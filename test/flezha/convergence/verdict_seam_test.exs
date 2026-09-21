@@ -625,7 +625,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
           :runner_pool_wedged,
           :channel_not_sending,
           :operative_not_forwarding,
-          :entity_dispatch_stalled,
+          :cell_dispatch_stalled,
           :producer_push_stalled
         ],
         do: layer

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Per-Entity state-persistence smoke test (engagement-only).
+# Per-Cell state-persistence smoke test (engagement-only).
 #
 # Verifies the data-plane half of the `operative-state-persistence`
 # contract (see `docs/internals/state_persistence.md`): with an operative
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under the namespaced layout
-# `app_data/state/<namespace>/<operative_class>/<procedure_id>/<entity_key>.wal`
-# and `flz state list <operative_class>` surfaces the live entity.
+# `app_data/state/<namespace>/<operative_class>/<tasklet_id>/<cell_key>.wal`
+# and `flz state list <operative_class>` surfaces the live cell.
 #
 # `operative_class` is NOT the factory id: `Overwatch.operative_class/1`
 # falls back to the operative's own id, so the class level on disk — and
@@ -31,9 +31,9 @@
 #   * `flz state at` / `flz state get` / `flz state rotate`. An older note
 #     here claimed these crash the BEAM; they do not — all three were driven
 #     against this stack and the node stayed up. `state get` and `state at`
-#     belong to `entity-state-live-query` and the time-travel CLI, `rotate`
-#     to `entity-compaction`; wiring them in is those capabilities' job, not
-#     this one's. Note `state at` takes the DECODED entity key, so the
+#     belong to `cell-state-live-query` and the time-travel CLI, `rotate`
+#     to `cell-compaction`; wiring them in is those capabilities' job, not
+#     this one's. Note `state at` takes the DECODED cell key, so the
 #     on-disk filename (`_.wal` for the empty key) is not a path fragment.
 #
 # Layout:
@@ -441,31 +441,31 @@ await_flz_output "operative '${OPERATIVE_ID}' is listed" "${OPERATIVE_ID}" 30 \
 await_flz_output "plugin '${PLUGIN_WS_ID}' is in 'flz operative info'" "${PLUGIN_WS_ID}" 30 \
   operative info -n "${DEMO_NAMESPACE}"
 
-await_flz_output "'flz state list ${OPERATIVE_ID}' reports entities" '"entity_key"' 30 \
+await_flz_output "'flz state list ${OPERATIVE_ID}' reports cells" '"cell_key"' 30 \
   state list "${OPERATIVE_ID}" --output json
 
 # The namespaced layout itself, not merely "some file exists": a WAL under
-# `<state_root>/<namespace>/<operative_class>/<procedure_id>/<key>.wal` is
+# `<state_root>/<namespace>/<operative_class>/<tasklet_id>/<key>.wal` is
 # what `Flezha.State.Paths.class_dir/1` promises, and asserting the shape
 # is what catches the layout moving out from under the contract.
 CLASS_DIR="${STATE_DIR}/${DEMO_NAMESPACE}/${OPERATIVE_ID}"
 note "verifying the namespaced WAL layout under ${CLASS_DIR}"
 mapfile -t WAL_FILES < <(find "${CLASS_DIR}" -mindepth 2 -maxdepth 2 -type f -name '*.wal' 2>/dev/null)
 if [ "${#WAL_FILES[@]}" -eq 0 ]; then
-  diag "FAIL: no <procedure_id>/<key>.wal under ${CLASS_DIR} — persistence not engaged"
+  diag "FAIL: no <tasklet_id>/<key>.wal under ${CLASS_DIR} — persistence not engaged"
   find "${STATE_DIR}" 2>/dev/null | sed 's/^/  /' >&2
   exit 1
 fi
 note "${#WAL_FILES[@]} WAL file(s) in the expected layout:"
 printf '  %s\n' "${WAL_FILES[@]}"
 
-note "PASS: per-Entity state persistence is engaged"
+note "PASS: per-Cell state persistence is engaged"
 note "  operative='${OPERATIVE_ID}' (factory='${FACTORY_ID}') in namespace '${DEMO_NAMESPACE}'"
 note "  plugins enabled=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID} (presence asserted for ${PLUGIN_WS_ID})"
 note ""
 note "Scope notes:"
 note "  * This script verifies the data-plane WAL is being written under the"
-note "    namespaced layout and that 'flz state list' surfaces the live entity."
+note "    namespaced layout and that 'flz state list' surfaces the live cell."
 note "  * It does NOT exercise a controller-side BEAM restart. The controller"
 note "    does not auto-recreate operatives after its own BEAM restarts (only"
 note "    SDK/runner restarts trigger the SDK-side RestoreInitState handshake"

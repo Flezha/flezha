@@ -216,7 +216,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
 
   Durable `State`/`Change` bodies are per-SDK below the shared 16-byte
   envelope, and a restore ships those bodies verbatim to whichever runner bound
-  the Entity. So placement must never hand a factory's operative to a runner of
+  the Cell. So placement must never hand a factory's operative to a runner of
   another language. The guard lives in the ONE filter every placement path
   reads (`placeable_runners/3`), which is what these tests drive through
   `runners_for_factory/3`.
@@ -393,10 +393,10 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       id = factory("stateful")
       forget(ns, [id])
       operative = "#{id}-0"
-      entity = {operative, "p0", "k"}
-      StateTestHelpers.write_wal_of_lang(entity, @java)
+      cell = {operative, "p0", "k"}
+      StateTestHelpers.write_wal_of_lang(cell, @java)
 
-      assert entity in Paths.entities_of(operative), "fixture: #{base}"
+      assert cell in Paths.cells_of(operative), "fixture: #{base}"
       assert Restore.class_sdk_lang(operative) == @java
       assert Restore.class_sdk_lang("never_written") == nil
 

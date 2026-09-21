@@ -4,7 +4,7 @@ defmodule FlezhaTest.OutboxCase do
 
       use FlezhaTest.OutboxCase, async: false
 
-  It stands up a per-test state tree with its own tmp root and entity id, tears
+  It stands up a per-test state tree with its own tmp root and cell id, tears
   the writer down before the root is removed (a late persist would otherwise
   race the `rm_rf`), and carries the record-shaping and dispatch-observing
   helpers both modules need.
@@ -69,13 +69,13 @@ defmodule FlezhaTest.OutboxCase do
     ClassRegistry.ensure_table()
 
     rc = "wo_" <> Integer.to_string(System.unique_integer([:positive]))
-    entity_id = {rc, "proc", "k1"}
+    cell_id = {rc, "task", "k1"}
 
     # Registered after the fixture table's own, so it runs BEFORE it: the writer
     # has to stop before `:tmp_app_data` removes the root under it.
     on_exit(fn ->
       try do
-        case Supervisor.lookup(entity_id) do
+        case Supervisor.lookup(cell_id) do
           {:ok, pid} -> WalWriter.close(pid)
           :error -> :ok
         end
@@ -86,7 +86,7 @@ defmodule FlezhaTest.OutboxCase do
       end
     end)
 
-    %{rc: rc, entity_id: entity_id, base: base}
+    %{rc: rc, cell_id: cell_id, base: base}
   end
 
   # Header byte 9 is the format id: 2 marks an effect record.
@@ -137,24 +137,24 @@ defmodule FlezhaTest.OutboxCase do
       {:trace, _pid, :call, {DlqStore, :append, [%{origin_offset: offset}]}} ->
         traced_order([{:park, offset} | acc])
 
-      {:trace, _pid, :call, {InputLog, :record_consumed, [_class, _entity, offset]}} ->
+      {:trace, _pid, :call, {InputLog, :record_consumed, [_class, _cell, offset]}} ->
         traced_order([{:consumed, offset} | acc])
     after
       0 -> Enum.reverse(acc)
     end
   end
 
-  def start_writer(entity_id) do
-    {:ok, pid} = Supervisor.find_or_start(entity_id)
+  def start_writer(cell_id) do
+    {:ok, pid} = Supervisor.find_or_start(cell_id)
     pid
   end
 
   # Close and wait for the registry sweep, so the next find_or_start starts
   # a fresh writer instead of racing the dead entry.
-  def close_writer(pid, entity_id) do
+  def close_writer(pid, cell_id) do
     :ok = WalWriter.close(pid)
 
-    assert wait_until(fn -> Supervisor.lookup(entity_id) == :error end, 2_000),
+    assert wait_until(fn -> Supervisor.lookup(cell_id) == :error end, 2_000),
            "writer registry entry never cleared"
   end
 
@@ -163,9 +163,9 @@ defmodule FlezhaTest.OutboxCase do
   steps every dispatch test needs before the first append, because a dispatch
   with no resolvable Overwatch schedules a retry instead of a delivery.
   """
-  def armed_writer(rc, entity_id) do
+  def armed_writer(rc, cell_id) do
     ClassRegistry.put_overwatch(rc, self(), nil)
-    start_writer(entity_id)
+    start_writer(cell_id)
   end
 
   @doc """
@@ -192,11 +192,11 @@ defmodule FlezhaTest.OutboxCase do
   between a batch reaching the plugins and the cursor write landing. What comes
   back owes the whole record again.
   """
-  def reopen_with_stale_cursor(entity_id) do
-    dedup = Outbox.read(entity_id)
-    :ok = Outbox.write(entity_id, %{dedup | outbox_flushed_seq: -1})
+  def reopen_with_stale_cursor(cell_id) do
+    dedup = Outbox.read(cell_id)
+    :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
 
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     _ = WalWriter.last_persisted_seq(pid)
     pid
   end

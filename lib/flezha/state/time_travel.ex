@@ -1,8 +1,8 @@
 defmodule Flezha.State.TimeTravel do
   @moduledoc """
-  Point-in-time state queries against persisted Entity data.
+  Point-in-time state queries against persisted Cell data.
 
-  `query/2` resolves an `(entity_id, target)` tuple where target is
+  `query/2` resolves a `(cell_id, target)` tuple where target is
   `{:seq, u64}` or `{:timestamp, datetime}`. It locates the latest
   snapshot at-or-before the target, then folds the WAL records up to
   the target on the SDK side via a transient `RestoreInitState`-style
@@ -12,7 +12,7 @@ defmodule Flezha.State.TimeTravel do
   v1 `query/2` returns the assembled bytes payload + the resolved
   terminal seq. The replay-on-SDK round-trip is wired by
   `Flezha.State.Commands.dispatch_restore_init_state/2` and is invoked by the CLI
-  command `flz state at <operative/procedure/entity> <seq | timestamp>`.
+  command `flz state at <operative/tasklet/cell> <seq | timestamp>`.
 
   Out-of-retention errors are returned as `%TimeTravelError{}`.
   """
@@ -54,11 +54,11 @@ defmodule Flezha.State.TimeTravel do
           terminal_seq: non_neg_integer()
         }
 
-  @spec query(Paths.entity_id(), target()) ::
+  @spec query(Paths.cell_id(), target()) ::
           {:ok, result()} | {:error, TimeTravelError.t()}
-  def query({operative_class, _, _} = entity_id, target) do
+  def query({operative_class, _, _} = cell_id, target) do
     if ClassRegistry.capable?(operative_class, :time_travel?) do
-      do_query(entity_id, target)
+      do_query(cell_id, target)
     else
       {:error,
        TimeTravelError.exception(
@@ -68,14 +68,14 @@ defmodule Flezha.State.TimeTravel do
     end
   end
 
-  defp do_query(entity_id, target) do
-    snaps = Paths.snapshot_paths(entity_id)
-    target_seq = resolve_target_seq(entity_id, target)
+  defp do_query(cell_id, target) do
+    snaps = Paths.snapshot_paths(cell_id)
+    target_seq = resolve_target_seq(cell_id, target)
 
-    case earliest_available_seq(snaps, entity_id) do
+    case earliest_available_seq(snaps, cell_id) do
       :no_data ->
         {:error,
-         TimeTravelError.exception(kind: :no_data, message: "no persisted state for entity")}
+         TimeTravelError.exception(kind: :no_data, message: "no persisted state for cell")}
 
       earliest when target_seq < earliest ->
         {:error,
@@ -103,7 +103,7 @@ defmodule Flezha.State.TimeTravel do
         snapshot_seq = elem(snapshot || {0, nil}, 0)
 
         {change_log_bytes, terminal_seq} =
-          read_wal_in_range(entity_id, snapshot_seq, target_seq)
+          read_wal_in_range(cell_id, snapshot_seq, target_seq)
 
         {:ok,
          %{
@@ -114,7 +114,7 @@ defmodule Flezha.State.TimeTravel do
     end
   end
 
-  defp resolve_target_seq(_entity_id, {:seq, seq}) when is_integer(seq) and seq >= 0, do: seq
+  defp resolve_target_seq(_cell_id, {:seq, seq}) when is_integer(seq) and seq >= 0, do: seq
 
   # The highest seq whose record time is at or before `ts` — exactly, from the
   # record itself. Effect records carry the invocation's clock value, which under
@@ -123,8 +123,8 @@ defmodule Flezha.State.TimeTravel do
   #
   # Falls back to the newest snapshot seq only when nothing is datable — a WAL of
   # pre-tier plain change records, which carry no time at all.
-  defp resolve_target_seq(entity_id, {:timestamp, ts}) when is_integer(ts) do
-    case scan_seq_at_or_before_path(Paths.wal_path(entity_id), ts) do
+  defp resolve_target_seq(cell_id, {:timestamp, ts}) when is_integer(ts) do
+    case scan_seq_at_or_before_path(Paths.wal_path(cell_id), ts) do
       nil -> 0
       seq -> seq
     end
@@ -139,8 +139,8 @@ defmodule Flezha.State.TimeTravel do
     end)
   end
 
-  defp earliest_available_seq([], entity_id) do
-    if File.exists?(Paths.wal_path(entity_id)), do: 0, else: :no_data
+  defp earliest_available_seq([], cell_id) do
+    if File.exists?(Paths.wal_path(cell_id)), do: 0, else: :no_data
   end
 
   defp earliest_available_seq([{seq, _} | _], _), do: seq
@@ -153,10 +153,10 @@ defmodule Flezha.State.TimeTravel do
     |> List.last()
   end
 
-  defp read_wal_in_range(entity_id, snapshot_seq, target_seq) do
+  defp read_wal_in_range(cell_id, snapshot_seq, target_seq) do
     {acc, terminal} =
       RecordFrame.fold_path!(
-        Paths.wal_path(entity_id),
+        Paths.wal_path(cell_id),
         {[], snapshot_seq},
         &gather(&1, &2, snapshot_seq, target_seq)
       )

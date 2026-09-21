@@ -9,7 +9,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   per runner.
 
   Cardinality is bounded by construction: driver metrics are per
-  transport (at most two) and the BEAM aggregates carry no per-entity
+  transport (at most two) and the BEAM aggregates carry no per-cell
   label, so nothing here grows with runner or operative churn.
 
   Both server drivers produce the self-report, so the same metrics are
@@ -80,7 +80,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit(:driver_streams, %{value: length(driver.streams)}, meta)
   end
 
-  # Global BEAM aggregates — no per-entity label, so cardinality is flat.
+  # Global BEAM aggregates — no per-cell label, so cardinality is flat.
   #
   # Nothing here names a slot, and nothing here decides how one reduces. The
   # layout declares which slots are metrics, how each is collapsed per runner

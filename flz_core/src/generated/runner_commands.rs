@@ -26,13 +26,13 @@ pub mod command_request {
         #[prost(message, tag = "7")]
         MigrationDeserialization(super::MigrationDeserialization),
         #[prost(message, tag = "8")]
-        EntityState(super::EntityState),
+        CellState(super::CellState),
         #[prost(message, tag = "9")]
         RunnerDisconnect(super::RunnerDisconnect),
         #[prost(message, tag = "10")]
         OperativeMessage(super::OperativeMessage),
         #[prost(message, tag = "11")]
-        EntityApplyState(super::EntityApplyState),
+        CellApplyState(super::CellApplyState),
         #[prost(message, tag = "12")]
         RunnerShutdownNotification(super::RunnerShutdownNotification),
         #[prost(message, tag = "13")]
@@ -42,11 +42,11 @@ pub mod command_request {
         #[prost(message, tag = "15")]
         RestoreInitStateResponse(super::RestoreInitStateResponse),
         #[prost(message, tag = "16")]
-        CompactEntity(super::CompactEntity),
+        CompactCell(super::CompactCell),
         #[prost(message, tag = "17")]
-        CompactEntityResponse(super::CompactEntityResponse),
+        CompactCellResponse(super::CompactCellResponse),
         #[prost(message, tag = "18")]
-        EntityMailboxStatus(super::EntityMailboxStatus),
+        CellMailboxStatus(super::CellMailboxStatus),
         #[prost(message, tag = "19")]
         Ping(super::Ping),
         #[prost(message, tag = "20")]
@@ -66,9 +66,9 @@ pub mod command_request {
         #[prost(message, tag = "27")]
         ParkPayloadAck(super::ParkPayloadAck),
         #[prost(message, tag = "28")]
-        ProcCommit(super::ProcCommit),
+        TaskCommit(super::TaskCommit),
         #[prost(message, tag = "29")]
-        ProcCommitResponse(super::ProcCommitResponse),
+        TaskCommitResponse(super::TaskCommitResponse),
         #[prost(message, tag = "30")]
         IterCommit(super::IterCommit),
         #[prost(message, tag = "31")]
@@ -121,23 +121,23 @@ pub struct AddOperative {
     /// "stream".
     #[prost(string, tag = "4")]
     pub kind: ::prost::alloc::string::String,
-    /// Number of persisted Entities the Controller will ship RestoreInitState
+    /// Number of persisted Cells the Controller will ship RestoreInitState
     /// for on this (re)bind. Non-zero only when re-binding a durable workflow
     /// operative that has WAL state on disk (crash-resume). A durable workflow
-    /// driver holds its first Procedure until this many Entity restores have
+    /// driver holds its first Tasklet until this many Cell restores have
     /// landed, so a resumed run reads persisted state instead of cold-starting.
     /// 0 for a fresh spawn, a stream operative, or an opted-out workflow one.
     #[prost(uint32, tag = "5")]
-    pub resume_entity_count: u32,
-    /// Workflow proc-journal crash-resume (workflow-proc-journal): the instance's
-    /// committed proc indexes + latest journaled handoff. Instance-scoped, so it
-    /// rides the bind itself rather than a per-Entity restore — a durable
-    /// workflow class with no per-Entity state ships no RestoreInitState at all,
+    pub resume_cell_count: u32,
+    /// Workflow task-journal crash-resume (workflow-task-journal): the instance's
+    /// committed task indexes + latest journaled handoff. Instance-scoped, so it
+    /// rides the bind itself rather than a per-Cell restore — a durable
+    /// workflow class with no per-Cell state ships no RestoreInitState at all,
     /// and would otherwise resume at iteration 0 on every wake.
     /// Absent when the instance has no journal (fresh spawn, opted-out class,
     /// stream operative) — the driver then keeps the re-run-from-top behaviour.
     #[prost(message, optional, tag = "6")]
-    pub proc_journal: ::core::option::Option<ProcJournalState>,
+    pub task_journal: ::core::option::Option<TaskJournalState>,
     /// Partitioned operatives: this member's identity within its group. A
     /// `partition_count` below 2 means unpartitioned — the whole key space is
     /// this instance's, which is every operative that predates partitioning.
@@ -192,20 +192,20 @@ pub struct MigrationDeserialization {
     #[prost(bytes = "vec", tag = "3")]
     pub serialized_state: ::prost::alloc::vec::Vec<u8>,
 }
-/// Serialize live in-memory Entity state as JSON. Both selector fields are
-/// optional (empty = absent): absent selector covers every Procedure of the
-/// Operative (the migration/handover shape), `procedure` narrows to one
-/// Procedure's Entities, `procedure` + `entity_key` to one Entity. An
-/// `entity_key` without a `procedure` is refused — an Entity key is unique
-/// only within its Procedure.
+/// Serialize live in-memory Cell state as JSON. Both selector fields are
+/// optional (empty = absent): absent selector covers every Tasklet of the
+/// Operative (the migration/handover shape), `tasklet` narrows to one
+/// Tasklet's Cells, `tasklet` + `cell_key` to one Cell. An
+/// `cell_key` without a `tasklet` is refused — a Cell key is unique
+/// only within its Tasklet.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct EntityState {
+pub struct CellState {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub procedure: ::prost::alloc::string::String,
+    pub tasklet: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
-    pub entity_key: ::prost::alloc::string::String,
+    pub cell_key: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerDisconnect {
@@ -235,14 +235,14 @@ pub struct OperativeMessageResponse {
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
 }
-/// Inverse of EntityState. Sent by the Controller to a Runner SDK to
+/// Inverse of CellState. Sent by the Controller to a Runner SDK to
 /// prime a freshly-spawned Operative's GenServer/struct state from a
 /// previously-captured `state_binary`. Round-trips with the same opaque
-/// SDK-internal serialization used by EntityState. SDKs that do not
+/// SDK-internal serialization used by CellState. SDKs that do not
 /// implement Apply respond with status="error" and error\[\] containing the
 /// canonical token "apply_state_not_supported".
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct EntityApplyState {
+pub struct CellApplyState {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -285,67 +285,67 @@ pub struct RunnerShutdownAck {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
 }
-/// One serialized inter-procedure handoff value: the payload bytes produced
+/// One serialized inter-tasklet handoff value: the payload bytes produced
 /// by the channel's byte codec, tagged with the producing channel id so a
 /// resume re-seeds through the same channel's decoder.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcHandoffItem {
+pub struct TaskHandoffItem {
     #[prost(uint32, tag = "1")]
     pub channel_id: u32,
     #[prost(bytes = "vec", tag = "2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
-/// One staged plugin-bound output of a procedure, buffered per entity
-/// while the procedure ran and shipped at its barrier
-/// (workflow-transactional-outbox). `seq_in_proc` orders the entries a single
-/// entity staged during the procedure; `channel` is the producing plugin
+/// One staged plugin-bound output of a tasklet, buffered per cell
+/// while the tasklet ran and shipped at its barrier
+/// (workflow-transactional-outbox). `seq_in_task` orders the entries a single
+/// cell staged during the tasklet; `channel` is the producing plugin
 /// channel's name, carried through to the flushed frame's `channel`
 /// metadata.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcOutboxItem {
+pub struct TaskOutboxItem {
     #[prost(bytes = "vec", tag = "1")]
-    pub entity_id: ::prost::alloc::vec::Vec<u8>,
+    pub cell_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint32, tag = "2")]
-    pub seq_in_proc: u32,
+    pub seq_in_task: u32,
     #[prost(string, tag = "3")]
     pub channel: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
-/// SDK -> Controller, at each procedure barrier of a durable structured
-/// workflow operative (workflow-proc-journal): procedure `proc_idx` completed
-/// forward on `entities_ran` (wire entity identities) and released the
-/// serialized `handoff` batch plus the `outbox` its entities staged
+/// SDK -> Controller, at each tasklet barrier of a durable structured
+/// workflow operative (workflow-task-journal): tasklet `task_idx` completed
+/// forward on `cells_ran` (wire cell identities) and released the
+/// serialized `handoff` batch plus the `outbox` its cells staged
 /// (workflow-transactional-outbox — nothing reached a plugin yet). The
-/// Controller appends ONE `proc_committed` entry carrying handoff AND outbox
-/// to the instance's proc-journal, fsyncs, replies ProcCommitResponse, and only
-/// then flushes the outbox; the driver starts the next procedure after the
+/// Controller appends ONE `task_committed` entry carrying handoff AND outbox
+/// to the instance's task-journal, fsyncs, replies TaskCommitResponse, and only
+/// then flushes the outbox; the driver starts the next tasklet after the
 /// successful reply. Direction is reversed like RunnerShutdownNotification:
 /// SDK -> Controller over the "control_command" payload_id; old Controllers
 /// ignore the unknown variant via Protox unknown-field handling. `iter` is 0
 /// for the single-pass chain (the durable-loop follow-up increments it).
 ///
 /// `compensating` marks the undo twin: a `compensate` hook's staged output
-/// for the already-committed procedure `proc_idx`, journaled as a
-/// `compensated` entry and flushed with comp-marked keys. The per-entity
+/// for the already-committed tasklet `task_idx`, journaled as a
+/// `compensated` entry and flushed with comp-marked keys. The per-cell
 /// compensation markers still decide which hooks run.
 ///
-/// `completes` / `result` carry the procedure's `ctx.complete` request, so a
+/// `completes` / `result` carry the tasklet's `ctx.complete` request, so a
 /// crash before the iteration commits still ends the instance on resume.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcCommit {
+pub struct TaskCommit {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
-    pub proc_idx: u32,
+    pub task_idx: u32,
     #[prost(uint32, tag = "3")]
     pub iter: u32,
     #[prost(bytes = "vec", repeated, tag = "4")]
-    pub entities_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    pub cells_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(message, repeated, tag = "5")]
-    pub handoff: ::prost::alloc::vec::Vec<ProcHandoffItem>,
+    pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
     #[prost(message, repeated, tag = "6")]
-    pub outbox: ::prost::alloc::vec::Vec<ProcOutboxItem>,
+    pub outbox: ::prost::alloc::vec::Vec<TaskOutboxItem>,
     #[prost(bool, tag = "7")]
     pub compensating: bool,
     #[prost(bool, tag = "8")]
@@ -353,17 +353,17 @@ pub struct ProcCommit {
     #[prost(bytes = "vec", tag = "9")]
     pub result: ::prost::alloc::vec::Vec<u8>,
 }
-/// Controller -> SDK reply to ProcCommit, emitted only AFTER the journal
+/// Controller -> SDK reply to TaskCommit, emitted only AFTER the journal
 /// entry is durable (fsync). Carries the originating request's
 /// reference_id so the SDK wakes the blocked driver. A non-empty `error`
 /// (journal write/fsync failure, oversized handoff) terminates the run
 /// abnormally through the existing terminal-error path.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcCommitResponse {
+pub struct TaskCommitResponse {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
-    pub proc_idx: u32,
+    pub task_idx: u32,
     #[prost(string, tag = "3")]
     pub error: ::prost::alloc::string::String,
 }
@@ -371,14 +371,14 @@ pub struct ProcCommitResponse {
 /// structured workflow operative (workflow-durable-loop): iteration `iter`
 /// finished, having consumed the durable inbox up to `consumed_offset` and
 /// released `handoff` as its terminal batch. The Controller appends
-/// `iter_committed(iter, consumed_offset)` to the proc-journal, fsyncs, requests
-/// a boundary snapshot for the instance's entities, flushes whatever the
-/// iteration's procedures staged, truncates the inbox below the consumed
+/// `iter_committed(iter, consumed_offset)` to the task-journal, fsyncs, requests
+/// a boundary snapshot for the instance's cells, flushes whatever the
+/// iteration's tasklets staged, truncates the inbox below the consumed
 /// offset, and replies IterCommitResponse. The driver enters iteration
 /// `iter + 1` only on the successful reply — a crash before it re-runs the
 /// whole iteration (at-least-once), never the ones below it.
 ///
-/// `completes` is set when a procedure of the iteration called
+/// `completes` is set when a tasklet of the iteration called
 /// `ctx.complete(result)`: the instance ends with `result` once this commit is
 /// durable, and a crash after it still ends it on resume.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -390,7 +390,7 @@ pub struct IterCommit {
     #[prost(uint64, tag = "3")]
     pub consumed_offset: u64,
     #[prost(message, repeated, tag = "4")]
-    pub handoff: ::prost::alloc::vec::Vec<ProcHandoffItem>,
+    pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
     #[prost(bool, tag = "5")]
     pub completes: bool,
     #[prost(bytes = "vec", tag = "6")]
@@ -398,7 +398,7 @@ pub struct IterCommit {
 }
 /// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
 /// is durable (fsync). Same reference_id / terminal-error contract as
-/// ProcCommitResponse.
+/// TaskCommitResponse.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterCommitResponse {
     #[prost(string, tag = "1")]
@@ -425,64 +425,64 @@ pub struct IterPark {
     #[prost(uint64, tag = "3")]
     pub wake_deadline_ms: u64,
 }
-/// One journaled forward proc commit, shipped back on crash-resume so the driver
+/// One journaled forward task commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
-/// durable state (workflow-durable-loop): procedure `proc_idx` of iteration `iter`
-/// completed forward on `entities_ran`.
+/// durable state (workflow-durable-loop): tasklet `task_idx` of iteration `iter`
+/// completed forward on `cells_ran`.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcCommittedProc {
+pub struct TaskCommittedTask {
     #[prost(uint32, tag = "1")]
-    pub proc_idx: u32,
+    pub task_idx: u32,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(bytes = "vec", repeated, tag = "3")]
-    pub entities_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    pub cells_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
     #[prost(bool, tag = "4")]
     pub completes: bool,
     #[prost(bytes = "vec", tag = "5")]
     pub result: ::prost::alloc::vec::Vec<u8>,
 }
-/// What one committed procedure of the in-flight iteration released, keyed by
-/// its proc_idx (workflow-branching). A procedure tree re-seeds each uncommitted
+/// What one committed tasklet of the in-flight iteration released, keyed by
+/// its task_idx (workflow-branching). A tasklet tree re-seeds each uncommitted
 /// child branch from its own parent's edge, so the resume state carries every
 /// in-flight commit's handoff — not just the latest one's.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcEdgeHandoff {
+pub struct TaskEdgeHandoff {
     #[prost(uint32, tag = "1")]
-    pub proc_idx: u32,
+    pub task_idx: u32,
     #[prost(message, repeated, tag = "2")]
-    pub handoff: ::prost::alloc::vec::Vec<ProcHandoffItem>,
+    pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
 }
-/// Committed proc-journal state shipped back on crash-resume
-/// (workflow-proc-journal). `iter` is the iteration to resume at — the one after
+/// Committed task-journal state shipped back on crash-resume
+/// (workflow-task-journal). `iter` is the iteration to resume at — the one after
 /// the highest journaled `iter_committed` (0 for a non-looping chain);
-/// `committed_proc_idxs` are the procedures already committed inside that
-/// still-in-flight iteration, which the driver skips, and `proc_handoffs` what
+/// `committed_task_idxs` are the tasklets already committed inside that
+/// still-in-flight iteration, which the driver skips, and `task_handoffs` what
 /// each of them released, which seeds their uncommitted children. `handoff` is
 /// the previous iteration's terminal batch, which re-seeds a handoff-chained
-/// loop. `committed_procs` carries every forward proc commit with its iteration
+/// loop. `committed_tasks` carries every forward task commit with its iteration
 /// (compensation planning), `consumed_offset` the inbox offset the last
 /// committed iteration consumed, and `parked` / `wake_deadline_ms` the
 /// suspension record (workflow-durable-suspension). `completed` / `result` are
 /// the last committed iteration's completion request: a resume ends the
 /// instance with `result` instead of waiting for input.
 ///
-/// `rewind_undo` carries the procedures a rewind unwound that have not been
+/// `rewind_undo` carries the tasklets a rewind unwound that have not been
 /// compensated yet (workflow-loop-rewind). The driver runs them through the
 /// ordinary compensation planner before resuming forward at `iter`, which the
 /// journal has already folded back to the rewound-to iteration. Each undo
 /// journals a `compensated` entry, so the list shrinks across a crash and
 /// re-planning never double-compensates. Empty = no rewind pending.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ProcJournalState {
+pub struct TaskJournalState {
     #[prost(uint32, repeated, tag = "1")]
-    pub committed_proc_idxs: ::prost::alloc::vec::Vec<u32>,
+    pub committed_task_idxs: ::prost::alloc::vec::Vec<u32>,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(message, repeated, tag = "3")]
-    pub handoff: ::prost::alloc::vec::Vec<ProcHandoffItem>,
+    pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
     #[prost(message, repeated, tag = "4")]
-    pub committed_procs: ::prost::alloc::vec::Vec<ProcCommittedProc>,
+    pub committed_tasks: ::prost::alloc::vec::Vec<TaskCommittedTask>,
     #[prost(uint64, tag = "5")]
     pub consumed_offset: u64,
     #[prost(bool, tag = "6")]
@@ -490,34 +490,34 @@ pub struct ProcJournalState {
     #[prost(uint64, tag = "7")]
     pub wake_deadline_ms: u64,
     #[prost(message, repeated, tag = "8")]
-    pub rewind_undo: ::prost::alloc::vec::Vec<ProcCommittedProc>,
+    pub rewind_undo: ::prost::alloc::vec::Vec<TaskCommittedTask>,
     #[prost(message, repeated, tag = "9")]
-    pub proc_handoffs: ::prost::alloc::vec::Vec<ProcEdgeHandoff>,
+    pub task_handoffs: ::prost::alloc::vec::Vec<TaskEdgeHandoff>,
     #[prost(bool, tag = "10")]
     pub completed: bool,
     #[prost(bytes = "vec", tag = "11")]
     pub result: ::prost::alloc::vec::Vec<u8>,
 }
-/// Per-Entity state restore handshake: Controller ships latest snapshot
-/// bytes plus tail-WAL bytes, SDK applies them to the entity's State
-/// before any input is processed. See the per-entity state persistence design.
+/// Per-Cell state restore handshake: Controller ships latest snapshot
+/// bytes plus tail-WAL bytes, SDK applies them to the cell's State
+/// before any input is processed. See the per-cell state persistence design.
 ///
-/// `entity_id` is the structured byte identifier
-/// `[operative_class_len: u8][operative_class][procedure_id_len: u8][procedure_id]
-///   [entity_key_len: u16 BE][entity_key]`. `change_log_bytes` is
+/// `cell_id` is the structured byte identifier
+/// `[operative_class_len: u8][operative_class][tasklet_id_len: u8][tasklet_id]
+///   [cell_key_len: u16 BE][cell_key]`. `change_log_bytes` is
 /// the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
 /// [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RestoreInitState {
     #[prost(bytes = "vec", tag = "1")]
-    pub entity_id: ::prost::alloc::vec::Vec<u8>,
+    pub cell_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub snapshot_bytes: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "3")]
     pub change_log_bytes: ::prost::alloc::vec::Vec<u8>,
     /// Saga crash-resume (workflow-operative-saga): the Controller sets these
-    /// from the per-Entity compensation markers it persisted for a durable
-    /// workflow operative. `has_compensation_intent` ⇒ this Entity's procedure
+    /// from the per-Cell compensation markers it persisted for a durable
+    /// workflow operative. `has_compensation_intent` ⇒ this Cell's tasklet
     /// completed forward and may need undo; `has_compensation_done` ⇒ its
     /// compensation already ran (skip it on resume). Both false for a
     /// stream operative or a workflow one that never compensated.
@@ -526,7 +526,7 @@ pub struct RestoreInitState {
     #[prost(bool, tag = "5")]
     pub has_compensation_done: bool,
     /// The highest seq the shipped state already covers — the snapshot's seq
-    /// when the change log is empty. The SDK re-arms the Entity's change seq
+    /// when the change log is empty. The SDK re-arms the Cell's change seq
     /// to `terminal_seq + 1`; deriving it from the change log alone restarted
     /// a snapshot-only restore at 1 and the writer dropped the next changes
     /// as duplicates.
@@ -540,11 +540,11 @@ pub struct RestoreInitState {
 }
 /// SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
 /// is the highest WAL seq folded into State; the Controller expects the next
-/// `entity_state_change` to carry `seq = terminal_seq + 1`.
+/// `cell_state_change` to carry `seq = terminal_seq + 1`.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RestoreInitStateResponse {
     #[prost(bytes = "vec", tag = "1")]
-    pub entity_id: ::prost::alloc::vec::Vec<u8>,
+    pub cell_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "2")]
     pub terminal_seq: u64,
     /// At least one record was migrated from an older schema version. The
@@ -554,32 +554,32 @@ pub struct RestoreInitStateResponse {
     #[prost(bool, tag = "3")]
     pub migrated: bool,
 }
-/// Controller-issued compaction request. The SDK clones the entity's
+/// Controller-issued compaction request. The SDK clones the cell's
 /// `Self::State` under the sticky CAS, serializes it, and replies via
-/// `entity_state_snapshot` then `CompactEntityResponse`.
+/// `cell_state_snapshot` then `CompactCellResponse`.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CompactEntity {
+pub struct CompactCell {
     #[prost(bytes = "vec", tag = "1")]
-    pub entity_id: ::prost::alloc::vec::Vec<u8>,
+    pub cell_id: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CompactEntityResponse {
+pub struct CompactCellResponse {
     #[prost(bytes = "vec", tag = "1")]
-    pub entity_id: ::prost::alloc::vec::Vec<u8>,
+    pub cell_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "2")]
     pub snapshot_seq: u64,
     #[prost(uint64, tag = "3")]
     pub snapshot_bytes_size: u64,
 }
-/// Back-pressure signal: the Controller's per-Entity WAL outbox is at the
+/// Back-pressure signal: the Controller's per-Cell WAL outbox is at the
 /// high watermark (`status = "full"`) or has drained below the low
-/// watermark (`status = "open"`). The SDK's per-Entity mailbox
+/// watermark (`status = "open"`). The SDK's per-Cell mailbox
 /// observer translates the signal into the channel's declared
 /// `OverflowPolicy`.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct EntityMailboxStatus {
+pub struct CellMailboxStatus {
     #[prost(bytes = "vec", tag = "1")]
-    pub entity_id: ::prost::alloc::vec::Vec<u8>,
+    pub cell_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub status: ::prost::alloc::string::String,
 }
@@ -657,7 +657,7 @@ pub struct WorkflowCompleted {
 /// threshold (informational to the SDK). The SDK acknowledges by returning an
 /// encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
 /// that does not recognise the variant never acks and keeps the legacy
-/// EntityMailboxStatus behaviour.
+/// CellMailboxStatus behaviour.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreditWindowInit {
     #[prost(string, tag = "1")]
@@ -690,7 +690,7 @@ pub struct CreditGrant {
 }
 /// Controller -> SDK. Durable ack for a `park_payload` data-stream frame:
 /// the dead-letter entry identified by `park_id` is fsynced in the DLQ
-/// store, so the parked entity may drop the poison payload and advance.
+/// store, so the parked cell may drop the poison payload and advance.
 /// One-way; the generic CommandResponse it solicits is ignored.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ParkPayloadAck {
@@ -742,7 +742,7 @@ pub struct WorkflowStop {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. A procedure asked for a workflow instance
+/// SDK -> Controller. A tasklet asked for a workflow instance
 /// (`ctx.spawn_workflow`): spawn `factory_id` under `instance_id` if that id is
 /// free, otherwise apply `if_running`. An empty `instance_id` asks the
 /// Controller to generate one and always spawns, so `if_running` is ignored for
@@ -773,7 +773,7 @@ pub struct SpawnWorkflowRequest {
 /// start failure) and is empty otherwise. `instance_id` is the id the request
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
-/// requesting procedure — it only resolves its handle.
+/// requesting tasklet — it only resolves its handle.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnWorkflowResponse {
     #[prost(string, tag = "1")]

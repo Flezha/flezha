@@ -2,7 +2,7 @@
 
 For application authors. A connected runner can administer the namespace its
 connection proved: start, stop and feed operatives, enable and disable plugins,
-and read what is running. No procedure has to be running, and the application
+and read what is running. No tasklet has to be running, and the application
 holds no credential of its own beyond what its connection already presented.
 
 The operator side is
@@ -12,7 +12,7 @@ The operator side is
 
 | | |
 |---|---|
-| Reached from | the runner object, not a procedure context |
+| Reached from | the runner object, not a tasklet context |
 | Namespace | the connection's, always. The request carries no namespace field |
 | Identity | the `runner@<namespace>` principal the transport minted |
 | Authority | the role that principal is bound to, read on every call |
@@ -26,7 +26,7 @@ flz role bind runner@team-orders app team-orders
 
 That is the whole grant, once per namespace. `flz role unbind` revokes it, and
 the revocation takes effect on the next call rather than the next reconnect.
-A namespace bound to `spawner` instead, the role for procedures that spawn
+A namespace bound to `spawner` instead, the role for tasklets that spawn
 workflows, reaches `Operative.start` and `Operative.send` here and none of the
 other verbs in the table below.
 
@@ -41,7 +41,7 @@ other verbs in the table below.
 | Disable a plugin | `PluginManager.disable` | `plugin_id` |
 | List operatives | `Operative.list_operatives` | none |
 | List plugins | `PluginManager.list` | none |
-| Read entity state | `Operative.entity_state` | `operative_id`, `entity_key` |
+| Read cell state | `Operative.cell_state` | `operative_id`, `cell_key` |
 
 Each SDK spells these as typed methods on its own admin handle:
 
@@ -124,4 +124,4 @@ its own core.
 
 - [`../operations/authn_authz.md`](../operations/authn_authz.md) — roles, the grant, the audit
 - [`protocol_spec.md`](protocol_spec.md) — the control protocol the frame rides
-- [`procedure_requested_spawn.md`](procedure_requested_spawn.md) — the other SDK-initiated request, for a workflow instance
+- [`tasklet_requested_spawn.md`](tasklet_requested_spawn.md) — the other SDK-initiated request, for a workflow instance

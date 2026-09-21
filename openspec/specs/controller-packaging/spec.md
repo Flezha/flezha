@@ -195,7 +195,7 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
    - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL `kill -TERM` the agent directly, bypassing the coordinator. This is the kill-switch fall-through, and it matches what the same variable means inside the BEAM (`controller-graceful-shutdown`: `SignalHandler` installs no OS handlers, so kernel's `erl_signal_handler` stays the owner).
 5. `wait` on the agent PID.
 
-Restart survival SHALL come from ProcessHub's durable registry and the per-Entity WAL (`auto-restore-on-boot`, `operative-state-persistence`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
+Restart survival SHALL come from ProcessHub's durable registry and the per-Cell WAL (`auto-restore-on-boot`, `operative-state-persistence`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
 
 The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`.
 

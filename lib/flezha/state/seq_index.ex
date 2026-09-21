@@ -3,7 +3,7 @@ defmodule Flezha.State.SeqIndex do
   A sparse seq→file-position index over a record log, plus where the file
   ends: one sample every `@every` records, enough to find where any seq
   starts within one span instead of walking the file. Both record logs — the
-  Entity WAL and the input log — keep one, so a cut at either end costs the
+  Cell WAL and the input log — keep one, so a cut at either end costs the
   records on the kept side of the boundary, never the whole file, in the loop
   the data plane waits on.
 

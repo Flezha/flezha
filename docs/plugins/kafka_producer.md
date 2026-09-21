@@ -44,11 +44,11 @@ record reports only through telemetry (below), and a synchronous `enqueue/4` cal
 ## Effectively-once records
 
 Records from an `effectively_once()` operative carry the outbox identity stamps
-`flz.entity`, `flz.seq` (`<record WAL seq>.<emit ordinal>`) and `flz.epoch`. For them the
-plugin uses `flz.key` (the emitting Entity's key, or `emit_keyed`'s) as the Kafka message
+`flz.cell`, `flz.seq` (`<record WAL seq>.<emit ordinal>`) and `flz.epoch`. For them the
+plugin uses `flz.key` (the emitting Cell's key, or `emit_keyed`'s) as the Kafka message
 key — stable partitioning across replays, latest-value semantics on compacted topics — and
 writes the full identity as the record header
-`flezha.dedup_key = <flz.entity>/<outbox seq>/<epoch>` (e.g. `MarketOperative/s1/k1/42.0/1`).
+`flezha.dedup_key = <flz.cell>/<outbox seq>/<epoch>` (e.g. `MarketOperative/s1/k1/42.0/1`).
 Records without the stamps use `flz.key`, else a caller-stamped `flezha.dedup_key`, else
 `kafka_msg_key` as the message key and carry no header.
 
@@ -123,7 +123,7 @@ flz plugin enable alerts operative_kafka_producer \
 This **selects** records; it does not merge channels. Each record keeps its own `channel`
 metadata, so a consumer reading the topic can still tell an `alerts` record from an
 `audit` one. Merging two outputs into one stream is a different question, and the answer
-to it is a procedure that carries both rather than a plugin that groups them.
+to it is a tasklet that carries both rather than a plugin that groups them.
 
 Order does not matter and a repeated name changes nothing, since neither can change which
 records match. Whitespace around a name is trimmed, so `alerts, audit` names the same two
@@ -185,7 +185,7 @@ entry is re-driven.
 (`Flezha.State.Outbox.hold/1`) before handing it to the worker. An acked batch confirms
 every guaranteed record it carried in one report per owning writer
 (`Outbox.confirm_many/1`); a batch that exhausts its budget parks each of them through the
-dead-letter store under its own `(entity, seq, epoch)` identity (`Outbox.park/4`, one per
+dead-letter store under its own `(cell, seq, epoch)` identity (`Outbox.park/4`, one per
 record because a park carries the payload), so the cursor advances past a recorded,
 replayable loss rather than a silent one. Records without the `flz.ack` token settle nothing.
 

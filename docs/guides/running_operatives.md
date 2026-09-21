@@ -20,7 +20,7 @@ that declaration when you ask the controller for one. If the analogy helps, the
 declaration is the definition and an operative is a thing made from it.
 
 One declaration backs as many operatives as you need, each under a name you
-choose and each independent of the rest: its own entities, its own state, its
+choose and each independent of the rest: its own cells, its own state, its
 own placement in the cluster. Ten exchanges to watch is one declaration started
 ten times. What the declaration itself is, and why it is the unit the controller
 schedules, is in [the runner guide](runner_deployment.md#the-operative).
@@ -31,12 +31,12 @@ An operative's **kind** is fixed when you start it, and it decides when the
 thing is over.
 
 **Stream operatives are always on.** An endless input, no completion, recovery
-per entity. `echo` is one, and everything below uses this kind. It runs until
+per cell. `echo` is one, and everything below uses this kind. It runs until
 you stop it.
 
-**Workflow operatives terminate.** A graph of procedures run level by level
+**Workflow operatives terminate.** A graph of tasklets run level by level
 behind a commit barrier, ending by itself on chain completion, when a
-procedure calls `ctx.complete`, or at `max_duration`.
+tasklet calls `ctx.complete`, or at `max_duration`.
 Stopping one by hand ends it early; it is not how one is meant to finish.
 [`workflow_basics.md`](tradedesk/workflow_basics.md) is the kind's own guide.
 
@@ -125,10 +125,10 @@ out	echo: hello world
 
 The first line is the delivery verdict, and it only says the payload was
 accepted. It is answered as soon as the input is durably accepted, before your
-procedure runs, so it tells you nothing about what happened next.
+tasklet runs, so it tells you nothing about what happened next.
 
 The second line is the output: the channel name, a tab, and the payload your
-procedure emitted. `out` is the name the operative gave that channel with
+tasklet emitted. `out` is the name the operative gave that channel with
 `.sink("out")`.
 
 `--await 2000` attaches an output listener, delivers the payload, and prints
@@ -157,7 +157,7 @@ out	echo: hello world
 Each line is the channel the message left on, a tab, and the message itself. A
 message from a keyed channel, one declared with `keyed()`, gets a third column
 saying which key it came from and its number in that key's sequence:
-`entity=... seq=... key=...`.
+`cell=... seq=... key=...`.
 
 Two options help when something looks wrong:
 

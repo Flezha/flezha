@@ -71,7 +71,7 @@ defmodule Flezha.Config.Backoff do
     # ---- cluster and transport --------------------------------------------
     {:cluster_reconnect,
      base: 1_000, cap: :reconnect_max_backoff_ms, jitter: true, reset: :per_call},
-    {:proc_outbox_retry, base: 1_000, cap: 1_000, reset: :per_call},
+    {:task_outbox_retry, base: 1_000, cap: 1_000, reset: :per_call},
 
     # ---- services ---------------------------------------------------------
     {:no_response, base: 150, cap: 5_000, reset: :per_call, give_up: 8},

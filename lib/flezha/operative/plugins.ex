@@ -237,7 +237,7 @@ defmodule Flezha.Operative.Plugins do
   `operative.opts[:plugins]` list of the cspec the operative was started with is
   re-subscribed by `prepare/2`, and a restart-driven start builds that cspec
   from the hub's declared set. That is
-  independent of the per-Entity state restore, which rehydrates SDK-side
+  independent of the per-Cell state restore, which rehydrates SDK-side
   WAL/snapshot state through the data plane. A HotSwap migration is handled in
   `Flezha.Operative.Handover` and never reaches here.
   """

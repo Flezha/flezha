@@ -130,7 +130,7 @@ assets for that tag. Maven-registry publication remains out of scope.
 
 ### Requirement: Java SDK artifact identifiers use canonical vocabulary
 
-Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Modules previously named with `processor`, `operator`, or `compute-engine` entities SHALL use `operative` and `runner` entities respectively. Existing module names that do not carry those terms (e.g., `flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) keep their names.
+Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Modules previously named with `processor`, `operator`, or `compute-engine` cells SHALL use `operative` and `runner` cells respectively. Existing module names that do not carry those terms (e.g., `flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) keep their names.
 
 #### Scenario: Built artifacts use canonical names
 - **WHEN** `mvn -f sdk/java verify` produces SDK jars

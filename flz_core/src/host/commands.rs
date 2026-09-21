@@ -1,6 +1,6 @@
-//! The command crossings of a host-run Entity: restore fold, compaction
+//! The command crossings of a host-run Cell: restore fold, compaction
 //! snapshot, live read / migration serialize and apply-state. Each runs under
-//! the entity gate and crosses one activation the host answers. The
+//! the cell gate and crosses one activation the host answers. The
 //! invariant: the schema-version decision is the core's — a host receives
 //! only bodies it can decode at its own version or migrate from a named one.
 
@@ -8,8 +8,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::entity::BytesBuffer;
-use crate::entity::EntitySlot;
+use super::cell::BytesBuffer;
+use crate::cell::CellSlot;
 use crate::error::Error;
 use crate::flusher::FlushableBuffer;
 use crate::header::{HeaderTemplate, RestoreError, SchemaDecision};
@@ -59,14 +59,14 @@ fn from_version(decision: SchemaDecision) -> Option<u32> {
     }
 }
 
-/// Restore a host-run Entity: split the persisted records into what the core
+/// Restore a host-run Cell: split the persisted records into what the core
 /// owns (cursors, timer ops, the schema decision — resolved here) and what only
 /// the host can decode (its own change bodies — crossed as a
-/// [`schema::RestoreFold`] activation). Runs under the entity gate; returns the
+/// [`schema::RestoreFold`] activation). Runs under the cell gate; returns the
 /// terminal WAL seq and whether anything migrated, or `None` with the failure
 /// recorded in `errors`.
 pub fn restore_fold_exclusive(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     snapshot_header: &[u8],
     snapshot_bytes: &[u8],
     change_log_bytes: &[u8],
@@ -144,19 +144,19 @@ fn resolve_snapshot(
     Some((Some(body), decision.migrating()))
 }
 
-/// Compaction snapshot for a host-run Entity: drain pending changes, read
+/// Compaction snapshot for a host-run Cell: drain pending changes, read
 /// the seq, re-state the pending timer set (so truncation cannot eat it),
 /// then cross a [`schema::ActivationKind::SnapshotRequest`] and frame the
-/// host-encoded state. Runs under the entity gate.
-pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, usize), Error> {
+/// host-encoded state. Runs under the cell gate.
+pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), Error> {
     let facts = slot.dispatcher.host_facts().ok_or_else(|| {
-        Error::HostCrossing("snapshot_frame_crossing: not a host-run procedure".to_string())
+        Error::HostCrossing("snapshot_frame_crossing: not a host-run tasklet".to_string())
     })?;
     let header = facts.header();
     let flush = |buffer: &mut Box<dyn FlushableBuffer>| {
         crate::flusher::flush_one(
             &mut **buffer,
-            &slot.entity_identity,
+            &slot.cell_identity,
             &slot.change_seq,
             &header,
             slot.persistence_enabled,
@@ -179,12 +179,8 @@ pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, 
         crate::poll_core::global().host_command(slot, schema::ActivationKind::SnapshotRequest)?,
     )?;
     let size = state.len();
-    let frame = crate::flusher::build_entity_frame(
-        &slot.entity_identity,
-        seq,
-        &header.stamp(&state),
-        &state,
-    );
+    let frame =
+        crate::flusher::build_cell_frame(&slot.cell_identity, seq, &header.stamp(&state), &state);
     Ok((frame, seq, size))
 }
 
@@ -202,11 +198,11 @@ fn snapshot_state(outcome: schema::ActivationOutcome) -> Result<Vec<u8>, Error> 
     }
 }
 
-/// Live-read / migration serialize for a host-run Entity, waiting `wait` for
-/// the host's answer. MUST run under the entity gate (the caller's
-/// `with_entity_exclusive` closure).
+/// Live-read / migration serialize for a host-run Cell, waiting `wait` for
+/// the host's answer. MUST run under the cell gate (the caller's
+/// `with_cell_exclusive` closure).
 pub fn state_json_locked(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     migration: bool,
     wait: Duration,
 ) -> Result<(serde_json::Value, u64), Error> {
@@ -231,9 +227,9 @@ pub fn state_json_locked(
     Ok((value, seq))
 }
 
-/// Apply-state (migration in / init_values) for a host-run Entity. MUST run
-/// under the entity gate.
-pub fn apply_state_locked(slot: &Arc<EntitySlot>, value: &serde_json::Value) -> Result<(), Error> {
+/// Apply-state (migration in / init_values) for a host-run Cell. MUST run
+/// under the cell gate.
+pub fn apply_state_locked(slot: &Arc<CellSlot>, value: &serde_json::Value) -> Result<(), Error> {
     let state_json = serde_json::to_vec(value).map_err(|e| Error::HostCrossing(e.to_string()))?;
     match crate::poll_core::global()
         .host_command(slot, schema::ActivationKind::ApplyState { state_json })?

@@ -1,25 +1,25 @@
 //! The frozen registration-time result of authoring a workflow class: a
-//! validated procedure DAG (single-rooted, acyclic, no dynamic entities),
+//! validated tasklet DAG (single-rooted, acyclic, no dynamic cells),
 //! plus the class's loop, rollback and durability facts.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::{LoopMode, RollbackMode};
-use crate::channel::{ProcedureId, RetryPolicy};
+use crate::channel::{RetryPolicy, TaskletId};
 use crate::operative::topology::OperativeTopology;
 
-/// The procedure DAG in Kahn order from the root, so every producer sits at
+/// The tasklet DAG in Kahn order from the root, so every producer sits at
 /// a lower index than its consumer. A node's index is its `stage_idx` and
-/// its wire `proc_idx`, and reversing the order is the compensation order.
+/// its wire `task_idx`, and reversing the order is the compensation order.
 #[derive(Debug, Default)]
-pub struct ProcDag {
-    pub order: Vec<ProcedureId>,
+pub struct TaskDag {
+    pub order: Vec<TaskletId>,
     pub parents: Vec<Vec<usize>>,
     pub children: Vec<Vec<usize>>,
 }
 
-impl ProcDag {
+impl TaskDag {
     pub fn len(&self) -> usize {
         self.order.len()
     }
@@ -51,14 +51,14 @@ pub enum GraphSeed {
     EveryIndegreeZero,
 }
 
-/// One graph-shape walk over the procedure nodes: Kahn topological order plus
+/// One graph-shape walk over the tasklet nodes: Kahn topological order plus
 /// reachability from the roots. Both declaration surfaces read their shape
 /// refusals off this — the rule is one rule, so its mechanism is one
 /// mechanism, and each caller keeps its own refusal wording.
 pub struct GraphOrder {
     /// Node ids in Kahn topological order (FIFO — for a tree this is exactly
-    /// BFS from the root, so workflow `proc_idx` numbering stays stable).
-    pub order: Vec<ProcedureId>,
+    /// BFS from the root, so workflow `task_idx` numbering stays stable).
+    pub order: Vec<TaskletId>,
     /// Node id → position in `order`; `usize::MAX` for a node the walk left
     /// out.
     pub pos: Vec<usize>,
@@ -68,15 +68,15 @@ pub struct GraphOrder {
     pub children: Vec<Vec<usize>>,
     /// First node unreachable from the roots, if any (meaningful only when
     /// the graph is acyclic — a cycle already explains unreachability).
-    pub unreachable: Option<ProcedureId>,
+    pub unreachable: Option<TaskletId>,
     /// First node the walk left over — on (or strictly downstream of) a cycle.
-    pub on_cycle: Option<ProcedureId>,
+    pub on_cycle: Option<TaskletId>,
 }
 
 /// The edge tables one walk needs: outgoing, incoming, and the incoming count.
 fn adjacency(
     n: usize,
-    edges: &[(ProcedureId, ProcedureId)],
+    edges: &[(TaskletId, TaskletId)],
 ) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<usize>) {
     let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -90,7 +90,7 @@ fn adjacency(
 }
 
 /// Which nodes `roots` reach, following `children`.
-fn reachable(children: &[Vec<usize>], roots: &[ProcedureId]) -> Vec<bool> {
+fn reachable(children: &[Vec<usize>], roots: &[TaskletId]) -> Vec<bool> {
     let mut reached = vec![false; children.len()];
     let mut stack: Vec<usize> = roots.iter().map(|&r| r as usize).collect();
     while let Some(node) = stack.pop() {
@@ -104,16 +104,16 @@ fn reachable(children: &[Vec<usize>], roots: &[ProcedureId]) -> Vec<bool> {
 
 /// Walk `n` nodes over `edges` (producer → consumer pairs), reachable from
 /// `roots`. Merge mappings are irrelevant to shape, so an edge is a pair of
-/// procedure ids.
+/// tasklet ids.
 pub fn graph_order(
     n: usize,
-    edges: &[(ProcedureId, ProcedureId)],
-    roots: &[ProcedureId],
+    edges: &[(TaskletId, TaskletId)],
+    roots: &[TaskletId],
     seed: GraphSeed,
 ) -> GraphOrder {
     let (parents, children, mut indegree) = adjacency(n, edges);
     let reached = reachable(&children, roots);
-    let unreachable = (0..n).find(|&i| !reached[i]).map(|i| i as ProcedureId);
+    let unreachable = (0..n).find(|&i| !reached[i]).map(|i| i as TaskletId);
 
     let mut queued = vec![false; n];
     let mut queue: std::collections::VecDeque<usize> = match seed {
@@ -127,7 +127,7 @@ pub fn graph_order(
     let mut pos = vec![usize::MAX; n];
     while let Some(node) = queue.pop_front() {
         pos[node] = order.len();
-        order.push(node as ProcedureId);
+        order.push(node as TaskletId);
         for &child in &children[node] {
             indegree[child] = indegree[child].saturating_sub(1);
             if indegree[child] == 0 && !queued[child] {
@@ -138,7 +138,7 @@ pub fn graph_order(
     }
     let on_cycle = (0..n)
         .find(|&i| pos[i] == usize::MAX)
-        .map(|i| i as ProcedureId);
+        .map(|i| i as TaskletId);
 
     GraphOrder {
         order,
@@ -153,12 +153,12 @@ pub fn graph_order(
 /// A workflow class as the registry holds it.
 pub struct WorkflowSpec {
     pub topology: Arc<OperativeTopology>,
-    pub dag: ProcDag,
+    pub dag: TaskDag,
     pub max_duration: Option<Duration>,
     pub rollback_mode: RollbackMode,
     pub loop_mode: LoopMode,
     pub wake_after: Option<Duration>,
-    /// The per-entity ladder inside a stage.
+    /// The per-cell ladder inside a stage.
     pub retry: RetryPolicy,
     /// Sends of one barrier before an unacked commit fails the run.
     pub barrier_retry_attempts: u32,
@@ -195,35 +195,35 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares procedures but no entry channel; a structured \
-         workflow must declare one input channel (c.input::<T>(...)) to seed its first procedure"
+        "workflow operative `{factory_id}` declares tasklets but no entry channel; a structured \
+         workflow must declare one input channel (c.input::<T>(...)) to seed its first tasklet"
     )]
     NoEntryChannel { factory_id: &'static str },
 
     #[error(
-        "workflow operative `{factory_id}` declares procedure `{procedure}` on a cycle; a \
-         bounded topology is a DAG — a procedure's output may never reach its own input"
+        "workflow operative `{factory_id}` declares tasklet `{tasklet}` on a cycle; a \
+         bounded topology is a DAG — a tasklet's output may never reach its own input"
     )]
     Cycle {
         factory_id: &'static str,
-        procedure: String,
+        tasklet: String,
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares procedure `{procedure}` as the producer of \
-         more than one channel; a procedure emits on exactly one output channel (its `Output` \
+        "workflow operative `{factory_id}` declares tasklet `{tasklet}` as the producer of \
+         more than one channel; a tasklet emits on exactly one output channel (its `Output` \
          type), so a second one could never be routed. Fan out by declaring several consumers on \
          the one channel"
     )]
     MultipleOutputChannels {
         factory_id: &'static str,
-        procedure: String,
+        tasklet: String,
     },
 
     #[error(
         "workflow operative `{factory_id}` declares entry channel `{channel}` feeding {consumers} \
-         procedures; a bounded topology has a single root — the entry channel must feed exactly \
-         one procedure, which then fans out"
+         tasklets; a bounded topology has a single root — the entry channel must feed exactly \
+         one tasklet, which then fans out"
     )]
     EntryRoot {
         factory_id: &'static str,
@@ -232,21 +232,21 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` merges entry channel `{channel}` into procedure \
-         `{procedure}`; a workflow operative is seeded from its spawn args (and, for a `PerInput` \
+        "workflow operative `{factory_id}` merges entry channel `{channel}` into tasklet \
+         `{tasklet}`; a workflow operative is seeded from its spawn args (and, for a `PerInput` \
          loop, its inbox items) through ONE entry channel, and neither carries the channel a \
          payload arrived on — so an entry channel cannot be one merge source among several. \
-         Merge the output streams of two or more of this operative's procedures instead"
+         Merge the output streams of two or more of this operative's tasklets instead"
     )]
     MergeFromEntryChannel {
         factory_id: &'static str,
         channel: String,
-        procedure: String,
+        tasklet: String,
     },
 
     #[error(
         "workflow operative `{factory_id}` declares a handoff-chained loop over a branching \
-         topology ({leaves} terminal procedures); iteration N+1 is seeded from iteration N's \
+         topology ({leaves} terminal tasklets); iteration N+1 is seeded from iteration N's \
          terminal batch, which a graph with several leaves does not define. Use \
          `LoopMode::PerInput`, or keep the chained loop converging on one terminal"
     )]
@@ -256,33 +256,33 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares a dynamic-entity procedure `{procedure}`; \
-         workflow operatives do not support dynamic entity mode"
+        "workflow operative `{factory_id}` declares a dynamic-cell tasklet `{tasklet}`; \
+         workflow operatives do not support dynamic cell mode"
     )]
-    DynamicEntities {
+    DynamicCells {
         factory_id: &'static str,
-        procedure: String,
+        tasklet: String,
     },
 
     #[error(
         "workflow operative `{factory_id}` is not terminable: its only possible exit is an external \
-         stop. Add a terminal condition: let the chain complete, have a procedure call \
+         stop. Add a terminal condition: let the chain complete, have a tasklet call \
          ctx.complete, or declare max_duration()."
     )]
     ExternalStopOnly { factory_id: &'static str },
 
     #[error(
-        "workflow operative `{factory_id}` declares procedure `{procedure}` that is not reachable \
-         from the entry channel; every procedure must hang off the one graph rooted there"
+        "workflow operative `{factory_id}` declares tasklet `{tasklet}` that is not reachable \
+         from the entry channel; every tasklet must hang off the one graph rooted there"
     )]
     Disconnected {
         factory_id: &'static str,
-        procedure: String,
+        tasklet: String,
     },
 
     #[error(
         "workflow operative `{factory_id}` declares a retry ladder ({attempts} attempts) with a \
-         zero backoff base; retries would re-run the failing entity in a hot loop. Give \
+         zero backoff base; retries would re-run the failing cell in a hot loop. Give \
          retry_backoff() a non-zero base, or set retry_attempts() to 0 for fail-fast"
     )]
     ZeroRetryBackoff {
@@ -291,21 +291,21 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares no procedures; a workflow runs a graph of \
-         procedures from one entry channel, declared in procedures() on the builder a stream uses"
+        "workflow operative `{factory_id}` declares no tasklets; a workflow runs a graph of \
+         tasklets from one entry channel, declared in tasklets() on the builder a stream uses"
     )]
-    NoProcedures { factory_id: &'static str },
+    NoTasklets { factory_id: &'static str },
 
     #[error(
         "workflow operative `{factory_id}` is a durable handoff-chained loop, but its terminal \
-         procedure `{procedure}` releases no inter-procedure handoff; iteration N+1 is seeded \
-         from iteration N's terminal batch, and a procedure that owns no output channel, or whose \
+         tasklet `{tasklet}` releases no inter-tasklet handoff; iteration N+1 is seeded \
+         from iteration N's terminal batch, and a tasklet that owns no output channel, or whose \
          only output is plugin-bound, has nothing the journal carries. Give the terminal \
-         procedure an output channel that is not plugin-bound — taking the sink off its own \
+         tasklet an output channel that is not plugin-bound — taking the sink off its own \
          channel is enough — or switch to `LoopMode::PerInput`"
     )]
     LoopTerminalWithoutHandoff {
         factory_id: &'static str,
-        procedure: String,
+        tasklet: String,
     },
 }

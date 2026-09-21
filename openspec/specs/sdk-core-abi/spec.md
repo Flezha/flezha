@@ -12,9 +12,9 @@ frees; buffers returned by the core are freed via a core-provided free function;
 context pointer is opaque.
 
 `abandon` takes a polled activation's token and re-hands its untouched items,
-releasing the entity as if it had never been polled. It exists because no unwind
+releasing the cell as if it had never been polled. It exists because no unwind
 crosses the ABI: a veneer whose host language throws, or whose thread dies, has
-no way to reach `complete`, and without an explicit call the entity would be
+no way to reach `complete`, and without an explicit call the cell would be
 retired for the lifetime of the process. A veneer SHALL answer every polled
 activation exactly once — `complete`, the failure path, or `abandon` — and SHALL
 make that structural in its own language (a `finally`, a destructor, a scope
@@ -36,8 +36,8 @@ memory.
 - **WHEN** `poll` is called with a 100 ms timeout and no work arrives
 - **THEN** it SHALL return an empty/timeout result within a bounded margin of 100 ms rather than blocking indefinitely
 
-#### Scenario: An abandoned activation releases its entity
-- **WHEN** a veneer polls an activation for entity E and calls `flz_core_abandon` with its token instead of completing it
+#### Scenario: An abandoned activation releases its cell
+- **WHEN** a veneer polls an activation for cell E and calls `flz_core_abandon` with its token instead of completing it
 - **THEN** E SHALL become pollable again with its items intact and in order, and no retry-ladder attempt SHALL have been consumed
 
 #### Scenario: An unknown or already-answered token is rejected, not silently accepted
@@ -81,7 +81,7 @@ unreachable over the ABI.
 
 #### Scenario: Complete from a different thread
 - **WHEN** worker A polls an activation and hands it to worker B, which completes it
-- **THEN** the completion SHALL be accepted and the entity released, identically to same-thread completion
+- **THEN** the completion SHALL be accepted and the cell released, identically to same-thread completion
 
 #### Scenario: The rule is recorded for the next binding
 - **WHEN** a new host binding is designed whose concurrency primitive is bound to one thread
@@ -133,14 +133,14 @@ binding whose surface is compared by review rather than by a test does not satis
 ### Requirement: The declaration surface covers the full host layer
 
 `flz_core_declare_class` SHALL accept the complete host-class declaration:
-entity mode (single/static with keys, dynamic with TTL and cap), clock
+cell mode (single/static with keys, dynamic with TTL and cap), clock
 kind, correction window and beyond-window policy, delivery tier
-(effectively-once, checkpoint ack-granularity), inter-procedure channels
+(effectively-once, checkpoint ack-granularity), inter-tasklet channels
 with edge ids and keying markers, per-channel retry and overflow
 policies, the record-header lang/format bytes, the declaring SDK's own
 version, persistence, and workflow
 lifecycle facts (loop mode, rollback mode, retry, wake-after,
-compensable procs). Timer caps stay host-layer policy — in both SDKs the
+compensable tasks). Timer caps stay host-layer policy — in both SDKs the
 cap is enforced where the registration API lives, not in the core. A declaration
 the core cannot honor SHALL be refused at declaration time with an error
 naming the field — never accepted and degraded silently.
@@ -183,7 +183,7 @@ differs per SDK.
 
 #### Scenario: The declared version reaches the header and nothing else
 - **GIVEN** a veneer that declared its classes with a version different from the kernel's own package version
-- **WHEN** an Entity of that class writes a durable record and the controller reads the operative's declaration metadata
+- **WHEN** a Cell of that class writes a durable record and the controller reads the operative's declaration metadata
 - **THEN** bytes 1:5 of the record SHALL carry the declared version, and the declaration metadata SHALL NOT carry it
 
 #### Scenario: The advertisement reads the declared value from the core
@@ -195,13 +195,13 @@ differs per SDK.
 
 Every capability the widened host layer supports SHALL be exercisable
 through `flz_core_ffi` alone — the five command activation kinds, the
-prepare crossing, entity modes, tiers, timers, inter-procedure routing,
+prepare crossing, cell modes, tiers, timers, inter-tasklet routing,
 and workflow lifecycles. The CI scenario suite SHALL grow to drive at least:
 a restore fold, a live state read, a keyed dynamic route via the prepare
 crossing, an effectively-once completion with offsets, and a workflow
-procedure's `complete` ending its instance, all through the C entry points,
+tasklet's `complete` ending its instance, all through the C entry points,
 failing if any required surface is missing. A step answer SHALL carry a
-procedure's completion request and its result, and no entry point SHALL exist
+tasklet's completion request and its result, and no entry point SHALL exist
 for a one-function workflow body, which no host declares.
 
 Every shim is a consumer of the C entry points, never a fork of them —
@@ -218,8 +218,8 @@ calls in one place, so its declared surface can be compared against the crate's
 exported symbols the way a veneer's exports are.
 
 #### Scenario: A restore fold crosses the ABI
-- **WHEN** the scenario suite ships a persisted change log for an ABI-declared entity and the controller path delivers `RestoreInitState`
-- **THEN** a `RestoreFold` activation SHALL be pollable through `flz_core_poll`, its completion SHALL unblock the entity, and the entity's next input activation SHALL observe the folded state's effects
+- **WHEN** the scenario suite ships a persisted change log for an ABI-declared cell and the controller path delivers `RestoreInitState`
+- **THEN** a `RestoreFold` activation SHALL be pollable through `flz_core_poll`, its completion SHALL unblock the cell, and the cell's next input activation SHALL observe the folded state's effects
 
 #### Scenario: The Java shim is a consumer, not a fork
 - **WHEN** the Java SDK's JNI bridge is compared against the ABI's exported symbol set
@@ -246,7 +246,7 @@ exported symbols the way a veneer's exports are.
 - **THEN** the core SHALL report the condition through `flz_core_wait_starvation`, so a host that services that wait can recover without a per-host kernel path
 
 #### Scenario: A step answer ends its workflow
-- **WHEN** a host answers a workflow step activation whose procedure called `ctx.complete(result)`
+- **WHEN** a host answers a workflow step activation whose tasklet called `ctx.complete(result)`
 - **THEN** the core SHALL end the instance with that result once the iteration commits, with no host-side path of its own
 
 ### Requirement: The restore crossing carries each record's stamped schema version
@@ -261,17 +261,17 @@ version or to migrate from a named `from_version`. A refusal SHALL be produced
 by the core and SHALL NOT cross.
 
 The class declaration SHALL carry `schema_version` and
-`min_readable_schema_version` per Procedure, not per class.
+`min_readable_schema_version` per Tasklet, not per class.
 
 #### Scenario: a host receives the version it must migrate from
 
-- **GIVEN** a host-run Procedure declaring `schema_version = 2` and `min_readable_schema_version = 1`
+- **GIVEN** a host-run Tasklet declaring `schema_version = 2` and `min_readable_schema_version = 1`
 - **WHEN** a restore payload carries a snapshot stamped version 1
 - **THEN** the crossing SHALL present the snapshot bytes tagged `from_version = 1`, and the host SHALL decode them with its version-1 migration rather than its current codec
 
 #### Scenario: an unreadable record never reaches the host
 
-- **GIVEN** a host-run Procedure declaring `schema_version = 2` and `min_readable_schema_version = 2`
+- **GIVEN** a host-run Tasklet declaring `schema_version = 2` and `min_readable_schema_version = 2`
 - **WHEN** a restore payload carries a record stamped version 1
 - **THEN** the core SHALL fail the restore with a schema error and SHALL NOT cross the record to the host
 
@@ -377,7 +377,7 @@ crate's source.
 
 ### Requirement: A spawn is a request and a result read through a handle
 
-The C ABI SHALL expose a procedure's spawn as two entry points and SHALL NOT expose a blocking
+The C ABI SHALL expose a tasklet's spawn as two entry points and SHALL NOT expose a blocking
 spawn-and-wait entry (`flz_core_spawn_workflow` is removed):
 
 - `flz_core_spawn_request(ctx, factory_id, id, payload, if_running, handle_out)` SHALL send the

@@ -7,7 +7,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
 
   Three declared behaviours, each its own phase: no output reaches a plugin
   before the interval closes; the whole interval's outputs then arrive together
-  with sequential ordinals off ONE record seq; and a quiet Entity's interval
+  with sequential ordinals off ONE record seq; and a quiet Cell's interval
   closes on its `max_delay_ms` alone, so a held output is never held
   indefinitely.
 
@@ -111,7 +111,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
 
     assert_identities_are_consistent(batch)
 
-    # --- Phase 3: a quiet Entity closes on the delay alone -------------------
+    # --- Phase 3: a quiet Cell closes on the delay alone -------------------
     # One input, then silence. Nothing will ever call `ctx.checkpoint()` again,
     # so only `max_delay_ms` can close this interval — and it must, or the
     # output waits for an input that never comes.

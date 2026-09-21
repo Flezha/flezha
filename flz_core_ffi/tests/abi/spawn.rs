@@ -1,4 +1,4 @@
-//! A procedure's spawn through the C ABI: the request never waits, the result
+//! A tasklet's spawn through the C ABI: the request never waits, the result
 //! read carries the id the request resolved to, a refusal stays in its handle,
 //! a replay sends nothing, and a failure nobody read is logged once when its
 //! activation completes.

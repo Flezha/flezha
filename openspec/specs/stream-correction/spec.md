@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The stream-correction capability lets a stream operative fix the past when a source sends a late or corrected event: an operative with the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Entity's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Entity, and the same transaction backs the operator verb `flz operative replay`.
+The stream-correction capability lets a stream operative fix the past when a source sends a late or corrected event: an operative with the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the operator verb `flz operative replay`.
 ## Requirements
 ### Requirement: Correction window declaration with validated prerequisites
 
@@ -67,15 +67,15 @@ existing one and is not re-expressed.
 
 #### Scenario: The Elixir SDK refuses the declaration at build time
 
-- **WHEN** an Elixir class declares `correction_window/2` without `effectively_once/1`, or over Procedures none of which declares an `:event_time` clock, or with a window of zero
-- **THEN** registration answers `{:error, {:invalid_topology, issues}}` naming `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (with the Procedure and the clock it declares) or `CorrectionWindowZero`, and no Entity is started
+- **WHEN** an Elixir class declares `correction_window/2` without `effectively_once/1`, or over Tasklets none of which declares an `:event_time` clock, or with a window of zero
+- **THEN** registration answers `{:error, {:invalid_topology, issues}}` naming `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (with the Tasklet and the clock it declares) or `CorrectionWindowZero`, and no Cell is started
 
 ### Requirement: Late inputs inside the window trigger automatic correction
 
-Each Entity SHALL track its event-time high-water. An input whose extracted
+Each Cell SHALL track its event-time high-water. An input whose extracted
 event time is behind the high-water by no more than the correction window SHALL
 NOT be processed as arrival; the SDK SHALL request correction and hold the
-Entity's drain. The engine SHALL rewind the Entity to the last state seq whose
+Cell's drain. The engine SHALL rewind the Cell to the last state seq whose
 event time precedes the late input's, restore the runner to that baseline, and
 re-forward the input-log range above the baseline's consumed offset marked as a
 replay slice. The SDK SHALL buffer that slice to its end-of-slice marker, order
@@ -86,15 +86,15 @@ The late input is already in the input log at its arrival offset, because inputs
 are journaled before they are forwarded; the slice therefore contains it by
 construction and no separate splice SHALL be performed.
 
-The Elixir SDK re-expresses this in its own core. Its Entity already tracks the
+The Elixir SDK re-expresses this in its own core. Its Cell already tracks the
 event-time high-water and restores it from its effect records, so the
 classification is a decision taken in the one function that extracts the event
 time, before it advances the high-water; a correctable input is withheld and one
 `correction_request` frame — seq zero, a zero record header, a body of the target
-event time alone — leaves on the Entity's own state stream. A run with no state
+event time alone — leaves on the Cell's own state stream. A run with no state
 stream dispatches the input as an arrival instead, as the reference does when no
-sink is installed. A marked member is buffered when the Entity pops it, and the
-end-of-slice broadcast is placed on that Entity's queue behind the members rather
+sink is installed. A marked member is buffered when the Cell pops it, and the
+end-of-slice broadcast is placed on that Cell's queue behind the members rather
 than executed on arrival, so the close can never overtake a member it was meant to
 include; the flush sorts by extracted event time with the input-log offset as the
 tie-break and re-queues the ordered members at the head. Each re-queued member is
@@ -105,9 +105,9 @@ watermark.
 
 #### Scenario: Late trade corrects a candle
 
-- **WHEN** an Entity building 1m candles has high-water 14:06:00 and receives a
+- **WHEN** a Cell building 1m candles has high-water 14:06:00 and receives a
   trade with event time 14:05:10, within a 10-minute window
-- **THEN** after correction completes, the Entity's state equals the state that
+- **THEN** after correction completes, the Cell's state equals the state that
   a run receiving the trade in event-time order would have produced
 
 #### Scenario: Slice membership is durable, not timing-dependent
@@ -124,7 +124,7 @@ watermark.
   are dispatched as members of the sorted slice, and those journaled above it are
   dispatched in arrival order after the slice
 
-#### Scenario: An Elixir Entity folds the replayed slice in event-time order
+#### Scenario: An Elixir Cell folds the replayed slice in event-time order
 
 - **WHEN** an Elixir class declaring a correction window has folded event times 100 and 300, an input at event time 200 arrives, and the controller replays the marked slice and closes it with the end-of-slice broadcast
 - **THEN** the input at 200 is not dispatched on arrival, exactly one `correction_request` carrying target 200 is sent, the replayed members are held until the broadcast, and the fold order after the slice is 100, 200, 300 — while an input journaled above the slice and enqueued behind the broadcast folds after all three
@@ -153,12 +153,12 @@ on-time input look late and start a correction storm.
 
 #### Scenario: An Elixir beyond-window arrival does not move the high-water
 
-- **WHEN** an Elixir Entity with high-water 1 000 000 and a 600 000 ms window receives an input at event time 1 000 under the default policy, and then an input at event time 1 000 001
+- **WHEN** an Elixir Cell with high-water 1 000 000 and a 600 000 ms window receives an input at event time 1 000 under the default policy, and then an input at event time 1 000 001
 - **THEN** the straggler is dispatched as an arrival, the high-water is still 1 000 000 when the next input is classified, and that next input is on time; under a declared `drop` policy the straggler is not dispatched and the high-water is likewise unmoved
 
 ### Requirement: Corrected outputs republish under a bumped epoch
 
-A deliberate correction or replay SHALL bump the Entity's epoch. Corrected
+A deliberate correction or replay SHALL bump the Cell's epoch. Corrected
 effect records SHALL supersede WAL history above the correction boundary via a
 non-destructive rewind that retains records at or below the baseline seq and
 drops only the snapshots above it; the epoch bump SHALL be durable before any
@@ -180,22 +180,22 @@ rows by natural key. Crash-driven re-emits SHALL NOT bump the epoch.
 - **THEN** the re-run reuses the same bumped epoch (no double increment) and the
   sink outcome is identical to an uninterrupted correction
 
-### Requirement: Correction requests coalesce per Entity
+### Requirement: Correction requests coalesce per Cell
 
-Concurrent or bursty late inputs for one Entity SHALL coalesce into a single
+Concurrent or bursty late inputs for one Cell SHALL coalesce into a single
 correction whose target is the oldest requested event time and whose splice
-contains all pending late inputs. At most one correction per Entity SHALL be in
+contains all pending late inputs. At most one correction per Cell SHALL be in
 flight.
 
 #### Scenario: Burst of late trades replays once
 
-- **WHEN** five late trades for one Entity arrive within the debounce interval
+- **WHEN** five late trades for one Cell arrive within the debounce interval
 - **THEN** exactly one restore-splice-replay cycle runs and its splice contains
   all five trades in event-time order
 
 ### Requirement: Operator replay verb
 
-`flz operative replay <entity> --from <seq|ts>` SHALL re-process the retained
+`flz operative replay <cell> --from <seq|ts>` SHALL re-process the retained
 input window from the given point through the current operative code and
 republish outputs under a bumped epoch, using the same correction transaction
 with an empty splice. Targets older than retention SHALL be refused with an

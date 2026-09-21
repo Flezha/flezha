@@ -1,8 +1,8 @@
 defmodule Flezha.State.Metrics do
   @moduledoc """
-  Per-Entity `:counters` references for the persistence subsystem.
+  Per-Cell `:counters` references for the persistence subsystem.
 
-  Eleven counter slots per Entity: `:persisted_changes_total` and
+  Eleven counter slots per Cell: `:persisted_changes_total` and
   `:persisted_bytes_total` (monotonic); `:wal_size_bytes`, `:snapshot_seq`,
   `:flush_latency_ms_p99` and `:fsync_durability_lag_ms` (gauges); plus
   `:dedup_drops_total`, `:wal_seq` (the last persisted seq), `:wal_shed_total`
@@ -11,14 +11,14 @@ defmodule Flezha.State.Metrics do
   the writer ran — what a batch of appends shares).
 
   Allocations are lazy and stored in a module-level `:ets` table keyed by
-  `entity_id`.
+  `cell_id`.
   """
 
   alias Flezha.State.Paths
 
   @table __MODULE__
 
-  # `:write_concurrency` rather than `:atomics`: a per-Entity table written by
+  # `:write_concurrency` rather than `:atomics`: a per-Cell table written by
   # the writer and read by the exporter, not a hot single-process counter.
   use Flezha.SDK.CounterTable,
     table: :counter,
@@ -42,20 +42,20 @@ defmodule Flezha.State.Metrics do
   @spec counters() :: [atom()]
   def counters(), do: @counters
 
-  @spec for_entity(Paths.entity_id()) :: :counters.counters_ref()
-  def for_entity(entity_id) do
+  @spec for_cell(Paths.cell_id()) :: :counters.counters_ref()
+  def for_cell(cell_id) do
     ensure_table()
 
-    case :ets.lookup(@table, entity_id) do
-      [{^entity_id, ref}] ->
+    case :ets.lookup(@table, cell_id) do
+      [{^cell_id, ref}] ->
         ref
 
       [] ->
         ref = counter_new()
         # `:ets.insert_new/2` keeps the first writer's ref under races.
-        case :ets.insert_new(@table, {entity_id, ref}) do
+        case :ets.insert_new(@table, {cell_id, ref}) do
           true -> ref
-          false -> :ets.lookup_element(@table, entity_id, 2)
+          false -> :ets.lookup_element(@table, cell_id, 2)
         end
     end
   end
@@ -80,24 +80,24 @@ defmodule Flezha.State.Metrics do
     counter_snapshot(ref)
   end
 
-  @spec drop_entity(Paths.entity_id()) :: :ok
-  def drop_entity(entity_id) do
+  @spec drop_cell(Paths.cell_id()) :: :ok
+  def drop_cell(cell_id) do
     ensure_table()
-    :ets.delete(@table, entity_id)
+    :ets.delete(@table, cell_id)
     :ok
   end
 
   @doc """
-  Snapshot every Entity's counter set. Returns
-  `[{entity_id, %{counter_name => value}}]`. Used by the metrics
+  Snapshot every Cell's counter set. Returns
+  `[{cell_id, %{counter_name => value}}]`. Used by the metrics
   exporter and by `flz state list`.
   """
-  @spec snapshot_all() :: [{Paths.entity_id(), %{atom() => integer()}}]
+  @spec snapshot_all() :: [{Paths.cell_id(), %{atom() => integer()}}]
   def snapshot_all() do
     ensure_table()
 
     :ets.tab2list(@table)
-    |> Enum.map(fn {entity_id, ref} -> {entity_id, to_map(ref)} end)
+    |> Enum.map(fn {cell_id, ref} -> {cell_id, to_map(ref)} end)
   end
 
   @doc """
@@ -111,12 +111,12 @@ defmodule Flezha.State.Metrics do
   end
 
   @doc """
-  Build the per-Entity metrics list — keyed structurally rather than
+  Build the per-Cell metrics list — keyed structurally rather than
   flattened to a metric name. Useful for the CLI (`flz state list`) and
   the `flz operative info` extension.
   """
-  @spec by_entity() :: [{Paths.entity_id(), %{atom() => integer()}}]
-  def by_entity(), do: snapshot_all()
+  @spec by_cell() :: [{Paths.cell_id(), %{atom() => integer()}}]
+  def by_cell(), do: snapshot_all()
 
   defp ensure_table() do
     case :ets.whereis(@table) do
@@ -132,10 +132,10 @@ defmodule Flezha.State.Metrics do
     end
   end
 
-  defp flatten({{_ce, operative_class, procedure_id, entity_key}, counters}) do
+  defp flatten({{_ce, operative_class, tasklet_id, cell_key}, counters}) do
     prefix =
-      "flezha.entity." <>
-        operative_class <> "." <> procedure_id <> "." <> Paths.encode_entity_key(entity_key)
+      "flezha.cell." <>
+        operative_class <> "." <> tasklet_id <> "." <> Paths.encode_cell_key(cell_key)
 
     Enum.map(counters, fn {name, value} ->
       {prefix <> "." <> Atom.to_string(name), value}

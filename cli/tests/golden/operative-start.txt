@@ -25,11 +25,11 @@ ID:
     prints "<id> is already running, left untouched" and starts nothing.
 
 INIT VALUES:
-    A stream operative's document is keyed by Procedure name, one entry per
-    Procedure to seed. Name only what you want seeded; a Procedure you leave
+    A stream operative's document is keyed by Tasklet name, one entry per
+    Tasklet to seed. Name only what you want seeded; a Tasklet you leave
     out keeps the state its class builds.
 
-        --init-values '{"compare_filter_procedure": {"comparable": "hi"}}'
+        --init-values '{"compare_filter_tasklet": {"comparable": "hi"}}'
         --init-values '{"ohlc": {"1m": {"high": 0}}}'   one state per declared key
 
     A name the class does not carry is ignored, not refused: the runner logs

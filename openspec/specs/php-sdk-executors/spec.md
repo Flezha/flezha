@@ -22,36 +22,36 @@ The loop SHALL take its work from a blocking `flz_core_poll(ctx, timeout_ms)` ca
 - **WHEN** the runner stops, whether by signal or by reaching its activation budget
 - **THEN** `stop()` SHALL return only once every loop has left user code, and `flz_core_shutdown` SHALL NOT be called before it does
 
-### Requirement: Concurrency cannot affect per-entity correctness
-An executor SHALL NOT be able to change ordering, exclusivity, or state consistency, because those are held by the core: `PollCore` never hands out two activations for the same entity concurrently, regardless of how many threads poll it.
+### Requirement: Concurrency cannot affect per-cell correctness
+An executor SHALL NOT be able to change ordering, exclusivity, or state consistency, because those are held by the core: `PollCore` never hands out two activations for the same cell concurrently, regardless of how many threads poll it.
 
 The SDK SHALL NOT add locking, queueing, or ordering of its own on top of that guarantee.
 
-#### Scenario: Concurrent activations never share an entity
+#### Scenario: Concurrent activations never share a cell
 - **WHEN** many threads poll under sustained load
-- **THEN** no two in-flight activations SHALL name the same entity
+- **THEN** no two in-flight activations SHALL name the same cell
 
 #### Scenario: Switching executors does not change results
 - **WHEN** the same deterministic workload is replayed under `SyncExecutor` and under `SwooleExecutor`
-- **THEN** the resulting entity states and emitted outputs SHALL be equal
+- **THEN** the resulting cell states and emitted outputs SHALL be equal
 
 ### Requirement: SyncExecutor is the zero-dependency default
 The SDK SHALL ship a `SyncExecutor` as the default, requiring no Composer dependency and no PHP extension beyond `ext-ffi`: `run()` drives the loop on the calling thread and `stop()` sets the flag the loop checks between polls.
 
-It SHALL process one activation at a time, which is correct for procedure bodies that are CPU-bound or use blocking I/O, and it SHALL work on a non-thread-safe (NTS) PHP build, which is what distributions ship by default.
+It SHALL process one activation at a time, which is correct for tasklet bodies that are CPU-bound or use blocking I/O, and it SHALL work on a non-thread-safe (NTS) PHP build, which is what distributions ship by default.
 
 #### Scenario: A runner starts with no dependencies installed
 - **WHEN** a project installs only `flezha/sdk` on an NTS PHP build and starts a runner without selecting an executor
 - **THEN** the runner SHALL start and process activations under `SyncExecutor`
 
-#### Scenario: A blocking procedure body is correct, not exceptional
-- **WHEN** a procedure body performs blocking I/O under `SyncExecutor`
+#### Scenario: A blocking tasklet body is correct, not exceptional
+- **WHEN** a tasklet body performs blocking I/O under `SyncExecutor`
 - **THEN** the activation SHALL complete normally and the runner SHALL process the next one afterwards, with no warning and no degraded mode
 
 ### Requirement: SwooleExecutor gives one runner every core
-The SDK SHALL ship a `SwooleExecutor` that runs the poll loop on a pool of `Swoole\Thread`s over one shared `FlzContext`, so a single runner — and therefore a single operative's procedure class — uses more than one core.
+The SDK SHALL ship a `SwooleExecutor` that runs the poll loop on a pool of `Swoole\Thread`s over one shared `FlzContext`, so a single runner — and therefore a single operative's tasklet class — uses more than one core.
 
-Each thread SHALL bootstrap the runner's entry script, rebuild the PHP-side procedure registry, and attach to the existing context by its address, without re-declaring classes to the core: `flz_core_declare_class` is per context, not per thread. The entry script is therefore re-entered, and the SDK SHALL document that it must be safe to `require` — in particular that it carries no `#!` line, which is stripped only from the script PHP was invoked with.
+Each thread SHALL bootstrap the runner's entry script, rebuild the PHP-side tasklet registry, and attach to the existing context by its address, without re-declaring classes to the core: `flz_core_declare_class` is per context, not per thread. The entry script is therefore re-entered, and the SDK SHALL document that it must be safe to `require` — in particular that it carries no `#!` line, which is stripped only from the script PHP was invoked with.
 
 The pool SHALL grow on the core's own signal rather than a guess: a supervisor SHALL block in `flz_core_wait_starvation` and add a thread when starvation is observed and the configured maximum is not reached, which is the case the ABI documents as "hosts whose fetch threads can be occupied by user code".
 
@@ -62,12 +62,12 @@ The pool SHALL grow on the core's own signal rather than a guess: a supervisor S
 - **THEN** total throughput SHALL exceed the same workload's throughput under `SyncExecutor` on the same host
 
 #### Scenario: The pool grows when user code occupies the fetch threads
-- **WHEN** every running thread is inside a procedure body while further work is queued
+- **WHEN** every running thread is inside a tasklet body while further work is queued
 - **THEN** the supervisor SHALL observe starvation and start another thread, up to the configured maximum
 
 #### Scenario: One operative uses more than one core
-- **WHEN** a single dynamic-entity operative receives inputs across many keys under `SwooleExecutor`
-- **THEN** activations for distinct entities SHALL execute simultaneously on distinct threads
+- **WHEN** a single dynamic-cell operative receives inputs across many keys under `SwooleExecutor`
+- **THEN** activations for distinct cells SHALL execute simultaneously on distinct threads
 
 #### Scenario: A missing runtime produces an instruction
 - **WHEN** `SwooleExecutor` is selected on a non-ZTS build, without the extension that provides `Swoole\Thread`, or on a build whose `ffi.enable` is not `true`

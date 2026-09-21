@@ -174,12 +174,12 @@ defmodule Flezha.Observability.TelemetryBridge do
   # so an event may leave a group and none may join.
   @unexported %{
     # One signal per durable workflow commit, at the data plane's rate, with
-    # `proc_idx` and `iter` unique to each. The commit's outcome rides the ack
+    # `task_idx` and `iter` unique to each. The commit's outcome rides the ack
     # the SDK observes and the durability counters, not a per-commit event.
     commit_path: [
       [:flezha, :state, :iter_commit],
-      [:flezha, :state, :proc_commit],
-      [:flezha, :state, :proc_outbox_flush]
+      [:flezha, :state, :task_commit],
+      [:flezha, :state, :task_outbox_flush]
     ],
     # The same fact is already a counted slot that IS exported, so a
     # per-occurrence signal would be a second, weaker account of it.

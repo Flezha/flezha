@@ -91,7 +91,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     output = capture_io(fn -> CliManager.schedule_list() end)
 
-    # The NODE cell is padded to 22, so match the cell — a bare "-" would also
+    # The NODE column is padded to 22, so match the column — a bare "-" would also
     # match the ISO date in NEXT FIRE.
     assert output =~ "-" <> String.duplicate(" ", 21)
   end

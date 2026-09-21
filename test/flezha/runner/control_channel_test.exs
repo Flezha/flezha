@@ -128,7 +128,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
   channel.
 
   Uses the 4-tuple ControlChannel constructor with a capturing `write_fun`,
-  mirroring `ControlChannelProcCommitTest`.
+  mirroring `ControlChannelTaskCommitTest`.
   """
   # async: false: the live controller and its fleet; registered runner channels.
   use ExUnit.Case, async: false

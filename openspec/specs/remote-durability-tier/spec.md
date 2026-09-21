@@ -11,22 +11,22 @@ A backend SHALL implement exactly the blob-level contract — `put`, `get`, `lis
 - **THEN** it implements only the five blob operations and the tier's shipping, manifest, and recovery behavior work against it unchanged
 
 ### Requirement: Shipped artifact scope covers the operative's full durable identity
-The tier SHALL ship every durable artifact an operative needs to resurrect elsewhere: its Entity WALs and snapshots, its proc-journal and durable inbox, its input log, and the registry cspec.
+The tier SHALL ship every durable artifact an operative needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal and durable inbox, its input log, and the registry cspec.
 
-An operative's artifacts SHALL be located through both of the identities it is stored under — its instance id, which keys the proc-journal and durable inbox, and its resolved operative class, which keys the Entities and input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Entity state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
+An operative's artifacts SHALL be located through both of the identities it is stored under — its instance id, which keys the task-journal and durable inbox, and its resolved operative class, which keys the Cells and input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
 
 The registry cspec SHALL be stored per writing controller rather than under one shared key, because each controller holds its own replica of a gossiped registry and all of them are legitimate writers. Recovery SHALL select one replica deterministically.
 
 #### Scenario: The log a cut resumes from ships with the cut
 - **WHEN** an effectively-once operative closes a checkpoint interval
-- **THEN** both the Entity's state cut and the input log covering its consumed offset are shipped, so a hydrated Entity has a log to replay from
+- **THEN** both the Cell's state cut and the input log covering its consumed offset are shipped, so a hydrated Cell has a log to replay from
 
 #### Scenario: An operative's existence survives with its state
 - **WHEN** a controller boots with an empty state directory against a backend holding shipped artifacts
 - **THEN** it hydrates the registry cspec before any hub starts, so the operatives it names are started and their state hydrated on bind
 
 #### Scenario: Source position ships with the state cut
-- **WHEN** an Entity's shipped cut is hydrated onto a fresh controller
+- **WHEN** a Cell's shipped cut is hydrated onto a fresh controller
 - **THEN** its consumed offset, WAL-owner epoch and compensation markers are restored with it, not only its records
 
 #### Scenario: A synchronous barrier ships both identity spaces
@@ -38,18 +38,18 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 - **THEN** both are stored without either overwriting the other, and a cold controller hydrates exactly one of them
 
 ### Requirement: Shipping triggers reuse existing boundaries plus an RPO backstop
-The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and workflow ProcCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for entities that reached no other boundary. Shipping SHALL be per-entity and uncoordinated: no cross-entity barrier or alignment.
+The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and workflow TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
 
 #### Scenario: Compaction snapshot ships
-- **WHEN** a compaction completes for an entity
-- **THEN** the snapshot and the segments it supersedes are reflected in a new shipped manifest entry for that entity
+- **WHEN** a compaction completes for a cell
+- **THEN** the snapshot and the segments it supersedes are reflected in a new shipped manifest entry for that cell
 
-#### Scenario: Quiet entity is bounded by the backstop
-- **WHEN** an entity has unshipped record ranges and hits no compaction, checkpoint, or barrier for `ship_interval_ms`
+#### Scenario: Quiet cell is bounded by the backstop
+- **WHEN** a cell has unshipped record ranges and hits no compaction, checkpoint, or barrier for `ship_interval_ms`
 - **THEN** the backstop sweep ships those ranges within one sweep period
 
 ### Requirement: Manifest-last atomicity with epoch supersession
-For every ship, artifact blobs SHALL be uploaded before the per-entity manifest entry, and the manifest entry SHALL be written last via a conditional write. Manifest entries SHALL be epoch-stamped: an entry at a higher epoch supersedes overlapping seq ranges from lower epochs, and recovery SHALL follow the highest-epoch consistent chain. Recovery SHALL read only the manifest; blobs not referenced by a live manifest chain SHALL be invisible to recovery and eligible for garbage collection, and GC SHALL never delete a manifest-referenced artifact.
+For every ship, artifact blobs SHALL be uploaded before the per-cell manifest entry, and the manifest entry SHALL be written last via a conditional write. Manifest entries SHALL be epoch-stamped: an entry at a higher epoch supersedes overlapping seq ranges from lower epochs, and recovery SHALL follow the highest-epoch consistent chain. Recovery SHALL read only the manifest; blobs not referenced by a live manifest chain SHALL be invisible to recovery and eligible for garbage collection, and GC SHALL never delete a manifest-referenced artifact.
 
 Artifact names SHALL incorporate a hash of their content, so that two controllers holding one reference address different keys and neither can overwrite the other's bytes. Because blobs are uploaded before the manifest entry, a writer that has already lost the reference's lineage will upload before it can discover that; position-derived names would let it replace the winning writer's records inside the winning manifest.
 
@@ -60,7 +60,7 @@ Garbage collection SHALL NOT delete an artifact younger than the configured coll
 - **THEN** recovery observes the previous manifest entry only, and the orphaned blobs are later garbage-collected without affecting any hydration
 
 #### Scenario: A correction rewind supersedes shipped ranges
-- **WHEN** a correction executes `rewind_to(seq, epoch+1)` on an entity whose pre-rewind records were already shipped
+- **WHEN** a correction executes `rewind_to(seq, epoch+1)` on a cell whose pre-rewind records were already shipped
 - **THEN** the next ship writes a manifest entry at the new epoch superseding the shipped ranges above the rewind seq, and a subsequent hydration reconstructs the post-rewind state, never the superseded one
 
 #### Scenario: One node's collection does not race another node's ship
@@ -87,7 +87,7 @@ In async mode (all stream classes, and workflow classes that do not opt into syn
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Per-class synchronous mode for workflow operatives
-A workflow class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix before replying to that ProcCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0). A stream class declaring synchronous mode SHALL be refused at registration.
+A workflow class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0). A stream class declaring synchronous mode SHALL be refused at registration.
 
 #### Scenario: Sync workflow commit is remote-durable before ack
 - **WHEN** a sync-declared workflow class reaches an IterCommit and the remote ship succeeds
@@ -95,7 +95,7 @@ A workflow class SHALL be able to declare synchronous durability via the class-d
 
 #### Scenario: Crash between local append and remote ship
 - **WHEN** the controller crashes after the local journal append but before the remote ship of a sync-mode barrier
-- **THEN** the SDK, never having received the ack, re-runs the uncommitted proc on resume and no divergent state is exposed
+- **THEN** the SDK, never having received the ack, re-runs the uncommitted task on resume and no divergent state is exposed
 
 #### Scenario: Stream class cannot opt into sync
 - **WHEN** a stream class declares synchronous durability
@@ -110,12 +110,12 @@ A manifest that references an artifact the backend does not hold SHALL be report
 - **WHEN** a controller dies with its disk and a fresh controller boots against the same backend
 - **THEN** it hydrates the shipped artifacts into the local layout and the ordinary restore-and-replay brings each operative back at its last shipped cut
 
-#### Scenario: Partial hydration by entity key
-- **WHEN** hydration is requested for named entity keys of one procedure
-- **THEN** only those entities' artifacts are fetched
+#### Scenario: Partial hydration by cell key
+- **WHEN** hydration is requested for named cell keys of one tasklet
+- **THEN** only those cells' artifacts are fetched
 
 #### Scenario: Hydration restores the local facts, not only the data
-- **WHEN** an Entity is hydrated from the manifest
+- **WHEN** a Cell is hydrated from the manifest
 - **THEN** its consumed offset, epoch and compensation markers are seeded alongside its records
 
 #### Scenario: A manifest naming a missing artifact is alarmed
@@ -130,8 +130,8 @@ The fencing token SHALL NOT be any value that travels with the local state it pr
 Taking over a reference's lineage SHALL require that the controller has adopted the operative, not merely that it holds local state for it: state transfer copies rather than moves, so a controller that has lost an operative still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
 
 #### Scenario: Split-brain claimant is fenced
-- **WHEN** two controllers both attempt to ship manifests for the same entity and one does not hold the claim
-- **THEN** that controller's conditional write is refused and it ceases shipping that entity
+- **WHEN** two controllers both attempt to ship manifests for the same cell and one does not hold the claim
+- **THEN** that controller's conditional write is refused and it ceases shipping that cell
 
 #### Scenario: A controller that lost an operative cannot take its lineage back
 - **WHEN** an operative migrates to another controller, which adopts it and ships, while the source controller still holds every local file
@@ -146,11 +146,11 @@ Taking over a reference's lineage SHALL require that the controller has adopted 
 - **THEN** it stops shipping that reference and reports no RPO breach for it, so a migration does not latch a permanent alarm
 
 ### Requirement: RPO breach is loud
-The tier SHALL track per-entity time since last successful ship against the RPO target and SHALL emit an alarm-grade telemetry event when breached, surfaced in `flz controller status` and `/healthz`. A shipping stall SHALL never be observable only by inspecting the backend.
+The tier SHALL track per-cell time since last successful ship against the RPO target and SHALL emit an alarm-grade telemetry event when breached, surfaced in `flz controller status` and `/healthz`. A shipping stall SHALL never be observable only by inspecting the backend.
 
 #### Scenario: Stalled shipper alarms
-- **WHEN** shipping for an entity fails past the RPO target while local writes continue
-- **THEN** the RPO-exceeded event fires with the entity identity and lag, and controller status reports the breach
+- **WHEN** shipping for a cell fails past the RPO target while local writes continue
+- **THEN** the RPO-exceeded event fires with the cell identity and lag, and controller status reports the breach
 
 ### Requirement: Disabling the tier is lossless
 Setting the backend to `none` on a controller with intact local state SHALL be a complete rollback: local state remains authoritative and no local data is altered or lost. Remote artifacts SHALL merely go stale.
@@ -241,7 +241,7 @@ boot. An unrecognised value SHALL resolve to `none` rather than fail the boot, a
 
 - **WHEN** a controller running with the tier off is stopped and restarted with
   its state root intact
-- **THEN** every Entity resumes from its local snapshot and tail WAL, and no
+- **THEN** every Cell resumes from its local snapshot and tail WAL, and no
   durable state is lost
 
 ### Requirement: A selected backend that cannot work refuses the boot

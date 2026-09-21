@@ -22,7 +22,7 @@ defmodule Flezha.State.WalWriter.Admission do
   # ---------- Hard bound (shed) ----------
 
   # Last-resort safety net above the soft watermark: cooperative SDKs throttle on
-  # `EntityMailboxStatus` first; only a slow disk or a non-cooperating SDK
+  # `CellMailboxStatus` first; only a slow disk or a non-cooperating SDK
   # reaches here.
   #
   # The un-fsynced byte bound always applies. The mailbox-depth cap applies only
@@ -45,7 +45,7 @@ defmodule Flezha.State.WalWriter.Admission do
   end
 
   # A seq gap is one latched fact per episode: the first gap declares
-  # `{:seq_gap, entity_id}` to the convergence loop, which plans the resync on
+  # `{:seq_gap, cell_id}` to the convergence loop, which plans the resync on
   # its own table; every further gap until the next contiguous append rides
   # the open episode. Shared by the three gap-driven triggers — a gap, a shed,
   # and a cold-takeover baseline pull — so a sustained flood declares once.
@@ -53,7 +53,7 @@ defmodule Flezha.State.WalWriter.Admission do
   def open_gap(%{gap_open?: true} = state, _runner_id, _trigger), do: state
 
   def open_gap(state, runner_id, trigger) do
-    Facts.declare({:seq_gap, state.entity_id, %{runner_id: runner_id, trigger: trigger}})
+    Facts.declare({:seq_gap, state.cell_id, %{runner_id: runner_id, trigger: trigger}})
     %{state | gap_open?: true}
   end
 
@@ -64,7 +64,7 @@ defmodule Flezha.State.WalWriter.Admission do
   def close_gap(%{gap_open?: false} = state), do: state
 
   def close_gap(state) do
-    Facts.declare({:seq_gap_closed, state.entity_id, %{}})
+    Facts.declare({:seq_gap_closed, state.cell_id, %{}})
     %{state | gap_open?: false}
   end
 
@@ -74,7 +74,7 @@ defmodule Flezha.State.WalWriter.Admission do
   # declares once; `append_async` clears it on any successful append.
   def shed(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
-    {rc, sh, pk} = state.entity_id
+    {rc, sh, pk} = state.cell_id
 
     # A conformant credit-speaking sender can never reach the hard bound
     # (the stream ledger refuses the overrun first) — a shed here is a
@@ -83,14 +83,14 @@ defmodule Flezha.State.WalWriter.Admission do
       :telemetry.execute(
         [:flezha, :state, :credit_anomaly],
         %{count: 1},
-        %{kind: :shed, operative: rc, procedure: sh, key: pk, runner: runner_id}
+        %{kind: :shed, operative: rc, tasklet: sh, key: pk, runner: runner_id}
       )
     end
 
     if state.shedding? do
       state
     else
-      emit_seq_gap(state.entity_id, state.last_persisted_seq + 1, seq)
+      emit_seq_gap(state.cell_id, state.last_persisted_seq + 1, seq)
       %{open_gap(state, runner_id, :shed) | shedding?: true}
     end
   end
@@ -113,7 +113,7 @@ defmodule Flezha.State.WalWriter.Admission do
 
   # Emit the telemetry event AND ship the wire signal. The telemetry
   # event is for in-process observers (metrics, debug); the wire signal
-  # routes through the producing Procedure's `OverflowPolicy` machinery on
+  # routes through the producing Tasklet's `OverflowPolicy` machinery on
   # the SDK side. A credit-speaking session gets no wire signal: its
   # back-pressure is carried entirely by the credit ledger (the sender parks
   # on window exhaustion), so only the telemetry event is emitted.
@@ -121,16 +121,16 @@ defmodule Flezha.State.WalWriter.Admission do
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
       %{pending_bytes: pending},
-      %{entity_id: state.entity_id, status: status}
+      %{cell_id: state.cell_id, status: status}
     )
 
     # Routing needs the owning runner (`nil` until the first Change lands,
     # in which case there is no session to signal).
     with false <- state.credit_active?,
-         {rc, sh, pk} <- state.entity_id,
+         {rc, sh, pk} <- state.cell_id,
          runner_id when is_binary(runner_id) <- state.owning_runner do
       _ =
-        Commands.notify_entity_backpressure(
+        Commands.notify_cell_backpressure(
           {runner_id, rc, sh, pk},
           status
         )
@@ -174,7 +174,7 @@ defmodule Flezha.State.WalWriter.Admission do
     :telemetry.execute(
       [:flezha, :state, :seq_gap],
       %{expected: expected, got: got},
-      %{operative: rc, procedure: sh, key: pk}
+      %{operative: rc, tasklet: sh, key: pk}
     )
   end
 

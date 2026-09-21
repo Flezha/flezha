@@ -11,17 +11,17 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::ItemAttempt;
+use crate::cell::{CellItem, CellPayload, CellSlot};
 use crate::channel::RetryPolicy;
 use crate::correction::Lateness;
-use crate::entity::{EntityItem, EntityPayload, EntitySlot};
 use crate::timer::{TimerFire, TimerKind};
 use crate::util::LockRecover;
 
-pub(super) fn closed_slice_pending(slot: &Arc<EntitySlot>) -> bool {
+pub(super) fn closed_slice_pending(slot: &Arc<CellSlot>) -> bool {
     slot.replay_depth.load(Ordering::Relaxed) != 0 && !slot.replay_open.load(Ordering::Acquire)
 }
 
-pub(super) fn event_time_due_pending(slot: &Arc<EntitySlot>) -> bool {
+pub(super) fn event_time_due_pending(slot: &Arc<CellSlot>) -> bool {
     if !slot.dispatcher.is_event_time() {
         return false;
     }
@@ -38,7 +38,7 @@ pub(super) fn event_time_due_pending(slot: &Arc<EntitySlot>) -> bool {
 
 /// One batch: the re-handed head of line, then what an earlier round left,
 /// then the mailbox.
-pub(super) fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<ItemAttempt> {
+pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
     let policy = slot.dispatcher.retry_policy();
     let event_time_class = slot.dispatcher.is_event_time();
     let mut items: Vec<ItemAttempt> = Vec::new();
@@ -81,7 +81,7 @@ pub(super) fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<ItemAttempt> {
     // buffered behind it flushes now, under the same gate; an open one keeps
     // waiting for its broadcast.
     if closed_slice_pending(slot)
-        && !(event_time_class && items.iter().any(|w| matches!(w.item, EntityItem::Input(_))))
+        && !(event_time_class && items.iter().any(|w| matches!(w.item, CellItem::Input(_))))
     {
         flush_closed_slice(slot, &mut items, &mut fired, policy, event_time_class);
     }
@@ -91,13 +91,13 @@ pub(super) fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<ItemAttempt> {
 /// Live items an earlier round deferred behind a draining slice: older than
 /// the mailbox, so they go first. `true` when one ended the batch.
 fn stage_deferred_live(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     items: &mut Vec<ItemAttempt>,
     fired: &mut HashSet<u64>,
     policy: RetryPolicy,
     event_time_class: bool,
 ) -> bool {
-    let deferred: Vec<EntityItem> = {
+    let deferred: Vec<CellItem> = {
         let mut held = slot.deferred_live.lock_recover();
         held.drain(..).collect()
     };
@@ -115,7 +115,7 @@ fn stage_deferred_live(
 /// one waiter per pop; `true` when a live item behind a closed slice was
 /// deferred.
 fn drain_mailbox(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     items: &mut Vec<ItemAttempt>,
     fired: &mut HashSet<u64>,
     policy: RetryPolicy,
@@ -124,11 +124,11 @@ fn drain_mailbox(
     while let Some(item) = slot.mailbox.pop() {
         slot.waiters.serve_one();
         if closed_slice_pending(slot) {
-            if let EntityItem::Input(payload) = &item {
+            if let CellItem::Input(payload) = &item {
                 if payload.replay {
                     // A member that raced the broadcast: it extends the
                     // closed slice, never splits it.
-                    let EntityItem::Input(payload) = item else {
+                    let CellItem::Input(payload) = item else {
                         unreachable!()
                     };
                     slot.replay_buffer.lock_recover().push(payload);
@@ -167,27 +167,27 @@ enum Staged {
 }
 
 fn stage_popped_item(
-    slot: &Arc<EntitySlot>,
-    item: EntityItem,
+    slot: &Arc<CellSlot>,
+    item: CellItem,
     items: &mut Vec<ItemAttempt>,
     fired: &mut HashSet<u64>,
     policy: RetryPolicy,
     event_time_class: bool,
 ) -> Staged {
     let payload = match item {
-        EntityItem::CloseInterval => return stage_close(slot, items),
-        EntityItem::Timer(fire) => {
+        CellItem::CloseInterval => return stage_close(slot, items),
+        CellItem::Timer(fire) => {
             stage_timer(slot, fire, items, policy);
             return Staged::Other;
         }
-        EntityItem::Input(payload) => payload,
+        CellItem::Input(payload) => payload,
     };
     // Effectively-once crash-replay: the controller re-forwards the
-    // journaled input tail; offsets this Entity already durably consumed
+    // journaled input tail; offsets this Cell already durably consumed
     // (restored effect records) are skipped, never re-run.
     if let Some(offset) = payload.consumed_offset {
         if (offset as i64) <= slot.consumed_floor.load(Ordering::Acquire) {
-            crate::entity::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+            crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
             return Staged::Other;
         }
     }
@@ -209,21 +209,21 @@ fn stage_popped_item(
 
 /// A close lands in mailbox order: at the head of a batch close now; behind
 /// live items defer it so they run first.
-fn stage_close(slot: &Arc<EntitySlot>, items: &[ItemAttempt]) -> Staged {
+fn stage_close(slot: &Arc<CellSlot>, items: &[ItemAttempt]) -> Staged {
     if items.is_empty() {
         close_due_interval(slot);
         return Staged::Other;
     }
     slot.deferred_live
         .lock_recover()
-        .push_back(EntityItem::CloseInterval);
+        .push_back(CellItem::CloseInterval);
     Staged::BatchClosed
 }
 
 /// Stage a firing the pending set still holds; the set is the authority and
 /// a stale wake-list entry fires nothing.
 fn stage_timer(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     fire: TimerFire,
     items: &mut Vec<ItemAttempt>,
     policy: RetryPolicy,
@@ -237,16 +237,16 @@ fn stage_timer(
             now: Some(fire.scheduled_at),
             attempt: 1,
             is_final: 1 >= policy.max_attempts,
-            item: EntityItem::Timer(fire),
+            item: CellItem::Timer(fire),
         });
     } else {
-        crate::entity::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+        crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 /// Ship an open interval's accumulation on its `max_delay_ms`; a no-op when
 /// an input already closed it.
-fn close_due_interval(slot: &Arc<EntitySlot>) {
+fn close_due_interval(slot: &Arc<CellSlot>) {
     let mut buffer = slot.flush_buffer.lock_recover();
     slot.dispatcher.close_interval(&mut buffer);
 }
@@ -254,8 +254,8 @@ fn close_due_interval(slot: &Arc<EntitySlot>) {
 /// Admit and stage one input, preceded by the event-time deadlines its
 /// high-water advance made due; whether it was admitted.
 fn stage_input(
-    slot: &Arc<EntitySlot>,
-    payload: EntityPayload,
+    slot: &Arc<CellSlot>,
+    payload: CellPayload,
     items: &mut Vec<ItemAttempt>,
     fired: &mut HashSet<u64>,
     policy: RetryPolicy,
@@ -267,7 +267,7 @@ fn stage_input(
             now: None,
             attempt: 1,
             is_final,
-            item: EntityItem::Input(payload),
+            item: CellItem::Input(payload),
         });
         return true;
     }
@@ -278,12 +278,12 @@ fn stage_input(
             now: None,
             attempt: 1,
             is_final,
-            item: EntityItem::Input(payload),
+            item: CellItem::Input(payload),
         });
         return true;
     };
     if !admit_and_track(slot, event_time, payload.replay) {
-        crate::entity::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+        crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
         return false;
     }
     // Event-time timers fire on the high-water this input just advanced,
@@ -294,7 +294,7 @@ fn stage_input(
         now: Some(event_time),
         attempt: 1,
         is_final,
-        item: EntityItem::Input(payload),
+        item: CellItem::Input(payload),
     });
     true
 }
@@ -303,7 +303,7 @@ fn stage_input(
 /// late input inside the correction window is dropped here and asked for
 /// back — the replayed slice re-delivers it in place. A `replayed` input is
 /// in order by construction and still advances the high-water.
-fn admit_and_track(slot: &Arc<EntitySlot>, event_time: u64, replayed: bool) -> bool {
+fn admit_and_track(slot: &Arc<CellSlot>, event_time: u64, replayed: bool) -> bool {
     let advance = || {
         slot.event_time_high_water
             .fetch_max(event_time as i64, Ordering::AcqRel);
@@ -325,7 +325,7 @@ fn admit_and_track(slot: &Arc<EntitySlot>, event_time: u64, replayed: bool) -> b
         // Requested: drop it here, the slice brings it back. Not requested
         // (transport-less run, nobody to ask): fall back to the
         // no-correction behaviour and process it as an arrival.
-        Lateness::Correctable => !crate::correction::request(&slot.entity_identity, event_time),
+        Lateness::Correctable => !crate::correction::request(&slot.cell_identity, event_time),
         // The high-water deliberately does NOT advance for a beyond-window
         // arrival: a very old event must not drag the window backward and
         // make the inputs after it look late.
@@ -339,7 +339,7 @@ fn admit_and_track(slot: &Arc<EntitySlot>, event_time: u64, replayed: bool) -> b
 /// Every pending event-time deadline at or below the high-water, ascending,
 /// deduplicated against the batch.
 fn push_due_event_timers(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     stream: &Arc<flz_transport::transport::FlezhaStream>,
     items: &mut Vec<ItemAttempt>,
     fired: &mut HashSet<u64>,
@@ -359,7 +359,7 @@ fn push_due_event_timers(
                 now: Some(scheduled_at),
                 attempt: 1,
                 is_final: 1 >= policy.max_attempts,
-                item: EntityItem::Timer(TimerFire {
+                item: CellItem::Timer(TimerFire {
                     kind: TimerKind::EventTime,
                     scheduled_at,
                     stream: Arc::clone(stream),
@@ -374,7 +374,7 @@ fn push_due_event_timers(
 /// for the next round. The high-water is never reset — the restore rebuilt
 /// it.
 fn flush_closed_slice(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     items: &mut Vec<ItemAttempt>,
     fired: &mut HashSet<u64>,
     policy: RetryPolicy,
@@ -402,7 +402,7 @@ fn flush_closed_slice(
     if member_granular {
         let mut members = slice.into_iter();
         if let Some(first) = members.next() {
-            let rest: Vec<EntityPayload> = members.collect();
+            let rest: Vec<CellPayload> = members.collect();
             if !rest.is_empty() {
                 slot.replay_depth
                     .store(rest.len() as u64, Ordering::Relaxed);

@@ -60,7 +60,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   describe "max_state_bytes accounting (§6.2)" do
     test "the counter is rebuilt from the on-disk truth", %{state_root: state_root} do
       {:ok, _} = NamespaceStore.create("team-disk", quotas: %{})
-      dir = Path.join([state_root, "team-disk", "op", "proc"])
+      dir = Path.join([state_root, "team-disk", "op", "task"])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 2_048))
 
@@ -76,7 +76,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
 
     test "a burst of callers rebuilds the counter once between them", %{state_root: state_root} do
       {:ok, _} = NamespaceStore.create("team-burst", quotas: %{})
-      dir = Path.join([state_root, "team-burst", "op", "proc"])
+      dir = Path.join([state_root, "team-burst", "op", "task"])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 2_048))
 
@@ -116,7 +116,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       state_root: state_root
     } do
       {:ok, _} = NamespaceStore.create("team-over", quotas: %{max_state_bytes: 1_000})
-      dir = Path.join([state_root, "team-over", "op", "proc"])
+      dir = Path.join([state_root, "team-over", "op", "task"])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 4_096))
       _ = Quotas.rebuild_disk_bytes("team-over")
@@ -134,7 +134,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       state_root: state_root
     } do
       {:ok, _} = NamespaceStore.create("team-alarm", quotas: %{max_state_bytes: 100})
-      dir = Path.join([state_root, "team-alarm", "op", "proc"])
+      dir = Path.join([state_root, "team-alarm", "op", "task"])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "k1.wal"), :binary.copy(<<0>>, 4_096))
 

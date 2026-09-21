@@ -3,13 +3,13 @@ defmodule Flezha.State.Completion do
   The per-operative *completion record* of a finished workflow operative.
 
   On terminal teardown (status `ok | error | cancelled`) the controller writes
-  a small durable term alongside the operative's retained Entity state, so the
+  a small durable term alongside the operative's retained Cell state, so the
   outcome stays inspectable via `flz operative info` until the retention window
   elapses (`Flezha.State.Retention` sweeps both).
 
   The record lives at
   `<state_root>/<namespace>/<operative_class>/completion.record` — a file
-  sibling to the procedure directories, inert to every
+  sibling to the tasklet directories, inert to every
   `Flezha.State.Paths` scanner (which only recognise `.wal` /
   `.snap.<seq>` / `.outbox.dedup`). Its
   presence is also the retain-vs-delete signal for `stop_operative`.

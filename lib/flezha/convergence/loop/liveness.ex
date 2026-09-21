@@ -65,10 +65,10 @@ defmodule Flezha.Convergence.Loop.Liveness do
   end
 
   # The classifier's own defaults, with the one knob an operator whose
-  # Procedures legitimately run long has to raise.
+  # Tasklets legitimately run long has to raise.
   defp classifier_opts() do
-    case Config.get(:convergence_entity_stall_ms) do
-      ms when is_integer(ms) and ms > 0 -> %{entity_stall_ms: ms}
+    case Config.get(:convergence_cell_stall_ms) do
+      ms when is_integer(ms) and ms > 0 -> %{cell_stall_ms: ms}
       _ -> %{}
     end
   end

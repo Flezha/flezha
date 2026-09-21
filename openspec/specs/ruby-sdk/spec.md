@@ -5,7 +5,7 @@ TBD - created by archiving change ruby-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: The Ruby SDK is a poll host over `flz_core`
 
-The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain no kernel code: transport, framing, ordering, per-entity exclusivity, durability, retries, the retry→park ladder, timers, credit, routing, the workflow driver and reconnect SHALL remain in the core. The SDK's responsibilities SHALL be limited to the authoring surface, the codec for user types, the threading host, and idiomatic errors.
+The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain no kernel code: transport, framing, ordering, per-cell exclusivity, durability, retries, the retry→park ladder, timers, credit, routing, the workflow driver and reconnect SHALL remain in the core. The SDK's responsibilities SHALL be limited to the authoring surface, the codec for user types, the threading host, and idiomatic errors.
 
 #### Scenario: No kernel surface is reimplemented in Ruby
 - **WHEN** the gem's source is inspected for a retry ladder, an outbox, a WAL writer, a credit window or a workflow driver
@@ -29,27 +29,27 @@ The SDK SHALL expose one entry point that declares classes, claims a runner slot
 
 ### Requirement: Class-based authoring surface with explicit registration
 
-Operatives and procedures SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal. A procedure's body SHALL be its `run` method, the name every SDK gives a procedure's body; a procedure class defining `process` and no `run` SHALL be refused at registration naming `run`.
+Operatives and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal. A tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a tasklet class defining `process` and no `run` SHALL be refused at registration naming `run`.
 
 #### Scenario: An undeclared class never runs
-- **WHEN** a procedure class is defined but not registered
+- **WHEN** a tasklet class is defined but not registered
 - **THEN** it SHALL NOT be declared to the core, and no activation SHALL reach it
 
 #### Scenario: A bad topology is refused by name
-- **WHEN** a registered procedure emits to a channel no procedure consumes and the operative is not sealed on that edge
+- **WHEN** a registered tasklet emits to a channel no tasklet consumes and the operative is not sealed on that edge
 - **THEN** registration SHALL raise naming the class, the method and the channel; no controller connection SHALL be attempted
 
-#### Scenario: A procedure's body is its run method
-- **WHEN** a `Flezha::Procedure` subclass defines `run(input, ctx)` and an operative wires it
-- **THEN** each input SHALL reach `run`, and its return value SHALL be the procedure's output
+#### Scenario: A tasklet's body is its run method
+- **WHEN** a `Flezha::Tasklet` subclass defines `run(input, ctx)` and an operative wires it
+- **THEN** each input SHALL reach `run`, and its return value SHALL be the tasklet's output
 
 #### Scenario: The old body method is refused
-- **WHEN** a registered procedure class defines `process(input, ctx)` and no `run`
+- **WHEN** a registered tasklet class defines `process(input, ctx)` and no `run`
 - **THEN** registration SHALL raise naming the class and `run`
 
 ### Requirement: The authoring surface carries the shared vocabulary at full parity
 
-The Ruby authoring surface SHALL carry both operative kinds — stream and workflow — and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, entity state and change journaling, static and dynamic entity modes, per-entity timers, tiers including effectively-once, multi-input procedures, procedure-requested spawn, workflow chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
+The Ruby authoring surface SHALL carry both operative kinds — stream and workflow — and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, cell state and change journaling, static and dynamic cell modes, per-cell timers, tiers including effectively-once, multi-input tasklets, tasklet-requested spawn, workflow chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
 
 #### Scenario: The manifest defers nothing at v1
 - **WHEN** `test/apps/ruby_runner/conformance.json` is compared against the Rust reference manifest
@@ -57,14 +57,14 @@ The Ruby authoring surface SHALL carry both operative kinds — stream and workf
 
 #### Scenario: A workflow class runs a durable chain
 - **WHEN** a Ruby workflow operative runs a chained loop with a suspension and is resumed after a runner restart
-- **THEN** the journal SHALL drive resume without re-running a committed procedure
+- **THEN** the journal SHALL drive resume without re-running a committed tasklet
 
-#### Scenario: Two channels merge into one procedure
+#### Scenario: Two channels merge into one tasklet
 - **WHEN** an operative declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
 
 #### Scenario: One input becomes three deliveries
-- **WHEN** an edge declares `.flat_map { |line| line.split(",") }` into a procedure and the dispatcher is handed `a,b,c`
+- **WHEN** an edge declares `.flat_map { |line| line.split(",") }` into a tasklet and the dispatcher is handed `a,b,c`
 - **THEN** `run` SHALL run three times, once per element, under one consumed offset, and feeding an empty line SHALL run it zero times
 
 #### Scenario: The latest-document router is offered
@@ -81,7 +81,7 @@ State and Change types SHALL serialize through author-declared `to_h` and `from_
 
 #### Scenario: A class rename does not break restore
 - **WHEN** a State class is renamed and its `to_h` / `from_h` shape is unchanged
-- **THEN** an Entity restored from a WAL written before the rename SHALL fold successfully
+- **THEN** a Cell restored from a WAL written before the rename SHALL fold successfully
 
 #### Scenario: A missing codec method is refused at registration
 - **WHEN** a State type declares `to_h` but not `from_h`
@@ -98,7 +98,7 @@ Offsets, sequence numbers and timestamps crossing the boundary SHALL be represen
 ### Requirement: The Ruby builder submits its topology to the reference check
 
 The Ruby SDK's builder SHALL record the authoring calls it receives — channels, the
-ordered links of each chain, merges, branches, class flags and procedure facts — into the
+ordered links of each chain, merges, branches, class flags and tasklet facts — into the
 declaration record and SHALL take its verdict from the reference check, so that every name
 of the `TopologyIssue` vocabulary is refused with the reference sentence and no rule is
 carried in the builder. The class-based surface SHALL stay as it is; only the judgement moves.
@@ -120,17 +120,17 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the Ruby interpreter reaches `merge_one_source` or `merge_same_twice`
 - **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
-### Requirement: The single-procedure short form is a class-body declaration
-The short form SHALL be a `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass, the same base a full-form operative subclasses, and SHALL NOT be a `Flezha::Procedure` subclass; `Flezha::Procedure` SHALL lose its `sink` class-body declaration and SHALL raise naming the operative base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operative already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
+### Requirement: The single-tasklet short form is a class-body declaration
+The short form SHALL be a `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass, the same base a full-form operative subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operative base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operative already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels` or `procedures`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated procedure named `factory_id` and, when a `sink` is declared, that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels` or `tasklets`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
-`Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a procedure's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+`Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
 #### Scenario: An operative class with a run body is a whole stream operative
 
 - **WHEN** `class Upcase < Flezha::StreamOperative` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and no `Flezha::Procedure` subclass exists for it
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha::Tasklet` subclass exists for it
 
 #### Scenario: An operative class with a run body is a whole workflow operative
 
@@ -140,7 +140,7 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 #### Scenario: A short form with no sink is declared
 
 - **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `sink`
-- **THEN** the operative declares `ticks` into the generated procedure and no plugin channel
+- **THEN** the operative declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
@@ -152,9 +152,9 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 - **WHEN** a `Flezha::StreamOperative` subclass defines both `channels` and `run`
 - **THEN** `register_factory` raises `Flezha::DeclarationError` naming `ShortFormWithTopology`
 
-#### Scenario: A sink on a procedure is refused
+#### Scenario: A sink on a tasklet is refused
 
-- **WHEN** a `Flezha::Procedure` subclass declares `sink "out"`
+- **WHEN** a `Flezha::Tasklet` subclass declares `sink "out"`
 - **THEN** loading it raises naming `Flezha::StreamOperative` and `Flezha::WorkflowOperative`
 
 #### Scenario: A derived factory id is refused

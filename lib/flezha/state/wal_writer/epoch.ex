@@ -34,12 +34,12 @@ defmodule Flezha.State.WalWriter.Epoch do
     if MapSet.member?(state.refused_sessions, runner_id) do
       state
     else
-      {rc, sh, pk} = state.entity_id
+      {rc, sh, pk} = state.cell_id
 
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operative: rc, procedure: sh, key: pk, session: runner_id}
+        %{operative: rc, tasklet: sh, key: pk, session: runner_id}
       )
 
       %{state | refused_sessions: MapSet.put(state.refused_sessions, runner_id)}
@@ -67,9 +67,9 @@ defmodule Flezha.State.WalWriter.Epoch do
     {:ok, _} = :file.position(state.file_handle, 0)
     :ok = :file.truncate(state.file_handle)
 
-    Enum.each(Paths.snapshot_paths(state.entity_id), fn {_seq, path} -> File.rm(path) end)
+    Enum.each(Paths.snapshot_paths(state.cell_id), fn {_seq, path} -> File.rm(path) end)
 
-    emit_realign(state.entity_id, state.last_persisted_seq, seq, runner_id)
+    emit_realign(state.cell_id, state.last_persisted_seq, seq, runner_id)
 
     Metrics.put(state.metrics, :wal_size_bytes, 0)
     Metrics.put(state.metrics, :snapshot_seq, 0)
@@ -99,7 +99,7 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   # The half a realign and a rewind share: re-seat the outbox cursors on the new
   # lineage and persist the epoch bump **synchronously**. That `persist_dedup`
-  # is the commit point of both procedures — it is what stops an output
+  # is the commit point of both tasklets — it is what stops an output
   # regenerated above the boundary from colliding with its own pre-boundary
   # delivery, because the two now key under different epochs.
   #
@@ -121,8 +121,8 @@ defmodule Flezha.State.WalWriter.Epoch do
   end
 
   # Cold-takeover shed: no baseline on this controller, so the frame can't
-  # append. Count it and declare the gap, so the loop drives a CompactEntity
-  # pull (the resync routes to the pull because the Entity has no persisted
+  # append. Count it and declare the gap, so the loop drives a CompactCell
+  # pull (the resync routes to the pull because the Cell has no persisted
   # state). The pulled snapshot encodes the shed deltas' effects; only that
   # snapshot clears this state, and the loop retries the pull on its table
   # until it does.
@@ -130,12 +130,12 @@ defmodule Flezha.State.WalWriter.Epoch do
     Metrics.add(state.metrics, :wal_shed_total, 1)
 
     unless state.awaiting_baseline? do
-      {rc, sh, pk} = state.entity_id
+      {rc, sh, pk} = state.cell_id
 
       :telemetry.execute(
         [:flezha, :state, :baseline_seed],
         %{first_seq: seq},
-        %{operative: rc, procedure: sh, key: pk, runner: runner_id}
+        %{operative: rc, tasklet: sh, key: pk, runner: runner_id}
       )
     end
 
@@ -166,7 +166,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     :telemetry.execute(
       [:flezha, :state, :wal_realign],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, procedure: sh, key: pk, runner: runner_id}
+      %{operative: rc, tasklet: sh, key: pk, runner: runner_id}
     )
   end
 
@@ -191,7 +191,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       {:ok, {:ok, _} = ok} -> ok
       {:ok, {:error, _} = err} -> err
       # The fold ran off the end: nothing is at or after the target, so the input
-      # is not actually late for this Entity.
+      # is not actually late for this Cell.
       {:ok, {_seq, _offset}} -> {:error, :nothing_to_correct}
       # A record on the way to the baseline was refused; there is no baseline.
       {:error, _refusal} = refused -> refused
@@ -221,24 +221,24 @@ defmodule Flezha.State.WalWriter.Epoch do
     :telemetry.execute(
       [:flezha, :state, :wal_rewind],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, procedure: sh, key: pk, epoch: epoch}
+      %{operative: rc, tasklet: sh, key: pk, epoch: epoch}
     )
   end
 
-  defp highest_snapshot_seq(entity_id) do
-    case Paths.snapshot_paths(entity_id) do
+  defp highest_snapshot_seq(cell_id) do
+    case Paths.snapshot_paths(cell_id) do
       [] -> 0
       paths -> paths |> List.last() |> elem(0)
     end
   end
 
-  # The rewound records are the ones that reported this Entity's consumed
+  # The rewound records are the ones that reported this Cell's consumed
   # offsets, so the input-log watermark it advanced is now a claim about inputs
   # nothing has consumed. Lower it, or the next retention sweep truncates away
   # the very inputs the correction is about to replay.
   defp rewind_input_watermark(state, max_consumed) do
-    {operative_class, _, _} = state.entity_id
-    InputLog.rewind_consumed(operative_class, state.entity_id, max_consumed || -1)
+    {operative_class, _, _} = state.cell_id
+    InputLog.rewind_consumed(operative_class, state.cell_id, max_consumed || -1)
   end
 
   # ---------- Effect-record scan ----------
@@ -294,7 +294,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
     # realign does, would be a wipe, not a rewind.
-    Enum.each(Paths.snapshot_paths(state.entity_id), fn {snap_seq, path} ->
+    Enum.each(Paths.snapshot_paths(state.cell_id), fn {snap_seq, path} ->
       if snap_seq > seq, do: File.rm(path)
     end)
 
@@ -315,8 +315,8 @@ defmodule Flezha.State.WalWriter.Epoch do
     now = State.now_ms()
     Metrics.put(state.metrics, :wal_size_bytes, size)
     Metrics.put(state.metrics, :wal_seq, seq)
-    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.entity_id))
-    emit_rewind(state.entity_id, state.last_persisted_seq, seq, epoch)
+    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.cell_id))
+    emit_rewind(state.cell_id, state.last_persisted_seq, seq, epoch)
 
     state = %{
       state

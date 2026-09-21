@@ -7,9 +7,9 @@ defmodule Flezha.State.DurabilityTier do
   Local files stay authoritative: every ack path gates on local fsync alone,
   shipping neither mutates nor deletes one, and turning the tier off is a
   complete rollback. What ships are immutable artifacts at boundaries that
-  already exist: snapshots, WAL record bundles, proc-journal and inbox suffixes,
+  already exist: snapshots, WAL record bundles, task-journal and inbox suffixes,
   the input log, the registry cspec, parked DLQ records, the control-plane
-  registries. The per-entity manifest is written last, so a torn upload is
+  registries. The per-cell manifest is written last, so a torn upload is
   invisible to recovery.
 
   Every trigger, recovery and status function is a no-op while `backend: :none`,
@@ -116,7 +116,7 @@ defmodule Flezha.State.DurabilityTier do
     :ok
   end
 
-  @doc "Backstop sweep period — the bound on how stale a quiet entity's remote copy gets."
+  @doc "Backstop sweep period — the bound on how stale a quiet cell's remote copy gets."
   @spec ship_interval_ms() :: pos_integer()
   def ship_interval_ms(),
     do: positive(:durability_ship_interval_ms)
@@ -319,8 +319,8 @@ defmodule Flezha.State.DurabilityTier do
   def ship(ref), do: if(enabled?(), do: Shipper.enqueue(ref), else: :ok)
 
   @doc """
-  Every shippable reference stored under one on-disk STATE KEY: its Entities
-  plus the reserved proc-journal/inbox identities (`Artifact.entity_refs/1`)
+  Every shippable reference stored under one on-disk STATE KEY: its Cells
+  plus the reserved task-journal/inbox identities (`Artifact.cell_refs/1`)
   and, when the effectively-once tier holds one, its durable input log.
 
   An operative can occupy two state keys — see `refs_of_operative/1`, which is
@@ -330,7 +330,7 @@ defmodule Flezha.State.DurabilityTier do
   def refs_of_state_key(state_key) when is_binary(state_key) do
     input_log = {:input_log, state_key}
     extra = if Artifact.has_local_state?(input_log), do: [input_log], else: []
-    Artifact.entity_refs(state_key) ++ extra ++ Artifact.dlq_refs(state_key)
+    Artifact.cell_refs(state_key) ++ extra ++ Artifact.dlq_refs(state_key)
   end
 
   @doc """
@@ -344,7 +344,7 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec all_refs(binary()) :: [Artifact.ref()]
   def all_refs(writer) when is_binary(writer) do
-    # Classes with Entity state UNION classes with parked failures: a stopped
+    # Classes with Cell state UNION classes with parked failures: a stopped
     # operative keeps its parks without holding state, and its parks are still
     # this node's to ship.
     (Paths.operative_classes() ++ Artifact.dlq_classes())
@@ -356,8 +356,8 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference of one operative, across BOTH identities it is
-  stored under — its instance id, which keys the proc-journal and durable inbox,
-  and its resolved class, which keys the Entities and input log.
+  stored under — its instance id, which keys the task-journal and durable inbox,
+  and its resolved class, which keys the Cells and input log.
 
   Anything holding an operative id and wanting its whole durable identity goes
   through here; `refs_of/1` answers the narrower question about one state key.
@@ -375,7 +375,7 @@ defmodule Flezha.State.DurabilityTier do
   the shipped set moves from record bundles to a baseline.
   """
   @spec on_compaction_completed(tuple()) :: :ok
-  def on_compaction_completed({_, _, _} = entity_id), do: ship({:entity, entity_id})
+  def on_compaction_completed({_, _, _} = cell_id), do: ship({:cell, cell_id})
 
   @doc """
   An effect record just became durable and dispatched. Ships only for a
@@ -385,13 +385,13 @@ defmodule Flezha.State.DurabilityTier do
   backstop sweep.
   """
   @spec on_effect_flushed(tuple(), integer() | nil) :: :ok
-  def on_effect_flushed({operative_class, _, _} = entity_id, consumed_offset)
+  def on_effect_flushed({operative_class, _, _} = cell_id, consumed_offset)
       when is_integer(consumed_offset) do
     if enabled?() and ClassRegistry.checkpoint_ack?(operative_class) do
-      ship({:entity, entity_id})
+      ship({:cell, cell_id})
 
       # The input log rides the same cut. Shipping the state without it would
-      # leave a hydrated Entity holding a consumed floor and nothing to replay
+      # leave a hydrated Cell holding a consumed floor and nothing to replay
       # from — the inputs after the cut would be gone, and the next one would
       # land below the floor and be skipped as already consumed.
       ship({:input_log, operative_class})
@@ -400,10 +400,10 @@ defmodule Flezha.State.DurabilityTier do
     :ok
   end
 
-  def on_effect_flushed(_entity_id, _consumed_offset), do: :ok
+  def on_effect_flushed(_cell_id, _consumed_offset), do: :ok
 
   @doc """
-  A workflow instance committed a proc or an iteration: its journal suffix, and
+  A workflow instance committed a task or an iteration: its journal suffix, and
   the inbox prefix the commit consumed, are the artifacts that must reach the
   remote store for the instance to resume elsewhere.
   """
@@ -426,7 +426,7 @@ defmodule Flezha.State.DurabilityTier do
   @spec commit_sync(binary()) :: :ok | {:error, term()}
   def commit_sync(operative_id) when is_binary(operative_id) do
     # Both key spaces: shipping only one of them would let this barrier answer
-    # `:ok` having never sent the Entity state the guarantee is about.
+    # `:ok` having never sent the Cell state the guarantee is about.
     Enum.reduce_while(refs_of_operative(operative_id), :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
@@ -451,16 +451,16 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  Hydrate only the named entity keys of one Procedure.
+  Hydrate only the named cell keys of one Tasklet.
 
-  The manifest is per-Entity, so a narrowed request costs exactly the artifacts
+  The manifest is per-Cell, so a narrowed request costs exactly the artifacts
   it names — answering a question about one key never fetches a whole
-  Procedure.
+  Tasklet.
   """
-  @spec hydrate_entities(binary(), binary(), [binary()]) :: :ok
-  def hydrate_entities(operative_class, procedure_id, entity_keys) do
+  @spec hydrate_cells(binary(), binary(), [binary()]) :: :ok
+  def hydrate_cells(operative_class, tasklet_id, cell_keys) do
     with {module, opts} <- BackendConfig.resolve() do
-      Hydrator.hydrate_entities(module, opts, operative_class, procedure_id, entity_keys)
+      Hydrator.hydrate_cells(module, opts, operative_class, tasklet_id, cell_keys)
     end
 
     :ok

@@ -13,7 +13,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   end
 
   test "migrates legacy runner-keyed layout under the _system namespace", %{base: base} do
-    legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "procedure-0"])
+    legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "tasklet-0"])
     File.mkdir_p!(legacy)
     File.write!(Path.join(legacy, "p1.wal"), "wal-bytes")
     File.write!(Path.join(legacy, "p1.snap.5"), "snap-bytes")
@@ -24,7 +24,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     assert result.renamed == 3
     assert result.collisions == 0
 
-    migrated = Path.join([base, "_system", "MyOperative", "procedure-0"])
+    migrated = Path.join([base, "_system", "MyOperative", "tasklet-0"])
     assert File.read!(Path.join(migrated, "p1.wal")) == "wal-bytes"
     assert File.read!(Path.join(migrated, "p1.snap.5")) == "snap-bytes"
     # Built by hand on purpose: `<root>/<class>` is the PRE-migration layout,
@@ -36,14 +36,14 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   test "moves a flat class dir under _system, then the marker makes re-runs no-ops", %{
     base: base
   } do
-    flat_dir = Path.join([base, "MyOperative", "procedure-0"])
+    flat_dir = Path.join([base, "MyOperative", "tasklet-0"])
     File.mkdir_p!(flat_dir)
     File.write!(Path.join(flat_dir, "p1.wal"), "wal-bytes")
 
     result = StatePathMigrator.migrate()
     assert result.renamed == 1
 
-    migrated = Path.join([base, "_system", "MyOperative", "procedure-0", "p1.wal"])
+    migrated = Path.join([base, "_system", "MyOperative", "tasklet-0", "p1.wal"])
     assert File.read!(migrated) == "wal-bytes"
     assert File.exists?(Path.join(base, ".layout"))
 
@@ -56,8 +56,8 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   end
 
   test "preserves the loser file on collision", %{base: base} do
-    legacy_a = Path.join([base, "ce-aaaa1111", "MyOperative", "procedure-0"])
-    legacy_b = Path.join([base, "ce-bbbb2222", "MyOperative", "procedure-0"])
+    legacy_a = Path.join([base, "ce-aaaa1111", "MyOperative", "tasklet-0"])
+    legacy_b = Path.join([base, "ce-bbbb2222", "MyOperative", "tasklet-0"])
     File.mkdir_p!(legacy_a)
     File.mkdir_p!(legacy_b)
 
@@ -69,7 +69,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     result = StatePathMigrator.migrate()
 
     assert result.collisions == 1
-    migrated = Path.join([base, "_system", "MyOperative", "procedure-0", "p1.wal"])
+    migrated = Path.join([base, "_system", "MyOperative", "tasklet-0", "p1.wal"])
     assert File.read!(migrated) == "newer"
 
     # The preserved sibling travelled with its class dir into `_system`, and
@@ -103,27 +103,27 @@ defmodule Flezha.Boot.StatePathMigratorTest do
 
   test "an interrupted namespace pass finishes on the next run", %{base: base} do
     # Simulate a crash after one class moved but before the marker landed.
-    File.mkdir_p!(Path.join([base, "_system", "AlreadyMoved", "procedure-0"]))
-    File.mkdir_p!(Path.join([base, "NotYetMoved", "procedure-0"]))
-    File.write!(Path.join([base, "NotYetMoved", "procedure-0", "p1.wal"]), "wal")
+    File.mkdir_p!(Path.join([base, "_system", "AlreadyMoved", "tasklet-0"]))
+    File.mkdir_p!(Path.join([base, "NotYetMoved", "tasklet-0"]))
+    File.write!(Path.join([base, "NotYetMoved", "tasklet-0", "p1.wal"]), "wal")
 
     result = StatePathMigrator.migrate()
 
     assert result.renamed == 1
     assert File.dir?(Path.join([base, "_system", "AlreadyMoved"]))
 
-    assert File.read!(Path.join([base, "_system", "NotYetMoved", "procedure-0", "p1.wal"])) ==
+    assert File.read!(Path.join([base, "_system", "NotYetMoved", "tasklet-0", "p1.wal"])) ==
              "wal"
   end
 
   test "Paths.scan_dir reads the migrated layout", %{base: base} do
-    legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "procedure-0"])
+    legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "tasklet-0"])
     File.mkdir_p!(legacy)
     File.write!(Path.join(legacy, "p1.wal"), "wal-bytes")
 
     StatePathMigrator.migrate()
 
-    %{wal_files: wals} = Paths.scan_dir({"MyOperative", "procedure-0", ""})
+    %{wal_files: wals} = Paths.scan_dir({"MyOperative", "tasklet-0", ""})
     assert [{"p1", _path}] = wals
   end
 
@@ -133,7 +133,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     test "migrate/0 leaves resolver-written WAL in place and the reader finds it" do
       root = TestHelpers.tmp_app_data_dir()
       on_exit(fn -> File.rm_rf!(root) end)
-      pid = TestHelpers.sample_entity_id()
+      pid = TestHelpers.sample_cell_id()
 
       # Written through the resolver — which places it under the `_system`
       # namespace level for an unclaimed class.
@@ -146,7 +146,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
 
       assert Paths.state_root() == root
       assert File.exists?(wal), "migrate/0 orphaned the resolver-written WAL"
-      assert pid in Paths.all_entities()
+      assert pid in Paths.all_cells()
     end
 
     test "one configured root is the single source for both resolver and migrator" do
@@ -162,7 +162,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
 
       assert Paths.state_root() == dir
 
-      pid = TestHelpers.sample_entity_id("envdir")
+      pid = TestHelpers.sample_cell_id("envdir")
       wal = Paths.wal_path(pid)
       assert String.starts_with?(wal, dir)
 
@@ -172,7 +172,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
       # The migrator resolves the same root, so the WAL is found after "restart".
       _ = StatePathMigrator.migrate()
       assert File.exists?(wal)
-      assert pid in Paths.all_entities()
+      assert pid in Paths.all_cells()
     end
   end
 end

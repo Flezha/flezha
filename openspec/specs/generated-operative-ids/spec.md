@@ -11,7 +11,7 @@ and the dangers a start without an id carries.
 ### Requirement: A start without an id SHALL be given a generated id
 
 Every door that starts an operative SHALL accept a start that names no id: `flz operative start`,
-the consumer surface's `Operative.start` and every SDK wrapper of it, a procedure's spawn request in
+the consumer surface's `Operative.start` and every SDK wrapper of it, a tasklet's spawn request in
 every SDK, and a partitioned start. The controller SHALL generate the id. A start that names an id
 SHALL run under exactly that id, as before.
 
@@ -26,9 +26,9 @@ SHALL run under exactly that id, as before.
 - **WHEN** application code calls the administration surface's start with the factory `echo` and no id
 - **THEN** an operative SHALL start under a generated id beginning with `echo-`
 
-#### Scenario: A procedure spawns a workflow without an id
+#### Scenario: A tasklet spawns a workflow without an id
 
-- **WHEN** a procedure requests a spawn of the workflow factory `triage` with a payload and no id
+- **WHEN** a tasklet requests a spawn of the workflow factory `triage` with a payload and no id
 - **THEN** a new workflow instance SHALL start under a generated id beginning with `triage-`, with the
   payload as its first input
 

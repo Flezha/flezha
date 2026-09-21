@@ -1,4 +1,4 @@
-//! `StreamInstance`: one bound stream operative — its Entities by procedure
+//! `StreamInstance`: one bound stream operative — its Cells by tasklet
 //! and mode, its partition range, its reapers — and the partition hash the
 //! controller's placement mirrors bit for bit.
 
@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
-use crate::channel::BuildEntityArgs;
-use crate::dynamic::{spawn_reaper, DynamicEntityRegistry};
-use crate::entity::EntitySlot;
-use crate::operative::topology::{EntityMode, OperativeTopology};
+use crate::cell::CellSlot;
+use crate::channel::BuildCellArgs;
+use crate::dynamic::{spawn_reaper, DynamicCellRegistry};
+use crate::operative::topology::{CellMode, OperativeTopology};
 
 /// Frozen by the cross-language `StableId` spec.
 pub const FNV128_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
@@ -74,8 +74,8 @@ impl KeyGroupRange {
         )))
     }
 
-    /// Whether `key` belongs here — the filtering form a static procedure
-    /// uses to leave its out-of-range Entities idle.
+    /// Whether `key` belongs here — the filtering form a static tasklet
+    /// uses to leave its out-of-range Cells idle.
     #[inline]
     pub fn owns(&self, key: &str) -> bool {
         !self.partitioned() || self.admit(key).is_ok()
@@ -87,13 +87,13 @@ pub struct StreamInstance {
     pub instance_id: Arc<str>,
     /// This member's range, from `AddOperative`; a rebind re-ships it.
     pub partition: KeyGroupRange,
-    /// By `ProcedureId`: one slot for single mode, one per key for static,
+    /// By `TaskletId`: one slot for single mode, one per key for static,
     /// none for dynamic (those live in `dynamic_registries`).
-    pub entities: Vec<Vec<Arc<EntitySlot>>>,
-    /// By `ProcedureId`: static keys to slot index.
-    pub entity_key_to_idx: Vec<HashMap<&'static str, usize>>,
-    /// By `ProcedureId`: `Some` for dynamic mode only.
-    pub dynamic_registries: Vec<Option<Arc<DynamicEntityRegistry>>>,
+    pub cells: Vec<Vec<Arc<CellSlot>>>,
+    /// By `TaskletId`: static keys to slot index.
+    pub cell_key_to_idx: Vec<HashMap<&'static str, usize>>,
+    /// By `TaskletId`: `Some` for dynamic mode only.
+    pub dynamic_registries: Vec<Option<Arc<DynamicCellRegistry>>>,
     /// Stop flag and handles of the reapers.
     background_stop: Arc<AtomicBool>,
     background_handles: Mutex<Vec<JoinHandle<()>>>,
@@ -128,24 +128,24 @@ impl StreamInstance {
         // The runner override wins over the class const when present.
         let persistence_enabled = operator_override.unwrap_or(topology.persistence_enabled_const);
         Arc::new_cyclic(|weak: &Weak<StreamInstance>| {
-            let procedure_count = topology.procedures.len();
-            let mut entities: Vec<Vec<Arc<EntitySlot>>> = Vec::with_capacity(procedure_count);
-            let mut entity_key_to_idx: Vec<HashMap<&'static str, usize>> =
-                Vec::with_capacity(procedure_count);
-            let mut dynamic_registries: Vec<Option<Arc<DynamicEntityRegistry>>> =
-                Vec::with_capacity(procedure_count);
+            let tasklet_count = topology.tasklets.len();
+            let mut cells: Vec<Vec<Arc<CellSlot>>> = Vec::with_capacity(tasklet_count);
+            let mut cell_key_to_idx: Vec<HashMap<&'static str, usize>> =
+                Vec::with_capacity(tasklet_count);
+            let mut dynamic_registries: Vec<Option<Arc<DynamicCellRegistry>>> =
+                Vec::with_capacity(tasklet_count);
 
-            for (procedure_id, procedure_desc) in topology.procedures.iter().enumerate() {
-                let (slots, key_map, registry) = build_procedure_entities(
+            for (tasklet_id, tasklet_desc) in topology.tasklets.iter().enumerate() {
+                let (slots, key_map, registry) = build_tasklet_cells(
                     &topology,
                     weak,
                     &instance_id,
-                    procedure_id as u32,
-                    procedure_desc,
+                    tasklet_id as u32,
+                    tasklet_desc,
                     persistence_enabled,
                 );
-                entities.push(slots);
-                entity_key_to_idx.push(key_map);
+                cells.push(slots);
+                cell_key_to_idx.push(key_map);
                 dynamic_registries.push(registry);
             }
 
@@ -159,8 +159,8 @@ impl StreamInstance {
                 topology,
                 instance_id,
                 partition,
-                entities,
-                entity_key_to_idx,
+                cells,
+                cell_key_to_idx,
                 dynamic_registries,
                 background_stop,
                 background_handles: Mutex::new(background_handles),
@@ -181,11 +181,11 @@ impl StreamInstance {
         Ok(Self::new(topology, Arc::from(instance_id)))
     }
 
-    /// Every Entity this instance holds right now, static and dynamic alike.
-    pub fn all_slots(&self) -> Vec<Arc<EntitySlot>> {
-        let statics = self.entities.iter().flatten().cloned();
+    /// Every Cell this instance holds right now, static and dynamic alike.
+    pub fn all_slots(&self) -> Vec<Arc<CellSlot>> {
+        let statics = self.cells.iter().flatten().cloned();
         let dynamics = self.dynamic_registries.iter().flatten().flat_map(|r| {
-            r.entities
+            r.cells
                 .iter()
                 .map(|e| Arc::clone(e.value()))
                 .collect::<Vec<_>>()
@@ -217,16 +217,15 @@ impl StreamInstance {
     }
 }
 
-/// One reaper per dynamic Procedure that declares a TTL.
+/// One reaper per dynamic Tasklet that declares a TTL.
 fn spawn_reapers(
     topology: &OperativeTopology,
-    dynamic_registries: &[Option<Arc<DynamicEntityRegistry>>],
+    dynamic_registries: &[Option<Arc<DynamicCellRegistry>>],
     stop: &Arc<AtomicBool>,
 ) -> Vec<JoinHandle<()>> {
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
-    for (procedure_id, registry) in dynamic_registries.iter().enumerate() {
-        if let (Some(registry), Some(idle_ttl)) =
-            (registry, topology.procedures[procedure_id].idle_ttl)
+    for (tasklet_id, registry) in dynamic_registries.iter().enumerate() {
+        if let (Some(registry), Some(idle_ttl)) = (registry, topology.tasklets[tasklet_id].idle_ttl)
         {
             handles.push(spawn_reaper(
                 idle_ttl,
@@ -238,36 +237,36 @@ fn spawn_reapers(
     handles
 }
 
-type ProcedureEntities = (
-    Vec<Arc<EntitySlot>>,
+type TaskletCells = (
+    Vec<Arc<CellSlot>>,
     HashMap<&'static str, usize>,
-    Option<Arc<DynamicEntityRegistry>>,
+    Option<Arc<DynamicCellRegistry>>,
 );
 
-/// One procedure's Entities by mode: `(slots, key → index, dynamic registry)`.
-fn build_procedure_entities(
+/// One tasklet's Cells by mode: `(slots, key → index, dynamic registry)`.
+fn build_tasklet_cells(
     topology: &Arc<OperativeTopology>,
     weak: &Weak<StreamInstance>,
     instance_id: &Arc<str>,
-    procedure_id: u32,
-    procedure_desc: &crate::operative::topology::ProcedureDescriptor,
+    tasklet_id: u32,
+    tasklet_desc: &crate::operative::topology::TaskletDescriptor,
     persistence_enabled: bool,
-) -> ProcedureEntities {
-    let build = |entity_key: Option<&str>, entity_index: usize| {
-        (procedure_desc.build_entity)(BuildEntityArgs {
+) -> TaskletCells {
+    let build = |cell_key: Option<&str>, cell_index: usize| {
+        (tasklet_desc.build_cell)(BuildCellArgs {
             topology: Arc::clone(topology),
             instance: Weak::clone(weak),
             instance_id: Arc::clone(instance_id),
-            procedure_id,
-            entity_key,
-            entity_index,
+            tasklet_id,
+            cell_key,
+            cell_index,
             persistence_enabled,
         })
     };
-    if procedure_desc.mode == EntityMode::Dynamic {
-        let registry = DynamicEntityRegistry::new(
-            procedure_id,
-            procedure_desc.max_entities,
+    if tasklet_desc.mode == CellMode::Dynamic {
+        let registry = DynamicCellRegistry::new(
+            tasklet_id,
+            tasklet_desc.max_cells,
             Arc::clone(topology),
             Weak::clone(weak),
             Arc::clone(instance_id),
@@ -275,12 +274,12 @@ fn build_procedure_entities(
         );
         return (Vec::new(), HashMap::new(), Some(Arc::new(registry)));
     }
-    if procedure_desc.entity_keys.is_empty() {
+    if tasklet_desc.cell_keys.is_empty() {
         return (vec![build(None, 0)], HashMap::new(), None);
     }
-    let mut slots = Vec::with_capacity(procedure_desc.entity_keys.len());
-    let mut key_map = HashMap::with_capacity(procedure_desc.entity_keys.len());
-    for (idx, key) in procedure_desc.entity_keys.iter().enumerate() {
+    let mut slots = Vec::with_capacity(tasklet_desc.cell_keys.len());
+    let mut key_map = HashMap::with_capacity(tasklet_desc.cell_keys.len());
+    for (idx, key) in tasklet_desc.cell_keys.iter().enumerate() {
         slots.push(build(Some(key), idx));
         key_map.insert(*key, idx);
     }

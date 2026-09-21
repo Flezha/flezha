@@ -13,7 +13,7 @@
 # template must carry, as code spans, exactly the flag lines that template sets.
 # A value change therefore has to be documented too, not just a new flag name.
 #
-# SCOPE IS THE FIRST CELL OF A TABLE ROW INSIDE THE MARKER BLOCK, not the
+# SCOPE IS THE FIRST COLUMN OF A TABLE ROW INSIDE THE MARKER BLOCK, not the
 # document and not the whole block. Prose elsewhere naming a flag an operator
 # may set, and the reference names several it deliberately does not ship, is
 # out of scope by construction, and so is a flag named in the row's own
@@ -37,7 +37,7 @@ import naming_gate
 REFERENCE = "docs/configuration.md"
 TEMPLATES = ["rel/vm.args.eex", "rel/remote.vm.args.eex"]
 
-# The first cell of a table row: `| `+sbwt none` | why |`. Anchored there so the
+# The first column of a table row: `| `+sbwt none` | why |`. Anchored there so the
 # why-column may name any flag it likes without being read as a claim that the
 # release ships it. Whitespace is squashed either side, so reindenting a
 # template cannot invalidate its own documentation.

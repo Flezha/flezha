@@ -9,11 +9,11 @@ defmodule Mix.Tasks.Bench.Workflow do
   @shortdoc "Workflow operative benchmark: spawn, commit, turn, sleep, wake"
   @moduledoc """
   Measures workflow operatives on the paths a stream never takes: the instance
-  lifecycle (spawn → chain → completion), the durable proc barrier, the chat
+  lifecycle (spawn → chain → completion), the durable task barrier, the chat
   turn (iteration commit), suspension, and the wake paths.
 
-      mix bench.workflow --scenario chain -n 1000 --procs 4 -c 100
-      mix bench.workflow --scenario chain -n 2000 --procs 4 --rate 200
+      mix bench.workflow --scenario chain -n 1000 --tasks 4 -c 100
+      mix bench.workflow --scenario chain -n 2000 --tasks 4 --rate 200
       mix bench.workflow --scenario turns -n 100 -m 100 --rate 1000
       mix bench.workflow --scenario turns -n 100 --duration 600 --rate 500 --kill-runner-at 120
       mix bench.workflow --scenario sleep -n 10000 --wake-after-ms 15000
@@ -22,8 +22,8 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   ## Scenarios
 
-    * `chain` — spawn `-n` run-once workflows of `bench_chain_<procs>`
-      (`--tier optout` picks the persistence-off twin of the 4-proc chain), each
+    * `chain` — spawn `-n` run-once workflows of `bench_chain_<tasks>`
+      (`--tier optout` picks the persistence-off twin of the 4-task chain), each
       seeded with `"<seq>,<send_ts_ns>"`, which the chain passes through to the
       sink. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s open
       loop; neither = one burst.
@@ -47,7 +47,7 @@ defmodule Mix.Tasks.Bench.Workflow do
     scenario: :string,
     num: :integer,
     turns: :integer,
-    procs: :integer,
+    tasks: :integer,
     tier: :string,
     concurrency: :integer,
     rate: :integer,
@@ -71,7 +71,7 @@ defmodule Mix.Tasks.Bench.Workflow do
     {opts, _, invalid} =
       OptionParser.parse(args,
         switches: @switches,
-        aliases: [n: :num, m: :turns, k: :procs, c: :concurrency]
+        aliases: [n: :num, m: :turns, k: :tasks, c: :concurrency]
       )
 
     if invalid != [], do: raise("unknown options: #{inspect(invalid)}")
@@ -115,12 +115,12 @@ defmodule Mix.Tasks.Bench.Workflow do
   # Peak BEAM memory across the run, tracked by a tiny sampler process (a
   # 250 ms tick, ~4 reads/s — off the collector's hot path, so it captures a
   # mid-run spike a busy receive loop would miss and adds no measurable load).
-  # The max lives in an :atomics cell; the run's summary reads it at the end.
+  # The max lives in an :atomics counter; the run's summary reads it at the end.
   defp config(opts) do
     scenario = parse_scenario(opts[:scenario] || "chain")
-    procs = opts[:procs] || 4
+    tasks = opts[:tasks] || 4
     tier = opts[:tier] || "durable"
-    factory = fixture(scenario, tier, procs)
+    factory = fixture(scenario, tier, tasks)
 
     n = opts[:num] || 100
     rate = opts[:rate] || 0
@@ -135,7 +135,7 @@ defmodule Mix.Tasks.Bench.Workflow do
       scenario: scenario,
       n: n,
       factory: factory,
-      procs: procs,
+      tasks: tasks,
       tier: tier,
       concurrency: opts[:concurrency] || 0,
       rate: rate,
@@ -165,11 +165,11 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   # The test-app fixture each scenario drives. Only the chain has variants, and
   # only the ones its factories exist for.
-  defp fixture(:chain, "durable", procs) when procs in [1, 4, 16], do: "bench_chain_#{procs}"
+  defp fixture(:chain, "durable", tasks) when tasks in [1, 4, 16], do: "bench_chain_#{tasks}"
   defp fixture(:chain, "optout", 4), do: "bench_chain_optout_4"
 
-  defp fixture(:chain, _tier, _procs),
-    do: raise("chain fixtures: --procs 1|4|16 --tier durable, or --procs 4 --tier optout")
+  defp fixture(:chain, _tier, _tasks),
+    do: raise("chain fixtures: --tasks 1|4|16 --tier durable, or --tasks 4 --tier optout")
 
-  defp fixture(_scenario, _tier, _procs), do: "bench_loop_workflow"
+  defp fixture(_scenario, _tier, _tasks), do: "bench_loop_workflow"
 end

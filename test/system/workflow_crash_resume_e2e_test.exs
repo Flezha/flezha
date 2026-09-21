@@ -4,11 +4,11 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   (`workflow-operative-functionality` §7c.3), against a live runner of the
   selected SDK runtime over both UDS and QUIC.
 
-  Two real-wire scenarios per transport cell:
+  Two real-wire scenarios per transport:
 
     * **resume** — a durable structured workflow operative (`commit_block_workflow`)
-      commits Entity state in procedure A, then blocks in procedure B. The
-      runner is SIGKILLed mid-run (proc A durable, proc B never finished), a
+      commits Cell state in tasklet A, then blocks in tasklet B. The
+      runner is SIGKILLed mid-run (task A durable, task B never finished), a
       replacement runner is started on the same stable identity, and the
       operative's controller-side supervisor is forced to re-bind onto it. The
       replacement restores the committed state and runs to completion — proving
@@ -32,11 +32,11 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       the SIGKILL, which QUIC surfaces only after its ~45 s idle timeout).
     * `Process.exit(overwatch_pid, :kill)` forces a fresh controller-side bind:
       ProcessHub transient-restarts the supervisor, which re-resolves onto the
-      live replacement and re-issues `AddOperative` with `resume_entity_count > 0`
+      live replacement and re-issues `AddOperative` with `resume_cell_count > 0`
       — the only path that arms the SDK's restore-before-run gate. The hard kill
       bypasses `terminate/2`, so the WAL survives (a graceful stop would delete it).
     * The replacement is launched WITH `FLEZHA_WORKFLOW_E2E_RELEASE`, so the
-      blocking procedure/compensation that parked on the first runner completes
+      blocking tasklet/compensation that parked on the first runner completes
       on the resume, making the crash window deterministic (no wall-clock races).
 
   Tagged `:system` (boots real subprocesses) — excluded from the default
@@ -57,45 +57,45 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   alias Flezha.Operative.Replay
   alias Flezha.Service.CliManager
   alias Flezha.State.Paths
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskJournal
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :workflow_crash_resume
   # Two live runner lifecycles + a SIGKILL + a resume per test; QUIC first
-  # connects can be slow, so give each cell a generous budget.
+  # connects can be slow, so give each scenario a generous budget.
   @moduletag timeout: 180_000
 
   for transport <- NodeTestHelper.transports() do
     describe "transport=#{transport}" do
       @describetag transport: transport
-      @describetag cell: :"crash_#{transport}"
+      @describetag scenario: :"crash_#{transport}"
 
-      test "durable workflow resumes from committed Entity state after a SIGKILL", ctx do
-        # Mid-run point: proc A committed durable Entity state (the spec's
-        # precondition); proc B is then blocking, so the operative can only
+      test "durable workflow resumes from committed Cell state after a SIGKILL", ctx do
+        # Mid-run point: task A committed durable Cell state (the spec's
+        # precondition); task B is then blocking, so the operative can only
         # complete after resuming on the replacement. On rust the point also
-        # requires proc A's journaled proc-commit — the WAL flush and the ProcCommit
+        # requires task A's journaled task-commit — the WAL flush and the TaskCommit
         # ack are independent, and the skip assertion below needs the journal
         # entry durable before the SIGKILL.
         operative_id =
           drive_crash_resume(ctx, "commit_block_workflow", "ok", fn oid ->
-            Replay.resume_entity_count(:workflow, oid) > 0 and
-              ProcJournal.restore_state(oid) != nil
+            Replay.resume_cell_count(:workflow, oid) > 0 and
+              TaskJournal.restore_state(oid) != nil
           end)
 
-        # workflow-proc-journal: proc A's completion was journaled at the proc barrier
+        # workflow-task-journal: task A's completion was journaled at the task barrier
         # before the crash, so the resume SKIPS it — its WAL keeps exactly the
-        # pre-crash record (a redo would append a second one) and proc B runs
+        # pre-crash record (a redo would append a second one) and task B runs
         # seeded from the journaled handoff. Both SDKs honour this contract.
         assert wal_record_count(operative_id, "commit_a") == 1,
-               "journaled proc A was re-run on resume (redo-vs-skip broken)"
+               "journaled task A was re-run on resume (redo-vs-skip broken)"
 
-        {:ok, entries} = ProcJournal.read(operative_id)
-        committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+        {:ok, entries} = TaskJournal.read(operative_id)
+        committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
 
-        assert 0 in committed, "proc A's pre-crash commit is missing from the journal"
-        assert 1 in committed, "resumed proc B never committed its boundary"
+        assert 0 in committed, "task A's pre-crash commit is missing from the journal"
+        assert 1 in committed, "resumed task B never committed its boundary"
 
         # Operator surface: `flz state journal <instance>` renders the entries.
         rendered =
@@ -103,8 +103,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
             CliManager.state_journal(operative_id)
           end)
 
-        assert rendered =~ "proc_committed"
-        assert rendered =~ "proc_idx=0"
+        assert rendered =~ "task_committed"
+        assert rendered =~ "task_idx=0"
       end
 
       test "durable saga workflow resumes compensation after a SIGKILL mid-rollback", ctx do
@@ -158,17 +158,17 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         assert Enum.count(delivered, &(&1 == "c:#{seed}")) == 1,
                "the committed producer must not re-run"
 
-        {:ok, entries} = ProcJournal.read(operative_id)
-        committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+        {:ok, entries} = TaskJournal.read(operative_id)
+        committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
 
         assert Enum.sort(committed) == [0, 1, 2, 3, 4],
                "each node commits exactly once across the crash — the join never twice: " <>
                  inspect(committed)
 
-        assert ClassRegistry.leaf_procs(operative_id) == [4],
+        assert ClassRegistry.leaf_tasks(operative_id) == [4],
                "the join is the diamond's single leaf"
 
-        assert ProcJournal.complete?(operative_id, [4])
+        assert TaskJournal.complete?(operative_id, [4])
       end
 
       # The same diamond with NO crash: one runner, the release env set, so
@@ -208,8 +208,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
                  ]),
                "the fan-out multiplied the released batch: #{inspect(delivered)}"
 
-        {:ok, entries} = ProcJournal.read(operative_id)
-        committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+        {:ok, entries} = TaskJournal.read(operative_id)
+        committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
 
         assert Enum.sort(committed) == [0, 1, 2, 3, 4],
                "each node commits exactly once on a clean run: " <> inspect(committed)
@@ -218,7 +218,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   end
 
   describe "effectively-once tier (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_tier, reference_runtime: true
+    @describetag transport: :uds, scenario: :uds_tier, reference_runtime: true
 
     # §6.2: a tier workflow operative crashes mid-run and resumes; every keyed
     # output reaches the conforming sink with the durable identity stamps, the
@@ -231,7 +231,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           ctx,
           "tier_commit_block_workflow",
           "ok",
-          fn oid -> Replay.resume_entity_count(:workflow, oid) > 0 end,
+          fn oid -> Replay.resume_cell_count(:workflow, oid) > 0 end,
           plugins: [forward_sink("tier_sink", self())]
         )
 
@@ -260,7 +260,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # Exact-identity dedup holds within an identity: no identity ever
       # carries two different payloads.
       outputs
-      |> Enum.group_by(fn {_m, md} -> {md["flz.entity"], md["flz.seq"], md["flz.epoch"]} end)
+      |> Enum.group_by(fn {_m, md} -> {md["flz.cell"], md["flz.seq"], md["flz.epoch"]} end)
       |> Enum.each(fn {identity, group} ->
         payloads = group |> Enum.map(fn {m, _} -> m end) |> Enum.uniq()
         assert length(payloads) == 1, "identity #{inspect(identity)} diverged"
@@ -269,13 +269,13 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   end
 
   describe "opted-out class (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_optout, reference_runtime: true
+    @describetag transport: :uds, scenario: :uds_optout, reference_runtime: true
 
-    # workflow-proc-journal: a `PERSISTENCE_ENABLED = false` class skips the
-    # proc-commit handshake entirely — no journal, no WAL — and a crash-resume
+    # workflow-task-journal: a `PERSISTENCE_ENABLED = false` class skips the
+    # task-commit handshake entirely — no journal, no WAL — and a crash-resume
     # keeps the re-run-from-top contract: with nothing restored and nothing
     # journaled, the only way the chain completes on the replacement is a
-    # fresh run of proc A feeding proc B. Proc A's sink marker is both the
+    # fresh run of task A feeding task B. Task A's sink marker is both the
     # pre-crash mid-run signal and the proof of that re-run: one marker per
     # run, and the second one is owed BEFORE the completed instance is
     # deregistered — the teardown flushes the runner's stream channels, so an
@@ -300,10 +300,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       markers = Enum.filter(collected(collector), &String.starts_with?(&1, "a-ran:"))
 
       assert length(markers) == 2,
-             "the sink must see proc A's marker once per run, both delivered " <>
+             "the sink must see task A's marker once per run, both delivered " <>
                "before the teardown: #{inspect(markers)}"
 
-      assert {:ok, []} = ProcJournal.read(operative_id)
+      assert {:ok, []} = TaskJournal.read(operative_id)
       refute File.exists?(Paths.journal_path(operative_id))
 
       assert [Paths.class_dir(operative_id), "**", "*.wal"]
@@ -314,14 +314,14 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   end
 
   describe "transactional outbox (reference/uds)" do
-    @describetag transport: :uds, cell: :uds_outbox, reference_runtime: true
+    @describetag transport: :uds, scenario: :uds_outbox, reference_runtime: true
 
     # The chain's args are the serialized `init_values` the harness starts with.
     @a_out ~s(a-out:{"seed":"go"})
     @undo_forward ~s(out:{"seed":"go"})
 
-    # workflow-transactional-outbox: proc A's plugin output is STAGED — it reaches
-    # the sink only after the controller journaled A's `proc_committed` entry (with
+    # workflow-transactional-outbox: task A's plugin output is STAGED — it reaches
+    # the sink only after the controller journaled A's `task_committed` entry (with
     # the output inside it) and fsynced. A crash after that flush must not
     # re-deliver it: the `outbox_flushed` marker gates the restore re-drive.
     test "staged output is flushed once after its commit and never re-delivered", ctx do
@@ -339,28 +339,28 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       delivered = await_outputs(collector, 1, operative_id)
 
       assert [{@a_out, md}] = delivered,
-             "proc A's staged output must reach the sink exactly once: #{inspect(delivered)}"
+             "task A's staged output must reach the sink exactly once: #{inspect(delivered)}"
 
-      # Minted from the journal: producing entity, proc index + per-proc sequence,
+      # Minted from the journal: producing cell, task index + per-task sequence,
       # instance epoch — the effectively-once output-identity shape.
-      assert md["flz.entity"] == "#{operative_id}/commit_a/"
+      assert md["flz.cell"] == "#{operative_id}/commit_a/"
       assert md["flz.seq"] == "0.0"
       assert md["flz.epoch"] == "0"
       assert md["channel"] == "mid"
 
-      assert ProcJournal.pending_entries(operative_id) == [],
+      assert TaskJournal.pending_entries(operative_id) == [],
              "the instance still owes outbox entries after completing"
 
-      {:ok, entries} = ProcJournal.read(operative_id)
+      {:ok, entries} = TaskJournal.read(operative_id)
 
       assert Enum.any?(
                entries,
                &match?(
-                 %{type: :outbox_flushed, proc_idx: 0, payload: %{for_type: :proc_committed}},
+                 %{type: :outbox_flushed, task_idx: 0, payload: %{for_type: :task_committed}},
                  &1
                )
              ),
-             "proc A's flush was never recorded"
+             "task A's flush was never recorded"
 
       # Operator surface: the journal renders the outbox and its flush marker.
       rendered =
@@ -368,11 +368,11 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           CliManager.state_journal(operative_id)
         end)
 
-      assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_proc=0 channel=mid"
-      assert rendered =~ "flushes: proc_committed"
+      assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_task=0 channel=mid"
+      assert rendered =~ "flushes: task_committed"
     end
 
-    # The crash-before-flush window: the `proc_committed` record (output inside)
+    # The crash-before-flush window: the `task_committed` record (output inside)
     # is durable, its `outbox_flushed` marker never landed — exactly what a
     # controller crash between the commit fsync and the flush leaves behind.
     # Restore must re-drive the delivery with the ORIGINAL keys.
@@ -400,7 +400,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert identity(second)["flz.seq"] == "0.0"
 
       # The re-drive recorded its own flush marker, so it is owed no more.
-      assert ProcJournal.pending_entries(operative_id) == []
+      assert TaskJournal.pending_entries(operative_id) == []
     end
 
     # workflow-operative-saga + outbox: a `compensate` hook's plugin output is
@@ -426,15 +426,15 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert [{@undo_forward, forward}, {"out:undone", undo}] = delivered,
              "expected the forward output then exactly one undo: #{inspect(delivered)}"
 
-      # Same entity, same procedure, same per-proc sequence — only the comp
+      # Same cell, same tasklet, same per-task sequence — only the comp
       # marker keeps the undo's key off the forward output it reverses.
       assert identity(forward)["flz.seq"] == "0.0"
       assert identity(undo)["flz.seq"] == "0.0.1"
-      assert identity(undo)["flz.entity"] == identity(forward)["flz.entity"]
+      assert identity(undo)["flz.cell"] == identity(forward)["flz.cell"]
 
-      {:ok, entries} = ProcJournal.read(operative_id)
+      {:ok, entries} = TaskJournal.read(operative_id)
 
-      assert [%{type: :compensated, proc_idx: 0, payload: %{outbox: [_]}}] =
+      assert [%{type: :compensated, task_idx: 0, payload: %{outbox: [_]}}] =
                Enum.filter(entries, &(&1.type == :compensated)),
              "the undo output was not journaled exactly once"
 
@@ -444,32 +444,32 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              ),
              "the undo flush was never recorded"
 
-      assert comp_done_count(operative_id) == 1, "the hook ran for exactly one entity"
-      assert ProcJournal.pending_entries(operative_id) == []
+      assert comp_done_count(operative_id) == 1, "the hook ran for exactly one cell"
+      assert TaskJournal.pending_entries(operative_id) == []
     end
   end
 
   # The crash point of `diamond_workflow`: the root, the blocked arm's upper
   # half (B1) and the fast arm (C) have committed while the blocked producer
-  # (B2, proc 3) is mid-run — the join therefore has exactly one journaled and
+  # (B2, task 3) is mid-run — the join therefore has exactly one journaled and
   # one outstanding contribution.
   defp diamond_half_committed?(operative_id) do
-    case ProcJournal.restore_state(operative_id) do
-      %{committed_proc_idxs: idxs} -> Enum.sort(idxs) == [0, 1, 2]
+    case TaskJournal.restore_state(operative_id) do
+      %{committed_task_idxs: idxs} -> Enum.sort(idxs) == [0, 1, 2]
       _ -> false
     end
   end
 
-  # The durable mid-run point for the outbox scenarios: proc A's boundary is
+  # The durable mid-run point for the outbox scenarios: task A's boundary is
   # journaled AND its outbox is recorded flushed (the two are separate records,
   # so waiting on the commit alone would race the flush).
 
-  # The durable mid-run point for the outbox scenarios: proc A's boundary is
+  # The durable mid-run point for the outbox scenarios: task A's boundary is
   # journaled AND its outbox is recorded flushed (the two are separate records,
   # so waiting on the commit alone would race the flush).
   defp committed_and_flushed?(operative_id) do
-    ProcJournal.restore_state(operative_id) != nil and
-      ProcJournal.pending_entries(operative_id) == []
+    TaskJournal.restore_state(operative_id) != nil and
+      TaskJournal.pending_entries(operative_id) == []
   end
 
   # Roll the journal back to the bytes it held before its first `outbox_flushed`
@@ -504,7 +504,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp truncate_at_flush_marker(_, offset), do: offset
 
   # The identity a flushed outbox entry is keyed by.
-  defp identity(md), do: Map.take(md, ["flz.entity", "flz.seq", "flz.epoch", "channel"])
+  defp identity(md), do: Map.take(md, ["flz.cell", "flz.seq", "flz.epoch", "channel"])
 
   defp drain_tier_outputs(acc) do
     receive do
@@ -531,12 +531,12 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         outputs ++ drain_tier_outputs([])
       end
 
-    assert journal_settled?(operative_id), "the proc journal still owes output"
+    assert journal_settled?(operative_id), "the task journal still owes output"
     outputs ++ drain_tier_outputs([])
   end
 
-  # Number of per-Entity compensation-done markers the controller has written
-  # for this operative (one per compensated Entity).
+  # Number of per-Cell compensation-done markers the controller has written
+  # for this operative (one per compensated Cell).
   defp comp_done_count(operative_id) do
     [Paths.class_dir(operative_id), "**", "*.comp_done"]
     |> Path.join()
@@ -544,8 +544,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     |> length()
   end
 
-  defp wal_record_count(operative_id, procedure) do
-    [Paths.class_dir(operative_id), procedure, "*.wal"]
+  defp wal_record_count(operative_id, tasklet) do
+    [Paths.class_dir(operative_id), tasklet, "*.wal"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.map(fn path -> length(wal_seqs(File.read!(path), [])) end)

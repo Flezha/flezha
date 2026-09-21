@@ -6,7 +6,7 @@ TBD - created by archiving change fix-first-input-drop-on-bind. Update Purpose a
 ### Requirement: An accepted input SHALL be delivered or refused, never silently dropped
 
 An input the Controller reports as accepted SHALL either reach the operative's
-procedure or be refused to the sender. It SHALL NOT be possible for the
+tasklet or be refused to the sender. It SHALL NOT be possible for the
 Controller to answer `:ok`, record the input as accepted, and then deliver it to
 nothing.
 
@@ -24,7 +24,7 @@ operative whose stream does not bind SHALL be parked rather than run.
 
 - **GIVEN** an operative of a journaled class whose data stream has not yet bound
 - **WHEN** an input is sent and the Controller reports it accepted
-- **THEN** the procedure SHALL receive that input once the stream binds
+- **THEN** the tasklet SHALL receive that input once the stream binds
 
 #### Scenario: An un-journaled input is not accepted while the stream is unbound
 
@@ -35,7 +35,7 @@ operative whose stream does not bind SHALL be parked rather than run.
 #### Scenario: The journal cannot claim an input the system dropped
 
 - **GIVEN** an input written to the journal during an unbound-stream window
-- **WHEN** the operative's stream binds and the Entity's replay range is computed
+- **WHEN** the operative's stream binds and the Cell's replay range is computed
 - **THEN** that input SHALL fall inside the range and be forwarded
 
 ### Requirement: A data-stream bind SHALL re-forward the journal's undelivered tail
@@ -45,24 +45,24 @@ by that stream's next bind, in offset order, using the same replay path a
 restore uses. This applies to operatives of a journaled class. A bind SHALL NOT
 introduce a second re-forward mechanism beside the restore's.
 
-The re-forward SHALL be bounded by the Entity's consumed offset, so an input the
-Entity has already consumed is not re-delivered, and SHALL be idempotent across
-repeated binds: a stream that binds, drops and rebinds without the Entity making
+The re-forward SHALL be bounded by the Cell's consumed offset, so an input the
+Cell has already consumed is not re-delivered, and SHALL be idempotent across
+repeated binds: a stream that binds, drops and rebinds without the Cell making
 progress SHALL forward the same tail rather than an accumulating one.
 
 A bind that owes nothing — every input so far having been delivered — SHALL
 forward nothing, so an ordinary runner reconnect does not re-deliver.
 
-#### Scenario: The bind forwards what the Entity has not consumed
+#### Scenario: The bind forwards what the Cell has not consumed
 
-- **GIVEN** an Entity whose consumed offset is 3 and whose journal holds offsets up to 6
+- **GIVEN** a Cell whose consumed offset is 3 and whose journal holds offsets up to 6
 - **WHEN** offsets 4, 5 and 6 could not be delivered and the operative's data stream then binds
 - **THEN** offsets 4, 5 and 6 SHALL be forwarded in order, and offsets at or below 3 SHALL NOT
 
 #### Scenario: A flapping stream does not multiply deliveries
 
-- **GIVEN** an Entity with an undelivered journal tail whose stream binds, drops and rebinds three times without the Entity consuming anything
-- **THEN** the number of distinct inputs the procedure receives SHALL equal the size of the tail
+- **GIVEN** a Cell with an undelivered journal tail whose stream binds, drops and rebinds three times without the Cell consuming anything
+- **THEN** the number of distinct inputs the tasklet receives SHALL equal the size of the tail
 
 #### Scenario: The bind uses the restore's replay path
 
@@ -100,7 +100,7 @@ suite SHALL fail on a delivery regression rather than settling around it.
 
 A frame whose metadata names an entry channel SHALL be delivered to that channel, or parked when the
 operative declares no ENTRY channel of that name. A name the operative declares as a channel of
-another kind — a plugin sink, an inter-procedure channel — is not an entry channel and SHALL be
+another kind — a plugin sink, an inter-tasklet channel — is not an entry channel and SHALL be
 parked the same way, because channel names are one namespace across every kind. The frame SHALL NOT
 be discarded, and it SHALL NOT be delivered to a different channel. Every SDK SHALL answer the same
 way: the six hosted on `flz_core` through the core's one resolution, and the Elixir SDK, which is
@@ -108,7 +108,7 @@ its own core, by re-expressing it.
 
 The park SHALL record the requested name in the entry's channel field and nowhere else. A name off
 the wire SHALL NOT reach the identity the dead-letter store keys its row by, because the store makes
-that identity's procedure component a directory; the SDK SHALL supply a fixed component of its own
+that identity's tasklet component a directory; the SDK SHALL supply a fixed component of its own
 for a park that resolved no channel.
 
 The park SHALL be immediate rather than laddered. The name is a fact of the frame, so a re-attempt
@@ -125,7 +125,7 @@ condition, rather than reporting an unresolved name against an empty set.
 
 - **GIVEN** an operative declaring one entry channel `prices`
 - **WHEN** a frame arrives whose metadata carries `channel = "not_prices"`
-- **THEN** the frame SHALL be parked in the dead-letter store with its payload bytes, and SHALL NOT reach any procedure
+- **THEN** the frame SHALL be parked in the dead-letter store with its payload bytes, and SHALL NOT reach any tasklet
 
 #### Scenario: The Elixir SDK stops rerouting an unresolved name
 
@@ -149,7 +149,7 @@ condition, rather than reporting an unresolved name against an empty set.
 
 - **GIVEN** an operative declaring one entry channel `prices` and one plugin sink `out`
 - **WHEN** a frame arrives whose metadata carries `channel = "out"`
-- **THEN** the frame SHALL be parked under the name `out`, and SHALL NOT reach any procedure
+- **THEN** the frame SHALL be parked under the name `out`, and SHALL NOT reach any tasklet
 
 #### Scenario: A requested name never becomes a path component
 

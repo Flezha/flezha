@@ -21,15 +21,15 @@ The end-to-end harness SHALL resolve the SDK runtime for a run from `FLEZHA_E2E_
 
 ### Requirement: Every SDK test app carries a conformance manifest
 
-Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `dispatch` (how the SDK's host executes activations — see below); `toolchain` (the shell command that prints its toolchain's version); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge`, `state_persistence`, `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`, `effectively_once`, `correction_window` — the surface every SDK carries) SHALL NOT appear under `deferred`, and the required set SHALL contain every capability that no manifest defers. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
+Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `dispatch` (how the SDK's host executes activations — see below); `toolchain` (the shell command that prints its toolchain's version); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge`, `state_persistence`, `keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers`, `effectively_once`, `correction_window` — the surface every SDK carries) SHALL NOT appear under `deferred`, and the required set SHALL contain every capability that no manifest defers. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
 
 `pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
 
-`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core against the kernel's rules, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_entity` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Procedure schema declaration with its migrations live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries them and the gate's inverse direction promotes them. `entity_timers` joins the same way: the pending set, its ops as records in the Entity's own log, the two firing paths and the clock kinds live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Entity's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries it and the gate's inverse direction promotes it. A capability the Elixir SDK still defers — `workflow` — stays out of the set until its own change lands, by name.
+`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core against the kernel's rules, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries it and the gate's inverse direction promotes it. A capability the Elixir SDK still defers — `workflow` — stays out of the set until its own change lands, by name.
 
 The required set SHALL be a declaration a person writes, never a value computed from the manifests, and the gate SHALL enforce the two directions separately because their remedies differ: a manifest that defers a required capability SHALL fail naming that manifest and the required set, and a capability no manifest defers that is absent from the required set SHALL fail naming the capability and the declaration it belongs in. A capability therefore cannot leave the required set as a side effect of a manifest edit — an SDK that genuinely cannot carry one defers it by name and removes it from the required set in the same change, and both halves are read by a reviewer.
 
-`dispatch` SHALL declare `model` — a slug from a closed vocabulary held in one place in the harness (`thread-pool`, `event-loop`, `process-per-entity`) — `detail`, one sentence describing how activations are executed, and `env`, a map from each environment variable that selects the SDK's dispatch topology to a description of what it selects. A runtime whose topology is fixed SHALL declare an empty `env`. Every SDK's manifest SHALL carry it, because a throughput number taken under one dispatch topology and one taken under another are different measurements of the same fixture, and only the manifest knows which. `toolchain` SHALL be the shell command that prints the version of the toolchain that runs the SDK, so a bench header can name it. A command that does not run SHALL report the toolchain as unavailable rather than fail the caller.
+`dispatch` SHALL declare `model` — a slug from a closed vocabulary held in one place in the harness (`thread-pool`, `event-loop`, `process-per-cell`) — `detail`, one sentence describing how activations are executed, and `env`, a map from each environment variable that selects the SDK's dispatch topology to a description of what it selects. A runtime whose topology is fixed SHALL declare an empty `env`. Every SDK's manifest SHALL carry it, because a throughput number taken under one dispatch topology and one taken under another are different measurements of the same fixture, and only the manifest knows which. `toolchain` SHALL be the shell command that prints the version of the toolchain that runs the SDK, so a bench header can name it. A command that does not run SHALL report the toolchain as unavailable rather than fail the caller.
 
 A consumer that reports a runtime's dispatch topology or toolchain version SHALL read it from the manifest and SHALL carry no per-runtime clause of its own — the same rule the launch line already follows. A per-runtime clause is a list a new SDK has to remember to join; the manifest is where a runtime already says what it is.
 
@@ -77,13 +77,13 @@ A consumer that reports a runtime's dispatch topology or toolchain version SHALL
 - **WHEN** a bench is run against a runtime whose manifest declares a `dispatch.env` entry
 - **THEN** the run header names the declared model and the current value of that variable, and no bench task contains a per-runtime dispatch clause
 
-#### Scenario: keyed_channels, dynamic_entity and schema_evolution are required once every manifest carries them
-- **WHEN** the Elixir manifest — the last to defer each — lists `keyed_channels: ["partition_relay"]`, `dynamic_entity: ["dynamic_entity"]` and `schema_evolution: ["schema_evolution_v1", "schema_evolution_v2"]` under `fixtures`
+#### Scenario: keyed_channels, dynamic_cell and schema_evolution are required once every manifest carries them
+- **WHEN** the Elixir manifest — the last to defer each — lists `keyed_channels: ["partition_relay"]`, `dynamic_cell: ["dynamic_cell"]` and `schema_evolution: ["schema_evolution_v1", "schema_evolution_v2"]` under `fixtures`
 - **THEN** the static gate fails three times, once per capability, until each is added to the required-set declaration in the same change, and a later manifest that lists any of the three under `deferred` fails the gate naming that manifest and the required set
 
-#### Scenario: entity_timers is required once every manifest carries it
-- **WHEN** the Elixir manifest — the last to defer it — lists `entity_timers: ["session_timeout"]` under `fixtures`
-- **THEN** the static gate fails until `entity_timers` is added to the required-set declaration in the same change, and a later manifest that lists `entity_timers` under `deferred` fails the gate naming that manifest and the required set
+#### Scenario: cell_timers is required once every manifest carries it
+- **WHEN** the Elixir manifest — the last to defer it — lists `cell_timers: ["session_timeout"]` under `fixtures`
+- **THEN** the static gate fails until `cell_timers` is added to the required-set declaration in the same change, and a later manifest that lists `cell_timers` under `deferred` fails the gate naming that manifest and the required set
 
 #### Scenario: effectively_once is required once every manifest carries it
 - **WHEN** the Elixir manifest — the last to defer `effectively_once` — lists it under `fixtures` with the reference's four ids
@@ -98,7 +98,7 @@ A consumer that reports a runtime's dispatch topology or toolchain version SHALL
 A fixture that implements the same scenario SHALL register the same factory id in every SDK test app, and its sink channel names, output bytes and declared options SHALL match the reference. No test app SHALL register a fixture id prefixed with its SDK's name, and no test under `test/system/` SHALL select a fixture by runtime. A test app SHALL NOT register a fixture id absent from the reference.
 
 #### Scenario: A generic test drives the same fixture on every SDK
-- **WHEN** `entity_timers_e2e_test.exs` starts the `session_timeout` fixture under `FLEZHA_E2E_RUNTIME=rust` and again under `FLEZHA_E2E_RUNTIME=java`
+- **WHEN** `cell_timers_e2e_test.exs` starts the `session_timeout` fixture under `FLEZHA_E2E_RUNTIME=rust` and again under `FLEZHA_E2E_RUNTIME=java`
 - **THEN** both runs bind a fixture registered as `session_timeout` and both pass the same assertions
 
 #### Scenario: A prefixed id fails the gate
@@ -107,7 +107,7 @@ A fixture that implements the same scenario SHALL register the same factory id i
 
 ### Requirement: Scenarios are tagged by capability; deferred capabilities and unsupported transports skip by name
 
-The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`, `keyed_channels`, `workflow`, `dynamic_entity`, `partitioned`, `schema_evolution`, `shorthand`). A capability MAY carry no fixtures in any manifest, when the scenarios that prove it need no fixture of their own; whether a capability may be deferred is a separate question from whether it carries fixtures, and `pool_wedge` is both required and fixture-carrying — a host that cannot be wedged on demand cannot prove it recovers. Every module under `test/system/` SHALL carry `@moduletag capability: <atom>` from the vocabulary; a test MAY override it with `@tag capability:`. For the selected runtime, `test_helper.exs` SHALL exclude every test whose capability the runtime's manifest defers and every test tagged with a transport the manifest does not list, and SHALL print one line naming the runtime, the manifest path, the deferred capabilities and the skipped transports. A capability the manifest does not defer SHALL run and SHALL pass; there is no third state. A capability no module or test under `test/system/` is tagged for SHALL be deferred by every manifest, so that a capability carried under `fixtures` is one at least one scenario proves: claiming a capability and covering it cannot diverge, and an SDK that carries the mechanism proves it rather than resting on the SDK's own unit tests.
+The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`, `cell_timers`, `correction_window`, `keyed_channels`, `workflow`, `dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`). A capability MAY carry no fixtures in any manifest, when the scenarios that prove it need no fixture of their own; whether a capability may be deferred is a separate question from whether it carries fixtures, and `pool_wedge` is both required and fixture-carrying — a host that cannot be wedged on demand cannot prove it recovers. Every module under `test/system/` SHALL carry `@moduletag capability: <atom>` from the vocabulary; a test MAY override it with `@tag capability:`. For the selected runtime, `test_helper.exs` SHALL exclude every test whose capability the runtime's manifest defers and every test tagged with a transport the manifest does not list, and SHALL print one line naming the runtime, the manifest path, the deferred capabilities and the skipped transports. A capability the manifest does not defer SHALL run and SHALL pass; there is no third state. A capability no module or test under `test/system/` is tagged for SHALL be deferred by every manifest, so that a capability carried under `fixtures` is one at least one scenario proves: claiming a capability and covering it cannot diverge, and an SDK that carries the mechanism proves it rather than resting on the SDK's own unit tests.
 
 #### Scenario: A deferred capability skips visibly
 - **WHEN** `FLEZHA_E2E_RUNTIME=elixir mix test --include system` is run and the Elixir manifest defers `workflow`
@@ -184,12 +184,12 @@ Where this requirement names a document, it SHALL name the path that document oc
 The smoke tier SHALL assert that the factory ids the controller lists for a freshly connected runner (`FleetManager.list_factories/1`) equal the union of the runtime's manifest `fixtures`.
 
 #### Scenario: The manifest and the app disagree
-- **WHEN** a manifest lists `session_timeout` under `entity_timers` and the app registers `java_session_timeout`
+- **WHEN** a manifest lists `session_timeout` under `cell_timers` and the app registers `java_session_timeout`
 - **THEN** the smoke tier fails naming the id present in the manifest and absent from the runner, and vice versa
 
 ### Requirement: The declared surface matches a golden snapshot
 
-The smoke tier SHALL bind one fixture per declaration key the controller reads (`static_entity`, `rolling_window_twin`, `tier_store`, `checkpoint_batched_store`, `candle`, `commit_block_workflow`, `saga_block_workflow`, `store_input`), capture the `AddOperativeResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. It SHALL further bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the sink output (`flz.entity`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
+The smoke tier SHALL bind one fixture per declaration key the controller reads (`static_cell`, `rolling_window_twin`, `tier_store`, `checkpoint_batched_store`, `candle`, `commit_block_workflow`, `saga_block_workflow`, `store_input`), capture the `AddOperativeResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. It SHALL further bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the sink output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
 
 #### Scenario: A differing default is a diff
 - **WHEN** an SDK's `tier_store` declares `effectively_once` with a value or key spelling that differs from `test/fixtures/declarations/tier_store.json`
@@ -207,7 +207,7 @@ The smoke tier SHALL bind one fixture per declaration key the controller reads (
 
 A test app SHALL take its namespace from the first command-line argument; SHALL end its own OS process when the port the harness manages it by goes away, whether that reaches it as end-of-file on standard input or as a standard-input read that can no longer answer one — a read error is the close arriving by another road, never a reason to stop watching; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, suspend the parked activation **without occupying the host's dispatch capacity** until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
 
-The parked activation's obligation is the same on every host and its spelling is not: a host whose manifest declares a worker-pool dispatch model SHALL park a pool worker and SHALL NOT park the driver thread; a host whose manifest declares an event-loop dispatch model SHALL suspend the activation and yield the loop; and a host whose manifest declares a process-per-entity dispatch model SHALL block the parked Entity's own process, which occupies no shared capacity because the host schedules one process per Entity and the driver is a process of its own. A synchronous hold on an event-loop host is a violation of this requirement, not an implementation of it: it freezes every other activation the loop owns, which is the wedge signature a different capability's fixture exists to produce. In every case the runner SHALL keep answering control pings while a fixture is parked, and a sibling procedure the driver has not yet reached SHALL remain dispatchable.
+The parked activation's obligation is the same on every host and its spelling is not: a host whose manifest declares a worker-pool dispatch model SHALL park a pool worker and SHALL NOT park the driver thread; a host whose manifest declares an event-loop dispatch model SHALL suspend the activation and yield the loop; and a host whose manifest declares a process-per-cell dispatch model SHALL block the parked Cell's own process, which occupies no shared capacity because the host schedules one process per Cell and the driver is a process of its own. A synchronous hold on an event-loop host is a violation of this requirement, not an implementation of it: it freezes every other activation the loop owns, which is the wedge signature a different capability's fixture exists to produce. In every case the runner SHALL keep answering control pings while a fixture is parked, and a sibling tasklet the driver has not yet reached SHALL remain dispatchable.
 
 An app whose runtime reads standard input through a device it also writes standard output through — the Elixir runner's `user` process is the only one — SHALL address its watch at that device rather than at a relay in front of it, so the device's death is reported to the read instead of leaving it unanswered, and SHALL treat that death as the close. It SHALL do so only while the runtime reports itself started: during start-up and during shutdown the device dies as part of that, and ending the process there would race the shutdown and replace the report and exit status the runtime had chosen with its own.
 
@@ -227,7 +227,7 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 
 #### Scenario: The release gate holds a workflow mid-run
 - **WHEN** a crash-resume scenario starts a workflow fixture without `FLEZHA_WORKFLOW_E2E_RELEASE` set
-- **THEN** the fixture's blocking procedure does not complete until the runner is respawned with the variable set, and the runner keeps answering control pings meanwhile
+- **THEN** the fixture's blocking tasklet does not complete until the runner is respawned with the variable set, and the runner keeps answering control pings meanwhile
 
 #### Scenario: An event-loop host parks without holding its loop
 - **WHEN** a test app whose manifest declares an event-loop dispatch model reaches the release gate in a workflow fixture and the variable is absent
@@ -245,10 +245,10 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 - **WHEN** a test app's connect path is checked against the pinned environment fixture
 - **THEN** an app reading `FLEZHA_QUIC_ADDRESS` fails the gate naming the app and the replacement
 
-#### Scenario: A process-per-entity host parks the Entity's own process
+#### Scenario: A process-per-cell host parks the Cell's own process
 
-- **WHEN** a test app whose manifest declares the `process-per-entity` dispatch model reaches the release gate in a workflow fixture and the variable is absent
-- **THEN** the parked Entity's own process blocks with no timer and no spin, and the runner keeps answering control pings while its driver dispatches a sibling procedure the parked one does not feed — a host that instead parked the driver would stall every stage of the chain
+- **WHEN** a test app whose manifest declares the `process-per-cell` dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **THEN** the parked Cell's own process blocks with no timer and no spin, and the runner keeps answering control pings while its driver dispatches a sibling tasklet the parked one does not feed — a host that instead parked the driver would stall every stage of the chain
 
 ### Requirement: The suite has a smoke tier and a full tier
 
@@ -280,7 +280,7 @@ When `FLEZHA_E2E_RUNTIME` is set or any `:system` test ran, the suite's formatte
 
 ### Requirement: A reference fixture proves schema evolution per runtime
 
-The conformance suite SHALL carry a reference fixture that persists per-Entity
+The conformance suite SHALL carry a reference fixture that persists per-Cell
 state under one schema version and restores it under the next, and every runtime
 that persists state SHALL advertise it. A runtime that persists nothing SHALL
 declare the fixture unsupported rather than silently omitting it.
@@ -291,29 +291,29 @@ migration refuses instead of producing state.
 
 #### Scenario: the evolution fixture runs on every persisting runtime
 
-- **GIVEN** the conformance gate running against a runtime that advertises per-Entity state persistence
+- **GIVEN** the conformance gate running against a runtime that advertises per-Cell state persistence
 - **WHEN** the fixture set is resolved for that runtime
 - **THEN** the schema-evolution fixture SHALL be among the fixtures the runtime advertises, and the gate SHALL fail if it is absent
 
 #### Scenario: a mismatch with no migration refuses
 
-- **GIVEN** the fixture's Procedure at the next schema version with no migration declared
-- **WHEN** it restores an Entity persisted at the previous version
-- **THEN** the restore SHALL fail with a schema error and the Entity SHALL NOT resume with cold state presented as restored
+- **GIVEN** the fixture's Tasklet at the next schema version with no migration declared
+- **WHEN** it restores a Cell persisted at the previous version
+- **THEN** the restore SHALL fail with a schema error and the Cell SHALL NOT resume with cold state presented as restored
 
 ### Requirement: The wedge scenario proves detection and recovery on every SDK
 
 The suite SHALL carry a scenario, driven by each SDK's `pool_wedge` fixture, that occupies the runner's dispatch capacity and asserts the full chain on the runtime under test: the runner's heartbeat reports handout liveness; the classifier mints the expected verdict; the planner issues the expected remedy; and the affected operative resumes producing afterwards.
 
-The scenario SHALL additionally cover the abandon path — a fixture whose Procedure aborts its worker rather than returning an error — and assert that the entity is served again without operator action and without a duplicate execution of the item that killed the worker.
+The scenario SHALL additionally cover the abandon path — a fixture whose Tasklet aborts its worker rather than returning an error — and assert that the cell is served again without operator action and without a duplicate execution of the item that killed the worker.
 
 #### Scenario: A wedged pool is detected and remedied on each runtime
 - **WHEN** the wedge fixture occupies the runner's dispatch capacity under `FLEZHA_E2E_RUNTIME=<sdk>`
 - **THEN** the heartbeat SHALL report the outstanding activation, the classifier SHALL mint the wedge verdict, the plan SHALL issue its remedy, and the operative SHALL produce again once the remedy lands
 
-#### Scenario: A worker killed mid-dispatch recovers without losing the entity
+#### Scenario: A worker killed mid-dispatch recovers without losing the cell
 - **WHEN** the fixture aborts the worker holding an activation
-- **THEN** the pool SHALL return to its configured size, the entity SHALL be served again, and the aborting item SHALL NOT have been executed twice
+- **THEN** the pool SHALL return to its configured size, the cell SHALL be served again, and the aborting item SHALL NOT have been executed twice
 
 ### Requirement: Every conformance manifest declares its runtime's language byte
 
@@ -464,7 +464,7 @@ fixtures cannot drive is a declaration the gate believes and no scenario checks.
 
 #### Scenario: A fan-out reaches every consumer on the durable path
 
-- **WHEN** an Elixir workflow class declares one producing procedure whose output channel
+- **WHEN** an Elixir workflow class declares one producing tasklet whose output channel
   carries two consumers, and `workflow_crash_resume_e2e_test.exs:180` drives it
 - **THEN** all five payloads are delivered, and removing either arm of the fan-out makes
   that test fail with three payloads where five are asserted — the negative control every
@@ -475,7 +475,7 @@ fixtures cannot drive is a declaration the gate believes and no scenario checks.
 
 One `test/system/` module SHALL drive every refusal row of
 `test/fixtures/reference_topologies.txt` through every runtime that carries a manifest:
-per cell it SHALL boot the runtime's test app with `FLEZHA_REFUSAL_FIXTURE=<topology id>`,
+per runtime and row it SHALL boot the runtime's test app with `FLEZHA_REFUSAL_FIXTURE=<topology id>`,
 under which the app registers only that row's topology through its own builder, and SHALL
 assert the runner refuses at boot with the row's name. A row a runtime's `needs` excludes
 SHALL be asserted as a skip by name. Rows SHALL be read from the fixture and runtimes from
@@ -769,9 +769,9 @@ end-to-end.
 - **THEN** the gate SHALL fail on the missing manifest as it would for any absent test app, naming the path
 
 ### Requirement: The short form is a required capability every manifest carries and every app spells
-`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `workflow`. Every test app SHALL declare each of the five through its SDK's short form, which is **one operative declaration** at the kind-named operative entry point carrying its factory id and a procedure body (a `sink` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a procedure beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`.
+`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `workflow`. Every test app SHALL declare each of the five through its SDK's short form, which is **one operative declaration** at the kind-named operative entry point carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a tasklet beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`.
 
-`sugar_state_only` SHALL be a stream short form with the entry channel `ticks`, no `sink`, and a body that records its input in declared state. It has no sink frame to observe, so its proof SHALL be the entity state read back through the live entity-state query rather than a sink assertion.
+`sugar_state_only` SHALL be a stream short form with the entry channel `ticks`, no `sink`, and a body that records its input in declared state. It has no sink frame to observe, so its proof SHALL be the cell state read back through the live cell-state query rather than a sink assertion.
 
 The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a body declaring no output), needing the surface `shorthand`, and `shorthand_typed_output` for the row only an SDK that can read a body's output type at declaration time can write. The rows SHALL be `shorthand_with_topology` and `shorthand_sink_without_output`. The `shorthand_omittable_sink` surface SHALL be removed from the `needs` vocabulary and from every manifest, because a sink is optional in every SDK's short form and no spelling has to omit a key that rides it. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
 
@@ -803,7 +803,7 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 #### Scenario: A sinkless short form is proven by its state on every runtime
 
 - **WHEN** the scenario injects a frame on channel `ticks` of a `sugar_state_only` operative under any runtime
-- **THEN** the operative declares no plugin channel, and the live entity-state query answers a state carrying that input
+- **THEN** the operative declares no plugin channel, and the live cell-state query answers a state carrying that input
 
 #### Scenario: A row an untyped SDK cannot write skips by name
 

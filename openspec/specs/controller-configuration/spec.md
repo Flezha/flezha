@@ -44,7 +44,7 @@ and a per-environment value SHALL be declared on the row rather than in a per-en
 config file. Where a knob is read by two roles with different needs, the row SHALL declare
 one default per role and the documentation SHALL state both. Every table in
 `docs/configuration.md`, `docs/operations/*.md` and `docs/internals/*.md` that restates a
-default SHALL render the row's default, and the seam test SHALL fail on a cell that does
+default SHALL render the row's default, and the seam test SHALL fail on a default column that does
 not.
 
 #### Scenario: The health listener binds the documented address in every environment

@@ -3,7 +3,7 @@
 #
 # The policies are `DropNothing`, `DropNewest` and `DropOldest` — each names
 # what it discards. "Block" named the mechanism instead, which is why the docs
-# had to gloss it, and which stops being true on an inter-procedure channel
+# had to gloss it, and which stops being true on an inter-tasklet channel
 # once the push no longer parks a thread.
 #
 # "block" is ordinary English and a common programming term, so this gate

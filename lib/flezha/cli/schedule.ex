@@ -88,10 +88,10 @@ defmodule Flezha.Service.Cli.Schedule do
       ])
     )
 
-    Enum.each(entries, &IO.puts(schedule_row(schedule_cells(&1, statuses))))
+    Enum.each(entries, &IO.puts(schedule_row(schedule_fields(&1, statuses))))
   end
 
-  defp schedule_cells(entry, statuses) do
+  defp schedule_fields(entry, statuses) do
     status = Map.get(statuses, entry.name, %{})
     last_fire = Map.get(status, :last_fire)
 
@@ -188,8 +188,8 @@ defmodule Flezha.Service.Cli.Schedule do
   end
 
   # First six columns padded; the last is printed raw.
-  defp schedule_row(cells) do
-    {padded, [last]} = Enum.split(cells, 8)
+  defp schedule_row(fields) do
+    {padded, [last]} = Enum.split(fields, 8)
 
     Enum.zip_with(padded, [24, 18, 20, 24, 14, 22, 22, 22], &String.pad_trailing/2)
     |> Enum.join()

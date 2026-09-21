@@ -131,7 +131,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       ClassRegistry.put_keyless(@factory, true)
 
       assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
-      assert message =~ "PartitionsWithoutKeyedProcedure"
+      assert message =~ "PartitionsWithoutKeyedTasklet"
       assert message =~ "key_by"
       assert started_members() == []
     end
@@ -257,7 +257,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       _ = started_members()
       :ets.delete(registry, "ohlc#p2")
 
-      wal = Paths.wal_path({"ohlc#p2", "proc", "key"})
+      wal = Paths.wal_path({"ohlc#p2", "task", "key"})
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "durable-bytes")
       on_exit(fn -> File.rm_rf(Paths.class_dir("ohlc#p2")) end)
@@ -357,7 +357,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
 
   The order is what makes the operation safe rather than merely sequential, so
   what these pin is the order's guarantees: every refusal leaves the group
-  exactly as it was, and once files start moving each Entity's move is atomic
+  exactly as it was, and once files start moving each Cell's move is atomic
   and re-derivable, which is what lets a crashed rescale be re-run.
 
   The registry is `FakeStartRegistry`, so the rescale drives the real start and
@@ -422,11 +422,11 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     %{registry: registry}
   end
 
-  defp write_entity(class, procedure, key, bytes) do
-    entity = {class, procedure, key}
-    File.mkdir_p!(Paths.state_dir(entity))
-    File.write!(Paths.wal_path(entity), bytes)
-    entity
+  defp write_cell(class, tasklet, key, bytes) do
+    cell = {class, tasklet, key}
+    File.mkdir_p!(Paths.state_dir(cell))
+    File.write!(Paths.wal_path(cell), bytes)
+    cell
   end
 
   defp drain(tag) do
@@ -493,26 +493,26 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   end
 
   describe "movement" do
-    test "3 to 2 absorbs the vacated member's entities and removes its tree" do
+    test "3 to 2 absorbs the vacated member's cells and removes its tree" do
       # SOL-USD hashes to key group 60 — p0 under both 3 and 2 members — and
       # ETH-USD to 213: p2 of three, p1 of two.
-      write_entity("ohlc#p0", "candle", "SOL-USD", "sol")
-      moved = write_entity("ohlc#p2", "candle", "ETH-USD", "eth")
+      write_cell("ohlc#p0", "candle", "SOL-USD", "sol")
+      moved = write_cell("ohlc#p2", "candle", "ETH-USD", "eth")
 
       assert {:ok, result} = PartitionGroup.rescale(@namespace, @group, 2)
 
       assert result.from == 3
       assert result.to == 2
       assert result.members == ["ohlc#p0", "ohlc#p1"]
-      assert result.entities_moved == 1
+      assert result.cells_moved == 1
       assert result.vacated == ["ohlc#p2"]
 
-      # The Entity is now p1's, byte-for-byte, and the source is gone.
+      # The Cell is now p1's, byte-for-byte, and the source is gone.
       assert File.read!(Paths.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
       refute File.exists?(Paths.wal_path(moved))
       refute File.exists?(Paths.class_dir("ohlc#p2"))
 
-      # The Entity that did not change owner was left exactly where it was.
+      # The Cell that did not change owner was left exactly where it was.
       assert File.read!(Paths.wal_path({"ohlc#p0", "candle", "SOL-USD"})) == "sol"
     end
 
@@ -564,13 +564,13 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     end
 
     test "a re-run after a crash mid-move completes the remainder and moves nothing twice" do
-      write_entity("ohlc#p2", "candle", "ETH-USD", "eth")
+      write_cell("ohlc#p2", "candle", "ETH-USD", "eth")
 
-      assert {:ok, %{entities_moved: 1}} = PartitionGroup.rescale(@namespace, @group, 2)
+      assert {:ok, %{cells_moved: 1}} = PartitionGroup.rescale(@namespace, @group, 2)
       assert File.read!(Paths.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
 
       # A re-run sees the source gone: nothing is owed, nothing is clobbered.
-      assert {:ok, %{entities_moved: 0}} = PartitionGroup.rescale(@namespace, @group, 2)
+      assert {:ok, %{cells_moved: 0}} = PartitionGroup.rescale(@namespace, @group, 2)
       assert File.read!(Paths.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
     end
   end
@@ -609,26 +609,26 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     end
   end
 
-  describe "WalTransfer.move_entity/3" do
-    test "moves an Entity's whole file set and is idempotent" do
-      source = write_entity("class_a", "proc", "k1", "wal-bytes")
+  describe "WalTransfer.move_cell/3" do
+    test "moves a Cell's whole file set and is idempotent" do
+      source = write_cell("class_a", "task", "k1", "wal-bytes")
       File.write!(Paths.outbox_dedup_path(source), "dedup")
-      destination = {"class_b", "proc", "k1"}
+      destination = {"class_b", "task", "k1"}
 
-      assert {:ok, 2} = WalTransfer.move_entity(node(), source, destination)
+      assert {:ok, 2} = WalTransfer.move_cell(node(), source, destination)
 
       assert File.read!(Paths.wal_path(destination)) == "wal-bytes"
       assert File.read!(Paths.outbox_dedup_path(destination)) == "dedup"
       refute File.exists?(Paths.wal_path(source))
 
       # Nothing left to move — and the destination is untouched.
-      assert {:ok, 0} = WalTransfer.move_entity(node(), source, destination)
+      assert {:ok, 0} = WalTransfer.move_cell(node(), source, destination)
       assert File.read!(Paths.wal_path(destination)) == "wal-bytes"
     end
 
     test "a move onto itself is a no-op" do
-      source = write_entity("class_a", "proc", "k1", "wal-bytes")
-      assert {:ok, 0} = WalTransfer.move_entity(node(), source, source)
+      source = write_cell("class_a", "task", "k1", "wal-bytes")
+      assert {:ok, 0} = WalTransfer.move_cell(node(), source, source)
       assert File.read!(Paths.wal_path(source)) == "wal-bytes"
     end
   end

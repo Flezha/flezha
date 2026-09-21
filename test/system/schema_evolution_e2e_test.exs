@@ -1,10 +1,10 @@
 defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   @moduledoc """
-  End-to-end proof that a Procedure's persisted state survives a change to the
-  Procedure's own `State` / `Change` types — the deploy every stateful service
+  End-to-end proof that a Tasklet's persisted state survives a change to the
+  Tasklet's own `State` / `Change` types — the deploy every stateful service
   eventually makes.
 
-  The two halves of the deploy are two factories declaring the SAME procedure
+  The two halves of the deploy are two factories declaring the SAME tasklet
   name (`evolving_cart`), so an operative started under `schema_evolution_v1`
   and restarted under `schema_evolution_v2` restores from the very WAL v1 wrote.
   One runner binary carries both, which is the only difference from a real
@@ -36,9 +36,9 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   import FlezhaTest.Helper.CreditTestHelper,
-    only: [await_seq: 3, wait_for_entity: 3, wait_for_writer: 2]
+    only: [await_seq: 3, wait_for_cell: 3, wait_for_writer: 2]
 
-  @procedure "evolving_cart"
+  @tasklet "evolving_cart"
   @v1 "schema_evolution_v1"
   @v2 "schema_evolution_v2"
 
@@ -98,22 +98,22 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
              inspect(state_of(namespace, operative_id))
 
     # Compact first: the snapshot is what carries the *state* across the
-    # deploy, and a long-lived Entity always has one. Without it the restore
+    # deploy, and a long-lived Cell always has one. Without it the restore
     # would exercise only the change-log half of the migration.
-    entity_id = {operative_id, @procedure, ""}
+    cell_id = {operative_id, @tasklet, ""}
     # The live read is not a persisted-seq signal: an erased host publishes its
     # state before the core frames the changes, so the WAL is awaited by seq.
-    wait_for_entity(operative_id, @procedure, 30_000)
-    await_seq(wait_for_writer(entity_id, 10_000), 1, 30_000)
+    wait_for_cell(operative_id, @tasklet, 30_000)
+    await_seq(wait_for_writer(cell_id, 10_000), 1, 30_000)
     Application.put_env(:flezha, :compact_after_age_ms, 1)
-    {:ok, writer} = Flezha.State.Supervisor.lookup(entity_id)
+    {:ok, writer} = Flezha.State.Supervisor.lookup(cell_id)
     TestHelpers.age_writer(writer, 50)
     :ok = Watchdog.sweep_now()
 
-    assert CA.wait_for_snapshot_file(entity_id, 15_000),
+    assert CA.wait_for_snapshot_file(cell_id, 15_000),
            "precondition: v1 must leave a snapshot for the deploy to restore from"
 
-    # The deploy: same operative id and procedure, one schema version later.
+    # The deploy: same operative id and tasklet, one schema version later.
     # `preserve_state: true` is what makes this a deploy rather than a delete —
     # the same option a rescale uses when the files are about to be handed on.
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
@@ -126,21 +126,21 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     assert state_of(namespace, operative_id)["currency"] == "EUR",
            "the field v2 added must come from the migration, not from init_state"
 
-    assert_receive {:migrated, %{operative: ^operative_id, procedure: @procedure}},
+    assert_receive {:migrated, %{operative: ^operative_id, tasklet: @tasklet}},
                    5_000,
                    "the controller must observe the migration and compact behind it"
 
-    # And the migrated Entity keeps accumulating on the new shape.
+    # And the migrated Cell keeps accumulating on the new shape.
     send(namespace, operative_id, "5")
     assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 12 end, 10_000)
 
     # The migration is paid once: the compaction the controller drove on the
     # back of it rewrote the baseline at the running version, so the NEXT
-    # restore of the same Entity finds nothing to migrate.
-    assert CA.wait_for_snapshot_file(entity_id, 15_000),
+    # restore of the same Cell finds nothing to migrate.
+    assert CA.wait_for_snapshot_file(cell_id, 15_000),
            "the post-migration compaction must leave a snapshot at the running version"
 
-    await_seq(wait_for_writer(entity_id, 10_000), 2, 30_000)
+    await_seq(wait_for_writer(cell_id, 10_000), 2, 30_000)
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
     assert {:ok, _} = start(namespace, operative_id, @v2)
     assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 12 end, 10_000)
@@ -159,8 +159,8 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     assert {:ok, _} = start(namespace, operative_id, @v2)
     send(namespace, operative_id, "9")
     assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 9 end, 10_000)
-    wait_for_entity(operative_id, @procedure, 30_000)
-    await_seq(wait_for_writer({operative_id, @procedure, ""}, 10_000), 0, 30_000)
+    wait_for_cell(operative_id, @tasklet, 30_000)
+    await_seq(wait_for_writer({operative_id, @tasklet, ""}, 10_000), 0, 30_000)
 
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
 
@@ -171,21 +171,21 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     )
 
     # Placement only: `start/3`'s residency wait would raise on the very outcome
-    # this scenario proves, since a refused restore never makes the Entity
+    # this scenario proves, since a refused restore never makes the Cell
     # resident.
     _ = place(namespace, operative_id, @v1)
 
-    assert_receive {:refused, _, %{entity: {^operative_id, _, _}, reason: reason}}, 30_000
+    assert_receive {:refused, _, %{cell: {^operative_id, _, _}, reason: reason}}, 30_000
 
     # Refused BY NAME, which is the whole point. v2's change records encode
     # `{delta, note}` where v1's encode `(delta)`, and a positional codec reads
     # the first field happily — an unguarded restore hands v1 the value 9 as
     # though it had written it. The version stamp is what makes that impossible,
     # so the reason has to be the stamp and not an incidental decode failure.
-    assert reason =~ "schema_version 2 is above the running procedure's 1"
+    assert reason =~ "schema_version 2 is above the running tasklet's 1"
 
     # `operative-state-persistence`, "A refused restore fails the bind instead of
-    # cold-starting the Entity": the operative is left unbound. Whether
+    # cold-starting the Cell": the operative is left unbound. Whether
     # `start_operative/2`'s own reply carried the refusal is NOT part of that
     # guarantee and is a real race — `Replay.dispatch_restore/3` reports the
     # verdict off-process, so `{:restore_refused, _}` and the
@@ -225,10 +225,10 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   defp start(namespace, operative_id, factory) do
     result = place(namespace, operative_id, factory)
 
-    # `start_operative` returns once the operative is placed; its Entity
+    # `start_operative` returns once the operative is placed; its Cell
     # materializes on the runner a moment later, and an input sent into that
     # gap has nothing to reach. A live state read is the readiness signal —
-    # it answers only once the Entity exists — and every send below follows it.
+    # it answers only once the Cell exists — and every send below follows it.
     with {:ok, _} <- result, do: await_resident(namespace, operative_id)
 
     result
@@ -244,10 +244,10 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     do: OperativeManager.send_io(operative_id, namespace, input, %{})
 
   defp state_of(namespace, operative_id) do
-    case OperativeManager.get_entity_state(namespace, operative_id) do
+    case OperativeManager.get_cell_state(namespace, operative_id) do
       {:ok, json} ->
         case Payloader.json_to_map(json) do
-          %{@procedure => entity} -> entity
+          %{@tasklet => cell} -> cell
           other -> other
         end
 

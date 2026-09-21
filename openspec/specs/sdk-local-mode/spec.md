@@ -10,22 +10,22 @@ class a user deploys and runs its declared graph entirely in the host process,
 with no controller, no transport connection and no socket. The class SHALL be
 accepted unchanged: local mode consumes the host-class declaration the authoring
 DSL already produces, and SHALL NOT require a separate declaration, a local-only
-builder surface, or any edit to the procedures themselves.
+builder surface, or any edit to the tasklets themselves.
 
 Every stage of the declared graph SHALL execute — entry-channel decode, edge
 transforms (`map`, `filter`, `flat_map`), edge keying (`key_by`), merged inputs,
-one entity per resolved key, mailboxes and their overflow policy, the retry
-ladder, and inter-procedure delivery.
+one cell per resolved key, mailboxes and their overflow policy, the retry
+ladder, and inter-tasklet delivery.
 
-#### Scenario: A two-procedure pipeline runs locally
+#### Scenario: A two-tasklet pipeline runs locally
 
-- **WHEN** an operative declaring `entry → Normalize → (inter-procedure) → Total → sink` is started in local mode and fed two values on the entry channel
-- **THEN** both procedures SHALL run, the inter-procedure hop SHALL be performed by the runtime rather than by caller code, and `Total`'s state SHALL reflect both values
+- **WHEN** an operative declaring `entry → Normalize → (inter-tasklet) → Total → sink` is started in local mode and fed two values on the entry channel
+- **THEN** both tasklets SHALL run, the inter-tasklet hop SHALL be performed by the runtime rather than by caller code, and `Total`'s state SHALL reflect both values
 
 #### Scenario: Edge transforms and keying run
 
 - **WHEN** an entry chain declares `.filter(...)`, `.flat_map(...)` and `.key_by(...)` before `.into(P)` and is fed values in local mode
-- **THEN** filtered values SHALL NOT reach `P`, each produced value SHALL be routed to the entity its key names, and one entity SHALL exist per distinct key
+- **THEN** filtered values SHALL NOT reach `P`, each produced value SHALL be routed to the cell its key names, and one cell SHALL exist per distinct key
 
 #### Scenario: The deployed class is accepted unchanged
 
@@ -34,26 +34,26 @@ ladder, and inter-procedure delivery.
 
 ### Requirement: Local mode SHALL share the production code path
 
-Local mode MUST reuse the runtime's existing dispatch, routing, entity and
-mailbox machinery, and SHALL NOT introduce a second implementation of entity
+Local mode MUST reuse the runtime's existing dispatch, routing, cell and
+mailbox machinery, and SHALL NOT introduce a second implementation of cell
 lifecycle, key resolution, channel routing, retry or overflow semantics. Input
 supplied to local mode SHALL enter through the same dispatch entry point a frame
-arriving on a transport uses, and an inter-procedure value SHALL travel the same
+arriving on a transport uses, and an inter-tasklet value SHALL travel the same
 routing seam that live delivery and replay travel.
 
 Where local mode differs from a deployed runner, the difference SHALL be
 expressed by supplying a different outbound sink, never by branching the routing
-or entity path on whether a controller is attached.
+or cell path on whether a controller is attached.
 
 #### Scenario: The routing seam is shared
 
-- **WHEN** a value is emitted by an upstream procedure onto an inter-procedure channel in local mode
+- **WHEN** a value is emitted by an upstream tasklet onto an inter-tasklet channel in local mode
 - **THEN** it SHALL be delivered through the same routing function used for live delivery and for a replay slice
 
-#### Scenario: No parallel entity implementation exists
+#### Scenario: No parallel cell implementation exists
 
 - **WHEN** the local-mode implementation is inspected
-- **THEN** it SHALL contain no separate entity registry, key resolver, mailbox or retry ladder of its own
+- **THEN** it SHALL contain no separate cell registry, key resolver, mailbox or retry ladder of its own
 
 ### Requirement: Local mode SHALL state at runtime that nothing is durable
 
@@ -93,7 +93,7 @@ production frames it rather than before.
 #### Scenario: Output carries production identity stamps
 
 - **WHEN** a keyed sink releases a value in local mode
-- **THEN** the delivered value SHALL carry the same entity, sequence and key stamps a deployed run would attach
+- **THEN** the delivered value SHALL carry the same cell, sequence and key stamps a deployed run would attach
 
 ### Requirement: Input SHALL be supplied by the caller on a named entry channel
 
@@ -154,7 +154,7 @@ Documentation introducing local mode SHALL be filed as user-facing material —
 quickstart, getting started, or the SDK's own guide — and SHALL NOT be placed in
 a testing section.
 
-This requirement SHALL NOT rename the procedure harness. `ProcedureTestHarness`
+This requirement SHALL NOT rename the tasklet harness. `TaskletTestHarness`
 and its per-SDK equivalents keep their names because they are for writing tests,
 which is the one place the word is correct.
 
@@ -191,8 +191,8 @@ deferred.
 
 #### Scenario: Equivalent behaviour across the in-scope SDKs
 
-- **WHEN** an equivalent two-procedure declaration is run in local mode on each SDK with the same inputs
-- **THEN** each SHALL execute both procedures, perform the inter-procedure hop in the runtime, and deliver the same sink output
+- **WHEN** an equivalent two-tasklet declaration is run in local mode on each SDK with the same inputs
+- **THEN** each SHALL execute both tasklets, perform the inter-tasklet hop in the runtime, and deliver the same sink output
 
 #### Scenario: No SDK claims a deferral
 
@@ -203,7 +203,7 @@ deferred.
 
 Each SDK SHALL run, in its own suite and in local mode, the fixture class its
 conformance manifest names for each of `graph_builder`, `keyed_channels`,
-`dynamic_entity`, `retry_ladder` and `entity_timers`, and SHALL assert the
+`dynamic_cell`, `retry_ladder` and `cell_timers`, and SHALL assert the
 outputs and refusals the end-to-end scenario for that capability asserts, as
 far as they are observable without a controller. A capability the controller
 owns SHALL stay refused by name and SHALL NOT be approximated locally; adding a
@@ -225,10 +225,10 @@ scheduled timestamp exactly as it does under a controller. It SHALL NOT hold a
 timer implementation of its own.
 
 #### Scenario: A processing-time timer fires locally
-- **WHEN** an entity in a local run schedules a timer after a duration and the run continues past it
+- **WHEN** a cell in a local run schedules a timer after a duration and the run continues past it
 - **THEN** the timer callback SHALL run with the scheduled timestamp
 
 #### Scenario: An event-time timer fires locally
-- **WHEN** an entity in a local run schedules a timer at an event time and a later input carries a later event time
+- **WHEN** a cell in a local run schedules a timer at an event time and a later input carries a later event time
 - **THEN** the timer callback SHALL run before that input is processed
 

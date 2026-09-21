@@ -1,11 +1,11 @@
-//! `MigrationDeserialization` — restore a StreamOperative instance's per-Procedure /
-//! per-Entity state from a snapshot blob and register it locally.
+//! `MigrationDeserialization` — restore a StreamOperative instance's per-Tasklet /
+//! per-Cell state from a snapshot blob and register it locally.
 //! Reuses `apply_init_values` for the state-application path so a
-//! migrated instance ends up with byte-identical Entity state to the
+//! migrated instance ends up with byte-identical Cell state to the
 //! source instance produced by `serialize_operative_state`.
 
 use super::{CommandAction, Reply};
-use crate::command::entity_state::apply_init_values;
+use crate::command::cell_state::apply_init_values;
 use crate::pb::MigrationDeserialization;
 use crate::runner::RunnerNode;
 

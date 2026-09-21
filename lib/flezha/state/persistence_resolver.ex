@@ -35,10 +35,10 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  Whether an operative of `kind` + `operative_class` has durable per-Entity
+  Whether an operative of `kind` + `operative_class` has durable per-Cell
   state (WAL + snapshot + restore) — the kind+class resolution of the
   `persistent_state?` capability that gates bind-time restore (crash-resume)
-  and `:get_entity_state` introspection:
+  and `:get_cell_state` introspection:
 
     * `:stream` — always durable.
     * `:workflow` — durable **by default**, opt-out per class (same precedence
@@ -47,7 +47,7 @@ defmodule Flezha.State.PersistenceResolver do
     * any other kind — not durable.
 
   Distinct from the pure per-kind `Flezha.Operative.Kind.capable?/2` flags
-  (`time_travel?`, `dynamic_entities?`, `output_stall_watch?`) which a durable
+  (`time_travel?`, `dynamic_cells?`, `output_stall_watch?`) which a durable
   workflow operative does NOT inherit.
   """
   @spec persistent_state?(atom(), binary(), map()) :: boolean()
@@ -70,7 +70,7 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  How many hours a finished workflow operative's data (retained Entity state +
+  How many hours a finished workflow operative's data (retained Cell state +
   completion record) is kept before the retention sweeper reclaims it.
   Precedence: operator override map `:workflow_completed_retention_hours` →
   instance metadata → global `:default_workflow_completed_retention_hours`
@@ -90,7 +90,7 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  The per-Entity WAL size at which the Watchdog triggers a compaction, per
+  The per-Cell WAL size at which the Watchdog triggers a compaction, per
   operative class. Precedence (moduledoc): operator override map
   `:compact_after_bytes` → the SDK-declared value the class shipped in its
   `AddOperative` metadata (persisted in `ClassRegistry`, resolved here the way
@@ -185,9 +185,9 @@ defmodule Flezha.State.PersistenceResolver do
 
   @doc """
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
-  "how many bytes is too many for one Entity-scale payload".
+  "how many bytes is too many for one Cell-scale payload".
 
-  It bounds the per-Entity WAL, the input log, a workflow journal entry, the
+  It bounds the per-Cell WAL, the input log, a workflow journal entry, the
   default credit window, and a live state read, so it lives here rather than as
   a literal at each of those.
   """

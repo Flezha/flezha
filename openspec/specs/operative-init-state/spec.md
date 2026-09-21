@@ -33,8 +33,8 @@ The system SHALL invoke each `:on_operative_init` subscriber's `on_operative_ini
 - **THEN** the ctx's `accumulated` field MUST equal the shallow merge (in order) of every predecessor's returned map
 
 #### Scenario: Subscriber receives operative identity
-- **WHEN** a subscriber's `on_operative_init/2` is invoked for an operative with id `"proc-42"` in namespace `:tenant_a` with factory id `"fact-7"`
-- **THEN** the ctx's `operative_id` MUST be `"proc-42"`, `namespace` MUST be `:tenant_a`, and `factory_id` MUST be `"fact-7"`
+- **WHEN** a subscriber's `on_operative_init/2` is invoked for an operative with id `"op-42"` in namespace `:tenant_a` with factory id `"fact-7"`
+- **THEN** the ctx's `operative_id` MUST be `"op-42"`, `namespace` MUST be `:tenant_a`, and `factory_id` MUST be `"fact-7"`
 
 ### Requirement: Shallow merge combination
 
@@ -50,15 +50,15 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when an operative is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operative-state-persistence` capability. On migration (`handle_call({:runner_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operative. On reconnect of an Entity whose Operative has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{entity_id, snapshot_bytes, change_log_bytes}` (per `operative-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for an Entity restored via `RestoreInitState`.
+The system SHALL invoke the init-state plugin chain only when an operative is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operative-state-persistence` capability. On migration (`handle_call({:runner_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operative. On reconnect of a Cell whose Operative has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `operative-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
 
-For Entities whose Operative has `persistence_enabled = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated operative).
+For Cells whose Operative has `persistence_enabled = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated operative).
 
-`RestoreInitState` and `runner_migrate` SHALL be mutually exclusive per Entity: when `runner_migrate` is invoked for an Entity with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Entity. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
+`RestoreInitState` and `runner_migrate` SHALL be mutually exclusive per Cell: when `runner_migrate` is invoked for a Cell with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Cell. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
 
 #### Scenario: Cold start with no inline init_values and no persisted state
 
-- **WHEN** an operative is started and `operative.init_values == %{}` AND no `RestoreInitState` payload is present (either because `persistence_enabled = false` OR no agent-side state exists for any Entity)
+- **WHEN** an operative is started and `operative.init_values == %{}` AND no `RestoreInitState` payload is present (either because `persistence_enabled = false` OR no agent-side state exists for any Cell)
 - **THEN** the init-state chain MUST run
 
 #### Scenario: Cold start with inline init_values
@@ -69,21 +69,21 @@ For Entities whose Operative has `persistence_enabled = false`, OR whose agent-s
 #### Scenario: Operative migration
 
 - **WHEN** an existing operative is migrated to a new compute engine via `runner_migrate`
-- **THEN** the init-state chain MUST NOT run, and migration MUST use the existing snapshot-or-inline-`init_values` selection logic; `RestoreInitState` SHALL NOT be issued for any Entity of the migrated operative (even Entities with persisted state — the migration snapshot is authoritative)
+- **THEN** the init-state chain MUST NOT run, and migration MUST use the existing snapshot-or-inline-`init_values` selection logic; `RestoreInitState` SHALL NOT be issued for any Cell of the migrated operative (even Cells with persisted state — the migration snapshot is authoritative)
 
-#### Scenario: Entity restart via changelog
+#### Scenario: Cell restart via changelog
 
-- **WHEN** an Entity reconnects AND its Operative has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `operative-state-persistence` capability
-- **THEN** the agent SHALL deliver state via `RestoreInitState{entity_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Entity; the SDK SHALL restore via `init_state(entity_key, Some(payload))` + runtime auto-snapshot-decode + change-log fold per `operative-state-persistence`
+- **WHEN** a Cell reconnects AND its Operative has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `operative-state-persistence` capability
+- **THEN** the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Cell; the SDK SHALL restore via `init_state(cell_key, Some(payload))` + runtime auto-snapshot-decode + change-log fold per `operative-state-persistence`
 
-#### Scenario: Entity restart with persistence disabled at Operative class
+#### Scenario: Cell restart with persistence disabled at Operative class
 
-- **WHEN** an Entity reconnects AND its Operative has `persistence_enabled = false`
-- **THEN** the agent SHALL NOT issue `RestoreInitState` for that Entity (regardless of any stale agent-side state from a prior `persistence_enabled = true` deploy of the same Operative class); the init-state chain MUST run if `operative.init_values == %{}`
+- **WHEN** a Cell reconnects AND its Operative has `persistence_enabled = false`
+- **THEN** the agent SHALL NOT issue `RestoreInitState` for that Cell (regardless of any stale agent-side state from a prior `persistence_enabled = true` deploy of the same Operative class); the init-state chain MUST run if `operative.init_values == %{}`
 
-#### Scenario: Entity restart with persistence enabled but no persisted state
+#### Scenario: Cell restart with persistence enabled but no persisted state
 
-- **WHEN** an Entity reconnects AND its Operative has `persistence_enabled = true` AND no WAL or snapshot file exists for this Entity
+- **WHEN** a Cell reconnects AND its Operative has `persistence_enabled = true` AND no WAL or snapshot file exists for this Cell
 - **THEN** the agent SHALL NOT issue `RestoreInitState` (there is nothing to restore); the init-state chain MUST run if `operative.init_values == %{}`
 
 ### Requirement: Per-plugin timeout enforcement

@@ -1,0 +1,6 @@
+# Fast smoke (~2-3 min at --repeat 1): does each path run clean?
+# name	runtime	scenario args (runners/transport come from run.sh flags)
+chain_1	default	--scenario chain -n 100 --tasks 1 --stall-timeout 90
+chain_4	default	--scenario chain -n 100 --tasks 4 -c 20 --stall-timeout 90
+turns	default	--scenario turns -n 100 -m 15 --rate 150 --stall-timeout 120
+sleep	default	--scenario sleep -n 50 --wake-after-ms 8000 --stall-timeout 90

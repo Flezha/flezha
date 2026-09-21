@@ -5,7 +5,7 @@
 # Local mode is a way to run an application, not a way to test one. A user
 # reaching for it must not be asked to import something that reads as test
 # scaffolding, and the page that introduces it must not be filed under testing.
-# `ProcedureTestHarness` and its per-SDK equivalents keep their names: they are
+# `TaskletTestHarness` and its per-SDK equivalents keep their names: they are
 # for writing tests, which is the one place the word is correct.
 #
 # Two judgements, both narrow-pattern (`pattern_check` with no allowlist), the

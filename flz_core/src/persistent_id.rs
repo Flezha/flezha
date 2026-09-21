@@ -157,8 +157,8 @@ mod tests {
     }
 
     #[test]
-    fn derive_id_profile_entity_is_order_independent_and_set_sensitive() {
-        // derive_id sorts the factory ids before hashing, so the profile entity
+    fn derive_id_profile_cell_is_order_independent_and_set_sensitive() {
+        // derive_id sorts the factory ids before hashing, so the profile cell
         // (the middle of ns-profile-rand) is identical regardless of input
         // order...
         let profile = |ids: &[&str]| {

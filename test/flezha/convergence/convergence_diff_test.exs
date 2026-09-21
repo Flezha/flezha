@@ -624,21 +624,21 @@ defmodule Flezha.Convergence.DiffTest do
                Planner.plan(busy, walked)
     end
 
-    test "an Entity fact plans one resync keyed on the fact, and a stale tag one publish" do
-      entity = {"class", "op0", "k1"}
+    test "a Cell fact plans one resync keyed on the fact, and a stale tag one publish" do
+      cell = {"class", "op0", "k1"}
 
       delta = %Diff{
-        resync_entities: [{entity, "e1", :seq_gap}],
+        resync_cells: [{cell, "e1", :seq_gap}],
         stale_tags: [{{:ns, "r"}, "e_old", "e1"}]
       }
 
       assert [
-               %{primitive: :resync_runner, target: ^entity, args: args} = resync,
+               %{primitive: :resync_runner, target: ^cell, args: args} = resync,
                %{primitive: :publish_binding, namespace: :ns, target: "r"} = publish
              ] = Planner.plan(delta, Backoff.new(:heal))
 
       assert args.runner_id == "e1"
-      assert Planner.key(resync) == {:seq_gap, entity}
+      assert Planner.key(resync) == {:seq_gap, cell}
       assert Planner.ladder?(resync)
       assert Planner.key(publish) == {:publish_binding, "r"}
       refute Planner.ladder?(publish)

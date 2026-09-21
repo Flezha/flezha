@@ -41,18 +41,18 @@ defmodule Flezha.State.FsyncBatcher do
   # `server` defaults to the shared singleton; tests pass an isolated
   # instance to assert coalescing without the 5 ms background tick.
   @spec mark_dirty(tuple(), GenServer.server()) :: :ok
-  def mark_dirty(entity_id, server \\ __MODULE__) do
-    GenServer.cast(server, {:mark_dirty, entity_id})
+  def mark_dirty(cell_id, server \\ __MODULE__) do
+    GenServer.cast(server, {:mark_dirty, cell_id})
   end
 
   @doc """
-  Drop any pending dirty mark for `entity_id`. Called when an Entity
+  Drop any pending dirty mark for `cell_id`. Called when a Cell
   is hard-deleted so the next tick does not try to fsync a writer that is
   being torn down.
   """
   @spec forget(tuple(), GenServer.server()) :: :ok
-  def forget(entity_id, server \\ __MODULE__) do
-    GenServer.cast(server, {:forget, entity_id})
+  def forget(cell_id, server \\ __MODULE__) do
+    GenServer.cast(server, {:forget, cell_id})
   end
 
   @doc """
@@ -107,12 +107,12 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   @impl true
-  def handle_cast({:mark_dirty, entity_id}, state) do
-    {:noreply, schedule(%{state | dirty_set: MapSet.put(state.dirty_set, entity_id)})}
+  def handle_cast({:mark_dirty, cell_id}, state) do
+    {:noreply, schedule(%{state | dirty_set: MapSet.put(state.dirty_set, cell_id)})}
   end
 
-  def handle_cast({:forget, entity_id}, state) do
-    {:noreply, schedule(%{state | dirty_set: MapSet.delete(state.dirty_set, entity_id)})}
+  def handle_cast({:forget, cell_id}, state) do
+    {:noreply, schedule(%{state | dirty_set: MapSet.delete(state.dirty_set, cell_id)})}
   end
 
   @impl true
@@ -158,8 +158,8 @@ defmodule Flezha.State.FsyncBatcher do
 
     # A writer that did not confirm its sync stays dirty for the next drain.
     still_dirty =
-      Enum.filter(state.dirty_set, fn entity_id ->
-        case WriterRegistry.lookup(entity_id) do
+      Enum.filter(state.dirty_set, fn cell_id ->
+        case WriterRegistry.lookup(cell_id) do
           {:ok, pid} -> fsync(pid, mode) == :unreachable
           :error -> false
         end
@@ -202,7 +202,7 @@ defmodule Flezha.State.FsyncBatcher do
       {:error, {_reason, _last_seq, _offset}} ->
         :refused
 
-      # A shape neither of the two above: keep the entity rather than drop a
+      # A shape neither of the two above: keep the cell rather than drop a
       # sync on an answer nobody has read yet.
       _other ->
         :unreachable

@@ -58,10 +58,7 @@ pub fn emit_workflow_output(operative_id: String, payload: Vec<u8>) {
 /// An SDK-initiated request under the caller's `reference_id`, which the
 /// controller's reply echoes to wake the registered waiter.
 pub fn emit_control_request(reference_id: String, command: crate::pb::command_request::Command) {
-    coordinator_send(RunnerMessage::EmitControlRequest {
-        reference_id,
-        command,
-    });
+    coordinator_send(RunnerMessage::control_request(reference_id, command));
 }
 
 /// A workflow's `WorkflowCompleted`, so the controller deregisters it.
@@ -120,7 +117,7 @@ pub enum RunnerMessage {
     /// `reference_id`.
     EmitControlRequest {
         reference_id: String,
-        command: crate::pb::command_request::Command,
+        command: Box<crate::pb::command_request::Command>,
     },
     /// A post-start remove, on the loop so the live-instance check is
     /// serialized with `AddOperative`; answered by
@@ -129,6 +126,20 @@ pub enum RunnerMessage {
         factory_id: String,
         workflow: bool,
     },
+}
+
+impl RunnerMessage {
+    /// An SDK-initiated request under the caller's `reference_id`. The command
+    /// is boxed so it does not size every other message on the channel.
+    pub fn control_request(
+        reference_id: String,
+        command: crate::pb::command_request::Command,
+    ) -> Self {
+        RunnerMessage::EmitControlRequest {
+            reference_id,
+            command: Box::new(command),
+        }
+    }
 }
 
 pub enum RunnerStatus {

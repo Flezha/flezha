@@ -360,7 +360,7 @@ defmodule Flezha.Healthz.ServerTest do
   test "STUCK operative (fed but frozen) → 200 degraded with per-reason detail", %{port: port} do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stuck_operatives: %{"btc_kraken" => %{detail: :wal_frozen, entity: "proc/k1"}},
+      stuck_operatives: %{"btc_kraken" => %{detail: :wal_frozen, cell: "task/k1"}},
       intent_mismatch: [],
       operative_health:
         verdicts([
@@ -381,7 +381,7 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["reason"] == "output_stalled"
       assert decoded["producing_operatives"] == 1
       assert decoded["stuck_operatives"]["btc_kraken"]["detail"] == "wal_frozen"
-      assert decoded["stuck_operatives"]["btc_kraken"]["entity"] == "proc/k1"
+      assert decoded["stuck_operatives"]["btc_kraken"]["cell"] == "task/k1"
     end
   end
 

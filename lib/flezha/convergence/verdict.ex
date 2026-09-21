@@ -104,7 +104,7 @@ defmodule Flezha.Convergence.Verdict do
 
   @doc """
   The deepest producing-liveness verdict of a set, ranked by root cause. The
-  classifier folds its per-Entity verdicts with it and the judge reads the
+  classifier folds its per-Cell verdicts with it and the judge reads the
   winner as a `{:stuck, detail}` reason, so "which stall wins" is answered
   once, here, beside the state rank.
   """

@@ -27,7 +27,7 @@ fail with a typed error.
 ### Requirement: Atomic effect record — state, outputs, and offset in one durable write
 
 In tier mode the SDK SHALL ship an invocation's state change(s), plugin emits,
-and consumed input offset as ONE `entity_effect_record` on the reliable state
+and consumed input offset as ONE `cell_effect_record` on the reliable state
 sink, and the controller SHALL persist it as ONE WAL record covered by ONE fsync
 window.
 
@@ -52,7 +52,7 @@ the tier requires absorbs them.
 
 #### Scenario: State is never durable ahead of its offset
 
-- **WHEN** a checkpoint-mode Entity applies changes for offsets 4701..4710
+- **WHEN** a checkpoint-mode Cell applies changes for offsets 4701..4710
   without checkpointing
 - **THEN** no durable record contains those changes, and the durable offset
   stays at the last checkpoint
@@ -67,11 +67,11 @@ the tier requires absorbs them.
 
 For tier operatives the controller SHALL invoke the `:on_output` plugin chain for
 an output only after its effect record is fsynced. Each outbox entry SHALL carry
-the durable identity `(flz.entity, outbox_seq, epoch)` where `outbox_seq` is
+the durable identity `(flz.cell, outbox_seq, epoch)` where `outbox_seq` is
 `<record WAL seq>.<emit ordinal>`. This closes the `flz.seq` exactness boundary:
 `outbox_seq` SHALL be a sufficient handle for exact append-only dedup.
 
-The controller SHALL bound the entries one Entity has inside the plugin chain
+The controller SHALL bound the entries one Cell has inside the plugin chain
 unconfirmed to `outbox_inflight_max` (default 1 000) — the window is the set of
 dispatched entries still awaiting completion, nothing else — and SHALL refill
 it on every event that can open it: an fsync that makes further entries
@@ -87,7 +87,7 @@ time, never the pump that drains a burst.
 #### Scenario: Durable identity on every flushed output
 
 - **WHEN** an output is dispatched to the plugin chain in tier mode
-- **THEN** its metadata carries `flz.entity`, the durable `outbox_seq`, and the
+- **THEN** its metadata carries `flz.cell`, the durable `outbox_seq`, and the
   epoch
 
 #### Scenario: A confirmation alone refills the window
@@ -100,7 +100,7 @@ time, never the pump that drains a burst.
 
 ### Requirement: Restart re-drives unflushed outbox entries
 
-The controller SHALL maintain a per-Entity `outbox_flushed_seq` cursor that
+The controller SHALL maintain a per-Cell `outbox_flushed_seq` cursor that
 never runs ahead of what the external sink has confirmed delivered. An
 in-memory hand-off (a cast to the operative or an async admission into a
 plugin queue) SHALL NOT advance the cursor. On restart the controller SHALL
@@ -224,7 +224,7 @@ integration test that kills each party at every phase boundary.
 
 #### Scenario: Runner kill mid-stream
 
-- **WHEN** the runner is killed while processing and the Entity is restored
+- **WHEN** the runner is killed while processing and the Cell is restored
   and replays from its durable consumed-offset
 - **THEN** the conforming sink's final state equals the no-crash run's final
   state
@@ -238,8 +238,8 @@ integration test that kills each party at every phase boundary.
 ### Requirement: Tier applies to both operative kinds
 
 Both stream and workflow operatives SHALL be able to opt into the tier with
-identical per-record semantics. Workflow proc-boundary staged flush (buffering
-outputs until proc commit) is explicitly out of scope and SHALL NOT be implied by
+identical per-record semantics. Workflow task-boundary staged flush (buffering
+outputs until task commit) is explicitly out of scope and SHALL NOT be implied by
 this capability.
 
 #### Scenario: Workflow operative under the tier
@@ -249,15 +249,15 @@ this capability.
 - **THEN** its re-emitted outputs carry identical identity and a conforming sink
   deduplicates them
 
-### Requirement: An inter-procedure output's offset is never durable ahead of the output
+### Requirement: An inter-tasklet output's offset is never durable ahead of the output
 
-An invocation's consumed input offset SHALL NOT become durable before every inter-procedure (edge) output that invocation produced has been admitted to its consumer's mailbox. An item with an undelivered edge output SHALL be treated as unresolved: its changes, its plugin outputs and its offset SHALL be held out of the flush buffer until the delivery completes, exactly as a failed-but-retryable attempt's changes are held until its item resolves.
+An invocation's consumed input offset SHALL NOT become durable before every inter-tasklet (edge) output that invocation produced has been admitted to its consumer's mailbox. An item with an undelivered edge output SHALL be treated as unresolved: its changes, its plugin outputs and its offset SHALL be held out of the flush buffer until the delivery completes, exactly as a failed-but-retryable attempt's changes are held until its item resolves.
 
 The reason is that an edge output is the one output kind with no durable copy: `OutputTarget::Edge` is excluded from the transactional outbox, so the only thing that can re-produce it is the producer re-running its input. If the offset is durable first, the crash-replay floor skips that input, the producer never re-runs, and the consumer is never fed — a permanent loss under a contract that promises effectively-once.
 
 With the ordering correct, at-least-once edge delivery composes into effectively-once without a second mechanism: the edge payload carries the producer's input offset, the consumer's own effect record acknowledges that offset, and the consumer's restored floor skips a re-emitted duplicate. A fan-out invocation SHALL hold its record until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all consumers and each one's own floor decides whether it is a duplicate.
 
-This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it. The Elixir SDK, whose Entity ships its own records and whose router is one process that blocks on a full consumer, holds an invocation's effect record in a FIFO until its router reports every edge push admitted and ships the FIFO in seq order, never gating its own queue — a gated Entity and a router blocked on it would wait on each other; a replacement after an untrappable kill loses the held records, whose offsets were never durable, and the controller's re-forward reproduces them.
+This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it. The Elixir SDK, whose Cell ships its own records and whose router is one process that blocks on a full consumer, holds an invocation's effect record in a FIFO until its router reports every edge push admitted and ships the FIFO in seq order, never gating its own queue — a gated Cell and a router blocked on it would wait on each other; a replacement after an untrappable kill loses the held records, whose offsets were never durable, and the controller's re-forward reproduces them.
 
 #### Scenario: A crash between the fold and the delivery loses nothing
 
@@ -274,7 +274,7 @@ This requirement binds the host (C-ABI) resolution path, where an activation's o
 - **WHEN** an invocation emits to three consumers, two pushes land, and the runner dies before the third
 - **THEN** the invocation's offset SHALL NOT be durable, and after restart all three consumers SHALL end in the state they would have reached had the invocation completed once
 
-#### Scenario: The Elixir Entity holds its record until the edge is admitted
-- **WHEN** a tier-mode Elixir Procedure emits towards a consumer whose mailbox of one is full and whose dispatch is held
+#### Scenario: The Elixir Cell holds its record until the edge is admitted
+- **WHEN** a tier-mode Elixir Tasklet emits towards a consumer whose mailbox of one is full and whose dispatch is held
 - **THEN** the producer's effect record for that input is not on the stream while the push waits, and ships as soon as the consumer admits it
 

@@ -10,7 +10,7 @@ The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION
 
 #### Scenario: A declared stream operative connects and is placed
 - **WHEN** a script calls `Flezha::createRunner('trading')->registerFactory(OrderTotals::class)->run()` against a live controller
-- **THEN** the runner SHALL connect, `AddOperative` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared procedure
+- **THEN** the runner SHALL connect, `AddOperative` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared tasklet
 
 #### Scenario: Zero declared operative types is legal
 - **WHEN** a runner is started having declared no operative class
@@ -24,21 +24,21 @@ The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION
 - **WHEN** the SDK starts on a PHP build where the `FFI` class is unavailable or `ffi.enable` forbids the call
 - **THEN** it SHALL raise an error naming the required extension and ini setting, rather than a bare "Class FFI not found" fatal
 
-### Requirement: Procedure authoring surface and per-entity dispatch
-The PHP SDK SHALL define a `Procedure` interface whose implementations declare their initial `State`, a `run()` invoked per input, and an `applyChange()` that folds a Change into State, with a `Ctx` supplying `emit()`, `emitKeyed()`, `now()`, `stableId()`, `checkpoint()` and the timer registrations.
+### Requirement: Tasklet authoring surface and per-cell dispatch
+The PHP SDK SHALL define a `Tasklet` interface whose implementations declare their initial `State`, a `run()` invoked per input, and an `applyChange()` that folds a Change into State, with a `Ctx` supplying `emit()`, `emitKeyed()`, `now()`, `stableId()`, `checkpoint()` and the timer registrations.
 
-Per-entity ordering and exclusivity SHALL be the core's, not the SDK's — the SDK SHALL NOT implement mailboxes, drain gates, or ordering of its own.
+Per-cell ordering and exclusivity SHALL be the core's, not the SDK's — the SDK SHALL NOT implement mailboxes, drain gates, or ordering of its own.
 
-#### Scenario: Different entities of one procedure run concurrently
-- **WHEN** the threaded executor is selected and inputs for two distinct entity keys arrive together
+#### Scenario: Different cells of one tasklet run concurrently
+- **WHEN** the threaded executor is selected and inputs for two distinct cell keys arrive together
 - **THEN** both activations MAY be in flight simultaneously on distinct threads, and the SDK SHALL add no serialization of its own
 
-#### Scenario: One entity never runs concurrently with itself
-- **WHEN** many inputs for a single entity key arrive under any executor
-- **THEN** the SDK SHALL never have two activations for that entity in flight, because the core does not hand them out
+#### Scenario: One cell never runs concurrently with itself
+- **WHEN** many inputs for a single cell key arrive under any executor
+- **THEN** the SDK SHALL never have two activations for that cell in flight, because the core does not hand them out
 
-#### Scenario: Per-entity inputs are delivered in arrival order
-- **WHEN** inputs for one entity arrive in a known order
+#### Scenario: Per-cell inputs are delivered in arrival order
+- **WHEN** inputs for one cell arrive in a known order
 - **THEN** `run()` SHALL observe them in that order
 
 #### Scenario: A throwing run climbs the retry ladder
@@ -46,20 +46,20 @@ Per-entity ordering and exclusivity SHALL be the core's, not the SDK's — the S
 - **THEN** the SDK SHALL complete the activation with a retryable verdict and the core SHALL re-hand the batch per the channel's retry policy, parking to the DLQ when attempts are exhausted
 
 #### Scenario: A non-retryable error parks immediately
-- **WHEN** `run()` throws the SDK's non-retryable procedure exception
+- **WHEN** `run()` throws the SDK's non-retryable tasklet exception
 - **THEN** the activation SHALL park without further attempts
 
 ### Requirement: Deterministic effects through Ctx
 The PHP SDK SHALL serve time from `Ctx::now()` and identifiers from `Ctx::stableId()`, evaluating the declared clock once per invocation and never reading ambient wall-clock or randomness on the authoring surface.
 
-`stableId()` SHALL be byte-identical to the Rust and Java implementations for the same entity identity, change seq and per-invocation ordinal.
+`stableId()` SHALL be byte-identical to the Rust and Java implementations for the same cell identity, change seq and per-invocation ordinal.
 
 #### Scenario: now() is constant within one invocation
 - **WHEN** `Ctx::now()` is called twice inside one `run()`
 - **THEN** both calls SHALL return the same value
 
 #### Scenario: stableId() matches the other SDKs
-- **WHEN** `stableId()` is computed for a fixed entity identity, change seq and ordinal
+- **WHEN** `stableId()` is computed for a fixed cell identity, change seq and ordinal
 - **THEN** it SHALL equal the value the Rust and Java SDKs produce for the same inputs, pinned by a shared fixture
 
 ### Requirement: Activation codec pinned to the shared fixtures
@@ -81,15 +81,15 @@ The PHP SDK SHALL serialize durable State and Change values as JSON produced by 
 Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-format id, declared through `HostClassDecl`'s existing `sdk_lang` / `change_format_id` fields.
 
 #### Scenario: State survives a restart
-- **WHEN** an entity accumulates State, the runner is stopped, and a new runner binds the same operative
+- **WHEN** a cell accumulates State, the runner is stopped, and a new runner binds the same operative
 - **THEN** the restored State SHALL equal the State at shutdown, folded from the change log through `fromArray()`
 
 #### Scenario: A renamed class still restores
-- **WHEN** a State class is renamed between two runs and its `fromArray()` is registered under the same procedure
+- **WHEN** a State class is renamed between two runs and its `fromArray()` is registered under the same tasklet
 - **THEN** restore SHALL succeed, because the durable bytes carry no class name
 
 #### Scenario: Records are stamped with the PHP language byte
-- **WHEN** a PHP-hosted entity writes a change record
+- **WHEN** a PHP-hosted cell writes a change record
 - **THEN** the record header SHALL carry the PHP SDK's allocated `sdk_lang` value and the PHP change-format id
 
 #### Scenario: The advertisement carries the same byte
@@ -101,7 +101,7 @@ Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-f
 - **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the operative unbound rather than cold-starting it
 
 ### Requirement: Full host-class declaration
-The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-procedure, plugin, with per-channel retry, overflow and plugin keying), entity modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and workflow lifecycle facts.
+The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-tasklet, plugin, with per-channel retry, overflow and plugin keying), cell modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and workflow lifecycle facts.
 
 A declaration the core refuses SHALL surface the core's error naming the offending field, and the class SHALL NOT be registered.
 
@@ -117,29 +117,29 @@ A declaration the core refuses SHALL surface the core's error naming the offendi
 The PHP SDK SHALL handle every command activation kind the core hands out: `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState` and `MigrationSerialize`.
 
 #### Scenario: A restore fold rebuilds state before inputs flow
-- **WHEN** an entity with a persisted change log is bound and the core hands out a `RestoreFold`
-- **THEN** the SDK SHALL fold the change bodies into State and complete the activation, and the entity's next input activation SHALL observe the folded state
+- **WHEN** a cell with a persisted change log is bound and the core hands out a `RestoreFold`
+- **THEN** the SDK SHALL fold the change bodies into State and complete the activation, and the cell's next input activation SHALL observe the folded state
 
 #### Scenario: A snapshot request round-trips through restore
-- **WHEN** the controller triggers `CompactEntity` and the core hands out a `SnapshotRequest`
+- **WHEN** the controller triggers `CompactCell` and the core hands out a `SnapshotRequest`
 - **THEN** the SDK SHALL answer with a serialized State that a later `RestoreFold` decodes to an equal State
 
 #### Scenario: A live state read reports the current value
-- **WHEN** `flz state get` targets a live PHP-hosted entity
-- **THEN** the SDK SHALL answer a `LiveStateRead` with the entity's current State as JSON, stamped with the change seq it was read at
+- **WHEN** `flz state get` targets a live PHP-hosted cell
+- **THEN** the SDK SHALL answer a `LiveStateRead` with the cell's current State as JSON, stamped with the change seq it was read at
 
 #### Scenario: A migration serializes and applies
-- **WHEN** an operative hot-swap migrates a PHP-hosted entity
+- **WHEN** an operative hot-swap migrates a PHP-hosted cell
 - **THEN** `MigrationSerialize` on the source and `ApplyState` on the destination SHALL round-trip the State
 
-### Requirement: Entity modes and the prepare crossing
-The PHP SDK SHALL support single, static-keyed and dynamic entity modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
+### Requirement: Cell modes and the prepare crossing
+The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
 
-Dynamic mode SHALL honour the declared idle TTL and entity cap through the core's existing eviction, without a PHP-side registry.
+Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's existing eviction, without a PHP-side registry.
 
-#### Scenario: A dynamic entity is created on first key
-- **WHEN** an input arrives whose key function yields a key with no live entity
-- **THEN** the core SHALL create the entity and the SDK SHALL run the procedure against fresh State
+#### Scenario: A dynamic cell is created on first key
+- **WHEN** an input arrives whose key function yields a key with no live cell
+- **THEN** the core SHALL create the cell and the SDK SHALL run the tasklet against fresh State
 
 #### Scenario: A failing key function climbs the entry retry ladder
 - **WHEN** the key function throws for one payload in a prepare batch
@@ -157,22 +157,22 @@ The PHP SDK SHALL carry tier semantics on activation completion: changes, output
 - **THEN** the changes SHALL stage without advancing the watermark, and the first `checkpoint()` SHALL close the interval and advance it
 
 #### Scenario: An exhausted retry parks with the payload
-- **WHEN** a procedure fails past its channel's attempt budget
+- **WHEN** a tasklet fails past its channel's attempt budget
 - **THEN** the SDK SHALL park the input to the DLQ store and the offset SHALL advance, so the replay starts after the poison input
 
-### Requirement: Per-entity timers
-The PHP SDK SHALL expose event-time and processing-time timer registration and cancellation on `Ctx`, returning the absolute scheduled timestamp as the cancellation handle, and SHALL handle the core's timer firing activations through an `onTimer()` procedure hook.
+### Requirement: Per-cell timers
+The PHP SDK SHALL expose event-time and processing-time timer registration and cancellation on `Ctx`, returning the absolute scheduled timestamp as the cancellation handle, and SHALL handle the core's timer firing activations through an `onTimer()` tasklet hook.
 
 #### Scenario: A processing-time timer fires
-- **WHEN** a procedure registers a processing-time timer and its deadline passes
+- **WHEN** a tasklet registers a processing-time timer and its deadline passes
 - **THEN** `onTimer()` SHALL be invoked with the scheduled timestamp, and `Ctx::now()` inside it SHALL equal that timestamp
 
 #### Scenario: Pending timers survive a restart
-- **WHEN** a runner holding pending timers is restarted and the entity is restored
-- **THEN** the restored entity SHALL still hold those timers, rebuilt from its change log
+- **WHEN** a runner holding pending timers is restarted and the cell is restored
+- **THEN** the restored cell SHALL still hold those timers, rebuilt from its change log
 
-### Requirement: Edge transforms, keys and inter-procedure routing
-The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMap and keyBy on stream handles, and merge with per-source mapping — with transforms composed at declaration time and evaluated where the core routes outputs. `$c->merge()` SHALL return a merge handle with `from($source, callable $map)`, `keyBy(callable $key)`, `into(string $class, ?string $nodeName = null)`, recording each source as a chain closed by the core's `merge` link under one group and taking the merge refusals from the reference check. `$c->routeLatest($documents, $traffic, callable $keyFn)` and `routeLatestNamed(..., string $nodeName)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-entity procedure with journaled `{document, version, delivered}` state.
+### Requirement: Edge transforms, keys and inter-tasklet routing
+The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMap and keyBy on stream handles, and merge with per-source mapping — with transforms composed at declaration time and evaluated where the core routes outputs. `$c->merge()` SHALL return a merge handle with `from($source, callable $map)`, `keyBy(callable $key)`, `into(string $class, ?string $nodeName = null)`, recording each source as a chain closed by the core's `merge` link under one group and taking the merge refusals from the reference check. `$c->routeLatest($documents, $traffic, callable $keyFn)` and `routeLatestNamed(..., string $nodeName)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state.
 
 #### Scenario: A chain of transforms is applied once per value
 - **WHEN** several transforms are declared on one edge before its terminal `into`
@@ -182,7 +182,7 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 - **WHEN** an edge transform throws
 - **THEN** the failure SHALL climb the channel's retry→park ladder rather than terminating the runner
 
-#### Scenario: Two channels merge into one procedure
+#### Scenario: Two channels merge into one tasklet
 - **WHEN** an operative declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
 
@@ -191,7 +191,7 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 - **THEN** exactly one `['A', $document]` and one `['B', $document]` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: Workflow operatives at parity
-The PHP SDK SHALL support workflow operatives as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\WorkflowOperative` SHALL carry no one-function `run`, and `Flezha\WorkflowCtx` SHALL NOT exist; a procedure inside a workflow SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
+The PHP SDK SHALL support workflow operatives as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\WorkflowOperative` SHALL carry no one-function `run`, and `Flezha\WorkflowCtx` SHALL NOT exist; a tasklet inside a workflow SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
 
 Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's existing machinery, reached through step activations; the SDK SHALL NOT implement a driver.
 
@@ -203,13 +203,13 @@ Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's
 - **WHEN** a stage fails after earlier stages committed
 - **THEN** the core SHALL hand out `CompensateRun` activations for the committed stages in reverse order
 
-#### Scenario: A procedure ends its workflow
-- **WHEN** a procedure of a `PerInput` workflow calls `$ctx->complete(['turns' => 4])` while handling a message
+#### Scenario: A tasklet ends its workflow
+- **WHEN** a tasklet of a `PerInput` workflow calls `$ctx->complete(['turns' => 4])` while handling a message
 - **THEN** the iteration SHALL commit and the instance SHALL complete with that result instead of waiting for the next message
 
 #### Scenario: A resumed chain skips journaled stages
 - **WHEN** a workflow instance is resumed after a crash mid-chain
-- **THEN** stages recorded as committed in the proc-journal SHALL NOT re-run
+- **THEN** stages recorded as committed in the task-journal SHALL NOT re-run
 
 ### Requirement: Clean shutdown on an activation budget
 The PHP SDK SHALL accept an optional maximum-activation count after which the runner shuts down cleanly and exits zero, so an external supervisor can recycle a long-lived process without data loss.
@@ -227,7 +227,7 @@ The budget SHALL default to unlimited, and a clean shutdown SHALL leave unpolled
 ### Requirement: End-to-end parity is the acceptance gate
 The PHP SDK SHALL be gated by a runner application under `test/apps/php_runner`, declaring its launch line and its fixtures in a `conformance.json` manifest exactly as the Rust, Java and Elixir apps do, and driven by `php_sdk`-tagged suites in `test/system` selected by `FLEZHA_E2E_RUNTIME=php`.
 
-Coverage SHALL include timers, dynamic entities, compaction, DLQ park, effectively-once, live state read and workflow crash-resume — the same scenarios the Java arm asserts — and the manifest SHALL defer nothing, because this SDK claims full parity.
+Coverage SHALL include timers, dynamic cells, compaction, DLQ park, effectively-once, live state read and workflow crash-resume — the same scenarios the Java arm asserts — and the manifest SHALL defer nothing, because this SDK claims full parity.
 
 #### Scenario: The e2e matrix does not branch per runtime
 - **WHEN** a system suite asserts a capability on the Rust and Java runners
@@ -244,7 +244,7 @@ Coverage SHALL include timers, dynamic entities, compaction, DLQ park, effective
 ### Requirement: The PHP builder submits its topology to the reference check
 
 The PHP SDK's builder SHALL record the authoring calls it receives — channels, the
-ordered links of each chain, merges, branches, class flags and procedure facts — into the
+ordered links of each chain, merges, branches, class flags and tasklet facts — into the
 declaration record and SHALL take its verdict from the reference check, so that every name
 of the `TopologyIssue` vocabulary is refused with the reference sentence and no rule is
 carried in the builder. The attribute-carried surface SHALL stay as it is; only the judgement moves.
@@ -266,19 +266,19 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the PHP interpreter reaches `merge_one_source` or `merge_same_twice`
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
-### Requirement: The single-procedure short form is four attribute arguments
-The short form SHALL be declared with the `#[Operative]` attribute a full-form operative already carries, on a class extending `Flezha\StreamOperative` or `Flezha\WorkflowOperative`, and SHALL NOT be declared with `#[Proc]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operative]` when one is given. `#[Operative]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
+### Requirement: The single-tasklet short form is four attribute arguments
+The short form SHALL be declared with the `#[Operative]` attribute a full-form operative already carries, on a class extending `Flezha\StreamOperative` or `Flezha\WorkflowOperative`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operative]` when one is given. `#[Operative]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
 
-A class SHALL be a short form exactly when it defines the procedure body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the procedure hooks a `Flezha\Procedure` subclass defines (`state`, `applyChange`), which the generated procedure takes.
+A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated procedure named `factoryId` and, when a `sink` is written, that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-`Runner::registerFactory` SHALL accept such a class string and register the generated operative, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Procedure::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a procedure declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
+`Runner::registerFactory` SHALL accept such a class string and register the generated operative, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
 #### Scenario: An attributed class is a whole stream operative
 
 - **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and no `Flezha\Procedure` subclass exists for it
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
 
 #### Scenario: An attributed class is a whole workflow operative
 
@@ -288,7 +288,7 @@ A class SHALL be a short form exactly when it defines the procedure body `run(mi
 #### Scenario: A short form with no sink is declared
 
 - **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
-- **THEN** the operative declares `ticks` into the generated procedure and no plugin channel
+- **THEN** the operative declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
@@ -300,14 +300,14 @@ A class SHALL be a short form exactly when it defines the procedure body `run(mi
 - **WHEN** an attributed operative class defines `run` and overrides `channels`
 - **THEN** `registerFactory` throws `DeclarationException` naming `ShortFormWithTopology`
 
-#### Scenario: A procedure cannot declare no output
+#### Scenario: A tasklet cannot declare no output
 
-- **WHEN** a class extending `Flezha\Procedure` declares `public function run(mixed $input, Ctx $ctx): void`
-- **THEN** it SHALL fail to load, because `Procedure::run` is declared `: mixed`, so no PHP procedure can declare no output and the SDK owes no `SinkWithoutOutput`
+- **WHEN** a class extending `Flezha\Tasklet` declares `public function run(mixed $input, Ctx $ctx): void`
+- **THEN** it SHALL fail to load, because `Tasklet::run` is declared `: mixed`, so no PHP tasklet can declare no output and the SDK owes no `SinkWithoutOutput`
 
-#### Scenario: A sink on a procedure attribute is refused
+#### Scenario: A sink on a tasklet attribute is refused
 
-- **WHEN** a class is attributed `#[Proc(name: 'upcase', sink: 'out')]`
+- **WHEN** a class is attributed `#[Task(name: 'upcase', sink: 'out')]`
 - **THEN** `registerFactory` throws naming `sink` and `#[Operative]`
 
 #### Scenario: A derived factory id is refused

@@ -3,7 +3,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   The requests a runner's SDK initiates on its control stream: the ones that
   act on one operative (a graceful-shutdown notification, a workflow
   completion, an iteration park, a durability barrier) and the ones scoped to
-  the runner or its namespace (a factory update, a procedure-requested spawn,
+  the runner or its namespace (a factory update, a tasklet-requested spawn,
   an admin call).
 
   An operative request is judged first by the operative's ownership record
@@ -30,7 +30,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskJournal
 
   require Logger
 
@@ -180,7 +180,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   defp await_owed_journal(operative_id, deadline) do
-    pending = ProcJournal.pending_entries(operative_id)
+    pending = TaskJournal.pending_entries(operative_id)
 
     cond do
       pending == [] ->
@@ -193,7 +193,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         )
 
       true ->
-        ProcJournal.flush_pending(operative_id)
+        TaskJournal.flush_pending(operative_id)
         Process.sleep(50)
         await_owed_journal(operative_id, deadline)
     end
@@ -234,7 +234,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     namespace = state.namespace
 
     Task.start(fn ->
-      case ProcJournal.append_parked(namespace, operative_id, iter, deadline) do
+      case TaskJournal.append_parked(namespace, operative_id, iter, deadline) do
         :ok ->
           suspend_parked(namespace, operative_id, iter, deadline)
 
@@ -262,12 +262,12 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  A durability barrier (`ProcCommit` or `IterCommit`), handed to the runner's
+  A durability barrier (`TaskCommit` or `IterCommit`), handed to the runner's
   commit worker so this process does no disk I/O. A barrier from a runner that
   does not own the instance is answered with an error and journals nothing,
   which ends the sending driver's run.
   """
-  @spec barrier(map(), :proc_commit | :iter_commit, struct(), binary()) :: :ok
+  @spec barrier(map(), :task_commit | :iter_commit, struct(), binary()) :: :ok
   def barrier(state, kind, commit, reference_id) do
     if Records.admit(state, commit.operative_id, kind),
       do: Commits.commit(state.runner_id, reference_id, commit),
@@ -302,7 +302,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  A procedure asked for a workflow instance (`ctx.spawn_workflow`), judged as
+  A tasklet asked for a workflow instance (`ctx.spawn_workflow`), judged as
   the identity this connection proved. The namespace is this channel's, never
   the requester's claim, so a request cannot reach another namespace.
   """

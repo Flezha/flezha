@@ -63,13 +63,13 @@ When a new session presents a stable identity that already has a currently-live 
 
 ### Requirement: The durable write path's owner binding follows takeover
 
-Newest-wins takeover SHALL update each affected Entity's durable write-path
+Newest-wins takeover SHALL update each affected Cell's durable write-path
 binding in the same transaction that re-binds the stable identity to the new
 session, ordered unbind-old-session before bind-new-session, so no window exists
-in which both sessions can forward Changes to the same Entity's WAL. A superseded
+in which both sessions can forward Changes to the same Cell's WAL. A superseded
 session's forwards SHALL stop at the binding (single state flip at takeover), with no
 per-record ownership check added to the owning session's append path. The first
-refused forward per (Entity, superseded session) episode SHALL emit
+refused forward per (Cell, superseded session) episode SHALL emit
 `[:flezha, :state, :stale_writer_refused]`; subsequent refusals in the episode
 SHALL only increment a counter.
 
@@ -77,7 +77,7 @@ SHALL only increment a counter.
 
 - **GIVEN** stable identity `S` bound to session `sess_old` with Changes in flight
 - **WHEN** a new session `sess_new` takes over `S`
-- **THEN** `sess_old`'s channels are unbound from every affected Entity's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Entity WAL after the unbind
+- **THEN** `sess_old`'s channels are unbound from every affected Cell's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Cell WAL after the unbind
 
 #### Scenario: Refusal is episode-workflow telemetry
 
@@ -189,8 +189,8 @@ bind names another, so what that runner sent before the operative left it still
 lands. A running migrate SHALL record the identity it is
 trying as pending until the runner answers, so that frames from either runner are
 accepted while the outcome is undecided. Every frame the controller reads that names
-an operative — an output frame, the seven entity-write payloads, `correction_request`,
-`WorkflowCompleted`, `IterPark`, `RunnerShutdownNotification`, `ProcCommit` and
+an operative — an output frame, the seven cell-write payloads, `correction_request`,
+`WorkflowCompleted`, `IterPark`, `RunnerShutdownNotification`, `TaskCommit` and
 `IterCommit` — SHALL be accepted only when the record names the sending session's
 identity as the owner or as pending, or when no record exists for the operative. A
 frame the record refuses SHALL NOT act on the operative: it SHALL be counted on the
@@ -228,7 +228,7 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 
 #### Scenario: A barrier from a runner that does not own the instance is answered with an error
 
-- **WHEN** session B sends `ProcCommit` or `IterCommit` naming an instance bound to
+- **WHEN** session B sends `TaskCommit` or `IterCommit` naming an instance bound to
   runner A
 - **THEN** the response SHALL carry a non-empty error, the journal SHALL hold no entry
   for it, no inbox SHALL be truncated and no journal cut, and B SHALL be sent
@@ -237,8 +237,8 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 #### Scenario: A data frame from a runner that does not own the operative is refused
 
 - **WHEN** session B's stream channel, holding no route for `X`, reads an output frame
-  or an entity-write frame naming `X` while the record names runner A
-- **THEN** the frame SHALL NOT reach `X`'s Overwatch or its Entity's writer, the
+  or a cell-write frame naming `X` while the record names runner A
+- **THEN** the frame SHALL NOT reach `X`'s Overwatch or its Cell's writer, the
   channel's `foreign_frame_refused` count SHALL rise, the event SHALL name B, A and
   `X`, and a second frame SHALL raise the count without a second `RemOperative`
 
@@ -260,7 +260,7 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 #### Scenario: An operative nobody records is handled as before
 
 - **WHEN** a frame names an operative for which no record exists on this node
-- **THEN** an output SHALL be the counted `:unrouted` drop it is today, an entity
+- **THEN** an output SHALL be the counted `:unrouted` drop it is today, a cell
   write SHALL reach its writer under the session fence alone, and a control frame
   SHALL be handled as one whose Overwatch is absent
 

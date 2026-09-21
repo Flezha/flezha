@@ -51,7 +51,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     # Stopping it would race with the application supervisor's restart loop.
 
     test "10 marks of the same writer fan out to 1 fsync per tick window" do
-      pid = TestHelpers.sample_entity_id("batcher_one")
+      pid = TestHelpers.sample_cell_id("batcher_one")
       {:ok, _} = Supervisor.find_or_start(pid)
 
       # Isolated batcher with a long interval so our explicit flush is the only
@@ -85,8 +85,8 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "tick coalesces dirty set" do
-      a = TestHelpers.sample_entity_id("a")
-      b = TestHelpers.sample_entity_id("b")
+      a = TestHelpers.sample_cell_id("a")
+      b = TestHelpers.sample_cell_id("b")
       {:ok, _} = Supervisor.find_or_start(a)
       {:ok, _} = Supervisor.find_or_start(b)
 
@@ -110,7 +110,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "actual fsync runs against live writer" do
-      pid = TestHelpers.sample_entity_id("real")
+      pid = TestHelpers.sample_cell_id("real")
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
       :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
@@ -123,7 +123,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "a writer that refused its own file is not re-marked dirty" do
-      pid = TestHelpers.sample_entity_id("refuser")
+      pid = TestHelpers.sample_cell_id("refuser")
       {:ok, srv} = Supervisor.find_or_start(pid)
       header = TestHelpers.stub_header()
       for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
@@ -147,7 +147,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "a writer that refuses its fsync stays dirty for the next drain" do
-      pid = TestHelpers.sample_entity_id("refused")
+      pid = TestHelpers.sample_cell_id("refused")
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
       :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
@@ -183,7 +183,7 @@ defmodule Flezha.State.FsyncBatcherTest do
   # cannot happen, which a window with no `:tick` in it could only suggest.
   describe "the tick is armed only while something is dirty" do
     test "an idle batcher arms none, a mark arms one a second mark keeps, the tick disarms it" do
-      id = TestHelpers.sample_entity_id("idle_batcher")
+      id = TestHelpers.sample_cell_id("idle_batcher")
       # Registered before the batcher starts, so `idle_batcher/0` sees it seeded
       # and its tick armed.
       {:ok, _} = Supervisor.find_or_start(id)
@@ -213,7 +213,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "a forget or flush that empties the set disarms it; an unreachable writer keeps it" do
-      id = TestHelpers.sample_entity_id("flushed")
+      id = TestHelpers.sample_cell_id("flushed")
       {:ok, srv} = Supervisor.find_or_start(id)
       batcher = idle_batcher()
 
@@ -243,7 +243,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "a dormant mark waits for the rhythm the last tick set, not a whole interval" do
-      id = TestHelpers.sample_entity_id("rhythm")
+      id = TestHelpers.sample_cell_id("rhythm")
       batcher = idle_batcher()
 
       # {ms since the last tick, ms after that tick the next one falls due}

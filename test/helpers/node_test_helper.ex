@@ -88,7 +88,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     # A peer BEAM is a second controller on this host, so it gets its own of
     # every resource one instance owns exclusively: two controllers over one
-    # entity WAL tree are two unsynchronised writers, and `<hub registry
+    # cell WAL tree are two unsynchronised writers, and `<hub registry
     # root>/<hub_id>` is not keyed by node either, so one root is one
     # `registry.dets`. A caller may hand it this node's value instead — a
     # cross-controller state transfer needs the peer to hold this node's files,
@@ -283,11 +283,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :retry_ladder,
     :state_persistence,
     :effectively_once,
-    :entity_timers,
+    :cell_timers,
     :correction_window,
     :keyed_channels,
     :workflow,
-    :dynamic_entity,
+    :dynamic_cell,
     :partitioned,
     :schema_evolution,
     :shorthand
@@ -314,9 +314,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :pool_wedge,
     :state_persistence,
     :keyed_channels,
-    :dynamic_entity,
+    :dynamic_cell,
     :schema_evolution,
-    :entity_timers,
+    :cell_timers,
     :effectively_once,
     :correction_window,
     :workflow,

@@ -444,7 +444,7 @@ absence, the failure is silent — the subsystem reports itself healthy and neve
 
 - **GIVEN** a change that must rename a module whose name is persisted
 - **WHEN** the change is written
-- **THEN** it SHALL carry the operator procedure that makes existing durable state
+- **THEN** it SHALL carry the operator tasklet that makes existing durable state
   readable again, and SHALL name it in the proposal rather than in a dev note
 
 #### Scenario: A tolerated absence is not a safe absence
@@ -1130,7 +1130,7 @@ Such a helper SHALL wait on the exit of what it terminated, never on time.
 
 - **WHEN** a test stops an operative in its teardown, the next test resets durable
   state and starts an operative under the same id
-- **THEN** the new operative's Entity SHALL hold no input the previous test sent,
+- **THEN** the new operative's Cell SHALL hold no input the previous test sent,
   on every run and at every seed
 
 #### Scenario: The full suite is as green as the module

@@ -38,21 +38,21 @@ defmodule Flezha.State.PersistenceResolverTest do
   describe "compact_after_bytes/2" do
     test "defaults to 8 MiB" do
       Application.delete_env(:flezha, :default_compact_after_bytes)
-      assert PersistenceResolver.compact_after_bytes("proc") == 8 * 1024 * 1024
+      assert PersistenceResolver.compact_after_bytes("task") == 8 * 1024 * 1024
     end
 
     test "global override wins over the default" do
       Application.put_env(:flezha, :default_compact_after_bytes, 123)
-      assert PersistenceResolver.compact_after_bytes("proc") == 123
+      assert PersistenceResolver.compact_after_bytes("task") == 123
     end
 
-    test "per-Procedure metadata wins over the global override" do
+    test "per-Tasklet metadata wins over the global override" do
       Application.put_env(:flezha, :default_compact_after_bytes, 123)
 
-      assert PersistenceResolver.compact_after_bytes("proc", %{"compact_after_bytes" => 456}) ==
+      assert PersistenceResolver.compact_after_bytes("task", %{"compact_after_bytes" => 456}) ==
                456
 
-      assert PersistenceResolver.compact_after_bytes("proc", %{compact_after_bytes: 789}) == 789
+      assert PersistenceResolver.compact_after_bytes("task", %{compact_after_bytes: 789}) == 789
     end
 
     # The Watchdog calls `compact_after_bytes(operative_class)` with NO metadata

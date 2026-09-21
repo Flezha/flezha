@@ -14,8 +14,8 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
@@ -96,7 +96,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
         [:flezha, :workflow, :suspended],
         [:flezha, :workflow, :rehydrating],
         [:flezha, :workflow, :failed],
-        [:flezha, :state, :proc_commit],
+        [:flezha, :state, :task_commit],
         [:flezha, :state, :iter_commit]
       ],
       &__MODULE__.handle_event/4,
@@ -127,7 +127,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
   def handle_event([:flezha, :workflow, :failed], _m, _md, {_pid, c}),
     do: :counters.add(c, 3, 1)
 
-  def handle_event([:flezha, :state, :proc_commit], _m, _md, {_pid, c}),
+  def handle_event([:flezha, :state, :task_commit], _m, _md, {_pid, c}),
     do: :counters.add(c, 1, 1)
 
   def handle_event([:flezha, :state, :iter_commit], _m, _md, {_pid, c}),
@@ -135,7 +135,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
 
   def commits(counters),
     do: %{
-      proc: :counters.get(counters, 1),
+      task: :counters.get(counters, 1),
       iter: :counters.get(counters, 2),
       failed: :counters.get(counters, 3)
     }
@@ -251,7 +251,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
             else: st
 
         :timer_wake ->
-          id = md |> Map.get("flz.entity", "") |> String.split("/") |> hd()
+          id = md |> Map.get("flz.cell", "") |> String.split("/") |> hd()
           %{st | timer_wakes: [{id, now} | st.timer_wakes]}
 
         :unknown ->
@@ -360,9 +360,9 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
 
       for seq <- Enum.uniq(no_output ++ no_done) |> Enum.take(5) do
         id = id_of.(seq)
-        {:ok, entries} = ProcJournal.read(id)
+        {:ok, entries} = TaskJournal.read(id)
         journal = entries |> Enum.map(&{&1.type, &1.iter}) |> Enum.take(-4)
-        undelivered = id |> ProcInbox.undelivered() |> Enum.map(& &1.offset)
+        undelivered = id |> TaskInbox.undelivered() |> Enum.map(& &1.offset)
 
         overwatch =
           case OperativeManager.get_operative_pid(@namespace, id) do

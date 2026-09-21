@@ -74,7 +74,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     Operative.stop
     Operative.send
     Operative.list_operatives
-    Operative.entity_state
+    Operative.cell_state
     PluginManager.enable
     PluginManager.disable
     PluginManager.list
@@ -95,7 +95,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
   # How a host executes activations. The vocabulary is closed and lives here,
   # so a new SDK either fits an existing model or extends this list on purpose.
-  @dispatch_models ~w(thread-pool event-loop process-per-entity)
+  @dispatch_models ~w(thread-pool event-loop process-per-cell)
 
   # Bench tasks whose `--runtime` resolves against `PortPilot.runtimes/0`. Their
   # help text may name a runtime as an example but may not enumerate the set: a

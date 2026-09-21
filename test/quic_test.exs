@@ -21,12 +21,12 @@ defmodule FlezhaQuicTest do
   @test_store_input_factory "store_input"
 
   setup_all do
-    # This module's operatives carry FIXED ids, so the Entities they persist
+    # This module's operatives carry FIXED ids, so the Cells they persist
     # outlive the run. On the next run the same identity binds, the bind-time
     # restore correctly rebuilds it from that WAL, and the state assertions
     # below see the PREVIOUS run's inputs on top of their own. Clear this
     # namespace's tree before anything binds. Narrower than
-    # `State.TestHelpers.reset_all_entities/0`, which wipes the whole state
+    # `State.TestHelpers.reset_all_cells/0`, which wipes the whole state
     # root — nothing here is live yet, so no WalWriter has to be stopped.
     File.rm_rf(Paths.namespace_dir(@quic_namespace))
 
@@ -107,12 +107,12 @@ defmodule FlezhaQuicTest do
     )
 
     {:ok, json_state} =
-      OperativeManager.get_entity_state(@quic_namespace, operative_id)
+      OperativeManager.get_cell_state(@quic_namespace, operative_id)
 
-    entity_state = Payloader.json_to_map(json_state)
+    cell_state = Payloader.json_to_map(json_state)
 
-    assert entity_state === %{
-             "store_input_procedure" => %{
+    assert cell_state === %{
+             "store_input_tasklet" => %{
                "binary_inputs" => [],
                "text_inputs" => ["quic_state_1", "quic_state_2"]
              }

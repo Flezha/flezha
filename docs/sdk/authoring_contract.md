@@ -2,8 +2,8 @@
 
 For operative authors who use the attribute/annotation sugar and for SDK
 implementers who must keep it identical across bindings. It specifies how a
-sugared declaration — `#[flezha::procedure]` / `#[derive(flezha::State)]` /
-`flezha::operative!` in Rust, `@Procedure` / `@State` in Java — maps onto the `StreamOperative` / `Procedure` / `Change` / `Channel`
+sugared declaration — `#[flezha::tasklet]` / `#[derive(flezha::State)]` /
+`flezha::operative!` in Rust, `@Tasklet` / `@State` in Java — maps onto the `StreamOperative` / `Tasklet` / `Change` / `Channel`
 trait (interface) surface. The sugar is **pure expansion**: a macro (Rust,
 `sdk/rust/macros/`) or an annotation processor (Java, `sdk/java/flezha-sdk-processor/`)
 generates exactly the impls a user would write by hand, against the unchanged
@@ -11,28 +11,28 @@ runtime. There is no parallel runtime path, no new protobuf message and no
 WAL-format change.
 
 The sugar exists in the Rust and Java SDKs. The Elixir SDK expands the same
-declarations through `use` macros — `use Flezha.SDK.Procedure`,
+declarations through `use` macros — `use Flezha.SDK.Tasklet`,
 `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative` take
 the scalar settings as options named after the behaviour's own callbacks and
 define only the callbacks written, so every default stays where
 `function_exported?` resolves it; a `state do field … end` block is its §3
 derive layer and `defchange` its manual boundary. The plain `@behaviour` form
 keeps working unchanged — see [`elixir_sdk.md`](elixir_sdk.md). The Node SDK exposes factory functions —
-`defineProcedure`, `defineOperative`, `registerFactory`, wired by a fluent
+`defineTasklet`, `defineOperative`, `registerFactory`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
 which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). The Ruby SDK
-exposes classes — `Flezha::Procedure`, `Flezha::StreamOperative`,
+exposes classes — `Flezha::Tasklet`, `Flezha::StreamOperative`,
 `Flezha::WorkflowOperative`, wired by the same fluent channel builder — and
-reads which optional hooks a procedure declares from the methods it defines, so
+reads which optional hooks a tasklet declares from the methods it defines, so
 a declaration and its implementation cannot disagree
 ([`ruby_sdk.md`](ruby_sdk.md)). The PHP SDK exposes classes too —
-`Flezha\Procedure`, `Flezha\StreamOperative`, `Flezha\WorkflowOperative`, wired
+`Flezha\Tasklet`, `Flezha\StreamOperative`, `Flezha\WorkflowOperative`, wired
 by the same fluent channel builder — with the scalar declarations in a
-`#[Proc]` attribute and the optional hooks read from the methods a procedure
+`#[Task]` attribute and the optional hooks read from the methods a tasklet
 **overrides**, which is the closest PHP comes to Java's annotations without a
 build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
-`@flezha.procedure`, `@flezha.state`, `@flezha.stream_operative`,
+`@flezha.tasklet`, `@flezha.state`, `@flezha.stream_operative`,
 `@flezha.workflow_operative`, wired by the same fluent channel builder — over a
 handler that is a plain function when it is a transform and a class when it has
 hooks, with the input, output, state and change types all read from the type
@@ -51,14 +51,14 @@ rather than one it intends to.
 ### State-mutation enforcement, per SDK
 
 Declared state is mutated only through declared changes, because the change log
-IS how an entity is rebuilt: a field mutated outside one is live now and gone
+IS how a cell is rebuilt: a field mutated outside one is live now and gone
 after a restart, and nothing reports the difference until the restart.
 
 | SDK | Mechanism it ships |
 | --- | --- |
 | Rust | The borrow checker. `StateHandle` hands out the generated mutators and `apply`; there is no `&mut S` to assign through, so an unrecorded mutation does not compile. |
 | Java | The generated `<State>Handle`. The state object is reachable, so an unrecorded mutation is possible in principle and prevented by the generated surface being the only one an author is given. |
-| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. A `state do field … end` block generates that path: `set_<field>` / `push_<field>` and `defchange`'s named recorder each journal exactly one change through `Ctx.apply/3`, so the hand-written fold is only for what the block does not cover. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Entity's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
+| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. A `state do field … end` block generates that path: `set_<field>` / `push_<field>` and `defchange`'s named recorder each journal exactly one change through `Ctx.apply/3`, so the hand-written fold is only for what the block does not cover. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Cell's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 | PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `Harness::assertReplayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
@@ -79,12 +79,12 @@ backstop for what typing cannot see.
 | SDK | Compile-time edge typing | Where the refusals are pinned |
 | --- | --- | --- |
 | Rust | yes | 25 compile-fail tests in `sdk/rust/tests/ui/` |
-| Java | yes, through the generic `Procedure<…>` arguments | `sdk/java/.../StreamOperativeConfigurationException` cases |
+| Java | yes, through the generic `Tasklet<…>` arguments | `sdk/java/.../StreamOperativeConfigurationException` cases |
 | Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
 | Elixir | no — the language cannot | registration-time refusals only |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
 | PHP | no — the language cannot | registration-time refusals only, in `sdk/php/tests/AuthoringTest.php` |
-| Python | yes, through the generic `Edge[T]` / `Procedure[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
+| Python | yes, through the generic `Edge[T]` / `Tasklet[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
 
 Before writing a new SDK, read
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads):
@@ -93,21 +93,21 @@ and which side owns the threading model.
 
 ## 1. Escape-hatch equivalence (non-negotiable)
 
-- Generated code is equivalent to a valid hand-written `Procedure` /
+- Generated code is equivalent to a valid hand-written `Tasklet` /
   `StreamOperative` implementation. It compiles and runs identically; no
   protocol, controller or WAL change is required for it to run.
-- An operative MAY mix sugared and hand-written procedures wired together.
-- "Ejecting" a sugared procedure to a full impl is a paste of its expansion —
+- An operative MAY mix sugared and hand-written tasklets wired together.
+- "Ejecting" a sugared tasklet to a full impl is a paste of its expansion —
   the operative behaves identically afterwards with no other change.
 
-The replay-determinism harness (`ProcedureTestHarness::replay_equals` in Rust,
-`ProcedureTestHarness.replayEquals()` in Java) is the conformance gate for
-**all** procedures, sugared and hand-written.
+The replay-determinism harness (`TaskletTestHarness::replay_equals` in Rust,
+`TaskletTestHarness.replayEquals()` in Java) is the conformance gate for
+**all** tasklets, sugared and hand-written.
 
 ## 2. Signature → associated types (the inference table)
 
 Inference is driven by the `run` declaration. In Rust the declaration is a free
-function carrying `#[flezha::procedure(...)]`; in Java `@Procedure` sits on a
+function carrying `#[flezha::tasklet(...)]`; in Java `@Tasklet` sits on a
 class that has exactly one public method named `run`. `S` below is the optional
 mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 `<S>Handle` or a raw `StateHandle<S, Change>`.
@@ -118,7 +118,7 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | return type `O` (or `Result<O, _>`)                 | `type Output = O` (always emit)                     |
 | return type `Option<O>` / `Optional<O>`             | `type Output = O`, emit on present                  |
 | return type unit (`()` / `void`)                    | no output channel                                   |
-| a trailing procedure-context param + unit return    | the body emits; `emits = T` sets `type Output = T`  |
+| a trailing tasklet-context param + unit return    | the body emits; `emits = T` sets `type Output = T`  |
 | a mutable-state param of type `S`                   | `type State = S` (stateful)                         |
 | no mutable-state param                              | `type State = ()` / `Stateless`, `Change = NoChange` |
 | `State` opts into change derivation                 | `type Change = <S>Change` (derived)                 |
@@ -129,7 +129,7 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the generated entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
 | `input = "…"` (short form only)                     | name of the generated entry channel (§5); absent, that channel is named `input` |
 
-A mutable-state parameter is **the single signal** that a procedure is
+A mutable-state parameter is **the single signal** that a tasklet is
 stateful. Its presence sets `State` and selects the derived change type; its
 absence means `State = ()` and `Change = NoChange`. Any other attribute key is
 refused by name.
@@ -140,17 +140,17 @@ A `run` that must emit more than once per input declares a trailing context
 parameter and returns unit:
 
 ```rust
-#[flezha::procedure(id = "ohlc", emits = Candle)]
-fn ohlc(trade: Trade, s: &mut Candles, ctx: &mut ProcedureCtx) -> Result<(), ProcedureError> {
+#[flezha::tasklet(id = "ohlc", emits = Candle)]
+fn ohlc(trade: Trade, s: &mut Candles, ctx: &mut TaskletCtx) -> Result<(), TaskletError> {
     ctx.emit_keyed(closed.symbol.clone(), closed)?;   // the candle that just closed
     ctx.emit_keyed(opened.symbol.clone(), opened)     // and the one that opened
 }
 ```
 
 ```java
-@Procedure(id = "ohlc", emits = Candle.class)
+@Tasklet(id = "ohlc", emits = Candle.class)
 public class Ohlc {
-    public void run(Trade trade, CandlesHandle s, ProcedureCtx ctx) {
+    public void run(Trade trade, CandlesHandle s, TaskletCtx ctx) {
         ctx.emitKeyed(closed.symbol(), closed);
         ctx.emitKeyed(opened.symbol(), opened);
     }
@@ -163,7 +163,7 @@ Because the body owns every emit, the return type has no output left to declare
 and `emits` declares it instead (absent = no output channel). Each of the
 following is refused with a named error, never silently:
 
-- a value return alongside a context parameter — one procedure, one emit path;
+- a value return alongside a context parameter — one tasklet, one emit path;
 - `key = …` alongside a context parameter — the body keys its own emits;
 - `emits` without a context parameter — the return type already answers.
 
@@ -174,22 +174,22 @@ for what its declaration does not already state:
 
 - **Java** — `inputType()`, `outputType()`, `changeType()`, `clockType()` and
   `configType()` default to the type arguments read off the implementing
-  class's generic supertype chain: a direct `implements Procedure<…>` with
+  class's generic supertype chain: a direct `implements Tasklet<…>` with
   concrete arguments, or a concrete subclass of a generic intermediate class
   (type variables are substituted at every hop). `kryoTypes()` defaults to the
   resolved Change and State classes, and to the empty list for a `NoChange`
-  procedure, which persists nothing. An argument still generic at the concrete
+  tasklet, which persists nothing. An argument still generic at the concrete
   class is **never guessed**: `registerFactory` fails naming the
   class and the parameter, and nothing is registered — a startup error, not a
   dispatch error.
-- **Rust** — `SimpleProcedure` declares `Input`, `Output`, `State`, `name`,
-  `init_state` and `run`; a blanket impl lifts it to `Procedure` with
+- **Rust** — `SimpleTasklet` declares `Input`, `Output`, `State`, `name`,
+  `init_state` and `run`; a blanket impl lifts it to `Tasklet` with
   `Clock = WallClock`, `Config = ()` and the `State` type's derived change type.
   `type State = ()` is the stateless spelling. Stable Rust has no
   associated-type defaults, hence a tier rather than defaults on the trait.
 
 **Explicit always wins.** A Java override is authoritative over the default it
-replaces; a Rust type implements `Procedure` directly to declare a non-default
+replaces; a Rust type implements `Tasklet` directly to declare a non-default
 clock, a typed config or a hand-written change — and a type cannot sit in both
 Rust tiers at once, because the blanket impl and a direct impl overlap and the
 compiler refuses it.
@@ -208,7 +208,7 @@ Rust, `@State` in Java) generates:
   trait, Java through a generated `<State>Handle` class) plus the explicit
   `state.apply(change)` path. Both journal the change to the WAL.
 
-**Elixir spells the same derivation as a block.** `use Flezha.SDK.Procedure`
+**Elixir spells the same derivation as a block.** `use Flezha.SDK.Tasklet`
 makes `state do field :qty, :integer, default: 0 end` available. A `field`
 takes a name, a type (`:integer`, `:float`, `:string`, `:boolean`, `:list`,
 `:map`, `:term`) and a `default`, and the block generates `init_state/1`
@@ -250,7 +250,7 @@ Rust, Kryo in Java). Reordering fields, removing one, or changing a field's
 type is not a compatibility question the codec can answer: last version's bytes
 either run out mid-decode or land in the wrong fields. So the rule is:
 
-> **Bump `SCHEMA_VERSION` on any non-additive edit to the Procedure's `State`
+> **Bump `SCHEMA_VERSION` on any non-additive edit to the Tasklet's `State`
 > or its `Change` type** — not to the `Change` type alone.
 
 The version is stamped in every record's 16-byte header, and every restore
@@ -295,7 +295,7 @@ A migration is subject to the determinism contract (§3.3): crash-resume,
 retry-replay and rewind all re-enter the restore fold, so the same bytes must
 produce the same value every time. Prove it without a controller — the test
 harness restores from a payload stamped at the older version
-(`ProcedureTestHarness::with_payload`, `sdk/rust/tests/state_evolution.rs`).
+(`TaskletTestHarness::with_payload`, `sdk/rust/tests/state_evolution.rs`).
 
 Two refusals are not migrations and cannot be made into them: a record older
 than your declared floor, and a record from a version **newer** than the one
@@ -341,8 +341,8 @@ map fields, or use `map_set` to record the whole per-key value.
 Flat fields and `#[journal(...)]` map fields on the same struct compose into
 one generated `Change` and one `apply_change`.
 
-**Flat collection fields.** Once a procedure is keyed by the thing a map would
-have keyed by, the Entity *is* the key and its collections stop being maps. A
+**Flat collection fields.** Once a tasklet is keyed by the thing a map would
+have keyed by, the Cell *is* the key and its collections stop being maps. A
 flat field therefore gets delta mutators too, with no annotation:
 
 | Field type                 | Generated mutators (Rust / Java)                                                                              | Change variants                                |
@@ -359,39 +359,39 @@ window replays safely.
 
 A logic function returning `Option<O>` (Rust) / `Optional<O>` (Java) emits
 when present and emits nothing when absent — the warmup gate without touching
-the procedure context. The unit return (no output channel) and the
+the tasklet context. The unit return (no output channel) and the
 unconditional `O` return (always emit) are the other two shapes.
 
 **Keyed output (`key`).** On a `.keyed()` output channel the plain emit carries
-the emitting Entity's **own key** — the key its input routed by — so a keyed
-procedure never re-supplies what the runtime already knows. A sugared procedure
-needs `key` only where its output's natural key *differs* from its Entity's, or
-where the procedure is single-entity and so has no key at all (there, the plain
+the emitting Cell's **own key** — the key its input routed by — so a keyed
+tasklet never re-supplies what the runtime already knows. A sugared tasklet
+needs `key` only where its output's natural key *differs* from its Cell's, or
+where the tasklet is single-cell and so has no key at all (there, the plain
 emit is refused). `key` names a function from the output to that key (Rust:
-`#[flezha::procedure(key = f)]` with `f(&Output) -> String`; Java:
+`#[flezha::tasklet(key = f)]` with `f(&Output) -> String`; Java:
 `key = "methodName"` naming a static method on the authoring class). `key` on a
-procedure with a unit return is an error.
+tasklet with a unit return is an error.
 
 ### 3.3 Single hand-written path determinism
 
-A procedure that mutates state **only** through generated mutators has exactly
+A tasklet that mutates state **only** through generated mutators has exactly
 one hand-written path — the logic function — and one generated replay path —
 the generated `apply_change`. The engine journals the recorded `Change`s before
 emit and, on warm restart, rebuilds state by folding those same `Change`s
 through the **generated** `apply_change`. Because that `apply_change` is
 generated from the same definitions the mutators use, it cannot drift from the
 live path: the live-vs-replay divergence `replay_equals` / `replayEquals()`
-exists to catch is structurally unrepresentable for sugared procedures.
+exists to catch is structurally unrepresentable for sugared tasklets.
 
 ### 3.4 The `on_timer` contract
 
-A Procedure can act because time passed, not only because an input arrived:
+A Tasklet can act because time passed, not only because an input arrived:
 `ctx.timer_at_event_time(ts)` / `ctx.timer_after(d)` (Rust) —
 `ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) —
 `timer_at_event_time(ctx, ts)` / `timer_after(ctx, ms)` (Elixir, imported by `use`) —
-register a per-Entity deadline, and `Procedure::on_timer` /
-`Procedure.onTimer` / `on_timer/4` handles the firing with the same
-`StateHandle` and `ProcedureCtx` `run` gets.
+register a per-Cell deadline, and `Tasklet::on_timer` /
+`Tasklet.onTimer` / `on_timer/4` handles the firing with the same
+`StateHandle` and `TaskletCtx` `run` gets.
 Registration returns the absolute timestamp it is scheduled at; that value is
 the handle a cancellation takes.
 
@@ -408,14 +408,14 @@ Three rules make the callback part of the determinism contract:
    not happen twice; a timer is internal state, and skipping it on replay
    would rebuild a pending set the live run never had.
 
-`on_timer`'s default panics (Rust) / throws (Java) naming the Procedure, and
-a firing on an Elixir Procedure without `on_timer/4` parks non-retryably
-naming the Procedure and the callback: registration is a runtime call, so a
-Procedure that registers a timer without handling it cannot be refused at
+`on_timer`'s default panics (Rust) / throws (Java) naming the Tasklet, and
+a firing on an Elixir Tasklet without `on_timer/4` parks non-retryably
+naming the Tasklet and the callback: registration is a runtime call, so a
+Tasklet that registers a timer without handling it cannot be refused at
 build time. Full contract, including which
-kind to reach for, in [`entity_timers.md`](entity_timers.md).
+kind to reach for, in [`cell_timers.md`](cell_timers.md).
 
-## 4. Entity mode is an explicit opt-in, never inferred
+## 4. Cell mode is an explicit opt-in, never inferred
 
 The mode changes lifecycle and on-disk state layout, so it is always an
 explicit author choice — never inferred from the `run` body. Each opt-in maps
@@ -423,37 +423,37 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 
 | Opt-in (Rust / Java)                                                         | Generated trait surface                                                               |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| none                                                                         | single-entity (empty `entity_keys()`)                                                 |
-| `keys = [..]` + `entities_for = f` / `keys = {..}` + an `@EntitiesFor` method | `entity_keys()` = keys, `ENTITIES_FOR_OVERRIDDEN = true` / `entitiesForOverridden()`, `entities_for` delegates |
-| `idle_ttl = ms` / `max_entities = n` (Rust; dynamic knobs)                   | `entity_idle_ttl()` / `max_entities()` overrides — the KEY is not here. Java overrides `entityIdleTtl()` on a hand-written Procedure; Elixir declares `entity_idle_ttl_ms/0` / `max_entities/0` |
+| none                                                                         | single-cell (empty `cell_keys()`)                                                 |
+| `keys = [..]` + `cells_for = f` / `keys = {..}` + an `@CellsFor` method | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` / `cellsForOverridden()`, `cells_for` delegates |
+| `idle_ttl = ms` / `max_cells = n` (Rust; dynamic knobs)                   | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java overrides `cellIdleTtl()` on a hand-written Tasklet; Elixir declares `cell_idle_ttl_ms/0` / `max_cells/0` |
 
-Declaring only one of `keys` / `entities_for` is refused. Static keying is
-declared **on the procedure**; dynamic keying is declared **on the wiring** —
+Declaring only one of `keys` / `cells_for` is refused. Static keying is
+declared **on the tasklet**; dynamic keying is declared **on the wiring** —
 `.key_by(f)` / `.keyBy(f)` on the stream that feeds it
 ([`stream_transforms.md`](stream_transforms.md)). The sugar therefore offers no
-`entity_key` hook: `entity_key = …` (Rust) / `@EntityKey` (Java) is a
+`cell_key` hook: `cell_key = …` (Rust) / `@CellKey` (Java) is a
 compile / annotation-processing error naming `key_by` as its replacement. The
-two modes stay mutually exclusive — a keyed edge into a procedure declaring
-`entity_keys()` fails the build with `KeyByOnUnkeyableTarget`.
+two modes stay mutually exclusive — a keyed edge into a tasklet declaring
+`cell_keys()` fails the build with `KeyByOnUnkeyableTarget`.
 
-**Per-entity state init (`init`).** By default a stateful procedure's
-`init_state` returns `State::default()` / `new State()`. When an entity's
+**Per-cell state init (`init`).** By default a stateful tasklet's
+`init_state` returns `State::default()` / `new State()`. When a cell's
 starting state is a function of its key, declare `init` naming a function
-`fn(Option<&str>) -> State` (Rust: `#[flezha::procedure(init = f)]`; Java: an
-`@InitState State initState(Optional<String> entityKey)` method on the
+`fn(Option<&str>) -> State` (Rust: `#[flezha::tasklet(init = f)]`; Java: an
+`@InitState State initState(Optional<String> cellKey)` method on the
 authoring class). The generated `init_state` delegates to it, passing the
-procedure key (absent in single-entity mode and the test-harness default).
-`init` on a stateless procedure is a compile-time error. The restore payload
+cell key (absent in single-cell mode and the test-harness default).
+`init` on a stateless tasklet is a compile-time error. The restore payload
 stays runtime-applied after `init_state` returns, so the `init` function never
 sees it.
 
-### 4.1 Reaching every keyed Entity: the `route_latest` building block
+### 4.1 Reaching every keyed Cell: the `route_latest` building block
 
-A keyed procedure cannot receive a broadcast: both keying declarations are
-total — `entities_for` names the Entities an input belongs to, `.key_by(f)`
+A keyed tasklet cannot receive a broadcast: both keying declarations are
+total — `cells_for` names the Cells an input belongs to, `.key_by(f)`
 names exactly one — and inside a partitioned member the computed key is
 admitted against that member's key-group range. "One operative-wide document
-that every keyed Entity must eventually see" (a threshold table, a feature
+that every keyed Cell must eventually see" (a threshold table, a feature
 flag, a config document) is therefore packaged as one builder method:
 
 ```rust
@@ -465,13 +465,13 @@ Stream<RoutedDocument<Thresholds>> routed =
         c.routeLatest(Thresholds.class, thresholds, trades, Trade::symbol);
 ```
 
-It expands to a merge into ONE SDK-packaged single-entity procedure (node
+It expands to a merge into ONE SDK-packaged single-cell tasklet (node
 identity `route_latest`) whose journaled state is
 `{document, version, delivered: key → version}`, and returns that node's output
 stream: a `(key, document)` pair in Rust, a `RoutedDocument<D>` record in Java
 (the runtime needs a `Class` token for the routed payload). The consumer keys
-by that key, which is what makes each delivery reach one Entity. Pure
-expansion per §1: merge, single-entity procedure, journaled state — no new
+by that key, which is what makes each delivery reach one Cell. Pure
+expansion per §1: merge, single-cell tasklet, journaled state — no new
 runtime semantics, no wire change, no new replay path.
 
 **Deliver on the key's own traffic — never a remembered-set fan-out.** A router
@@ -484,7 +484,7 @@ a key's own next traffic item makes over-delivery impossible by construction.
 **Latency is one tick per key**: a key learns of a new document on its next
 traffic item, not when the document arrives. A key whose traffic has stopped is
 never delivered to — so there is no push to idle keys, no retained broadcast to
-late-born Entities and no rescale-time replay.
+late-born Cells and no rescale-time replay.
 
 **The document is opaque.** It is retained and compared (`Eq` / `equals`) and
 never parsed. A document equal to the retained one is inert (which absorbs the
@@ -498,18 +498,18 @@ name) — by [`naming_conventions.md`](naming_conventions.md) rule 10 two unname
 mentions of one class are one node, and here that means one retained document
 shared between them.
 
-## 5. The single-procedure short form, and registration
+## 5. The single-tasklet short form, and registration
 
-Exactly **one** topology may be written short: a single procedure from a
-controller input to at most one named sink (`input → procedure → plugin(sink)`,
-or `input → procedure` with no sink), as an operative of either kind. **Every
+Exactly **one** topology may be written short: a single tasklet from a
+controller input to at most one named sink (`input → tasklet → plugin(sink)`,
+or `input → tasklet` with no sink), as an operative of either kind. **Every
 SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
 
 **The short form is an operative declaration**, written at the SDK's
 kind-named operative entry point, the one a full-form operative already uses.
 An operative declaration is a short form exactly when it carries its one
-procedure's body **instead of** a topology body (`channels` or `procedures`).
-The body is `run`, the name every SDK gives a procedure's body. The kind is the
+tasklet's body **instead of** a topology body (`channels` or `tasklets`).
+The body is `run`, the name every SDK gives a tasklet's body. The kind is the
 entry point's own name (in PHP, the base class the `#[Operative]` class
 extends), never a key. The identity is the operative's factory id, spelled as
 that SDK's full form spells it, and is **written by the author**: an SDK that
@@ -527,58 +527,58 @@ is an address an operator types and a rename must not move it.
 | Elixir | `use Flezha.SDK.StreamOperative, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.WorkflowOperative, ...` |
 
 **`sink` is optional.** With a `sink`, the generated operative declares an
-entry channel, the procedure, and a plugin sink of that name. With no `sink`,
-it declares the entry channel and the procedure and no plugin channel, which is
+entry channel, the tasklet, and a plugin sink of that name. With no `sink`,
+it declares the entry channel and the tasklet and no plugin channel, which is
 the topology a full-form operative declares when its channel ends at a
-procedure: the operative that only keeps state is one declaration. `input` and
+tasklet: the operative that only keeps state is one declaration. `input` and
 `codec` are accepted either way, because an entry channel exists either way.
 
 **The generated operative is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
-`codec` where one is written (Python, Node, Ruby, PHP); the procedure; the sink
+`codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the sink
 when one is written; a factory id equal to the identity; and every class-level
 setting at that SDK's default for that kind. A stream short form is a default
 stream. A workflow short form is a `once` workflow: `flz operative start --kind
-workflow --init-values '<json>'` seeds the entry channel, the procedure runs
+workflow --init-values '<json>'` seeds the entry channel, the tasklet runs
 once, its output reaches the sink after the commit, and the instance
 completes. A workflow short form started by a spawn does not see its payload
 yet; that is `KB-381`, not a property of the short form.
 
-**The expansion is an ordinary procedure and an ordinary operative, and the
-procedure is named after the factory id, verbatim.** An entity lives at
-`<state_root>/<namespace>/<class>/<procedure_id>/<entity_key>`, so a
-procedure's name is a durable address; pinning it to the factory id is what
+**The expansion is an ordinary tasklet and an ordinary operative, and the
+tasklet is named after the factory id, verbatim.** A cell lives at
+`<state_root>/<namespace>/<class>/<tasklet_id>/<cell_key>`, so a
+tasklet's name is a durable address; pinning it to the factory id is what
 makes growing out of the short form keep its state. Where an SDK generates
 code, the two are separate types and the author-facing name is the
-operative's: Rust emits the operative `Echo` and the procedure `EchoProcedure`;
-Java emits `EchoProcedure` and `EchoStreamOperative` and registers from the
-class the author wrote; Elixir generates the nested module `Echo.Procedure`.
-The generated procedure composes in another operative's topology body like any
-procedure.
+operative's: Rust emits the operative `Echo` and the tasklet `EchoTasklet`;
+Java emits `EchoTasklet` and `EchoStreamOperative` and registers from the
+class the author wrote; Elixir generates the nested module `Echo.Tasklet`.
+The generated tasklet composes in another operative's topology body like any
+tasklet.
 
 Growing out of the short form is a move, not a rewrite. With the stream short
-form `echo` above, the full form that keeps every entity where it was is:
+form `echo` above, the full form that keeps every cell where it was is:
 
 ```rust
-#[flezha::procedure(id = "echo")]
-fn echo_procedure(s: String) -> String { s }
+#[flezha::tasklet(id = "echo")]
+fn echo_tasklet(s: String) -> String { s }
 
 struct Echo;
 impl StreamOperative for Echo {
     fn factory_id() -> &'static str { "echo" }
     fn channels(c: &ChannelBuilder) {
-        c.input::<String>("in").into::<EchoProcedure>().sink_named("out");
+        c.input::<String>("in").into::<EchoTasklet>().sink_named("out");
     }
 }
 ```
 
-The procedure keeps the name `echo` and the operative keeps the name `Echo`,
-so `register_factory(Echo)` is unchanged and the entities stay at
-`<class>/echo/<entity_key>`.
+The tasklet keeps the name `echo` and the operative keeps the name `Echo`,
+so `register_factory(Echo)` is unchanged and the cells stay at
+`<class>/echo/<cell_key>`.
 
-Per-procedure settings the declaration already carries keep working (entity
-keys and `entities_for`, mailbox capacity, clock, schema version), because they
-belong to the procedure, not to the class. Where an SDK names an entry channel's
+Per-tasklet settings the declaration already carries keep working (cell
+keys and `cells_for`, mailbox capacity, clock, schema version), because they
+belong to the tasklet, not to the class. Where an SDK names an entry channel's
 overflow policy on the declaration (`on_full` / `onFull` in Rust and Java), it is
 the short form's, describing the entry channel it generates.
 
@@ -589,11 +589,11 @@ the short form's, describing the entry channel it generates.
   head, `input::<String>("prices")`, in the same position the `plugin`
   terminator takes one.
 
-- **Multi-procedure topology stays explicit.** More than one procedure, any
+- **Multi-tasklet topology stays explicit.** More than one tasklet, any
   fan-out or multi-input edge, a keyed edge, or any class-level setting (a loop
   mode, a retry ladder, a duration, persistence off, the effectively-once tier,
   a correction window) requires the full form: an explicit `channels()` /
-  `procedures()` body, or, in Rust, the linear `flezha::operative! { pub struct
+  `tasklets()` body, or, in Rust, the linear `flezha::operative! { pub struct
   Name; id: "…", pipeline: input::<T> -> A -> B -> plugin::<U>("name") }` sugar
   for a strictly linear chain. The SDK refuses rather than guessing a graph.
 
@@ -611,7 +611,7 @@ sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
 `Operative<StreamKind>`) and every `WorkflowOperative` (as
 `Operative<WorkflowKind>`), so an author implements only the kind trait. The
 base's shared member is `factory_id()`; the kind-divergent surface (`channels`
-and the persistence opt-in on one side, `procedures` and the workflow settings
+and the persistence opt-in on one side, `tasklets` and the workflow settings
 on the other) stays on the per-kind traits.
 
 An operative declares its kind where it is written, so a runner call that names
@@ -665,12 +665,12 @@ refusal table's short-form rows are checked against:
 
 | Name | Condition |
 | --- | --- |
-| `ShortFormWithTopology` | an operative declaration carries a procedure body and also a `channels` or `procedures` body |
+| `ShortFormWithTopology` | an operative declaration carries a tasklet body and also a `channels` or `tasklets` body |
 | `SinkWithoutOutput` | a `sink` on a body the SDK can see declares no output |
 | `DuplicateFactoryId` | a second operative, of either kind, under a factory id the runner holds |
 
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
-whose procedure bodies declare no output type the SDK can read (Node, Ruby,
+whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
 PHP, Elixir) owes no `SinkWithoutOutput` and says so in its conformance
 manifest. A declaration with neither body, or with no written identity, is
 refused by the rule every operative already obeys, not by a short-form name.
@@ -701,27 +701,27 @@ it).
 ## 6. Canonical reference operative (cross-SDK conformance anchor)
 
 Every SDK's conformance test asserts that this one operative — the
-`StaticEntityOperative` shape — expands to the same topology and
-associated-type mapping. It is a two-procedure, statically-entity, linear
+`StaticCellOperative` shape — expands to the same topology and
+associated-type mapping. It is a two-tasklet, static-mode, linear
 operative.
 
 **Authored (Rust sugar):**
 
 ```rust
-#[flezha::procedure(id = "static_entry_procedure", keys = ["a", "b", "c", "d"], entities_for = static_seg)]
+#[flezha::tasklet(id = "static_entry_tasklet", keys = ["a", "b", "c", "d"], cells_for = static_seg)]
 fn static_entry(input: String, state: &mut StaticEntryState) -> String {
     state.push_seen(input.clone());
     input
 }
 
-#[flezha::procedure]
+#[flezha::tasklet]
 fn static_downstream(input: String) -> Vec<u8> {
     input.into_bytes()
 }
 
 flezha::operative! {
-    pub struct StaticEntity;
-    id: "static_entity",
+    pub struct StaticCell;
+    id: "static_cell",
     pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka")
 }
 ```
@@ -731,30 +731,30 @@ flezha::operative! {
 | Channel | Kind            | Payload   | Producer           | Consumer / sink     |
 | ------- | --------------- | --------- | ------------------ | ------------------- |
 | `input` | entry           | `String`  | controller         | `StaticEntry`       |
-| (hop)   | inter-procedure | `String`  | `StaticEntry`      | `StaticDownstream`  |
+| (hop)   | inter-tasklet | `String`  | `StaticEntry`      | `StaticDownstream`  |
 | (sink)  | plugin-bound    | `Vec<u8>` | `StaticDownstream` | plugin `test_kafka` |
 
 **Expected associated-type mapping:**
 
-| Procedure          | Input    | Output    | State              | Change                 | Mode                     |
+| Tasklet          | Input    | Output    | State              | Change                 | Mode                     |
 | ------------------ | -------- | --------- | ------------------ | ---------------------- | ------------------------ |
 | `StaticEntry`      | `String` | `String`  | `StaticEntryState` | derived (`Push`/`Set`) | static (`a`,`b`,`c`,`d`) |
 | `StaticDownstream` | `String` | `Vec<u8>` | `()`               | `NoChange`             | single                   |
 
 `Clock = WallClock`, `Config = ()` for both.
 
-Where the fixtures live: the hand-written `StaticEntityOperative`
-(`factory_id` `static_entity`) is in `test/apps/rust_runner/src/entity.rs` and
-its `operative!` twin `sugar_static_entity` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
-`test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticEntityStreamOperative.java`
-(`sugar_static_entity`, `SugarEntry` with `@EntitiesFor`), asserted by
+Where the fixtures live: the hand-written `StaticCellOperative`
+(`factory_id` `static_cell`) is in `test/apps/rust_runner/src/cell.rs` and
+its `operative!` twin `sugar_static_cell` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
+`test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticCellStreamOperative.java`
+(`sugar_static_cell`, `SugarEntry` with `@CellsFor`), asserted by
 `SugarTwinTest.referenceOperativeMatchesContract`. Java has no pipeline macro,
-so its two-procedure twin is an explicit `StreamOperative` class with a
+so its two-tasklet twin is an explicit `StreamOperative` class with a
 `channels()` body.
 
-### 6.1 Canonical keyed-collection reference procedure
+### 6.1 Canonical keyed-collection reference tasklet
 
-Every SDK's conformance test also implements this one procedure — a **rolling
+Every SDK's conformance test also implements this one tasklet — a **rolling
 per-key window** — and asserts its generated journaling matches a hand-written
 twin and survives the replay-determinism harness. It is the reference for the
 §3.1 keyed/collection rules and the §3.2 emit-or-skip return.
@@ -773,7 +773,7 @@ struct RollingWindowState {
     window: HashMap<String, VecDeque<f64>>,
 }
 
-#[flezha::procedure(id = "rolling_window")]
+#[flezha::tasklet(id = "rolling_window")]
 fn rolling_window(input: (String, f64), state: &mut RollingWindowState) -> Option<f64> {
     let (key, value) = input;
     state.push_back_window(key.clone(), value);          // journaled
@@ -824,6 +824,6 @@ logically-equal state, and the sugared form passes `replay_equals` /
 - [`naming_conventions.md`](naming_conventions.md) — method and node naming every SDK mirrors
 - [`poll_core.md`](poll_core.md) — the kernel the sugar's expansion runs on
 - [`stream_transforms.md`](stream_transforms.md) — `key_by` and the edge transforms
-- [`entity_timers.md`](entity_timers.md) — the timer contract behind §3.4
+- [`cell_timers.md`](cell_timers.md) — the timer contract behind §3.4
 - [`elixir_sdk.md`](elixir_sdk.md) — the `use` macros, the `state` block and the behaviour beneath them
 - [`../architecture/runner.md`](../architecture/runner.md) — "One change, every SDK"

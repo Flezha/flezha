@@ -212,7 +212,7 @@ tree and a node name that no other instance touches.
 | Variable | What the instance owns |
 |---|---|
 | `FLEZHA_SOCKET_FILES_PATH` | The socket directory. Also the UDS access boundary, so separate directories give separate permission scopes. |
-| `FLEZHA_STATE_DIR` | The per-Entity WAL, snapshot and outbox trees. Claimed exclusively at boot — see below. |
+| `FLEZHA_STATE_DIR` | The per-Cell WAL, snapshot and outbox trees. Claimed exclusively at boot — see below. |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | The durable hub registry. `<root>/<hub_id>/registry.dets` is not keyed by node, so two instances over one root open one file. |
 | `FLEZHA_DLQ_DIR` | The parked-record store. |
 | `FLEZHA_NODE_NAME` (with `FLEZHA_NODE_HOST`) | The node name. Two BEAMs on one host cannot share one. |
@@ -243,7 +243,7 @@ Two guards make a missed variable a refusal rather than damage:
 - **The state root is claimed exclusively.** A controller takes an advisory
   lock on `<state root>/.instance.lock` at boot and holds it for its lifetime.
   Two controllers over one state root are two unsynchronised writers on one
-  entity WAL tree, which corrupts it silently; the refusal names the state
+  cell WAL tree, which corrupts it silently; the refusal names the state
   root, the process holding it and `FLEZHA_STATE_DIR`. The kernel releases the
   lock when the holder exits, so a controller that was killed leaves nothing
   to clear.

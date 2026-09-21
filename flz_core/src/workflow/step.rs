@@ -1,4 +1,4 @@
-//! One stage of a workflow chain: its step activations (one per entity
+//! One stage of a workflow chain: its step activations (one per cell
 //! partition, on the poll core's direct queue) and the barrier its driver
 //! waits at. The invariant: a step runs ONE attempt and releases its worker;
 //! the retry ladder is timed at the barrier, so a backoff is an entry in a
@@ -11,44 +11,44 @@ use std::time::Instant;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 
-use super::compensation::{EntityRun, StagedOutput};
+use super::compensation::{CellRun, StagedOutput};
 use super::driver::{ChainCtx, Runnable, Value, CANCEL_POLL_CHUNK};
 use super::{WorkflowCollectSink, WorkflowError};
+use crate::cell::CellSlot;
 use crate::channel::RetryPolicy;
-use crate::entity::EntitySlot;
-use crate::operative::topology::{EntityMode, ProcedureDescriptor};
+use crate::operative::topology::{CellMode, TaskletDescriptor};
 use crate::poll_core::EnginePayload;
 use crate::util::LockRecover;
 
 /// One stage's join result: the batch released to the next stage, plus the
-/// per-entity record kept for a possible rollback.
+/// per-cell record kept for a possible rollback.
 pub(super) struct StageOut {
     pub(super) batch: Vec<Value>,
-    pub(super) entities: Vec<EntityRun>,
+    pub(super) cells: Vec<CellRun>,
 }
 
-/// One entity's stage result, as its collecting sink gathered it.
+/// One cell's stage result, as its collecting sink gathered it.
 #[derive(Debug, Default)]
-struct EntityOut {
-    /// Inter-procedure output for the next stage.
+struct CellOut {
+    /// Inter-tasklet output for the next stage.
     outputs: Vec<Value>,
     /// Plugin-bound output held for the commit.
     staged: Vec<StagedOutput>,
-    /// The result the entity's `complete` asked for.
+    /// The result the cell's `complete` asked for.
     completion: Option<Vec<u8>>,
 }
 
-/// Which entity partition a step belongs to.
+/// Which cell partition a step belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct StepKey {
     node: usize,
-    entity_index: usize,
+    cell_index: usize,
 }
 
 /// Run one frontier as step activations and join on one barrier. A failing
-/// entity climbs its ladder in place; its siblings are never re-run. Answers
+/// cell climbs its ladder in place; its siblings are never re-run. Answers
 /// every node that completed whole (ascending, so parents precede children)
-/// plus the first error; a node with a failing entity yields nothing, one with
+/// plus the first error; a node with a failing cell yields nothing, one with
 /// nothing to do yields an empty `StageOut`.
 pub(super) fn run_stage(
     ctx: &ChainCtx,
@@ -56,8 +56,8 @@ pub(super) fn run_stage(
 ) -> (Vec<(usize, StageOut)>, Option<WorkflowError>) {
     let mut barrier = StageBarrier::new(frontier.iter().map(|(node, _)| *node), ctx.retry);
     for (node, batch) in &frontier {
-        let slots = &ctx.stage_entities[*node];
-        for (entity_index, items) in partition(ctx.proc(*node), slots.len(), batch)
+        let slots = &ctx.stage_cells[*node];
+        for (cell_index, items) in partition(ctx.task(*node), slots.len(), batch)
             .into_iter()
             .enumerate()
         {
@@ -66,7 +66,7 @@ pub(super) fn run_stage(
                     ctx,
                     StepKey {
                         node: *node,
-                        entity_index,
+                        cell_index,
                     },
                     items,
                 );
@@ -76,56 +76,56 @@ pub(super) fn run_stage(
     barrier.join(ctx)
 }
 
-/// Run one entity's `compensate` hook as its own step, handing back the undo
+/// Run one cell's `compensate` hook as its own step, handing back the undo
 /// output it staged. Best-effort: a failing hook is logged, never stranding
 /// the rest of the plan.
 pub(super) fn run_compensation_step(
     ctx: &ChainCtx,
     node: usize,
-    seg_run: &EntityRun,
+    seg_run: &CellRun,
 ) -> Vec<StagedOutput> {
     let (tx, rx) = unbounded::<StepDone>();
     let key = StepKey {
         node,
-        entity_index: seg_run.entity_index,
+        cell_index: seg_run.cell_index,
     };
     let outputs: Vec<Value> = seg_run.outputs.iter().map(Arc::clone).collect();
     submit_step(ctx, key, StepWork::Compensate(outputs), &tx);
     match rx.recv() {
         Ok(StepDone {
-            result: Ok(EntityOut { staged, .. }),
+            result: Ok(CellOut { staged, .. }),
             ..
         }) => staged,
         _ => Vec::new(),
     }
 }
 
-/// Partition a batch across a stage's entities: everything to entity 0 in
-/// single mode, by `entities_for` keys in static mode.
-fn partition(proc: &ProcedureDescriptor, entity_count: usize, batch: &[Value]) -> Vec<Vec<Value>> {
-    let mut buckets: Vec<Vec<Value>> = vec![Vec::new(); entity_count];
-    match proc.mode {
-        EntityMode::Single => {
+/// Partition a batch across a stage's cells: everything to cell 0 in
+/// single mode, by `cells_for` keys in static mode.
+fn partition(task: &TaskletDescriptor, cell_count: usize, batch: &[Value]) -> Vec<Vec<Value>> {
+    let mut buckets: Vec<Vec<Value>> = vec![Vec::new(); cell_count];
+    match task.mode {
+        CellMode::Single => {
             if let Some(bucket) = buckets.first_mut() {
                 bucket.extend(batch.iter().map(Arc::clone));
             }
         }
-        EntityMode::Static => {
-            let key_to_idx: HashMap<&str, usize> = proc
-                .entity_keys
+        CellMode::Static => {
+            let key_to_idx: HashMap<&str, usize> = task
+                .cell_keys
                 .iter()
                 .enumerate()
                 .map(|(i, k)| (*k, i))
                 .collect();
             for item in batch {
-                for key in (proc.entities_for_erased)(item.as_ref()) {
+                for key in (task.cells_for_erased)(item.as_ref()) {
                     if let Some(&idx) = key_to_idx.get(key) {
                         buckets[idx].push(Arc::clone(item));
                     }
                 }
             }
         }
-        EntityMode::Dynamic => {}
+        CellMode::Dynamic => {}
     }
     buckets
 }
@@ -136,7 +136,7 @@ struct StageBarrier {
     tx: Sender<StepDone>,
     rx: Receiver<StepDone>,
     ladders: HashMap<StepKey, Ladder>,
-    runs: BTreeMap<usize, Vec<EntityRun>>,
+    runs: BTreeMap<usize, Vec<CellRun>>,
     failed: HashSet<usize>,
     first_err: Option<WorkflowError>,
     max_attempts: u32,
@@ -242,11 +242,11 @@ impl StageBarrier {
             .min()
     }
 
-    fn bank(&mut self, key: StepKey, out: EntityOut) {
+    fn bank(&mut self, key: StepKey, out: CellOut) {
         self.ladders.remove(&key);
         if let Some(runs) = self.runs.get_mut(&key.node) {
-            runs.push(EntityRun {
-                entity_index: key.entity_index,
+            runs.push(CellRun {
+                cell_index: key.cell_index,
                 outputs: out.outputs,
                 staged: out.staged,
                 completion: out.completion,
@@ -304,15 +304,15 @@ impl StageBarrier {
             .runs
             .into_iter()
             .filter(|(node, _)| !self.failed.contains(node))
-            .map(|(node, mut entities)| {
-                // Deterministic downstream batch: entities in index order (each
-                // entity's own item order is preserved by its step).
-                entities.sort_by_key(|s| s.entity_index);
-                let batch: Vec<Value> = entities
+            .map(|(node, mut cells)| {
+                // Deterministic downstream batch: cells in index order (each
+                // cell's own item order is preserved by its step).
+                cells.sort_by_key(|s| s.cell_index);
+                let batch: Vec<Value> = cells
                     .iter()
                     .flat_map(|s| s.outputs.iter().map(Arc::clone))
                     .collect();
-                (node, StageOut { batch, entities })
+                (node, StageOut { batch, cells })
             })
             .collect();
         (level, self.first_err)
@@ -331,22 +331,22 @@ struct Ladder {
 
 fn step_label(ctx: &ChainCtx, key: StepKey) -> String {
     format!(
-        "workflow {} procedure {} entity {}",
+        "workflow {} tasklet {} cell {}",
         ctx.instance_id,
-        ctx.proc(key.node).name,
-        ctx.stage_entities[key.node][key.entity_index]
-            .entity_key
+        ctx.task(key.node).name,
+        ctx.stage_cells[key.node][key.cell_index]
+            .cell_key
             .as_deref()
             .unwrap_or("-")
     )
 }
 
-/// Hand one entity's step to the SDK's workers on the poll core's direct
-/// queue — ahead of entity work and exempt from the cap, so what a driver
+/// Hand one cell's step to the SDK's workers on the poll core's direct
+/// queue — ahead of cell work and exempt from the cap, so what a driver
 /// waits on is never queued behind work that blocks.
 fn submit_step(ctx: &ChainCtx, key: StepKey, work: StepWork, tx: &Sender<StepDone>) {
     crate::poll_core::global().submit_direct(EnginePayload::WorkflowStep(WorkflowStep {
-        slot: Arc::clone(&ctx.stage_entities[key.node][key.entity_index]),
+        slot: Arc::clone(&ctx.stage_cells[key.node][key.cell_index]),
         work,
         instance_id: Arc::clone(ctx.instance_id),
         staging: ctx.journaling(),
@@ -356,7 +356,7 @@ fn submit_step(ctx: &ChainCtx, key: StepKey, work: StepWork, tx: &Sender<StepDon
 
 /// One partition's share of a stage, as an SDK worker receives it.
 pub struct WorkflowStep {
-    pub(crate) slot: Arc<EntitySlot>,
+    pub(crate) slot: Arc<CellSlot>,
     pub(crate) work: StepWork,
     instance_id: Arc<str>,
     staging: bool,
@@ -371,7 +371,7 @@ pub(crate) enum StepWork {
 
 struct StepDone {
     key: StepKey,
-    result: Result<EntityOut, WorkflowError>,
+    result: Result<CellOut, WorkflowError>,
 }
 
 /// The answer a step owes its driver, delivered exactly once — on completion,
@@ -391,7 +391,7 @@ impl StepReply {
         }
     }
 
-    fn send(&mut self, result: Result<EntityOut, WorkflowError>) {
+    fn send(&mut self, result: Result<CellOut, WorkflowError>) {
         self.answered = true;
         let _ = self.tx.send(StepDone {
             key: self.key,
@@ -411,7 +411,7 @@ impl Drop for StepReply {
 /// Run one step on the calling host thread and answer its driver; the guard
 /// keeps the worker alive through a step that unwinds.
 pub fn run_workflow_step(step: WorkflowStep) {
-    let mut sink = WorkflowEntitySink::new(&step.instance_id, step.staging);
+    let mut sink = WorkflowCellSink::new(&step.instance_id, step.staging);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         step.run_in_process(&mut sink)
     }));
@@ -427,7 +427,7 @@ pub(crate) fn complete_workflow_step(
     step: WorkflowStep,
     outcome: crate::schema::ActivationOutcome,
 ) {
-    let mut sink = WorkflowEntitySink::new(&step.instance_id, step.staging);
+    let mut sink = WorkflowCellSink::new(&step.instance_id, step.staging);
     let folded = crate::host::fold_workflow_outcome(&step.slot.flush_buffer, outcome, &mut sink);
     step.finish(folded, sink);
 }
@@ -435,7 +435,7 @@ pub(crate) fn complete_workflow_step(
 impl WorkflowStep {
     /// One attempt in this process: the items sequentially through the
     /// collecting path, or the `compensate` hook over the recorded outputs.
-    fn run_in_process(&self, sink: &mut WorkflowEntitySink) -> Result<(), WorkflowError> {
+    fn run_in_process(&self, sink: &mut WorkflowCellSink) -> Result<(), WorkflowError> {
         let mut state = self.slot.state.lock_recover();
         let dispatcher = &self.slot.dispatcher;
         match &self.work {
@@ -453,7 +453,7 @@ impl WorkflowStep {
 
     /// Answer the driver. A stage failure travels to the barrier; a
     /// compensation's is logged and what the hook staged is still handed back.
-    fn finish(mut self, outcome: Result<(), WorkflowError>, sink: WorkflowEntitySink) {
+    fn finish(mut self, outcome: Result<(), WorkflowError>, sink: WorkflowCellSink) {
         let compensating = matches!(self.work, StepWork::Compensate(_));
         let result = match outcome {
             Ok(()) => Ok(sink.out),
@@ -470,26 +470,26 @@ impl WorkflowStep {
     }
 }
 
-/// Per-entity collecting sink: inter-procedure output buffered for the next
+/// Per-cell collecting sink: inter-tasklet output buffered for the next
 /// stage, plugin-bound output staged when the run journals (`staging`) and
 /// forwarded straight to the wire otherwise.
-struct WorkflowEntitySink {
+struct WorkflowCellSink {
     instance_id: Arc<str>,
-    out: EntityOut,
+    out: CellOut,
     staging: bool,
 }
 
-impl WorkflowEntitySink {
+impl WorkflowCellSink {
     fn new(instance_id: &Arc<str>, staging: bool) -> Self {
         Self {
             instance_id: Arc::clone(instance_id),
-            out: EntityOut::default(),
+            out: CellOut::default(),
             staging,
         }
     }
 }
 
-impl WorkflowCollectSink for WorkflowEntitySink {
+impl WorkflowCollectSink for WorkflowCellSink {
     fn collect(&mut self, value: Value) {
         self.out.outputs.push(value);
     }
@@ -518,7 +518,7 @@ mod tests {
         let (tx, rx) = unbounded::<StepDone>();
         let key = StepKey {
             node: 2,
-            entity_index: 1,
+            cell_index: 1,
         };
         drop(StepReply::new(key, tx));
 
@@ -542,11 +542,11 @@ mod tests {
         let mut reply = StepReply::new(
             StepKey {
                 node: 0,
-                entity_index: 0,
+                cell_index: 0,
             },
             tx,
         );
-        reply.send(Ok(EntityOut::default()));
+        reply.send(Ok(CellOut::default()));
         drop(reply);
 
         assert!(rx.try_recv().expect("the answer").result.is_ok());

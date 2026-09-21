@@ -350,7 +350,7 @@ out/alerts/
 - **A roll, then a part.** Batches are synced into the open roll, a hidden temp file.
   The roll is committed when `roll_after_ms` has passed since its first bytes or it
   reaches `roll_bytes`, whichever comes first: the temp file is renamed to the next
-  `part-<N>`, then `.progress` is written temp-then-rename naming `N` and each Entity's
+  `part-<N>`, then `.progress` is written temp-then-rename naming `N` and each Cell's
   `(epoch, seq)` watermark, and only then are the roll's holds confirmed. Parts and the
   sidecar are created `0600`.
 - **What a roll costs.** A guaranteed record waits up to `roll_after_ms` for its
@@ -364,8 +364,8 @@ out/alerts/
   refuses the start, deleting nothing, with
   `{:unhealthy, {:open_failed, {{:part_ahead_of_progress, newest, last}, path}}}`.
 - **Which records are written once.** A record the outbox guarantees, one carrying a
-  confirmation token and a replay-stable identity (`flz.entity` and a numeric
-  `flz.seq`), is written once: a re-driven copy at or below its Entity's watermark is
+  confirmation token and a replay-stable identity (`flz.cell` and a numeric
+  `flz.seq`), is written once: a re-driven copy at or below its Cell's watermark is
   confirmed without being written. Every other record is written at least once, because
   a seq off the effectively-once tier can repeat and a watermark over it would drop a
   record.

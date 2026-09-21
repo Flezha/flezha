@@ -85,7 +85,7 @@ defmodule Flezha.Service.CliManager do
     verb: :plugin_enable,
     row: &Cli.Plugin.enable_row/1
 
-  verb entity_state(namespace, operative_id, opts \\ []), to: Cli.Operative
+  verb cell_state(namespace, operative_id, opts \\ []), to: Cli.Operative
   verb group_partition_rows(rows), to: Cli.Listing
   verb install_plugin(path, opts \\ []), to: Cli.Plugin
   verb installed_plugin?(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info

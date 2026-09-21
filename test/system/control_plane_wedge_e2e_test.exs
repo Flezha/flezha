@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   @moduledoc """
-  A worker aborted mid-dispatch recovers without losing its entity: the OTHER
+  A worker aborted mid-dispatch recovers without losing its cell: the OTHER
   way a runner stops doing work, and a durability assertion rather than a
   remedy. The remedy path a wedged runner takes — verdict, terminal restart,
   eviction, rebind — is a row of `test/system/remedy_drill_test.exs`.
@@ -44,13 +44,13 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
   # A worker killed mid-dispatch is the OTHER way a runner stops doing work:
   # not a pool that stalls, but one activation whose host died holding it.
-  # Per-entity exclusivity is the handout, so without the host answering it —
-  # abandoning, replacing the worker, recreating the Entity, whatever that
-  # runtime's answer is — the Entity would be retired for the life of the
+  # Per-cell exclusivity is the handout, so without the host answering it —
+  # abandoning, replacing the worker, recreating the Cell, whatever that
+  # runtime's answer is — the Cell would be retired for the life of the
   # process and nothing would ever say so.
   @tag capability: :pool_wedge, skip: FlezhaTest.SystemCase.deferral(:pool_wedge)
   @tag timeout: 180_000
-  test "a worker aborted mid-dispatch recovers without losing its entity",
+  test "a worker aborted mid-dispatch recovers without losing its cell",
        %{namespace: namespace} do
     {operative_id, _port, _runner} = probe_on_its_own_runner(namespace, "aborted")
 
@@ -61,9 +61,9 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     OperativeManager.send_io(operative_id, namespace, "abort", %{"input_type" => "2"})
 
     # No operator action, no rebind: a pool that did not come back to size, or
-    # an entity left holding an unanswered handout, would never serve this.
+    # a cell left holding an unanswered handout, would never serve this.
     assert produces?(operative_id, namespace, "two", "ok:two", 120_000),
-           "the entity was never served again after its worker was aborted"
+           "the cell was never served again after its worker was aborted"
 
     # And the aborting item never ran twice: it produced at most once, whether
     # its host re-handed it (abandon / retry ladder) or lost it with the worker.

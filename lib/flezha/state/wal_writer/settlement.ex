@@ -22,7 +22,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Process.Timer
   alias Flezha.State.WalWriter.State
 
-  @reserved_entity_keys Paths.reserved_entity_keys()
+  @reserved_cell_keys Paths.reserved_cell_keys()
 
   # ---------- Effectively-once outbox (fsync-gated flush) ----------
 
@@ -48,10 +48,10 @@ defmodule Flezha.State.WalWriter.Settlement do
           }
 
         {:error, reason} ->
-          {rc, sh, pk} = state.entity_id
+          {rc, sh, pk} = state.cell_id
 
           Logger.warning(
-            "[wal] effect record body undecodable entity=#{rc}/#{sh}/#{pk} " <>
+            "[wal] effect record body undecodable cell=#{rc}/#{sh}/#{pk} " <>
               "seq=#{seq}: #{inspect(reason)} — outputs not flushed"
           )
 
@@ -63,7 +63,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   end
 
   # Dispatch every leading durable entry, in seq order, to the operative's
-  # `:on_output` chain with the durable identity `(flz.entity, outbox_seq,
+  # `:on_output` chain with the durable identity `(flz.cell, outbox_seq,
   # epoch)`. Undispatchable (Overwatch not yet bound) → bounded retry timer;
   # the queue is bounded by the credit window like the un-fsynced buffer.
   #
@@ -83,7 +83,7 @@ defmodule Flezha.State.WalWriter.Settlement do
         if window_full?(state) do
           state
         else
-          {rc, _sh, _pk} = state.entity_id
+          {rc, _sh, _pk} = state.cell_id
 
           case Lookup.overwatch(rc) do
             {:ok, pid} -> dispatch_outbox_window(state, pid)
@@ -144,17 +144,17 @@ defmodule Flezha.State.WalWriter.Settlement do
   # The stamped outputs alone — what a re-dispatch owes, and how many the
   # entry's tally waits on before the cursor may pass it.
   defp entry_outputs(state, key, entry) do
-    # The token names the entry, and a stream Entity's writer owns its own
+    # The token names the entry, and a stream Cell's writer owns its own
     # output — so one token covers every output of the entry.
-    ack = Outbox.token(state.entity_id, key)
+    ack = Outbox.token(state.cell_id, key)
 
     entry.outputs
     |> Enum.with_index()
     |> Enum.map(fn {output, ordinal} ->
       Outbox.stamp(output.payload, %{
-        owner: state.entity_id,
+        owner: state.cell_id,
         entry: key,
-        entity: state.entity_id,
+        cell: state.cell_id,
         ack: ack,
         seq: "#{entry.seq}.#{ordinal}",
         epoch: state.outbox_epoch,
@@ -178,15 +178,15 @@ defmodule Flezha.State.WalWriter.Settlement do
   defp advance_consumed(_state, -1), do: :ok
 
   defp advance_consumed(state, offset) do
-    {rc, _sh, _pk} = state.entity_id
-    InputLog.record_consumed(rc, state.entity_id, offset)
+    {rc, _sh, _pk} = state.cell_id
+    InputLog.record_consumed(rc, state.cell_id, offset)
   end
 
   # The durable side effects the record carries beyond its outputs. They belong
   # to the record, not to a delivery attempt, so a re-dispatch does not repeat
   # them.
   defp apply_effect(state, entry) do
-    {rc, sh, pk} = state.entity_id
+    {rc, sh, pk} = state.cell_id
 
     # Materialize a dead-letter park BEFORE the pass's consumed-offset advance:
     # the watermark move can truncate the poison input out of the
@@ -203,8 +203,8 @@ defmodule Flezha.State.WalWriter.Settlement do
           DlqStore.append(
             DlqEntry.new!(%{
               operative_class: rc,
-              procedure_id: sh,
-              entity_key: pk,
+              tasklet_id: sh,
+              cell_key: pk,
               channel: dlq.channel,
               origin_offset: entry.consumed_offset,
               error: dlq.error,
@@ -218,7 +218,7 @@ defmodule Flezha.State.WalWriter.Settlement do
     # state and source position are consistent at exactly this cut, which is the
     # cut the remote durability tier wants. Every other class reaches the tier
     # through compaction, a commit barrier, or the backstop sweep.
-    DurabilityTier.on_effect_flushed(state.entity_id, entry.consumed_offset)
+    DurabilityTier.on_effect_flushed(state.cell_id, entry.consumed_offset)
   end
 
   def schedule_outbox_retry(state) do
@@ -310,7 +310,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   # dropping the tally is what lets the next journal-driven flush re-drive them.
   def resettle_outbox(state) do
     if resettle_due?(state) do
-      {rc, _sh, _pk} = state.entity_id
+      {rc, _sh, _pk} = state.cell_id
       overwatch = Lookup.overwatch(rc)
 
       {state, chunks} =
@@ -357,10 +357,10 @@ defmodule Flezha.State.WalWriter.Settlement do
   # back into this very process — so it runs off-process and reports back.
   defp complete_entry(state, {:marker, _, _, _, _} = key) do
     writer = self()
-    entity_id = state.entity_id
+    cell_id = state.cell_id
 
     spawn(fn ->
-      Outbox.complete(entity_id, key)
+      Outbox.complete(cell_id, key)
       send(writer, {:outbox_marked, key})
     end)
 
@@ -402,10 +402,10 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   # Advance the dedup file (persistence watermark + flush cursor + epoch)
   # with one atomic tmp+rename — at most once per fsync batch. The reserved
-  # per-instance identities (proc-journal, durable inbox) skip it: neither carries
-  # effect records, and the dedup side-file would register a phantom Entity
+  # per-instance identities (task-journal, durable inbox) skip it: neither carries
+  # effect records, and the dedup side-file would register a phantom Cell
   # with `Paths.scan_dir/1`.
-  def persist_dedup(%{entity_id: {_, _, key}} = state) when key in @reserved_entity_keys,
+  def persist_dedup(%{cell_id: {_, _, key}} = state) when key in @reserved_cell_keys,
     do: state
 
   def persist_dedup(state) do
@@ -418,11 +418,11 @@ defmodule Flezha.State.WalWriter.Settlement do
     # record re-drives work the sinks dedup — writing a flush cursor ahead of
     # what is durable would drop those outputs for good.
     if State.ordered?(progress) do
-      _ = Outbox.write(state.entity_id, progress)
+      _ = Outbox.write(state.cell_id, progress)
     else
       Logger.error(
         "[state] refusing to persist an out-of-order cursor record for " <>
-          "#{inspect(state.entity_id)}: #{inspect(progress)}"
+          "#{inspect(state.cell_id)}: #{inspect(progress)}"
       )
     end
 

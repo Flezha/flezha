@@ -62,7 +62,7 @@ fn c_abi_full_scenario() {
     restores_and_applies_the_offset_floor(ctx, &controller, &stream);
     a_live_read_answers_with_the_host_json(ctx, &controller);
     a_keyed_dynamic_route_crosses_for_its_key(ctx, &controller, &stream);
-    a_workflow_procedure_completes_through_the_abi(ctx, &controller);
+    a_workflow_tasklet_completes_through_the_abi(ctx, &controller);
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
@@ -125,8 +125,8 @@ pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller)
     let decl = br#"{
         "factory_id": "abi_probe",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
-        "procedures": [{"name": "abi_pass"}]
+        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
+        "tasklets": [{"name": "abi_pass"}]
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -180,13 +180,13 @@ pub(crate) fn routes_two_entry_payloads(
         work_payloads(&act),
         vec![b"alpha".to_vec(), b"beta".to_vec()]
     );
-    assert_eq!(act.target.procedure, 0);
+    assert_eq!(act.target.tasklet, 0);
     act
 }
 
 /// The third answer, and the one the ABI has to name because no unwind
 /// crosses it: a veneer whose language threw cannot reach `complete`, and
-/// per-entity exclusivity would then retire this entity for the life of the
+/// per-cell exclusivity would then retire this cell for the life of the
 /// process. Abandoning re-hands the batch untouched.
 fn abandon_re_hands_the_batch(ctx: *mut FlzContext, act: schema::Activation) -> schema::Activation {
     assert_eq!(unsafe { flz_core_abandon(ctx, act.token) }, FLZ_OK);
@@ -202,10 +202,7 @@ fn abandon_re_hands_the_batch(ctx: *mut FlzContext, act: schema::Activation) -> 
     );
 
     let (status, act) = abi_poll(ctx, 2_000);
-    assert_eq!(
-        status, FLZ_POLL_ACTIVATION,
-        "an abandoned entity polls again"
-    );
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "an abandoned cell polls again");
     let act = act.unwrap();
     assert_eq!(
         work_payloads(&act),
@@ -321,11 +318,11 @@ fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Contro
         "sdk_lang": 2,"sdk_version":"0.1.0",
         "change_format_id": 4,
         "channels": [
-            {"name": "ein", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]},
+            {"name": "ein", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]},
             {"name": "eout", "kind": "plugin", "producer": 0, "keyed": true,
              "chains": [[{"link": "sink", "name": "eout"}]]}
         ],
-        "procedures": [{
+        "tasklets": [{
             "name": "eff_pass",
             "schema_version": 2,
             "min_readable_schema_version": 1
@@ -394,11 +391,11 @@ fn wal_record(seq: u64, format_id: u8, body: &[u8]) -> Vec<u8> {
 }
 
 fn restores_from_a_snapshot_and_a_wal(ctx: *mut FlzContext, controller: &Controller) {
-    let entity_id = flz_core::flusher::encode_entity_identity("eff-1", "eff_pass", "");
+    let cell_id = flz_core::flusher::encode_cell_identity("eff-1", "eff_pass", "");
     controller.send(
         "ref-restore-1",
         flz_core::pb::command_request::Command::RestoreInitState(flz_core::pb::RestoreInitState {
-            entity_id,
+            cell_id,
             snapshot_bytes: vec![0x5A],
             snapshot_header: header_for(4, 1, &[0x5A]).to_vec(),
             change_log_bytes: change_log(),
@@ -492,12 +489,12 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
     );
 }
 
-/// EntityState becomes a LiveStateRead activation; the host's JSON answer
+/// CellState becomes a LiveStateRead activation; the host's JSON answer
 /// lands in the command reply under the Decision-10 shape.
 fn a_live_read_answers_with_the_host_json(ctx: *mut FlzContext, controller: &Controller) {
     controller.send(
         "ref-read-1",
-        flz_core::pb::command_request::Command::EntityState(flz_core::pb::EntityState {
+        flz_core::pb::command_request::Command::CellState(flz_core::pb::CellState {
             operative_id: "eff-1".to_string(),
             ..Default::default()
         }),
@@ -520,7 +517,7 @@ fn a_live_read_answers_with_the_host_json(ctx: *mut FlzContext, controller: &Con
         },
     );
 
-    let reply = controller.await_reply("entity_state reply carrying the host JSON", "ref-read-1");
+    let reply = controller.await_reply("cell_state reply carrying the host JSON", "ref-read-1");
     let body = String::from_utf8_lossy(&reply.raw_data);
     assert!(
         body.contains("eff_pass") && body.contains("\"n\":3"),
@@ -549,7 +546,7 @@ fn a_keyed_dynamic_route_crosses_for_its_key(
     );
     assert!(staged.is_none(), "keyed consumer stages for the crossing");
     answers_the_prepare_crossing(ctx);
-    the_keyed_input_reaches_its_own_entity(ctx);
+    the_keyed_input_reaches_its_own_cell(ctx);
 }
 
 fn answers_the_prepare_crossing(ctx: *mut FlzContext) {
@@ -574,15 +571,15 @@ fn answers_the_prepare_crossing(ctx: *mut FlzContext) {
     );
 }
 
-fn the_keyed_input_reaches_its_own_entity(ctx: *mut FlzContext) {
+fn the_keyed_input_reaches_its_own_cell(ctx: *mut FlzContext) {
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "keyed input dispatches");
     let act = act.unwrap();
     assert_eq!(act.target.operative, "dyn-1");
     assert_eq!(
-        act.target.entity_key.as_deref(),
+        act.target.cell_key.as_deref(),
         Some("k1"),
-        "the prepare answer's key selected the lazily-created entity"
+        "the prepare answer's key selected the lazily-created cell"
     );
     abi_complete(
         ctx,
@@ -597,8 +594,8 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_dyn",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "din", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
-        "procedures": [{"name": "dyn_pass", "entity_mode": "dynamic"}]
+        "channels": [{"name": "din", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
+        "tasklets": [{"name": "dyn_pass", "cell_mode": "dynamic"}]
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -615,7 +612,7 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     controller.await_success("AddOperative dyn response", "ref-add-dyn");
 }
 
-fn a_workflow_procedure_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
+fn a_workflow_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
     declares_the_workflow_class(ctx, controller);
     let (status, act) = abi_poll(ctx, 5_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "the workflow's step hands out");
@@ -658,8 +655,8 @@ fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_workflow",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
-        "procedures": [{"name": "wf_step"}],
+        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
+        "tasklets": [{"name": "wf_step"}],
         "workflow": {}
     }"#;
     assert_eq!(

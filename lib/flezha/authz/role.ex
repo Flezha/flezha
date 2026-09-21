@@ -14,7 +14,7 @@ defmodule Flezha.AuthZ.Role do
   additionally carries actions that destroy a record or move work.
 
   `spawner` is for the same identity and grants less: `operative.start` and
-  `operative.send` in its namespace, which a procedure's `ctx.spawn_workflow`
+  `operative.send` in its namespace, which a tasklet's `ctx.spawn_workflow`
   needs and which also open `Operative.start` and `Operative.send` on the
   administration surface; no stop and no plugin verbs.
 

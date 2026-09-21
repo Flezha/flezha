@@ -1,17 +1,17 @@
-// The two-procedure word count, run in this process with no controller.
+// The two-tasklet word count, run in this process with no controller.
 //
 //   node local_word_count.mjs
 //
-// `Split` and `Tally` are ordinary procedures with nothing local-mode about
+// `Split` and `Tally` are ordinary tasklets with nothing local-mode about
 // them: the same definition deploys against a controller unchanged. What
 // local mode supplies is the sink — the values `Tally` releases arrive here
 // instead of on a socket.
 //
 // State is held in memory and nothing is durable; the run says so on stderr.
 
-import { LocalOperative, defineOperative, defineProcedure } from '@flezha/sdk';
+import { LocalOperative, defineOperative, defineTasklet } from '@flezha/sdk';
 
-const Split = defineProcedure({
+const Split = defineTasklet({
   name: 'split',
   run: (line, ctx) => {
     for (const word of line.split(/\s+/).filter(Boolean)) {
@@ -20,9 +20,9 @@ const Split = defineProcedure({
   },
 });
 
-const Tally = defineProcedure({
+const Tally = defineTasklet({
   name: 'tally',
-  dynamicEntities: { idleTtlMs: 300_000 },
+  dynamicCells: { idleTtlMs: 300_000 },
   initialState: () => ({ seen: 0 }),
   applyChange: (state, change) => {
     state.seen = change.seen;
@@ -39,7 +39,7 @@ const WordCount = defineOperative({
   channels: (c) => {
     c.input('lines', { codec: 'text' })
       .into(Split)
-      // One Entity per word: the hop from `Split` to `Tally` is the
+      // One Cell per word: the hop from `Split` to `Tally` is the
       // runtime's, not this file's.
       .keyBy((word) => word)
       .into(Tally)

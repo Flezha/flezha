@@ -4,7 +4,7 @@
 //! runner builds, feeds it through the [`OperativeDispatchHandle::dispatch`]
 //! a stream reader uses, and takes sink output where production frames it —
 //! a [`FlezhaStream::Local`] whose writes are parsed in process instead of
-//! reaching a socket. Entity lifecycle, key resolution, routing, mailboxes,
+//! reaching a socket. Cell lifecycle, key resolution, routing, mailboxes,
 //! overflow and the retry ladder are the deployed ones, untouched.
 //!
 //! What a local run has not got: durability of any kind (a null sink discards
@@ -178,12 +178,12 @@ impl LocalRun {
         Ok(())
     }
 
-    /// Block until every Entity has drained and nothing is in flight, or
+    /// Block until every Cell has drained and nothing is in flight, or
     /// `budget` elapses — which is reported, never passed off as done.
     pub fn run_until_idle(&self, budget: Duration) -> Result<(), Error> {
         let deadline = Instant::now() + budget;
         let core = crate::poll_core::global();
-        // Two consecutive idle observations, because an Entity between its
+        // Two consecutive idle observations, because a Cell between its
         // pop and its next push is momentarily idle by every counter.
         let mut idle_seen = 0;
         while Instant::now() < deadline {
@@ -199,7 +199,7 @@ impl LocalRun {
         )))
     }
 
-    /// The live instance, for a caller that wants to read its Entities.
+    /// The live instance, for a caller that wants to read its Cells.
     pub fn instance(&self) -> &Arc<StreamInstance> {
         &self.instance
     }

@@ -15,8 +15,8 @@ runner: no plugin infrastructure, no local mode.
 the named operative's output chain and print each forwarded frame as it arrives, and
 with `--input` it SHALL attach to the input chain instead. In text mode each frame
 SHALL be one line: the channel name, a tab, the payload bytes, and, when the frame
-carries `flz.entity`, `flz.seq` or `flz.key`, a further tab and those three as
-`entity=… seq=… key=…`; a frame with no channel name SHALL print `-` in its place. In
+carries `flz.cell`, `flz.seq` or `flz.key`, a further tab and those three as
+`cell=… seq=… key=…`; a frame with no channel name SHALL print `-` in its place. In
 JSON mode (`--json` or `--output json`) each frame SHALL be one JSON object on its own
 line carrying `channel`, `payload` when the bytes are valid UTF-8 or `payload_base64`
 otherwise, and `metadata` with the frame's whole metadata map. No metadata key SHALL be
@@ -24,7 +24,7 @@ dropped in either mode.
 
 #### Scenario: A named sink is readable
 
-- **WHEN** a listener is attached to an operative whose procedure emits on a sink
+- **WHEN** a listener is attached to an operative whose tasklet emits on a sink
   named `echo`, and the operative is sent `hello`
 - **THEN** the listener SHALL print a line whose first field is `echo` and whose second
   is `hello`
@@ -34,7 +34,7 @@ dropped in either mode.
 - **WHEN** a listener is attached to an operative whose keyed sink emits `k1=v1` for
   input `k1:v1`
 - **THEN** the printed line SHALL carry the channel, the payload and a third field
-  naming the frame's `flz.entity`, `flz.seq` and `flz.key` values
+  naming the frame's `flz.cell`, `flz.seq` and `flz.key` values
 
 #### Scenario: JSON mode carries the map
 

@@ -3,16 +3,16 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
   The stream-graph shapes every SDK's builder authors, driven end to end on the
   runtime `FLEZHA_E2E_RUNTIME` selects:
 
-    * `merged_input`: entries `ticks` and `quotes` merged into one procedure,
+    * `merged_input`: entries `ticks` and `quotes` merged into one tasklet,
       each source mapped to a value tagged with its channel and keyed on the
-      symbol before the first `:`; the procedure emits `<source>:<payload>` on
+      symbol before the first `:`; the tasklet emits `<source>:<payload>` on
       the keyed sink `merged`.
     * `transform_chain`: entry `trades` through `filter` (drops `drop`),
       `flat_map` (splits on `,`), `map` (upper-cases) and `key_by` (the prefix
-      before `:`) into a procedure that emits its input on the keyed sink
+      before `:`) into a tasklet that emits its input on the keyed sink
       `transformed`.
 
-  Both sinks are keyed, so `flz.entity` on each frame names the Entity the key
+  Both sinks are keyed, so `flz.cell` on each frame names the Cell the key
   routed the value to.
 
       FLEZHA_E2E_RUNTIME=node mix test --include system test/system/stream_graph_e2e_test.exs
@@ -36,15 +36,15 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
     {:ok, namespace: namespace}
   end
 
-  test "a frame on each merged entry reaches the procedure under its own mapping", ctx do
+  test "a frame on each merged entry reaches the tasklet under its own mapping", ctx do
     operative_id = start(ctx.namespace, "merged_input")
 
     send_inputs(operative_id, ctx.namespace, ["AAPL:1"], %{"channel" => "ticks"})
     send_inputs(operative_id, ctx.namespace, ["AAPL:2"], %{"channel" => "quotes"})
 
     assert Enum.sort(receive_lines(2)) == [
-             {"quotes:AAPL:2", "#{operative_id}/merge_label_procedure/AAPL"},
-             {"ticks:AAPL:1", "#{operative_id}/merge_label_procedure/AAPL"}
+             {"quotes:AAPL:2", "#{operative_id}/merge_label_tasklet/AAPL"},
+             {"ticks:AAPL:1", "#{operative_id}/merge_label_tasklet/AAPL"}
            ]
   end
 
@@ -62,8 +62,8 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
     send_inputs(operative_id, ctx.namespace, ["drop", "a:1,b:2"], %{"channel" => "trades"})
 
     assert Enum.sort(receive_lines(2)) == [
-             {"A:1", "#{operative_id}/transform_label_procedure/A"},
-             {"B:2", "#{operative_id}/transform_label_procedure/B"}
+             {"A:1", "#{operative_id}/transform_label_tasklet/A"},
+             {"B:2", "#{operative_id}/transform_label_tasklet/B"}
            ]
 
     refute_receive {:message_forward, _, _}, 1_000, "the filtered `drop` frame reached the sink"
@@ -82,11 +82,11 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
     operative_id
   end
 
-  # `{payload, flz.entity}` per frame, in arrival order.
+  # `{payload, flz.cell}` per frame, in arrival order.
   defp receive_lines(count) do
     for _ <- 1..count do
       assert_receive {:message_forward, payload, metadata}, 30_000
-      {to_string(payload), metadata["flz.entity"]}
+      {to_string(payload), metadata["flz.cell"]}
     end
   end
 

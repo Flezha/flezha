@@ -87,8 +87,6 @@ ATTRIBUTE = re.compile(r'^\s*@([a-z_][a-zA-Z0-9_]*)\s+"([^"#]*)')
 BINDING = re.compile(r'^\s*([a-z_][a-zA-Z0-9_]*)\s*=\s*"([^"#]*)')
 NAMED_ROW = re.compile(r"^\s*([a-z_][a-zA-Z0-9_]*)\s*=\s*.*env_name\(:([a-z0-9_]+)\)")
 
-hits = set()
-
 
 def names_in(text):
     """What each identifier in this file stands for, when it stands for a name."""
@@ -132,11 +130,8 @@ def check_file(text):
         name = resolve(match.group(1), known)
         if name is not None and not reads_live(name):
             return []
-        hits.add(rel)
-        if rel in baseline:
-            return []
         said = name or "the name is not spelled here"
-        return [f"{line.strip()}   [{said}]"]
+        return [(rel, f"{line.strip()}   [{said}]")]
 
     return check
 
@@ -154,10 +149,10 @@ def check(rel, line):
     return state["check"](rel, line)
 
 
-baseline = naming_gate.load_baseline(BASELINE)
-
-code = naming_gate.walk(
+sys.exit(naming_gate.walk_baselined(
     check=check,
+    baseline=BASELINE,
+    what="set one",
     pathspec=("test/",),
     prefilter=lambda text: "System.put_env" in text,
     headline="a test sets an OS variable a runner reads while it is running:",
@@ -167,9 +162,5 @@ code = naming_gate.walk(
          "reason.",
     ok_message=f"live env in tests OK ({len(VARIABLES)} runner-read variables)",
     noun="site(s)",
-)
-
-# Both halves report: a run with a new site AND a stale entry says so once.
-stale = naming_gate.stale_baseline(BASELINE, baseline, hits, "set one")
-sys.exit(code or stale)
+))
 PY

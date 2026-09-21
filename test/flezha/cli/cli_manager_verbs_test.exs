@@ -261,8 +261,8 @@ defmodule Flezha.Service.CliManagerDlqTest do
 
     entry = %{
       operative_class: rc,
-      procedure_id: "proc",
-      entity_key: "k",
+      tasklet_id: "task",
+      cell_key: "k",
       channel: "input",
       origin_offset: nil,
       error: "kaboom",

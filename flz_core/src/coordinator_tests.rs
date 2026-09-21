@@ -50,9 +50,9 @@ fn the_heartbeat_carries_every_overflow_counter() {
         assert!(before.contains_key(key), "the heartbeat must carry {key}");
     }
 
-    crate::entity::PUSHES_BLOCKED_TOTAL.fetch_add(3, std::sync::atomic::Ordering::Relaxed);
-    crate::entity::DROPS_NEWEST_TOTAL.fetch_add(5, std::sync::atomic::Ordering::Relaxed);
-    crate::entity::DROPS_OLDEST_TOTAL.fetch_add(7, std::sync::atomic::Ordering::Relaxed);
+    crate::cell::PUSHES_BLOCKED_TOTAL.fetch_add(3, std::sync::atomic::Ordering::Relaxed);
+    crate::cell::DROPS_NEWEST_TOTAL.fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+    crate::cell::DROPS_OLDEST_TOTAL.fetch_add(7, std::sync::atomic::Ordering::Relaxed);
     let after = super::heartbeat_metadata();
 
     for (key, bumped) in [

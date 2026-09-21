@@ -24,7 +24,7 @@ all this page is about.
 Look at the declaration again:
 
 ```java
-c.input(String.class, "in").into(EchoProcedure.class).sink("out");
+c.input(String.class, "in").into(EchoTasklet.class).sink("out");
 ```
 
 Both ends of that line are open to plugins. `input(String.class, "in")` names

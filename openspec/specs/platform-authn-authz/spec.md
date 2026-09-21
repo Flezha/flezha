@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `app`, `operator`, `admin`, `runner`, `spawner`, `stopper`), a set of which is bound to a principal on one namespace, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `app`, `operator`, `admin`, `runner`, `spawner`, `stopper`), a set of which is bound to a principal on one namespace, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/cell enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
 ## Requirements
 ### Requirement: Verified-principal model
 
@@ -74,7 +74,7 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly seven roles: `viewer`, `app`, `operator`, `admin`, `runner`, `spawner`, `stopper`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`, and a principal MAY hold several of these roles in its namespace, as the "An identity SHALL hold a set of roles in one namespace" requirement states. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. `spawner` SHALL grant `:runner.connect`, `:operative.start` and `:operative.send` on the bound namespace and nothing else: the rights a procedure-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `stopper` SHALL grant `:runner.connect` and `:operative.stop` on the bound namespace and nothing else: the right to stop any operative in that namespace, which authorizes the same principal's stop on the administration surface. `app` SHALL grant every action `spawner` and `stopper` grant. A role that grants `:runner.connect` is a role for a runner's principal; because a runner proves its namespace with a `runner` credential, the operator surface SHALL NOT issue a credential for any such role other than `runner` itself, which today excludes `app`, `spawner` and `stopper`, and that exclusion SHALL be derived from the grant rather than kept as a list of role names. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
+The system SHALL define exactly seven roles: `viewer`, `app`, `operator`, `admin`, `runner`, `spawner`, `stopper`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`, and a principal MAY hold several of these roles in its namespace, as the "An identity SHALL hold a set of roles in one namespace" requirement states. `viewer` SHALL grant read-only actions on the bound namespace. `app` SHALL grant viewer plus the namespace-scoped lifecycle an application performs on its own work, and SHALL NOT grant any action that destroys a record or moves work it did not create; because the only principal ever bound to it is a runner's, it SHALL also grant `:runner.connect`. `operator` SHALL grant everything `app` adds except that connect, plus the remaining operative and plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. `spawner` SHALL grant `:runner.connect`, `:operative.start` and `:operative.send` on the bound namespace and nothing else: the rights a tasklet-requested spawn needs, which equally authorize the same principal's start and send on the administration surface. `stopper` SHALL grant `:runner.connect` and `:operative.stop` on the bound namespace and nothing else: the right to stop any operative in that namespace, which authorizes the same principal's stop on the administration surface. `app` SHALL grant every action `spawner` and `stopper` grant. A role that grants `:runner.connect` is a role for a runner's principal; because a runner proves its namespace with a `runner` credential, the operator surface SHALL NOT issue a credential for any such role other than `runner` itself, which today excludes `app`, `spawner` and `stopper`, and that exclusion SHALL be derived from the grant rather than kept as a list of role names. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
 
 A runner connection's roles SHALL be resolved from the role store keyed on its principal rather than stamped by the connect path. The connection SHALL hold every role bound to its principal in the namespace the connection proved that grants `:runner.connect`, and an action SHALL be authorized for it when any of those roles grants the action. A principal with no binding, one whose binding names a namespace other than the one the connection proved, or one none of whose bound roles grants `:runner.connect` SHALL resolve to `runner` alone; a bound role that does not grant `:runner.connect` SHALL NOT be held by a runner connection. The resolution SHALL be read per call, so that binding or unbinding a role takes effect on the next call without a reconnect.
 
@@ -196,7 +196,7 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 
 ### Requirement: Per-namespace quotas at allocation
 
-The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_operatives`, `max_entities_per_operative`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.OperativeManager.start_operative/2` SHALL call `check_allocation/3` for `max_operatives` and `max_entities_per_operative`; `stop_operative/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
+The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_operatives`, `max_cells_per_operative`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.OperativeManager.start_operative/2` SHALL call `check_allocation/3` for `max_operatives` and `max_cells_per_operative`; `stop_operative/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
 
 #### Scenario: Max-operatives denial on allocation
 - **WHEN** namespace `team-orders` has `max_operatives: 5`, 5 operatives already exist, and an operator invokes `Flezha.Service.OperativeManager.start_operative/2` with a 6th
@@ -240,7 +240,7 @@ The system SHALL move any pre-namespace top-level subtree under `app_data/state/
 
 #### Scenario: Namespaced operative writes under its namespace
 
-- **WHEN** an operative in namespace `team-orders` persists entity state
+- **WHEN** an operative in namespace `team-orders` persists cell state
 - **THEN** the WAL and snapshot files land under `app_data/state/team-orders/...`
   and restore resolves the same path
 
@@ -302,13 +302,13 @@ The system SHALL expose runtime configuration under the `:authn_authz` key with 
 
 #### Scenario: Default-namespace quotas applied when not overridden
 - **WHEN** namespace `team-orders` is created without quota overrides
-- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_operatives: 100`, `max_entities_per_operative: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_state_bytes: 107_374_182_400`, `max_runners: 32`)
+- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_operatives: 100`, `max_cells_per_operative: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_state_bytes: 107_374_182_400`, `max_runners: 32`)
 
 ### Requirement: Authorization is enforced by default
 
 The default posture SHALL enforce authorization. On a boot where no `admin@_system`
 binding exists (bootstrap not yet claimed), gated verbs SHALL be refused with a
-message naming the bootstrap procedure, while already-running dataflow (operative
+message naming the bootstrap tasklet, while already-running dataflow (operative
 execution, runner reconnects over the authenticated transport) SHALL continue.
 Disabling enforcement SHALL require the explicit `FLEZHA_AUTHZ_ENABLED=false`
 opt-out, which SHALL emit a `warn` on every boot for as long as it is set.
@@ -322,7 +322,7 @@ writes nothing, and the operator is sent to a line that is not there.
 
 - **WHEN** a controller boots with default configuration and no `admin@_system`
   binding exists
-- **THEN** a destructive verb is refused naming the bootstrap procedure, AND
+- **THEN** a destructive verb is refused naming the bootstrap tasklet, AND
   running operatives continue to process input
 
 #### Scenario: The refusal names the token file
@@ -454,7 +454,7 @@ The system SHALL provide a documented recovery path for a lost `admin@_system` c
 
 #### Scenario: Recovery re-enters bootstrap
 
-- **WHEN** the operator runs the offline recovery procedure with the controller
+- **WHEN** the operator runs the offline recovery tasklet with the controller
   stopped and boots the controller
 - **THEN** a fresh `bootstrap.token` is written, the previous admin binding no
   longer authorizes, and an auditable event records that recovery occurred
@@ -478,7 +478,7 @@ provider pattern.
 
 Such a verb SHALL name an action in the authorizable-action enumeration and SHALL
 authorize it before doing anything — a verb that reads parked business data or
-records in flight, reads an entity's state live or at a point in time, listens to the
+records in flight, reads a cell's state live or at a point in time, listens to the
 frames an operative ingests or emits, injects input into or replays inputs through an
 operative, enables a plugin on an operative, rewrites a controller-wide setting,
 creates or destroys a schedule, starts an operative, or moves live work between
@@ -497,7 +497,7 @@ business data SHALL be granted no more widely than the mutation on the same data
 A verb whose effect is one an existing action already names SHALL authorize that action
 rather than add a second name for the same right: firing a schedule by hand starts an
 operative, and is judged as `operative.start` in the namespace the schedule was added
-under; reading an entity's live state is `state.get`. Listening to an operative is its
+under; reading a cell's live state is `state.get`. Listening to an operative is its
 own action, `operative.listen`, because the right to read the frames an operative
 carries is not the right to attach an arbitrary plugin to it: it is granted from `app`
 upward, the same floor as `plugin.enable`, so no caller that could listen before the
@@ -567,9 +567,9 @@ it attaches to print what came back is that verb's own mechanism, not a second v
 - **THEN** the read SHALL be refused as `state.records` and no record bytes SHALL be
   returned
 
-#### Scenario: Entity state is read by the role that reads persisted state
+#### Scenario: Cell state is read by the role that reads persisted state
 
-- **WHEN** a `viewer` bound to the entity's namespace issues `flz entity state` or
+- **WHEN** a `viewer` bound to the cell's namespace issues `flz cell state` or
   `flz state at` while authorization is enforced
 - **THEN** the read SHALL be served as `state.get` and `state.at` respectively, and the
   same read by a caller with no role binding SHALL be refused

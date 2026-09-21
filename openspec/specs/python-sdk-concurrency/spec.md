@@ -65,7 +65,7 @@ Because shutdown wakes every poller and the ABI exposes no per-thread wake, work
 - **WHEN** the process receives an interrupt while all workers are parked in `poll` with no work
 - **THEN** shutdown SHALL begin within the documented poll timeout rather than waiting for work to arrive
 
-### Requirement: The executor seam may never affect per-entity ordering
+### Requirement: The executor seam may never affect per-cell ordering
 
 The SDK SHALL expose an executor seam with at least a thread executor (default) and an asyncio executor. Under every executor the thread that fetches SHALL be a real Python thread — never a coroutine, and never borrowed from an event loop's default executor or any other pool the application also uses — and an activation SHALL be completed only after its dispatch has returned. An executor SHALL NOT observe, reorder, batch or coalesce activations.
 
@@ -73,7 +73,7 @@ The executor SHALL be selected by `FLEZHA_PYTHON_EXECUTOR` (default the thread e
 
 #### Scenario: Ordering holds under either executor
 - **WHEN** the conformance suite runs under the thread executor and again under the asyncio executor
-- **THEN** per-entity input ordering and output identity SHALL be identical in both runs
+- **THEN** per-cell input ordering and output identity SHALL be identical in both runs
 
 #### Scenario: The asyncio executor does not fetch on the event loop
 - **WHEN** the asyncio executor is active
@@ -81,7 +81,7 @@ The executor SHALL be selected by `FLEZHA_PYTHON_EXECUTOR` (default the thread e
 
 #### Scenario: Completing from a different thread than the one that polled is supported
 - **WHEN** an executor dispatches on a thread or loop other than the fetcher's and completes there
-- **THEN** the completion SHALL be accepted and the entity released identically to same-thread completion
+- **THEN** the completion SHALL be accepted and the cell released identically to same-thread completion
 
 #### Scenario: One test app serves both executors
 - **WHEN** the suite is run under each executor
@@ -118,7 +118,7 @@ The SDK SHALL ship a free-threaded wheel tier alongside the GIL tier from its fi
 All per-interpreter SDK state — the binding handle, the class registry view and the active executor — SHALL be resolved per interpreter rather than through a process-wide module global, so that a sub-interpreter executor can be added without restructuring. The sub-interpreter executor SHALL be recorded as deferred by name, with the follow-up change that owes it, in the SDK's documentation.
 
 #### Scenario: Handler bodies run in parallel on the free-threaded tier
-- **WHEN** two CPU-bound handlers of different Entities are served concurrently under the free-threaded wheel
+- **WHEN** two CPU-bound handlers of different Cells are served concurrently under the free-threaded wheel
 - **THEN** their bodies SHALL execute in parallel, and the run SHALL be observably faster than the same workload on the GIL tier
 
 #### Scenario: The build tier is never ambiguous

@@ -254,7 +254,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
   end
 
   test "runner_pool_wedged does NOT fire while the block counter climbs (backpressure)" do
-    # A producer held on a full entity mailbox freezes `dispatches` exactly as
+    # A producer held on a full cell mailbox freezes `dispatches` exactly as
     # a wedge does — this was byte-for-byte the same picture. The block counter
     # advancing per wait iteration is what separates them: the system is
     # working, the consumer is behind, and a rebind would only move the jam.
@@ -372,12 +372,12 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.layer({:runner_pool_wedged, %{}}) == :runner_pool_wedged
   end
 
-  describe "entity_dispatch_stalled" do
-    @stall_opts %{entity_stall_ms: 60_000}
+  describe "cell_dispatch_stalled" do
+    @stall_opts %{cell_stall_ms: 60_000}
 
     # One activation the runner took and never answered. `dispatches` keeps
-    # climbing on every other Entity, so the runner-wide verdict is blind to
-    # it — and per-entity exclusivity means the stalled Entity simply never
+    # climbing on every other Cell, so the runner-wide verdict is blind to
+    # it — and per-cell exclusivity means the stalled Cell simply never
     # appears in a poll result again.
     test "fires for an aged handout on a runner that is still completing work" do
       prev =
@@ -402,15 +402,15 @@ defmodule Flezha.Convergence.StallClassifierTest do
           ]
         )
 
-      assert {:entity_dispatch_stalled, ctx} =
+      assert {:cell_dispatch_stalled, ctx} =
                StallClassifier.classify(curr, prev, @stall_opts)
 
       assert ctx.runner_id == "exec-1"
       assert ctx.inflight == 1
       # The reported age rides the verdict so a false positive — a genuinely
-      # long Procedure — is diagnosable from the log line alone.
+      # long Tasklet — is diagnosable from the log line alone.
       assert ctx.oldest_ms == 600_000
-      assert StallClassifier.layer_scope(:entity_dispatch_stalled) == :operative
+      assert StallClassifier.layer_scope(:cell_dispatch_stalled) == :operative
     end
 
     test "does NOT fire below the threshold, nor with nothing outstanding" do
@@ -454,8 +454,8 @@ defmodule Flezha.Convergence.StallClassifierTest do
       assert StallClassifier.classify(curr, prev, @stall_opts) == :ok
     end
 
-    # A wedged runner explains a wedged Entity, not the other way round.
-    test "a wedged runner outranks a stalled entity" do
+    # A wedged runner explains a wedged Cell, not the other way round.
+    test "a wedged runner outranks a stalled cell" do
       {prev, curr} =
         fed_runner(
           [hb_dispatches: 9_000, hb_inflight: 1],
@@ -580,7 +580,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       Map.merge(
         %{
           operative_id: "btc",
-          entity: {"proc", "k1"},
+          cell: {"task", "k1"},
           last_change_seen_at: @now,
           last_advance_at: @now
         },
@@ -602,7 +602,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       m = marker(last_change_seen_at: @now - 1_000, last_advance_at: @now - 2 * @grace)
 
       assert StallClassifier.classify_producing([m], nil, @opts) ==
-               %{"btc" => {:stuck, :wal_frozen, %{entity: {"proc", "k1"}}}}
+               %{"btc" => {:stuck, :wal_frozen, %{cell: {"task", "k1"}}}}
     end
 
     test "advancing markers classify advancing; absent tier cursors degrade to WAL-only" do
@@ -616,7 +616,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       # WAL itself is fed and advancing — only the watermark cursor is wedged.
       cur = marker(input_log_tail: 250, consumed_offset: 40)
 
-      assert %{"btc" => {:stuck, :watermark_frozen, %{entity: {"proc", "k1"}}}} =
+      assert %{"btc" => {:stuck, :watermark_frozen, %{cell: {"task", "k1"}}}} =
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
@@ -624,7 +624,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       base = marker(out_pending_seq: 10, outbox_flushed_seq: 10)
       cur = marker(out_pending_seq: 50, outbox_flushed_seq: 10)
 
-      assert %{"btc" => {:stuck, :outbox_flat, %{entity: {"proc", "k1"}}}} =
+      assert %{"btc" => {:stuck, :outbox_flat, %{cell: {"task", "k1"}}}} =
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
@@ -633,7 +633,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       # evidence is that a sink has not answered for what is already dispatched.
       cur = marker(out_pending_seq: 10, outbox_flushed_seq: 10, outbox_unconfirmed_ms: 90_000)
 
-      assert %{"btc" => {:stuck, :outbox_flat, %{entity: {"proc", "k1"}}}} =
+      assert %{"btc" => {:stuck, :outbox_flat, %{cell: {"task", "k1"}}}} =
                StallClassifier.classify_producing([cur], nil, @opts)
 
       fresh = marker(out_pending_seq: 10, outbox_flushed_seq: 10, outbox_unconfirmed_ms: 100)
@@ -665,12 +665,12 @@ defmodule Flezha.Convergence.StallClassifierTest do
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
-    test "multi-entity collapse: any STUCK entity wins over advancing and idle" do
-      ok = marker(entity: {"proc", "healthy"})
+    test "multi-cell collapse: any STUCK cell wins over advancing and idle" do
+      ok = marker(cell: {"task", "healthy"})
 
       frozen =
         marker(
-          entity: {"proc", "wedged"},
+          cell: {"task", "wedged"},
           last_change_seen_at: @now - 1_000,
           last_advance_at: @now - 2 * @grace
         )
@@ -683,7 +683,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
         )
 
       assert %{
-               "btc" => {:stuck, :wal_frozen, %{entity: {"proc", "wedged"}}},
+               "btc" => {:stuck, :wal_frozen, %{cell: {"task", "wedged"}}},
                "eth" => :idle
              } = StallClassifier.classify_producing([ok, frozen, idle_other], nil, @opts)
     end

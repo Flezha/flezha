@@ -203,8 +203,8 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
       DlqStore.append(
         DlqEntry.new!(%{
           operative_class: source,
-          procedure_id: "operative_forward",
-          entity_key: target,
+          tasklet_id: "operative_forward",
+          cell_key: target,
           channel: Map.get(metadata || %{}, "channel", "operative_forward"),
           error:
             "#{reason}: forwarding from #{source} to partitioned target #{target}; " <>

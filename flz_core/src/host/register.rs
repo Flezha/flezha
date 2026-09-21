@@ -13,21 +13,21 @@ use std::sync::Arc;
 use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 
 use super::build::{
-    build_channels, build_host_dag, build_procedures, register_workflow_class, resolve_class_facts,
+    build_channels, build_host_dag, build_tasklets, register_workflow_class, resolve_class_facts,
 };
 use super::chains::derive_channels;
 use super::decl::{
-    HostAckGranularity, HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock,
-    HostEntityModeDecl, HostLoopMode, HostOverflow, HostProcedureDecl, HostWorkflowDecl,
+    HostAckGranularity, HostCellModeDecl, HostChannelKind, HostCheckpointOutputs, HostClassDecl,
+    HostClock, HostLoopMode, HostOverflow, HostTaskletDecl, HostWorkflowDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
 use crate::channel::ChannelKind;
 use crate::error::Error;
 use crate::operative::topology::OperativeTopology;
-use crate::workflow::spec::{graph_order, GraphSeed, ProcDag};
+use crate::workflow::spec::{graph_order, GraphSeed, TaskDag};
 use crate::workflow::LoopMode;
 
-/// Hard upper bound on a per-Entity mailbox: ~1M items is past sanity for any
+/// Hard upper bound on a per-Cell mailbox: ~1M items is past sanity for any
 /// expected workload, and a capacity above it is a typo, not a posture.
 pub const MAX_MAILBOX_CAPACITY: usize = 1_048_576;
 
@@ -64,7 +64,7 @@ pub struct DerivedChannel {
 
 #[derive(Debug, serde::Serialize)]
 pub struct DerivedEdge {
-    pub procedure: u32,
+    pub tasklet: u32,
     /// Which of the channel's chains produced this edge. The host held that
     /// chain's closures aside and attaches them here — so which edge survives a
     /// re-declaration is the core's answer, not a rule each builder repeats.
@@ -113,8 +113,8 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
 
     let channels = derive_channels(&decl, &mut issues);
     refuse_names(&decl, &channels, &mut issues);
-    for proc_decl in &decl.procedures {
-        refuse_procedure(proc_decl, &mut issues);
+    for task_decl in &decl.tasklets {
+        refuse_tasklet(task_decl, &mut issues);
     }
     for channel in &channels {
         refuse_channel(&decl, channel, &mut issues);
@@ -182,11 +182,11 @@ fn refuse_names(
             });
         }
     }
-    let mut seen_procs = HashSet::new();
-    for proc_decl in &decl.procedures {
-        if !seen_procs.insert(proc_decl.name.as_str()) {
+    let mut seen_tasks = HashSet::new();
+    for task_decl in &decl.tasklets {
+        if !seen_tasks.insert(task_decl.name.as_str()) {
             issues.push(TopologyIssue::NodeIdentityCollision {
-                name: proc_decl.name.clone(),
+                name: task_decl.name.clone(),
             });
         }
     }
@@ -212,9 +212,9 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
             decl.factory_id, decl.sdk_version
         )));
     }
-    if decl.procedures.is_empty() {
+    if decl.tasklets.is_empty() {
         issues.push(TopologyIssue::Declaration(
-            "a host class declares at least one procedure".to_string(),
+            "a host class declares at least one tasklet".to_string(),
         ));
     }
     if let Some(workflow) = &decl.workflow {
@@ -249,16 +249,16 @@ fn refuse_workflow_facts(
     if workflow.retry_attempts > 1 && workflow.retry_backoff_ms == 0 {
         issues.push(TopologyIssue::Declaration(format!(
             "workflow retry ladder ({} attempts) declares a zero backoff base; retries \
-             would re-run the failing entity in a hot loop",
+             would re-run the failing cell in a hot loop",
             workflow.retry_attempts
         )));
     }
-    for proc_decl in &decl.procedures {
-        if proc_decl.entity_mode == HostEntityModeDecl::Dynamic {
+    for task_decl in &decl.tasklets {
+        if task_decl.cell_mode == HostCellModeDecl::Dynamic {
             issues.push(TopologyIssue::Declaration(format!(
-                "workflow procedure `{}` declares dynamic entity mode, which workflow \
+                "workflow tasklet `{}` declares dynamic cell mode, which workflow \
                  operatives do not support",
-                proc_decl.name
+                task_decl.name
             )));
         }
     }
@@ -295,11 +295,11 @@ fn refuse_tier_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
         issues.push(TopologyIssue::CorrectionWindowZero);
     }
     if decl.correction_window_ms.is_some() {
-        for proc_decl in &decl.procedures {
-            if proc_decl.clock != HostClock::EventTime {
+        for task_decl in &decl.tasklets {
+            if task_decl.clock != HostClock::EventTime {
                 issues.push(TopologyIssue::CorrectionWithoutEventTime {
-                    procedure: proc_decl.name.clone(),
-                    clock_type: clock_name(proc_decl.clock).to_string(),
+                    tasklet: task_decl.name.clone(),
+                    clock_type: clock_name(task_decl.clock).to_string(),
                 });
             }
         }
@@ -355,12 +355,12 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
     // The consumer end is judged where its link is read (`wire_consumer`); only
     // the producer is a channel fact of its own.
     if let Some(producer) = channel_decl.producer {
-        if producer as usize >= decl.procedures.len() {
+        if producer as usize >= decl.tasklets.len() {
             issues.push(TopologyIssue::Declaration(format!(
-                "channel `{}` names producer {} but the class declares {} procedure(s)",
+                "channel `{}` names producer {} but the class declares {} tasklet(s)",
                 channel.name,
                 producer,
-                decl.procedures.len()
+                decl.tasklets.len()
             )));
         }
     }
@@ -368,10 +368,10 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
 }
 
 /// Each channel kind names exactly the ends its kind has. A produced
-/// inter_proc channel with no consumer is NOT one of them: it is a leaf's
+/// inter_task channel with no consumer is NOT one of them: it is a leaf's
 /// retained output — what the typed SDK's `sealed()` declares, what a saga
 /// archive leaf's undo reverses, what a handoff-chained loop feeds back — and
-/// the driver, not another procedure, is what reads it.
+/// the driver, not another tasklet, is what reads it.
 fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>) {
     let text = match channel.kind {
         HostChannelKind::Entry if channel.producer.is_some() => {
@@ -380,8 +380,8 @@ fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>
         HostChannelKind::Entry if channel.consumers.is_empty() => {
             format!("entry channel `{}` names no consumer", channel.name)
         }
-        HostChannelKind::InterProc if channel.producer.is_none() => {
-            format!("inter_proc channel `{}` names no producer", channel.name)
+        HostChannelKind::InterTask if channel.producer.is_none() => {
+            format!("inter_task channel `{}` names no producer", channel.name)
         }
         HostChannelKind::Plugin if !channel.consumers.is_empty() => {
             format!("plugin channel `{}` cannot name consumers", channel.name)
@@ -391,61 +391,59 @@ fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>
     issues.push(TopologyIssue::Declaration(text));
 }
 
-/// What one procedure's declaration may claim about its Entities, its clock
+/// What one tasklet's declaration may claim about its Cells, its clock
 /// and its mailbox.
-fn refuse_procedure(proc_decl: &HostProcedureDecl, issues: &mut Vec<TopologyIssue>) {
-    match proc_decl.entity_mode {
-        HostEntityModeDecl::Static if proc_decl.entity_keys.is_empty() => {
+fn refuse_tasklet(task_decl: &HostTaskletDecl, issues: &mut Vec<TopologyIssue>) {
+    match task_decl.cell_mode {
+        HostCellModeDecl::Static if task_decl.cell_keys.is_empty() => {
             issues.push(TopologyIssue::Declaration(format!(
-                "static procedure `{}` declares no entity_keys",
-                proc_decl.name
+                "static tasklet `{}` declares no cell_keys",
+                task_decl.name
             )));
         }
-        HostEntityModeDecl::Single | HostEntityModeDecl::Dynamic
-            if !proc_decl.entity_keys.is_empty() =>
-        {
+        HostCellModeDecl::Single | HostCellModeDecl::Dynamic if !task_decl.cell_keys.is_empty() => {
             issues.push(TopologyIssue::Declaration(format!(
-                "procedure `{}` declares entity_keys without static mode",
-                proc_decl.name
+                "tasklet `{}` declares cell_keys without static mode",
+                task_decl.name
             )));
         }
-        HostEntityModeDecl::Dynamic if proc_decl.max_entities == Some(0) => {
+        HostCellModeDecl::Dynamic if task_decl.max_cells == Some(0) => {
             issues.push(TopologyIssue::Declaration(format!(
-                "dynamic procedure `{}` declares max_entities 0",
-                proc_decl.name
+                "dynamic tasklet `{}` declares max_cells 0",
+                task_decl.name
             )));
         }
         _ => {}
     }
-    if !proc_decl.entity_keys.is_empty() && !proc_decl.entities_for_overridden {
-        issues.push(TopologyIssue::EntitiesForMissing {
-            name: proc_decl.name.clone(),
+    if !task_decl.cell_keys.is_empty() && !task_decl.cells_for_overridden {
+        issues.push(TopologyIssue::CellsForMissing {
+            name: task_decl.name.clone(),
         });
     }
     // Logical time is the durable change seq, which never advances for a
-    // procedure that journals nothing — fail fast instead of serving a clock
+    // tasklet that journals nothing — fail fast instead of serving a clock
     // frozen at zero.
-    if proc_decl.clock == HostClock::Logical && proc_decl.change_is_nochange {
+    if task_decl.clock == HostClock::Logical && task_decl.change_is_nochange {
         issues.push(TopologyIssue::UnservableClock {
-            procedure: proc_decl.name.clone(),
-            clock_type: clock_name(proc_decl.clock).to_string(),
+            tasklet: task_decl.name.clone(),
+            clock_type: clock_name(task_decl.clock).to_string(),
         });
     }
-    if proc_decl.mailbox_capacity == 0 {
+    if task_decl.mailbox_capacity == 0 {
         issues.push(TopologyIssue::MailboxCapacityZero {
-            procedure: proc_decl.name.clone(),
+            tasklet: task_decl.name.clone(),
         });
-    } else if proc_decl.mailbox_capacity > MAX_MAILBOX_CAPACITY {
+    } else if task_decl.mailbox_capacity > MAX_MAILBOX_CAPACITY {
         issues.push(TopologyIssue::MailboxCapacityTooLarge {
-            procedure: proc_decl.name.clone(),
-            value: proc_decl.mailbox_capacity,
+            tasklet: task_decl.name.clone(),
+            value: task_decl.mailbox_capacity,
         });
     }
 }
 
-/// What an edge may declare about its consumer's Entity mode. The mode is
-/// read off the WIRING: a procedure reached by a keyed edge is dynamic, so
-/// every other edge into it must name an Entity too.
+/// What an edge may declare about its consumer's Cell mode. The mode is
+/// read off the WIRING: a tasklet reached by a keyed edge is dynamic, so
+/// every other edge into it must name a Cell too.
 fn refuse_edge_keying(
     decl: &HostClassDecl,
     channels: &[DerivedChannel],
@@ -455,23 +453,23 @@ fn refuse_edge_keying(
         .iter()
         .flat_map(|c| c.consumers.iter())
         .filter(|e| e.key)
-        .map(|e| e.procedure)
+        .map(|e| e.tasklet)
         .collect();
     for channel in channels {
         for edge in &channel.consumers {
-            let Some(proc_decl) = decl.procedures.get(edge.procedure as usize) else {
+            let Some(task_decl) = decl.tasklets.get(edge.tasklet as usize) else {
                 continue;
             };
-            if edge.key && !proc_decl.entity_keys.is_empty() {
+            if edge.key && !task_decl.cell_keys.is_empty() {
                 issues.push(TopologyIssue::KeyByOnUnkeyableTarget {
                     channel: channel.name.clone(),
-                    procedure: proc_decl.name.clone(),
+                    tasklet: task_decl.name.clone(),
                 });
             }
-            if !edge.key && keyed.contains(&edge.procedure) {
-                issues.push(TopologyIssue::UnkeyedEdgeIntoDynamicProcedure {
+            if !edge.key && keyed.contains(&edge.tasklet) {
+                issues.push(TopologyIssue::UnkeyedEdgeIntoDynamicTasklet {
                     channel: channel.name.clone(),
-                    procedure: proc_decl.name.clone(),
+                    tasklet: task_decl.name.clone(),
                 });
             }
         }
@@ -485,32 +483,32 @@ fn refuse_graph_shape(
     channels: &[DerivedChannel],
     issues: &mut Vec<TopologyIssue>,
 ) {
-    if decl.procedures.is_empty() {
+    if decl.tasklets.is_empty() {
         return;
     }
     let edges: Vec<_> = channels
         .iter()
         .filter_map(|c| c.producer.map(|p| (p, c)))
-        .flat_map(|(p, c)| c.consumers.iter().map(move |e| (p, e.procedure)))
+        .flat_map(|(p, c)| c.consumers.iter().map(move |e| (p, e.tasklet)))
         .collect();
     let roots: Vec<_> = channels
         .iter()
         .filter(|c| c.kind == HostChannelKind::Entry)
-        .flat_map(|c| c.consumers.iter().map(|e| e.procedure))
+        .flat_map(|c| c.consumers.iter().map(|e| e.tasklet))
         .collect();
     let shape = graph_order(
-        decl.procedures.len(),
+        decl.tasklets.len(),
         &edges,
         &roots,
         GraphSeed::EveryIndegreeZero,
     );
     if let Some(node) = shape.on_cycle {
         issues.push(TopologyIssue::Cycle {
-            procedure: decl.procedures[node as usize].name.clone(),
+            tasklet: decl.tasklets[node as usize].name.clone(),
         });
     } else if let Some(node) = shape.unreachable {
-        issues.push(TopologyIssue::UnreachableProcedure {
-            procedure: decl.procedures[node as usize].name.clone(),
+        issues.push(TopologyIssue::UnreachableTasklet {
+            tasklet: decl.tasklets[node as usize].name.clone(),
         });
     }
 }
@@ -523,14 +521,14 @@ fn register(derived: Derived) -> Result<(), Error> {
     } = derived;
     let class = resolve_class_facts(&decl, ack_granularity);
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
-    let (procedures, procedure_name_to_id) =
-        build_procedures(&decl, &class, &channels, &derived_channels);
+    let (tasklets, tasklet_name_to_id) =
+        build_tasklets(&decl, &class, &channels, &derived_channels);
     let topology = Arc::new(OperativeTopology {
         sdk_lang: decl.sdk_lang,
         channels,
         name_to_id,
-        procedures,
-        procedure_name_to_id,
+        tasklets,
+        tasklet_name_to_id,
         factory_id: class.factory_id,
         persistence_enabled_const: decl.persistent,
         effectively_once: decl.effectively_once,
@@ -547,7 +545,7 @@ fn register(derived: Derived) -> Result<(), Error> {
 }
 
 /// A durable handoff-chained loop seeds iteration N+1 from iteration N's
-/// terminal handoff, and only an inter-procedure channel carries one: the
+/// terminal handoff, and only an inter-tasklet channel carries one: the
 /// journal codec rides that kind and no other (`build::build_channel`). A
 /// terminal that owns no output channel, or one whose only wiring is a plugin
 /// sink, would therefore ship an empty handoff at the iteration commit, and
@@ -562,30 +560,30 @@ fn refuse_loop_terminal_without_handoff(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
     topology: &OperativeTopology,
-    dag: &ProcDag,
+    dag: &TaskDag,
 ) -> Result<(), Error> {
     if !decl.persistent || workflow.loop_mode != HostLoopMode::Chained {
         return Ok(());
     }
     let Some(terminal) = dag
         .single_leaf()
-        .and_then(|leaf| topology.procedure(dag.order[leaf]))
+        .and_then(|leaf| topology.tasklet(dag.order[leaf]))
     else {
         return Ok(());
     };
     let carries_handoff = terminal
         .output_channel_id
         .and_then(|cid| topology.channel(cid))
-        .is_some_and(|ch| ch.kind == ChannelKind::InterProcedure);
+        .is_some_and(|ch| ch.kind == ChannelKind::InterTasklet);
     if carries_handoff {
         return Ok(());
     }
     Err(Error::Declaration(format!(
-        "a durable handoff-chained loop's terminal procedure `{}` releases no inter-procedure \
-         handoff; iteration N+1 is seeded from iteration N's terminal batch, and a procedure that \
+        "a durable handoff-chained loop's terminal tasklet `{}` releases no inter-tasklet \
+         handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that \
          owns no output channel, or whose only output is plugin-bound, has nothing the journal \
          carries. Take the sink off the terminal's own channel, or declare the loop `per_input`; \
-         wiring another procedure behind the sink only moves the rule onto that one",
+         wiring another tasklet behind the sink only moves the rule onto that one",
         terminal.name
     )))
 }
@@ -600,7 +598,7 @@ fn register_structured_workflow(
     let dag = build_host_dag(&topology)?;
     if workflow.loop_mode == HostLoopMode::Chained && dag.single_leaf().is_none() {
         return Err(Error::Declaration(format!(
-            "a handoff-chained loop needs exactly one terminal procedure; the graph \
+            "a handoff-chained loop needs exactly one terminal tasklet; the graph \
              has {}",
             dag.leaves().count()
         )));

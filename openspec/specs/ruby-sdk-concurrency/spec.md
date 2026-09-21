@@ -43,13 +43,13 @@ Because shutdown wakes every poller and the ABI exposes no per-thread wake, work
 - **WHEN** the process receives an interrupt while all workers are parked in `poll` with no work
 - **THEN** shutdown SHALL begin within the documented poll timeout rather than waiting for work to arrive
 
-### Requirement: The executor seam may never affect per-entity ordering
+### Requirement: The executor seam may never affect per-cell ordering
 
 The SDK SHALL expose an executor seam with at least a thread executor (default) and a `Fiber::Scheduler` executor. Under every executor the thread that fetches SHALL be a real Ruby thread — never a fiber, and never borrowed from a shared I/O pool the application also uses — and an activation SHALL be completed only after its dispatch has returned. An executor SHALL NOT observe, reorder, batch or coalesce activations.
 
 #### Scenario: Ordering holds under either executor
 - **WHEN** the conformance suite runs under the thread executor and again under the fiber executor
-- **THEN** per-entity input ordering and output identity SHALL be identical in both runs
+- **THEN** per-cell input ordering and output identity SHALL be identical in both runs
 
 #### Scenario: The fiber executor does not fetch on a fiber
 - **WHEN** the fiber executor is active
@@ -57,7 +57,7 @@ The SDK SHALL expose an executor seam with at least a thread executor (default) 
 
 #### Scenario: Completing from a different thread than the one that polled is supported
 - **WHEN** an executor dispatches on a thread or fiber other than the fetcher and completes there
-- **THEN** the completion SHALL be accepted and the entity released identically to same-thread completion
+- **THEN** the completion SHALL be accepted and the cell released identically to same-thread completion
 
 ### Requirement: The SDK spawns no processes and refuses use after a fork
 

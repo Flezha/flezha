@@ -3,7 +3,7 @@ name: Nightly E2E
 # The `:system` and `:multi_node` suites are excluded from `mix test` (see
 # `test/test_helper.exs`) and no other workflow passes `--include`, so until
 # this job existed they had never run in CI at all. That is the suite that
-# covers crash-resume, durability, compaction, DLQ, entity timers and
+# covers crash-resume, durability, compaction, DLQ, cell timers and
 # cross-node migration — precisely the behaviour that breaks in production
 # while a green `mix test` says nothing is wrong.
 #
@@ -43,7 +43,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # One job per SDK runtime, so a red cell names the SDK that broke. The
+  # One job per SDK runtime, so a red job names the SDK that broke. The
   # schedule runs the two reference SDKs, rust and java; a dispatch can pick any
   # runtime that carries a conformance manifest.
   matrix:

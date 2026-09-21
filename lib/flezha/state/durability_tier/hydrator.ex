@@ -27,15 +27,15 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   @doc """
   Hydrate every shipped reference of `operative_class` whose local files are
   absent. Called from the bind-time restore enumeration, so a fresh controller
-  binding a remote-only operative finds its Entities, proc-journal, durable
+  binding a remote-only operative finds its Cells, task-journal, durable
   inbox, input log and parked failures on disk by the time it enumerates them.
   """
   @spec hydrate_operative(module(), keyword(), binary()) :: :ok
   def hydrate_operative(module, opts, operative_class) when is_binary(operative_class) do
-    hydrate_prefix(module, opts, Manifest.prefix(:entity, [operative_class]))
+    hydrate_prefix(module, opts, Manifest.prefix(:cell, [operative_class]))
 
-    # The input log is class-level, so it sits outside the per-Entity prefix
-    # above and has to be asked for by name. Without it a hydrated Entity
+    # The input log is class-level, so it sits outside the per-Cell prefix
+    # above and has to be asked for by name. Without it a hydrated Cell
     # comes back with its consumed floor intact and no log to replay from —
     # the next input lands at offset 0, below the floor, and is silently
     # skipped as already-consumed.
@@ -54,15 +54,15 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   end
 
   @doc """
-  Hydrate only the named entity keys of one Procedure.
+  Hydrate only the named cell keys of one Tasklet.
 
-  The manifest is per-Entity, so a narrowed request costs exactly the artifacts
-  it names — no full-Procedure fetch to answer a question about one key.
+  The manifest is per-Cell, so a narrowed request costs exactly the artifacts
+  it names — no full-Tasklet fetch to answer a question about one key.
   """
-  @spec hydrate_entities(module(), keyword(), binary(), binary(), [binary()]) :: :ok
-  def hydrate_entities(module, opts, operative_class, procedure_id, entity_keys) do
-    Enum.each(entity_keys, fn entity_key ->
-      ref = {:entity, {operative_class, procedure_id, entity_key}}
+  @spec hydrate_cells(module(), keyword(), binary(), binary(), [binary()]) :: :ok
+  def hydrate_cells(module, opts, operative_class, tasklet_id, cell_keys) do
+    Enum.each(cell_keys, fn cell_key ->
+      ref = {:cell, {operative_class, tasklet_id, cell_key}}
       hydrate_ref(module, opts, ref)
     end)
   end
@@ -275,27 +275,27 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end
   end
 
-  # Fetching the data is only half a restore. An Entity is also described by
+  # Fetching the data is only half a restore. A Cell is also described by
   # small local files that no record implies — its consumed offset, its WAL-owner
-  # epoch, its saga markers — and an Entity that comes back without them looks
+  # epoch, its saga markers — and a Cell that comes back without them looks
   # correct and behaves wrongly. Every write here is an overwrite of a fixed
   # path, so a retry after a partial hydration converges.
-  defp seed_local_facts(%Manifest{ref: {:entity, {class, _, _} = entity_id}} = manifest) do
-    seed_consumed_offset(class, entity_id, manifest)
-    seed_epoch(entity_id, manifest)
-    seed_markers(entity_id, manifest)
+  defp seed_local_facts(%Manifest{ref: {:cell, {class, _, _} = cell_id}} = manifest) do
+    seed_consumed_offset(class, cell_id, manifest)
+    seed_epoch(cell_id, manifest)
+    seed_markers(cell_id, manifest)
   end
 
   defp seed_local_facts(_manifest), do: :ok
 
   # Normally rebuilt from the effect records in the WAL tail — but a compacted
-  # Entity ships a snapshot and no effect record, so the position its cut is
+  # Cell ships a snapshot and no effect record, so the position its cut is
   # consistent with would be lost. Seeding it is what lets post-hydration replay
   # resume at the shipped cut instead of at the start of the retained input log.
-  defp seed_consumed_offset(class, entity_id, manifest) do
+  defp seed_consumed_offset(class, cell_id, manifest) do
     case Map.get(manifest.source_offsets, :consumed_offset) do
       offset when is_integer(offset) and offset >= 0 ->
-        InputLog.record_consumed(class, entity_id, offset)
+        InputLog.record_consumed(class, cell_id, offset)
 
       _ ->
         :ok
@@ -303,7 +303,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   end
 
   # The epoch's only home on disk is the dedup cache, which is not an artifact —
-  # so without this the recovered Entity reads epoch 0, its next manifest write
+  # so without this the recovered Cell reads epoch 0, its next manifest write
   # is refused as stale against the epoch it shipped under, and it fences itself
   # off permanently. It survives one disk loss and is silently unprotected
   # against the next.
@@ -314,9 +314,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # `seq > cursor` — a cursor restored ahead of the restored WAL would silently
   # drop those effect records and never dispatch their outputs. `-1` re-drives
   # everything, which the sinks' dedup absorbs: the cursor may lag, never lead.
-  defp seed_epoch(entity_id, %Manifest{epoch: epoch}) do
+  defp seed_epoch(cell_id, %Manifest{epoch: epoch}) do
     _ =
-      Outbox.write(entity_id, %{
+      Outbox.write(cell_id, %{
         last_persisted_seq: 0,
         outbox_flushed_seq: -1,
         epoch: epoch
@@ -325,9 +325,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     :ok
   end
 
-  defp seed_markers(entity_id, %Manifest{markers: markers}) do
+  defp seed_markers(cell_id, %Manifest{markers: markers}) do
     for {kind, true} <- Map.to_list(markers || %{}) do
-      Paths.write_compensation_marker(entity_id, kind)
+      Paths.write_compensation_marker(cell_id, kind)
     end
 
     :ok

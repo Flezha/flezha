@@ -28,9 +28,9 @@ defmodule FlezhaTest.Handover do
 
   setup _context do
     # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
-    # per-Entity state from an earlier test that reused the same operative_id
-    # would leak in. Start each test from empty entities.
-    TestHelpers.reset_all_entities()
+    # per-Cell state from an earlier test that reused the same operative_id
+    # would leak in. Start each test from empty cells.
+    TestHelpers.reset_all_cells()
 
     on_exit(fn ->
       OperativeManager.stop_all_operatives(@default_namespace)
@@ -73,9 +73,9 @@ defmodule FlezhaTest.Handover do
            ),
            "expected live HotSwap handover, not a WAL cold restore"
 
-    {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
+    {:ok, json_state} = OperativeManager.get_cell_state(@default_namespace, operative_id)
     state = Payloader.json_to_map(json_state)
-    assert "before_drain" in get_in(state, ["store_input_procedure", "text_inputs"])
+    assert "before_drain" in get_in(state, ["store_input_tasklet", "text_inputs"])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -100,7 +100,7 @@ defmodule FlezhaTest.Handover do
 
     GenServer.cast(
       ow_pid,
-      {:correction_request, {operative_id, "store_input_procedure", "poke"}, 1}
+      {:correction_request, {operative_id, "store_input_tasklet", "poke"}, 1}
     )
 
     # Sync barrier: the cast is folded into state before the drain begins.
@@ -148,10 +148,10 @@ defmodule FlezhaTest.Handover do
            "the operative must become addressable at its new home after the forced handover"
 
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "after_force", %{})
-    {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
+    {:ok, json_state} = OperativeManager.get_cell_state(@default_namespace, operative_id)
     state = Payloader.json_to_map(json_state)
-    assert "seed" in get_in(state, ["store_input_procedure", "text_inputs"])
-    assert "after_force" in get_in(state, ["store_input_procedure", "text_inputs"])
+    assert "seed" in get_in(state, ["store_input_tasklet", "text_inputs"])
+    assert "after_force" in get_in(state, ["store_input_tasklet", "text_inputs"])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -211,7 +211,7 @@ defmodule FlezhaTest.Handover do
   end
 
   @tag :runner_disconnect_migrate_op
-  test "runner disconnect migrate proc" do
+  test "runner disconnect migrate operative" do
     namespace = @temp_namespace
     operative_id_1 = "operative_1"
     operative_id_2 = "operative_2"
@@ -266,8 +266,8 @@ defmodule FlezhaTest.Handover do
            "operatives did not rebind to #{active_runner} within timeout"
 
     # The rebound runner's state arrives with the WAL restore, after the tag flips.
-    stored = &{:ok, ~s({"store_input_procedure":{"binary_inputs":[],"text_inputs":["#{&1}"]}})}
-    states = fn -> Enum.map([operative_id_1, operative_id_2], &entity_state/1) end
+    stored = &{:ok, ~s({"store_input_tasklet":{"binary_inputs":[],"text_inputs":["#{&1}"]}})}
+    states = fn -> Enum.map([operative_id_1, operative_id_2], &cell_state/1) end
 
     assert NodeTestHelper.wait_until(
              fn -> states.() == [stored.("state_1"), stored.("state_2")] end,
@@ -352,7 +352,7 @@ defmodule FlezhaTest.Handover do
     # change-log onto the reseated runner, so poll the migrated state
     # rather than reading it the instant the tag lands.
     expected_state = fn operative_id ->
-      "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
+      "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     # The convergence Loop dispatches the WAL restore once, inside the rebind
@@ -376,7 +376,7 @@ defmodule FlezhaTest.Handover do
                end
 
                Enum.all?(operative_infos, fn {operative_id, _info} ->
-                 OperativeManager.get_entity_state(namespace, operative_id) ===
+                 OperativeManager.get_cell_state(namespace, operative_id) ===
                    {:ok, expected_state.(operative_id)}
                end)
              end,
@@ -502,10 +502,10 @@ defmodule FlezhaTest.Handover do
 
     # Check the states before runner migrations.
     for {operative_id, _info} <- operative_infos do
-      {:ok, json_state} = OperativeManager.get_entity_state(namespace, operative_id)
+      {:ok, json_state} = OperativeManager.get_cell_state(namespace, operative_id)
 
       assert json_state ===
-               "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
+               "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     # No snapshot is taken: the peer's runners hold the only live copy, so the
@@ -531,20 +531,20 @@ defmodule FlezhaTest.Handover do
 
     # The tag converges when the registry row moves; the destination Overwatch
     # still has to finish binding and take the handover before it can answer for
-    # its Entities. Poll that out — migrated-with-state is an eventual property,
+    # its Cells. Poll that out — migrated-with-state is an eventual property,
     # and reading it at the first converged tag races the bind.
     assert NodeTestHelper.wait_until(
              fn ->
                Enum.all?(operative_infos, fn {operative_id, _info} ->
-                 OperativeManager.get_entity_state(namespace, operative_id) ===
+                 OperativeManager.get_cell_state(namespace, operative_id) ===
                    {:ok,
-                    "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"}
+                    "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"}
                end)
              end,
              15_000
            ),
            "operative states did not survive the cross-controller migration: " <>
-             inspect(for id <- moved, do: {id, entity_state(id)})
+             inspect(for id <- moved, do: {id, cell_state(id)})
 
     for id <- moved do
       assert {:ok, %{arrived_via_hotswap?: false}} =
@@ -597,7 +597,7 @@ defmodule FlezhaTest.Handover do
            "the operative never rebound to runner B: #{inspect(bound_runner(op))}"
 
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "before_snapshot") end, 15_000),
-           "runner B never received the state: #{inspect(entity_state(op))}"
+           "runner B never received the state: #{inspect(cell_state(op))}"
 
     OperativeTestHelper.send_sync_io(op, @temp_namespace, "after_snapshot", %{})
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "after_snapshot") end, 10_000)
@@ -646,7 +646,7 @@ defmodule FlezhaTest.Handover do
 
     assert NodeTestHelper.wait_until(fn -> state_has?(op, text) end, 15_000),
            "state on the destination lacks #{inspect(text)}: " <>
-             "state=#{inspect(entity_state(op))} " <>
+             "state=#{inspect(cell_state(op))} " <>
              "arrived_via_hotswap?=#{inspect(overwatch(op).arrived_via_hotswap?)}"
 
     refute overwatch(op).arrived_via_hotswap?
@@ -655,12 +655,12 @@ defmodule FlezhaTest.Handover do
   # A live read can be ahead of the WAL, and a hard kill loses that gap by
   # design, so a test that kills a runner first waits for the WAL to catch up.
   defp await_durable(node, op, namespace \\ @temp_namespace) do
-    entity_id = {op, "store_input_procedure", ""}
+    cell_id = {op, "store_input_tasklet", ""}
 
     observe = fn ->
       with {:ok, _json, seq} = read <-
-             OperativeManager.get_entity_state(namespace, op, %{procedure: elem(entity_id, 1)}),
-           {:ok, writer} <- :erpc.call(node, Flezha.State.WriterRegistry, :lookup, [entity_id]) do
+             OperativeManager.get_cell_state(namespace, op, %{tasklet: elem(cell_id, 1)}),
+           {:ok, writer} <- :erpc.call(node, Flezha.State.WriterRegistry, :lookup, [cell_id]) do
         {read, :erpc.call(node, Flezha.State.WalWriter, :last_persisted_seq, [writer]), seq}
       end
     end
@@ -701,11 +701,11 @@ defmodule FlezhaTest.Handover do
   end
 
   defp bound_runner(op), do: overwatch(op).runner_id
-  defp entity_state(op), do: OperativeManager.get_entity_state(@temp_namespace, op)
+  defp cell_state(op), do: OperativeManager.get_cell_state(@temp_namespace, op)
   defp contains?(bin, text), do: is_binary(bin) and String.contains?(bin, text)
 
   defp state_has?(op, text) do
-    case entity_state(op) do
+    case cell_state(op) do
       {:ok, json} -> contains?(json, text)
       _ -> false
     end

@@ -365,7 +365,6 @@ def self_test():
     directory that owns its feature retires its entry.
     """
     import shutil
-    import tempfile
 
     tree = {
         # A file in a low directory reaching up, in four spellings, and one
@@ -424,17 +423,9 @@ end
         "lib/flezha/state/paths.ex -> Flezha.Http.Listener",
     }
 
-    root = tempfile.mkdtemp(prefix="layer-gate-selftest-")
-    cwd = os.getcwd()
     failures = []
-    try:
-        os.chdir(root)
-        os.makedirs("scripts")
-        for rel, body in tree.items():
-            os.makedirs(os.path.dirname(rel), exist_ok=True)
-            with open(rel, "w", encoding="utf-8") as fh:
-                fh.write(body)
-
+    with naming_gate.scratch_tree(tree):
+        os.makedirs("scripts", exist_ok=True)
         found = census()
         if found != expected:
             failures.append(f"census: missing {expected - found}, extra {found - expected}")
@@ -483,9 +474,6 @@ end
             fh.write("lib/flezha/gone.ex -> (no directory owns it)\n")
         if main([]) != 1:
             failures.append("a baseline entry the tree no longer holds did not fail the gate")
-    finally:
-        os.chdir(cwd)
-        shutil.rmtree(root, ignore_errors=True)
 
     if failures:
         print("check-layer-direction self-test FAILED", file=sys.stderr)

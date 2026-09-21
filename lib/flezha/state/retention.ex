@@ -2,10 +2,10 @@ defmodule Flezha.State.Retention do
   @moduledoc """
   Sweeper enforcing `time_travel_retention_hours` per Operative class.
 
-  On each pass, walks every Entity under `Paths.state_root/0` and prunes
+  On each pass, walks every Cell under `Paths.state_root/0` and prunes
   snapshots strictly older than `now - retention_hours` (keeping at minimum the
   latest snapshot) and WAL records whose `seq <= kept_snapshot_seq`, by chunk
-  rewrite through `entity.wal.rewriting` -> rename.
+  rewrite through `cell.wal.rewriting` -> rename.
 
   `retention_hours = 0` disables time-travel for that Operative class: the WAL
   is truncated to the latest snapshot's seq on every pass — compact and forget.
@@ -43,7 +43,7 @@ defmodule Flezha.State.Retention do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Run a sweep tick synchronously. Used by tests and `flz state` procs."
+  @doc "Run a sweep tick synchronously. Used by tests and `flz state` ops."
   @spec sweep_now() :: :ok
   def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now)
 
@@ -83,7 +83,7 @@ defmodule Flezha.State.Retention do
   # ---------- Sweep ----------
 
   defp sweep_all() do
-    Enum.each(Paths.all_entities(), fn {operative_class, _, _} = pid ->
+    Enum.each(Paths.all_cells(), fn {operative_class, _, _} = pid ->
       hours =
         if ClassRegistry.capable?(operative_class, :time_travel?) do
           PersistenceResolver.retention_hours(operative_class)
@@ -93,7 +93,7 @@ defmodule Flezha.State.Retention do
           0
         end
 
-      sweep_entity(pid, hours)
+      sweep_cell(pid, hours)
     end)
   end
 
@@ -123,12 +123,12 @@ defmodule Flezha.State.Retention do
   end
 
   @doc """
-  Sweep a single Entity. Public for `flz state` debugging.
+  Sweep a single Cell. Public for `flz state` debugging.
   """
-  @spec sweep_entity(Paths.entity_id(), non_neg_integer()) :: :ok
-  def sweep_entity(entity_id, retention_hours)
+  @spec sweep_cell(Paths.cell_id(), non_neg_integer()) :: :ok
+  def sweep_cell(cell_id, retention_hours)
       when is_integer(retention_hours) and retention_hours >= 0 do
-    snaps = Paths.snapshot_paths(entity_id)
+    snaps = Paths.snapshot_paths(cell_id)
 
     case snaps do
       [] ->
@@ -141,7 +141,7 @@ defmodule Flezha.State.Retention do
           if seq < kept_seq, do: File.rm(path)
         end)
 
-        rewrite_wal_excluding_pre_seq(entity_id, kept_seq)
+        rewrite_wal_excluding_pre_seq(cell_id, kept_seq)
     end
 
     :ok
@@ -176,25 +176,25 @@ defmodule Flezha.State.Retention do
 
   @doc """
   Rewrite the WAL keeping only records with `seq > keep_above_seq`.
-  Atomic via `entity.wal.rewriting → rename`.
+  Atomic via `cell.wal.rewriting → rename`.
   """
-  @spec rewrite_wal_excluding_pre_seq(Paths.entity_id(), non_neg_integer()) :: :ok
-  def rewrite_wal_excluding_pre_seq(entity_id, keep_above_seq) do
-    case WriterRegistry.lookup(entity_id) do
+  @spec rewrite_wal_excluding_pre_seq(Paths.cell_id(), non_neg_integer()) :: :ok
+  def rewrite_wal_excluding_pre_seq(cell_id, keep_above_seq) do
+    case WriterRegistry.lookup(cell_id) do
       {:ok, pid} ->
         # Delegate through the writer so it controls its own file handle.
         WalWriter.truncate_up_to(pid, keep_above_seq)
 
       :error ->
         # No live writer — perform the rewrite in-process.
-        rewrite_offline(entity_id, keep_above_seq)
+        rewrite_offline(cell_id, keep_above_seq)
     end
   end
 
   # No live writer, so the rewrite happens in-process — but through the same
   # primitive the writer uses, not a second copy of it.
-  defp rewrite_offline(entity_id, keep_above_seq) do
-    wal_path = Paths.wal_path(entity_id)
+  defp rewrite_offline(cell_id, keep_above_seq) do
+    wal_path = Paths.wal_path(cell_id)
 
     case :file.open(wal_path, [:raw, :read, :write, :binary]) do
       {:ok, device} ->
@@ -206,7 +206,7 @@ defmodule Flezha.State.Retention do
              ) do
           {:ok, _cut, file, _index} ->
             _ = :file.close(file)
-            Metrics.put(Metrics.for_entity(entity_id), :wal_size_bytes, file_size(wal_path))
+            Metrics.put(Metrics.for_cell(cell_id), :wal_size_bytes, file_size(wal_path))
 
           _ ->
             _ = :file.close(device)

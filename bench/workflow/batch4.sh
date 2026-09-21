@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Proof cells after the late fixes: the completion teardown drain (3/1000 outputs
-# lost before) and the process_hub reconcile two-rounds rule, on the cells that
+# Proof cases after the late fixes: the completion teardown drain (3/1000 outputs
+# lost before) and the process_hub reconcile two-rounds rule, on the cases that
 # showed them.
 set -u
 cd "$(dirname "$0")/../.."
@@ -13,6 +13,6 @@ run() {
   grep -A22 '=== .* summary' "$OUT/$name.log" | grep -v '^\s*$'
   sleep 3
 }
-run fixed2_chain_p4_burst   --scenario chain -n 1000 --procs 4 --stall-timeout 120
-run fixed2_chain_p4_c1000   --scenario chain -n 5000 --procs 4 -c 1000 --stall-timeout 180 --status-every 15
+run fixed2_chain_p4_burst   --scenario chain -n 1000 --tasks 4 --stall-timeout 120
+run fixed2_chain_p4_c1000   --scenario chain -n 5000 --tasks 4 -c 1000 --stall-timeout 180 --status-every 15
 echo "=== batch 4 done $(date +%H:%M:%S)"

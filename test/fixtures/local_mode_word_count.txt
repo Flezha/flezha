@@ -1,13 +1,13 @@
-# The two-procedure local-mode scenario every core runs, and the output every
+# The two-tasklet local-mode scenario every core runs, and the output every
 # core must release. Read by the Rust SDK, Java and Elixir local-mode suites,
 # so the Elixir SDK's own core and `flz_core` are compared against ONE recorded
 # expectation rather than by inspection.
 #
-# The graph is `lines -> Split -> (inter-procedure, keyed by word) -> Tally ->
-# totals sink`, with Tally counting occurrences of the word its Entity is.
+# The graph is `lines -> Split -> (inter-tasklet, keyed by word) -> Tally ->
+# totals sink`, with Tally counting occurrences of the word its Cell is.
 #
 # `lines` are fed to the entry channel in order. `totals` are the values the
-# sink releases, as a MULTISET: one Entity per word, and Entities run
+# sink releases, as a MULTISET: one Cell per word, and Cells run
 # concurrently, so the order across different words is not a property any core
 # has. Per word the order is FIFO, which is why `the 1` precedes `the 2`.
 lines: the quick brown fox

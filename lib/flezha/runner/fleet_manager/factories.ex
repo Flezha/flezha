@@ -210,7 +210,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # inherits the guard rather than having to remember it.
   #
   # The homogeneous unit is the FACTORY, not the namespace: a restore ships one
-  # SDK's bytes verbatim to whichever runner bound the Entity, and only one
+  # SDK's bytes verbatim to whichever runner bound the Cell, and only one
   # factory id's implementations must never mix.
   def placeable_runners(state, namespace, factory_id) do
     {info, candidates} = advertising_runners(state, namespace, factory_id)

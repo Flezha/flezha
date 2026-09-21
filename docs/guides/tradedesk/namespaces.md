@@ -72,7 +72,7 @@ $ flz namespace create trading
 namespace trading created
 namespace: trading
 quotas:
-  max_entities_per_operative: 1024
+  max_cells_per_operative: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
   max_operatives: 100
@@ -189,7 +189,7 @@ The six limits, their defaults, and what each one refuses:
 | Quota | Default | What it caps |
 |---|---|---|
 | `max_operatives` | 100 | operatives started in the namespace |
-| `max_entities_per_operative` | 1024 | keyed entities one operative may hold, such as symbols in `candles` |
+| `max_cells_per_operative` | 1024 | keyed cells one operative may hold, such as symbols in `candles` |
 | `max_mailbox_bytes_total` | 256 MiB | the credit window across the namespace's operative mailboxes |
 | `max_message_rate_per_second` | 100 000 | stored for now, not yet enforced |
 | `max_state_bytes` | 100 GiB | the namespace's state on disk; a start is refused while over it |
@@ -208,7 +208,7 @@ $ flz namespace show trading
 ```output
 namespace: trading
 quotas:
-  max_entities_per_operative: 1024
+  max_cells_per_operative: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
   max_operatives: 100
@@ -226,7 +226,7 @@ $ flz namespace set-quota trading --Xmax_runners=4
 namespace trading quotas updated
 namespace: trading
 quotas:
-  max_entities_per_operative: 1024
+  max_cells_per_operative: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
   max_operatives: 100

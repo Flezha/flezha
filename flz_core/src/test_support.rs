@@ -36,11 +36,11 @@ pub(crate) fn saturate<P: Send + 'static>(mailbox: &Mailbox<P>, item: P) {
     assert!(mailbox.is_full());
 }
 
-/// One park as the controller receives it: the entity identity the frame was
+/// One park as the controller receives it: the cell identity the frame was
 /// addressed to, and the body inside it.
 #[cfg(test)]
 pub(crate) struct CapturedPark {
-    /// `(operative_class, procedure_id, entity_key)` — the triple the
+    /// `(operative_class, tasklet_id, cell_key)` — the triple the
     /// controller keys the row by, and whose middle element it makes a
     /// directory.
     pub identity: (String, String, String),
@@ -66,15 +66,15 @@ pub(crate) fn capture_parks() -> Arc<std::sync::Mutex<Vec<CapturedPark>>> {
     parks
 }
 
-/// The identity and `ParkBody` inside a frame `build_entity_frame` wrote:
+/// The identity and `ParkBody` inside a frame `build_cell_frame` wrote:
 /// `[id_len(2)][identity][seq(8)][header(16)][body_len(4)][body][crc(4)]`. The
 /// identity is read back with the flusher's own inverse, so a capture cannot
 /// disagree with what the controller decodes.
 #[cfg(test)]
 fn decode_park(frame: &[u8]) -> CapturedPark {
     let id_len = u16::from_be_bytes([frame[0], frame[1]]) as usize;
-    let identity = crate::flusher::decode_entity_identity(&frame[2..2 + id_len])
-        .expect("a park frame carries an encoded entity identity");
+    let identity = crate::flusher::decode_cell_identity(&frame[2..2 + id_len])
+        .expect("a park frame carries an encoded cell identity");
     let rest = &frame[2 + id_len + 8 + 16..];
     let body_len = u32::from_be_bytes(rest[..4].try_into().expect("a 4-byte length")) as usize;
     let body = postcard::from_bytes(&rest[4..4 + body_len]).expect("a postcard ParkBody");
@@ -95,14 +95,14 @@ pub(crate) mod host_class {
             .iter()
             .map(|name| {
                 format!(
-                    r#"{{"name":"{name}","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},"#
+                    r#"{{"name":"{name}","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},"#
                 )
             })
             .collect()
     }
 
     /// A tier class: an entry channel per name in `entries`, each into `p0`
-    /// — static-keyed by `keys` when there are any — one inter-procedure
+    /// — static-keyed by `keys` when there are any — one inter-tasklet
     /// channel from `p0` to every consumer in `consumers`, each with a
     /// one-slot mailbox so it is full after a single push. An empty `entries`
     /// declares a class no frame can enter.
@@ -114,7 +114,7 @@ pub(crate) mod host_class {
     ) -> Arc<StreamInstance> {
         let chain_list = consumers
             .iter()
-            .map(|c| format!(r#"[{{"link":"into","procedure":{c}}}]"#))
+            .map(|c| format!(r#"[{{"link":"into","tasklet":{c}}}]"#))
             .collect::<Vec<_>>()
             .join(",");
         let p0 = if keys.is_empty() {
@@ -126,10 +126,10 @@ pub(crate) mod host_class {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                r#"{{"name":"p0","entity_mode":"static","entity_keys":[{key_list}],"entities_for_overridden":true}}"#
+                r#"{{"name":"p0","cell_mode":"static","cell_keys":[{key_list}],"cells_for_overridden":true}}"#
             )
         };
-        let procs = std::iter::once(p0)
+        let tasks = std::iter::once(p0)
             .chain(
                 consumers
                     .iter()
@@ -141,11 +141,11 @@ pub(crate) mod host_class {
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,
                  "channels":[{entry_json}
-                             {{"name":"mid","kind":"inter_proc","producer":0,
+                             {{"name":"mid","kind":"inter_task","producer":0,
                                "chains":[{chain_list}]}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
-                 "procedures":[{procs}]}}"#
+                 "tasklets":[{tasks}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
         StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")

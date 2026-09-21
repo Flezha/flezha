@@ -9,7 +9,7 @@ defmodule Flezha.SDK.CommandsTest do
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Codec, Commands, Counters, Credit, Entity, Hold, Park, Record}
+  alias Flezha.SDK.{Codec, Commands, Counters, Credit, Cell, Hold, Park, Record}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.SDK.Wire
@@ -70,29 +70,29 @@ defmodule Flezha.SDK.CommandsTest do
       assert :ok = Credit.acquire(gone, 5)
     end
 
-    test "an Entity parks on the window and its record leaves on the grant; the heartbeat counter moves" do
+    test "a Cell parks on the window and its record leaves on the grant; the heartbeat counter moves" do
       {credit, counters} = credit()
       Credit.arm(credit, "s1", 1)
       %{op: op} = start_operative(CounterOp, credit: credit)
       Inbox.input(op, "in", "1", %{})
       assert NodeTestHelper.wait_until(fn -> Counters.credit_parked(counters) == 1 end, 2_000)
-      refute_received {:flz_data, _, "entity_state_change", _, _}
+      refute_received {:flz_data, _, "cell_state_change", _, _}
 
       Credit.grant(credit, "s1", 10_000)
-      assert [{"entity_state_change", _, _}, {"op-1", "1", _}] = frames(2)
+      assert [{"cell_state_change", _, _}, {"op-1", "1", _}] = frames(2)
     end
   end
 
   describe "the commands" do
-    test "the live read answers the Decision-10 shape with the seq of one Entity, and refuses by name" do
+    test "the live read answers the Decision-10 shape with the seq of one Cell, and refuses by name" do
       %{op: op} = start_operative(CounterOp)
       Inbox.input(op, "in", "3", %{})
       [_, _] = frames(2)
       s = server_state(op, nil)
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "", entity_key: ""},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "", cell_key: ""},
         respond(),
         s
       )
@@ -101,36 +101,36 @@ defmodule Flezha.SDK.CommandsTest do
       assert Jason.decode!(json) == %{"counter" => %{"value" => 3}}
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "", entity_key: "k"},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "", cell_key: "k"},
         respond(),
         s
       )
 
-      assert_receive {:replied, "error", ["entity_key_without_procedure: " <> _], <<>>, %{}},
+      assert_receive {:replied, "error", ["cell_key_without_tasklet: " <> _], <<>>, %{}},
                      2_000
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "nope", entity_key: ""},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "nope", cell_key: ""},
         respond(),
         s
       )
 
-      assert_receive {:replied, "error", ["procedure_not_found: " <> _], <<>>, %{}}, 2_000
+      assert_receive {:replied, "error", ["tasklet_not_found: " <> _], <<>>, %{}}, 2_000
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "counter", entity_key: "k"},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "counter", cell_key: "k"},
         respond(),
         s
       )
 
-      assert_receive {:replied, "error", ["entity_not_found: " <> _], <<>>, %{}}, 2_000
+      assert_receive {:replied, "error", ["cell_not_found: " <> _], <<>>, %{}}, 2_000
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-9", procedure: "", entity_key: ""},
+        :cell_state,
+        %{operative_id: "op-9", tasklet: "", cell_key: ""},
         respond(),
         s
       )
@@ -140,15 +140,15 @@ defmodule Flezha.SDK.CommandsTest do
                      2_000
     end
 
-    test "a keyed node reads as a map by key, narrowed by the selector, with the seq only for one Entity" do
+    test "a keyed node reads as a map by key, narrowed by the selector, with the seq only for one Cell" do
       %{op: op} = start_operative(DynCounterOp)
       for input <- ~w(1 2 3), do: Inbox.input(op, "in", input, %{})
       [_, _, _, _, _, _] = frames(6)
       s = server_state(op, nil)
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "", entity_key: ""},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "", cell_key: ""},
         respond(),
         s
       )
@@ -160,8 +160,8 @@ defmodule Flezha.SDK.CommandsTest do
              }
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "counter", entity_key: "k1"},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "counter", cell_key: "k1"},
         respond(),
         s
       )
@@ -183,7 +183,7 @@ defmodule Flezha.SDK.CommandsTest do
       Commands.dispatch(
         :restore_init_state,
         %{
-          entity_id: identity,
+          cell_id: identity,
           snapshot_header: Record.header(snapshot, 1),
           snapshot_bytes: snapshot,
           change_log_bytes: change_record(2, {:delta, 3}, 1),
@@ -198,8 +198,8 @@ defmodule Flezha.SDK.CommandsTest do
       assert {:ok, %{terminal_seq: 2, migrated: true}} =
                RunnerCommands.RestoreInitStateResponse.decode(raw)
 
-      Commands.dispatch(:compact_entity, %{entity_id: identity}, respond(), s)
-      assert_receive {:flz_data, _, "entity_state_snapshot", frame, _}, 2_000
+      Commands.dispatch(:compact_cell, %{cell_id: identity}, respond(), s)
+      assert_receive {:flz_data, _, "cell_state_snapshot", frame, _}, 2_000
 
       assert {:ok, %{seq: 2, header: <<3, _::32, 2::32-big, _::binary>>, body: body}} =
                Wire.decode_frame(frame)
@@ -212,12 +212,12 @@ defmodule Flezha.SDK.CommandsTest do
       %{op: op} = start_operative(TtlOp)
       Inbox.input(op, "in", "5", %{})
       [_, _] = frames(2)
-      assert_receive {:flz_data, _, "delete_entity_state", _, _}, 2_000
+      assert_receive {:flz_data, _, "delete_cell_state", _, _}, 2_000
       s = server_state(op, nil)
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "ttl", entity_key: "k5"},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "ttl", cell_key: "k5"},
         respond(),
         s
       )
@@ -225,17 +225,17 @@ defmodule Flezha.SDK.CommandsTest do
       assert_receive {:replied, "error", [reason], <<>>, %{}}, 2_000
 
       assert reason ==
-               "entity_evicted: Entity `k5` of procedure `ttl` was idle-evicted; eviction is " <>
+               "cell_evicted: Cell `k5` of tasklet `ttl` was idle-evicted; eviction is " <>
                  "destructive, so there is no durable value to serve"
 
       Commands.dispatch(
-        :entity_state,
-        %{operative_id: "op-1", procedure: "ttl", entity_key: "zz"},
+        :cell_state,
+        %{operative_id: "op-1", tasklet: "ttl", cell_key: "zz"},
         respond(),
         s
       )
 
-      assert_receive {:replied, "error", ["entity_not_found: " <> _], <<>>, %{}}, 2_000
+      assert_receive {:replied, "error", ["cell_not_found: " <> _], <<>>, %{}}, 2_000
     end
 
     test "restore and compaction answer through the commands with their protobuf replies" do
@@ -245,7 +245,7 @@ defmodule Flezha.SDK.CommandsTest do
       snap = Record.encode_body(%{value: 10})
 
       cmd = %{
-        entity_id: id,
+        cell_id: id,
         snapshot_header: Record.header(snap, 1),
         snapshot_bytes: snap,
         change_log_bytes: change_record(4, {:delta, 5}),
@@ -257,7 +257,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       assert {:ok,
               %RunnerCommands.RestoreInitStateResponse{
-                entity_id: ^id,
+                cell_id: ^id,
                 terminal_seq: 4,
                 migrated: false
               }} =
@@ -279,10 +279,10 @@ defmodule Flezha.SDK.CommandsTest do
 
       assert {:ok, %{terminal_seq: 0}} = RunnerCommands.RestoreInitStateResponse.decode(raw)
 
-      # no live Entity: acked at the controller's own terminal
+      # no live Cell: acked at the controller's own terminal
       Commands.dispatch(
         :restore_init_state,
-        %{cmd | entity_id: Park.identity("op-9", "counter", "")},
+        %{cmd | cell_id: Park.identity("op-9", "counter", "")},
         respond(),
         s
       )
@@ -290,28 +290,28 @@ defmodule Flezha.SDK.CommandsTest do
       assert_receive {:replied, "success", [], raw, %{}}, 2_000
       assert {:ok, %{terminal_seq: 3}} = RunnerCommands.RestoreInitStateResponse.decode(raw)
 
-      Commands.dispatch(:compact_entity, %{entity_id: id}, respond(), s)
+      Commands.dispatch(:compact_cell, %{cell_id: id}, respond(), s)
       assert_receive {:replied, "success", [], raw, %{}}, 2_000
 
       assert {:ok,
-              %RunnerCommands.CompactEntityResponse{snapshot_seq: 4, snapshot_bytes_size: size}} =
-               RunnerCommands.CompactEntityResponse.decode(raw)
+              %RunnerCommands.CompactCellResponse{snapshot_seq: 4, snapshot_bytes_size: size}} =
+               RunnerCommands.CompactCellResponse.decode(raw)
 
-      assert [{"entity_state_snapshot", frame, _}] = frames(1)
+      assert [{"cell_state_snapshot", frame, _}] = frames(1)
       assert {:ok, %{seq: 4, body: body}} = Wire.decode_frame(frame)
       assert byte_size(body) == size
 
       Commands.dispatch(
-        :compact_entity,
-        %{entity_id: Park.identity("op-9", "counter", "")},
+        :compact_cell,
+        %{cell_id: Park.identity("op-9", "counter", "")},
         respond(),
         s
       )
 
-      assert_receive {:replied, "error", ["compact_entity: " <> _], raw, %{}}, 2_000
+      assert_receive {:replied, "error", ["compact_cell: " <> _], raw, %{}}, 2_000
 
       assert {:ok, %{snapshot_seq: 0, snapshot_bytes_size: 0}} =
-               RunnerCommands.CompactEntityResponse.decode(raw)
+               RunnerCommands.CompactCellResponse.decode(raw)
     end
 
     test "init_values and a migration's state apply through state_from_json, per declared key" do
@@ -324,8 +324,8 @@ defmodule Flezha.SDK.CommandsTest do
                  ~s({"scounter":{"a":{"value":5},"zz":{"value":1}},"nope":{}})
                )
 
-      assert {:ok, %{value: 5}, 0} = Entity.read(entity!(op, "scounter", "a"), 1_000)
-      assert {:ok, %{value: 0}, 0} = Entity.read(entity!(op, "scounter", "b"), 1_000)
+      assert {:ok, %{value: 5}, 0} = Cell.read(cell!(op, "scounter", "a"), 1_000)
+      assert {:ok, %{value: 0}, 0} = Cell.read(cell!(op, "scounter", "b"), 1_000)
       assert :ok = Commands.apply_json(op, "op-1", "")
       assert {:error, "init_values: not a JSON object"} = Commands.apply_json(op, "op-1", "[1]")
 
@@ -333,14 +333,14 @@ defmodule Flezha.SDK.CommandsTest do
       s = server_state(single, nil)
 
       Commands.dispatch(
-        :entity_apply_state,
+        :cell_apply_state,
         %{operative_id: "op-1", factory_id: "f", state_binary: ~s({"counter":{"value":8}})},
         respond(),
         s
       )
 
       assert_receive {:replied, "success", [], <<>>, %{}}, 2_000
-      assert {:ok, %{value: 8}, 0} = Entity.read(entity!(single, "counter"), 1_000)
+      assert {:ok, %{value: 8}, 0} = Cell.read(cell!(single, "counter"), 1_000)
     end
 
     test "the credit commands arm and grant the window and ack the session" do
@@ -365,7 +365,7 @@ defmodule Flezha.SDK.CommandsTest do
       assert_receive {:replied, "success", [], <<>>, %{}}
       assert :ok = Credit.acquire(credit, 150)
 
-      Commands.dispatch(:entity_mailbox_status, %{entity_id: <<>>, status: "full"}, respond(), s)
+      Commands.dispatch(:cell_mailbox_status, %{cell_id: <<>>, status: "full"}, respond(), s)
       assert_receive {:replied, "success", [], <<>>, %{}}
     end
   end

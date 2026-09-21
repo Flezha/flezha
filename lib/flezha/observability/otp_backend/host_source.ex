@@ -35,7 +35,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   def poll(state) do
     case File.read(@stat_path) do
       {:ok, stat_bytes} ->
-        handle_proc_read(state, stat_bytes)
+        handle_task_read(state, stat_bytes)
 
       {:error, _reason} ->
         emit_degraded()
@@ -43,7 +43,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
     end
   end
 
-  defp handle_proc_read(state, stat_bytes) do
+  defp handle_task_read(state, stat_bytes) do
     {state, current_jiffies} =
       case ProcParser.parse_stat(String.trim(stat_bytes)) do
         {:ok, stat} ->

@@ -36,7 +36,7 @@ has not shown the decision is one-way.
 
 ## How this record is read
 
-The `class` cell carries `blocking` or `owed`, and may add `decision` when the entry is a
+The `class` column carries `blocking` or `owed`, and may add `decision` when the entry is a
 choice rather than a task, or `settled` once it is closed. A `settled` entry names its
 evidence in `settled-by`: a commit, a requirement or a file in the tree. An entry that says
 settled and points nowhere can be checked by nobody but its author.
@@ -79,7 +79,7 @@ carry.
 | B5 | owed | — | One source of truth for the version, and a check that the artefacts agree. Painful to keep by hand, but a later fix costs no more than an early one. | One place states the version and a check refuses an artefact that disagrees. | maintainer | |
 | B6 | owed | — | Package metadata is correct: description, readme, keywords, links, publish visibility, and the file list a package ships. Immutable per version, so a mistake is corrected by the next release rather than never. | For each package, the metadata resolves and the visibility is explicit. | maintainer | |
 | L1 | blocking | (a) relicensing an unsigned contribution needs its author found again | Contribution-agreement automation is live before the repository can accept its first external contribution. | The bot is installed and a test pull request is blocked until signed. | maintainer | |
-| L2 | blocking · decision | (a) every signatory would have to be asked again | The contribution agreement says whether the grant runs to a successor entity. | Read the agreement; the answer is present. | owner | |
+| L2 | blocking · decision | (a) every signatory would have to be asked again | The contribution agreement says whether the grant runs to a successor cell. | Read the agreement; the answer is present. | owner | |
 | L3 | blocking | (b) a vulnerability reported in public cannot be un-published | A security contact receives mail, and private reporting is enabled, on the day the repository becomes public. | A message to the published address is received, and the private reporting channel accepts a report. | maintainer | |
 | L4 | blocking | (b) copies already taken cannot be relicensed | Material the documentation tells a user to copy carries the licence intended for copied material. | For each example the docs present as a starting point, its effective licence is the SDK's. | maintainer | |
 | L5 | owed | — | Trademark registration. The name is already reserved in the notice file and registration can follow publication. | The registration is filed, or the decision not to file is recorded. | owner | |
@@ -100,7 +100,7 @@ They are collected here so they can be settled from one page.
 | N2 | the Java group coordinate | a domain-derived coordinate (needs the domain, reads as a project) · an account-derived one (needs nothing, reads as personal, and is equally permanent) |
 | N4 | the product's spelling | keep the split and record the rule (free, and every registry shows both) · unify before publishing (a rename across every registry name, free today, impossible after) |
 | C2 | the first version number | stay pre-1.0 (keeps the freedom this project currently relies on) · release 1.0 (spends it on the first day) |
-| L2 | whether the contribution grant runs to a successor entity | settle before the first external contribution (free) · after (every signatory asked again) |
+| L2 | whether the contribution grant runs to a successor cell | settle before the first external contribution (free) · after (every signatory asked again) |
 | B4 | which SDKs the first release publishes | all of them (one compatibility promise per SDK, at once) · a named subset with the rest marked unreleased (adding later is additive) |
 
 ## Three checks this repository cannot answer

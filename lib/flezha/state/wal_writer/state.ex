@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriter.State do
   @moduledoc """
-  The per-Entity writer's struct, and the clock every part of it stamps with.
+  The per-Cell writer's struct, and the clock every part of it stamps with.
 
   Split out of `Flezha.State.WalWriter` so its `Boot`, `Settlement`, `Epoch` and
   `Admission` siblings can thread the same struct without naming the GenServer
@@ -16,7 +16,7 @@ defmodule Flezha.State.WalWriter.State do
   alias Flezha.State.{Paths, SeqIndex}
 
   defstruct [
-    :entity_id,
+    :cell_id,
     :file_handle,
     :wal_path,
     :last_persisted_seq,
@@ -59,7 +59,7 @@ defmodule Flezha.State.WalWriter.State do
     # Highest seq of an OUTPUT-BEARING effect record queued. Producing-liveness
     # compares it against `outbox_flushed_seq` to see an outbox that accumulates
     # without draining. It must count only output-bearing records:
-    # `outbox_durable_seq` advances on every fsynced record, so an Entity that
+    # `outbox_durable_seq` advances on every fsynced record, so a Cell that
     # persists state but emits nothing would read as a frozen outbox forever.
     :outbox_last_seq,
     # A `Flezha.State.SeqIndex` over the file: a cut at either end finds its
@@ -81,7 +81,7 @@ defmodule Flezha.State.WalWriter.State do
   ]
 
   @type t :: %__MODULE__{
-          entity_id: Paths.entity_id(),
+          cell_id: Paths.cell_id(),
           file_handle: :file.io_device(),
           wal_path: binary(),
           last_persisted_seq: integer(),
@@ -125,7 +125,7 @@ defmodule Flezha.State.WalWriter.State do
         }
 
   @typedoc """
-  An Entity's durable progress, read as one value: how far its records are
+  A Cell's durable progress, read as one value: how far its records are
   persisted, how far they are fsynced, how far its outbox has been confirmed,
   and the realign epoch all three are counted under.
   """
@@ -137,9 +137,9 @@ defmodule Flezha.State.WalWriter.State do
         }
 
   @doc """
-  The Entity's durable cursors as one record.
+  The Cell's durable cursors as one record.
 
-  The one accessor: a reader that needs an Entity's progress takes this rather
+  The one accessor: a reader that needs a Cell's progress takes this rather
   than copying the writer's fields, so the four cursors cannot be read at four
   different moments and reported as one picture.
   """
@@ -161,9 +161,9 @@ defmodule Flezha.State.WalWriter.State do
 
   The snapshot cursor is deliberately not in that chain. It counts how much
   state a compaction folded away, the flush cursor how much output was
-  confirmed; an Entity that emits nothing snapshots past a flush cursor that
+  confirmed; a Cell that emits nothing snapshots past a flush cursor that
   never leaves `-1`, and ordering the two against each other would be false of
-  every Entity outside the effectively-once tier.
+  every Cell outside the effectively-once tier.
   """
   @spec ordered?(progress()) :: boolean()
   def ordered?(%{

@@ -5,7 +5,7 @@ defmodule Flezha.State.TestHelpers do
   `:flezha` key goes through.
 
   Lives under `test/helpers/`, which `elixirc_paths` compiles in `:dev` and
-  `:test` but not `:prod`: `reset_all_entities/0` wipes the state root, and
+  `:test` but not `:prod`: `reset_all_cells/0` wipes the state root, and
   that must not be reachable from a release.
   """
 
@@ -85,7 +85,7 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Stand in as the WalWriter that owns `entity_id`'s outbox cursor: the
+  Stand in as the WalWriter that owns `cell_id`'s outbox cursor: the
   delivery-confirmation seam (`Flezha.State.Outbox`) resolves the owning writer
   through the state registry, so a registered test process receives the sink's
   `hold` / `settled` / `confirm` reports as plain casts.
@@ -93,31 +93,31 @@ defmodule Flezha.State.TestHelpers do
   Used by the sink-plugin suites, which exercise the confirmation seam without a
   real persistence subsystem behind it.
   """
-  @spec stub_outbox_owner(Paths.entity_id()) :: :ok
-  def stub_outbox_owner(entity_id) do
+  @spec stub_outbox_owner(Paths.cell_id()) :: :ok
+  def stub_outbox_owner(cell_id) do
     case Elixir.Registry.start_link(keys: :unique, name: Supervisor.registry_name()) do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
     end
 
-    {:ok, _} = Elixir.Registry.register(Supervisor.registry_name(), entity_id, nil)
+    {:ok, _} = Elixir.Registry.register(Supervisor.registry_name(), cell_id, nil)
     :ok
   end
 
   @doc """
-  Metadata a durable outbox flush would stamp on one output of `entity_id`'s
+  Metadata a durable outbox flush would stamp on one output of `cell_id`'s
   entry `seq` — identity plus the confirmation token the owning writer waits
   on. `extra` merges over it for the fields a given sink reads.
   """
-  @spec guaranteed_metadata(Paths.entity_id(), non_neg_integer(), map()) :: map()
-  def guaranteed_metadata({rc, sh, pk} = entity_id, seq, extra \\ %{}) do
+  @spec guaranteed_metadata(Paths.cell_id(), non_neg_integer(), map()) :: map()
+  def guaranteed_metadata({rc, sh, pk} = cell_id, seq, extra \\ %{}) do
     Map.merge(
       %{
         "channel" => "out",
-        "flz.entity" => "#{rc}/#{sh}/#{pk}",
+        "flz.cell" => "#{rc}/#{sh}/#{pk}",
         "flz.seq" => "#{seq}.0",
         "flz.epoch" => "0",
-        Outbox.ack_key() => Outbox.token(entity_id, {:cursor, seq})
+        Outbox.ack_key() => Outbox.token(cell_id, {:cursor, seq})
       },
       extra
     )
@@ -245,11 +245,11 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Reset all per-Entity state: terminate every live `WalWriter` and wipe
+  Reset all per-Cell state: terminate every live `WalWriter` and wipe
   the on-disk `state_root`. Integration tests reuse operative ids across cases;
   now that restore actually rehydrates a operative from its WAL on (re)bind,
   leftover state from a prior test would leak into the next one. Call from a
-  `setup` block so each test starts from empty entities.
+  `setup` block so each test starts from empty cells.
 
   The root comes from `Paths.state_root/0` — the one resolver the writers, the
   bind-time restore and the operative teardown all use. Deriving it here from
@@ -275,8 +275,8 @@ defmodule Flezha.State.TestHelpers do
   the boot-time root while the reset emptied a different one. That is a fleet
   lifecycle change, not a fixture declaration.
   """
-  @spec reset_all_entities() :: :ok
-  def reset_all_entities() do
+  @spec reset_all_cells() :: :ok
+  def reset_all_cells() do
     sup = Flezha.State.Supervisor
 
     for {_, pid, _, _} <- DynamicSupervisor.which_children(sup), is_pid(pid) do
@@ -366,17 +366,17 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Write one Entity's WAL holding a single record stamped by `sdk_lang`.
+  Write one Cell's WAL holding a single record stamped by `sdk_lang`.
 
   The fixture behind every "what language wrote this state" assertion: the
   placement guard resolves a factory's established language from byte 0 of a
   record header, so a test needs a real on-disk WAL rather than a stub.
   """
-  @spec write_wal_of_lang(Paths.entity_id(), byte()) :: :ok
-  def write_wal_of_lang(entity_id, sdk_lang) do
+  @spec write_wal_of_lang(Paths.cell_id(), byte()) :: :ok
+  def write_wal_of_lang(cell_id, sdk_lang) do
     body = "state-bytes"
     header = RecordFrame.encode_header(sdk_lang, 0, 1, RecordFrame.format_id(:postcard), body)
-    path = Paths.wal_path(entity_id)
+    path = Paths.wal_path(cell_id)
 
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, build_wal_record(0, header, body))
@@ -391,19 +391,19 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Write `seqs` as an Entity's WAL, creating the directory. `tag` distinguishes
+  Write `seqs` as a Cell's WAL, creating the directory. `tag` distinguishes
   two writers' records for the same seq range, which is what a cross-writer
   collision case needs.
   """
-  def write_wal(entity_id, seqs, tag \\ "change") do
-    path = Paths.wal_path(entity_id)
+  def write_wal(cell_id, seqs, tag \\ "change") do
+    path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, wal_records(seqs, tag))
   end
 
-  @doc "Append `seqs` to an Entity's existing WAL."
-  def append_wal(entity_id, seqs, tag \\ "change") do
-    File.write!(Paths.wal_path(entity_id), wal_records(seqs, tag), [:append])
+  @doc "Append `seqs` to a Cell's existing WAL."
+  def append_wal(cell_id, seqs, tag \\ "change") do
+    File.write!(Paths.wal_path(cell_id), wal_records(seqs, tag), [:append])
   end
 
   @doc "The framed bytes of `seqs`, as they land on disk."
@@ -411,14 +411,14 @@ defmodule Flezha.State.TestHelpers do
     Enum.map_join(seqs, fn seq -> build_wal_record(seq, "#{tag}-#{seq}") end)
   end
 
-  @doc "Remove every durable file one Entity owns."
-  def wipe_entity(entity_id) do
-    Enum.each(Paths.entity_files(entity_id), &File.rm/1)
+  @doc "Remove every durable file one Cell owns."
+  def wipe_cell(cell_id) do
+    Enum.each(Paths.cell_files(cell_id), &File.rm/1)
   end
 
   @doc """
   A short decimal string no other caller in this BEAM has been handed, for the
-  entity- and class-name prefixes a per-test fixture needs.
+  cell- and class-name prefixes a per-test fixture needs.
 
   The stream is node-global and per-scheduler striped, and it restarts low in
   every BEAM, so a name built from it is unique within a run and not across
@@ -429,11 +429,11 @@ defmodule Flezha.State.TestHelpers do
   def uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 
   @doc """
-  Construct a deterministic `entity_id` tuple usable as a fixture.
+  Construct a deterministic `cell_id` tuple usable as a fixture.
   """
-  @spec sample_entity_id(binary()) :: Paths.entity_id()
-  def sample_entity_id(suffix \\ "p1") do
-    {"TestOperative", "TestProcedure", suffix}
+  @spec sample_cell_id(binary()) :: Paths.cell_id()
+  def sample_cell_id(suffix \\ "p1") do
+    {"TestOperative", "TestTasklet", suffix}
   end
 
   @doc """
@@ -444,19 +444,19 @@ defmodule Flezha.State.TestHelpers do
   monitor's `:DOWN`, which happens after. A re-open in that window gets the
   dead pid back from `Supervisor.lookup/1` and the next call exits `:noproc`.
   """
-  @spec close_and_await(pid(), Paths.entity_id(), timeout()) :: :ok
-  def close_and_await(server, entity_id, timeout_ms \\ 2_000) do
+  @spec close_and_await(pid(), Paths.cell_id(), timeout()) :: :ok
+  def close_and_await(server, cell_id, timeout_ms \\ 2_000) do
     WalWriter.close(server)
 
     deregistered? =
       NodeTestHelper.wait_until(
-        fn -> Supervisor.lookup(entity_id) == :error end,
+        fn -> Supervisor.lookup(cell_id) == :error end,
         timeout_ms,
         5
       )
 
     if deregistered?,
       do: :ok,
-      else: raise("writer for #{inspect(entity_id)} still registered after close")
+      else: raise("writer for #{inspect(cell_id)} still registered after close")
   end
 end

@@ -303,7 +303,7 @@ defmodule Mix.Tasks.Bench.Extension do
     ops_per_sec = div(iterations * 1_000_000, max(micros, 1))
 
     IO.puts(
-      :io_lib.format("~-48s  ~10w ns/call    ~12w procs/sec", [
+      :io_lib.format("~-48s  ~10w ns/call    ~12w ops/sec", [
         label,
         per_call_ns,
         ops_per_sec

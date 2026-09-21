@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   @moduledoc """
-  A procedure-requested workflow spawn (`ctx.spawn_workflow`) is judged like
+  A tasklet-requested workflow spawn (`ctx.spawn_workflow`) is judged like
   any other act, as the identity its connection proved: a start against the
   `operative_start` row, which records it, and a delivery to a running instance
   against `spawn_deliver`, the `operative.send` right with no record of a

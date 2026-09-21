@@ -34,14 +34,14 @@ defmodule Flezha.Service.Cli.Dlq do
   end
 
   @doc """
-  `flz dlq show <operative/procedure/id>` — entry metadata + payload preview.
+  `flz dlq show <operative/tasklet/id>` — entry metadata + payload preview.
   """
   def dlq_show(_entry_ref, %{row: %{entry: entry, payload: payload}}) do
     render_entry(entry, payload)
   end
 
   @doc """
-  `flz dlq replay <operative/procedure/id>` — re-dispatch a parked payload
+  `flz dlq replay <operative/tasklet/id>` — re-dispatch a parked payload
   to its operative through the ordinary input path. A successful replay
   removes the entry; a failing one re-parks it with `generation`
   incremented.
@@ -60,7 +60,7 @@ defmodule Flezha.Service.Cli.Dlq do
   end
 
   @doc """
-  `flz dlq drop <operative/procedure/id>` — discard a parked entry and its
+  `flz dlq drop <operative/tasklet/id>` — discard a parked entry and its
   payload. Audited: the drop is deliberate data loss.
   """
   def dlq_drop(entry_ref, _call) do
@@ -74,19 +74,19 @@ defmodule Flezha.Service.Cli.Dlq do
   defp render_listing(entries) do
     IO.puts(
       String.pad_trailing("ENTRY", 60) <>
-        String.pad_trailing("ENTITY", 16) <>
+        String.pad_trailing("CELL", 16) <>
         String.pad_trailing("CHANNEL", 12) <>
         String.pad_trailing("GEN", 5) <>
         String.pad_trailing("AGE", 10) <> "ERROR"
     )
 
     Enum.each(entries, fn e ->
-      ref = "#{e["operative_class"]}/#{e["procedure_id"]}/#{e["id"]}"
+      ref = "#{e["operative_class"]}/#{e["tasklet_id"]}/#{e["id"]}"
       age_s = div(System.system_time(:millisecond) - (e["ts_ms"] || 0), 1000)
 
       IO.puts(
         String.pad_trailing(ref, 60) <>
-          String.pad_trailing(e["entity_key"] || "", 16) <>
+          String.pad_trailing(e["cell_key"] || "", 16) <>
           String.pad_trailing(e["channel"] || "", 12) <>
           String.pad_trailing(Integer.to_string(e["generation"] || 1), 5) <>
           String.pad_trailing("#{age_s}s", 10) <> String.slice(e["error"] || "", 0, 60)
@@ -96,7 +96,7 @@ defmodule Flezha.Service.Cli.Dlq do
 
   defp render_entry(entry, payload) do
     Enum.each(
-      ~w(id operative_class procedure_id entity_key channel origin_offset error attempts generation status ts_ms payload_bytes),
+      ~w(id operative_class tasklet_id cell_key channel origin_offset error attempts generation status ts_ms payload_bytes),
       fn key ->
         IO.puts(String.pad_trailing(key, 18) <> to_string(inspect(entry[key])))
       end
@@ -123,10 +123,10 @@ defmodule Flezha.Service.Cli.Dlq do
   defp render_dlq_error(reason), do: Context.fail!(reason, &dlq_message/1)
 
   defp dlq_message(:not_found), do: "DLQ entry not found"
-  defp dlq_message(:bad_entry_ref), do: "expected <operative>/<procedure>/<entry-id>"
+  defp dlq_message(:bad_entry_ref), do: "expected <operative>/<tasklet>/<entry-id>"
 
   defp dlq_message(:payload_not_replayable),
-    do: "entry carries no payload bytes (inter-procedure input); inspect or drop it"
+    do: "entry carries no payload bytes (inter-tasklet input); inspect or drop it"
 
   defp dlq_message(:operative_not_running),
     do: "the entry's operative is not running; start it before replaying"

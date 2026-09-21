@@ -27,7 +27,7 @@ struct Row {
 }
 
 /// The surfaces no record can express either. `detached` is authorable here —
-/// the record is data, and a procedure nothing wires is one line of it — so
+/// the record is data, and a tasklet nothing wires is one line of it — so
 /// only the two flag families the fixture header names are skipped.
 const UNWRITABLE: [&str; 2] = ["raw_flags", "raw_class_flags"];
 
@@ -53,15 +53,13 @@ fn rows() -> Vec<Row> {
 }
 
 /// The palette: the facts each role the fixture header names declares. The
-/// core's "SDK" is the record, so a role IS its procedure declaration.
+/// core's "SDK" is the record, so a role IS its tasklet declaration.
 fn palette(role: &str) -> Option<&'static str> {
     Some(match role {
         "plain" | "second" | "twin" => "",
-        "static" => r#""entity_mode":"static","entity_keys":["a","b"]"#,
-        "routed" => {
-            r#""entity_mode":"static","entity_keys":["a","b"],"entities_for_overridden":true"#
-        }
-        "dynamic" => r#""entity_mode":"dynamic""#,
+        "static" => r#""cell_mode":"static","cell_keys":["a","b"]"#,
+        "routed" => r#""cell_mode":"static","cell_keys":["a","b"],"cells_for_overridden":true"#,
+        "dynamic" => r#""cell_mode":"dynamic""#,
         "nochange" => r#""clock":"logical","change_is_nochange":true"#,
         "eventtime" => r#""clock":"event_time""#,
         _ => return None,
@@ -85,7 +83,7 @@ struct Channel {
 #[derive(Default)]
 struct Interpreter {
     channels: Vec<Channel>,
-    /// Role → procedure index, in the order the row first names each role.
+    /// Role → tasklet index, in the order the row first names each role.
     roles: Vec<String>,
     mailbox: HashMap<String, usize>,
     class: Vec<String>,
@@ -94,8 +92,8 @@ struct Interpreter {
 }
 
 impl Interpreter {
-    /// The index of `role`, minting the procedure the first time a row names it.
-    fn procedure(&mut self, role: &str) -> usize {
+    /// The index of `role`, minting the tasklet the first time a row names it.
+    fn tasklet(&mut self, role: &str) -> usize {
         if let Some(at) = self.roles.iter().position(|r| r == role) {
             return at;
         }
@@ -104,7 +102,7 @@ impl Interpreter {
     }
 
     /// The channel `handle` addresses: an entry channel by name, or the output
-    /// channel of the procedure a role names — minted on first use, exactly as
+    /// channel of the tasklet a role names — minted on first use, exactly as
     /// a fluent builder mints a producer's output.
     fn channel(&mut self, handle: &str) -> usize {
         if let Some(at) = self.channels.iter().position(|c| c.name == handle) {
@@ -114,10 +112,10 @@ impl Interpreter {
         if let Some(at) = self.channels.iter().position(|c| c.name == out) {
             return at;
         }
-        let producer = self.procedure(handle);
+        let producer = self.tasklet(handle);
         self.channels.push(Channel {
             name: out,
-            kind: "inter_proc",
+            kind: "inter_task",
             producer: Some(producer),
             ..Channel::default()
         });
@@ -140,13 +138,13 @@ impl Interpreter {
             }),
             "merge" => {
                 let parts: Vec<&str> = arg.split(',').map(str::trim).collect();
-                let procedure = self.procedure(parts[0]);
+                let tasklet = self.tasklet(parts[0]);
                 let group = self.merge_group;
                 self.merge_group += 1;
                 for source in &parts[1..] {
                     let at = self.channel(source);
                     self.channels[at].chains.push(format!(
-                        r#"[{{"link":"merge","procedure":{procedure},"group":{group}}}]"#
+                        r#"[{{"link":"merge","tasklet":{tasklet},"group":{group}}}]"#
                     ));
                 }
             }
@@ -163,7 +161,7 @@ impl Interpreter {
     }
 
     /// `<handle>.<link>…` — a chain declared off a handle, a channel knob, a
-    /// procedure knob, or a class flag.
+    /// tasklet knob, or a class flag.
     fn dotted(&mut self, step: &str) {
         let (head, rest) = step.split_once('.').expect("a step is a call or a chain");
         if head == "class" {
@@ -174,7 +172,7 @@ impl Interpreter {
         let (verb, arg) = split_call(rest);
         match verb {
             "mailbox" => {
-                self.procedure(head);
+                self.tasklet(head);
                 self.mailbox
                     .insert(head.to_string(), arg.parse().expect("mailbox capacity"));
             }
@@ -209,8 +207,8 @@ impl Interpreter {
                 "sink" if arg.is_empty() => r#"{"link":"sink"}"#.to_string(),
                 "sink" => format!(r#"{{"link":"sink","name":"{arg}"}}"#),
                 "into" => {
-                    let procedure = self.procedure(arg);
-                    format!(r#"{{"link":"into","procedure":{procedure}}}"#)
+                    let tasklet = self.tasklet(arg);
+                    format!(r#"{{"link":"into","tasklet":{tasklet}}}"#)
                 }
                 other => panic!("the fixture spells a link this interpreter does not map: {other}"),
             });
@@ -270,7 +268,7 @@ impl Interpreter {
             })
             .collect();
 
-        let procedures: Vec<String> = self
+        let tasklets: Vec<String> = self
             .roles
             .iter()
             .map(|role| {
@@ -302,9 +300,9 @@ impl Interpreter {
         };
         format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0"{class}{workflow},
-                 "channels":[{}],"procedures":[{}]}}"#,
+                 "channels":[{}],"tasklets":[{}]}}"#,
             channels.join(","),
-            procedures.join(",")
+            tasklets.join(",")
         )
     }
 }
@@ -531,7 +529,7 @@ mod derivation {
         let derived = derive("entry(in); in.into(plain); plain.sink(out); plain.into(second)");
         assert_eq!(
             derived.channels[1].kind,
-            HostChannelKind::InterProc,
+            HostChannelKind::InterTask,
             "a sink WITH a consumer behind it is hybrid, not a terminal"
         );
     }
@@ -572,7 +570,7 @@ mod derivation {
 
         assert!(names.contains(&"DuplicateKeyBy"), "{names:?}");
         assert!(names.contains(&"TransformAfterKeyBy"), "{names:?}");
-        assert!(names.contains(&"EntitiesForMissing"), "{names:?}");
+        assert!(names.contains(&"CellsForMissing"), "{names:?}");
 
         let rendered = super::super::issue::render_issues(&issues);
         assert!(

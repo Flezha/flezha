@@ -59,8 +59,8 @@ FORBIDDEN = (
 )
 
 
-def cells(line):
-    """The cells of a markdown table row, outer pipes stripped."""
+def fields(line):
+    """The fields of a markdown table row, outer pipes stripped."""
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
@@ -81,7 +81,7 @@ def read_entries():
 
     start = None
     for i, line in enumerate(lines):
-        if line.startswith("|") and tuple(cells(line)) == COLUMNS:
+        if line.startswith("|") and tuple(fields(line)) == COLUMNS:
             start = i
             break
     if start is None:
@@ -95,7 +95,7 @@ def read_entries():
     for lineno, line in enumerate(lines[start + 2:], start=start + 3):
         if not line.startswith("|"):
             break
-        row = cells(line)
+        row = fields(line)
         if len(row) != len(COLUMNS):
             entries.append({"lineno": lineno, "_width": len(row), "id": row[0] if row else "?"})
             continue
@@ -106,7 +106,7 @@ def read_entries():
 
 
 def classify(entry):
-    """The class word and the qualifiers of an entry's `class` cell."""
+    """The class word and the qualifiers of an entry's `class` column."""
     words = [w.strip() for w in entry.get("class", "").split("·")]
     base = [w for w in words if w in CLASSES]
     extra = [w for w in words if w in QUALIFIERS]

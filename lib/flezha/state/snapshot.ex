@@ -14,7 +14,7 @@ defmodule Flezha.State.Snapshot do
        folds the redundant records, and because `apply_change` is required to be
        idempotent over `(seq, change)` the result is identical.
     3. **Crash mid-WAL-truncate** — handled by `WalWriter.truncate_up_to/2`'s
-       own `entity.wal.rewriting` -> rename sequence.
+       own `cell.wal.rewriting` -> rename sequence.
   """
 
   alias Flezha.SDK.RecordFrame
@@ -23,29 +23,29 @@ defmodule Flezha.State.Snapshot do
   @header_size RecordFrame.header_size()
 
   @doc """
-  Persist a snapshot for `entity_id`. Truncates the WAL up to `seq`
+  Persist a snapshot for `cell_id`. Truncates the WAL up to `seq`
   on success, after the rename is durable. Returns the absolute path
   the snapshot was written to.
   """
-  @spec write_snapshot(Paths.entity_id(), non_neg_integer(), binary(), binary()) ::
+  @spec write_snapshot(Paths.cell_id(), non_neg_integer(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
-  def write_snapshot(entity_id, seq, header, snapshot_bytes)
+  def write_snapshot(cell_id, seq, header, snapshot_bytes)
       when is_integer(seq) and seq >= 0 and is_binary(header) and is_binary(snapshot_bytes) do
     if byte_size(header) != @header_size do
       {:error, {:bad_header_size, byte_size(header)}}
     else
-      final_path = Paths.snapshot_path(entity_id, seq)
+      final_path = Paths.snapshot_path(cell_id, seq)
 
       crc = RecordFrame.crc32(header, snapshot_bytes)
       bytes = <<header::binary, snapshot_bytes::binary, crc::32-big>>
 
       with :ok <- Paths.atomic_install(final_path, &:file.write(&1, bytes), :snapshot) do
-        case WriterRegistry.lookup(entity_id) do
+        case WriterRegistry.lookup(cell_id) do
           {:ok, pid} -> WalWriter.truncate_up_to(pid, seq)
           :error -> :ok
         end
 
-        metrics = Metrics.for_entity(entity_id)
+        metrics = Metrics.for_cell(cell_id)
         Metrics.put(metrics, :snapshot_seq, seq)
 
         {:ok, final_path}
@@ -81,11 +81,11 @@ defmodule Flezha.State.Snapshot do
   end
 
   @doc """
-  Highest-seq snapshot for the Entity, or `nil` if none exist.
+  Highest-seq snapshot for the Cell, or `nil` if none exist.
   """
-  @spec latest_snapshot(Paths.entity_id()) :: {non_neg_integer(), binary()} | nil
-  def latest_snapshot(entity_id) do
-    case Paths.snapshot_paths(entity_id) do
+  @spec latest_snapshot(Paths.cell_id()) :: {non_neg_integer(), binary()} | nil
+  def latest_snapshot(cell_id) do
+    case Paths.snapshot_paths(cell_id) do
       [] -> nil
       paths -> List.last(paths)
     end
@@ -94,9 +94,9 @@ defmodule Flezha.State.Snapshot do
   @doc """
   Remove a single snapshot file by seq. No-op if absent.
   """
-  @spec delete_snapshot(Paths.entity_id(), non_neg_integer()) :: :ok
-  def delete_snapshot(entity_id, seq) do
-    _ = File.rm(Paths.snapshot_path(entity_id, seq))
+  @spec delete_snapshot(Paths.cell_id(), non_neg_integer()) :: :ok
+  def delete_snapshot(cell_id, seq) do
+    _ = File.rm(Paths.snapshot_path(cell_id, seq))
     :ok
   end
 end

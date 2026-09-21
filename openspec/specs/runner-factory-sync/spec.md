@@ -27,7 +27,7 @@ The wire protocol SHALL define an SDK→controller control message `UpdateFactor
 
 ### Requirement: Controller applies UpdateFactories as a full-set replacement
 
-`Flezha.Runner.ControlChannel` SHALL decode `UpdateFactories` on the existing SDK-initiated-command seam (alongside `ProcCommit`/`IterCommit`/`IterPark`) and dispatch it as an asynchronous cast to FleetManager — decoding SHALL NOT block the control channel. FleetManager SHALL replace the runner's stored factory list with the message's set by composing its existing removal and store paths (remove-then-store), scoped to that namespace + runner id; other runners' factory lists SHALL be untouched. An empty set SHALL be legal and SHALL leave the runner connected with zero placeable factories.
+`Flezha.Runner.ControlChannel` SHALL decode `UpdateFactories` on the existing SDK-initiated-command seam (alongside `TaskCommit`/`IterCommit`/`IterPark`) and dispatch it as an asynchronous cast to FleetManager — decoding SHALL NOT block the control channel. FleetManager SHALL replace the runner's stored factory list with the message's set by composing its existing removal and store paths (remove-then-store), scoped to that namespace + runner id; other runners' factory lists SHALL be untouched. An empty set SHALL be legal and SHALL leave the runner connected with zero placeable factories.
 
 #### Scenario: Full-set replacement drops removed factories
 - **GIVEN** the controller's stored factory list for runner R is {A, B}

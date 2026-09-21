@@ -5,7 +5,7 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a procedure context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operative, enabling and disabling a plugin, and reading operatives, plugins and entity state. It SHALL require no procedure to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operative start` takes: the factory, and an id only when the application chooses one.
+The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operative, enabling and disabling a plugin, and reading operatives, plugins and cell state. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operative start` takes: the factory, and an id only when the application chooses one.
 
 #### Scenario: An application starts an operative it implements
 
@@ -19,9 +19,9 @@ The SDK SHALL offer, on the runner object rather than on a procedure context, a 
 - **THEN** the operative SHALL start in the namespace the connection proved under a
   generated id
 
-#### Scenario: The call needs no procedure
+#### Scenario: The call needs no tasklet
 
-- **WHEN** the surface is called from application code with no procedure running
+- **WHEN** the surface is called from application code with no tasklet running
 - **THEN** the call SHALL succeed on the same terms as any other
 
 #### Scenario: The SDK presents no expiring credential
@@ -57,7 +57,7 @@ An SDK-issued act SHALL be judged at the same policy point, against the same dec
 
 #### Scenario: A read writes no audit record
 
-- **WHEN** an application reads operatives, plugins or entity state
+- **WHEN** an application reads operatives, plugins or cell state
 - **THEN** the read SHALL be authorized and SHALL write no audit record, matching
   the declaration its row already carries
 

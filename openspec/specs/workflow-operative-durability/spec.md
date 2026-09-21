@@ -5,12 +5,12 @@ TBD - created by archiving change workflow-operative-functionality. Update Purpo
 ## Requirements
 ### Requirement: WAL persistence for a workflow operative is durable by default, opt-out per class
 
-A workflow operative class SHALL be **durable by default**; an author MAY **opt out** per class (fire-and-forget) via a flag on the operative (mirroring the stream persistence flag), resolved at start through the existing persistence resolver, with an operator override still available. When durable, its procedures/entities SHALL be WAL-backed on the **same substrate** (WalWriter framing, snapshots, fsync batching, retention) and the **same `{operative_class, procedure_id, entity_key}` identity** a stream operative uses. When opted out, a workflow operative SHALL be pure in-memory and SHALL leave no on-disk state artifacts.
+A workflow operative class SHALL be **durable by default**; an author MAY **opt out** per class (fire-and-forget) via a flag on the operative (mirroring the stream persistence flag), resolved at start through the existing persistence resolver, with an operator override still available. When durable, its tasklets/cells SHALL be WAL-backed on the **same substrate** (WalWriter framing, snapshots, fsync batching, retention) and the **same `{operative_class, tasklet_id, cell_key}` identity** a stream operative uses. When opted out, a workflow operative SHALL be pure in-memory and SHALL leave no on-disk state artifacts.
 
 #### Scenario: Durable workflow operative is WAL-backed by default
 
-- **WHEN** a workflow operative class does not opt out of persistence and writes Entity state
-- **THEN** its Entity state changes SHALL be appended to the WAL on the shared substrate exactly as a stream operative's are
+- **WHEN** a workflow operative class does not opt out of persistence and writes Cell state
+- **THEN** its Cell state changes SHALL be appended to the WAL on the shared substrate exactly as a stream operative's are
 
 #### Scenario: Opted-out workflow operative writes nothing to disk
 
@@ -19,17 +19,17 @@ A workflow operative class SHALL be **durable by default**; an author MAY **opt 
 
 ### Requirement: A durable workflow operative resumes from the WAL on crash, at-least-once
 
-When a durable workflow operative's runner or controller restarts mid-run, the operative SHALL be respawned and its Procedure/Entity state restored from the WAL via the bind-time restore path, then execution SHALL **resume at the current procedure/iteration** rather than restarting from the beginning; the controller-side **proc-journal** decides redo-vs-skip — procedures recorded `proc_committed` SHALL be skipped and the first uncommitted procedure SHALL be seeded from the journaled handoff batch. An instance with no journal (opted-out class, or created before the journal existed) SHALL re-run from the top. Execution SHALL therefore be **at-least-once** — a step whose completion was not journaled before the crash MAY run again on resume — so steps and compensations SHALL be idempotent by author contract. An entity error inside a structured procedure SHALL first pass through the per-entity retry ladder (`workflow-entity-retry`); an error that is non-retryable or has exhausted the ladder SHALL be terminal — the operative compensates and terminates with status `error`, with no further platform re-run of the operative (author loops own their own semantic retry); this is distinct from crash-resume. A crash during a retry ladder SHALL converge on normal crash-resume of the uncommitted procedure (the in-memory attempt counter resets).
+When a durable workflow operative's runner or controller restarts mid-run, the operative SHALL be respawned and its Tasklet/Cell state restored from the WAL via the bind-time restore path, then execution SHALL **resume at the current tasklet/iteration** rather than restarting from the beginning; the controller-side **task-journal** decides redo-vs-skip — tasklets recorded `task_committed` SHALL be skipped and the first uncommitted tasklet SHALL be seeded from the journaled handoff batch. An instance with no journal (opted-out class, or created before the journal existed) SHALL re-run from the top. Execution SHALL therefore be **at-least-once** — a step whose completion was not journaled before the crash MAY run again on resume — so steps and compensations SHALL be idempotent by author contract. A cell error inside a structured tasklet SHALL first pass through the per-cell retry ladder (`workflow-cell-retry`); an error that is non-retryable or has exhausted the ladder SHALL be terminal — the operative compensates and terminates with status `error`, with no further platform re-run of the operative (author loops own their own semantic retry); this is distinct from crash-resume. A crash during a retry ladder SHALL converge on normal crash-resume of the uncommitted tasklet (the in-memory attempt counter resets).
 
 #### Scenario: Crash mid-run resumes from durable state
 
-- **WHEN** a durable workflow operative has committed Entity state and journaled `proc_committed` entries for several completed procedures, then its runner crashes and it is respawned
-- **THEN** it SHALL restore the committed state, skip the journaled procedures, and continue from the first uncommitted procedure seeded with the journaled handoff — not from the beginning
+- **WHEN** a durable workflow operative has committed Cell state and journaled `task_committed` entries for several completed tasklets, then its runner crashes and it is respawned
+- **THEN** it SHALL restore the committed state, skip the journaled tasklets, and continue from the first uncommitted tasklet seeded with the journaled handoff — not from the beginning
 
 #### Scenario: Exhausted or non-retryable error is terminal
 
-- **WHEN** a workflow operative's entity error is non-retryable or has exhausted the retry ladder
-- **THEN** the operative SHALL compensate completed procedures and terminate with status `error`, and the platform SHALL NOT automatically re-run the operative
+- **WHEN** a workflow operative's cell error is non-retryable or has exhausted the retry ladder
+- **THEN** the operative SHALL compensate completed tasklets and terminate with status `error`, and the platform SHALL NOT automatically re-run the operative
 
 ### Requirement: A finished workflow operative's data is retained for a window
 

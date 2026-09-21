@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Workflow do
   @moduledoc """
-  Published service-API surface for workflow instances: the proc journal, the
-  proc inbox, completion, retention, time travel and the two verbs that move an
+  Published service-API surface for workflow instances: the task journal, the
+  task inbox, completion, retention, time travel and the two verbs that move an
   instance — rescale and rewind.
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
@@ -29,8 +29,8 @@ defmodule Flezha.Service.Workflow do
   alias Flezha.State.Metrics
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
   alias Flezha.State.TimeTravel
 
   @type caller_context :: CallerContext.t()
@@ -62,10 +62,10 @@ defmodule Flezha.Service.Workflow do
     {:ok, PersistenceResolver.completed_retention_hours(operative_class, metadata)}
   end
 
-  @doc "One instance's proc-journal entries."
+  @doc "One instance's task-journal entries."
   @spec journal(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb journal(instance_id, caller_context), verb: :state_journal, row: &instance_row/1 do
-    ProcJournal.read(instance_id)
+    TaskJournal.read(instance_id)
   end
 
   @doc "The iterations the instance's journal has committed."
@@ -73,25 +73,25 @@ defmodule Flezha.Service.Workflow do
   verb committed_iterations(instance_id, caller_context),
     verb: :state_journal,
     row: &instance_row/1 do
-    {:ok, ProcJournal.committed_iterations(instance_id)}
+    {:ok, TaskJournal.committed_iterations(instance_id)}
   end
 
   @doc "The journal offset the instance has consumed up to."
   @spec consumed_offset(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb consumed_offset(instance_id, caller_context), verb: :state_journal, row: &instance_row/1 do
-    {:ok, ProcJournal.consumed_offset(instance_id)}
+    {:ok, TaskJournal.consumed_offset(instance_id)}
   end
 
   @doc "The inbox messages the instance has not taken yet."
   @spec undelivered(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb undelivered(instance_id, caller_context), verb: :state_inbox, row: &instance_row/1 do
-    {:ok, ProcInbox.undelivered(instance_id)}
+    {:ok, TaskInbox.undelivered(instance_id)}
   end
 
   @doc "The last offset written to the instance's inbox."
   @spec last_offset(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb last_offset(instance_id, caller_context), verb: :state_inbox, row: &instance_row/1 do
-    {:ok, ProcInbox.last_offset(instance_id)}
+    {:ok, TaskInbox.last_offset(instance_id)}
   end
 
   @doc "Durable-state counters across every operative class."
@@ -100,10 +100,10 @@ defmodule Flezha.Service.Workflow do
     {:ok, Metrics.snapshot_all()}
   end
 
-  @doc "One Entity's state as of `target`, replayed from its write-ahead log."
+  @doc "One Cell's state as of `target`, replayed from its write-ahead log."
   @spec time_travel(String.t(), term(), caller_context()) :: {:ok, term()} | {:error, term()}
-  verb time_travel(entity_id, target, caller_context), verb: :state_at, row: &entity_row/1 do
-    TimeTravel.query(entity_id, target)
+  verb time_travel(cell_id, target, caller_context), verb: :state_at, row: &cell_row/1 do
+    TimeTravel.query(cell_id, target)
   end
 
   # ---------- Mutations ----------
@@ -143,6 +143,6 @@ defmodule Flezha.Service.Workflow do
   defp instance_row([instance_id | _]) when is_binary(instance_id),
     do: {:ok, %{namespace: OperativeManager.namespace_of_class(instance_id)}}
 
-  defp entity_row([{operative_class, _procedure, _key} | _]),
+  defp cell_row([{operative_class, _tasklet, _key} | _]),
     do: {:ok, %{namespace: OperativeManager.namespace_of_class(operative_class)}}
 end

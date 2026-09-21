@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   @moduledoc """
   Per-`plugin_id` transactional Postgres sink. Per flush batch ONE transaction
   upserts every record into `flezha_records` keyed by `flz.key` AND upserts the
-  per-Entity `flezha_sink_progress` watermark, so data and progress can never
+  per-Cell `flezha_sink_progress` watermark, so data and progress can never
   diverge.
 
   Every upsert is guarded by `(epoch, seq)` monotonicity, so a re-driven batch
@@ -29,7 +29,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   @records_ddl """
   CREATE TABLE IF NOT EXISTS #{@records_table} (
     key text PRIMARY KEY,
-    entity text,
+    cell text,
     seq text,
     epoch bigint,
     payload bytea,
@@ -39,7 +39,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   @progress_ddl """
   CREATE TABLE IF NOT EXISTS #{@progress_table} (
-    entity text PRIMARY KEY,
+    cell text PRIMARY KEY,
     last_seq text,
     epoch bigint
   )
@@ -49,12 +49,12 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # numerically ("10.0" > "9.1"); the row comparison is the monotonicity
   # guard — not-strictly-newer identities leave the row untouched.
   @records_upsert """
-  INSERT INTO #{@records_table} (key, entity, seq, epoch, payload, updated_at)
-  SELECT u.key, u.entity, u.seq, u.epoch, u.payload, now()
+  INSERT INTO #{@records_table} (key, cell, seq, epoch, payload, updated_at)
+  SELECT u.key, u.cell, u.seq, u.epoch, u.payload, now()
   FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[], $5::bytea[])
-       AS u(key, entity, seq, epoch, payload)
+       AS u(key, cell, seq, epoch, payload)
   ON CONFLICT (key) DO UPDATE SET
-    entity = excluded.entity,
+    cell = excluded.cell,
     seq = excluded.seq,
     epoch = excluded.epoch,
     payload = excluded.payload,
@@ -64,8 +64,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   """
 
   @progress_upsert """
-  INSERT INTO #{@progress_table} (entity, last_seq, epoch) VALUES ($1, $2, $3)
-  ON CONFLICT (entity) DO UPDATE SET
+  INSERT INTO #{@progress_table} (cell, last_seq, epoch) VALUES ($1, $2, $3)
+  ON CONFLICT (cell) DO UPDATE SET
     last_seq = excluded.last_seq,
     epoch = excluded.epoch
   WHERE (excluded.epoch, string_to_array(excluded.last_seq, '.')::bigint[]) >
@@ -269,8 +269,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
       Postgrex.transaction(state.pool, fn conn ->
         Postgrex.query!(conn, @records_upsert, record_params(records))
 
-        Enum.each(progress, fn {entity, last_seq, epoch} ->
-          Postgrex.query!(conn, @progress_upsert, [entity, last_seq, epoch])
+        Enum.each(progress, fn {cell, last_seq, epoch} ->
+          Postgrex.query!(conn, @progress_upsert, [cell, last_seq, epoch])
         end)
       end)
 
@@ -296,18 +296,18 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   defp progress_rows(batch) do
     batch
-    |> Enum.reject(&(&1.entity == ""))
-    |> Enum.group_by(& &1.entity)
-    |> Enum.map(fn {entity, recs} ->
+    |> Enum.reject(&(&1.cell == ""))
+    |> Enum.group_by(& &1.cell)
+    |> Enum.map(fn {cell, recs} ->
       newest = Enum.max_by(recs, & &1.sort)
-      {entity, newest.seq, newest.epoch}
+      {cell, newest.seq, newest.epoch}
     end)
   end
 
   defp record_params(records) do
     [
       Enum.map(records, & &1.key),
-      Enum.map(records, & &1.entity),
+      Enum.map(records, & &1.cell),
       Enum.map(records, & &1.seq),
       Enum.map(records, & &1.epoch),
       Enum.map(records, & &1.payload)
@@ -324,7 +324,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     case Outbox.output_identity(metadata) do
       {:ok, identity} ->
         Map.merge(identity, %{
-          key: Map.get(metadata, "flz.key") || "#{identity.entity}/#{identity.seq}",
+          key: Map.get(metadata, "flz.key") || "#{identity.cell}/#{identity.seq}",
           payload: msg,
           metadata: metadata
         })
@@ -332,7 +332,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
       :none ->
         %{
           key: Map.get(metadata, "flz.key") || anon_key(),
-          entity: "",
+          cell: "",
           seq: "",
           epoch: 0,
           sort: {0, []},

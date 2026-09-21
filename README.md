@@ -1,7 +1,7 @@
 # Flezha
 
-Distributed stateful operatives: a compute graph of procedures, each with its
-own durable per-Entity state, placed and migrated across a cluster by a
+Distributed stateful operatives: a compute graph of tasklets, each with its
+own durable per-Cell state, placed and migrated across a cluster by a
 controller, with static and dynamic creation of operatives.
 
 It is built for ETL pipelines: extract from files, HTTP endpoints, sockets or
@@ -29,7 +29,7 @@ cargo run -p flezha_runner --example local_word_count
 **Local mode holds state in memory and nothing is durable** — no write-ahead
 log, no snapshots, no dead-letter queue, and nothing survives the process. It
 runs the deployed machinery (entry decode, edge transforms and keying, one
-Entity per key with its own mailbox, the retry ladder, inter-procedure
+Cell per key with its own mailbox, the retry ladder, inter-tasklet
 delivery); durability, plugins, placement and migration, the dead-letter queue,
 observability export, authz and multi-runner scale need a controller. It ships
 in every SDK.
@@ -47,7 +47,7 @@ tomorrow with no rebuild.
 | Stage | What carries it |
 | --- | --- |
 | Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operative's output ([`operative_forward.md`](docs/plugins/operative_forward.md)); or a plugin of your own ([`installation.md`](docs/plugins/installation.md)) |
-| Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`stream_transforms.md`](docs/sdk/stream_transforms.md)); procedures with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`multi_input_procedures.md`](docs/sdk/multi_input_procedures.md)); windows and timeouts from per-key timers ([`entity_timers.md`](docs/sdk/entity_timers.md)) |
+| Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`stream_transforms.md`](docs/sdk/stream_transforms.md)); tasklets with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`multi_input_tasklets.md`](docs/sdk/multi_input_tasklets.md)); windows and timeouts from per-key timers ([`cell_timers.md`](docs/sdk/cell_timers.md)) |
 | Load | Postgres, each batch writing its rows and its progress watermark in one transaction ([`postgres_sink.md`](docs/plugins/postgres_sink.md)); Kafka, with retries, batching and an idempotent producer ([`kafka_producer.md`](docs/plugins/kafka_producer.md)); a file; or the next operative |
 
 What a pipeline usually has to build around itself is already there:
@@ -89,9 +89,9 @@ kernel, the two operative profiles, and the diagrams. Vocabulary:
 - Run a whole graph in process, with no controller ([`docs/quickstart.md`](docs/quickstart.md))
 - Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
-- Per-Entity durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
+- Per-Cell durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
-- Workflow operatives — a procedure tree with saga compensation, a durable loop, and suspension ([`docs/architecture/workflow_profile.md`](docs/architecture/workflow_profile.md))
+- Workflow operatives — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/workflow_profile.md`](docs/architecture/workflow_profile.md))
 - Installable plugin subsystem ([`docs/plugins/installation.md`](docs/plugins/installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
@@ -260,19 +260,19 @@ _build/dev/rel/flezha/bin/flz controller stop
 _build/dev/rel/flezha/bin/flz operative start do_nothing --id my_operative
 ```
 
-`--init-values` seeds Procedure state at start. Its top level is a map of
-**Procedure name** to that Procedure's starting state, so one operative seeds
-several Procedures from one document:
+`--init-values` seeds Tasklet state at start. Its top level is a map of
+**Tasklet name** to that Tasklet's starting state, so one operative seeds
+several Tasklets from one document:
 
 ```bash
 _build/dev/rel/flezha/bin/flz operative start compare_filter --id my_operative --init-values='{
-  "compare_filter_procedure": {"comparable": "hello world", "inverted": false}
+  "compare_filter_tasklet": {"comparable": "hello world", "inverted": false}
 }'
 ```
 
-Name only the Procedures you want to seed; one you leave out starts from the
-state its class builds. A Procedure with declared Entity keys takes one state
-per key instead: `{"<procedure>": {"<entity_key>": <state>}}`. A name the class
+Name only the Tasklets you want to seed; one you leave out starts from the
+state its class builds. A Tasklet with declared Cell keys takes one state
+per key instead: `{"<tasklet>": {"<cell_key>": <state>}}`. A name the class
 does not carry is ignored with a line on the runner's stderr and the start
 still succeeds, so check the spelling. The full rules, including what a
 workflow operative does with the same flag, are in
@@ -336,12 +336,12 @@ _build/dev/rel/flezha/bin/flz operative state my_operative
 ### Performance Testing
 
 Use `./scripts/bench.sh` to measure throughput. Switching axes are independent:
-runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`entity`).
+runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`cell`).
 
 ```bash
 ./scripts/bench.sh                                # rust + uds, defaults
 ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # any combination
-./scripts/bench.sh --shape entity --pool-sizes 1,8
+./scripts/bench.sh --shape cell --pool-sizes 1,8
 ./scripts/bench.sh --help
 ```
 
@@ -353,8 +353,8 @@ Full reference (flags, shapes, CI gates, floors, triage):
 Flezha auto-restores after any restart — single-controller crash, rolling
 deploy, or full cluster cold boot. Two persistence layers back it: the
 ProcessHub durable registry, which holds every operative's child-spec including
-`opts[:plugins]`, and the per-Entity WAL/snapshot, which holds change-by-change
-progress and is shipped back to the SDK when the Entity's stream reattaches.
+`opts[:plugins]`, and the per-Cell WAL/snapshot, which holds change-by-change
+progress and is shipped back to the SDK when the Cell's stream reattaches.
 What is written where, the boot reconcile, the `flz boot status` and
 `flz boot await` surface, the `FLEZHA_AUTO_RESTORE_ENABLED` kill-switch and the
 safety matrix per scenario — including the one tolerated data-loss case:

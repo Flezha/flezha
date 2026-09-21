@@ -220,7 +220,7 @@ The installer SHALL write installed plugin files to `app_data/plugins/installed/
 
 ### Requirement: Installed-plugin catalog persistence
 
-The system SHALL maintain a DETS-backed catalog named `installed_plugins.dets` in the layout's plugin subtree, reached through `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk at the end of each install, upgrade, enable, disable, and uninstall procedure before the procedure returns.
+The system SHALL maintain a DETS-backed catalog named `installed_plugins.dets` in the layout's plugin subtree, reached through `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk at the end of each install, upgrade, enable, disable, and uninstall tasklet before the tasklet returns.
 
 The catalog SHALL be one declared durable store: the store names its layout subtree and its filename, and the opening, the corrupt-file rotation, the per-mutation sync and the close on shutdown SHALL be performed by the shared store implementation. `Flezha.Plugin.Installer.Store` SHALL NOT open, rotate, sync or close a DETS table itself, and SHALL NOT create its directory itself.
 
@@ -349,9 +349,9 @@ row's `status` updated to `:load_failed` but MUST NOT prevent other plugins from
 
 ### Requirement: Public service API
 
-`Flezha.Plugin.Installer` SHALL expose exactly these public functions, each reachable from in-node callers (CLI via `Flezha.Service.CliManager`, future Phoenix UI, and test code): `install/2`, `upgrade/3`, `uninstall/2`, `enable/2`, `disable/2`, `list/0`, and `info/1`. All calls MUST be serialized through a single GenServer; concurrent invocations of mutating procedures (`install`, `upgrade`, `uninstall`, `enable`, `disable`) MUST queue rather than race. Read-only procedures (`list`, `info`) MAY be served without queuing but MUST observe the most recent successful write.
+`Flezha.Plugin.Installer` SHALL expose exactly these public functions, each reachable from in-node callers (CLI via `Flezha.Service.CliManager`, future Phoenix UI, and test code): `install/2`, `upgrade/3`, `uninstall/2`, `enable/2`, `disable/2`, `list/0`, and `info/1`. All calls MUST be serialized through a single GenServer; concurrent invocations of mutating tasklets (`install`, `upgrade`, `uninstall`, `enable`, `disable`) MUST queue rather than race. Read-only tasklets (`list`, `info`) MAY be served without queuing but MUST observe the most recent successful write.
 
-#### Scenario: Mutating procedures are serialized
+#### Scenario: Mutating tasklets are serialized
 - **WHEN** two callers invoke `install/2` concurrently
 - **THEN** exactly one install MUST be in flight at a time and the second MUST wait for the first to complete before starting
 

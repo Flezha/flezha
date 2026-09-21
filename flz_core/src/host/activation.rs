@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use flz_transport::transport::FlezhaStream;
 
+use super::cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 use super::decl::HostClock;
-use super::entity::{entity_ref_of, BytesBuffer, HostPayload, HostProcedureFacts};
 use super::prepare::{apply_prepare_outcome, PrepareCrossing};
-use crate::entity::{EntityItem, EntitySlot};
+use crate::cell::{CellItem, CellSlot};
 use crate::error::Error;
 use crate::flusher::{DlqEntryBody, InvocationEffects, OutputRecord, SettlePolicy};
 use crate::poll_core::{EngineActivation, EnginePayload, ItemAttempt, PollCore};
@@ -53,14 +53,14 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
         },
         EnginePayload::WorkflowStep(step) => schema::Activation {
             token: act.token,
-            target: entity_ref_of(&step.slot),
+            target: cell_ref_of(&step.slot),
             kind: workflow_step_kind(step),
             change_seq: step.slot.change_seq.load(Ordering::Acquire),
             factory: step.slot.topology.factory_id.to_string(),
         },
         EnginePayload::Work { slot, items } => schema::Activation {
             token: act.token,
-            target: entity_ref_of(slot),
+            target: cell_ref_of(slot),
             kind: schema::ActivationKind::Work(work_items_to_schema(slot, items)),
             change_seq: slot.change_seq.load(Ordering::Acquire),
             factory: slot.topology.factory_id.to_string(),
@@ -69,30 +69,30 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
 }
 
 /// A prepare crossing is addressed to the channel's first consumer.
-fn prepare_target(crossing: &PrepareCrossing) -> schema::EntityRef {
-    schema::EntityRef {
+fn prepare_target(crossing: &PrepareCrossing) -> schema::CellRef {
+    schema::CellRef {
         operative: crossing.instance.instance_id.to_string(),
-        procedure: crossing
+        tasklet: crossing
             .instance
             .topology
             .channel(crossing.channel)
             .and_then(|c| c.consumers.first())
-            .map(|e| e.procedure)
+            .map(|e| e.tasklet)
             .unwrap_or(0),
-        entity_key: None,
+        cell_key: None,
     }
 }
 
-fn work_items_to_schema(slot: &EntitySlot, items: &[ItemAttempt]) -> Vec<schema::WorkItem> {
+fn work_items_to_schema(slot: &CellSlot, items: &[ItemAttempt]) -> Vec<schema::WorkItem> {
     let now_fallback = host_clock_now(slot);
     items
         .iter()
         // A close is consumed by the batch assembler; it never becomes
         // host work, and filtering keeps the effect-to-item zip aligned
         // if that invariant ever loosened.
-        .filter(|work| !matches!(work.item, EntityItem::CloseInterval))
+        .filter(|work| !matches!(work.item, CellItem::CloseInterval))
         .map(|work| match &work.item {
-            EntityItem::Input(payload) => {
+            CellItem::Input(payload) => {
                 let (channel, bytes, metadata) =
                     host_input_parts(payload.value.downcast_ref::<HostPayload>(), slot);
                 schema::WorkItem::Input(schema::InputItem {
@@ -104,12 +104,12 @@ fn work_items_to_schema(slot: &EntitySlot, items: &[ItemAttempt]) -> Vec<schema:
                     now: work.now.unwrap_or(now_fallback),
                 })
             }
-            EntityItem::Timer(fire) => schema::WorkItem::Timer(schema::TimerItem {
+            CellItem::Timer(fire) => schema::WorkItem::Timer(schema::TimerItem {
                 kind: fire.kind,
                 scheduled_at: fire.scheduled_at,
             }),
             // Filtered out above; a firing item is the harmless shape.
-            EntityItem::CloseInterval => schema::WorkItem::Timer(schema::TimerItem {
+            CellItem::CloseInterval => schema::WorkItem::Timer(schema::TimerItem {
                 kind: schema::TimerKind::ProcessingTime,
                 scheduled_at: 0,
             }),
@@ -154,7 +154,7 @@ fn workflow_step_kind(step: &crate::workflow::step::WorkflowStep) -> schema::Act
 
 /// The declared clock's value, once per handout; the engine stamps event-time
 /// items, wall and logical clocks evaluate here.
-fn host_clock_now(slot: &EntitySlot) -> u64 {
+fn host_clock_now(slot: &CellSlot) -> u64 {
     let clock = slot
         .dispatcher
         .host_facts()
@@ -171,7 +171,7 @@ fn host_clock_now(slot: &EntitySlot) -> u64 {
 /// payload the host's decoder rejects.
 fn host_input_parts(
     payload: Option<&HostPayload>,
-    slot: &EntitySlot,
+    slot: &CellSlot,
 ) -> (u32, Vec<u8>, Vec<(String, String)>) {
     match payload {
         Some(p) => (p.channel, p.bytes.clone(), p.metadata.clone()),
@@ -179,9 +179,9 @@ fn host_input_parts(
     }
 }
 
-fn input_channel_of(slot: &EntitySlot) -> u32 {
+fn input_channel_of(slot: &CellSlot) -> u32 {
     slot.topology
-        .procedure(slot.procedure_id)
+        .tasklet(slot.tasklet_id)
         .and_then(|p| p.input_channel_ids.first().copied())
         .unwrap_or(0)
 }
@@ -197,7 +197,7 @@ pub fn apply_result(
     let (slot, items) = match payload {
         EnginePayload::Command { reply, .. } => {
             // A command interaction: the blocked command thread owns the
-            // entity gate and validates the outcome; this side only
+            // cell gate and validates the outcome; this side only
             // rendezvous-routes.
             let _ = reply.send(result.outcome);
             return Ok(());
@@ -222,7 +222,7 @@ pub fn apply_result(
             answer_failed_activation(core, token, &slot, items, err);
             Ok(())
         }
-        // A malformed answer still answers: the entity is released with its
+        // A malformed answer still answers: the cell is released with its
         // items intact rather than retired behind a handout nobody will
         // complete.
         _ => {
@@ -239,7 +239,7 @@ pub fn apply_result(
 fn answer_failed_activation(
     core: &PollCore,
     token: u64,
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     items: Vec<ItemAttempt>,
     err: schema::WorkError,
 ) {
@@ -267,7 +267,7 @@ fn answer_failed_activation(
 fn settle_items(
     core: &PollCore,
     token: u64,
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     items: Vec<ItemAttempt>,
     effects: Vec<schema::ItemEffect>,
 ) -> Result<(), Error> {
@@ -283,12 +283,12 @@ fn settle_items(
         match effect.verdict.clone() {
             schema::Verdict::Ok => {
                 settle_item(slot, &work, effect, None);
-                crate::entity::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
             }
             schema::Verdict::RetryableError { message } => {
                 if work.is_final {
                     settle_item(slot, &work, effect, Some((message, work.attempt)));
-                    crate::entity::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                    crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
                 // Keep the failed attempt's changes out of the flusher's
@@ -304,7 +304,7 @@ fn settle_items(
             }
             schema::Verdict::NonRetryableError { message } => {
                 settle_item(slot, &work, effect, Some((message, work.attempt)));
-                crate::entity::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -312,7 +312,7 @@ fn settle_items(
     Ok(())
 }
 
-/// A stream never completes: an item whose procedure asked to fails as the
+/// A stream never completes: an item whose tasklet asked to fails as the
 /// author's own non-retryable error would, carrying nothing it recorded.
 pub(super) fn refuse_completion(effect: &mut schema::ItemEffect) {
     if effect.complete.is_some() && effect.verdict == schema::Verdict::Ok {
@@ -382,7 +382,7 @@ pub(crate) fn empty_effect() -> schema::ItemEffect {
     }
 }
 
-fn stash_pending_attempt(slot: &Arc<EntitySlot>, changes: Vec<Vec<u8>>) {
+fn stash_pending_attempt(slot: &Arc<CellSlot>, changes: Vec<Vec<u8>>) {
     if changes.is_empty() {
         return;
     }
@@ -396,7 +396,7 @@ fn stash_pending_attempt(slot: &Arc<EntitySlot>, changes: Vec<Vec<u8>>) {
 /// outputs, and mint the park where the typed layer does — inside the effect
 /// record under the tier, through the blocking park otherwise.
 pub(super) fn settle_item(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     work: &ItemAttempt,
     effect: schema::ItemEffect,
     park: Option<(String, u32)>,
@@ -431,11 +431,11 @@ pub(super) fn settle_item(
     crate::timer::arm_interval_deadline(slot);
     ship_plugin_outputs(slot, &stream, plugin_outputs);
     if let Some(entry) = tier_off_dlq {
-        // Tier-off park: ship the park frame and hold this entity until the
+        // Tier-off park: ship the park frame and hold this cell until the
         // controller acks the DLQ append as durable — park-then-advance.
         crate::park::park_tier_off(
-            &slot.entity_identity,
-            slot.dispatcher.entity_label(),
+            &slot.cell_identity,
+            slot.dispatcher.cell_label(),
             consumed_offset,
             entry,
         );
@@ -444,11 +444,11 @@ pub(super) fn settle_item(
 
 /// The connection an item's outputs and park ride; a close takes the live
 /// secondary.
-fn stream_of(item: &EntityItem) -> Option<Arc<FlezhaStream>> {
+fn stream_of(item: &CellItem) -> Option<Arc<FlezhaStream>> {
     match item {
-        EntityItem::Input(p) => Some(Arc::clone(&p.stream)),
-        EntityItem::Timer(f) => Some(Arc::clone(&f.stream)),
-        EntityItem::CloseInterval => crate::state_sink::secondary_stream(),
+        CellItem::Input(p) => Some(Arc::clone(&p.stream)),
+        CellItem::Timer(f) => Some(Arc::clone(&f.stream)),
+        CellItem::CloseInterval => crate::state_sink::secondary_stream(),
     }
 }
 
@@ -461,35 +461,30 @@ fn split_outputs(outputs: Vec<schema::Output>) -> (Vec<schema::Output>, Vec<sche
 }
 
 /// The offset is core-authoritative; a firing consumes nothing.
-fn consumed_offset_of(item: &EntityItem) -> Option<u64> {
+fn consumed_offset_of(item: &CellItem) -> Option<u64> {
     match item {
-        EntityItem::Input(p) => p.consumed_offset,
-        EntityItem::Timer(_) | EntityItem::CloseInterval => None,
+        CellItem::Input(p) => p.consumed_offset,
+        CellItem::Timer(_) | CellItem::CloseInterval => None,
     }
 }
 
 /// A failed invocation commits no timer registrations — except a poison
 /// firing's own removal, so it parks once instead of firing forever.
-fn committed_timers(item: &EntityItem, timers: Vec<TimerOp>, parked: bool) -> Vec<TimerOp> {
+fn committed_timers(item: &CellItem, timers: Vec<TimerOp>, parked: bool) -> Vec<TimerOp> {
     if !parked {
         return timers;
     }
     match item {
-        EntityItem::Timer(fire) => vec![TimerOp::cancel(fire.kind, fire.scheduled_at)],
-        EntityItem::Input(_) | EntityItem::CloseInterval => Vec::new(),
+        CellItem::Timer(fire) => vec![TimerOp::cancel(fire.kind, fire.scheduled_at)],
+        CellItem::Input(_) | CellItem::CloseInterval => Vec::new(),
     }
 }
 
-fn park_entry(
-    slot: &Arc<EntitySlot>,
-    item: &EntityItem,
-    error: String,
-    attempts: u32,
-) -> DlqEntryBody {
+fn park_entry(slot: &Arc<CellSlot>, item: &CellItem, error: String, attempts: u32) -> DlqEntryBody {
     crate::park::PARKED_TOTAL.fetch_add(1, Ordering::Relaxed);
     eprintln!(
-        "[flezha] procedure {} parking poison payload to DLQ after {} attempt(s): {}",
-        slot.dispatcher.procedure_name(),
+        "[flezha] tasklet {} parking poison payload to DLQ after {} attempt(s): {}",
+        slot.dispatcher.tasklet_name(),
         attempts,
         error
     );
@@ -498,11 +493,11 @@ fn park_entry(
         error,
         attempts,
         payload: match item {
-            EntityItem::Input(p) => p
+            CellItem::Input(p) => p
                 .value
                 .downcast_ref::<HostPayload>()
                 .map(|hp| hp.bytes.clone()),
-            EntityItem::Timer(_) | EntityItem::CloseInterval => None,
+            CellItem::Timer(_) | CellItem::CloseInterval => None,
         },
     }
 }
@@ -511,7 +506,7 @@ fn park_entry(
 /// an edge output has no durable copy, so a consumed offset durable ahead of
 /// it would be a permanent loss under effectively-once.
 fn route_edge_outputs(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
     edge_outputs: Vec<schema::Output>,
@@ -542,8 +537,8 @@ fn route_edge_outputs(
             consumed_offset,
             slot,
         ) {
-            // A push this Entity could not deliver is HELD, not lost:
-            // it sits in the producer's holdback and the Entity is
+            // A push this Cell could not deliver is HELD, not lost:
+            // it sits in the producer's holdback and the Cell is
             // handed no further work until it lands. The remaining
             // outputs of this completion still route — rule 2 appends
             // them behind the held one rather than letting them
@@ -551,7 +546,7 @@ fn route_edge_outputs(
             Ok(_) => {}
             Err(e) => tracing::warn!(
                 target: "flezha::host",
-                entity = slot.dispatcher.entity_label(),
+                cell = slot.dispatcher.cell_label(),
                 "edge output dropped: {e}"
             ),
         }
@@ -561,8 +556,8 @@ fn route_edge_outputs(
 /// Fold the invocation into the buffer per its tier; outside the tier the
 /// wire outputs and the park are handed back to ship after the buffer ops.
 fn settle_into_buffer(
-    slot: &Arc<EntitySlot>,
-    facts: &HostProcedureFacts,
+    slot: &Arc<CellSlot>,
+    facts: &HostTaskletFacts,
     mut effects: InvocationEffects<Vec<u8>>,
     wire_outputs: Vec<schema::Output>,
     dlq: Option<DlqEntryBody>,
@@ -605,7 +600,7 @@ fn output_records(wire_outputs: Vec<schema::Output>) -> Vec<OutputRecord> {
         .collect()
 }
 
-fn commit_timers(slot: &Arc<EntitySlot>, timers: &[TimerOp], stream: &Arc<FlezhaStream>) {
+fn commit_timers(slot: &Arc<CellSlot>, timers: &[TimerOp], stream: &Arc<FlezhaStream>) {
     if timers.is_empty() {
         return;
     }
@@ -621,7 +616,7 @@ fn commit_timers(slot: &Arc<EntitySlot>, timers: &[TimerOp], stream: &Arc<Flezha
 /// Ship the tier-off plugin outputs. The frame's payload id is the OPERATIVE
 /// ID — what the controller routes `:on_output` by.
 fn ship_plugin_outputs(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     plugin_outputs: Vec<schema::Output>,
 ) {
@@ -649,9 +644,9 @@ fn ship_plugin_outputs(
     }
 }
 
-fn park_channel_of(slot: &Arc<EntitySlot>) -> String {
+fn park_channel_of(slot: &Arc<CellSlot>) -> String {
     slot.topology
-        .procedure(slot.procedure_id)
+        .tasklet(slot.tasklet_id)
         .and_then(|d| d.input_channel_ids.first())
         .and_then(|&id| slot.topology.channel(id))
         .map(|c| c.name.to_string())

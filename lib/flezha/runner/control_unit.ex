@@ -75,7 +75,7 @@ defmodule Flezha.Runner.ControlUnit do
   Sends a `OperativeMessage` to the SDK-side operative via the control
   channel and returns the decoded `OperativeMessageResponse`.
 
-  Mirrors the `EntityState` request/reply pattern: the compute engine's
+  Mirrors the `CellState` request/reply pattern: the compute engine's
   reply (a protobuf-encoded `OperativeMessageResponse`) is delivered by
   `handle_payload/2` as the `raw_data` field of the outer `CommandResponse`.
   An empty `error` string is mapped to `{:ok, payload}`; a non-empty error
@@ -110,8 +110,8 @@ defmodule Flezha.Runner.ControlUnit do
   `:metadata`. With `metadata: true` the reply is
   `{:ok, raw_data, frame_metadata}` — the reply frame's own metadata map, which
   is where an SDK answer carries anything that must not change the payload's
-  shape (`EntityState` stamps `flz.change_seq` there for a single selected
-  Entity).
+  shape (`CellState` stamps `flz.change_seq` there for a single selected
+  Cell).
   """
   @spec send_control_await(binary() | nil, tuple(), keyword()) ::
           {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
@@ -312,12 +312,12 @@ defmodule Flezha.Runner.ControlUnit do
       init_values: init_values,
       kind: kind,
       # Both stamped on opts by `Flezha.Operative.Lifecycle`. Non-zero only
-      # for a durable workflow (re)bind: the SDK driver holds its first Procedure
-      # until this many Entity restores land (crash-resume). `proc_journal` is
+      # for a durable workflow (re)bind: the SDK driver holds its first Tasklet
+      # until this many Cell restores land (crash-resume). `task_journal` is
       # `nil` unless the instance has a journal to resume from.
-      resume_entity_count: Keyword.get(operative.opts, :resume_entity_count, 0),
+      resume_cell_count: Keyword.get(operative.opts, :resume_cell_count, 0),
       inbox_tail_count: Keyword.get(operative.opts, :inbox_tail_count, 0),
-      proc_journal: Keyword.get(operative.opts, :proc_journal)
+      task_journal: Keyword.get(operative.opts, :task_journal)
     }
 
     command = with_partition_identity(command, operative.opts)

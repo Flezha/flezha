@@ -1,9 +1,9 @@
 defmodule Flezha.State.WatchdogTest do
   @moduledoc """
-  Defect B: the per-Entity output-staleness sweep and the
-  compaction-handshake timeout. A live Entity whose persisted seq
-  freezes is detected and resynced; a genuinely idle Entity is not
-  flagged; a `CompactEntity` whose snapshot never returns is timed out
+  Defect B: the per-Cell output-staleness sweep and the
+  compaction-handshake timeout. A live Cell whose persisted seq
+  freezes is detected and resynced; a genuinely idle Cell is not
+  flagged; a `CompactCell` whose snapshot never returns is timed out
   and recovered, and stays retriable.
   """
 
@@ -47,8 +47,8 @@ defmodule Flezha.State.WatchdogTest do
     parent = self()
 
     on_exit(
-      TestHelpers.override_env(:state_resync_fun, fn entity_id, opts ->
-        send(parent, {:resync_called, entity_id, opts})
+      TestHelpers.override_env(:state_resync_fun, fn cell_id, opts ->
+        send(parent, {:resync_called, cell_id, opts})
         {:ok, make_ref()}
       end)
     )
@@ -79,7 +79,7 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   defp live_writer(suffix, header) do
-    pid = TestHelpers.sample_entity_id(suffix <> uniq())
+    pid = TestHelpers.sample_cell_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -90,7 +90,7 @@ defmodule Flezha.State.WatchdogTest do
 
   test "a writer that refuses its status read does not take the Watchdog down",
        %{header: header} do
-    {entity_id, writer} = live_writer("refused_", header)
+    {cell_id, writer} = live_writer("refused_", header)
 
     # The Registry clears an entry from the exit it is linked by, and a suspended
     # partition handles none, so the sweep provably still finds this writer after
@@ -103,7 +103,7 @@ defmodule Flezha.State.WatchdogTest do
     ref = Process.monitor(writer)
     :ok = WalWriter.close(writer)
     assert_receive {:DOWN, ^ref, :process, ^writer, _}, 1_000
-    assert {:ok, ^writer} = WriterRegistry.lookup(entity_id)
+    assert {:ok, ^writer} = WriterRegistry.lookup(cell_id)
 
     watchdog = Process.whereis(Watchdog)
     :ok = Watchdog.sweep_now()
@@ -112,9 +112,9 @@ defmodule Flezha.State.WatchdogTest do
            "the sweep killed the node's Watchdog on one refused status read"
   end
 
-  test "a live entity whose seq froze is flagged, and the sensor heals nothing",
+  test "a live cell whose seq froze is flagged, and the sensor heals nothing",
        %{header: header} do
-    {_entity_id, writer} = live_writer("stall_", header)
+    {_cell_id, writer} = live_writer("stall_", header)
 
     # The advance window lapses, then Changes keep arriving (duplicates)
     # without advancing the seq — the stall signature.
@@ -133,7 +133,7 @@ defmodule Flezha.State.WatchdogTest do
     # The Watchdog emits and stops there. Its former direct resync is the
     # second actor the convergence pipeline replaced with the output-stall
     # ladder; a resync from here would race that ladder under no backoff.
-    refute_received {:resync_called, _entity_id, _opts}
+    refute_received {:resync_called, _cell_id, _opts}
   end
 
   test "every completed sweep stamps the sensor freshness mark" do
@@ -146,8 +146,8 @@ defmodule Flezha.State.WatchdogTest do
     assert :erlang.monotonic_time(:millisecond) - at < 1_000
   end
 
-  test "a genuinely idle entity is not flagged", %{header: header} do
-    {{_, _, key} = entity_id, writer} = live_writer("idle_", header)
+  test "a genuinely idle cell is not flagged", %{header: header} do
+    {{_, _, key} = cell_id, writer} = live_writer("idle_", header)
 
     # No Changes arrive after the window lapses — last_change_seen_at goes
     # stale alongside last_advance_at, so this is idle, not stalled.
@@ -155,30 +155,30 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to THIS test's entity key. The Watchdog is a singleton and every
+    # Scoped to THIS test's cell key. The Watchdog is a singleton and every
     # test in this file uses the operative class "TestOperative", so an unscoped
     # refute — or one scoped only to the operative — matches a sibling test's
     # message and fails whenever the suite interleaves.
     refute_received {:output_stall, _, %{key: ^key}}
-    refute_received {:resync_called, ^entity_id, _}
+    refute_received {:resync_called, ^cell_id, _}
   end
 
-  test "a stalled compaction times out and stays retriable, without resyncing a live entity below give-up" do
-    {_, _, key} = entity_id = TestHelpers.sample_entity_id("comp_" <> uniq())
+  test "a stalled compaction times out and stays retriable, without resyncing a live cell below give-up" do
+    {_, _, key} = cell_id = TestHelpers.sample_cell_id("comp_" <> uniq())
 
-    Watchdog.compaction_started(entity_id, "exec-comp")
-    age_compaction(entity_id, @compaction_ms * 2)
+    Watchdog.compaction_started(cell_id, "exec-comp")
+    age_compaction(cell_id, @compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to this test's entity KEY, not its operative: the Watchdog is a
+    # Scoped to this test's cell KEY, not its operative: the Watchdog is a
     # singleton and every test here shares the class "TestOperative", so a sweep
     # also sees compactions a sibling test left pending.
     assert_receive {:compaction_timeout, %{waited_ms: ms}, %{key: ^key, attempt: 1}}, 1_000
     assert ms >= @compaction_ms
-    # Below the give-up threshold a still-live, still-correct Entity is NOT
+    # Below the give-up threshold a still-live, still-correct Cell is NOT
     # force-resynced — the backoff-gated trigger sweep is the retry.
-    refute_received {:resync_called, ^entity_id, _}
+    refute_received {:resync_called, ^cell_id, _}
 
     # Entry was cleared on timeout — a second sweep does not re-fire.
     :ok = Watchdog.sweep_now()
@@ -187,15 +187,15 @@ defmodule Flezha.State.WatchdogTest do
 
   test "repeated compaction failures back off and give up loudly, declaring the give-up" do
     become_loop()
-    {_, _, key} = entity_id = TestHelpers.sample_entity_id("giveup_" <> uniq())
+    {_, _, key} = cell_id = TestHelpers.sample_cell_id("giveup_" <> uniq())
 
     # Drive four timeouts (compaction_started bypasses the backoff-gated trigger
     # sweep, so this reaches the give-up threshold without waiting out cooldowns).
     log =
       ExUnit.CaptureLog.capture_log(fn ->
         for _ <- 1..4 do
-          Watchdog.compaction_started(entity_id, "exec-giveup")
-          age_compaction(entity_id, @compaction_ms * 2)
+          Watchdog.compaction_started(cell_id, "exec-giveup")
+          age_compaction(cell_id, @compaction_ms * 2)
           :ok = Watchdog.sweep_now()
         end
 
@@ -209,44 +209,44 @@ defmodule Flezha.State.WatchdogTest do
     # The fourth crossing declares the give-up, with the runner the WalWriter
     # status held, to the loop — which plans the resync. The Watchdog itself
     # resyncs nothing.
-    assert_receive {:declare, :compaction_gave_up, ^entity_id, %{runner_id: "exec-giveup"}}, 1_000
-    refute_received {:resync_called, ^entity_id, _}
+    assert_receive {:declare, :compaction_gave_up, ^cell_id, %{runner_id: "exec-giveup"}}, 1_000
+    refute_received {:resync_called, ^cell_id, _}
   end
 
   test "a completed compaction is declared as the counter-fact of a give-up" do
     become_loop()
-    entity_id = TestHelpers.sample_entity_id("compdone_" <> uniq())
+    cell_id = TestHelpers.sample_cell_id("compdone_" <> uniq())
 
-    Watchdog.compaction_started(entity_id, "exec-done")
-    Watchdog.compaction_completed(entity_id)
+    Watchdog.compaction_started(cell_id, "exec-done")
+    Watchdog.compaction_completed(cell_id)
     :ok = Watchdog.sweep_now()
 
-    assert_receive {:declare, :compaction_completed, ^entity_id, %{}}, 1_000
+    assert_receive {:declare, :compaction_completed, ^cell_id, %{}}, 1_000
   end
 
   test "a compaction that completes before the bound never times out" do
-    {_, _, key} = entity_id = TestHelpers.sample_entity_id("compok_" <> uniq())
+    {_, _, key} = cell_id = TestHelpers.sample_cell_id("compok_" <> uniq())
 
-    Watchdog.compaction_started(entity_id, "exec-ok")
-    Watchdog.compaction_completed(entity_id)
+    Watchdog.compaction_started(cell_id, "exec-ok")
+    Watchdog.compaction_completed(cell_id)
 
     :ok = Watchdog.sweep_now()
-    # Keyed on this entity: the sweep is global, so a sibling test's in-flight
+    # Keyed on this cell: the sweep is global, so a sibling test's in-flight
     # compaction must not be able to answer for this one.
     refute_received {:compaction_timeout, _, %{key: ^key}}
   end
 
   # An owned writer (runner_id on append) is the trigger sweeps' subject;
   # writers without an owning runner are skipped (no session to ask).
-  # Returns the entity KEY: the Watchdog is a singleton whose sweep walks every
-  # registered entity, so every assertion here must be scoped to its own — any
-  # other test's WAL (a proc-journal, say) triggers the same telemetry.
+  # Returns the cell KEY: the Watchdog is a singleton whose sweep walks every
+  # registered cell, so every assertion here must be scoped to its own — any
+  # other test's WAL (a task-journal, say) triggers the same telemetry.
   defp owned_writer(suffix, header, body) do
-    {_rc, _op, key} = pid = TestHelpers.sample_entity_id(suffix <> uniq())
+    {_rc, _op, key} = pid = TestHelpers.sample_cell_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, body, "exec-trig")
-    # A triggered entity sits in the shared Watchdog's in-flight map; clear
+    # A triggered cell sits in the shared Watchdog's in-flight map; clear
     # it so it cannot expire as compaction_timeout noise in a later test.
     on_exit(fn -> Watchdog.compaction_completed(pid) end)
     {key, w}
@@ -318,7 +318,7 @@ defmodule Flezha.State.WatchdogTest do
 
     forward_state_event(:input_silence)
 
-    pid = {class, "proc", "seg" <> uniq()}
+    pid = {class, "task", "seg" <> uniq()}
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -332,8 +332,8 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to THIS test's class and entity. The Watchdog is a singleton whose
-    # sweep walks every registered entity, so an unscoped refute also matches a
+    # Scoped to THIS test's class and cell. The Watchdog is a singleton whose
+    # sweep walks every registered cell, so an unscoped refute also matches a
     # sibling test's resync (a compaction timeout on its own WAL, say).
     refute_received {:output_stall, _, %{operative_class: ^class}}
     refute_received {:resync_called, ^pid, _}
@@ -360,7 +360,7 @@ defmodule Flezha.State.WatchdogTest do
     forward_state_event(:input_silence)
 
     for class <- [per_input, checkpoint] do
-      pid = {class, "proc", "seg" <> uniq()}
+      pid = {class, "task", "seg" <> uniq()}
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, w} = Supervisor.lookup(pid)
       :ok = WalWriter.append(w, 0, header, "z")
@@ -397,7 +397,7 @@ defmodule Flezha.State.WatchdogTest do
 
     forward_state_event(:input_silence)
 
-    pid = {class, "proc", "seg" <> uniq()}
+    pid = {class, "task", "seg" <> uniq()}
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -424,7 +424,7 @@ defmodule Flezha.State.WatchdogTest do
 
     forward_state_event(:input_silence)
 
-    pid = {class, "proc", "seg" <> uniq()}
+    pid = {class, "task", "seg" <> uniq()}
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -506,17 +506,17 @@ defmodule Flezha.State.WatchdogTest do
 
   # A reference with a WAL on disk, ready to be shipped.
   defp shippable_ref(prefix) do
-    entity_id = {"#{prefix}_#{uniq()}", "proc", "k1"}
-    path = Paths.wal_path(entity_id)
+    cell_id = {"#{prefix}_#{uniq()}", "task", "k1"}
+    path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, TestHelpers.build_wal_record(0, "change"))
-    {:entity, entity_id}
+    {:cell, cell_id}
   end
 
   # A compaction handed out `ms` ago, on the shared Watchdog's own ledger.
-  defp age_compaction(entity_id, ms) do
+  defp age_compaction(cell_id, ms) do
     :sys.replace_state(Watchdog, fn state ->
-      update_in(state.compactions[entity_id], fn {started_at, runner_id} ->
+      update_in(state.compactions[cell_id], fn {started_at, runner_id} ->
         {started_at - ms, runner_id}
       end)
     end)

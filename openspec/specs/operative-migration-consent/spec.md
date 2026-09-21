@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operative-migration-consent capability makes Overwatch a participant in ProcessHub's migration-consent protocol so a cluster redistribution (node join/leave, convergence rebind, graceful-shutdown drain) can no longer tear an Overwatch out mid-critical-work. Overwatch answers `:defer` while a late-input correction is pending, while a durable workflow instance is between commit barriers, or while an effectively-once instance has unflushed outbox items — and signals `ProcessHub.Service.Migration.migration_ready/2` at its existing safe barriers (suspension, correction completion) so deferred moves resume promptly. `Flezha.Service.HubManager` enables the protocol via `consent_settings` on the HotSwap strategy, with the deferral ceiling derived from the graceful-shutdown budget and each knob env-overridable. A deferred operative that exhausts its deferral window is force-migrated through the existing best-effort handover and lands on the existing recovery paths (RestoreInitState/baseline pull, proc-journal fold, the workflow ack timeout → compensation → re-placement) with no new wire message.
+The operative-migration-consent capability makes Overwatch a participant in ProcessHub's migration-consent protocol so a cluster redistribution (node join/leave, convergence rebind, graceful-shutdown drain) can no longer tear an Overwatch out mid-critical-work. Overwatch answers `:defer` while a late-input correction is pending, while a durable workflow instance is between commit barriers, or while an effectively-once instance has unflushed outbox items — and signals `ProcessHub.Service.Migration.migration_ready/2` at its existing safe barriers (suspension, correction completion) so deferred moves resume promptly. `Flezha.Service.HubManager` enables the protocol via `consent_settings` on the HotSwap strategy, with the deferral ceiling derived from the graceful-shutdown budget and each knob env-overridable. A deferred operative that exhausts its deferral window is force-migrated through the existing best-effort handover and lands on the existing recovery paths (RestoreInitState/baseline pull, task-journal fold, the workflow ack timeout → compensation → re-placement) with no new wire message.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: w
 
 #### Scenario: Effectively-once instance with pending outbox defers
 
-- **GIVEN** an effectively-once Overwatch whose entity WalWriter reports pending outbox items not yet flushed downstream
+- **GIVEN** an effectively-once Overwatch whose cell WalWriter reports pending outbox items not yet flushed downstream
 - **WHEN** it is asked for migration consent
 - **THEN** it returns `:defer`
 - **AND** after the outbox drains, the next consent re-query (retry tick) receives `:ready` and the child migrates
@@ -76,10 +76,10 @@ The `HotSwap` migration strategy in `Flezha.Service.HubManager` SHALL carry `con
 
 ### Requirement: Forced migration SHALL land on the existing recovery paths with a consistent SDK protocol
 
-A deferred Overwatch that reaches `max_defer_time` (or the drain deadline) SHALL be force-migrated through the existing best-effort HotSwap handover. After a forced migration: a stream instance SHALL resync via the existing `RestoreInitState`/baseline-pull path; a durable workflow instance SHALL resume from its proc-journal fold (committed procs skipped, the uncommitted proc re-run); an SDK driver blocked on a `ProcCommit`/`IterCommit` ack whose controller-side Overwatch has left SHALL hit the existing ≤30 s ack timeout → terminal error → compensation, after which convergence re-places the instance. No new wire message SHALL be introduced.
+A deferred Overwatch that reaches `max_defer_time` (or the drain deadline) SHALL be force-migrated through the existing best-effort HotSwap handover. After a forced migration: a stream instance SHALL resync via the existing `RestoreInitState`/baseline-pull path; a durable workflow instance SHALL resume from its task-journal fold (committed tasks skipped, the uncommitted task re-run); an SDK driver blocked on a `TaskCommit`/`IterCommit` ack whose controller-side Overwatch has left SHALL hit the existing ≤30 s ack timeout → terminal error → compensation, after which convergence re-places the instance. No new wire message SHALL be introduced.
 
 #### Scenario: Forced migration of a busy workflow operative resumes from the journal
 
 - **GIVEN** a durable workflow Overwatch under continuous input that never suspends, deferred until `max_defer_time` expires
 - **WHEN** the hub force-migrates it to a peer node
-- **THEN** upstream logs the forced-migration warning, the target node rebinds the instance, its proc-journal fold skips every committed proc, and the interrupted iteration re-runs without protocol wedge — the runner-side driver either re-attaches or fails its pending ack within the existing 30 s bound and recovers via compensation + re-placement
+- **THEN** upstream logs the forced-migration warning, the target node rebinds the instance, its task-journal fold skips every committed task, and the interrupted iteration re-runs without protocol wedge — the runner-side driver either re-attaches or fails its pending ack within the existing 30 s bound and recovers via compensation + re-placement

@@ -2,10 +2,10 @@ defmodule Flezha.State.Paths do
   require Logger
 
   @moduledoc """
-  Path resolution for per-Entity WAL, snapshot, and outbox-dedup files.
+  Path resolution for per-Cell WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<namespace>/<operative_class>/<procedure_id>/`, where
+  `<state_root>/<namespace>/<operative_class>/<tasklet_id>/`, where
   `<state_root>` is the `:flezha, :state_root` application env (set by tests
   for isolation), else `app_data/state`. The operator-facing knob is the
   `FLEZHA_STATE_DIR` OS env, which fills that key once at boot in
@@ -14,69 +14,69 @@ defmodule Flezha.State.Paths do
   `class_dir/1` own the first two levels; nothing outside this module assembles
   them.
 
-  `entity_key` is URL-safe-base64-encoded when it contains characters
+  `cell_key` is URL-safe-base64-encoded when it contains characters
   that would be unsafe on POSIX filesystems (anything outside `[A-Za-z0-9_.-]`).
-  `decode_entity_key/1` reverses the encoding.
+  `decode_cell_key/1` reverses the encoding.
   """
 
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.State.Durable
 
-  @type entity_id ::
-          {operative_class :: binary(), procedure_id :: binary(), entity_key :: binary()}
+  @type cell_id ::
+          {operative_class :: binary(), tasklet_id :: binary(), cell_key :: binary()}
 
   @type scan_result :: %{
-          wal_files: [{entity_key :: binary(), path :: binary()}],
+          wal_files: [{cell_key :: binary(), path :: binary()}],
           snapshot_files: [
-            {entity_key :: binary(), seq :: non_neg_integer(), path :: binary()}
+            {cell_key :: binary(), seq :: non_neg_integer(), path :: binary()}
           ],
-          outbox_files: [{entity_key :: binary(), path :: binary()}]
+          outbox_files: [{cell_key :: binary(), path :: binary()}]
         }
 
   @safe_chars ~r/^[A-Za-z0-9_.-]+$/
 
-  @journal_entity_key "_proc_journal"
-  @inbox_entity_key "_proc_inbox"
+  @journal_cell_key "_task_journal"
+  @inbox_cell_key "_task_inbox"
 
-  # Reserved entity-keys of a workflow instance's proc-journal and durable inbox,
-  # each paired with the file it maps onto. They ride the Entity persistence
+  # Reserved cell-keys of a workflow instance's task-journal and durable inbox,
+  # each paired with the file it maps onto. They ride the Cell persistence
   # substrate — `wal_path/1` writes these names, so the
   # WalWriter/FsyncBatcher/delete machinery treats them as one more per-instance
-  # file — but they are not Entities: `scan_dir/1` skips the files and the
+  # file — but they are not Cells: `scan_dir/1` skips the files and the
   # WalWriter writes no dedup cache for the keys. One pairing serves both sides,
   # so a new reserved identity cannot land on a filename nothing skips.
   @reserved_file_by_key %{
-    @journal_entity_key => "proc.journal",
-    @inbox_entity_key => "inbox.wal"
+    @journal_cell_key => "task.journal",
+    @inbox_cell_key => "inbox.wal"
   }
-  @reserved_entity_keys Map.keys(@reserved_file_by_key)
+  @reserved_cell_keys Map.keys(@reserved_file_by_key)
   @reserved_files Map.values(@reserved_file_by_key)
 
-  @spec journal_entity_key() :: binary()
-  def journal_entity_key(), do: @journal_entity_key
+  @spec journal_cell_key() :: binary()
+  def journal_cell_key(), do: @journal_cell_key
 
-  @spec inbox_entity_key() :: binary()
-  def inbox_entity_key(), do: @inbox_entity_key
+  @spec inbox_cell_key() :: binary()
+  def inbox_cell_key(), do: @inbox_cell_key
 
   @doc """
-  The reserved per-instance entity keys — identities that ride the Entity
-  persistence substrate (WalWriter + FsyncBatcher) but are not Entities. The
+  The reserved per-instance cell keys — identities that ride the Cell
+  persistence substrate (WalWriter + FsyncBatcher) but are not Cells. The
   `WalWriter` skips its outbox dedup side-file for them, which is also what
-  keeps `scan_dir/1` from ever surfacing one as a phantom Entity.
+  keeps `scan_dir/1` from ever surfacing one as a phantom Cell.
   """
-  @spec reserved_entity_keys() :: [binary()]
-  def reserved_entity_keys(), do: @reserved_entity_keys
+  @spec reserved_cell_keys() :: [binary()]
+  def reserved_cell_keys(), do: @reserved_cell_keys
 
   @doc """
-  Reserved journal identity for a workflow instance's proc-journal
-  (`workflow-proc-journal`). Workflow per-instance state is keyed by the
+  Reserved journal identity for a workflow instance's task-journal
+  (`workflow-task-journal`). Workflow per-instance state is keyed by the
   instance id in the class position, so both dir levels carry it.
   """
-  @spec journal_id(binary()) :: entity_id()
+  @spec journal_id(binary()) :: cell_id()
   def journal_id(instance_id) when is_binary(instance_id),
-    do: {instance_id, instance_id, @journal_entity_key}
+    do: {instance_id, instance_id, @journal_cell_key}
 
-  @doc "On-disk path of a workflow instance's proc-journal."
+  @doc "On-disk path of a workflow instance's task-journal."
   @spec journal_path(binary()) :: binary()
   def journal_path(instance_id) when is_binary(instance_id),
     do: wal_path(journal_id(instance_id))
@@ -85,9 +85,9 @@ defmodule Flezha.State.Paths do
   Reserved inbox identity for a workflow instance's durable inbox
   (`workflow-durable-suspension`) — the sibling of `journal_id/1`.
   """
-  @spec inbox_id(binary()) :: entity_id()
+  @spec inbox_id(binary()) :: cell_id()
   def inbox_id(instance_id) when is_binary(instance_id),
-    do: {instance_id, instance_id, @inbox_entity_key}
+    do: {instance_id, instance_id, @inbox_cell_key}
 
   @doc "On-disk path of a workflow instance's durable inbox."
   @spec inbox_path(binary()) :: binary()
@@ -111,7 +111,7 @@ defmodule Flezha.State.Paths do
   # ----- namespace resolution (finish-platform-authn-authz) -----
   #
   # Durable state lives under `<state_root>/<namespace>/<operative_class>/`.
-  # The wire's entity_id stays the 3-tuple: the namespace is resolved HERE,
+  # The wire's cell_id stays the 3-tuple: the namespace is resolved HERE,
   # from the class→namespace claim an Operative records when it binds, else
   # from the on-disk layout, else `_system`. One seam — every path in this
   # module (and every consumer of `class_dir/1`) inherits it.
@@ -188,7 +188,7 @@ defmodule Flezha.State.Paths do
 
   @doc """
   Remove a class's state tree — the one guard every deletion of durable state
-  passes: a procedure directory holding a file under any in-progress suffix
+  passes: a tasklet directory holding a file under any in-progress suffix
   `Flezha.State.Durable` declares has a write in flight, and truncating it
   would corrupt the rename ceremony, so it is skipped (with WARN) and the class
   directory stays until it is empty.
@@ -201,7 +201,7 @@ defmodule Flezha.State.Paths do
       {:ok, names} ->
         Enum.each(names, fn name ->
           path = Path.join(class_dir, name)
-          if File.dir?(path), do: maybe_delete_procedure(path), else: File.rm(path)
+          if File.dir?(path), do: maybe_delete_tasklet(path), else: File.rm(path)
         end)
 
         _ = File.rmdir(class_dir)
@@ -212,16 +212,16 @@ defmodule Flezha.State.Paths do
     end
   end
 
-  defp maybe_delete_procedure(procedure_dir) do
-    case File.ls(procedure_dir) do
+  defp maybe_delete_tasklet(tasklet_dir) do
+    case File.ls(tasklet_dir) do
       {:ok, names} ->
         if Enum.any?(names, &Durable.in_progress?/1) do
           Logger.warning(
-            "[state] skipping state dir #{procedure_dir}: write in flight " <>
+            "[state] skipping state dir #{tasklet_dir}: write in flight " <>
               "(#{Enum.join(Durable.suffixes(), " / ")} present)"
           )
         else
-          _ = File.rm_rf(procedure_dir)
+          _ = File.rm_rf(tasklet_dir)
         end
 
       {:error, _} ->
@@ -298,24 +298,24 @@ defmodule Flezha.State.Paths do
     end
   end
 
-  @spec state_dir(entity_id()) :: binary()
-  def state_dir({operative_class, procedure_id, _entity_key}) do
-    Path.join(class_dir(operative_class), procedure_id)
+  @spec state_dir(cell_id()) :: binary()
+  def state_dir({operative_class, tasklet_id, _cell_key}) do
+    Path.join(class_dir(operative_class), tasklet_id)
   end
 
-  @spec wal_path(entity_id()) :: binary()
-  def wal_path({_, _, entity_key} = pid) do
+  @spec wal_path(cell_id()) :: binary()
+  def wal_path({_, _, cell_key} = pid) do
     name =
-      Map.get_lazy(@reserved_file_by_key, entity_key, fn ->
-        encode_entity_key(entity_key) <> ".wal"
+      Map.get_lazy(@reserved_file_by_key, cell_key, fn ->
+        encode_cell_key(cell_key) <> ".wal"
       end)
 
     Path.join(state_dir(pid), name)
   end
 
-  @spec snapshot_paths(entity_id()) :: [{non_neg_integer(), binary()}]
-  def snapshot_paths({_, _, entity_key} = pid) do
-    encoded = encode_entity_key(entity_key)
+  @spec snapshot_paths(cell_id()) :: [{non_neg_integer(), binary()}]
+  def snapshot_paths({_, _, cell_key} = pid) do
+    encoded = encode_cell_key(cell_key)
     prefix = encoded <> ".snap."
 
     pid
@@ -336,15 +336,15 @@ defmodule Flezha.State.Paths do
     |> Enum.sort_by(fn {seq, _} -> seq end)
   end
 
-  @spec outbox_dedup_path(entity_id()) :: binary()
-  def outbox_dedup_path({_, _, entity_key} = pid) do
-    Path.join(state_dir(pid), encode_entity_key(entity_key) <> ".outbox.dedup")
+  @spec outbox_dedup_path(cell_id()) :: binary()
+  def outbox_dedup_path({_, _, cell_key} = pid) do
+    Path.join(state_dir(pid), encode_cell_key(cell_key) <> ".outbox.dedup")
   end
 
   @doc """
   Path of the per-operative durable input-log (effectively-once tier).
   Lives at the class level beside the `kind` sidecar — inert to the
-  Entity scanners, which only walk `<class>/<procedure_id>/` dirs.
+  Cell scanners, which only walk `<class>/<tasklet_id>/` dirs.
   """
   @spec input_log_path(binary()) :: binary()
   def input_log_path(operative_class) when is_binary(operative_class) do
@@ -352,24 +352,24 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Path of a per-Entity saga compensation marker (`workflow-operative-saga`
-  §4.3). `:intent` marks that the Entity's procedure completed forward and may
+  Path of a per-Cell saga compensation marker (`workflow-operative-saga`
+  §4.3). `:intent` marks that the Cell's tasklet completed forward and may
   need undo; `:done` marks that its compensation already ran. Presence is the
   signal (empty file). Inert to `scan_dir/1` (unknown suffix), so a marker never
-  registers a phantom Entity; reclaimed with the operative-class dir on
+  registers a phantom Cell; reclaimed with the operative-class dir on
   retention sweep.
   """
-  @spec compensation_marker_path(entity_id(), :intent | :done) :: binary()
-  def compensation_marker_path({_, _, entity_key} = pid, kind) when kind in [:intent, :done] do
+  @spec compensation_marker_path(cell_id(), :intent | :done) :: binary()
+  def compensation_marker_path({_, _, cell_key} = pid, kind) when kind in [:intent, :done] do
     suffix = if kind == :intent, do: ".comp_intent", else: ".comp_done"
-    Path.join(state_dir(pid), encode_entity_key(entity_key) <> suffix)
+    Path.join(state_dir(pid), encode_cell_key(cell_key) <> suffix)
   end
 
   @doc """
-  Write one compensation marker for an Entity (presence is the signal — empty
+  Write one compensation marker for a Cell (presence is the signal — empty
   body). Best-effort; returns the `File.write/2` result so the caller can log.
   """
-  @spec write_compensation_marker(entity_id(), :intent | :done) :: :ok | {:error, term()}
+  @spec write_compensation_marker(cell_id(), :intent | :done) :: :ok | {:error, term()}
   def write_compensation_marker({_, _, _} = pid, kind) when kind in [:intent, :done] do
     path = compensation_marker_path(pid, kind)
     File.mkdir_p(Path.dirname(path))
@@ -377,12 +377,12 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Read an Entity's saga compensation markers, shipped back on `RestoreInitState`
+  Read a Cell's saga compensation markers, shipped back on `RestoreInitState`
   so a respawned durable workflow driver finishes the remaining hooks: `intent` ⇒
-  its procedure completed forward and may need undo; `done` ⇒ its compensation
+  its tasklet completed forward and may need undo; `done` ⇒ its compensation
   already ran (skip it).
   """
-  @spec compensation_markers(entity_id()) :: %{intent: boolean(), done: boolean()}
+  @spec compensation_markers(cell_id()) :: %{intent: boolean(), done: boolean()}
   def compensation_markers({_, _, _} = pid) do
     %{
       intent: File.exists?(compensation_marker_path(pid, :intent)),
@@ -391,13 +391,13 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Every on-disk path that belongs to one Entity (WAL, all snapshots, the
+  Every on-disk path that belongs to one Cell (WAL, all snapshots, the
   outbox-dedup file, both compensation markers). Paths are returned whether or
-  not the file exists — the one definition of "this Entity's durable set",
+  not the file exists — the one definition of "this Cell's durable set",
   shared by the hard-delete path and the cross-controller transfer.
   """
-  @spec entity_files(entity_id()) :: [binary()]
-  def entity_files({_, _, _} = pid) do
+  @spec cell_files(cell_id()) :: [binary()]
+  def cell_files({_, _, _} = pid) do
     [
       wal_path(pid),
       outbox_dedup_path(pid),
@@ -407,8 +407,8 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Resolve one basename from `entity_files/1` back to its full path, or `nil`
-  when the Entity's layout does not produce that name.
+  Resolve one basename from `cell_files/1` back to its full path, or `nil`
+  when the Cell's layout does not produce that name.
 
   The `nil` is a guard, not a convenience: the cross-controller transfer takes
   the name off the wire, and joining it onto `state_dir/1` would let a peer
@@ -416,15 +416,15 @@ defmodule Flezha.State.Paths do
   rather than matched, since a node can legitimately be asked for a snapshot it
   does not hold yet.
   """
-  @spec entity_file_path(entity_id(), binary()) :: binary() | nil
-  def entity_file_path({_, _, entity_key} = pid, name) when is_binary(name) do
-    Enum.find(entity_files(pid), &(Path.basename(&1) == name)) ||
-      snapshot_file_path(pid, entity_key, name)
+  @spec cell_file_path(cell_id(), binary()) :: binary() | nil
+  def cell_file_path({_, _, cell_key} = pid, name) when is_binary(name) do
+    Enum.find(cell_files(pid), &(Path.basename(&1) == name)) ||
+      snapshot_file_path(pid, cell_key, name)
   end
 
-  defp snapshot_file_path(pid, entity_key, name) do
+  defp snapshot_file_path(pid, cell_key, name) do
     with ["", seq_str] <-
-           String.split(name, encode_entity_key(entity_key) <> ".snap.", parts: 2),
+           String.split(name, encode_cell_key(cell_key) <> ".snap.", parts: 2),
          {seq, ""} <- Integer.parse(seq_str) do
       snapshot_path(pid, seq)
     else
@@ -433,35 +433,35 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Entity ids under one Operative class — the per-Operative view every caller
+  Cell ids under one Operative class — the per-Operative view every caller
   actually wants.
 
-  Scans only this class's subtree. Filtering `all_entities/0` would make every
+  Scans only this class's subtree. Filtering `all_cells/0` would make every
   caller pay for the whole state root, which turns any per-operative loop into
   a walk of every operative on the node.
   """
-  @spec entities_of(binary()) :: [entity_id()]
-  def entities_of(operative_class) when is_binary(operative_class) do
-    for procedure_id <- list_dir(class_dir(operative_class)),
-        entity_key <- entity_keys_under({operative_class, procedure_id, ""}),
+  @spec cells_of(binary()) :: [cell_id()]
+  def cells_of(operative_class) when is_binary(operative_class) do
+    for tasklet_id <- list_dir(class_dir(operative_class)),
+        cell_key <- cell_keys_under({operative_class, tasklet_id, ""}),
         uniq: true,
-        do: {operative_class, procedure_id, entity_key}
+        do: {operative_class, tasklet_id, cell_key}
   end
 
   @doc """
-  Remove every on-disk file for one Entity (WAL, all snapshots, the
+  Remove every on-disk file for one Cell (WAL, all snapshots, the
   outbox-dedup file). Idempotent: missing files are ignored. Used by the
-  dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_entity/1`).
+  dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_cell/1`).
   """
-  @spec delete_files(entity_id()) :: :ok
+  @spec delete_files(cell_id()) :: :ok
   def delete_files({operative_class, _, _} = pid) do
     pid
-    |> entity_files()
+    |> cell_files()
     |> Enum.each(&File.rm/1)
 
     # Prune now-empty parent dirs so deleted state stops counting as durable
     # evidence of prior intent (intent-mismatch detection); rmdir fails
-    # harmlessly while a sibling Entity or Procedure still holds files.
+    # harmlessly while a sibling Cell or Tasklet still holds files.
     _ = File.rmdir(state_dir(pid))
     class_dir = class_dir(operative_class)
     _ = File.rmdir(class_dir)
@@ -475,23 +475,23 @@ defmodule Flezha.State.Paths do
     :ok
   end
 
-  @spec snapshot_path(entity_id(), non_neg_integer()) :: binary()
-  def snapshot_path({_, _, entity_key} = pid, seq) do
+  @spec snapshot_path(cell_id(), non_neg_integer()) :: binary()
+  def snapshot_path({_, _, cell_key} = pid, seq) do
     Path.join(
       state_dir(pid),
-      encode_entity_key(entity_key) <> ".snap." <> Integer.to_string(seq)
+      encode_cell_key(cell_key) <> ".snap." <> Integer.to_string(seq)
     )
   end
 
   @doc """
-  Enumerate Entity files under a Operative tree.
+  Enumerate Cell files under a Operative tree.
 
-  Pass `{operative_class, procedure_id, ""}` to scan the whole Procedure. Returns lists
-  of `{entity_key, ...}` tuples grouped by file type. A file wearing any
+  Pass `{operative_class, tasklet_id, ""}` to scan the whole Tasklet. Returns lists
+  of `{cell_key, ...}` tuples grouped by file type. A file wearing any
   in-progress suffix `Flezha.State.Durable` declares is skipped — it is
-  crash-residue from an atomic-rename workflow, not an Entity.
+  crash-residue from an atomic-rename workflow, not a Cell.
   """
-  @spec scan_dir(entity_id()) :: scan_result()
+  @spec scan_dir(cell_id()) :: scan_result()
   def scan_dir({_, _, _} = pid) do
     dir = state_dir(pid)
 
@@ -502,24 +502,24 @@ defmodule Flezha.State.Paths do
         Durable.in_progress?(name) ->
           acc
 
-        # The per-instance journal and inbox ride the Entity substrate but are
-        # not Entities; `inbox.wal` would otherwise decode as an Entity named
+        # The per-instance journal and inbox ride the Cell substrate but are
+        # not Cells; `inbox.wal` would otherwise decode as a Cell named
         # "inbox" and be shipped a `RestoreInitState`.
         name in @reserved_files ->
           acc
 
         String.ends_with?(name, ".wal") ->
-          key = name |> String.trim_trailing(".wal") |> decode_entity_key()
+          key = name |> String.trim_trailing(".wal") |> decode_cell_key()
           %{acc | wal_files: [{key, Path.join(dir, name)} | acc.wal_files]}
 
         String.ends_with?(name, ".outbox.dedup") ->
-          key = name |> String.trim_trailing(".outbox.dedup") |> decode_entity_key()
+          key = name |> String.trim_trailing(".outbox.dedup") |> decode_cell_key()
           %{acc | outbox_files: [{key, Path.join(dir, name)} | acc.outbox_files]}
 
         true ->
           case parse_snapshot_name(name) do
             {:ok, encoded_key, seq} ->
-              key = decode_entity_key(encoded_key)
+              key = decode_cell_key(encoded_key)
 
               %{
                 acc
@@ -534,13 +534,13 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Enumerate every Entity that has any persistence file on disk under
+  Enumerate every Cell that has any persistence file on disk under
   `state_root()`. Walks the directory tree
-  `<state_root>/<namespace>/<operative_class>/<procedure_id>/`.
+  `<state_root>/<namespace>/<operative_class>/<tasklet_id>/`.
   """
-  @spec all_entities() :: [entity_id()]
-  def all_entities() do
-    Enum.flat_map(operative_classes(), &entities_of/1)
+  @spec all_cells() :: [cell_id()]
+  def all_cells() do
+    Enum.flat_map(operative_classes(), &cells_of/1)
   end
 
   @doc """
@@ -556,7 +556,7 @@ defmodule Flezha.State.Paths do
   @doc """
   Operative classes holding durable state on this node — the on-disk answer to
   "which operatives are here at all", shared by the retention sweep, the remote
-  durability tier's backstop, and `all_entities/0`.
+  durability tier's backstop, and `all_cells/0`.
 
   The tree is `<root>/<namespace>/<class>/`, so classes are the second level;
   class-level sidecars (`kind`, `input.log`, the declaration files) are regular
@@ -608,7 +608,7 @@ defmodule Flezha.State.Paths do
   defp install_sync(fd, :inline), do: :file.datasync(fd)
   defp install_sync(_fd, :batched), do: :ok
 
-  # Where the directory's existence is the signal that an Entity is alive, the
+  # Where the directory's existence is the signal that a Cell is alive, the
   # install must fail with `:enoent` rather than resurrect a removed one.
   defp ensure_dir(path, true), do: File.mkdir_p(Path.dirname(path))
   defp ensure_dir(_path, false), do: :ok
@@ -626,13 +626,13 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Snapshot files for a single Entity, sorted by seq ascending.
+  Snapshot files for a single Cell, sorted by seq ascending.
   """
-  @spec snapshot_files(entity_id()) :: [{seq :: non_neg_integer(), path :: binary()}]
+  @spec snapshot_files(cell_id()) :: [{seq :: non_neg_integer(), path :: binary()}]
   def snapshot_files(pid), do: snapshot_paths(pid)
 
-  @spec encode_entity_key(binary()) :: binary()
-  def encode_entity_key(key) do
+  @spec encode_cell_key(binary()) :: binary()
+  def encode_cell_key(key) do
     if Regex.match?(@safe_chars, key) and not String.starts_with?(key, "_") do
       key
     else
@@ -640,15 +640,15 @@ defmodule Flezha.State.Paths do
     end
   end
 
-  @spec decode_entity_key(binary()) :: binary()
-  def decode_entity_key("_" <> encoded) do
+  @spec decode_cell_key(binary()) :: binary()
+  def decode_cell_key("_" <> encoded) do
     case Base.url_decode64(encoded, padding: false) do
       {:ok, decoded} -> decoded
       :error -> "_" <> encoded
     end
   end
 
-  def decode_entity_key(key), do: key
+  def decode_cell_key(key), do: key
 
   defp parse_snapshot_name(name) do
     case Regex.run(~r/^(.+)\.snap\.(\d+)$/, name) do
@@ -663,7 +663,7 @@ defmodule Flezha.State.Paths do
     end
   end
 
-  defp entity_keys_under({_, _, _} = pid) do
+  defp cell_keys_under({_, _, _} = pid) do
     %{wal_files: w, snapshot_files: s, outbox_files: o} = scan_dir(pid)
     keys = Enum.map(w, &elem(&1, 0)) ++ Enum.map(s, &elem(&1, 0)) ++ Enum.map(o, &elem(&1, 0))
     Enum.uniq(keys)

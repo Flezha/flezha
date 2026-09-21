@@ -3,41 +3,41 @@ use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 
-/// The Entity-scoped write verbs all name the same slot.
-const ENTITY: &[Positional] = &[Positional::required("<operative/procedure/entity_key>")];
+/// The Cell-scoped write verbs all name the same slot.
+const CELL: &[Positional] = &[Positional::required("<operative/tasklet/cell_key>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz state",
     help: help::STATE,
     verbs: &[
         Verb::new("get", |read| scoped_verb(read, "state_get"))
-            .taking(&[Positional::required("<operative/procedure[/entity_key]>")])
+            .taking(&[Positional::required("<operative/tasklet[/cell_key]>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
         Verb::new("list", |read| scoped_verb(read, "state_list"))
             .taking(&[Positional::required("<operative_class>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
         Verb::new("at", handle_at)
             .taking(&[
-                Positional::required("<operative/procedure/entity_key>"),
+                Positional::required("<operative/tasklet/cell_key>"),
                 Positional::required("<seq | iso8601-timestamp>"),
             ])
             .reading(&[OUTPUT, JSON_SWITCH]),
         Verb::new("rotate", |read| {
-            rpc::one_arg(read, ENTITY[0].name, "state_rotate", rpc::PROPAGATE)
+            rpc::one_arg(read, CELL[0].name, "state_rotate", rpc::PROPAGATE)
         })
-        .taking(ENTITY),
+        .taking(CELL),
         Verb::new("retention", handle_retention).taking(&[
             Positional::required("<operative_class>"),
             Positional::number("<hours>"),
         ]),
         Verb::new("delete", |read| {
-            rpc::one_arg(read, ENTITY[0].name, "state_delete", rpc::PROPAGATE)
+            rpc::one_arg(read, CELL[0].name, "state_delete", rpc::PROPAGATE)
         })
-        .taking(ENTITY),
+        .taking(CELL),
         Verb::new("outbox", |read| {
-            rpc::one_arg(read, ENTITY[0].name, "state_outbox", rpc::PROPAGATE)
+            rpc::one_arg(read, CELL[0].name, "state_outbox", rpc::PROPAGATE)
         })
-        .taking(ENTITY),
+        .taking(CELL),
         Verb::new("journal", |read| scoped_verb(read, "state_journal"))
             .taking(&[Positional::required("<operative/instance>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
@@ -54,7 +54,7 @@ fn handle_at(read: &Reading) {
     rpc::run(
         "state_at",
         &[
-            text(read.pos(ENTITY[0].name)),
+            text(read.pos(CELL[0].name)),
             text(read.pos("<seq | iso8601-timestamp>")),
             text(read.output_format()),
         ],

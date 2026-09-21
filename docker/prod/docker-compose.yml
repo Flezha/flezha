@@ -46,7 +46,7 @@ services:
       - flezha_certs:/flezha/app_data/certs
       - flezha_logs:/flezha/app_data/logs
       # ProcessHub's persistent registry (auto-restore-on-boot) and
-      # per-Entity WAL files. Must survive container restarts.
+      # per-Cell WAL files. Must survive container restarts.
       - flezha_state:/flezha/app_data/state
       - flezha_process_hub:/flezha/app_data/process_hub
       - flezha_plugins:/flezha/app_data/plugins

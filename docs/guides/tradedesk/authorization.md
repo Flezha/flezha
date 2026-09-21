@@ -109,12 +109,12 @@ namespace. Only `admin@_system` reaches across namespaces.
 
 | Role | What it may do |
 |---|---|
-| `viewer` | read: operatives, plugins, entity state, audit, the schedule |
+| `viewer` | read: operatives, plugins, cell state, audit, the schedule |
 | `app` | what an application does to its own work: start, stop and send to an operative, listen to it, enable and disable a plugin |
 | `operator` | everything `app` may, plus the rest of the operative lifecycle: the dead-letter queue, rewind, replay, rescale, schedules |
 | `admin` | everything `operator` may, plus tokens, roles, namespaces and quotas, and stopping the controller |
 | `runner` | connect a runner, and nothing else |
-| `spawner` | what a runner needs so that a procedure can start a workflow: start and send, in its own namespace |
+| `spawner` | what a runner needs so that a tasklet can start a workflow: start and send, in its own namespace |
 | `stopper` | what a runner needs to stop its own operatives |
 
 The key makes the runner `runner@trading`, which holds only `runner`.

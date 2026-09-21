@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   @moduledoc """
-  `OperativeManager.spawn_or_deliver/6` — the controller half of a procedure's
-  `ctx.spawn_workflow` (`procedure-requested-spawn`).
+  `OperativeManager.spawn_or_deliver/6` — the controller half of a tasklet's
+  `ctx.spawn_workflow` (`tasklet-requested-spawn`).
 
   The registry is `FakeStartRegistry`, whose `insert_new` is the same atomic
   claim ProcessHub's `start_child` performs, so the concurrency case exercises

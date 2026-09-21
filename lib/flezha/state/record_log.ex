@@ -1,17 +1,17 @@
 defmodule Flezha.State.RecordLog do
   @moduledoc """
-  Per-instance append-only record log on the Entity persistence substrate.
+  Per-instance append-only record log on the Cell persistence substrate.
 
   The shared core behind a workflow instance's two durable logs — its
-  `proc.journal` (`Flezha.State.ProcJournal`) and its `inbox.wal`
-  (`Flezha.State.ProcInbox`). Both are WAL-framed record streams written through
+  `task.journal` (`Flezha.State.TaskJournal`) and its `inbox.wal`
+  (`Flezha.State.TaskInbox`). Both are WAL-framed record streams written through
   the existing `WalWriter` + `FsyncBatcher` path under a reserved
-  `Flezha.State.Paths` identity, and both need exactly two procedures from that
+  `Flezha.State.Paths` identity, and both need exactly two tasklets from that
   substrate: a **durable append** (assign the next seq, write, answer once the
   record is synced) and a **torn-tail-tolerant read**. Those live here, so
   neither log owns a copy of the substrate protocol.
 
-  A log is not an Entity: its reserved identity carries no effect records and no
+  A log is not a Cell: its reserved identity carries no effect records and no
   dedup side-file (`WalWriter` skips it), and `Paths.scan_dir/1` never surfaces
   it.
   """
@@ -31,7 +31,7 @@ defmodule Flezha.State.RecordLog do
   the record has synced, `dedup: true` answers `{:duplicate, seq}` for a record
   whose header is already in the log.
   """
-  @spec append(Paths.entity_id(), binary(), binary(), keyword()) ::
+  @spec append(Paths.cell_id(), binary(), binary(), keyword()) ::
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
   def append(log_id, header, body, opts \\ []) when is_binary(header) and is_binary(body) do
     with {:ok, pid} <- Supervisor.find_or_start(log_id),
@@ -52,7 +52,7 @@ defmodule Flezha.State.RecordLog do
   the record's batch has synced, never before.
   """
   @spec append_async(
-          Paths.entity_id(),
+          Paths.cell_id(),
           binary(),
           binary(),
           keyword(),

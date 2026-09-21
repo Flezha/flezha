@@ -1,6 +1,6 @@
 //! The dead-letter park outside the effectively-once tier: a `park_payload`
 //! frame plus a wait for the controller's `ParkPayloadAck`, re-sent until
-//! acked. The invariant: the entity advances only once the park is durable
+//! acked. The invariant: the cell advances only once the park is durable
 //! — delay, never loss. Under the tier the park rides the effect record.
 
 use std::collections::HashSet;
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::flusher::build_entity_frame;
+use crate::flusher::build_cell_frame;
 use crate::state_sink::{self, PARK_PAYLOAD_PAYLOAD_ID};
 
 /// Retry attempts, process-wide; rides the heartbeat.
@@ -38,10 +38,10 @@ const ACK_RESEND_INTERVAL: Duration = Duration::from_secs(2);
 /// Warn every this many re-sends.
 const WARN_EVERY_RESENDS: u64 = 5;
 
-pub fn mint_park_id(entity_label: &str) -> String {
+pub fn mint_park_id(cell_label: &str) -> String {
     format!(
         "{}#{}",
-        entity_label,
+        cell_label,
         PARK_SEQ.fetch_add(1, Ordering::Relaxed)
     )
 }
@@ -77,7 +77,7 @@ pub fn extract_payload_bytes<T: std::any::Any>(input: &T) -> Option<Vec<u8>> {
 
 /// Ship a park and block until it is acked durable, re-sending forever; a
 /// transport-less run logs and drops.
-pub fn park_blocking(entity_identity: &[u8], body: &ParkBody) {
+pub fn park_blocking(cell_identity: &[u8], body: &ParkBody) {
     if !state_sink::sink_installed() {
         eprintln!(
             "[flezha] DLQ park impossible without a controller transport; dropping poison \
@@ -90,7 +90,7 @@ pub fn park_blocking(entity_identity: &[u8], body: &ParkBody) {
     let body_bytes =
         postcard::to_allocvec(body).expect("postcard serialization of ParkBody cannot fail");
     let seq = PARK_SEQ.load(Ordering::Relaxed);
-    let frame = build_entity_frame(entity_identity, seq, &[0u8; 16], &body_bytes);
+    let frame = build_cell_frame(cell_identity, seq, &[0u8; 16], &body_bytes);
 
     let mut resends: u64 = 0;
     loop {
@@ -116,7 +116,7 @@ pub fn park_blocking(entity_identity: &[u8], body: &ParkBody) {
                 park_id = %body.park_id,
                 channel = %body.entry.channel,
                 resends,
-                "dead-letter park still unacked; entity held (re-sending)"
+                "dead-letter park still unacked; cell held (re-sending)"
             );
         }
     }
@@ -124,17 +124,17 @@ pub fn park_blocking(entity_identity: &[u8], body: &ParkBody) {
 
 /// Mint, build and ship one tier-off park, blocking for its ack.
 pub fn park_tier_off(
-    entity_identity: &[u8],
-    entity_label: &str,
+    cell_identity: &[u8],
+    cell_label: &str,
     origin_offset: Option<u64>,
     entry: crate::flusher::DlqEntryBody,
 ) {
     let body = ParkBody {
-        park_id: mint_park_id(entity_label),
+        park_id: mint_park_id(cell_label),
         origin_offset,
         entry,
     };
-    park_blocking(entity_identity, &body);
+    park_blocking(cell_identity, &body);
 }
 
 #[cfg(test)]

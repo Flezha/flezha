@@ -4,23 +4,23 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
   reference's `tier_store` (a keyed upsert over a keyed plugin sink under
   `effectively_once/1`), its checkpoint postures, its poison and timer
   variants, a persistence-off variant and a two-node shape with an
-  inter-procedure edge under the tier, and the correction probes — an
+  inter-tasklet edge under the tier, and the correction probes — an
   event-time class recording nothing but the ORDER its inputs were folded
   in, which is the only thing a correction changes.
   """
 
   alias Flezha.SDK.{Channels, Ctx}
 
-  defmodule TierStoreProc do
+  defmodule TierStoreTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "tier_store_procedure"
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "tier_store_tasklet"
     def init_state(_), do: %{}
     def apply_change(s, {k, v}), do: Map.put(s, k, v)
     def state_from_json(json), do: json
 
     # `commit:` closes the interval and records nothing, as the reference's
-    # `checkpoint_store_procedure` does; `poison` exhausts the ladder.
+    # `checkpoint_store_tasklet` does; `poison` exhausts the ladder.
     def run("poison" <> _, _s, _ctx), do: {:error, {:non_retryable, "poison value"}}
 
     # Ends the process untrappably mid-dispatch, before any record ships.
@@ -51,7 +51,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.input("input")
         |> Channels.on_full(:drop_nothing)
         |> Channels.retry_backoff_ms(300)
-        |> Channels.into(TierStoreProc)
+        |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -68,7 +68,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
       c
       |> Channels.outputs_at_checkpoint(1_500)
       |> Channels.input("input")
-      |> Channels.into(TierStoreProc)
+      |> Channels.into(TierStoreTask)
       |> Channels.named("sink")
       |> Channels.keyed()
       |> Channels.sink()
@@ -86,7 +86,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.effectively_once()
         |> Channels.checkpoint_ack()
         |> Channels.input("input")
-        |> Channels.into(TierStoreProc)
+        |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -103,7 +103,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.effectively_once()
         |> Channels.checkpoint_every(3)
         |> Channels.input("input")
-        |> Channels.into(TierStoreProc)
+        |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -120,15 +120,15 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.effectively_once()
         |> Channels.outputs_at_checkpoint(20)
         |> Channels.input("input")
-        |> Channels.into(TierStoreProc)
+        |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
   end
 
-  defmodule TierTimerProc do
+  defmodule TierTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "tier_timer"
     def init_state(_), do: %{}
     def apply_change(s, {k, v}), do: Map.put(s, k, v)
@@ -159,15 +159,15 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         c
         |> Channels.effectively_once()
         |> Channels.input("input")
-        |> Channels.into(TierTimerProc)
+        |> Channels.into(TierTimerTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
   end
 
-  defmodule HeldConsumerProc do
+  defmodule HeldConsumerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "held_consumer"
     def init_state(_), do: nil
     def mailbox_capacity, do: 1
@@ -189,9 +189,9 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
     def run(_input, s, _ctx), do: {:ok, s}
   end
 
-  defmodule EdgeProducerProc do
+  defmodule EdgeProducerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "edge_producer"
     def init_state(_), do: %{}
     def apply_change(s, {k, v}), do: Map.put(s, k, v)
@@ -213,16 +213,16 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
       c
       |> Channels.effectively_once()
       |> Channels.input("input")
-      |> Channels.into(EdgeProducerProc)
+      |> Channels.into(EdgeProducerTask)
       |> Channels.named("producer")
-      |> Channels.into(HeldConsumerProc)
+      |> Channels.into(HeldConsumerTask)
       |> Channels.named("consumer")
     end
   end
 
-  defmodule StatelessTierProc do
+  defmodule StatelessTierTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "stateless_tier"
     def init_state(_), do: nil
 
@@ -245,7 +245,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         c
         |> Channels.effectively_once()
         |> Channels.input("input")
-        |> Channels.into(StatelessTierProc)
+        |> Channels.into(StatelessTierTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -254,10 +254,10 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
   # The correction probes. Deliberately NOT the reference's `candle`: no bucket
   # arithmetic and no emit format, because the only claim a unit test makes here
   # is about fold ORDER. Input is `<event_time>:<label>`.
-  defmodule CorrectionProc do
+  defmodule CorrectionTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "correction_procedure"
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "correction_tasklet"
     def clock, do: :event_time
     def init_state(_), do: %{order: []}
 
@@ -288,7 +288,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.effectively_once()
         |> Channels.correction_window(600_000)
         |> Channels.input("input")
-        |> Channels.into(CorrectionProc)
+        |> Channels.into(CorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -306,7 +306,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.correction_window(600_000)
         |> Channels.beyond_window_policy(:drop)
         |> Channels.input("input")
-        |> Channels.into(CorrectionProc)
+        |> Channels.into(CorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()

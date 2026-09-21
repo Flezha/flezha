@@ -13,7 +13,7 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | [`operations/`](#operations) | operators | Deploying, configuring, securing, observing and recovering a controller |
 | [`resilience/`](#resilience) | everyone | What survives what — the guarantee-level docs |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
-| [`runbooks/`](#runbooks) | operators, contributors | Step-by-step procedures for one-off operations |
+| [`runbooks/`](#runbooks) | operators, contributors | Step-by-step tasklets for one-off operations |
 | [`troubleshooting/`](#troubleshooting) | operators | A symptom, what it means, and the fix |
 | [`publishing/`](#publishing) | the maintainer, before the first public release | The decisions publishing makes irreversible, and which of them block a release |
 
@@ -41,7 +41,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Claiming the admin, tokens, the runner's key and roles |
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
 | [`workflow_basics.md`](guides/tradedesk/workflow_basics.md) | Part 2. Writing the workflow: steps, retries and compensation |
-| [`stream_basics.md`](guides/tradedesk/stream_basics.md) | Part 2. Writing the stream operative: chained procedures, transforms, a merge and state |
+| [`stream_basics.md`](guides/tradedesk/stream_basics.md) | Part 2. Writing the stream operative: chained tasklets, transforms, a merge and state |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
@@ -56,10 +56,10 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`authoring_contract.md`](sdk/authoring_contract.md) | The three authoring tiers, signature → type inference, state → Change derivation, entity mode, the cross-SDK reference operative |
+| [`authoring_contract.md`](sdk/authoring_contract.md) | The three authoring tiers, signature → type inference, state → Change derivation, cell mode, the cross-SDK reference operative |
 | [`naming_conventions.md`](sdk/naming_conventions.md) | The numbered naming rules every SDK surface follows |
-| [`rust_operative_architecture.md`](sdk/rust_operative_architecture.md) | The Rust SDK's dispatch pipeline: channels, procedures, entities, mailboxes, backpressure, plugin egress |
-| [`state_persistence.md`](sdk/state_persistence.md) | Per-Entity state, Change, snapshot/WAL restore and compaction — Rust and Java surfaces |
+| [`rust_operative_architecture.md`](sdk/rust_operative_architecture.md) | The Rust SDK's dispatch pipeline: channels, tasklets, cells, mailboxes, backpressure, plugin egress |
+| [`state_persistence.md`](sdk/state_persistence.md) | Per-Cell state, Change, snapshot/WAL restore and compaction — Rust and Java surfaces |
 | [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK: in-node native mode and the standalone runner |
 | [`java_sdk.md`](sdk/java_sdk.md) | The Java SDK: scope, how its artifacts are built, how it is tested |
 | [`node_sdk.md`](sdk/node_sdk.md) | The Node SDK (`@flezha/sdk`): supported versions, dispatch configuration, what must never block the event loop |
@@ -68,9 +68,9 @@ answer "what are the options"; a guide answers "what do I type".
 | [`php_sdk.md`](sdk/php_sdk.md) | The PHP SDK over `ext-ffi`: supported versions, sizing, the executor seam, accepted limits |
 | [`conformance.md`](sdk/conformance.md) | The cross-SDK conformance suite: manifests, capabilities, the gate, adding an SDK |
 | [`stream_transforms.md`](sdk/stream_transforms.md) | Edge transforms and `key_by` keying |
-| [`multi_input_procedures.md`](sdk/multi_input_procedures.md) | Merged subscriptions: what a merge promises |
-| [`entity_timers.md`](sdk/entity_timers.md) | Per-Entity processing-time and event-time timers |
-| [`procedure_requested_spawn.md`](sdk/procedure_requested_spawn.md) | `ctx.spawn_workflow`: a running procedure asks for a worker |
+| [`multi_input_tasklets.md`](sdk/multi_input_tasklets.md) | Merged subscriptions: what a merge promises |
+| [`cell_timers.md`](sdk/cell_timers.md) | Per-Cell processing-time and event-time timers |
+| [`tasklet_requested_spawn.md`](sdk/tasklet_requested_spawn.md) | `ctx.spawn_workflow`: a running tasklet asks for a worker |
 | [`admin.md`](sdk/admin.md) | The surface an application administers its own namespace with, and the role that grants it |
 | [`partitioned_operatives.md`](sdk/partitioned_operatives.md) | One logical operative, N instances: key groups, sources, rescale |
 | [`protocol_spec.md`](sdk/protocol_spec.md) | The wire protocol: transports, framing, commands, lifecycle, data plane |

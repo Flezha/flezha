@@ -28,8 +28,8 @@ defmodule Flezha.Operative.Migration do
   alias Flezha.Service.OperativeManager
   alias Flezha.Shutdown
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
   alias ProcessHub.Service.Migration, as: HubMigration
 
   require Logger
@@ -55,7 +55,7 @@ defmodule Flezha.Operative.Migration do
   then evict the instance from its runner and rehydrate it.
 
   The rehydrating bind ships the folded journal back, so the driver undoes the
-  unwound procedures through the ordinary compensation planner and resumes the
+  unwound tasklets through the ordinary compensation planner and resumes the
   loop at `to_iter + 1`, with the inbox items those iterations consumed
   undelivered again. The marker is durable before the eviction, so a crash
   mid-rewind resumes as a rewind rather than as a partially unwound loop.
@@ -101,7 +101,7 @@ defmodule Flezha.Operative.Migration do
   tuple the Overwatch's call returns.
 
   Parked (a failed init) and suspended (a durable loop park) both come back
-  through the un-park task: it re-binds, restores journal and entities, and
+  through the un-park task: it re-binds, restores journal and cells, and
   delivers the undelivered inbox tail, off the Overwatch so a slow bind never
   blocks it. A running operative migrates in place: one ping and start
   round-trip, kept synchronous for the HotSwap handover invariants that depend
@@ -157,10 +157,10 @@ defmodule Flezha.Operative.Migration do
   def session_replaced(%Overwatch{} = state, _old_session, _new_session), do: state
 
   # Refuse a rewind before it changes anything: an uncommitted target, or an
-  # unwound procedure whose plugin output cannot be undone.
+  # unwound tasklet whose plugin output cannot be undone.
   @spec rewind_guard(Overwatch.t(), non_neg_integer()) :: :ok | {:error, term()}
   def rewind_guard(%Overwatch{} = state, to_iter) do
-    committed = ProcJournal.committed_iterations(state.id)
+    committed = TaskJournal.committed_iterations(state.id)
 
     cond do
       to_iter not in committed ->
@@ -176,15 +176,15 @@ defmodule Flezha.Operative.Migration do
 
   # A workflow operative's staged plugin output carries no natural key, so a
   # re-run's output cannot be relied on to overwrite the original at every sink.
-  # The only undo the engine can guarantee is the procedure's own `compensate`
-  # hook — so an unwound procedure that emitted and declares none blocks the
-  # rewind, naming the channels it wrote. A procedure that emitted nothing needs
+  # The only undo the engine can guarantee is the tasklet's own `compensate`
+  # hook — so an unwound tasklet that emitted and declares none blocks the
+  # rewind, naming the channels it wrote. A tasklet that emitted nothing needs
   # no coverage.
   def uncovered_channels(%Overwatch{} = state, to_iter) do
-    compensable = ClassRegistry.compensable_procs(Overwatch.operative_class(state)) || []
+    compensable = ClassRegistry.compensable_tasks(Overwatch.operative_class(state)) || []
 
-    for {proc_idx, channel} <- ProcJournal.staged_channels_above(state.id, to_iter),
-        proc_idx not in compensable,
+    for {task_idx, channel} <- TaskJournal.staged_channels_above(state.id, to_iter),
+        task_idx not in compensable,
         uniq: true,
         do: channel
   end
@@ -244,7 +244,7 @@ defmodule Flezha.Operative.Migration do
   def rehydrate_if_pending(%Overwatch{suspended: false} = state), do: state
 
   def rehydrate_if_pending(%Overwatch{} = state) do
-    if ProcInbox.undelivered(state.id) == [], do: state, else: rehydrate(state)
+    if TaskInbox.undelivered(state.id) == [], do: state, else: rehydrate(state)
   end
 
   @doc """
@@ -285,7 +285,7 @@ defmodule Flezha.Operative.Migration do
   end
 
   @doc """
-  A durable workflow class: the kind that owns a proc-journal and an inbox. An
+  A durable workflow class: the kind that owns a task-journal and an inbox. An
   opted-out class keeps the memory-only inbox and re-runs from the top.
   """
   @spec durable_workflow?(Overwatch.t(), map()) :: boolean()
@@ -304,8 +304,8 @@ defmodule Flezha.Operative.Migration do
   """
   @spec suspended_on_disk?(binary()) :: boolean()
   def suspended_on_disk?(instance_id) do
-    case ProcJournal.restore_state(instance_id) do
-      %{parked: true} -> ProcInbox.undelivered(instance_id) == []
+    case TaskJournal.restore_state(instance_id) do
+      %{parked: true} -> TaskInbox.undelivered(instance_id) == []
       _ -> false
     end
   end
@@ -431,12 +431,12 @@ defmodule Flezha.Operative.Migration do
   @spec rewind_to(Overwatch.t(), non_neg_integer()) :: {:ok, Overwatch.t()} | {:error, term()}
   def rewind_to(%Overwatch{} = state, to_iter) do
     with :ok <- rewind_guard(state, to_iter),
-         :ok <- ProcJournal.append_rewound(state.id, to_iter) do
+         :ok <- TaskJournal.append_rewound(state.id, to_iter) do
       release_runner(state)
 
       :telemetry.execute(
         [:flezha, :workflow, :rewind],
-        %{count: 1, epoch: ProcJournal.current_epoch(state.id)},
+        %{count: 1, epoch: TaskJournal.current_epoch(state.id)},
         %{namespace: state.namespace, operative_id: state.id, to_iter: to_iter}
       )
 

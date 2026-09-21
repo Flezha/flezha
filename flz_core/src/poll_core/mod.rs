@@ -1,12 +1,12 @@
-//! The poll/complete engine: per-entity activation handout, the deferred-wake
+//! The poll/complete engine: per-cell activation handout, the deferred-wake
 //! list (retry backoffs, processing-time deadlines) and the cap on work
-//! underway. The invariant: an entity with an outstanding activation never
+//! underway. The invariant: a cell with an outstanding activation never
 //! appears in another handout until that one is answered — by
 //! [`PollCore::complete`], [`PollCore::retry_after_failure`] or
 //! [`PollCore::abandon`] — and the core never reclaims a handout on a timer.
 //! The core runs no host code and blocks no host thread: hosts block in
 //! [`PollCore::poll`] and answer with completions; a `DropNothing` push a
-//! producing entity cannot deliver is held in its holdback and the entity is
+//! producing cell cannot deliver is held in its holdback and the cell is
 //! handed nothing until it lands. An event-time class is handed ONE input per
 //! activation so a correction replay folds firings where the live run did.
 
@@ -23,14 +23,14 @@ use assembly::{assemble_batch, closed_slice_pending, event_time_due_pending};
 use dashmap::DashMap;
 use wake::{DeferredWake, Wake, WakeKey, WakeTiebreak};
 
-use crate::entity::{EntityItem, EntitySlot};
+use crate::cell::{CellItem, CellSlot};
 use crate::error::Error;
 use crate::util::LockRecover;
 
 /// One item on its ladder, as the engine hands it out. Cloning is shallow.
 #[derive(Clone)]
 pub struct ItemAttempt {
-    pub item: EntityItem,
+    pub item: CellItem,
     /// Core-evaluated `now` (an event-time input's event time, a firing's
     /// scheduled time); `None` when the typed layer evaluates its own clock.
     pub now: Option<u64>,
@@ -40,38 +40,38 @@ pub struct ItemAttempt {
 }
 
 /// One handed-out unit of work; for a [`EnginePayload::Work`] batch, holding
-/// it IS the entity's exclusivity until the token is answered.
+/// it IS the cell's exclusivity until the token is answered.
 pub struct EngineActivation {
     pub token: u64,
     pub payload: EnginePayload,
 }
 
 pub enum EnginePayload {
-    /// An ordered per-entity batch of inputs and timer firings.
+    /// An ordered per-cell batch of inputs and timer firings.
     Work {
-        slot: Arc<EntitySlot>,
+        slot: Arc<CellSlot>,
         items: Vec<ItemAttempt>,
     },
     /// A command interaction crossed to a C-ABI host. Its exclusivity is the
-    /// enqueuer's gate ([`PollCore::with_entity_exclusive`]); its completion
+    /// enqueuer's gate ([`PollCore::with_cell_exclusive`]); its completion
     /// answers that rendezvous, never releases a slot.
     Command {
-        target: crate::schema::EntityRef,
+        target: crate::schema::CellRef,
         change_seq: u64,
         factory: String,
         kind: crate::schema::ActivationKind,
         reply: crossbeam::channel::Sender<crate::schema::ActivationOutcome>,
     },
-    /// One entity's share of a workflow stage or undo; its exclusivity is the
+    /// One cell's share of a workflow stage or undo; its exclusivity is the
     /// driver's stage serialization, its completion answers the barrier.
     WorkflowStep(crate::workflow::step::WorkflowStep),
-    /// A batched prepare crossing for one entry channel, bound to no entity.
+    /// A batched prepare crossing for one entry channel, bound to no cell.
     Prepare(crate::host::PrepareCrossing),
 }
 
 impl EngineActivation {
     /// The work batch's slot; only a work activation is bound to one.
-    pub fn slot(&self) -> &Arc<EntitySlot> {
+    pub fn slot(&self) -> &Arc<CellSlot> {
         match &self.payload {
             EnginePayload::Work { slot, .. } => slot,
             _ => unreachable!("only work activations are bound to a live slot"),
@@ -85,7 +85,7 @@ impl EngineActivation {
         }
     }
 
-    pub fn into_work(self) -> Option<(u64, Arc<EntitySlot>, Vec<ItemAttempt>)> {
+    pub fn into_work(self) -> Option<(u64, Arc<CellSlot>, Vec<ItemAttempt>)> {
         match self.payload {
             EnginePayload::Work { slot, items } => Some((self.token, slot, items)),
             _ => None,
@@ -116,7 +116,7 @@ pub enum Starvation {
 }
 
 struct Outstanding {
-    slot: Arc<EntitySlot>,
+    slot: Arc<CellSlot>,
     handed_at: Instant,
 }
 
@@ -125,9 +125,9 @@ struct PendingPushes {
 }
 
 pub struct PollCore {
-    ready: Mutex<VecDeque<Arc<EntitySlot>>>,
+    ready: Mutex<VecDeque<Arc<CellSlot>>>,
     /// Command and workflow-step activations, ahead of `ready`; the enqueuer
-    /// holds their entity gate, so they never race a work assembly.
+    /// holds their cell gate, so they never race a work assembly.
     direct: Mutex<VecDeque<EngineActivation>>,
     cv: Condvar,
     shutting_down: AtomicBool,
@@ -135,7 +135,7 @@ pub struct PollCore {
     /// Live handouts by token, with when each went out — reported, never
     /// acted on.
     outstanding: DashMap<u64, Outstanding>,
-    /// Entities gated on an undelivered push, by identity; reported beside
+    /// Cells gated on an undelivered push, by identity; reported beside
     /// `outstanding`, which cannot see them (a gated producer holds no
     /// handout).
     deferred_pushes: DashMap<Arc<Vec<u8>>, PendingPushes>,
@@ -207,7 +207,7 @@ impl PollCore {
 
     /// Make a slot's round servable: queue it and wake one blocked poller.
     /// The caller holds the round's inflight token (a winning `claim_inflight`).
-    pub fn schedule(&self, slot: &Arc<EntitySlot>) {
+    pub fn schedule(&self, slot: &Arc<CellSlot>) {
         self.ready.lock_recover().push_back(Arc::clone(slot));
         self.cv.notify_one();
     }
@@ -236,11 +236,11 @@ impl PollCore {
             if let Some(act) = self.direct.lock_recover().pop_front() {
                 return Polled::Activation(act);
             }
-            // At the cap, entity work stays queued and pollers wait as if
+            // At the cap, cell work stays queued and pollers wait as if
             // `ready` were empty; the completion that drops the count below it
             // notifies. Direct activations were already served above — they
             // are barrier-bounded by their own drivers, and holding one behind
-            // blocked entity work would deadlock the driver waiting for it.
+            // blocked cell work would deadlock the driver waiting for it.
             while self.outstanding_count.load(Ordering::Acquire) < self.max_inflight {
                 let Some(slot) = ready.pop_front() else { break };
                 drop(ready);
@@ -261,7 +261,7 @@ impl PollCore {
 
     /// Become the slot's active drainer and assemble its batch; `None` when
     /// another thread owns the round or nothing is runnable.
-    pub fn try_assemble(&self, slot: &Arc<EntitySlot>) -> Option<EngineActivation> {
+    pub fn try_assemble(&self, slot: &Arc<CellSlot>) -> Option<EngineActivation> {
         if slot.drain_active.swap(true, Ordering::AcqRel) {
             return None;
         }
@@ -305,7 +305,7 @@ impl PollCore {
         }
     }
 
-    /// Release the entity and, if work remains, schedule the next round; any
+    /// Release the cell and, if work remains, schedule the next round; any
     /// host thread may answer, not only the one that polled.
     pub fn complete(&self, token: u64) -> Answered {
         self.release(token, Vec::new(), "complete")
@@ -324,8 +324,8 @@ impl PollCore {
 
     /// Drop one activation from the count; at the cap that is what wakes the
     /// parked pollers. `None` is a double answer, reported rather than ignored
-    /// because the second answer would release an entity the first re-armed.
-    fn take_outstanding(&self, token: u64, answer: &'static str) -> Option<Arc<EntitySlot>> {
+    /// because the second answer would release a cell the first re-armed.
+    fn take_outstanding(&self, token: u64, answer: &'static str) -> Option<Arc<CellSlot>> {
         let Some((_, out)) = self.outstanding.remove(&token) else {
             tracing::warn!(
                 target: "flezha::dispatch",
@@ -377,7 +377,7 @@ impl PollCore {
         if let Some(head) = items.first_mut() {
             let policy = slot.dispatcher.retry_policy();
             delay = crate::retry::note_failed_attempt(
-                &format!("procedure {}", slot.dispatcher.procedure_name()),
+                &format!("tasklet {}", slot.dispatcher.tasklet_name()),
                 head.attempt,
                 policy,
                 &error,
@@ -402,18 +402,18 @@ impl PollCore {
     }
 
     /// Give up a handout without processing `items`: hold them at the head of
-    /// the line and release the entity as if never polled — no attempt bump,
+    /// the line and release the cell as if never polled — no attempt bump,
     /// no backoff. Only items the host did NOT run may be passed (re-handing
     /// one it ran executes it twice), which is also why the core never
-    /// abandons on its own: from here a slow Procedure and a lost handout are
+    /// abandons on its own: from here a slow Tasklet and a lost handout are
     /// identical.
     pub fn abandon(&self, token: u64, items: Vec<ItemAttempt>) -> Answered {
         self.release(token, items, "abandon")
     }
 
-    /// Hold re-handed items at the head of the entity's line; only while the
+    /// Hold re-handed items at the head of the cell's line; only while the
     /// slot is handed out, which the assertion states.
-    fn hold_head_of_line(&self, slot: &Arc<EntitySlot>, items: Vec<ItemAttempt>) {
+    fn hold_head_of_line(&self, slot: &Arc<CellSlot>, items: Vec<ItemAttempt>) {
         if items.is_empty() {
             return;
         }
@@ -425,8 +425,8 @@ impl PollCore {
     /// Release the gates and claim the round anything left owes.
     /// `drain_active` drops BEFORE inflight so a producer observing
     /// inflight=false can become the next drainer at once.
-    fn release_and_rearm(&self, slot: &Arc<EntitySlot>) {
-        // An Entity owing an undelivered push is handed no new activation: the
+    fn release_and_rearm(&self, slot: &Arc<CellSlot>) {
+        // A Cell owing an undelivered push is handed no new activation: the
         // gates it already holds stay held, exactly as they do across a retry
         // backoff, and nothing else could have drained it then either. The
         // producing thread is long gone — this is what replaces holding it.
@@ -458,23 +458,23 @@ impl PollCore {
         }
     }
 
-    /// What an Entity's holdback owes its gates: `true` keeps them held, for
+    /// What a Cell's holdback owes its gates: `true` keeps them held, for
     /// the holdback or because another thread took the claim. `push_gated` is
     /// published on EVERY entry before anything is read; a claim published
     /// only on the deferred branch would let a consumer racing the two reads
     /// leave both sides answering "held" and the gates leaked.
-    fn hold_or_release_pushes(&self, slot: &Arc<EntitySlot>) -> bool {
+    fn hold_or_release_pushes(&self, slot: &Arc<CellSlot>) -> bool {
         slot.push_gated.store(true, Ordering::Release);
         if slot.push_deferred.load(Ordering::Acquire) {
             self.deferred_pushes
-                .entry(Arc::clone(&slot.entity_identity))
+                .entry(Arc::clone(&slot.cell_identity))
                 .or_insert_with(|| PendingPushes {
                     since: Instant::now(),
                 });
             crate::admission::drain_push_holdback(slot);
             if slot.push_deferred.load(Ordering::Acquire) {
                 // The consumer's wait list is what normally brings us back;
-                // this only bounds how long a lost wake could hold the Entity.
+                // this only bounds how long a lost wake could hold the Cell.
                 self.wakes.record(
                     WakeKey {
                         due_at_ms: crate::util::wall_now_ms() + PUSH_RETRY_BACKOFF_MS,
@@ -494,14 +494,14 @@ impl PollCore {
             // cannot mean "no claim was ever made".
             return true;
         }
-        self.deferred_pushes.remove(&slot.entity_identity);
+        self.deferred_pushes.remove(&slot.cell_identity);
         false
     }
 
     /// Re-attempt a producer's held pushes (a consumer freed room, or the
     /// fallback wake came due); releases the gates only when they are held
     /// FOR the holdback.
-    pub(crate) fn rearm_deferred_pushes(&self, slot: &Arc<EntitySlot>) {
+    pub(crate) fn rearm_deferred_pushes(&self, slot: &Arc<CellSlot>) {
         crate::admission::drain_push_holdback(slot);
         if !slot.push_deferred.load(Ordering::Acquire) && slot.push_gated.load(Ordering::Acquire) {
             self.release_and_rearm(slot);
@@ -533,11 +533,11 @@ impl PollCore {
     }
 
     /// Cross a command interaction to a host poller and block for its answer.
-    /// MUST run inside [`Self::with_entity_exclusive`]: that gate keeps input
+    /// MUST run inside [`Self::with_cell_exclusive`]: that gate keeps input
     /// activations out while the command runs.
     pub fn host_command(
         &self,
-        slot: &Arc<EntitySlot>,
+        slot: &Arc<CellSlot>,
         kind: crate::schema::ActivationKind,
     ) -> Result<crate::schema::ActivationOutcome, Error> {
         self.host_command_within(slot, kind, HOST_COMMAND_TIMEOUT)
@@ -546,7 +546,7 @@ impl PollCore {
     /// [`Self::host_command`] with the wait chosen by the caller.
     pub fn host_command_within(
         &self,
-        slot: &Arc<EntitySlot>,
+        slot: &Arc<CellSlot>,
         kind: crate::schema::ActivationKind,
         wait: Duration,
     ) -> Result<crate::schema::ActivationOutcome, Error> {
@@ -558,7 +558,7 @@ impl PollCore {
         }
         let (reply, rx) = crossbeam::channel::bounded(1);
         self.submit_direct(EnginePayload::Command {
-            target: crate::host::entity_ref_of(slot),
+            target: crate::host::cell_ref_of(slot),
             change_seq: slot.change_seq.load(Ordering::Acquire),
             factory: slot.topology.factory_id.to_string(),
             kind,
@@ -578,19 +578,19 @@ impl PollCore {
         }
     }
 
-    /// Run `f` under the entity's handout exclusivity: it waits out any
+    /// Run `f` under the cell's handout exclusivity: it waits out any
     /// outstanding activation and none is handed out while it runs.
-    pub fn with_entity_exclusive<R>(&self, slot: &Arc<EntitySlot>, f: impl FnOnce() -> R) -> R {
-        self.try_with_entity_exclusive(slot, Duration::MAX, f)
+    pub fn with_cell_exclusive<R>(&self, slot: &Arc<CellSlot>, f: impl FnOnce() -> R) -> R {
+        self.try_with_cell_exclusive(slot, Duration::MAX, f)
             .expect("a wait of Duration::MAX never elapses")
     }
 
-    /// [`Self::with_entity_exclusive`] with a bound: `None` when the
+    /// [`Self::with_cell_exclusive`] with a bound: `None` when the
     /// outstanding activation is still running at `wait`, and the gate — not
     /// won — is left to whoever holds it.
-    pub fn try_with_entity_exclusive<R>(
+    pub fn try_with_cell_exclusive<R>(
         &self,
-        slot: &Arc<EntitySlot>,
+        slot: &Arc<CellSlot>,
         wait: Duration,
         f: impl FnOnce() -> R,
     ) -> Option<R> {
@@ -604,7 +604,7 @@ impl PollCore {
                 warned = true;
                 tracing::warn!(
                     target: "flezha::poll_core",
-                    entity = slot.dispatcher.entity_label(),
+                    cell = slot.dispatcher.cell_label(),
                     "command interaction waiting >5s for an outstanding activation"
                 );
             }

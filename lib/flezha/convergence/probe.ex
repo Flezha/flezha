@@ -73,7 +73,7 @@ defmodule Flezha.Convergence.Probe do
     }
   end
 
-  # The Entities with a live writer — the evidence a declared gap or give-up
+  # The Cells with a live writer — the evidence a declared gap or give-up
   # still has a log to close. `:unknown` on a failed read, never empty: a
   # missing writer clears a fact, and a read that failed proves nothing.
   defp live_writers() do

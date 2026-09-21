@@ -10,7 +10,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Counters, Entity, Record}
+  alias Flezha.SDK.{Counters, Cell, Record}
   alias Flezha.SDK.Operative.Inbox
 
   alias FlezhaTest.Helper.SdkTierFixtures.{
@@ -25,7 +25,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     TierTimerOp
   }
 
-  @proc "tier_store_procedure"
+  @task "tier_store_tasklet"
 
   defp push(op, input, offset),
     do: Inbox.input(op, "input", input, %{"flz.offset" => Integer.to_string(offset)})
@@ -46,7 +46,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert_in_delta body.event_time, now, 60_000
 
     # The next frame on the stream is the NEXT dispatch's record: no
-    # `entity_state_change` and no output frame left between the two.
+    # `cell_state_change` and no output frame left between the two.
     push(op, "k2=b", 4)
     assert [second] = frames(1)
     assert {1, %{consumed_offset: 4, changes: [_], outputs: [_]}} = effect(second)
@@ -54,7 +54,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
   test "an input at or below the restored floor is a completed dispatch, and the one above it runs" do
     %{op: op, counters: counters} = start_operative(TierStoreOp)
-    pid = entity!(op, @proc)
+    pid = cell!(op, @task)
 
     log =
       effect_record(0, %{
@@ -66,8 +66,8 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
         timers: []
       })
 
-    assert {:ok, 0, false} = Entity.restore(pid, <<>>, <<>>, log, 0)
-    assert {:ok, %{"k0" => "seed"}, 1} = Entity.read(pid, 1_000)
+    assert {:ok, 0, false} = Cell.restore(pid, <<>>, <<>>, log, 0)
+    assert {:ok, %{"k0" => "seed"}, 1} = Cell.read(pid, 1_000)
     before = Counters.dispatches(counters)
 
     # 4 is at or below the floor the restored record made durable: the
@@ -77,12 +77,12 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
     assert [frame] = frames(1)
     assert {1, %{consumed_offset: 6, changes: [_]}} = effect(frame)
-    assert {:ok, %{"k6" => "y"} = state, 2} = Entity.read(pid, 1_000)
+    assert {:ok, %{"k6" => "y"} = state, 2} = Cell.read(pid, 1_000)
     refute Map.has_key?(state, "k4")
     assert Counters.dispatches(counters) - before == 2
   end
 
-  test "a stateless procedure under the tier ships its output and its offset in a record" do
+  test "a stateless tasklet under the tier ships its output and its offset in a record" do
     %{op: op} = start_operative(StatelessTierOp)
     push(op, "k1=a", 5)
 
@@ -99,7 +99,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     %{op: op} = start_operative(TierStoreNoPersistOp)
     push(op, "k1=a", 0)
 
-    assert {:ok, %{"k1" => "a"}, 1} = Entity.read(entity!(op, @proc), 1_000)
+    assert {:ok, %{"k1" => "a"}, 1} = Cell.read(cell!(op, @task), 1_000)
     refute_received {:flz_data, _, _, _, _}
   end
 
@@ -209,21 +209,21 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
   test "a restore discards the staged interval, and a replacement re-holds it from the slot" do
     %{op: op, counters: counters} = start_operative(CheckpointStoreOp)
-    pid = entity!(op, @proc)
+    pid = cell!(op, @task)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
     assert [_, _] = frames(2)
     before = Counters.restore_discarded_inputs(counters)
 
-    # The two changes are staged, not durable: a restore re-seats the Entity
+    # The two changes are staged, not durable: a restore re-seats the Cell
     # on a past in which neither was applied.
-    assert {:ok, 0, false} = Entity.restore(pid, <<>>, <<>>, <<>>, 0)
+    assert {:ok, 0, false} = Cell.restore(pid, <<>>, <<>>, <<>>, 0)
 
     # And the two inputs it threw away are reported, under the key every other
     # runtime carries: the controller re-forwards them, but an operator has to
     # be able to see that they went.
     assert Counters.restore_discarded_inputs(counters) - before == 2
-    assert {:ok, %{}, 1} = Entity.read(pid, 1_000)
+    assert {:ok, %{}, 1} = Cell.read(pid, 1_000)
 
     push(op, "commit:now", 3)
     assert [after_restore] = frames(1)
@@ -232,10 +232,10 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
   test "a replacement after an untrappable kill re-holds the staged interval at the slot's seq" do
     %{op: op} = start_operative(CheckpointBatchedOp)
-    pid = entity!(op, @proc)
+    pid = cell!(op, @task)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
-    assert {:ok, _state, 0} = Entity.read(pid, 1_000)
+    assert {:ok, _state, 0} = Cell.read(pid, 1_000)
 
     ref = Process.monitor(pid)
     push(op, "kill", 3)
@@ -249,9 +249,9 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert body.consumed_offset == 4
   end
 
-  test "an inter-procedure output holds its record until the consumer admits the push" do
+  test "an inter-tasklet output holds its record until the consumer admits the push" do
     %{op: op} = start_operative(TierEdgeOp)
-    producer = entity!(op, "edge_producer")
+    producer = cell!(op, "edge_producer")
 
     # This one's push was admitted before the consumer went into `run/3`, so
     # its record ships; the consumer is inside `run/3` from here on and
@@ -260,17 +260,17 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert [f0] = frames(1)
     assert {0, %{consumed_offset: 1}} = effect(f0)
 
-    consumer = entity!(op, "held_consumer")
-    assert {:error, :busy} = Entity.read(consumer, 200)
+    consumer = cell!(op, "held_consumer")
+    assert {:error, :busy} = Cell.read(consumer, 200)
 
     # Queued into the producer directly: the router is exercised for the EMIT,
     # and a synchronous enqueue then read is what makes "the settle has
     # happened" a fact rather than a wait. The router is now inside the push
     # the consumer will not answer, and this offset may not become durable
     # ahead of the output it produced.
-    :ok = Entity.enqueue_block(producer, %Entity.Input{value: "k2=b", offset: 2})
-    assert {:ok, %{"k2" => "b"}, 2} = Entity.read(producer, 1_000)
-    refute_received {:flz_data, _, "entity_effect_record", _, _}
+    :ok = Cell.enqueue_block(producer, %Cell.Input{value: "k2=b", offset: 2})
+    assert {:ok, %{"k2" => "b"}, 2} = Cell.read(producer, 1_000)
+    refute_received {:flz_data, _, "cell_effect_record", _, _}
 
     send(consumer, :release)
     assert [f1] = frames(1)

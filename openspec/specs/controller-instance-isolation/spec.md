@@ -54,7 +54,7 @@ A controller SHALL resolve its state root to an absolute path once, at the point
 root is read, so that the advisory lock, the refusal it raises, `held/0` and every
 durable path built from the root name one directory rather than one per working
 directory. It SHALL acquire an exclusive advisory lock on that resolved root at boot
-and hold it for the process lifetime, so that no two controllers write one entity WAL
+and hold it for the process lifetime, so that no two controllers write one cell WAL
 tree. The lock SHALL be released by the operating system when the holding process
 exits, requiring no stale-lock recovery. A controller that cannot acquire the lock
 SHALL refuse to start, naming the resolved state root and the holder.

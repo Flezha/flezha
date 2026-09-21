@@ -2,7 +2,7 @@
 
 The `flezha` package is a poll host over `flz_core`, the runner kernel the
 Rust, Java, Node and Ruby SDKs also drive. The kernel owns transport, ordering,
-per-entity exclusivity, durability, retries, timers, credit, routing and the
+per-cell exclusivity, durability, retries, timers, credit, routing and the
 workflow driver. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
@@ -80,14 +80,14 @@ class Upcase:
         ctx.change(Bumped(by=1))
         return value.upper()
 
-    def initial_state(self, entity_key: str | None) -> Seen:
+    def initial_state(self, cell_key: str | None) -> Seen:
         return Seen()
 
     def apply_change(self, state: Seen, change: Bumped) -> None:
         state.count += change.by
 
 
-upcase = flezha.procedure(Upcase)
+upcase = flezha.tasklet(Upcase)
 
 
 @flezha.stream_operative("upcase")
@@ -98,13 +98,13 @@ def upcase_operative(c: flezha.Channels) -> None:
 flezha.create_runner("default").register_factory(upcase_operative).run()
 ```
 
-A procedure is a function when it is a transform and a class when it has state,
+A tasklet is a function when it is a transform and a class when it has state,
 timers, a clock extractor or a compensation. Both produce the same
-`Procedure`, and either way the handler stays an ordinary callable a plain
+`Tasklet`, and either way the handler stays an ordinary callable a plain
 `pytest` test can invoke with no runtime present:
 
 ```python
-@flezha.procedure
+@flezha.tasklet
 def price(tick: Tick) -> Quote: ...
 
 
@@ -115,12 +115,12 @@ def test_price() -> None:
 ### The short form
 
 `@flezha.stream_operative` and `@flezha.workflow_operative` declare a whole
-single-procedure operative when they decorate a procedure's body instead of a
-channels body: one declaration, no `flezha.procedure` beside it. The decorator
+single-tasklet operative when they decorate a tasklet's body instead of a
+channels body: one declaration, no `flezha.tasklet` beside it. The decorator
 names the kind. `id` is the factory id and is always written; `sink`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
-the procedure's own keywords (`entity_keys`, `clock`, `mailbox_capacity`,
-`schema_version` and the rest `flezha.procedure` takes, except `name`).
+the tasklet's own keywords (`cell_keys`, `clock`, `mailbox_capacity`,
+`schema_version` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
 @flezha.stream_operative(id="upcase", sink="out", codec="text")
@@ -140,9 +140,9 @@ runner.register_factory(upcase).register_factory(place).run()
 The body is a function, or a class whose `run` is the handler and whose other
 methods are the hooks. A function is a channels body when it takes one
 parameter annotated `flezha.Channels`, or not annotated at all; any other
-function is a procedure body.
+function is a tasklet body.
 
-With no `sink`, the operative declares its entry channel and the procedure and
+With no `sink`, the operative declares its entry channel and the tasklet and
 no plugin channel, which is how an operative that only keeps state is written:
 
 ```python
@@ -151,7 +151,7 @@ class Counter:
     def run(self, value: str, ctx: flezha.Ctx[Seen]) -> None:
         ctx.change(Bumped(by=1))
 
-    def initial_state(self, entity_key: str | None) -> Seen:
+    def initial_state(self, cell_key: str | None) -> Seen:
         return Seen()
 
     def apply_change(self, state: Seen, change: Bumped) -> None:
@@ -159,28 +159,28 @@ class Counter:
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` (or the `input` keyword's
-value) decoded by `codec`, the procedure, a plugin sink named by `sink` when one
+single tasklet: an entry channel named `input` (or the `input` keyword's
+value) decoded by `codec`, the tasklet, a plugin sink named by `sink` when one
 is written, a factory id equal to `id`, and every class-level setting at its
-default. The procedure is named `id` verbatim, so growing out of the short form
-keeps every entity's state where it was, and `upcase.procedure` wires it into
+default. The tasklet is named `id` verbatim, so growing out of the short form
+keeps every cell's state where it was, and `upcase.tasklet` wires it into
 another operative's channels body. A workflow short form is a `once` workflow,
 seeded on its entry channel from `flz operative start --kind workflow
 --init-values`.
 
-Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window. The short form declares none of them, and nothing is harvested: an
 operative a runner declares is one you registered.
 
 Three refusals name themselves. `ShortFormWithTopology` (a class with `run`
-that also declares `channels` or `procedures`) and `SinkWithoutOutput` (a `sink` on a body with
+that also declares `channels` or `tasklets`) and `SinkWithoutOutput` (a `sink` on a body with
 no return annotation, or `None`) are raised where the decorator runs, and
 `DuplicateFactoryId` where a second operative under one factory id is
 registered. A missing `id`, a class-level setting on a short form, and `sink`,
-`input`, `codec` or a procedure keyword on a channels body are refused where the
+`input`, `codec` or a tasklet keyword on a channels body are refused where the
 decorator runs too, as is `kind`, `sink`, `input` or `codec` on
-`flezha.procedure`.
+`flezha.tasklet`.
 
 > A workflow short form started by a *spawn* does not see its payload yet
 > (`KB-381`). Start it with `--init-values` until that is fixed.
@@ -224,7 +224,7 @@ three identical claims of which one is true is not.
 
 The guard covers assignment, not mutation *through* a container a state field
 holds (`state.items.append(x)`). Rust has the same gap via interior mutability.
-`flezha.testing.ProcedureTestHarness.replay_equals()` is what catches it.
+`flezha.testing.TaskletTestHarness.replay_equals()` is what catches it.
 
 ### Determinism
 
@@ -239,7 +239,7 @@ only while an invocation runs and only on the thread running it.
 A channel names the format of its payload with `codec=` on `input` and on
 `sink`, a string typed as `flezha.ChannelCodec`:
 
-| Codec | An entry hands the procedure | A sink sends |
+| Codec | An entry hands the tasklet | A sink sends |
 | --- | --- | --- |
 | `"text"` | a `str`; invalid UTF-8 fails the decode | a `str` as UTF-8; any other value fails the emit |
 | `"bytes"` | `bytes`, unchanged | `bytes`, `bytearray` or `memoryview` unchanged; any other value fails the emit |
@@ -261,9 +261,9 @@ Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
 codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries
 it.
 
-A value passed between two procedures of one operative never crosses a channel
+A value passed between two tasklets of one operative never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
-procedure the binary instead, since an Elixir string is its binary, so the same
+tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are a `dict` here and a string there.
 
 ## Encoding
@@ -331,7 +331,7 @@ though handler bodies overlapped on a GIL build.
 
 ### The starvation supervisor is required, not an optimisation
 
-A completion can block. When a procedure emits onto a full `DropNothing`
+A completion can block. When a tasklet emits onto a full `DropNothing`
 consumer mailbox, the routing push parks the completing thread — and
 `routing::install_inline_serve`, the hook that rescues the in-process Rust host
 by draining the consumer inline, takes a Rust function pointer and is **not
@@ -361,9 +361,9 @@ they wrote. A synchronous user never sees asyncio: off an event loop the
 dispatch never suspends, so the thread executor drives an entire synchronous
 activation without creating a loop at all.
 
-**No executor may observe or affect per-entity ordering.** Exclusivity is the
+**No executor may observe or affect per-cell ordering.** Exclusivity is the
 core's handout guarantee — it will never hand out two activations for the same
-Entity concurrently, however many threads poll — and an activation is completed
+Cell concurrently, however many threads poll — and an activation is completed
 only after its dispatch has returned. Safety comes from the core, not from the
 adapter: an executor can affect throughput and latency; it cannot affect
 correctness.
@@ -427,8 +427,8 @@ with LocalOperative.start(word_count) as run:
 ```
 
 `on_sink` registers against the sink's **channel** name, which is the producing
-procedure's name unless the declaration named it. The run brings the same
-executor a started runner brings, so the procedures run on its worker threads
+tasklet's name unless the declaration named it. The run brings the same
+executor a started runner brings, so the tasklets run on its worker threads
 while the caller waits in `run_until_idle`. Worked example:
 [`sdk/python/examples/local_word_count.py`](../../sdk/python/examples/local_word_count.py).
 
@@ -442,9 +442,9 @@ refused at startup, naming it. Walk-through:
 ## Testing your handlers
 
 ```python
-from flezha.testing import ProcedureTestHarness
+from flezha.testing import TaskletTestHarness
 
-harness = ProcedureTestHarness(upcase)
+harness = TaskletTestHarness(upcase)
 harness.apply_inputs(["a", "b"])
 assert harness.state.count == 2
 assert harness.replay_equals()

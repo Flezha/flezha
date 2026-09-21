@@ -56,7 +56,7 @@ defmodule Flezha.Service.HubManager.Placement do
         )
 
       # The cspec just changed: shipping state without it would give a
-      # recovering controller perfect Entities for operatives it does not know
+      # recovering controller perfect Cells for operatives it does not know
       # exist.
       DurabilityTier.ship_cspec(hub_id)
       result

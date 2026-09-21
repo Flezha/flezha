@@ -25,7 +25,7 @@ impl CommandAction for AddOperative {
         // every StreamOperative instance ProcessHub still has tagged to this
         // runner's profile after a restart. If the instance is already
         // in the local registry, skip without re-registering — keeps
-        // the existing per-Entity state intact and prevents
+        // the existing per-Cell state intact and prevents
         // duplicate-init crashes.
         if runner.has_operative(&instance_id) {
             return Reply {
@@ -64,9 +64,9 @@ impl AddOperative {
             factory_id.to_string(),
             instance_id.to_string(),
             self.init_values.clone(),
-            self.resume_entity_count,
+            self.resume_cell_count,
             self.inbox_tail_count,
-            self.proc_journal.as_ref().map(Into::into),
+            self.task_journal.as_ref().map(Into::into),
         ) {
             errors.push(format!(
                 "WorkflowOperative class with factory_id {} is not registered",
@@ -96,10 +96,9 @@ impl AddOperative {
         ) {
             Some(instance) => {
                 if !self.init_values.is_empty() {
-                    if let Err(e) = crate::command::entity_state::apply_init_values(
-                        &instance,
-                        &self.init_values,
-                    ) {
+                    if let Err(e) =
+                        crate::command::cell_state::apply_init_values(&instance, &self.init_values)
+                    {
                         errors.push(e.to_string());
                     }
                 }
@@ -128,19 +127,19 @@ impl AddOperative {
     }
 }
 
-/// Whether an entry-fed procedure is keyed — the one definition of
+/// Whether an entry-fed tasklet is keyed — the one definition of
 /// "partitionable", read by the bind refusal and the declaration alike.
-fn has_keyed_entry_procedure(topology: &crate::operative::topology::OperativeTopology) -> bool {
+fn has_keyed_entry_tasklet(topology: &crate::operative::topology::OperativeTopology) -> bool {
     use crate::channel::ChannelKind;
-    use crate::operative::topology::EntityMode;
+    use crate::operative::topology::CellMode;
 
     topology
         .channels
         .iter()
         .filter(|channel| channel.kind == ChannelKind::Entry)
         .flat_map(|channel| channel.consumers.iter())
-        .filter_map(|edge| topology.procedure(edge.procedure))
-        .any(|procedure| matches!(procedure.mode, EntityMode::Dynamic | EntityMode::Static))
+        .filter_map(|edge| topology.tasklet(edge.tasklet))
+        .any(|tasklet| matches!(tasklet.mode, CellMode::Dynamic | CellMode::Static))
 }
 
 fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String> {
@@ -148,14 +147,14 @@ fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String>
         return None;
     }
     let topology = crate::operative::registry::get_class(factory_id)?;
-    if has_keyed_entry_procedure(&topology) {
+    if has_keyed_entry_tasklet(&topology) {
         None
     } else {
         Some(format!(
-            "PartitionsWithoutKeyedProcedure: class {} has no keyed entry-fed procedure, \
+            "PartitionsWithoutKeyedTasklet: class {} has no keyed entry-fed tasklet, \
              so its {} partitions would each fold a slice of the input into a private copy \
-             of the same state — declare `key_by` on the entry edge (or entity keys on the \
-             procedure) before partitioning",
+             of the same state — declare `key_by` on the entry edge (or cell keys on the \
+             tasklet) before partitioning",
             factory_id, command.partition_count
         ))
     }
@@ -194,17 +193,17 @@ fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
     if spec.as_ref().is_some_and(|spec| spec.sync_durability) {
         metadata.insert("durability".to_string(), "sync_remote".to_string());
     }
-    if let Some(procs) = declared_procs("workflow", factory_id, |spec, node| {
+    if let Some(tasks) = declared_tasks("workflow", factory_id, |spec, node| {
         spec.topology
-            .procedure(spec.dag.order[node])
-            .is_some_and(|proc| proc.compensate_overridden)
+            .tasklet(spec.dag.order[node])
+            .is_some_and(|task| task.compensate_overridden)
     }) {
-        metadata.insert("compensable_procs".to_string(), procs);
+        metadata.insert("compensable_tasks".to_string(), tasks);
     }
-    if let Some(procs) = declared_procs("workflow", factory_id, |spec, node| {
+    if let Some(tasks) = declared_tasks("workflow", factory_id, |spec, node| {
         spec.dag.children[node].is_empty()
     }) {
-        metadata.insert("leaf_procs".to_string(), procs);
+        metadata.insert("leaf_tasks".to_string(), tasks);
     }
 }
 
@@ -219,7 +218,7 @@ fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, 
     if topology.effectively_once {
         metadata.insert("effectively_once".to_string(), "true".to_string());
     }
-    if !has_keyed_entry_procedure(topology) {
+    if !has_keyed_entry_tasklet(topology) {
         metadata.insert("keyed".to_string(), "false".to_string());
     }
     if let Some(policy) = topology.correction {
@@ -240,9 +239,9 @@ fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, 
         metadata.insert("ack_granularity".to_string(), "checkpoint".to_string());
     }
     if let Some(min_bytes) = topology
-        .procedures
+        .tasklets
         .iter()
-        .map(|proc| proc.compact_after_bytes)
+        .map(|task| task.compact_after_bytes)
         .min()
     {
         if min_bytes != crate::operative::topology::DEFAULT_COMPACT_AFTER_BYTES {
@@ -253,7 +252,7 @@ fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, 
 
 /// The positions `select` picks out, comma-separated; `None` without a
 /// tree, and an empty string is "a tree, none selected".
-fn declared_procs(
+fn declared_tasks(
     kind: &str,
     factory_id: &str,
     select: impl Fn(&WorkflowSpec, usize) -> bool,
@@ -282,8 +281,8 @@ mod metadata_tests {
     fn register_workflow(id: &str, sync: bool) {
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":{sync},
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p0"}}],"workflow":{{}}}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}],"workflow":{{}}}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
@@ -315,8 +314,8 @@ mod metadata_tests {
         assert_eq!(
             keys.into_iter().collect::<Vec<_>>(),
             vec![
-                ("compensable_procs".to_string(), String::new()),
-                ("leaf_procs".to_string(), "0".to_string())
+                ("compensable_tasks".to_string(), String::new()),
+                ("leaf_tasks".to_string(), "0".to_string())
             ]
         );
         assert!(metadata_response("stream", "meta_never_registered").is_empty());
@@ -330,12 +329,12 @@ mod partition_tests {
 
     use super::{partition_refusal, AddOperative, AddOperativeResponse, KeyGroupRange, Message};
 
-    fn register(id: &str, entity_mode: &str, entity_keys: &str) {
+    fn register(id: &str, cell_mode: &str, cell_keys: &str) {
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
-                 "procedures":[{{"name":"p","entity_mode":"{entity_mode}","entities_for_overridden":true,
-                                 "entity_keys":[{entity_keys}]}}]}}"#
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p","cell_mode":"{cell_mode}","cells_for_overridden":true,
+                                 "cell_keys":[{cell_keys}]}}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
@@ -359,7 +358,7 @@ mod partition_tests {
 
         let refusal = partition_refusal(&partitioned(&id, 3), &id).expect("refused");
         assert!(
-            refusal.contains("PartitionsWithoutKeyedProcedure"),
+            refusal.contains("PartitionsWithoutKeyedTasklet"),
             "{refusal}"
         );
         assert!(refusal.contains("key_by"), "{refusal}");

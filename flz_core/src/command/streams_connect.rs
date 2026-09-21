@@ -149,10 +149,10 @@ fn write_stream_type(stream: &QuicBidiStream, stream_type: u8, key: u32) -> std:
 
 /// Install the global `state_sink` wrapping the FIRST
 /// secondary stream from the freshly-connected pairs. The flusher uses
-/// this sink to ship `entity_state_change` and
-/// `entity_state_snapshot` frames; one secondary is enough because
-/// the WAL is single-writer per entity and the controller serializes the
-/// per-Entity writes server-side.
+/// this sink to ship `cell_state_change` and
+/// `cell_state_snapshot` frames; one secondary is enough because
+/// the WAL is single-writer per cell and the controller serializes the
+/// per-Cell writes server-side.
 fn install_state_sink(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
     // Credit never carries across sessions: drop the old window (waking any
     // parked sender into the legacy path) until the controller re-offers

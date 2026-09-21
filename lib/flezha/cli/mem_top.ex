@@ -6,7 +6,7 @@ defmodule Flezha.Service.Cli.MemTop do
 
   alias Flezha.Layout.Table, as: Layout
 
-  @top_proc_count 20
+  @top_task_count 20
 
   @doc """
   `flz controller mem-top` RPC. Captures a single snapshot of the
@@ -33,7 +33,7 @@ defmodule Flezha.Service.Cli.MemTop do
       captured_at: DateTime.utc_now() |> DateTime.to_iso8601(),
       node: Atom.to_string(node()),
       erlang_memory: erlang_memory_map(),
-      top_processes: top_processes(@top_proc_count),
+      top_processes: top_processes(@top_task_count),
       ets_tables: top_ets_tables(),
       dets_files: dets_files_under_process_hub(),
       recon_alloc_allocated_types: recon_alloc_allocated_types()

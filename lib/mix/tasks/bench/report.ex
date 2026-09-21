@@ -30,8 +30,7 @@ defmodule Mix.Tasks.Bench.Report do
   """
   @spec table([String.t()], [[String.t()]], [:left | :right]) :: String.t()
   def table(headers, rows, aligns \\ []) do
-    cells = [headers | rows]
-    widths = widths(cells)
+    widths = widths([headers | rows])
     aligns = Enum.map(0..(length(headers) - 1)//1, &Enum.at(aligns, &1, :left))
 
     [
@@ -72,18 +71,18 @@ defmodule Mix.Tasks.Bench.Report do
     end)
   end
 
-  defp widths(cells) do
-    cells
+  defp widths(rows) do
+    rows
     |> Enum.zip_with(& &1)
     |> Enum.map(fn column -> column |> Enum.map(&String.length/1) |> Enum.max() end)
   end
 
-  defp render_row(cells, widths, aligns) do
-    [cells, widths, aligns]
-    |> Enum.zip_with(fn [cell, width, align] ->
+  defp render_row(fields, widths, aligns) do
+    [fields, widths, aligns]
+    |> Enum.zip_with(fn [field, width, align] ->
       case align do
-        :right -> String.pad_leading(cell, width)
-        :left -> String.pad_trailing(cell, width)
+        :right -> String.pad_leading(field, width)
+        :left -> String.pad_trailing(field, width)
       end
     end)
     |> Enum.join("  ")

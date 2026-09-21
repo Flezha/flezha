@@ -16,7 +16,7 @@ pub enum TopologyIssue {
 
     #[error(
         "node identity `{name}` is declared by two distinct nodes; a node name must be unique \
-         per operative and distinct from every procedure name()"
+         per operative and distinct from every tasklet name()"
     )]
     NodeIdentityCollision { name: String },
 
@@ -34,26 +34,26 @@ pub enum TopologyIssue {
     BranchTooFewArms { arms: usize },
 
     #[error(
-        "procedure `{procedure}` is on a cycle; an operative topology is a DAG — a node's \
+        "tasklet `{tasklet}` is on a cycle; an operative topology is a DAG — a node's \
          output may never reach its own input"
     )]
-    Cycle { procedure: String },
+    Cycle { tasklet: String },
 
-    #[error("procedure `{procedure}` is not reachable from any entry channel")]
-    UnreachableProcedure { procedure: String },
-
-    #[error(
-        "procedure `{name}` declares non-empty entity_keys() but does not override entities_for \
-         (set ENTITIES_FOR_OVERRIDDEN = true)"
-    )]
-    EntitiesForMissing { name: String },
+    #[error("tasklet `{tasklet}` is not reachable from any entry channel")]
+    UnreachableTasklet { tasklet: String },
 
     #[error(
-        "channel `{channel}` declares .key_by(...) into procedure `{procedure}`, which declares a \
-         non-empty entity_keys() (static mode); static keying routes by entities_for and may name \
-         several Entities, edge keying names exactly one — declare one OR the other, not both"
+        "tasklet `{name}` declares non-empty cell_keys() but does not override cells_for \
+         (set CELLS_FOR_OVERRIDDEN = true)"
     )]
-    KeyByOnUnkeyableTarget { channel: String, procedure: String },
+    CellsForMissing { name: String },
+
+    #[error(
+        "channel `{channel}` declares .key_by(...) into tasklet `{tasklet}`, which declares a \
+         non-empty cell_keys() (static mode); static keying routes by cells_for and may name \
+         several Cells, edge keying names exactly one — declare one OR the other, not both"
+    )]
+    KeyByOnUnkeyableTarget { channel: String, tasklet: String },
 
     #[error("channel `{channel}` declares .key_by(...) twice before one `.into(...)`")]
     DuplicateKeyBy { channel: String },
@@ -78,21 +78,21 @@ pub enum TopologyIssue {
     DanglingTransformChain { channel: String },
 
     #[error(
-        "channel `{channel}` feeds procedure `{procedure}` without a .key_by(...), but another \
-         edge keys it into dynamic mode; every edge into a dynamic-mode procedure must name the \
-         Entity its inputs reach"
+        "channel `{channel}` feeds tasklet `{tasklet}` without a .key_by(...), but another \
+         edge keys it into dynamic mode; every edge into a dynamic-mode tasklet must name the \
+         Cell its inputs reach"
     )]
-    UnkeyedEdgeIntoDynamicProcedure { channel: String, procedure: String },
+    UnkeyedEdgeIntoDynamicTasklet { channel: String, tasklet: String },
 
     #[error(
-        "procedure `{procedure}` declared mailbox_capacity = 0; capacity must be in 1..=1_048_576"
+        "tasklet `{tasklet}` declared mailbox_capacity = 0; capacity must be in 1..=1_048_576"
     )]
-    MailboxCapacityZero { procedure: String },
+    MailboxCapacityZero { tasklet: String },
 
     #[error(
-        "procedure `{procedure}` declared mailbox_capacity = {value}; capacity must be in 1..=1_048_576"
+        "tasklet `{tasklet}` declared mailbox_capacity = {value}; capacity must be in 1..=1_048_576"
     )]
-    MailboxCapacityTooLarge { procedure: String, value: usize },
+    MailboxCapacityTooLarge { tasklet: String, value: usize },
 
     #[error(
         "channel `{channel}` was declared with `sink(...)` more than once; \
@@ -125,14 +125,11 @@ pub enum TopologyIssue {
     KeyedChannelWithoutPluginWire { channel: String },
 
     #[error(
-        "procedure `{procedure}` declares clock `{clock_type}` with `type Change = NoChange`; \
+        "tasklet `{tasklet}` declares clock `{clock_type}` with `type Change = NoChange`; \
          the runtime cannot serve it (logical time is the durable change seq, which never \
          advances without persistent changes)"
     )]
-    UnservableClock {
-        procedure: String,
-        clock_type: String,
-    },
+    UnservableClock { tasklet: String, clock_type: String },
 
     #[error(
         "channel `{channel}` has a plugin wire but is not declared .keyed(); the \
@@ -143,7 +140,7 @@ pub enum TopologyIssue {
 
     #[error(
         "channel `{channel}` declared retry_max = 0; at least one attempt is required \
-         (use ProcedureError::non_retryable to park without retries)"
+         (use TaskletError::non_retryable to park without retries)"
     )]
     RetryMaxZero { channel: String },
 
@@ -164,14 +161,11 @@ pub enum TopologyIssue {
     CorrectionWithoutTier,
 
     #[error(
-        "operative declares correction_window() but procedure `{procedure}` declares clock \
+        "operative declares correction_window() but tasklet `{tasklet}` declares clock \
          `{clock_type}`; correction orders a replayed slice by event time, which only \
          `EventTimeFrom` yields"
     )]
-    CorrectionWithoutEventTime {
-        procedure: String,
-        clock_type: String,
-    },
+    CorrectionWithoutEventTime { tasklet: String, clock_type: String },
 
     #[error("operative declares correction_window(0); a zero window can correct nothing")]
     CorrectionWindowZero,
@@ -190,10 +184,10 @@ pub enum TopologyIssue {
     CheckpointAckWithoutTier,
 
     #[error(
-        "merge into procedure `{procedure}` declares {sources} source channel(s); a merge \
-         consumes two or more — wire a single source with `.into::<Proc>()` instead"
+        "merge into tasklet `{tasklet}` declares {sources} source channel(s); a merge \
+         consumes two or more — wire a single source with `.into::<Task>()` instead"
     )]
-    MergeTooFewSources { procedure: String, sources: usize },
+    MergeTooFewSources { tasklet: String, sources: usize },
 
     #[error(
         "merge subscribes channel `{channel}` twice; each merge source must be a distinct \
@@ -202,11 +196,11 @@ pub enum TopologyIssue {
     DuplicateMergeSource { channel: String },
 
     #[error(
-        "channel `{channel}` already feeds procedure `{procedure}`; an edge carries exactly one \
+        "channel `{channel}` already feeds tasklet `{tasklet}`; an edge carries exactly one \
          transform and one key or neither, so a re-declaration where either side carries one is \
          refused rather than silently keeping the first"
     )]
-    EdgeAlreadyWired { channel: String, procedure: String },
+    EdgeAlreadyWired { channel: String, tasklet: String },
 
     // The class facts the fixture pins. Each carries the sentence `register`
     // printed as free text before it had a name.
@@ -225,7 +219,7 @@ pub enum TopologyIssue {
 
     #[error(
         "checkpoint_outputs at_checkpoint requires checkpoint_max_delay_ms: an interval that \
-         never closes would hold its outputs forever on a quiet Entity"
+         never closes would hold its outputs forever on a quiet Cell"
     )]
     AtCheckpointWithoutMaxDelay,
 
@@ -249,14 +243,14 @@ impl TopologyIssue {
             Self::ChannelNameTooLong { .. } => "ChannelNameTooLong",
             Self::BranchTooFewArms { .. } => "BranchTooFewArms",
             Self::Cycle { .. } => "Cycle",
-            Self::UnreachableProcedure { .. } => "UnreachableProcedure",
-            Self::EntitiesForMissing { .. } => "EntitiesForMissing",
+            Self::UnreachableTasklet { .. } => "UnreachableTasklet",
+            Self::CellsForMissing { .. } => "CellsForMissing",
             Self::KeyByOnUnkeyableTarget { .. } => "KeyByOnUnkeyableTarget",
             Self::DuplicateKeyBy { .. } => "DuplicateKeyBy",
             Self::TransformAfterTerminal { .. } => "TransformAfterTerminal",
             Self::TransformAfterKeyBy { .. } => "TransformAfterKeyBy",
             Self::DanglingTransformChain { .. } => "DanglingTransformChain",
-            Self::UnkeyedEdgeIntoDynamicProcedure { .. } => "UnkeyedEdgeIntoDynamicProcedure",
+            Self::UnkeyedEdgeIntoDynamicTasklet { .. } => "UnkeyedEdgeIntoDynamicTasklet",
             Self::MailboxCapacityZero { .. } => "MailboxCapacityZero",
             Self::MailboxCapacityTooLarge { .. } => "MailboxCapacityTooLarge",
             Self::DuplicatePluginSink { .. } => "DuplicatePluginSink",

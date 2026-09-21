@@ -94,8 +94,8 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
          "#{st.completed - cfg.warmup} in #{Report.ms_from_ns(m.whole_window)} ms → #{Report.decimal(Run.rate(cfg.n, m.whole_window))} workflows/s"},
         {"sink outputs",
          "#{st.out.received} measured, #{st.out.duplicates} dup, #{m.missing} missing, #{st.out.foreign} foreign"},
-        {"proc commits",
-         "#{c1.proc - c0.proc} (#{Report.decimal((c1.proc - c0.proc) / max(cfg.n, 1), 2)}/workflow) → #{Report.decimal(Run.rate(c1.proc - c0.proc, m.whole_window))} commits/s; failed=#{c1.failed - c0.failed}"},
+        {"task commits",
+         "#{c1.task - c0.task} (#{Report.decimal((c1.task - c0.task) / max(cfg.n, 1), 2)}/workflow) → #{Report.decimal(Run.rate(c1.task - c0.task, m.whole_window))} commits/s; failed=#{c1.failed - c0.failed}"},
         {"state dir",
          "#{Tally.state_dir_summary(Run.namespace())}; fsync p99 #{Tally.fsync_p99_ms()} ms"},
         {"beam", "#{Run.mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes"},
@@ -112,7 +112,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       throughput: Run.rate(cfg.n, m.whole_window),
       unit: "workflows/s",
       p50_ms: Run.p50_ms(st.done),
-      commits_s: Run.rate(c1.proc - c0.proc, m.whole_window),
+      commits_s: Run.rate(c1.task - c0.task, m.whole_window),
       integrity: Run.integrity(st, m.missing)
     )
   end
@@ -195,7 +195,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
           {"parks / wakes",
            "#{st.suspended} parked, #{st.rehydrating} rehydrated during the turns"},
           {"commits",
-           "#{c1.proc - c0.proc} proc (#{Report.decimal((c1.proc - c0.proc) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Report.decimal((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{Report.decimal(Run.rate(c1.proc - c0.proc, window))} proc commits/s; failed=#{c1.failed - c0.failed}"}
+           "#{c1.task - c0.task} task (#{Report.decimal((c1.task - c0.task) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Report.decimal((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{Report.decimal(Run.rate(c1.task - c0.task, window))} task commits/s; failed=#{c1.failed - c0.failed}"}
         ] ++
           kill_rows(st) ++
           [
@@ -214,7 +214,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       throughput: Run.rate(st.out.received, window),
       unit: "turns/s",
       p50_ms: Run.p50_ms(st.out),
-      commits_s: Run.rate(c1.proc - c0.proc, window),
+      commits_s: Run.rate(c1.task - c0.task, window),
       integrity: Run.integrity(st, missing)
     )
   end
@@ -343,12 +343,12 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
          "#{div(bytes, 1024)} KiB (#{Report.decimal(bytes / n / 1024, 1)} KiB/sleeper), #{wals} wal, #{snaps} snap"},
         {"convergence tick",
          "#{Enum.map_join(ticks, " / ", &"#{Report.ms_from_ns(&1 * 1_000)} ms")} (3 samples)"},
-        {"commits so far", "#{c.proc} proc, #{c.iter} iter"}
+        {"commits so far", "#{c.task} task, #{c.iter} iter"}
       ])
     )
   end
 
-  # `--no-wake` ends a sleep cell at the resting report — a `--keep` that
+  # `--no-wake` ends a sleep run at the resting report — a `--keep` that
   # leaves every sleeper suspended with nothing owed, for a clean boot.
   defp wake_storms(%{no_wake: true}, _st, _ids, _counters), do: :ok
 
@@ -403,7 +403,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
           {"wake → reply", Tally.latency_line(st.out)},
           {"rehydrations",
            "#{st.rehydrating} (expect #{n}); replies #{st.out.received}, dup #{st.out.duplicates}, missing #{n - st.out.seen}"},
-          {"commits", "#{c1.proc - c0.proc} proc, #{c1.iter - c0.iter} iter"}
+          {"commits", "#{c1.task - c0.task} task, #{c1.iter - c0.iter} iter"}
         ] ++ if(st.stalled, do: [{"result", "STALLED"}], else: [])
       )
     )
@@ -414,7 +414,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       throughput: Run.rate(n, window),
       unit: "wakes/s",
       p50_ms: Run.p50_ms(st.out),
-      commits_s: Run.rate(c1.proc - c0.proc, max(window, 1)),
+      commits_s: Run.rate(c1.task - c0.task, max(window, 1)),
       integrity:
         Run.integrity(%{st | out: %{st.out | duplicates: st.out.duplicates}}, n - st.out.seen)
     )
@@ -560,7 +560,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
   end
 
   # Spawn the loop population (burst) and name it: `{state, ids}` with the
-  # start-call latencies tallied. A failed spawn ends the cell.
+  # start-call latencies tallied. A failed spawn ends the run.
   defp spawn_population(cfg, sink, st) do
     n = cfg.n
     IO.puts("Spawning #{n} × #{cfg.factory}...")

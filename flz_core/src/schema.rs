@@ -7,28 +7,28 @@ use serde::{Deserialize, Serialize};
 /// Negotiated at context creation; a mismatch refuses to start.
 pub const SCHEMA_VERSION: u32 = 3;
 
-pub use crate::channel::{ChannelId, ProcedureId};
+pub use crate::channel::{ChannelId, TaskletId};
 
-/// One unit of work handed to the host, exclusive on its entity until its
+/// One unit of work handed to the host, exclusive on its cell until its
 /// [`ActivationResult`] arrives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
     pub token: u64,
-    pub target: EntityRef,
+    pub target: CellRef,
     pub kind: ActivationKind,
-    /// The entity's change seq at handout, an input to `ctx.stable_id()`.
+    /// The cell's change seq at handout, an input to `ctx.stable_id()`.
     pub change_seq: u64,
     /// The declared class, by which a host resolves its own typed class.
     pub factory: String,
 }
 
-/// The entity an activation is addressed to; `entity_key` is `None` only for
+/// The cell an activation is addressed to; `cell_key` is `None` only for
 /// pre-keying work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityRef {
+pub struct CellRef {
     pub operative: String,
-    pub procedure: ProcedureId,
-    pub entity_key: Option<String>,
+    pub tasklet: TaskletId,
+    pub cell_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -107,7 +107,7 @@ pub struct KeyRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrepareAnswer {
     /// One for a dynamic consumer, any number for a static fan-out (empty =
-    /// every declared entity).
+    /// every declared cell).
     pub keys: Vec<String>,
     pub event_time: Option<u64>,
 }
@@ -186,7 +186,7 @@ pub struct Output {
 pub enum OutputTarget {
     Edge {
         channel: ChannelId,
-        consumer: ProcedureId,
+        consumer: TaskletId,
     },
     Plugin {
         channel: String,
@@ -279,10 +279,10 @@ mod tests {
     fn activation_round_trips() {
         let a = Activation {
             token: 7,
-            target: EntityRef {
+            target: CellRef {
                 operative: "inst".into(),
-                procedure: 2,
-                entity_key: Some("k1".into()),
+                tasklet: 2,
+                cell_key: Some("k1".into()),
             },
             kind: ActivationKind::Work(vec![
                 WorkItem::Input(InputItem {
@@ -343,10 +343,10 @@ mod fixture_tests {
     fn work_activation() -> Activation {
         Activation {
             token: 42,
-            target: EntityRef {
+            target: CellRef {
                 operative: "op-1".into(),
-                procedure: 3,
-                entity_key: Some("k".into()),
+                tasklet: 3,
+                cell_key: Some("k".into()),
             },
             kind: ActivationKind::Work(vec![
                 WorkItem::Input(InputItem {
@@ -464,10 +464,10 @@ mod fixture_tests {
         for (kind, expected) in kinds {
             let act = Activation {
                 token: 1,
-                target: EntityRef {
+                target: CellRef {
                     operative: "o".into(),
-                    procedure: 0,
-                    entity_key: None,
+                    tasklet: 0,
+                    cell_key: None,
                 },
                 kind,
                 change_seq: 0,

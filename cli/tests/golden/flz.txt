@@ -11,7 +11,7 @@ COMMANDS:
     runner         Runner management commands
     plugin         Plugin management commands
     boot           Boot/recovery status, await, and legacy snapshot import
-    state          Per-Entity state queries (time-travel, retention, list)
+    state          Per-Cell state queries (time-travel, retention, list)
     reset          Clear Controller durable runtime data on disk (controller must be stopped)
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)

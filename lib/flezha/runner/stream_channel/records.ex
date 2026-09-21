@@ -3,9 +3,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
   The operative route cache, the ownership check, the durable-record fan-out
   and the credit handshake.
 
-  Every frame a runner sends on an Entity's write path arrives here: state
+  Every frame a runner sends on a Cell's write path arrives here: state
   changes, snapshots, deletions, compensation records, corrections and parks.
-  Each is routed to the Entity's own writer. A frame from a session the
+  Each is routed to the Cell's own writer. A frame from a session the
   takeover fence marked superseded is refused rather than written, and so is
   one from a runner the operative's ownership record does not name
   (`admit/3`), the check the control channel's requests are judged by too.
@@ -227,35 +227,35 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
-  # Persistence frames are handed to the per-entity WalWriter via a
+  # Persistence frames are handed to the per-cell WalWriter via a
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes
   # snapshots (an fsync) in its own process, so disk/recovery latency never
   # stalls this channel — which also carries the operative's output frames.
-  # The per-Entity queue that keeps a slow Entity from stalling siblings on
+  # The per-Cell queue that keeps a slow Cell from stalling siblings on
   # this stream is each WalWriter's own mailbox: the cast demuxes here and
-  # queues there, so only the shared credit window couples Entities.
-  def handle_entity_state_change(state, frame) do
+  # queues there, so only the shared credit window couples Cells.
+  def handle_cell_state_change(state, frame) do
     case Wire.decode_frame(frame) do
-      {:ok, %{entity_id: {rc, _sh, _pk} = entity_id} = record} ->
-        if admit(state, rc, :entity_state_change),
-          do: append_to_entity(state, entity_id, rc, record, byte_size(frame)),
+      {:ok, %{cell_id: {rc, _sh, _pk} = cell_id} = record} ->
+        if admit(state, rc, :cell_state_change),
+          do: append_to_cell(state, cell_id, rc, record, byte_size(frame)),
           else: state
 
       {:error, reason} ->
-        Logger.warning("[stream] entity_state_change decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] cell_state_change decode failed: #{inspect(reason)}")
         state
     end
   end
 
-  defp append_to_entity(state, entity_id, rc, record, frame_bytes) do
-    case Flezha.State.Supervisor.find_or_start(entity_id) do
+  defp append_to_cell(state, cell_id, rc, record, frame_bytes) do
+    case Flezha.State.Supervisor.find_or_start(cell_id) do
       {:ok, pid} ->
         admit_and_append(state, pid, rc, record, frame_bytes)
 
       {:error, reason} ->
         Logger.error(
-          "[stream] entity_state_change WalWriter start failed " <>
-            "entity=#{inspect(entity_id)}: #{inspect(reason)}"
+          "[stream] cell_state_change WalWriter start failed " <>
+            "cell=#{inspect(cell_id)}: #{inspect(reason)}"
         )
 
         state
@@ -286,12 +286,12 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # runs in the store process after the fsync; `send_control_async` is a
   # cast, so it cannot block the store either.
   def handle_correction_request(state, frame) do
-    with {:ok, %{entity_id: {operative_class, _, _} = entity_id, body: body}} <-
+    with {:ok, %{cell_id: {operative_class, _, _} = cell_id, body: body}} <-
            Wire.decode_frame(frame),
          {:ok, target} <- Wire.decode_correction_request(body),
          true <- admit(state, operative_class, :correction_request),
          {:ok, overwatch} <- Lookup.overwatch(operative_class) do
-      Replay.request_correction(overwatch, entity_id, target)
+      Replay.request_correction(overwatch, cell_id, target)
     else
       false ->
         :ok
@@ -302,7 +302,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   def handle_park_payload(state, frame) do
-    with {:ok, %{entity_id: {rc, sh, pk}, body: body}} <- Wire.decode_frame(frame),
+    with {:ok, %{cell_id: {rc, sh, pk}, body: body}} <- Wire.decode_frame(frame),
          {:ok, park} <- Wire.decode_park_body(body),
          true <- admit(state, rc, :park_payload) do
       runner_id = state.runner_id
@@ -324,28 +324,28 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   # Count every refused forward; emit `stale_writer_refused` once per
-  # (Entity, superseded session) episode so a chatty zombie cannot storm the
-  # bus. A frame whose Entity cannot be decoded is still counted.
+  # (Cell, superseded session) episode so a chatty zombie cannot storm the
+  # bus. A frame whose Cell cannot be decoded is still counted.
   def refuse_stale_forward(state, payload_id, frame) do
     LivenessCounters.bump_channel(state.liveness_ref, :stale_writer_refused)
 
-    with {:ok, {rc, sh, pk} = entity_id} <- frame_entity_id(payload_id, frame),
-         true <- Marks.first_refusal?(state.runner_id, entity_id) do
+    with {:ok, {rc, sh, pk} = cell_id} <- frame_cell_id(payload_id, frame),
+         true <- Marks.first_refusal?(state.runner_id, cell_id) do
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operative: rc, procedure: sh, key: pk, session: state.runner_id}
+        %{operative: rc, tasklet: sh, key: pk, session: state.runner_id}
       )
     end
 
     :ok
   end
 
-  def frame_entity_id("delete_entity_state", frame), do: Wire.decode_entity_id(frame)
+  def frame_cell_id("delete_cell_state", frame), do: Wire.decode_cell_id(frame)
 
-  def frame_entity_id(_payload_id, frame) do
-    with {:ok, %{entity_id: entity_id}} <- Wire.decode_frame(frame),
-         do: {:ok, entity_id}
+  def frame_cell_id(_payload_id, frame) do
+    with {:ok, %{cell_id: cell_id}} <- Wire.decode_frame(frame),
+         do: {:ok, cell_id}
   end
 
   # ---------- Credit-grant flow control ----------
@@ -468,80 +468,80 @@ defmodule Flezha.Runner.StreamChannel.Records do
     Config.get(:credit_flow_control_enabled)
   end
 
-  # Writing a snapshot fsyncs and truncates the per-entity WAL (a call back
+  # Writing a snapshot fsyncs and truncates the per-cell WAL (a call back
   # into its writer), so run it in a separate process — off this channel's loop
   # and outside the writer (which would self-call).
-  def handle_entity_state_snapshot(state, frame) do
+  def handle_cell_state_snapshot(state, frame) do
     case Wire.decode_frame(frame) do
-      {:ok, %{entity_id: {rc, _sh, _pk} = entity_id, seq: seq, header: header, body: body}} ->
-        if admit(state, rc, :entity_state_snapshot),
-          do: spawn(fn -> write_snapshot(entity_id, seq, header, body) end)
+      {:ok, %{cell_id: {rc, _sh, _pk} = cell_id, seq: seq, header: header, body: body}} ->
+        if admit(state, rc, :cell_state_snapshot),
+          do: spawn(fn -> write_snapshot(cell_id, seq, header, body) end)
 
       {:error, reason} ->
-        Logger.warning("[stream] entity_state_snapshot decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] cell_state_snapshot decode failed: #{inspect(reason)}")
     end
   end
 
-  # Persist one saga compensation marker for the frame's Entity (presence is the
+  # Persist one saga compensation marker for the frame's Cell (presence is the
   # signal; `Flezha.State.Paths.compensation_markers/1` reads it back onto
   # `RestoreInitState`). Write off this channel's loop so a slow disk never stalls
   # the output-carrying channel.
   def handle_compensation_record(state, payload_id, frame) do
     case Wire.decode_frame(frame) do
-      {:ok, %{entity_id: {rc, _sh, _pk} = entity_id}} ->
+      {:ok, %{cell_id: {rc, _sh, _pk} = cell_id}} ->
         kind = if payload_id == "compensation_intent", do: :intent, else: :done
 
         if admit(state, rc, :compensation_record),
-          do: spawn(fn -> write_compensation_marker(entity_id, kind) end)
+          do: spawn(fn -> write_compensation_marker(cell_id, kind) end)
 
       {:error, reason} ->
         Logger.warning("[stream] #{payload_id} decode failed: #{inspect(reason)}")
     end
   end
 
-  defp write_compensation_marker(entity_id, kind) do
-    with {:error, reason} <- Paths.write_compensation_marker(entity_id, kind) do
+  defp write_compensation_marker(cell_id, kind) do
+    with {:error, reason} <- Paths.write_compensation_marker(cell_id, kind) do
       Logger.error(
         "[stream] compensation marker write failed " <>
-          "entity=#{inspect(entity_id)} kind=#{kind}: #{inspect(reason)}"
+          "cell=#{inspect(cell_id)} kind=#{kind}: #{inspect(reason)}"
       )
     end
   end
 
   # Run the file teardown off this channel's loop: it stops the writer and
   # unlinks files, which we never want to gate the output-carrying channel on.
-  # Destructive idle-eviction is a dynamic-entity mode behaviour; ignore it for a
-  # kind without dynamic entities so a durable workflow operative's state is
+  # Destructive idle-eviction is a dynamic-cell mode behaviour; ignore it for a
+  # kind without dynamic cells so a durable workflow operative's state is
   # never dropped out from under it.
-  defp delete_if_dynamic({rc, _sh, _pk} = entity_id) do
-    if ClassRegistry.capable?(rc, :dynamic_entities?) do
-      spawn(fn -> Flezha.State.Supervisor.delete_entity(entity_id) end)
+  defp delete_if_dynamic({rc, _sh, _pk} = cell_id) do
+    if ClassRegistry.capable?(rc, :dynamic_cells?) do
+      spawn(fn -> Flezha.State.Supervisor.delete_cell(cell_id) end)
     else
-      Logger.warning("[stream] delete_entity_state ignored for non-dynamic class #{inspect(rc)}")
+      Logger.warning("[stream] delete_cell_state ignored for non-dynamic class #{inspect(rc)}")
     end
   end
 
-  def handle_delete_entity_state(state, frame) do
-    case Wire.decode_entity_id(frame) do
-      {:ok, {rc, _sh, _pk} = entity_id} ->
-        if admit(state, rc, :delete_entity_state), do: delete_if_dynamic(entity_id)
+  def handle_delete_cell_state(state, frame) do
+    case Wire.decode_cell_id(frame) do
+      {:ok, {rc, _sh, _pk} = cell_id} ->
+        if admit(state, rc, :delete_cell_state), do: delete_if_dynamic(cell_id)
 
       {:error, reason} ->
-        Logger.warning("[stream] delete_entity_state decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] delete_cell_state decode failed: #{inspect(reason)}")
     end
   end
 
-  def write_snapshot(entity_id, seq, header, body) do
-    Watchdog.compaction_completed(entity_id)
+  def write_snapshot(cell_id, seq, header, body) do
+    Watchdog.compaction_completed(cell_id)
 
-    case StateSnapshot.write_snapshot(entity_id, seq, header, body) do
+    case StateSnapshot.write_snapshot(cell_id, seq, header, body) do
       {:ok, _path} ->
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "[stream] entity_state_snapshot write failed " <>
-            "entity=#{inspect(entity_id)}: #{inspect(reason)}"
+          "[stream] cell_state_snapshot write failed " <>
+            "cell=#{inspect(cell_id)}: #{inspect(reason)}"
         )
     end
   end

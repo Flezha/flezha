@@ -17,17 +17,17 @@ message CommandRequest {
         RemOperative rem_operative = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        EntityState entity_state = 8;
+        CellState cell_state = 8;
         RunnerDisconnect runner_disconnect = 9;
         OperativeMessage operative_message = 10;
-        EntityApplyState entity_apply_state = 11;
+        CellApplyState cell_apply_state = 11;
         RunnerShutdownNotification runner_shutdown_notification = 12;
         RunnerShutdownAck runner_shutdown_ack = 13;
         RestoreInitState restore_init_state = 14;
         RestoreInitStateResponse restore_init_state_response = 15;
-        CompactEntity compact_entity = 16;
-        CompactEntityResponse compact_entity_response = 17;
-        EntityMailboxStatus entity_mailbox_status = 18;
+        CompactCell compact_cell = 16;
+        CompactCellResponse compact_cell_response = 17;
+        CellMailboxStatus cell_mailbox_status = 18;
         Ping ping = 19;
         RunnerReconnected runner_reconnected = 20;
         ReassignRunnerId reassign_runner_id = 21;
@@ -37,8 +37,8 @@ message CommandRequest {
         CreditWindowAck credit_window_ack = 25;
         CreditGrant credit_grant = 26;
         ParkPayloadAck park_payload_ack = 27;
-        ProcCommit proc_commit = 28;
-        ProcCommitResponse proc_commit_response = 29;
+        TaskCommit task_commit = 28;
+        TaskCommitResponse task_commit_response = 29;
         IterCommit iter_commit = 30;
         IterCommitResponse iter_commit_response = 31;
         IterPark iter_park = 32;
@@ -73,21 +73,21 @@ message AddOperative {
     // (when populated by the Controller from the operative's :kind) is
     // "stream".
     string kind = 4;
-    // Number of persisted Entities the Controller will ship RestoreInitState
+    // Number of persisted Cells the Controller will ship RestoreInitState
     // for on this (re)bind. Non-zero only when re-binding a durable workflow
     // operative that has WAL state on disk (crash-resume). A durable workflow
-    // driver holds its first Procedure until this many Entity restores have
+    // driver holds its first Tasklet until this many Cell restores have
     // landed, so a resumed run reads persisted state instead of cold-starting.
     // 0 for a fresh spawn, a stream operative, or an opted-out workflow one.
-    uint32 resume_entity_count = 5;
-    // Workflow proc-journal crash-resume (workflow-proc-journal): the instance's
-    // committed proc indexes + latest journaled handoff. Instance-scoped, so it
-    // rides the bind itself rather than a per-Entity restore — a durable
-    // workflow class with no per-Entity state ships no RestoreInitState at all,
+    uint32 resume_cell_count = 5;
+    // Workflow task-journal crash-resume (workflow-task-journal): the instance's
+    // committed task indexes + latest journaled handoff. Instance-scoped, so it
+    // rides the bind itself rather than a per-Cell restore — a durable
+    // workflow class with no per-Cell state ships no RestoreInitState at all,
     // and would otherwise resume at iteration 0 on every wake.
     // Absent when the instance has no journal (fresh spawn, opted-out class,
     // stream operative) — the driver then keeps the re-run-from-top behaviour.
-    ProcJournalState proc_journal = 6;
+    TaskJournalState task_journal = 6;
     // Partitioned operatives: this member's identity within its group. A
     // `partition_count` below 2 means unpartitioned — the whole key space is
     // this instance's, which is every operative that predates partitioning.
@@ -131,16 +131,16 @@ message MigrationDeserialization {
     bytes serialized_state = 3;
 }
 
-// Serialize live in-memory Entity state as JSON. Both selector fields are
-// optional (empty = absent): absent selector covers every Procedure of the
-// Operative (the migration/handover shape), `procedure` narrows to one
-// Procedure's Entities, `procedure` + `entity_key` to one Entity. An
-// `entity_key` without a `procedure` is refused — an Entity key is unique
-// only within its Procedure.
-message EntityState {
+// Serialize live in-memory Cell state as JSON. Both selector fields are
+// optional (empty = absent): absent selector covers every Tasklet of the
+// Operative (the migration/handover shape), `tasklet` narrows to one
+// Tasklet's Cells, `tasklet` + `cell_key` to one Cell. An
+// `cell_key` without a `tasklet` is refused — a Cell key is unique
+// only within its Tasklet.
+message CellState {
     string operative_id = 1;
-    string procedure = 2;
-    string entity_key = 3;
+    string tasklet = 2;
+    string cell_key = 3;
 }
 
 message RunnerDisconnect {
@@ -165,13 +165,13 @@ message OperativeMessageResponse {
     string error = 2;
 }
 
-// Inverse of EntityState. Sent by the Controller to a Runner SDK to
+// Inverse of CellState. Sent by the Controller to a Runner SDK to
 // prime a freshly-spawned Operative's GenServer/struct state from a
 // previously-captured `state_binary`. Round-trips with the same opaque
-// SDK-internal serialization used by EntityState. SDKs that do not
+// SDK-internal serialization used by CellState. SDKs that do not
 // implement Apply respond with status="error" and error[] containing the
 // canonical token "apply_state_not_supported".
-message EntityApplyState {
+message CellApplyState {
     string operative_id = 1;
     string factory_id = 2;
     bytes state_binary = 3;
@@ -209,67 +209,67 @@ message RunnerShutdownAck {
     string operative_id = 1;
 }
 
-// One serialized inter-procedure handoff value: the payload bytes produced
+// One serialized inter-tasklet handoff value: the payload bytes produced
 // by the channel's byte codec, tagged with the producing channel id so a
 // resume re-seeds through the same channel's decoder.
-message ProcHandoffItem {
+message TaskHandoffItem {
     uint32 channel_id = 1;
     bytes payload = 2;
 }
 
-// One staged plugin-bound output of a procedure, buffered per entity
-// while the procedure ran and shipped at its barrier
-// (workflow-transactional-outbox). `seq_in_proc` orders the entries a single
-// entity staged during the procedure; `channel` is the producing plugin
+// One staged plugin-bound output of a tasklet, buffered per cell
+// while the tasklet ran and shipped at its barrier
+// (workflow-transactional-outbox). `seq_in_task` orders the entries a single
+// cell staged during the tasklet; `channel` is the producing plugin
 // channel's name, carried through to the flushed frame's `channel`
 // metadata.
-message ProcOutboxItem {
-    bytes entity_id = 1;
-    uint32 seq_in_proc = 2;
+message TaskOutboxItem {
+    bytes cell_id = 1;
+    uint32 seq_in_task = 2;
     string channel = 3;
     bytes payload = 4;
 }
 
-// SDK -> Controller, at each procedure barrier of a durable structured
-// workflow operative (workflow-proc-journal): procedure `proc_idx` completed
-// forward on `entities_ran` (wire entity identities) and released the
-// serialized `handoff` batch plus the `outbox` its entities staged
+// SDK -> Controller, at each tasklet barrier of a durable structured
+// workflow operative (workflow-task-journal): tasklet `task_idx` completed
+// forward on `cells_ran` (wire cell identities) and released the
+// serialized `handoff` batch plus the `outbox` its cells staged
 // (workflow-transactional-outbox — nothing reached a plugin yet). The
-// Controller appends ONE `proc_committed` entry carrying handoff AND outbox
-// to the instance's proc-journal, fsyncs, replies ProcCommitResponse, and only
-// then flushes the outbox; the driver starts the next procedure after the
+// Controller appends ONE `task_committed` entry carrying handoff AND outbox
+// to the instance's task-journal, fsyncs, replies TaskCommitResponse, and only
+// then flushes the outbox; the driver starts the next tasklet after the
 // successful reply. Direction is reversed like RunnerShutdownNotification:
 // SDK -> Controller over the "control_command" payload_id; old Controllers
 // ignore the unknown variant via Protox unknown-field handling. `iter` is 0
 // for the single-pass chain (the durable-loop follow-up increments it).
 //
 // `compensating` marks the undo twin: a `compensate` hook's staged output
-// for the already-committed procedure `proc_idx`, journaled as a
-// `compensated` entry and flushed with comp-marked keys. The per-entity
+// for the already-committed tasklet `task_idx`, journaled as a
+// `compensated` entry and flushed with comp-marked keys. The per-cell
 // compensation markers still decide which hooks run.
 //
-// `completes` / `result` carry the procedure's `ctx.complete` request, so a
+// `completes` / `result` carry the tasklet's `ctx.complete` request, so a
 // crash before the iteration commits still ends the instance on resume.
-message ProcCommit {
+message TaskCommit {
     string operative_id = 1;
-    uint32 proc_idx = 2;
+    uint32 task_idx = 2;
     uint32 iter = 3;
-    repeated bytes entities_ran = 4;
-    repeated ProcHandoffItem handoff = 5;
-    repeated ProcOutboxItem outbox = 6;
+    repeated bytes cells_ran = 4;
+    repeated TaskHandoffItem handoff = 5;
+    repeated TaskOutboxItem outbox = 6;
     bool compensating = 7;
     bool completes = 8;
     bytes result = 9;
 }
 
-// Controller -> SDK reply to ProcCommit, emitted only AFTER the journal
+// Controller -> SDK reply to TaskCommit, emitted only AFTER the journal
 // entry is durable (fsync). Carries the originating request's
 // reference_id so the SDK wakes the blocked driver. A non-empty `error`
 // (journal write/fsync failure, oversized handoff) terminates the run
 // abnormally through the existing terminal-error path.
-message ProcCommitResponse {
+message TaskCommitResponse {
     string operative_id = 1;
-    uint32 proc_idx = 2;
+    uint32 task_idx = 2;
     string error = 3;
 }
 
@@ -277,28 +277,28 @@ message ProcCommitResponse {
 // structured workflow operative (workflow-durable-loop): iteration `iter`
 // finished, having consumed the durable inbox up to `consumed_offset` and
 // released `handoff` as its terminal batch. The Controller appends
-// `iter_committed(iter, consumed_offset)` to the proc-journal, fsyncs, requests
-// a boundary snapshot for the instance's entities, flushes whatever the
-// iteration's procedures staged, truncates the inbox below the consumed
+// `iter_committed(iter, consumed_offset)` to the task-journal, fsyncs, requests
+// a boundary snapshot for the instance's cells, flushes whatever the
+// iteration's tasklets staged, truncates the inbox below the consumed
 // offset, and replies IterCommitResponse. The driver enters iteration
 // `iter + 1` only on the successful reply — a crash before it re-runs the
 // whole iteration (at-least-once), never the ones below it.
 //
-// `completes` is set when a procedure of the iteration called
+// `completes` is set when a tasklet of the iteration called
 // `ctx.complete(result)`: the instance ends with `result` once this commit is
 // durable, and a crash after it still ends it on resume.
 message IterCommit {
     string operative_id = 1;
     uint32 iter = 2;
     uint64 consumed_offset = 3;
-    repeated ProcHandoffItem handoff = 4;
+    repeated TaskHandoffItem handoff = 4;
     bool completes = 5;
     bytes result = 6;
 }
 
 // Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
 // is durable (fsync). Same reference_id / terminal-error contract as
-// ProcCommitResponse.
+// TaskCommitResponse.
 message IterCommitResponse {
     string operative_id = 1;
     uint32 iter = 2;
@@ -319,84 +319,84 @@ message IterPark {
     uint64 wake_deadline_ms = 3;
 }
 
-// One journaled forward proc commit, shipped back on crash-resume so the driver
+// One journaled forward task commit, shipped back on crash-resume so the driver
 // can rebuild `plan_compensation`'s per-iteration `committed` input from
-// durable state (workflow-durable-loop): procedure `proc_idx` of iteration `iter`
-// completed forward on `entities_ran`.
-message ProcCommittedProc {
-    uint32 proc_idx = 1;
+// durable state (workflow-durable-loop): tasklet `task_idx` of iteration `iter`
+// completed forward on `cells_ran`.
+message TaskCommittedTask {
+    uint32 task_idx = 1;
     uint32 iter = 2;
-    repeated bytes entities_ran = 3;
+    repeated bytes cells_ran = 3;
     bool completes = 4;
     bytes result = 5;
 }
 
-// What one committed procedure of the in-flight iteration released, keyed by
-// its proc_idx (workflow-branching). A procedure tree re-seeds each uncommitted
+// What one committed tasklet of the in-flight iteration released, keyed by
+// its task_idx (workflow-branching). A tasklet tree re-seeds each uncommitted
 // child branch from its own parent's edge, so the resume state carries every
 // in-flight commit's handoff — not just the latest one's.
-message ProcEdgeHandoff {
-    uint32 proc_idx = 1;
-    repeated ProcHandoffItem handoff = 2;
+message TaskEdgeHandoff {
+    uint32 task_idx = 1;
+    repeated TaskHandoffItem handoff = 2;
 }
 
-// Committed proc-journal state shipped back on crash-resume
-// (workflow-proc-journal). `iter` is the iteration to resume at — the one after
+// Committed task-journal state shipped back on crash-resume
+// (workflow-task-journal). `iter` is the iteration to resume at — the one after
 // the highest journaled `iter_committed` (0 for a non-looping chain);
-// `committed_proc_idxs` are the procedures already committed inside that
-// still-in-flight iteration, which the driver skips, and `proc_handoffs` what
+// `committed_task_idxs` are the tasklets already committed inside that
+// still-in-flight iteration, which the driver skips, and `task_handoffs` what
 // each of them released, which seeds their uncommitted children. `handoff` is
 // the previous iteration's terminal batch, which re-seeds a handoff-chained
-// loop. `committed_procs` carries every forward proc commit with its iteration
+// loop. `committed_tasks` carries every forward task commit with its iteration
 // (compensation planning), `consumed_offset` the inbox offset the last
 // committed iteration consumed, and `parked` / `wake_deadline_ms` the
 // suspension record (workflow-durable-suspension). `completed` / `result` are
 // the last committed iteration's completion request: a resume ends the
 // instance with `result` instead of waiting for input.
 //
-// `rewind_undo` carries the procedures a rewind unwound that have not been
+// `rewind_undo` carries the tasklets a rewind unwound that have not been
 // compensated yet (workflow-loop-rewind). The driver runs them through the
 // ordinary compensation planner before resuming forward at `iter`, which the
 // journal has already folded back to the rewound-to iteration. Each undo
 // journals a `compensated` entry, so the list shrinks across a crash and
 // re-planning never double-compensates. Empty = no rewind pending.
-message ProcJournalState {
-    repeated uint32 committed_proc_idxs = 1;
+message TaskJournalState {
+    repeated uint32 committed_task_idxs = 1;
     uint32 iter = 2;
-    repeated ProcHandoffItem handoff = 3;
-    repeated ProcCommittedProc committed_procs = 4;
+    repeated TaskHandoffItem handoff = 3;
+    repeated TaskCommittedTask committed_tasks = 4;
     uint64 consumed_offset = 5;
     bool parked = 6;
     uint64 wake_deadline_ms = 7;
-    repeated ProcCommittedProc rewind_undo = 8;
-    repeated ProcEdgeHandoff proc_handoffs = 9;
+    repeated TaskCommittedTask rewind_undo = 8;
+    repeated TaskEdgeHandoff task_handoffs = 9;
     bool completed = 10;
     bytes result = 11;
 }
 
-// Per-Entity state restore handshake: Controller ships latest snapshot
-// bytes plus tail-WAL bytes, SDK applies them to the entity's State
-// before any input is processed. See the per-entity state persistence design.
+// Per-Cell state restore handshake: Controller ships latest snapshot
+// bytes plus tail-WAL bytes, SDK applies them to the cell's State
+// before any input is processed. See the per-cell state persistence design.
 //
-// `entity_id` is the structured byte identifier
-// `[operative_class_len: u8][operative_class][procedure_id_len: u8][procedure_id]
-//  [entity_key_len: u16 BE][entity_key]`. `change_log_bytes` is
+// `cell_id` is the structured byte identifier
+// `[operative_class_len: u8][operative_class][tasklet_id_len: u8][tasklet_id]
+//  [cell_key_len: u16 BE][cell_key]`. `change_log_bytes` is
 // the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
 // [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
 message RestoreInitState {
-    bytes entity_id = 1;
+    bytes cell_id = 1;
     bytes snapshot_bytes = 2;
     bytes change_log_bytes = 3;
     // Saga crash-resume (workflow-operative-saga): the Controller sets these
-    // from the per-Entity compensation markers it persisted for a durable
-    // workflow operative. `has_compensation_intent` ⇒ this Entity's procedure
+    // from the per-Cell compensation markers it persisted for a durable
+    // workflow operative. `has_compensation_intent` ⇒ this Cell's tasklet
     // completed forward and may need undo; `has_compensation_done` ⇒ its
     // compensation already ran (skip it on resume). Both false for a
     // stream operative or a workflow one that never compensated.
     bool has_compensation_intent = 4;
     bool has_compensation_done = 5;
     // The highest seq the shipped state already covers — the snapshot's seq
-    // when the change log is empty. The SDK re-arms the Entity's change seq
+    // when the change log is empty. The SDK re-arms the Cell's change seq
     // to `terminal_seq + 1`; deriving it from the change log alone restarted
     // a snapshot-only restore at 1 and the writer dropped the next changes
     // as duplicates.
@@ -409,9 +409,9 @@ message RestoreInitState {
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
 // is the highest WAL seq folded into State; the Controller expects the next
-// `entity_state_change` to carry `seq = terminal_seq + 1`.
+// `cell_state_change` to carry `seq = terminal_seq + 1`.
 message RestoreInitStateResponse {
-    bytes entity_id = 1;
+    bytes cell_id = 1;
     uint64 terminal_seq = 2;
     // At least one record was migrated from an older schema version. The
     // Controller answers with the compaction it already knows how to drive,
@@ -420,26 +420,26 @@ message RestoreInitStateResponse {
     bool migrated = 3;
 }
 
-// Controller-issued compaction request. The SDK clones the entity's
+// Controller-issued compaction request. The SDK clones the cell's
 // `Self::State` under the sticky CAS, serializes it, and replies via
-// `entity_state_snapshot` then `CompactEntityResponse`.
-message CompactEntity {
-    bytes entity_id = 1;
+// `cell_state_snapshot` then `CompactCellResponse`.
+message CompactCell {
+    bytes cell_id = 1;
 }
 
-message CompactEntityResponse {
-    bytes entity_id = 1;
+message CompactCellResponse {
+    bytes cell_id = 1;
     uint64 snapshot_seq = 2;
     uint64 snapshot_bytes_size = 3;
 }
 
-// Back-pressure signal: the Controller's per-Entity WAL outbox is at the
+// Back-pressure signal: the Controller's per-Cell WAL outbox is at the
 // high watermark (`status = "full"`) or has drained below the low
-// watermark (`status = "open"`). The SDK's per-Entity mailbox
+// watermark (`status = "open"`). The SDK's per-Cell mailbox
 // observer translates the signal into the channel's declared
 // `OverflowPolicy`.
-message EntityMailboxStatus {
-    bytes entity_id = 1;
+message CellMailboxStatus {
+    bytes cell_id = 1;
     string status = 2;
 }
 
@@ -512,7 +512,7 @@ message WorkflowCompleted {
 // threshold (informational to the SDK). The SDK acknowledges by returning an
 // encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
 // that does not recognise the variant never acks and keeps the legacy
-// EntityMailboxStatus behaviour.
+// CellMailboxStatus behaviour.
 message CreditWindowInit {
     string stream_id = 1;
     uint64 window_bytes = 2;
@@ -539,7 +539,7 @@ message CreditGrant {
 
 // Controller -> SDK. Durable ack for a `park_payload` data-stream frame:
 // the dead-letter entry identified by `park_id` is fsynced in the DLQ
-// store, so the parked entity may drop the poison payload and advance.
+// store, so the parked cell may drop the poison payload and advance.
 // One-way; the generic CommandResponse it solicits is ignored.
 message ParkPayloadAck {
     string park_id = 1;
@@ -585,7 +585,7 @@ message WorkflowStop {
     string operative_id = 1;
 }
 
-// SDK -> Controller. A procedure asked for a workflow instance
+// SDK -> Controller. A tasklet asked for a workflow instance
 // (`ctx.spawn_workflow`): spawn `factory_id` under `instance_id` if that id is
 // free, otherwise apply `if_running`. An empty `instance_id` asks the
 // Controller to generate one and always spawns, so `if_running` is ignored for
@@ -612,7 +612,7 @@ message SpawnWorkflowRequest {
 // start failure) and is empty otherwise. `instance_id` is the id the request
 // resolved to: the requester's own, or the generated one for a request that
 // carried none (empty when nothing was started). The reply never faults the
-// requesting procedure — it only resolves its handle.
+// requesting tasklet — it only resolves its handle.
 message SpawnWorkflowResponse {
     string outcome = 1;
     string error = 2;

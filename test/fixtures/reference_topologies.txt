@@ -1,5 +1,5 @@
 # The channel topology two reference fixtures declare, pinned as data — the
-# cross-language instrument for "one output channel per producing procedure",
+# cross-language instrument for "one output channel per producing tasklet",
 # in the shape `test/fixtures/host_class_decl_keys.txt` uses for declaration
 # keys.
 #
@@ -14,7 +14,7 @@
 # `commit_block_chain` is this file's name for the second shape because no
 # veneer registers a workflow fixture yet; it is `tier_commit_block_workflow`'s
 # topology, which declares nothing about its handoffs — no SDK does, because the
-# runtime derives an inter-procedure channel's journal codec (from the channel
+# runtime derives an inter-tasklet channel's journal codec (from the channel
 # kind for a host that ships bytes, `flz_core/src/host/register.rs`).
 #
 # Five readers pin it: `sdk/node/test/decl-keys.test.mjs`,
@@ -29,24 +29,24 @@
 # `index` is the channel's position in the declaration — id order is the
 # contract. Every column is the DERIVED declaration
 # `flz_core::host::register::check` answers with, never a builder's own read:
-# `producer` and `consumers` are PROCEDURE indices in declaration order, `kind`
+# `producer` and `consumers` are TASKLET indices in declaration order, `kind`
 # is the declared kind after the wiring rule (a sink with no consumer is
 # `plugin`, everything else keeps the channel's own kind, so a channel carrying
-# both a sink and a consumer stays `inter_proc`), and `sink` is the plugin
+# both a sink and a consumer stays `inter_task`), and `sink` is the plugin
 # descriptor name — which the record now carries as a `sink` link, so the core
 # derives it rather than being told a channel name and nothing else.
 
 # hybrid_channel — a stream class. One entry, one producer whose single output
-# channel carries a plugin sink AND an inter-procedure consumer.
-# Procedures: 0 hybrid_producer_procedure, 1 hybrid_consumer_procedure.
+# channel carries a plugin sink AND an inter-tasklet consumer.
+# Tasklets: 0 hybrid_producer_tasklet, 1 hybrid_consumer_tasklet.
 hybrid_channel | 0 | input | entry | - | 0 | -
-hybrid_channel | 1 | hybrid_indicator | inter_proc | 0 | 1 | hybrid_indicator
+hybrid_channel | 1 | hybrid_indicator | inter_task | 0 | 1 | hybrid_indicator
 
 # commit_block_chain — a structured workflow class, effectively-once, with the
 # same hybrid shape mid-chain and a keyed producing channel.
-# Procedures: 0 tier_commit_a, 1 block_b.
+# Tasklets: 0 tier_commit_a, 1 block_b.
 commit_block_chain | 0 | in | entry | - | 0 | -
-commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
+commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 
 # ---------------------------------------------------------------------------
 # refusals — one row per reference refusal. Columns, `|`-separated:
@@ -62,12 +62,12 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 # `steps` are `;`-separated, in a language-neutral spelling every interpreter
 # maps to its own builder:
 #   entry(<chan>)              declare an entry channel
-#   <x>.into(<proc>)           wire x into a procedure; the result is that
-#                              procedure's output channel, addressed by its role
-#   <x>.map.into(<proc>)       a transform link before the terminator
-#   <x>.filter.into(<proc>)    the same link, declared with the SDK's filter
-#   <x>.flat_map.into(<proc>)  the same link, declared with the SDK's flat_map
-#   <x>.key.into(<proc>)       a key link before the terminator
+#   <x>.into(<task>)           wire x into a tasklet; the result is that
+#                              tasklet's output channel, addressed by its role
+#   <x>.map.into(<task>)       a transform link before the terminator
+#   <x>.filter.into(<task>)    the same link, declared with the SDK's filter
+#   <x>.flat_map.into(<task>)  the same link, declared with the SDK's flat_map
+#   <x>.key.into(<task>)       a key link before the terminator
 #   <x>.map                    a chain nothing closes
 #   <x>.sink(<name>)           terminate x on the plugin layer, naming it
 #   <x>.sink                   the same, leaving the name derived
@@ -75,15 +75,15 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #   <x>.keyed                  opt x into output identity
 #   <x>.retry_max(<n>)         the channel's attempt ceiling
 #   <x>.on_full(<policy>)      drop_nothing | drop_newest | drop_oldest
-#   merge(<proc>, <x>, <x>…)   one merge over the listed sources
+#   merge(<task>, <x>, <x>…)   one merge over the listed sources
 #   branch(<x>, <n>)           the branch sugar's arity
-#   <proc>.mailbox(<n>)        the procedure's per-Entity mailbox capacity
+#   <task>.mailbox(<n>)        the tasklet's per-Cell mailbox capacity
 #   class.<flag>[(<value>)]    persistent | effectively_once | checkpoint_ack |
 #                              checkpoint_every(n) | outputs_at_checkpoint(ms) |
 #                              correction_window(ms) | sync_durability | workflow
 #   shorthand(<id>|-, <sink>|-, <input>|-)
 #                              one §5 short form, a stream operative declaration
-#                              carrying a procedure body: the factory id, the
+#                              carrying a tasklet body: the factory id, the
 #                              plugin sink and the entry channel name, each `-`
 #                              when the row leaves it unwritten. The step
 #                              declares NO builder topology — it is the whole
@@ -93,15 +93,15 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #   shorthand(...).topology    the same, on a declaration that also carries a
 #                              topology body
 #
-# procedure palette — the interpreter binds each role to one fixture procedure
+# tasklet palette — the interpreter binds each role to one fixture tasklet
 # of its own SDK:
-#   plain         single mode, wall clock, no entity keys
-#   second        a second plain procedure under its own name
-#   twin          a distinct procedure declaring the SAME name as `plain`
-#   static        entity_keys ["a","b"], entities_for NOT overridden
-#   routed        entity_keys ["a","b"], entities_for overridden
-#   dynamic       dynamic entity mode
-#   nochange      logical clock over a procedure that journals nothing
+#   plain         single mode, wall clock, no cell keys
+#   second        a second plain tasklet under its own name
+#   twin          a distinct tasklet declaring the SAME name as `plain`
+#   static        cell_keys ["a","b"], cells_for NOT overridden
+#   routed        cell_keys ["a","b"], cells_for overridden
+#   dynamic       dynamic cell mode
+#   nochange      logical clock over a tasklet that journals nothing
 #   eventtime     event-time clock
 #
 # `needs` is `-`, or the surface the row needs. An SDK whose manifest or
@@ -110,7 +110,7 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #   merge      a merge terminator
 #   branch     the branch sugar (the Elixir v1 subset has none)
 #   workflow   a workflow class kind
-#   detached   a procedure no entry can reach — unauthorable in a fluent
+#   detached   a tasklet no entry can reach — unauthorable in a fluent
 #              builder, where a node exists only once something wires it
 #   raw_flags  the checkpoint-outputs flag set without its delay, which every
 #              SDK's `outputs_at_checkpoint(ms)` makes it impossible to write
@@ -118,9 +118,9 @@ commit_block_chain | 1 | mid | inter_proc | 0 | 1 | mid
 #              and Java declare it on a workflow class only, so a stream class of
 #              theirs cannot spell it at all and the refusal cannot be reached
 #              from one. The row stays for the five builders that can
-#   shorthand  the §5 single-procedure short form. Every SDK carries it, so no
+#   shorthand  the §5 single-tasklet short form. Every SDK carries it, so no
 #              manifest may lack this one
-#   shorthand_typed_output  a short form on a procedure whose output the SDK can
+#   shorthand_typed_output  a short form on a tasklet whose output the SDK can
 #              see at declaration time. Rust, Java and Python (return hint)
 #              can; Node, Ruby, PHP and Elixir cannot
 #   raw_class_flags  a tier key written onto a WORKFLOW class's record. KI-147's
@@ -140,14 +140,14 @@ NodeIdentityCollision              | dup_node         | entry(in); in.into(plain
 ChannelNameTooLong                 | long_channel_name| entry(in); in.into(plain); plain.named(nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn) | -
 BranchTooFewArms                   | branch_one_arm   | entry(in); in.into(plain); branch(plain, 1)                                           | branch
 Cycle                              | cycle            | entry(in); in.into(plain); plain.into(second); second.into(plain)                     | -
-UnreachableProcedure               | detached_node    | entry(in); in.into(plain); second.into(plain)                                         | detached
-EntitiesForMissing                 | keys_no_router   | entry(in); in.into(static)                                                            | -
+UnreachableTasklet               | detached_node    | entry(in); in.into(plain); second.into(plain)                                         | detached
+CellsForMissing                 | keys_no_router   | entry(in); in.into(static)                                                            | -
 KeyByOnUnkeyableTarget             | key_on_static    | entry(in); in.key.into(routed)                                                        | -
 DuplicateKeyBy                     | dup_key_by       | entry(in); in.key.key.into(plain)                                                     | -
 TransformAfterTerminal             | map_after_sink   | entry(in); in.into(plain); plain.sink(out); plain.map.into(second)                    | -
 TransformAfterKeyBy                | map_after_key    | entry(in); in.key.map.into(plain)                                                     | -
 DanglingTransformChain             | dangling_chain   | entry(in); in.into(plain); in.map                                                     | -
-UnkeyedEdgeIntoDynamicProcedure    | unkeyed_dynamic  | entry(in); entry(other); in.key.into(dynamic); other.into(dynamic)                    | -
+UnkeyedEdgeIntoDynamicTasklet    | unkeyed_dynamic  | entry(in); entry(other); in.key.into(dynamic); other.into(dynamic)                    | -
 MailboxCapacityZero                | mailbox_zero     | entry(in); in.into(plain); plain.mailbox(0)                                           | -
 MailboxCapacityTooLarge            | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
 DuplicatePluginSink                | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -

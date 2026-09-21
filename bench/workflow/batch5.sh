@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Final re-take of the wake/rebind-storm cells on the complete fix set (the
+# Final re-take of the wake/rebind-storm cases on the complete fix set (the
 # batch-3 runs of these predate the un-park race and restore-seq fixes).
 set -u
 cd "$(dirname "$0")/../.."
 OUT=bench/workflow/reports
-FILTER='intent mismatch|Connection closed|compact_entity|SignalHandler|authz|Setting up|Started 2'
+FILTER='intent mismatch|Connection closed|compact_cell|SignalHandler|authz|Setting up|Started 2'
 run() {
   local name="$1"; shift
   echo "=== $name: mix bench.workflow $* ($(date +%H:%M:%S))"

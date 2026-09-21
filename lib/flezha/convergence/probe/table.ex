@@ -94,7 +94,7 @@ defmodule Flezha.Convergence.Probe.Table do
       kind: :by_scope,
       facts: &Readers.data_plane/1,
       events: [[:flezha, :data_plane, :stall_localized]],
-      thresholds: [:driver_freeze_ms, :stall_ms, :queue_high, :entity_stall_ms]
+      thresholds: [:driver_freeze_ms, :stall_ms, :queue_high, :cell_stall_ms]
     },
     # Declaration-only: whether the bounded call answered is `observed?` and
     # `bound_runner: :unknown` on the binding row, so a second reader would

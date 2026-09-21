@@ -3,16 +3,16 @@ defmodule Flezha.State.InputLog.Sweep do
   Reclaiming an operative's input log, and saying so when it cannot be.
 
   The floor — not the watermark — decides whether there is work: under a hold
-  window it advances with the clock even while every Entity's consumed-offset
+  window it advances with the clock even while every Cell's consumed-offset
   stands still, so gating on the watermark would leave a fully-consumed,
   fully-aged-out log unreclaimed for ever. The truncate itself is a cast; the
   sweeper is housekeeping and must never die because a log is busy.
 
   A log that grows past the size threshold while its watermark stands still is
-  not silently accumulating: the frozen-watermark event names the Entity that is
+  not silently accumulating: the frozen-watermark event names the Cell that is
   holding it. Two memos are kept per operative, because they answer two
   questions — the floor "is there anything left to reclaim?", the watermark "is
-  an Entity refusing to consume?".
+  a Cell refusing to consume?".
   """
 
   alias Flezha.State.{InputLog, Paths, PersistenceResolver, Supervisor}
@@ -45,7 +45,7 @@ defmodule Flezha.State.InputLog.Sweep do
     floor = truncation_floor(operative_class, watermark)
 
     # The *floor* decides whether there is work, not the watermark: under a hold
-    # window the floor advances with the clock even while every Entity's
+    # window the floor advances with the clock even while every Cell's
     # consumed-offset stands still, and gating on the watermark would mean a
     # fully-consumed, fully-aged-out log is never reclaimed.
     advanced? = floor != last_sweep_floor(operative_class)
@@ -125,7 +125,7 @@ defmodule Flezha.State.InputLog.Sweep do
         %{
           operative: operative_class,
           watermark: watermark,
-          lagging_entity: lagging_entity(operative_class)
+          lagging_cell: lagging_cell(operative_class)
         }
       )
     end
@@ -135,15 +135,15 @@ defmodule Flezha.State.InputLog.Sweep do
 
   # Two memos, two questions: the floor answers "is there anything left to
   # reclaim?" (it moves with the clock under a hold window); the watermark
-  # answers "is an Entity refusing to consume?" (the frozen-watermark warning).
+  # answers "is a Cell refusing to consume?" (the frozen-watermark warning).
   defp remember_sweep(operative_class, watermark, floor) do
     InputLog.ensure_watermark_table()
     :ets.insert(InputLog.watermark_table(), {{operative_class, :last_sweep_floor}, floor})
     :ets.insert(InputLog.watermark_table(), {{operative_class, :last_sweep_watermark}, watermark})
   end
 
-  defp lagging_entity(operative_class) do
-    case InputLog.entity_offsets(operative_class) do
+  defp lagging_cell(operative_class) do
+    case InputLog.cell_offsets(operative_class) do
       [] -> nil
       offsets -> offsets |> Enum.min_by(&elem(&1, 1)) |> elem(0)
     end

@@ -28,8 +28,8 @@ defmodule Flezha.Service.DlqTest do
 
     entry = %{
       operative_class: operative_class,
-      procedure_id: "proc",
-      entity_key: "k",
+      tasklet_id: "task",
+      cell_key: "k",
       channel: "input",
       origin_offset: nil,
       error: "kaboom",
@@ -84,12 +84,12 @@ defmodule Flezha.Service.DlqTest do
     end
 
     test "answers :not_found for an entry that is not there" do
-      assert {:error, :not_found} = DlqSvc.drop("nope/proc/1", context())
+      assert {:error, :not_found} = DlqSvc.drop("nope/task/1", context())
     end
   end
 
   describe "the reads answer data" do
-    test "list, get, stats and procedures", %{entry: entry, operative_class: operative_class} do
+    test "list, get, stats and tasklets", %{entry: entry, operative_class: operative_class} do
       {:ok, ref} = Store.append(entry)
 
       assert {:ok, [listed]} = DlqSvc.list(operative_class, context())
@@ -103,12 +103,12 @@ defmodule Flezha.Service.DlqTest do
 
       assert Enum.any?(
                stats,
-               &(&1.operative_class == operative_class and &1.procedure_id == "proc" and
+               &(&1.operative_class == operative_class and &1.tasklet_id == "task" and
                    &1.entries == 1)
              )
 
-      assert {:ok, procedures} = DlqSvc.procedures(operative_class, context())
-      assert {operative_class, "proc"} in procedures
+      assert {:ok, tasklets} = DlqSvc.tasklets(operative_class, context())
+      assert {operative_class, "task"} in tasklets
     end
   end
 

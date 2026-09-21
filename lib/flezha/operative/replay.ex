@@ -26,8 +26,8 @@ defmodule Flezha.Operative.Replay do
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskInbox
+  alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
   alias Flezha.State.WalTransfer
   alias Flezha.State.WalWriter
@@ -37,15 +37,15 @@ defmodule Flezha.Operative.Replay do
   # ---------- process API ----------
 
   @doc """
-  An Entity reported an input behind its event-time high-water but inside the
+  A Cell reported an input behind its event-time high-water but inside the
   correction window. Coalesce it; the debounce fires the replay.
   """
   @spec request_correction(pid(), tuple(), non_neg_integer()) :: :ok
-  def request_correction(overwatch, entity_id, target_event_time),
-    do: GenServer.cast(overwatch, {:correction_request, entity_id, target_event_time})
+  def request_correction(overwatch, cell_id, target_event_time),
+    do: GenServer.cast(overwatch, {:correction_request, cell_id, target_event_time})
 
   @doc """
-  Operator replay (`flz operative replay`): rewind an Entity to `baseline_seq`
+  Operator replay (`flz operative replay`): rewind a Cell to `baseline_seq`
   and re-run its retained inputs from there through the current code.
 
   The same transaction a late input drives, with the baseline chosen rather than
@@ -53,18 +53,18 @@ defmodule Flezha.Operative.Replay do
   "queued".
   """
   @spec replay_from(pid(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
-  def replay_from(overwatch, entity_id, baseline_seq),
-    do: GenServer.call(overwatch, {:replay_from, entity_id, baseline_seq}, 60_000)
+  def replay_from(overwatch, cell_id, baseline_seq),
+    do: GenServer.call(overwatch, {:replay_from, cell_id, baseline_seq}, 60_000)
 
   @doc """
-  External trigger for the bind-driven per-Entity replay. Called from
+  External trigger for the bind-driven per-Cell replay. Called from
   `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind caller
   (the convergence Loop's rebind heal) needs to re-issue the
   `RestoreInitState` handshake for an already-bound Overwatch.
 
   Routes the work back to the Overwatch process via a cast so the caller never
   blocks on enumeration / dispatch — the Overwatch is the single owner of
-  "enumerate my entities, dispatch RestoreInitState for each".
+  "enumerate my cells, dispatch RestoreInitState for each".
   """
   @spec kick_restore_for_bound_runner(pid(), binary()) :: :ok
   def kick_restore_for_bound_runner(overwatch_pid, runner_id)
@@ -76,27 +76,27 @@ defmodule Flezha.Operative.Replay do
   Fold a correction request into the pending set, arming the debounce on the
   first one.
 
-  Concurrent late inputs for one Entity collapse into the one replay that
+  Concurrent late inputs for one Cell collapse into the one replay that
   reaches furthest back — a burst of five late trades is one restore-replay
   cycle, not five. The debounce is what gives the burst time to arrive; the
   `Map.has_key?` guard is what keeps it a single timer.
   """
   @spec note_correction(Overwatch.t(), tuple(), non_neg_integer()) :: Overwatch.t()
-  def note_correction(%Overwatch{} = state, entity_id, target) do
+  def note_correction(%Overwatch{} = state, cell_id, target) do
     pending = state.corrections
 
-    if Map.has_key?(pending, entity_id) do
-      %{state | corrections: Map.update!(pending, entity_id, &min(&1, target))}
+    if Map.has_key?(pending, cell_id) do
+      %{state | corrections: Map.update!(pending, cell_id, &min(&1, target))}
     else
       %Overwatch{
         state
-        | corrections: Map.put(pending, entity_id, target),
+        | corrections: Map.put(pending, cell_id, target),
           timers:
             Timer.arm(
               state.timers,
-              {:correction, entity_id},
+              {:correction, cell_id},
               correction_debounce_ms(),
-              {:run_correction, entity_id}
+              {:run_correction, cell_id}
             )
       }
     end
@@ -108,8 +108,8 @@ defmodule Flezha.Operative.Replay do
   # ---------- bind-time restore ----------
 
   @doc """
-  Walk the on-disk Entity state for this operative and dispatch `RestoreInitState`
-  to the SDK for each Entity that has a non-empty payload.
+  Walk the on-disk Cell state for this operative and dispatch `RestoreInitState`
+  to the SDK for each Cell that has a non-empty payload.
 
   Skipped when the operative arrived via HotSwap — handover already delivers the
   state in-band — and when persistence is disabled for this operative class.
@@ -128,7 +128,7 @@ defmodule Flezha.Operative.Replay do
   end
 
   @doc """
-  Enumerate this operative's persisted Entities and ship a `RestoreInitState` for
+  Enumerate this operative's persisted Cells and ship a `RestoreInitState` for
   each, off-process — the replay does blocking disk reads and never touches state.
 
   The bind path reaches it through `restore_on_bind/2`; the
@@ -136,19 +136,19 @@ defmodule Flezha.Operative.Replay do
   """
   @spec dispatch_restore(Overwatch.t(), keyword(), binary()) :: :ok
   def dispatch_restore(%Overwatch{} = state, operative_opts, runner_id) do
-    # The SDK keys per-Entity state by the operative INSTANCE id (== `state.id`),
+    # The SDK keys per-Cell state by the operative INSTANCE id (== `state.id`),
     # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
     operative_class = Keyword.get(operative_opts, :operative_class, state.id)
     overwatch = self()
     source_node = foreign_state_source(operative_opts)
 
     spawn(fn ->
-      # A partition rescale gathers the group's Entities on the node that ran
+      # A partition rescale gathers the group's Cells on the node that ran
       # it, so a member placed elsewhere pulls its class tree first. The
       # restore below is the same one every bind runs, and it is what covers
       # the case where the state is already local.
       if source_node, do: WalTransfer.pull_operative(source_node, operative_class)
-      replay_persisted_entities(state.builder.kind, operative_class, runner_id, overwatch)
+      replay_persisted_cells(state.builder.kind, operative_class, runner_id, overwatch)
     end)
 
     :ok
@@ -167,22 +167,22 @@ defmodule Flezha.Operative.Replay do
   # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
   # `:stream` always; a durable `:workflow` class (this IS its crash-resume)
   # unless it opted out. A stateless kind has no WAL to replay.
-  defp replay_persisted_entities(kind, operative_class, runner_id, overwatch) do
-    # Transactional outbox re-drive (workflow-transactional-outbox): a procedure
-    # journaled `proc_committed` (or `compensated`) whose outbox never reached the
+  defp replay_persisted_cells(kind, operative_class, runner_id, overwatch) do
+    # Transactional outbox re-drive (workflow-transactional-outbox): a tasklet
+    # journaled `task_committed` (or `compensated`) whose outbox never reached the
     # plugins owes that output. Re-drive it — with the original keys — before the
     # resumed run advances, so a crash between commit and flush loses nothing.
     if kind == :workflow do
-      _ = ProcJournal.flush_pending(operative_class, overwatch)
+      _ = TaskJournal.flush_pending(operative_class, overwatch)
     end
 
     # Awaited, not fire-and-forget: the reply carries whether the SDK had to
     # migrate records from an older schema version, and the controller answers
     # that with a compaction. This already runs off-process (the enumeration
-    # does blocking disk reads) and Entities are independent, so the awaits run
+    # does blocking disk reads) and Cells are independent, so the awaits run
     # concurrently rather than serialising a large rebind.
     refusals =
-      restorable_entities(kind, operative_class)
+      restorable_cells(kind, operative_class)
       |> Flezha.Parallel.map(&await_restore(runner_id, &1),
         max_concurrency: restore_concurrency()
       )
@@ -199,17 +199,17 @@ defmodule Flezha.Operative.Replay do
   end
 
   @doc """
-  Await one Entity's `RestoreInitState` and report a decisive verdict.
+  Await one Cell's `RestoreInitState` and report a decisive verdict.
 
   The one place the awaited restore's ANSWER is read. `{:error, reason}` covers
   every way an SDK refuses a fold — language, schema, CRC, truncation, apply —
   because they mean one thing here: the durable state did not reach the runner,
-  and folding new inputs onto empty state would lose it silently. An Entity
+  and folding new inputs onto empty state would lose it silently. A Cell
   with no snapshot and a zero-length WAL is a SUCCESS and binds normally.
   """
-  @spec await_restore(binary(), Paths.entity_id()) :: :ok | {:error, term()}
-  def await_restore(runner_id, entity_id) do
-    case Commands.await_restore_init_state(runner_id, entity_id) do
+  @spec await_restore(binary(), Paths.cell_id()) :: :ok | {:error, term()}
+  def await_restore(runner_id, cell_id) do
+    case Commands.await_restore_init_state(runner_id, cell_id) do
       {:ok, _raw} ->
         :ok
 
@@ -219,7 +219,7 @@ defmodule Flezha.Operative.Replay do
       # would turn ordinary teardown churn into stuck operatives.
       {:error, reason} when not is_binary(reason) ->
         Logger.debug(
-          "[Overwatch] restore unanswered entity=#{inspect(entity_id)} " <>
+          "[Overwatch] restore unanswered cell=#{inspect(cell_id)} " <>
             "runner=#{runner_id}: #{inspect(reason)}"
         )
 
@@ -229,7 +229,7 @@ defmodule Flezha.Operative.Replay do
       # from the reply's `errors`.
       {:error, reason} ->
         Logger.error(
-          "[Overwatch] restore REFUSED entity=#{inspect(entity_id)} runner=#{runner_id}: " <>
+          "[Overwatch] restore REFUSED cell=#{inspect(cell_id)} runner=#{runner_id}: " <>
             "#{inspect(reason)}; leaving the operative unbound rather than folding new " <>
             "inputs onto empty state"
         )
@@ -237,7 +237,7 @@ defmodule Flezha.Operative.Replay do
         :telemetry.execute(
           [:flezha, :state, :restore_refused],
           %{count: 1},
-          %{entity: entity_id, runner: runner_id, reason: reason}
+          %{cell: cell_id, runner: runner_id, reason: reason}
         )
 
         {:error, reason}
@@ -247,20 +247,20 @@ defmodule Flezha.Operative.Replay do
   defp restore_concurrency,
     do: Config.get(:bind_restore_concurrency)
 
-  # Persisted, restorable Entities of this class — empty when the kind/class
+  # Persisted, restorable Cells of this class — empty when the kind/class
   # combination has no persistent state.
-  defp restorable_entities(kind, operative_class) do
+  defp restorable_cells(kind, operative_class) do
     if PersistenceResolver.persistent_state?(kind, operative_class) do
       # Remote hydration runs first, and in this one place: a controller
-      # adopting an operative whose disk is gone then finds its Entities,
-      # proc-journal, durable inbox and input log on disk by the time this walks
+      # adopting an operative whose disk is gone then finds its Cells,
+      # task-journal, durable inbox and input log on disk by the time this walks
       # them — and every caller (bind restore, the tier's awaited restore, the
       # resume-gate count) sees the same set. Inert unless a durability backend
       # is configured and the local state really is absent.
       DurabilityTier.hydrate_operative(operative_class)
 
       operative_class
-      |> Paths.entities_of()
+      |> Paths.cells_of()
       |> Enum.filter(&Restore.has_persisted_state?/1)
     else
       []
@@ -268,30 +268,30 @@ defmodule Flezha.Operative.Replay do
   end
 
   @doc """
-  Number of persisted Entities the bind-time restore path will ship a
+  Number of persisted Cells the bind-time restore path will ship a
   `RestoreInitState` for on this (re)bind — the value threaded onto
-  `AddOperative.resume_entity_count` so a durable workflow driver holds its
-  first Procedure until that many restores land (crash-resume,
+  `AddOperative.resume_cell_count` so a durable workflow driver holds its
+  first Tasklet until that many restores land (crash-resume,
   `workflow-operative-durability`).
 
   Non-zero only for a durable `:workflow` class with WAL state on disk; `0` for a
   fresh spawn, a stream operative, or an opted-out workflow one — those need
-  no restore-before-run gate. Matches the frames `replay_persisted_entities/4`
+  no restore-before-run gate. Matches the frames `replay_persisted_cells/4`
   ships (same enumeration + `has_persisted_state?` filter).
   """
-  @spec resume_entity_count(atom(), binary()) :: non_neg_integer()
-  def resume_entity_count(:workflow, operative_class),
-    do: length(restorable_entities(:workflow, operative_class))
+  @spec resume_cell_count(atom(), binary()) :: non_neg_integer()
+  def resume_cell_count(:workflow, operative_class),
+    do: length(restorable_cells(:workflow, operative_class))
 
-  def resume_entity_count(_kind, _operative_class), do: 0
+  def resume_cell_count(_kind, _operative_class), do: 0
 
   @doc """
-  Effectively-once bind path: restore each persisted Entity through the
+  Effectively-once bind path: restore each persisted Cell through the
   awaited control round-trip (the SDK has applied state + consumed floor
   when the reply lands), then re-forward the journaled input tail above
   the min durable consumed-offset.
 
-  Runs in the Overwatch process before plugin activation; Entities ahead of the
+  Runs in the Overwatch process before plugin activation; Cells ahead of the
   min watermark skip re-forwarded offsets they already consumed (SDK
   `consumed_floor`).
   """
@@ -299,20 +299,20 @@ defmodule Flezha.Operative.Replay do
   def restore_and_replay_journal(%Overwatch{} = state) do
     refused =
       state.builder.kind
-      |> restorable_entities(Overwatch.operative_class(state))
-      |> Enum.find_value(fn entity_id ->
+      |> restorable_cells(Overwatch.operative_class(state))
+      |> Enum.find_value(fn cell_id ->
         # Starting the writer replays its WAL scan: arms the outbox re-drive
-        # and repopulates the Entity's durable consumed-offset watermark.
-        _ = Flezha.State.Supervisor.find_or_start(entity_id)
+        # and repopulates the Cell's durable consumed-offset watermark.
+        _ = Flezha.State.Supervisor.find_or_start(cell_id)
 
-        case await_restore(state.runner_id, entity_id) do
+        case await_restore(state.runner_id, cell_id) do
           :ok -> nil
           {:error, reason} -> reason
         end
       end)
 
     # Stop before the journal replay: re-forwarding the input tail onto an
-    # Entity whose baseline never landed is the silent loss this guards.
+    # Cell whose baseline never landed is the silent loss this guards.
     if refused do
       {:error, refused}
     else
@@ -336,7 +336,7 @@ defmodule Flezha.Operative.Replay do
       floor = InputLog.watermark(operative_class) || -1
 
       # A refused log answers no tail. Re-forwarding from the prefix that
-      # verified would hand the Entity part of its journal as all of it, so
+      # verified would hand the Cell part of its journal as all of it, so
       # nothing is re-forwarded; the refusal was already reported where it was
       # read, and the operative is left to the bind's own restore verdict.
       case InputLog.last_offset(operative_class) do
@@ -421,7 +421,7 @@ defmodule Flezha.Operative.Replay do
 
   def deliver_inbox_tail(%Overwatch{} = state) do
     state.id
-    |> ProcInbox.undelivered()
+    |> TaskInbox.undelivered()
     |> Enum.map(fn entry ->
       {entry.message,
        Map.put(entry.metadata, "flz.inbox_offset", Integer.to_string(entry.offset))}
@@ -465,8 +465,8 @@ defmodule Flezha.Operative.Replay do
         |> then(&reforward(state, &1))
 
         # Close the slice. A broadcast rather than a flag on the last input:
-        # an input reaches exactly one Entity (routed by key), so a marker
-        # riding one would strand the slice every *other* Entity buffered.
+        # an input reaches exactly one Cell (routed by key), so a marker
+        # riding one would strand the slice every *other* Cell buffered.
         if state.correction_window_ms do
           reforward(state, [{"", %{"flz.replay_end" => "1"}}])
         end
@@ -512,15 +512,15 @@ defmodule Flezha.Operative.Replay do
   deliberate correction share one path.
   """
   @spec run_correction(Overwatch.t(), tuple(), non_neg_integer()) :: Overwatch.t()
-  def run_correction(%Overwatch{} = state, entity_id, target) do
+  def run_correction(%Overwatch{} = state, cell_id, target) do
     result =
-      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id),
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(cell_id),
            {:ok, %{seq: baseline_seq, consumed_offset: consumed}} <-
              WalWriter.correction_baseline(writer, target) do
-        rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
+        rewind_and_replay(state, cell_id, writer, baseline_seq, consumed)
       end
 
-    log_correction(state, entity_id, target, result)
+    log_correction(state, cell_id, target, result)
     state
   end
 
@@ -530,19 +530,19 @@ defmodule Flezha.Operative.Replay do
   transaction `run_correction/3` drives.
   """
   @spec run_replay(Overwatch.t(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
-  def run_replay(%Overwatch{} = state, entity_id, baseline_seq) do
+  def run_replay(%Overwatch{} = state, cell_id, baseline_seq) do
     result =
-      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id),
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(cell_id),
            consumed when is_integer(consumed) <-
              WalWriter.consumed_offset_at(writer, baseline_seq) do
-        rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
+        rewind_and_replay(state, cell_id, writer, baseline_seq, consumed)
       end
 
-    log_correction(state, entity_id, baseline_seq, result)
+    log_correction(state, cell_id, baseline_seq, result)
     if match?({:ok, _}, result), do: :ok, else: result
   end
 
-  defp rewind_and_replay(state, entity_id, writer, baseline_seq, consumed) do
+  defp rewind_and_replay(state, cell_id, writer, baseline_seq, consumed) do
     operative_class = Overwatch.operative_class(state)
     started = System.monotonic_time(:millisecond)
 
@@ -558,8 +558,8 @@ defmodule Flezha.Operative.Replay do
     # rewind the writer refused cut nothing, so there is no baseline to replay
     # onto and the correction is reported rather than attempted.
     with :ok <- WalWriter.rewind_to(writer, baseline_seq, epoch),
-         :ok <- await_restore(state.runner_id, entity_id) do
-      # The rewind already truncated the Entity back to its baseline, so a
+         :ok <- await_restore(state.runner_id, cell_id) do
+      # The rewind already truncated the Cell back to its baseline, so a
       # refused restore leaves nothing to replay the slice ONTO. Report the
       # refusal instead: `log_correction/4` surfaces it and the correction is
       # retried, rather than the slice folding onto empty state.
@@ -578,27 +578,27 @@ defmodule Flezha.Operative.Replay do
     end
   end
 
-  defp log_correction(state, entity_id, _target, {:ok, measurements}) do
-    emit_correction(:completed, Overwatch.operative_class(state), entity_id, measurements)
+  defp log_correction(state, cell_id, _target, {:ok, measurements}) do
+    emit_correction(:completed, Overwatch.operative_class(state), cell_id, measurements)
     :ok
   end
 
-  defp log_correction(state, entity_id, target, {:error, reason}) do
+  defp log_correction(state, cell_id, target, {:error, reason}) do
     Logger.warning(
-      "[Overwatch] correction refused entity=#{inspect(entity_id)} " <>
+      "[Overwatch] correction refused cell=#{inspect(cell_id)} " <>
         "target=#{target}: #{inspect(reason)}"
     )
 
-    emit_correction(:refused, Overwatch.operative_class(state), entity_id, %{reason: reason})
+    emit_correction(:refused, Overwatch.operative_class(state), cell_id, %{reason: reason})
   end
 
-  defp emit_correction(event, operative_class, {_, procedure, key}, measurements) do
+  defp emit_correction(event, operative_class, {_, tasklet, key}, measurements) do
     {reason, measurements} = Map.pop(measurements, :reason)
 
     :telemetry.execute(
       [:flezha, :correction, event],
       Map.put_new(measurements, :count, 1),
-      %{operative: operative_class, procedure: procedure, key: key, reason: reason}
+      %{operative: operative_class, tasklet: tasklet, key: key, reason: reason}
     )
   end
 end

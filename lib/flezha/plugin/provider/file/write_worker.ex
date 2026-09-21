@@ -14,7 +14,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   target is the open roll, a hidden temp file in the path's directory or, under
   an S3 root, memory, and its holds wait for the roll to be committed: its part
   written as `part-<N>`, then the sidecar `.progress` naming `N` and the
-  per-Entity `(epoch, seq)` watermark, and only then confirmed. A record the
+  per-Cell `(epoch, seq)` watermark, and only then confirmed. A record the
   outbox guarantees at or below the watermark is confirmed without being
   written again.
   """
@@ -206,8 +206,8 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   defp park(state, msg, metadata) do
     DlqEntry.new!(%{
       operative_class: state.operative_id || @provider,
-      procedure_id: state.plugin_id,
-      entity_key: Map.get(metadata, "flz.entity") || state.plugin_id,
+      tasklet_id: state.plugin_id,
+      cell_key: Map.get(metadata, "flz.cell") || state.plugin_id,
       channel: Map.get(metadata, "channel", ""),
       error: "embedded_newline: a record holding a newline cannot be one line of #{state.path}",
       attempts: 1,
@@ -302,16 +302,16 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
       cond do
         covers?(committed, identity) -> :committed
         covers?(marks, identity) -> :in_roll
-        true -> {:write, Map.put(marks, identity.entity, identity)}
+        true -> {:write, Map.put(marks, identity.cell, identity)}
       end
     else
       _unguarded -> {:write, marks}
     end
   end
 
-  defp covers?(marks, %{entity: entity, sort: sort}) do
+  defp covers?(marks, %{cell: cell, sort: sort}) do
     case marks do
-      %{^entity => mark} -> sort <= mark.sort
+      %{^cell => mark} -> sort <= mark.sort
       _no_mark -> false
     end
   end
@@ -514,22 +514,22 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   defp decode_marks(encoded) do
     Enum.reduce_while(encoded, {:ok, %{}}, fn {key, value}, {:ok, marks} ->
-      with {:ok, entity} <- Base.url_decode64(key, padding: false),
+      with {:ok, cell} <- Base.url_decode64(key, padding: false),
            [epoch, seq] when is_integer(epoch) <- value,
-           stamps = %{"flz.entity" => entity, "flz.seq" => seq, "flz.epoch" => epoch},
+           stamps = %{"flz.cell" => cell, "flz.seq" => seq, "flz.epoch" => epoch},
            {:ok, identity} <- Outbox.output_identity(stamps) do
-        {:cont, {:ok, Map.put(marks, entity, identity)}}
+        {:cont, {:ok, Map.put(marks, cell, identity)}}
       else
         _corrupt -> {:halt, :error}
       end
     end)
   end
 
-  # An Entity is keyed in base64url: its key is bytes, and JSON carries text.
+  # A Cell is keyed in base64url: its key is bytes, and JSON carries text.
   defp write_progress(state, last, marks) do
     watermarks =
-      Map.new(marks, fn {entity, identity} ->
-        {Base.url_encode64(entity, padding: false), [identity.epoch, identity.seq]}
+      Map.new(marks, fn {cell, identity} ->
+        {Base.url_encode64(cell, padding: false), [identity.epoch, identity.seq]}
       end)
 
     body = Jason.encode!(%{part: last, watermarks: watermarks})

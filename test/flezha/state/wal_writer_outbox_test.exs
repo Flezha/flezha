@@ -1,7 +1,7 @@
 defmodule Flezha.State.WalWriterOutboxTest do
   @moduledoc """
   What the writer owes after a crash: fsync-gated `:on_output` dispatch with
-  durable identity `(flz.entity, outbox_seq, epoch)`, restart re-drive above the
+  durable identity `(flz.cell, outbox_seq, epoch)`, restart re-drive above the
   `outbox_flushed_seq` cursor, the dedup file advancing at fsync-batch cadence
   rather than per record, dead-letter parks landing before any watermark moves,
   and the all-or-nothing crash-tear property of the atomic effect record.
@@ -10,9 +10,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "outputs are dispatched only after fsync, with durable identity", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     body =
       effect_body(
@@ -31,7 +31,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     assert {"candle-1", md1, _} = next_output()
     assert md1["channel"] == "out"
-    assert md1["flz.entity"] == "#{rc}/proc/k1"
+    assert md1["flz.cell"] == "#{rc}/task/k1"
     assert md1["flz.seq"] == "0.0"
     assert md1["flz.epoch"] == "0"
     assert md1["flz.key"] == "BTC/1m"
@@ -45,20 +45,20 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     # The cursor does NOT move on the hand-off — only once the chain has run
     # both outputs and no sink is holding either.
-    assert Outbox.read(entity_id).outbox_flushed_seq == -1
+    assert Outbox.read(cell_id).outbox_flushed_seq == -1
 
     settle(md1)
     settle(md2)
     :ok = WalWriter.fsync(pid)
 
-    assert Outbox.read(entity_id).outbox_flushed_seq == 0
+    assert Outbox.read(cell_id).outbox_flushed_seq == 0
   end
 
   test "checkpoint granularity: a mid-interval record flushes outputs without acking", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     # Mid-interval: the invocation emitted, but the state it emitted from is
     # not durable yet, so the record acknowledges nothing.
@@ -80,7 +80,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
   end
 
   test "N appends produce no dedup-file writes until the fsync batch", %{
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     # The app-tree FsyncBatcher ticks every 5 ms, so without suppressing the
     # dirty mark the very batch this test is named for can fire mid-append and
@@ -88,32 +88,32 @@ defmodule Flezha.State.WalWriterOutboxTest do
     set_mimic_global_until_exit()
     stub(FsyncBatcher, :mark_dirty, fn _ -> :ok end)
 
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
 
     for seq <- 0..9 do
       :ok = WalWriter.append(pid, seq, plain_header(), "change-#{seq}")
     end
 
-    refute File.exists?(Paths.outbox_dedup_path(entity_id)),
+    refute File.exists?(Paths.outbox_dedup_path(cell_id)),
            "append path must not write the dedup file per record"
 
     :ok = WalWriter.fsync(pid)
 
-    assert Outbox.read(entity_id).last_persisted_seq == 9
+    assert Outbox.read(cell_id).last_persisted_seq == 9
   end
 
   test "a stale dedup file is repaired from the WAL scan on reopen", %{
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     for seq <- 0..4, do: :ok = WalWriter.append(pid, seq, plain_header(), "c#{seq}")
     :ok = WalWriter.fsync(pid)
-    close_writer(pid, entity_id)
+    close_writer(pid, cell_id)
 
     # Crash-outran-the-cache simulation: the file claims an old watermark.
-    :ok = Outbox.write(entity_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: 0})
+    :ok = Outbox.write(cell_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: 0})
 
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     assert WalWriter.last_persisted_seq(pid) == 4, "WAL scan is authoritative"
     assert :duplicate = WalWriter.append(pid, 3, plain_header(), "stale")
     :ok = WalWriter.append(pid, 5, plain_header(), "next")
@@ -121,19 +121,19 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "crash before flush: restart re-drives the outputs exactly once", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     # No Overwatch bound: the record becomes durable but cannot dispatch.
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     append_effect(pid, 0, [output("k", "payload-x")], 7)
     refute_dispatched()
-    close_writer(pid, entity_id)
+    close_writer(pid, cell_id)
 
-    assert Outbox.read(entity_id).outbox_flushed_seq == -1
+    assert Outbox.read(cell_id).outbox_flushed_seq == -1
 
     # Restart with the operative bound: the re-drive dispatches with the
     # original durable identity.
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
     _ = WalWriter.last_persisted_seq(pid)
 
     assert {"payload-x", md, _} = next_output(2_000)
@@ -144,29 +144,29 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "crash after flush but before cursor write: identical re-drive", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
     append_effect(pid, 0, [output("k", "payload-y")], 1)
     assert {"payload-y", md_first, _} = next_output()
     settle(md_first)
     :ok = WalWriter.fsync(pid)
-    close_writer(pid, entity_id)
+    close_writer(pid, cell_id)
 
     # The cursor write never landed (crash window): reset it to stale.
-    _pid = reopen_with_stale_cursor(entity_id)
+    _pid = reopen_with_stale_cursor(cell_id)
 
     assert {"payload-y", md_again, _} = next_output(2_000)
     assert md_again["flz.seq"] == md_first["flz.seq"]
     assert md_again["flz.epoch"] == md_first["flz.epoch"]
-    assert md_again["flz.entity"] == md_first["flz.entity"]
+    assert md_again["flz.cell"] == md_first["flz.cell"]
   end
 
   test "re-drive waits for the operative to bind (retry path)", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     append_effect(pid, 0, [output("k", "late")], 2)
     refute_dispatched()
 
@@ -175,22 +175,22 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert {"late", _, _} = next_output(3_000)
   end
 
-  test "reopen repopulates the entity's consumed-offset watermark", %{
+  test "reopen repopulates the cell's consumed-offset watermark", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
     stage_effect(pid, 0, [output("k", "a")], 10)
     append_effect(pid, 1, [output("k", "b")], 17)
     assert {"a", _, _} = next_output()
     assert {"b", _, _} = next_output()
-    close_writer(pid, entity_id)
+    close_writer(pid, cell_id)
 
     # Crash simulation: the rebuildable watermark cache is gone.
-    InputLog.forget_entity(rc, entity_id)
+    InputLog.forget_cell(rc, cell_id)
     assert InputLog.watermark(rc) == nil
 
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     _ = WalWriter.last_persisted_seq(pid)
 
     assert InputLog.watermark(rc) == 17,
@@ -199,9 +199,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "flz state outbox renders live and offline status", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
     append_effect(pid, 0, [output("k", "p")], 3)
     assert {_, md, _} = next_output()
     settle(md)
@@ -209,7 +209,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     live =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.state_outbox("#{rc}/proc/k1")
+        CliManager.state_outbox("#{rc}/task/k1")
       end)
 
     assert live =~ "outbox_flushed_seq 0"
@@ -220,7 +220,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     offline =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.state_outbox("#{rc}/proc/k1")
+        CliManager.state_outbox("#{rc}/task/k1")
       end)
 
     assert offline =~ "unknown (writer not running)"
@@ -229,11 +229,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "tier-on park: DLQ entry materializes after fsync and the watermark resumes", %{
     rc: rc,
-    entity_id: entity_id,
+    cell_id: cell_id,
     base: base
   } do
     redirect_dlq_dir(base)
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     # A healthy invocation at offset 10, then the poison payload's park
     # record at offset 11: {no outputs, dlq entry, consumed offset}.
@@ -258,11 +258,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert entry["error"] == "kaboom"
     assert entry["attempts"] == 3
     assert entry["origin_offset"] == 11
-    assert entry["entity_key"] == "k1"
+    assert entry["cell_key"] == "k1"
 
-    assert {:ok, _entry, "poison"} = DlqStore.get("#{rc}/proc/#{entry["id"]}")
+    assert {:ok, _entry, "poison"} = DlqStore.get("#{rc}/task/#{entry["id"]}")
 
-    # Parking un-froze the min-watermark: the entity's consumed offset
+    # Parking un-froze the min-watermark: the cell's consumed offset
     # advanced PAST the poison payload.
     assert InputLog.watermark(rc) == 11
   end
@@ -271,11 +271,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
   # one a window nested inside its dispatch already reported.
   test "a nested window's advance survives the outer window closing", %{
     rc: rc,
-    entity_id: entity_id,
+    cell_id: cell_id,
     base: base
   } do
     redirect_dlq_dir(base)
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     # One fsync batch, deliberately: the park record's entry carries no output,
     # so it completes inside the very window that dispatched it and
@@ -308,11 +308,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
   # window advances the watermark past the input the park owns.
   test "a park is stored before any watermark advance", %{
     rc: rc,
-    entity_id: entity_id,
+    cell_id: cell_id,
     base: base
   } do
     redirect_dlq_dir(base)
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
     trace_park_and_watermark(pid)
 
     in_one_window(fn ->
@@ -344,11 +344,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "re-drive of a park record is idempotent: no duplicate DLQ entry", %{
     rc: rc,
-    entity_id: entity_id,
+    cell_id: cell_id,
     base: base
   } do
     redirect_dlq_dir(base)
-    pid = armed_writer(rc, entity_id)
+    pid = armed_writer(rc, cell_id)
 
     :ok =
       WalWriter.append(
@@ -363,12 +363,12 @@ defmodule Flezha.State.WalWriterOutboxTest do
     append_effect(pid, 1, [output("k", "marker")], 6)
     assert {"marker", _, _} = next_output()
     assert [_entry] = DlqStore.list(rc)
-    close_writer(pid, entity_id)
+    close_writer(pid, cell_id)
 
     # Crash window: the park materialized but the outbox cursor write never
     # landed. The reopen re-drives both records; the park is idempotent on
     # origin identity, so exactly one entry survives.
-    _pid = reopen_with_stale_cursor(entity_id)
+    _pid = reopen_with_stale_cursor(cell_id)
 
     assert {"marker", _, _} = next_output(2_000)
     assert [_exactly_one] = DlqStore.list(rc)
@@ -376,7 +376,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "crash-tear: a torn park record loses neither offset nor park, together", %{
     rc: rc,
-    entity_id: entity_id,
+    cell_id: cell_id,
     base: base
   } do
     redirect_dlq_dir(base)
@@ -384,23 +384,23 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     body = effect_body([], 9, %{channel: "in", error: "e", attempts: 1, payload: "p"})
     effect = RecordFrame.encode_record(0, effect_header(), body)
-    wal_path = Paths.wal_path(entity_id)
+    wal_path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(wal_path))
 
     # Torn mid-record: the record is discarded entirely — the consumed
     # offset cannot advance while the park is lost (they are one record).
     File.write!(wal_path, binary_part(effect, 0, byte_size(effect) - 3))
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     _ = WalWriter.last_persisted_seq(pid)
     assert DlqStore.list(rc) == []
     assert InputLog.watermark(rc) == nil
     :ok = WalWriter.close(pid)
     File.rm!(wal_path)
-    File.rm(Paths.outbox_dedup_path(entity_id))
+    File.rm(Paths.outbox_dedup_path(cell_id))
 
     # Complete record: park AND offset recover together.
     File.write!(wal_path, effect)
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     _ = WalWriter.last_persisted_seq(pid)
 
     assert wait_until(fn -> DlqStore.list(rc) != [] end, 2_000),
@@ -412,7 +412,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   test "crash-tear: a torn effect record recovers all-or-nothing", %{
     rc: rc,
-    entity_id: entity_id
+    cell_id: cell_id
   } do
     ClassRegistry.put_overwatch(rc, self(), nil)
 
@@ -421,14 +421,14 @@ defmodule Flezha.State.WalWriterOutboxTest do
     body = effect_body([output("k", "torn?")], 9)
     effect = RecordFrame.encode_record(1, effect_header(), body)
 
-    wal_path = Paths.wal_path(entity_id)
+    wal_path = Paths.wal_path(cell_id)
     File.mkdir_p!(Path.dirname(wal_path))
 
     # Kill the controller at every byte boundary inside the effect append.
     for cut <- 1..(byte_size(effect) - 1) do
       File.write!(wal_path, plain <> binary_part(effect, 0, cut))
 
-      pid = start_writer(entity_id)
+      pid = start_writer(cell_id)
 
       assert WalWriter.last_persisted_seq(pid) == 0,
              "cut=#{cut}: torn effect record must be discarded entirely"
@@ -437,12 +437,12 @@ defmodule Flezha.State.WalWriterOutboxTest do
       :ok = WalWriter.close(pid)
       # The writer truncated the torn tail; reset the fixture for the next cut.
       File.rm!(wal_path)
-      File.rm(Paths.outbox_dedup_path(entity_id))
+      File.rm(Paths.outbox_dedup_path(cell_id))
     end
 
     # The complete append recovers change + outputs + offset together.
     File.write!(wal_path, plain <> effect)
-    pid = start_writer(entity_id)
+    pid = start_writer(cell_id)
     assert WalWriter.last_persisted_seq(pid) == 1
 
     assert {"torn?", md, _} = next_output(2_000)

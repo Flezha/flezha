@@ -79,7 +79,7 @@ defmodule Flezha.Operative.Handover do
 
     if bound? do
       result =
-        Overwatch.with_proc_span(:migration_deserialize, state.id, fn ->
+        Overwatch.with_task_span(:migration_deserialize, state.id, fn ->
           ControlUnit.send_control_await(state.runner_id, {:migration_deserialization, command})
         end)
 
@@ -178,9 +178,9 @@ defmodule Flezha.Operative.Handover do
   """
   @spec create_snapshot(binary(), binary() | nil) :: binary() | nil
   def create_snapshot(operative_id, runner_id) do
-    command = %RunnerCommands.EntityState{operative_id: operative_id}
+    command = %RunnerCommands.CellState{operative_id: operative_id}
 
-    case ControlUnit.send_control_await(runner_id, {:entity_state, command}) do
+    case ControlUnit.send_control_await(runner_id, {:cell_state, command}) do
       {:ok, snapshot} -> snapshot
       {:error, _reason} -> nil
     end

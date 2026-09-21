@@ -12,7 +12,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     * **workflow, synchronous** — a class declaring `SYNC_DURABILITY`. Its
       commit barrier is acked only after the barrier reaches the backend, so
       destroying the state directory afterwards loses *nothing*: the resumed
-      run skips the committed procedure rather than re-running it.
+      run skips the committed tasklet rather than re-running it.
 
     * **stream, checkpoint** — a checkpoint-ack class. The interval that closed
       is remote; the state it folded comes back byte for byte after the disk is
@@ -45,7 +45,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
-  alias Flezha.State.{InputLog, Paths, ProcJournal}
+  alias Flezha.State.{InputLog, Paths, TaskJournal}
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :postgres_integration
@@ -66,7 +66,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-    # Runner A blocks in proc B, so the crash lands with proc A committed and
+    # Runner A blocks in task B, so the crash lands with task A committed and
     # the chain unfinished.
     {port_a, exec_a} = boot_runner(namespace, id_path)
 
@@ -84,16 +84,16 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> ClassRegistry.sync_durability?(operative_id) end, 30_000),
            "the sync-durability declaration never reached the controller"
 
-    assert wait_until(fn -> ProcJournal.restore_state(operative_id) != nil end, 60_000),
-           "proc A never committed its barrier on the first runner"
+    assert wait_until(fn -> TaskJournal.restore_state(operative_id) != nil end, 60_000),
+           "task A never committed its barrier on the first runner"
 
     # The barrier's journal is on the backend. A sync-declared class gets there
     # before its ack; the wait covers the one window where it cannot — the
     # very first barrier, which the SDK can reach before the controller has
     # finished decoding the class declaration that turns the gate on. The gate
     # itself is pinned deterministically in
-    # `test/flezha/runner/control_channel_proc_commit_test.exs`.
-    journal_ref = {:entity, {operative_id, operative_id, Paths.journal_entity_key()}}
+    # `test/flezha/runner/control_channel_task_commit_test.exs`.
+    journal_ref = {:cell, {operative_id, operative_id, Paths.journal_cell_key()}}
 
     assert wait_until(
              fn -> match?({:ok, _}, fetch(backend_opts, Manifest.key(journal_ref))) end,
@@ -109,7 +109,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     destroy_local_state(operative_id)
     refute File.exists?(Paths.class_dir(operative_id))
-    assert ProcJournal.restore_state(operative_id) == nil, "local journal survived the drill"
+    assert TaskJournal.restore_state(operative_id) == nil, "local journal survived the drill"
 
     # A replacement runner with the release flag: the resumed chain can finish.
     {_port_b, exec_b} =
@@ -119,21 +119,21 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     kill_overwatch(namespace, operative_id)
 
     # Zero loss: the bind hydrated the journal out of the manifest, so the
-    # resumed run SKIPS proc A and completes.
+    # resumed run SKIPS task A and completes.
     assert wait_until(
              fn -> match?({:ok, %{status: "ok"}}, Completion.read(operative_id)) end,
              120_000
            ),
            "the resumed run never completed after hydrating from the remote store"
 
-    {:ok, entries} = ProcJournal.read(operative_id)
-    committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+    {:ok, entries} = TaskJournal.read(operative_id)
+    committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
 
-    assert 0 in committed, "proc A's pre-drill commit did not survive the disk loss"
-    assert 1 in committed, "the resumed proc B never committed its boundary"
+    assert 0 in committed, "task A's pre-drill commit did not survive the disk loss"
+    assert 1 in committed, "the resumed task B never committed its boundary"
 
     assert Enum.count(committed, &(&1 == 0)) == 1,
-           "proc A was re-run after the drill — the hydrated journal was not honoured"
+           "task A was re-run after the drill — the hydrated journal was not honoured"
   end
 
   test "a checkpoint stream class comes back from the shipped cut after the disk is destroyed" do
@@ -176,18 +176,18 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> InputLog.watermark(operative_id) == 2 end, 60_000),
            "the checkpoint never advanced the durable consumed-offset"
 
-    assert wait_until(fn -> Paths.entities_of(operative_id) != [] end, 60_000)
-    [entity_id | _] = Paths.entities_of(operative_id)
-    entity_ref = {:entity, entity_id}
+    assert wait_until(fn -> Paths.cells_of(operative_id) != [] end, 60_000)
+    [cell_id | _] = Paths.cells_of(operative_id)
+    cell_ref = {:cell, cell_id}
 
     assert wait_until(
-             fn -> match?({:ok, _}, fetch(backend_opts, Manifest.key(entity_ref))) end,
+             fn -> match?({:ok, _}, fetch(backend_opts, Manifest.key(cell_ref))) end,
              60_000
            ),
            "the closed interval never reached the durability backend"
 
     # The log the cut resumes from ships with it. Without this the hydrated
-    # Entity comes back holding a consumed floor and nothing to replay from.
+    # Cell comes back holding a consumed floor and nothing to replay from.
     assert wait_until(
              fn ->
                match?({:ok, _}, fetch(backend_opts, Manifest.key({:input_log, operative_id})))
@@ -197,7 +197,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
            "the input log never reached the durability backend"
 
     # --- the drill ----------------------------------------------------------
-    shipped_before = shipped_through(backend_opts, entity_ref)
+    shipped_before = shipped_through(backend_opts, cell_ref)
 
     sigkill(os_pid(port_a))
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 60_000)
@@ -210,12 +210,12 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     force_fresh_rebind(namespace, operative_id)
 
-    # The checkpointed state is back: the live Entity holds both keys folded
+    # The checkpointed state is back: the live Cell holds both keys folded
     # before the disk was destroyed. Loss is bounded to what was never
     # checkpointed, which is the mode's documented contract.
     assert wait_until(
              fn ->
-               case OperativeManager.get_entity_state(namespace, operative_id) do
+               case OperativeManager.get_cell_state(namespace, operative_id) do
                  {:ok, json} -> json =~ "k1" and json =~ "k2"
                  _ -> false
                end
@@ -231,21 +231,21 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     # --- the drill, again ---------------------------------------------------
     # Recovering once is worth nothing if it leaves the operative unprotected
-    # against the next failure, and a recovered Entity is only protected if
+    # against the next failure, and a recovered Cell is only protected if
     # hydration put back the local files that describe it as well as its data.
-    # This round is the end-to-end repeatability statement: the recovered Entity
+    # This round is the end-to-end repeatability statement: the recovered Cell
     # ships again, and survives a second disk loss.
     #
     # It does NOT pin the epoch specifically — this fixture's epoch never
     # diverges, because a runner replacement restores contiguous seqs and so
     # never realigns. `durability_tier_test.exs` sets a bumped epoch directly
-    # and is where "a recovered Entity keeps shipping instead of fencing itself
+    # and is where "a recovered Cell keeps shipping instead of fencing itself
     # off" actually bites.
     assert wait_until(
-             fn -> shipped_through(backend_opts, entity_ref) > shipped_before end,
+             fn -> shipped_through(backend_opts, cell_ref) > shipped_before end,
              60_000
            ),
-           "the recovered Entity never shipped again — it fenced itself off"
+           "the recovered Cell never shipped again — it fenced itself off"
 
     sigkill(os_pid(port_b))
     assert wait_until(fn -> exec_b not in FleetManager.active_runners(namespace) end, 60_000)
@@ -257,7 +257,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     assert wait_until(
              fn ->
-               case OperativeManager.get_entity_state(namespace, operative_id) do
+               case OperativeManager.get_cell_state(namespace, operative_id) do
                  {:ok, json} -> json =~ "k1" and json =~ "k2" and json =~ "k3"
                  _ -> false
                end
@@ -302,12 +302,12 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
       assert {:ok, _collected} = GenServer.call(peer, :gc, 60_000)
     end
 
-    assert wait_until(fn -> Paths.entities_of(operative_id) != [] end, 60_000)
-    [entity_id | _] = Paths.entities_of(operative_id)
-    entity_ref = {:entity, entity_id}
+    assert wait_until(fn -> Paths.cells_of(operative_id) != [] end, 60_000)
+    [cell_id | _] = Paths.cells_of(operative_id)
+    cell_ref = {:cell, cell_id}
 
     assert wait_until(
-             fn -> shipped_through(backend_opts, entity_ref) >= 0 end,
+             fn -> shipped_through(backend_opts, cell_ref) >= 0 end,
              60_000
            ),
            "nothing ever reached the backend"
@@ -315,7 +315,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     # Every artifact the live manifest names must still be there. Under a global,
     # time-blind collection this is exactly where a blob went missing: uploaded,
     # collected by the peer, then named by a manifest written a moment later.
-    assert {:ok, blob} = fetch(backend_opts, Manifest.key(entity_ref))
+    assert {:ok, blob} = fetch(backend_opts, Manifest.key(cell_ref))
     assert {:ok, manifest} = Manifest.decode(blob)
 
     for artifact <- Manifest.blob_keys(manifest) do
@@ -331,7 +331,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     assert wait_until(
              fn ->
-               case OperativeManager.get_entity_state(namespace, operative_id) do
+               case OperativeManager.get_cell_state(namespace, operative_id) do
                  {:ok, json} -> json =~ "k1"
                  _ -> false
                end

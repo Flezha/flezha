@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   @moduledoc """
-  The procedures and operatives the SDK's persistence tests drive: a
+  The tasklets and operatives the SDK's persistence tests drive: a
   changeful counter in Single, Static and Dynamic shapes, a `NoChange` echo, a
   class with persistence off, the two shapes the builder refuses, and the keyed
   sinks whose frames are stamped.
@@ -8,9 +8,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   alias Flezha.SDK.Ctx
 
-  defmodule CounterProc do
+  defmodule CounterTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "counter"
     def init_state(_), do: %{value: 0}
     def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
@@ -26,9 +26,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
     end
   end
 
-  defmodule EchoProc do
+  defmodule EchoTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "echo"
     def init_state(_), do: nil
 
@@ -38,26 +38,26 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
     end
   end
 
-  defmodule ThriftyProc do
+  defmodule ThriftyTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "thrifty"
     def init_state(_), do: %{value: 0}
     def compact_after_bytes, do: 1_048_576
-    defdelegate apply_change(s, c), to: CounterProc
-    defdelegate run(input, s, ctx), to: CounterProc
+    defdelegate apply_change(s, c), to: CounterTask
+    defdelegate run(input, s, ctx), to: CounterTask
   end
 
-  defmodule StaticCounterProc do
+  defmodule StaticCounterTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "scounter"
-    def entity_keys, do: ["a", "b"]
-    def entities_for(_input), do: ["a"]
-    defdelegate init_state(key), to: CounterProc
-    defdelegate apply_change(s, change), to: CounterProc
-    defdelegate state_from_json(json), to: CounterProc
-    defdelegate run(input, s, ctx), to: CounterProc
+    def cell_keys, do: ["a", "b"]
+    def cells_for(_input), do: ["a"]
+    defdelegate init_state(key), to: CounterTask
+    defdelegate apply_change(s, change), to: CounterTask
+    defdelegate state_from_json(json), to: CounterTask
+    defdelegate run(input, s, ctx), to: CounterTask
   end
 
   defmodule CounterOp do
@@ -67,7 +67,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input_with("in", &parse/1) |> into(CounterProc) |> sink("c")
+      c |> input_with("in", &parse/1) |> into(CounterTask) |> sink("c")
     end
 
     def parse("kill"), do: {:ok, :kill}
@@ -89,7 +89,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(EchoProc) |> sink("e")
+      c |> input("in") |> into(EchoTask) |> sink("e")
     end
   end
 
@@ -103,7 +103,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
       c
       |> input_with("in", &CounterOp.parse/1)
-      |> into(StaticCounterProc)
+      |> into(StaticCounterTask)
       |> sink("s")
     end
   end
@@ -119,7 +119,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(fn n -> "k#{rem(n, 2)}" end)
-      |> into(CounterProc)
+      |> into(CounterTask)
       |> sink("c")
     end
   end
@@ -131,8 +131,8 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("a") |> into_named(CounterProc, "first") |> sink()
-      c |> input("b") |> into_named(CounterProc, "second") |> sink()
+      c |> input("a") |> into_named(CounterTask, "first") |> sink()
+      c |> input("b") |> into_named(CounterTask, "second") |> sink()
     end
   end
 
@@ -144,15 +144,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(ThriftyProc) |> into(CounterProc) |> sink()
+      c |> input("in") |> into(ThriftyTask) |> into(CounterTask) |> sink()
     end
   end
 
   # Emits twice per input — once with user metadata — so the ordinal and the
   # stamps' position after the metadata are both observable on one dispatch.
-  defmodule StampedProc do
+  defmodule StampedTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "stamped"
     def init_state(_), do: %{value: 0}
     def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
@@ -167,9 +167,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   # Answers a refused emit as a non-retryable error, so the refusal is
   # readable off the park it produces.
-  defmodule RefusingProc do
+  defmodule RefusingTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "refusing"
     def init_state(_), do: nil
 
@@ -192,7 +192,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(fn n -> "k#{rem(n, 2)}" end)
-      |> into(StampedProc)
+      |> into(StampedTask)
       |> keyed()
       |> sink("c")
     end
@@ -212,7 +212,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
         c
         |> input_with("in", &CounterOp.parse/1)
         |> key_by(fn n -> "k#{rem(n, 2)}" end)
-        |> into(StampedProc)
+        |> into(StampedTask)
         |> named("c")
 
       node |> keyed() |> sink()
@@ -232,22 +232,22 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
       c
       |> input("in")
-      |> into(RefusingProc)
+      |> into(RefusingTask)
       |> keyed()
       |> sink("r")
     end
   end
 
-  # Two live Entities at most: a third key's input has nowhere to go.
-  defmodule CappedProc do
+  # Two live Cells at most: a third key's input has nowhere to go.
+  defmodule CappedTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "capped"
-    def max_entities, do: 2
-    defdelegate init_state(key), to: CounterProc
-    defdelegate apply_change(s, change), to: CounterProc
-    defdelegate state_from_json(json), to: CounterProc
-    defdelegate run(input, s, ctx), to: CounterProc
+    def max_cells, do: 2
+    defdelegate init_state(key), to: CounterTask
+    defdelegate apply_change(s, change), to: CounterTask
+    defdelegate state_from_json(json), to: CounterTask
+    defdelegate run(input, s, ctx), to: CounterTask
   end
 
   defmodule CappedOp do
@@ -261,15 +261,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(&"k#{&1}")
-      |> into(CappedProc)
+      |> into(CappedTask)
       |> sink("c")
     end
   end
 
   # Emits what `Ctx.now/1` served: the seq the dispatch started at.
-  defmodule LogicalClockProc do
+  defmodule LogicalClockTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "logical"
     def clock, do: :logical
     def init_state(_), do: %{value: 0}
@@ -282,9 +282,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # Emits what `Ctx.now/1` served: the input's own timestamp.
-  defmodule EventTimeProc do
+  defmodule EventTimeTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "event_time"
     def clock, do: :event_time
     def event_time_of(input), do: input
@@ -297,9 +297,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # Emits what `Ctx.now/1` served under the default clock: the epoch millisecond.
-  defmodule NowProc do
+  defmodule NowTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "now"
     def init_state(_), do: nil
 
@@ -312,9 +312,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Each input journals its delta and registers a deadline `input` seconds out
   # (distinct per input, whatever the clock did between two dispatches); the
   # firing journals the timestamp it was handed and emits it.
-  defmodule TimerProc do
+  defmodule TimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "timer"
     def init_state(_), do: %{value: 0, fired: []}
     def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
@@ -338,9 +338,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   # Fires on the input's own timeline: `arm:<at>` registers an event-time
   # timer at event time 0 (the high-water stays), `<t>` is a tick at `t`.
-  defmodule EventTimerProc do
+  defmodule EventTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "event_timer"
     def clock, do: :event_time
     def event_time_of({:arm, _at}), do: 0
@@ -363,11 +363,11 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
     end
   end
 
-  # `on_timer/4` holds the Entity until told `:go`, telling the probe first,
+  # `on_timer/4` holds the Cell until told `:go`, telling the probe first,
   # so an input pushed meanwhile is dispatched after the firing.
-  defmodule GatedTimerProc do
+  defmodule GatedTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "gated_timer"
     def init_state(_), do: nil
 
@@ -395,9 +395,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # A firing that fails non-retryably: the park must carry the removal.
-  defmodule PoisonTimerProc do
+  defmodule PoisonTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "poison_timer"
     def init_state(_), do: %{armed: 0}
     def apply_change(s, {:armed, n}), do: %{s | armed: s.armed + n}
@@ -416,9 +416,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # Registers and never handles.
-  defmodule NoHandlerProc do
+  defmodule NoHandlerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "no_handler"
     def init_state(_), do: nil
 
@@ -429,9 +429,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # Remembers what it armed so a later input can cancel it.
-  defmodule CancelProc do
+  defmodule CancelTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "cancel"
     def init_state(_), do: %{armed: nil}
     def apply_change(s, {:armed, at}), do: %{s | armed: at}
@@ -459,9 +459,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # Arms 100 ms out, dies untrappably on demand: the replacement owes the timer.
-  defmodule KillableTimerProc do
+  defmodule KillableTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "killable_timer"
     def init_state(_), do: %{fired: []}
     def apply_change(s, {:fired, at}), do: %{s | fired: s.fired ++ [at]}
@@ -478,12 +478,12 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
     end
   end
 
-  # A dynamic Entity idle-evicted after 100 ms, holding a timer a minute out.
-  defmodule TtlTimerProc do
+  # A dynamic Cell idle-evicted after 100 ms, holding a timer a minute out.
+  defmodule TtlTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "ttl_timer"
-    def entity_idle_ttl_ms, do: 100
+    def cell_idle_ttl_ms, do: 100
     def init_state(_), do: %{armed: 0}
     def apply_change(s, {:armed, n}), do: %{s | armed: s.armed + n}
 
@@ -499,11 +499,11 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # One pending timer at most; emits what each registration answered.
-  defmodule CappedTimersProc do
+  defmodule CappedTimersTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "capped_timers"
-    def max_timers_per_entity, do: 1
+    def max_timers_per_cell, do: 1
     def init_state(_), do: nil
 
     def run(n, s, ctx) do
@@ -521,7 +521,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input_with("in", &parse/1) |> into(EventTimerProc) |> sink("e")
+      c |> input_with("in", &parse/1) |> into(EventTimerTask) |> sink("e")
     end
 
     def parse("arm:" <> at), do: {:ok, {:arm, String.to_integer(at)}}
@@ -535,7 +535,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(GatedTimerProc) |> sink("g")
+      c |> input("in") |> into(GatedTimerTask) |> sink("g")
     end
   end
 
@@ -546,7 +546,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(PoisonTimerProc) |> sink("p")
+      c |> input("in") |> into(PoisonTimerTask) |> sink("p")
     end
   end
 
@@ -557,7 +557,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(NoHandlerProc) |> sink("n")
+      c |> input("in") |> into(NoHandlerTask) |> sink("n")
     end
   end
 
@@ -568,7 +568,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(CancelProc) |> sink("c")
+      c |> input("in") |> into(CancelTask) |> sink("c")
     end
   end
 
@@ -579,7 +579,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(KillableTimerProc) |> sink("k")
+      c |> input("in") |> into(KillableTimerTask) |> sink("k")
     end
   end
 
@@ -594,7 +594,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input("in")
       |> key_by(&hd(String.split(&1, ":")))
-      |> into(TtlTimerProc)
+      |> into(TtlTimerTask)
       |> sink("t")
     end
   end
@@ -609,7 +609,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
       c
       |> input_with("in", &CounterOp.parse/1)
-      |> into(CappedTimersProc)
+      |> into(CappedTimersTask)
       |> sink("c")
     end
   end
@@ -624,7 +624,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
       c
       |> input_with("in", &CounterOp.parse/1)
-      |> into(LogicalClockProc)
+      |> into(LogicalClockTask)
       |> sink("l")
     end
   end
@@ -639,7 +639,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
       c
       |> input_with("in", &CounterOp.parse/1)
-      |> into(EventTimeProc)
+      |> into(EventTimeTask)
       |> sink("t")
     end
   end
@@ -651,7 +651,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> into(NowProc) |> sink("n")
+      c |> input("in") |> into(NowTask) |> sink("n")
     end
   end
 
@@ -662,20 +662,20 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input_with("in", &CounterOp.parse/1) |> into(TimerProc) |> sink("t")
+      c |> input_with("in", &CounterOp.parse/1) |> into(TimerTask) |> sink("t")
     end
   end
 
   # Idle-evicted after 100 ms, on a sweep every 25 ms.
-  defmodule TtlProc do
+  defmodule TtlTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "ttl"
-    def entity_idle_ttl_ms, do: 100
-    defdelegate init_state(key), to: CounterProc
-    defdelegate apply_change(s, change), to: CounterProc
-    defdelegate state_from_json(json), to: CounterProc
-    defdelegate run(input, s, ctx), to: CounterProc
+    def cell_idle_ttl_ms, do: 100
+    defdelegate init_state(key), to: CounterTask
+    defdelegate apply_change(s, change), to: CounterTask
+    defdelegate state_from_json(json), to: CounterTask
+    defdelegate run(input, s, ctx), to: CounterTask
   end
 
   defmodule TtlOp do
@@ -689,18 +689,18 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
       c
       |> input_with("in", &CounterOp.parse/1)
       |> key_by(&"k#{&1}")
-      |> into(TtlProc)
+      |> into(TtlTask)
       |> sink("c")
     end
   end
 
   # Blocks inside `run/3` until told `:go`, so a sweep meets it busy; a
-  # NoChange procedure, so its eviction ships no delete frame.
-  defmodule GatedTtlProc do
+  # NoChange tasklet, so its eviction ships no delete frame.
+  defmodule GatedTtlTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "gated_ttl"
-    def entity_idle_ttl_ms, do: 1
+    def cell_idle_ttl_ms, do: 1
     def init_state(_), do: nil
 
     def run(input, s, ctx) do
@@ -720,15 +720,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> input("in") |> key_by(& &1) |> into(GatedTtlProc) |> sink("g")
+      c |> input("in") |> key_by(& &1) |> into(GatedTtlTask) |> sink("g")
     end
   end
 
   # The counter one schema version on: `unit` joined the state, a note joined
   # the change, and both read back from version 1 through the migrations.
-  defmodule CounterV2Proc do
+  defmodule CounterV2Task do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
 
     alias Flezha.SDK.Ctx
 
@@ -750,15 +750,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   end
 
   # Claims to read version 1 and declares no migration.
-  defmodule FlooredProc do
+  defmodule FlooredTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "floored"
     def schema_version, do: 2
     def min_readable_schema_version, do: 1
-    defdelegate init_state(key), to: CounterProc
-    defdelegate apply_change(s, change), to: CounterProc
-    defdelegate run(input, s, ctx), to: CounterProc
+    defdelegate init_state(key), to: CounterTask
+    defdelegate apply_change(s, change), to: CounterTask
+    defdelegate run(input, s, ctx), to: CounterTask
   end
 
   defmodule CounterV2Op do
@@ -771,7 +771,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
       c
       |> input_with("in", &CounterOp.parse/1)
-      |> into(CounterV2Proc)
+      |> into(CounterV2Task)
       |> sink("c")
     end
   end

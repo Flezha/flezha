@@ -1,6 +1,6 @@
 defmodule Flezha.State.Watchdog do
   @moduledoc """
-  Sweeper that makes a stalled per-Entity persistence/output path *detectable*
+  Sweeper that makes a stalled per-Cell persistence/output path *detectable*
   instead of silently frozen. Holds its own sweep timer
   (`:output_watchdog_interval_ms`, 10 s); the convergence `Loop` consumes the
   telemetry it emits.
@@ -13,7 +13,7 @@ defmodule Flezha.State.Watchdog do
   in silence.
 
   Four sweeps run on each pass: **output staleness** (Changes still arriving
-  while the persisted seq has not advanced — an idle Entity is not flagged),
+  while the persisted seq has not advanced — an idle Cell is not flagged),
   **compaction trigger** on un-snapshotted bytes or age, **compaction timeout**,
   and **remote RPO** when a durability backend is configured.
   """
@@ -39,10 +39,10 @@ defmodule Flezha.State.Watchdog do
     WriterRegistry
   }
 
-  # `compactions` maps `entity_id => {started_at_ms, runner_id}`: the in-flight
+  # `compactions` maps `cell_id => {started_at_ms, runner_id}`: the in-flight
   # handshake plus the runner that owns it, so the timeout path can recover.
-  # `backoff` is the shared per-`{:compaction, entity_id}` strike/cooldown table
-  # that keeps a repeatedly-failing Entity from re-triggering every sweep; it is
+  # `backoff` is the shared per-`{:compaction, cell_id}` strike/cooldown table
+  # that keeps a repeatedly-failing Cell from re-triggering every sweep; it is
   # filled by `init/1` rather than defaulted here, because a struct default is
   # evaluated at compile time and would make this a compile-time dependency on
   # a module a sensor only calls.
@@ -59,43 +59,43 @@ defmodule Flezha.State.Watchdog do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Run both sweeps synchronously. Used by tests and procs tooling."
+  @doc "Run both sweeps synchronously. Used by tests and ops tooling."
   @spec sweep_now() :: :ok
   def sweep_now(), do: GenServer.call(__MODULE__, :sweep_now)
 
   @doc """
-  Stall/advance evidence (`WalWriter.stall_status/1`) for every Entity with
+  Stall/advance evidence (`WalWriter.stall_status/1`) for every Cell with
   a live writer. Stateless read used by the sweeps here and by the
   convergence Loop's producing-liveness classification at tick cadence.
   """
-  @spec entity_statuses() :: [{Paths.entity_id(), WalWriter.stall_status()}]
-  def entity_statuses(), do: collect_statuses(Paths.all_entities())
+  @spec cell_statuses() :: [{Paths.cell_id(), WalWriter.stall_status()}]
+  def cell_statuses(), do: collect_statuses(Paths.all_cells())
 
   @doc """
-  Record that a `CompactEntity` was shipped for `entity_id` so the
+  Record that a `CompactCell` was shipped for `cell_id` so the
   handshake is bounded by `compaction_timeout_ms`. No-op when the
   Watchdog is not running (e.g. isolated unit tests).
   """
   @spec compaction_started(tuple(), binary()) :: :ok
-  def compaction_started(entity_id, runner_id) do
-    GenServer.cast(__MODULE__, {:compaction_started, entity_id, runner_id})
+  def compaction_started(cell_id, runner_id) do
+    GenServer.cast(__MODULE__, {:compaction_started, cell_id, runner_id})
   end
 
   @doc "Clear a tracked compaction once its snapshot response arrives."
   @spec compaction_completed(tuple()) :: :ok
-  def compaction_completed(entity_id) do
-    GenServer.cast(__MODULE__, {:compaction_completed, entity_id})
+  def compaction_completed(cell_id) do
+    GenServer.cast(__MODULE__, {:compaction_completed, cell_id})
   end
 
   @doc """
   Record a compaction the SDK reported as failed — a `snapshot_seq = 0`
-  response against a non-empty WAL (a stub build or an unaddressable Entity).
+  response against a non-empty WAL (a stub build or an unaddressable Cell).
   Advances the backoff strike and alarms at the give-up threshold, so a stub is
   caught without waiting out the timeout sweep.
   """
   @spec compaction_failed(tuple()) :: :ok
-  def compaction_failed(entity_id) do
-    GenServer.cast(__MODULE__, {:compaction_failed, entity_id})
+  def compaction_failed(cell_id) do
+    GenServer.cast(__MODULE__, {:compaction_failed, cell_id})
   end
 
   # ---------- GenServer ----------
@@ -127,46 +127,46 @@ defmodule Flezha.State.Watchdog do
   defp sweep_interval_ms(), do: Durations.get(:output_watchdog_interval_ms)
 
   @impl true
-  def handle_cast({:compaction_started, entity_id, runner_id}, state) do
+  def handle_cast({:compaction_started, cell_id, runner_id}, state) do
     if PersistenceResolver.compaction_timeout_ms() > 0 do
       now = :erlang.monotonic_time(:millisecond)
-      {:noreply, %{state | compactions: Map.put(state.compactions, entity_id, {now, runner_id})}}
+      {:noreply, %{state | compactions: Map.put(state.compactions, cell_id, {now, runner_id})}}
     else
       {:noreply, state}
     end
   end
 
-  def handle_cast({:compaction_completed, {rc, sh, pk} = entity_id}, state) do
+  def handle_cast({:compaction_completed, {rc, sh, pk} = cell_id}, state) do
     :telemetry.execute(
       [:flezha, :state, :compaction_completed],
       %{},
-      %{operative: rc, procedure: sh, key: pk}
+      %{operative: rc, tasklet: sh, key: pk}
     )
 
     now = :erlang.monotonic_time(:millisecond)
 
     # A snapshot just replaced the WAL prefix it subsumes — the exact boundary
     # at which the remote copy should move from record bundles to a baseline.
-    DurabilityTier.on_compaction_completed(entity_id)
-    Facts.declare({:compaction_completed, entity_id, %{}})
+    DurabilityTier.on_compaction_completed(cell_id)
+    Facts.declare({:compaction_completed, cell_id, %{}})
 
     {:noreply,
      %{
        state
-       | compactions: Map.delete(state.compactions, entity_id),
-         backoff: Backoff.update(state.backoff, {:compaction, entity_id}, :ok, now)
+       | compactions: Map.delete(state.compactions, cell_id),
+         backoff: Backoff.update(state.backoff, {:compaction, cell_id}, :ok, now)
      }}
   end
 
-  def handle_cast({:compaction_failed, entity_id}, state) do
+  def handle_cast({:compaction_failed, cell_id}, state) do
     now = :erlang.monotonic_time(:millisecond)
-    backoff = Backoff.update(state.backoff, {:compaction, entity_id}, :error, now)
-    attempt = Backoff.attempt(backoff, {:compaction, entity_id})
+    backoff = Backoff.update(state.backoff, {:compaction, cell_id}, :error, now)
+    attempt = Backoff.attempt(backoff, {:compaction, cell_id})
     # A reported failure no resync can fix (the SDK shipped no snapshot). Alarm
     # at the threshold; the backoff-gated trigger sweep is the retry.
-    maybe_give_up(entity_id, attempt)
+    maybe_give_up(cell_id, attempt)
 
-    {:noreply, %{state | compactions: Map.delete(state.compactions, entity_id), backoff: backoff}}
+    {:noreply, %{state | compactions: Map.delete(state.compactions, cell_id), backoff: backoff}}
   end
 
   @impl true
@@ -289,14 +289,14 @@ defmodule Flezha.State.Watchdog do
   # directly so a failed dispatch still backs off until the timeout sweep
   # clears it — is the shared guard that keeps size+age to one enqueue.
   defp sweep_compaction_triggers(state, now) do
-    entity_statuses()
-    |> Enum.reduce(state, fn {{rc, sh, _pk} = entity_id, status}, acc ->
-      with false <- Map.has_key?(acc.compactions, entity_id),
-           true <- Backoff.eligible?(acc.backoff, {:compaction, entity_id}, now),
+    cell_statuses()
+    |> Enum.reduce(state, fn {{rc, sh, _pk} = cell_id, status}, acc ->
+      with false <- Map.has_key?(acc.compactions, cell_id),
+           true <- Backoff.eligible?(acc.backoff, {:compaction, cell_id}, now),
            runner_id when is_binary(runner_id) <- status.owning_runner,
            trigger when trigger != nil <- compaction_trigger(status, now, rc, sh) do
-        flag_compaction_trigger(entity_id, runner_id, status, trigger)
-        %{acc | compactions: Map.put(acc.compactions, entity_id, {now, runner_id})}
+        flag_compaction_trigger(cell_id, runner_id, status, trigger)
+        %{acc | compactions: Map.put(acc.compactions, cell_id, {now, runner_id})}
       else
         _ -> acc
       end
@@ -305,9 +305,9 @@ defmodule Flezha.State.Watchdog do
 
   # The age floor resolves per operative (a correction-declaring class must not
   # compact away the history inside its own window), so it is read here rather
-  # than hoisted out of the loop. The size floor already resolved per entity,
+  # than hoisted out of the loop. The size floor already resolved per cell,
   # so this adds no new cost class.
-  defp compaction_trigger(status, now, operative_class, _procedure_id) do
+  defp compaction_trigger(status, now, operative_class, _tasklet_id) do
     age_ms = PersistenceResolver.compact_after_age_ms(operative_class)
 
     cond do
@@ -323,20 +323,20 @@ defmodule Flezha.State.Watchdog do
     end
   end
 
-  defp flag_compaction_trigger({rc, sh, pk} = entity_id, runner_id, status, trigger) do
+  defp flag_compaction_trigger({rc, sh, pk} = cell_id, runner_id, status, trigger) do
     :telemetry.execute(
       [:flezha, :state, :compaction_trigger],
       %{wal_size_bytes: status.wal_size_bytes},
-      %{operative: rc, procedure: sh, key: pk, trigger: trigger, runner: runner_id}
+      %{operative: rc, tasklet: sh, key: pk, trigger: trigger, runner: runner_id}
     )
 
-    _ = Commands.dispatch_compact_entity(runner_id, entity_id)
+    _ = Commands.dispatch_compact_cell(runner_id, cell_id)
     :ok
   end
 
   # Detects an operative that produced output but received zero Change frames for
   # the full timeout: the condition the output-staleness sweep cannot see (no
-  # Changes arriving means the entity looks idle, not stalled). Latched per
+  # Changes arriving means the cell looks idle, not stalled). Latched per
   # operative_class.
   #
   # Silence is all this establishes. A dead upstream, a source that reports
@@ -350,7 +350,7 @@ defmodule Flezha.State.Watchdog do
     if timeout <= 0 do
       state
     else
-      entity_statuses()
+      cell_statuses()
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
         # The sweep is stream-only: a durable :workflow operative legitimately
@@ -381,8 +381,8 @@ defmodule Flezha.State.Watchdog do
     end
   end
 
-  defp collect_statuses(entities) do
-    Enum.flat_map(entities, fn pid ->
+  defp collect_statuses(cells) do
+    Enum.flat_map(cells, fn pid ->
       with {:ok, writer} <- WriterRegistry.lookup(pid),
            {:ok, status} <- safe_stall_status(writer) do
         [{pid, status}]
@@ -412,7 +412,7 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp sweep_output_staleness(state, now) do
-    Enum.each(Paths.all_entities(), fn {rc, _sh, _pk} = pid ->
+    Enum.each(Paths.all_cells(), fn {rc, _sh, _pk} = pid ->
       timeout = PersistenceResolver.output_stall_timeout_ms(rc)
 
       with true <- ClassRegistry.capable?(rc, :output_stall_watch?),
@@ -434,7 +434,7 @@ defmodule Flezha.State.Watchdog do
       now - status.last_advance_at >= timeout
   end
 
-  # The entity's `operative_class` is, by the flezha operative convention
+  # The cell's `operative_class` is, by the flezha operative convention
   # (`OperativeManager`: "the operative_id is used as the operative_class identifier"),
   # the operative-instance id the convergence Loop binds. Emitting it as
   # `operative_instance` lets the Loop rebind the exact stalled instance
@@ -443,7 +443,7 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: now - status.last_advance_at, last_seq: status.last_persisted_seq},
-      %{operative_class: rc, operative_instance: rc, procedure: sh, key: pk}
+      %{operative_class: rc, operative_instance: rc, tasklet: sh, key: pk}
     )
   end
 
@@ -480,7 +480,7 @@ defmodule Flezha.State.Watchdog do
     :telemetry.execute(
       [:flezha, :state, :compaction_timeout],
       %{waited_ms: waited_ms},
-      %{operative: rc, procedure: sh, key: pk, runner: runner_id, attempt: attempt}
+      %{operative: rc, tasklet: sh, key: pk, runner: runner_id, attempt: attempt}
     )
 
     maybe_give_up(pid, attempt, runner_id)
@@ -488,8 +488,8 @@ defmodule Flezha.State.Watchdog do
   end
 
   # Below the give-up threshold the backoff-gated trigger sweep is the retry — a
-  # still-live, still-correct Entity is NOT resynced (re-restoring a healthy
-  # Entity fixes nothing and risks availability). At the threshold the WAL has
+  # still-live, still-correct Cell is NOT resynced (re-restoring a healthy
+  # Cell fixes nothing and risks availability). At the threshold the WAL has
   # grown across every backoff rung, so the loud alarm fires; and when a
   # `runner_id` is known (the timeout path carries one; the stub-response path
   # does not), the give-up is declared to the loop, which plans the resync on
@@ -501,7 +501,7 @@ defmodule Flezha.State.Watchdog do
       if runner_id, do: Facts.declare({:compaction_gave_up, pid, %{runner_id: runner_id}})
     else
       Logger.debug(
-        "[watchdog] compaction unresolved operative=#{rc} procedure=#{sh} key=#{pk} " <>
+        "[watchdog] compaction unresolved operative=#{rc} tasklet=#{sh} key=#{pk} " <>
           "attempt=#{attempt}; retry gated by backoff"
       )
     end
@@ -510,14 +510,14 @@ defmodule Flezha.State.Watchdog do
   defp emit_give_up({rc, sh, pk}, attempt) do
     Logger.error(
       "[watchdog] compaction GAVE UP after #{attempt} failed attempts operative=#{rc} " <>
-        "procedure=#{sh} key=#{pk}; the Entity's WAL is not being reclaimed — investigate " <>
+        "tasklet=#{sh} key=#{pk}; the Cell's WAL is not being reclaimed — investigate " <>
         "the runner's snapshot path"
     )
 
     :telemetry.execute(
       [:flezha, :state, :compaction_gave_up],
       %{attempts: attempt},
-      %{operative: rc, procedure: sh, key: pk}
+      %{operative: rc, tasklet: sh, key: pk}
     )
   end
 

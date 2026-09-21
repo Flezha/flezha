@@ -1,9 +1,9 @@
 defmodule Flezha.Service.Cli.State do
   @moduledoc """
   `flz state get | list | at | rotate | delete | outbox | retention` and
-  `flz operative replay` — the Entity-scoped state reads and writes.
+  `flz operative replay` — the Cell-scoped state reads and writes.
 
-  Every verb here is judged in the namespace that holds the Entity: the row a
+  Every verb here is judged in the namespace that holds the Cell: the row a
   path or a class resolves to, read only for a bound caller whose role grants
   the action, so an unbound caller learns nothing about what exists on disk.
   """
@@ -33,19 +33,19 @@ defmodule Flezha.Service.Cli.State do
     do: {:ok, %{namespace: OperativeManager.namespace_of_class(operative_class)}}
 
   @doc """
-  The row a `state at | rotate | outbox` is judged by: an Entity with persisted
+  The row a `state at | rotate | outbox` is judged by: a Cell with persisted
   state, in its class's namespace. Each verb keeps its own prefix on the
   not-found it prints.
   """
-  def at_row(args), do: entity_row(args, "state at")
-  def rotate_row(args), do: entity_row(args, "state rotate")
-  def outbox_row(args), do: entity_row(args, "state outbox")
+  def at_row(args), do: cell_row(args, "state at")
+  def rotate_row(args), do: cell_row(args, "state rotate")
+  def outbox_row(args), do: cell_row(args, "state outbox")
 
-  defp entity_row([path_string | _], verb) do
+  defp cell_row([path_string | _], verb) do
     case parse_state_path(path_string) do
-      {:ok, {operative_class, _, _} = entity_id} ->
+      {:ok, {operative_class, _, _} = cell_id} ->
         {:ok,
-         %{namespace: OperativeManager.namespace_of_class(operative_class), entity_id: entity_id}}
+         %{namespace: OperativeManager.namespace_of_class(operative_class), cell_id: cell_id}}
 
       {:error, reason} ->
         Context.fail!("#{verb}: #{reason}")
@@ -54,38 +54,37 @@ defmodule Flezha.Service.Cli.State do
 
   @doc """
   The row a `state delete` is judged by: the path split, with no on-disk check,
-  so deleting an Entity that left nothing behind still succeeds.
+  so deleting a Cell that left nothing behind still succeeds.
   """
   def split_row([path_string | _]) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        {:ok, %{namespace: OperativeManager.namespace_of_class(rc), entity_id: {rc, sh, pk}}}
+        {:ok, %{namespace: OperativeManager.namespace_of_class(rc), cell_id: {rc, sh, pk}}}
 
       _ ->
         Context.fail!(
-          "state delete: expected <operative>/<procedure>/<entity_key>; got #{path_string}"
+          "state delete: expected <operative>/<tasklet>/<cell_key>; got #{path_string}"
         )
     end
   end
 
   @doc "The row a `state get` is judged by: the live Operative's namespace and the members that hold the key."
   def live_row([path_string | _]) do
-    with {:ok, {operative_id, procedure, entity_key}} <- parse_live_path(path_string),
-         {:ok, namespace, targets} <- resolve_state_targets(operative_id, entity_key) do
-      {:ok,
-       %{namespace: namespace, targets: targets, procedure: procedure, entity_key: entity_key}}
+    with {:ok, {operative_id, tasklet, cell_key}} <- parse_live_path(path_string),
+         {:ok, namespace, targets} <- resolve_state_targets(operative_id, cell_key) do
+      {:ok, %{namespace: namespace, targets: targets, tasklet: tasklet, cell_key: cell_key}}
     else
       {:error, reason} ->
         Context.fail!("state get: #{render_state_get_error(reason)}")
     end
   end
 
-  @doc "The row an `operative replay` is judged by: the Entity's class namespace."
+  @doc "The row an `operative replay` is judged by: the Cell's class namespace."
   def replay_row([_namespace, path_string | _]) do
     case parse_state_path(path_string) do
-      {:ok, {operative_class, _, _} = entity_id} ->
+      {:ok, {operative_class, _, _} = cell_id} ->
         {:ok,
-         %{namespace: OperativeManager.namespace_of_class(operative_class), entity_id: entity_id}}
+         %{namespace: OperativeManager.namespace_of_class(operative_class), cell_id: cell_id}}
 
       {:error, reason} ->
         Context.fail!("replay: #{Context.format_reason(reason)}")
@@ -95,20 +94,20 @@ defmodule Flezha.Service.Cli.State do
   # ---------- The verbs ----------
 
   @doc """
-  `flz state get <operative/procedure[/entity_key]>` — the CURRENT in-memory
-  state of one live Entity (or of one Procedure's Entities), as JSON, with the
+  `flz state get <operative/tasklet[/cell_key]>` — the CURRENT in-memory
+  state of one live Cell (or of one Tasklet's Cells), as JSON, with the
   `change_seq` it was read at.
 
   The value is the freshest one there is: it includes changes applied but not
   yet flushed, so it is at or ahead of the durable state, and the seq is how a
-  caller tells versions apart. An Entity that is not held in memory is refused
+  caller tells versions apart. A Cell that is not held in memory is refused
   naming why — never served from the durable store, which is what
   `flz state at` is for.
   """
   def state_get(path_string, output_format, %{row: row}) do
-    %{namespace: namespace, targets: targets, procedure: procedure, entity_key: entity_key} = row
+    %{namespace: namespace, targets: targets, tasklet: tasklet, cell_key: cell_key} = row
 
-    with {:ok, json, change_seq} <- read_entity_state(namespace, targets, procedure, entity_key),
+    with {:ok, json, change_seq} <- read_cell_state(namespace, targets, tasklet, cell_key),
          :ok <- within_read_ceiling(json) do
       print_state_get(path_string, json, change_seq, output_format)
     else
@@ -121,9 +120,9 @@ defmodule Flezha.Service.Cli.State do
   # rather than assuming `default`.
   #
   # A partition group id names no operative — it names N — so a keyed read
-  # resolves the one member owning the key's group, and a procedure-level read
+  # resolves the one member owning the key's group, and a tasklet-level read
   # fans out over every member and merges: each holds only its own share.
-  defp resolve_state_targets(operative_id, entity_key) do
+  defp resolve_state_targets(operative_id, cell_key) do
     case OperativeManager.namespace_of(operative_id) do
       {:ok, namespace} ->
         {:ok, namespace, [operative_id]}
@@ -131,7 +130,7 @@ defmodule Flezha.Service.Cli.State do
       :error ->
         with {:ok, namespace} <- group_namespace(operative_id),
              members = PartitionGroup.members(namespace, operative_id) do
-          {:ok, namespace, owning_members(members, entity_key)}
+          {:ok, namespace, owning_members(members, cell_key)}
         end
     end
   end
@@ -145,23 +144,23 @@ defmodule Flezha.Service.Cli.State do
 
   defp owning_members(members, nil), do: Enum.map(members, & &1.id)
 
-  defp owning_members(members, entity_key) do
-    case Enum.find(members, &Partition.owns?(&1.partition.range, entity_key)) do
+  defp owning_members(members, cell_key) do
+    case Enum.find(members, &Partition.owns?(&1.partition.range, cell_key)) do
       nil -> Enum.map(members, & &1.id)
       member -> [member.id]
     end
   end
 
-  defp read_entity_state(namespace, [operative_id], procedure, entity_key) do
-    OperativeManager.get_entity_state(namespace, operative_id, %{
-      procedure: procedure,
-      entity_key: entity_key
+  defp read_cell_state(namespace, [operative_id], tasklet, cell_key) do
+    OperativeManager.get_cell_state(namespace, operative_id, %{
+      tasklet: tasklet,
+      cell_key: cell_key
     })
   end
 
-  defp read_entity_state(namespace, targets, procedure, entity_key) do
+  defp read_cell_state(namespace, targets, tasklet, cell_key) do
     targets
-    |> Enum.map(&read_entity_state(namespace, [&1], procedure, entity_key))
+    |> Enum.map(&read_cell_state(namespace, [&1], tasklet, cell_key))
     |> Enum.filter(&match?({:ok, _json, _seq}, &1))
     |> case do
       [] ->
@@ -180,31 +179,30 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  # Two members answer the same procedure with disjoint entity keys, so the
-  # merge is per-procedure, per-key — never a whole-value overwrite.
+  # Two members answer the same tasklet with disjoint cell keys, so the
+  # merge is per-tasklet, per-key — never a whole-value overwrite.
   defp deep_merge(left, right) when is_map(left) and is_map(right),
     do: Map.merge(left, right, fn _key, l, r -> deep_merge(l, r) end)
 
   defp deep_merge(_left, right), do: right
 
-  # `<operative>/<procedure>[/<entity_key>]` for a LIVE read. No on-disk check,
-  # unlike `parse_state_path/1`: a resident Entity may have no WAL yet, and a
+  # `<operative>/<tasklet>[/<cell_key>]` for a LIVE read. No on-disk check,
+  # unlike `parse_state_path/1`: a resident Cell may have no WAL yet, and a
   # persistence-disabled one never will.
   defp parse_live_path(path_string) do
     case String.split(path_string, "/", parts: 3) do
-      [operative, procedure, entity_key] when operative != "" and procedure != "" ->
-        {:ok, {operative, procedure, entity_key}}
+      [operative, tasklet, cell_key] when operative != "" and tasklet != "" ->
+        {:ok, {operative, tasklet, cell_key}}
 
-      [operative, procedure] when operative != "" and procedure != "" ->
-        {:ok, {operative, procedure, nil}}
+      [operative, tasklet] when operative != "" and tasklet != "" ->
+        {:ok, {operative, tasklet, nil}}
 
       _ ->
-        {:error,
-         {:bad_path, "expected <operative>/<procedure>[/<entity_key>]; got #{path_string}"}}
+        {:error, {:bad_path, "expected <operative>/<tasklet>[/<cell_key>]; got #{path_string}"}}
     end
   end
 
-  # Same ceiling the workflow handoff uses — a whole-Procedure read of a big
+  # Same ceiling the workflow handoff uses — a whole-Tasklet read of a big
   # Operative is the way to blow it, and naming the narrowing selector is the
   # way out.
   defp within_read_ceiling(json) do
@@ -239,7 +237,7 @@ defmodule Flezha.Service.Cli.State do
 
   defp render_state_get_error({:not_resident, :suspended}),
     do:
-      "the instance is suspended and holds no live Entity — " <>
+      "the instance is suspended and holds no live Cell — " <>
         "read its durable state with `flz state at`"
 
   defp render_state_get_error({:not_resident, :unbound}),
@@ -248,17 +246,17 @@ defmodule Flezha.Service.Cli.State do
         "read its durable state with `flz state at`"
 
   defp render_state_get_error({:unsupported_for_kind, :persistent_state}),
-    do: "this Operative kind holds no per-Entity state, so there is nothing to read"
+    do: "this Operative kind holds no per-Cell state, so there is nothing to read"
 
   defp render_state_get_error({:oversized_state, bytes}),
     do:
       "the selected state is #{bytes} bytes, over the :wal_high_watermark_bytes " <>
-        "ceiling — narrow the read with <operative>/<procedure>/<entity_key>"
+        "ceiling — narrow the read with <operative>/<tasklet>/<cell_key>"
 
   defp render_state_get_error(reason) when is_binary(reason) do
     # SDK refusals lead with a canonical token; the not-resident family points
     # at the durable-read path, which the SDK cannot know about.
-    if String.starts_with?(reason, ["entity_evicted", "entity_not_found"]) do
+    if String.starts_with?(reason, ["cell_evicted", "cell_not_found"]) do
       reason <> " — read its durable state with `flz state at`"
     else
       reason
@@ -268,7 +266,7 @@ defmodule Flezha.Service.Cli.State do
   defp render_state_get_error(reason), do: Context.format_reason(reason)
 
   @doc """
-  `flz state list <operative_class>` — print one row per Entity under
+  `flz state list <operative_class>` — print one row per Cell under
   `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
   def state_list(operative_class, output_format, _call) do
@@ -283,8 +281,8 @@ defmodule Flezha.Service.Cli.State do
 
         %{
           operative_class: rc,
-          procedure_id: sh,
-          entity_key: pk,
+          tasklet_id: sh,
+          cell_key: pk,
           wal_seq: counters.wal_seq,
           snapshot_seq: counters.snapshot_seq,
           wal_bytes: wal_bytes,
@@ -296,16 +294,16 @@ defmodule Flezha.Service.Cli.State do
 
     case output_format do
       "json" ->
-        IO.puts(Jason.encode!(%{operative_class: operative_class, entities: rows}))
+        IO.puts(Jason.encode!(%{operative_class: operative_class, cells: rows}))
 
       _ ->
-        IO.puts("Entities under operative #{operative_class}:\n")
+        IO.puts("Cells under operative #{operative_class}:\n")
         Enum.each(rows, &print_state_row/1)
     end
   end
 
   defp print_state_row(row) do
-    IO.puts("  #{row.procedure_id}/#{row.entity_key}")
+    IO.puts("  #{row.tasklet_id}/#{row.cell_key}")
     IO.puts("    wal_seq:                 #{row.wal_seq}")
     IO.puts("    snapshot_seq:            #{row.snapshot_seq}")
     IO.puts("    wal_bytes:               #{row.wal_bytes}")
@@ -316,24 +314,24 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state at <operative/procedure/entity> <seq | timestamp>` — point-in-time
+  `flz state at <operative/tasklet/cell> <seq | timestamp>` — point-in-time
   query. Resolves the path string into a `(runner_id, operative,
-  procedure, entity_key)` by scanning the on-disk state tree (one match
+  tasklet, cell_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
-  def state_at(_path_string, target_string, output_format, %{row: %{entity_id: entity_id}}) do
+  def state_at(_path_string, target_string, output_format, %{row: %{cell_id: cell_id}}) do
     target = parse_state_target(target_string)
 
-    case TimeTravel.query(entity_id, target) do
+    case TimeTravel.query(cell_id, target) do
       {:ok, result} ->
-        print_state_at(entity_id, target, result, output_format)
+        print_state_at(cell_id, target, result, output_format)
 
       {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
         Context.fail!("state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})")
     end
   end
 
-  defp print_state_at(_entity_id, _target, result, "json") do
+  defp print_state_at(_cell_id, _target, result, "json") do
     IO.puts(
       Jason.encode!(%{
         terminal_seq: result.terminal_seq,
@@ -343,8 +341,8 @@ defmodule Flezha.Service.Cli.State do
     )
   end
 
-  defp print_state_at(entity_id, target, result, _) do
-    {rc, sh, pk} = entity_id
+  defp print_state_at(cell_id, target, result, _) do
+    {rc, sh, pk} = cell_id
 
     IO.puts("state at #{rc}/#{sh}/#{pk} target=#{inspect(target)}:")
     IO.puts("  terminal_seq:    #{result.terminal_seq}")
@@ -353,13 +351,13 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state rotate <operative/procedure/entity>` — force a compaction by
-  dispatching a `CompactEntity` to the SDK.
+  `flz state rotate <operative/tasklet/cell>` — force a compaction by
+  dispatching a `CompactCell` to the SDK.
   """
-  def state_rotate(_path_string, %{row: %{entity_id: {rc, sh, pk}}}) do
+  def state_rotate(_path_string, %{row: %{cell_id: {rc, sh, pk}}}) do
     case Recovery.resolve_runner({rc, sh, pk}) do
       {:ok, runner_id} ->
-        case Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
+        case Commands.dispatch_compact_cell(runner_id, {rc, sh, pk}) do
           {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
           {:error, reason} -> Context.fail!("state rotate: #{Context.format_reason(reason)}")
         end
@@ -370,37 +368,37 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state delete <operative/procedure/key>` — hard-delete one Entity's
+  `flz state delete <operative/tasklet/key>` — hard-delete one Cell's
   persisted state (WAL + snapshots + outbox-dedup). Idempotent: deleting
-  an entity with no on-disk state still succeeds. This is the
+  a cell with no on-disk state still succeeds. This is the
   operator-driven, confirmation-returning counterpart to the SDK reaper's
-  fire-and-forget `delete_entity_state` send (Decision 8).
+  fire-and-forget `delete_cell_state` send (Decision 8).
   """
-  def state_delete(_path_string, %{row: %{entity_id: {rc, sh, pk}}}) do
-    {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})
+  def state_delete(_path_string, %{row: %{cell_id: {rc, sh, pk}}}) do
+    {:ok, _} = Flezha.State.Supervisor.delete_cell({rc, sh, pk})
     IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
   end
 
   @doc """
-  `flz state outbox <operative/procedure/key>` — effectively-once outbox
-  status for one Entity: durable seq, flush cursor, epoch, undispatched
+  `flz state outbox <operative/tasklet/key>` — effectively-once outbox
+  status for one Cell: durable seq, flush cursor, epoch, undispatched
   lag, and the operative's input-log min-watermark.
   """
-  def state_outbox(_path_string, %{row: %{entity_id: {rc, sh, pk} = entity_id}}) do
+  def state_outbox(_path_string, %{row: %{cell_id: {rc, sh, pk} = cell_id}}) do
     status =
-      case Flezha.State.WriterRegistry.lookup(entity_id) do
+      case Flezha.State.WriterRegistry.lookup(cell_id) do
         {:ok, pid} ->
           WalWriter.outbox_status(pid)
 
         :error ->
           # The same cursor record the writer answers with, read off the dedup
           # file instead of the live writer; only the outbox depth is unknown.
-          Map.put(Outbox.read(entity_id), :pending, nil)
+          Map.put(Outbox.read(cell_id), :pending, nil)
       end
 
     watermark = InputLog.watermark(rc)
 
-    IO.puts("entity            #{rc}/#{sh}/#{pk}")
+    IO.puts("cell              #{rc}/#{sh}/#{pk}")
     IO.puts("last_persisted_seq #{status.last_persisted_seq}")
     IO.puts("outbox_flushed_seq #{status.outbox_flushed_seq}")
     IO.puts("epoch              #{status.epoch}")
@@ -409,21 +407,21 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz operative replay <operative/procedure/key> --from <seq|ts>` — re-run a
-  Entity's retained inputs from a point in the past through the current code.
+  `flz operative replay <operative/tasklet/key> --from <seq|ts>` — re-run a
+  Cell's retained inputs from a point in the past through the current code.
 
   The same transaction a late input triggers automatically, with the operator
-  choosing the baseline instead of a late event: rewind the Entity there, bump
+  choosing the baseline instead of a late event: rewind the Cell there, bump
   the epoch, and replay the input log forward. A conforming keyed sink overwrites
   the stale rows by natural key, which is what makes "deploy a fix, heal the
   recent past" a single verb rather than a migration.
   """
-  def operative_replay(_namespace, path_string, from_string, %{row: %{entity_id: entity_id}}) do
-    {operative_class, _, _} = entity_id
+  def operative_replay(_namespace, path_string, from_string, %{row: %{cell_id: cell_id}}) do
+    {operative_class, _, _} = cell_id
 
     with {:ok, overwatch} <- resolve_replay_overwatch(operative_class),
-         {:ok, target_seq} <- resolve_replay_seq(entity_id, from_string) do
-      Replay.replay_from(overwatch, entity_id, target_seq)
+         {:ok, target_seq} <- resolve_replay_seq(cell_id, from_string) do
+      Replay.replay_from(overwatch, cell_id, target_seq)
 
       IO.puts(
         "Replaying #{path_string} from seq #{target_seq}. Outputs republish under a " <>
@@ -450,8 +448,8 @@ defmodule Flezha.Service.Cli.State do
 
   # A `--from` is a WAL seq or a point in time; the same `TimeTravel` resolution
   # `flz state at` uses, which is now exact rather than an mtime approximation.
-  defp resolve_replay_seq(entity_id, from_string) do
-    case TimeTravel.query(entity_id, parse_state_target(from_string)) do
+  defp resolve_replay_seq(cell_id, from_string) do
+    case TimeTravel.query(cell_id, parse_state_target(from_string)) do
       {:ok, %{terminal_seq: seq}} -> {:ok, seq}
       {:error, err} -> {:error, err}
     end
@@ -482,8 +480,8 @@ defmodule Flezha.Service.Cli.State do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
         # A controller that adopted this operative may hold it only remotely.
-        # The manifest is per-Entity, so answering about one key fetches one
-        # key's artifacts — never the whole Procedure. Inert with no backend.
+        # The manifest is per-Cell, so answering about one key fetches one
+        # key's artifacts — never the whole Tasklet. Inert with no backend.
         if has_persisted_state?(rc, sh, pk) or hydrated_state?(rc, sh, pk) do
           {:ok, {rc, sh, pk}}
         else
@@ -491,18 +489,18 @@ defmodule Flezha.Service.Cli.State do
         end
 
       _ ->
-        {:error, "expected <operative>/<procedure>/<entity_key>; got #{path_string}"}
+        {:error, "expected <operative>/<tasklet>/<cell_key>; got #{path_string}"}
     end
   end
 
   defp has_persisted_state?(rc, sh, pk) do
-    Enum.any?(Paths.all_entities(), fn {r, s, p} ->
+    Enum.any?(Paths.all_cells(), fn {r, s, p} ->
       r == rc and s == sh and p == pk
     end)
   end
 
   defp hydrated_state?(rc, sh, pk) do
-    DurabilityTier.hydrate_entities(rc, sh, [pk])
+    DurabilityTier.hydrate_cells(rc, sh, [pk])
     has_persisted_state?(rc, sh, pk)
   end
 

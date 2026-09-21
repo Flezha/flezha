@@ -266,7 +266,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   defp shorthand_row?(row), do: String.starts_with?(row.needs, "shorthand")
 
   # The refusal names §5 lists, read off its table the way an author reads it:
-  # the first cell of each row, backticked.
+  # the first column of each row, backticked.
   defp contract_refusal_names do
     section =
       @contract
@@ -302,7 +302,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     for {struct, section} <- [
           {"HostClassDecl", "class"},
           {"HostChannelDecl", "channel"},
-          {"HostProcedureDecl", "procedure"},
+          {"HostTaskletDecl", "tasklet"},
           {"HostWorkflowDecl", "workflow"}
         ],
         key <- struct_fields(body, struct),

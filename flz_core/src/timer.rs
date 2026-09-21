@@ -1,6 +1,6 @@
-//! Per-Entity timers: the pending set, its durable ops, and the arming of
+//! Per-Cell timers: the pending set, its durable ops, and the arming of
 //! processing-time deadlines. The invariant: a timer is folded state — every
-//! registration, cancellation and firing is a [`TimerOp`] in the Entity's own
+//! registration, cancellation and firing is a [`TimerOp`] in the Cell's own
 //! record stream, so a restore rebuilds the set through the ordinary fold and
 //! a firing's removal rides the same record as its effects. Event-time timers
 //! fire off the high-water on the dispatch path; processing-time ones are
@@ -17,32 +17,32 @@ use dashmap::DashMap;
 use flz_transport::transport::FlezhaStream;
 use serde::{Deserialize, Serialize};
 
-use crate::entity::EntitySlot;
+use crate::cell::CellSlot;
 pub use crate::schema::{TimerKind, TimerOp};
 use crate::util::LockRecover;
 
 /// A refused timer registration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TimerRefusal {
-    EventTimeWithoutEventTimeClock { procedure: String, clock: String },
-    CapExceeded { procedure: String, max: usize },
+    EventTimeWithoutEventTimeClock { tasklet: String, clock: String },
+    CapExceeded { tasklet: String, max: usize },
 }
 
 impl std::fmt::Display for TimerRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TimerRefusal::EventTimeWithoutEventTimeClock { procedure, clock } => write!(
+            TimerRefusal::EventTimeWithoutEventTimeClock { tasklet, clock } => write!(
                 f,
-                "procedure `{procedure}` declared clock `{clock}`; an event-time timer needs an event-time clock"
+                "tasklet `{tasklet}` declared clock `{clock}`; an event-time timer needs an event-time clock"
             ),
-            TimerRefusal::CapExceeded { procedure, max } => {
-                write!(f, "procedure `{procedure}` reached its timer cap ({max})")
+            TimerRefusal::CapExceeded { tasklet, max } => {
+                write!(f, "tasklet `{tasklet}` reached its timer cap ({max})")
             }
         }
     }
 }
 
-/// An Entity's pending timers, one ordered set per kind; registering the
+/// A Cell's pending timers, one ordered set per kind; registering the
 /// same timestamp twice is idempotent.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingTimers {
@@ -113,7 +113,7 @@ impl PendingTimers {
     }
 }
 
-/// A validated firing on an Entity's work path, carrying the connection
+/// A validated firing on a Cell's work path, carrying the connection
 /// `on_timer`'s emits leave on.
 #[derive(Clone)]
 pub struct TimerFire {
@@ -124,13 +124,13 @@ pub struct TimerFire {
 
 // ----------------------------------------------------------------- session
 
-/// What a Procedure declares about its timers, resolved once: the cap, the
+/// What a Tasklet declares about its timers, resolved once: the cap, the
 /// names a refusal reports, whether its clock serves event time, its
 /// counters.
 #[derive(Clone)]
 pub struct TimerPolicy {
-    max_per_entity: usize,
-    procedure: &'static str,
+    max_per_cell: usize,
+    tasklet: &'static str,
     event_time_clock: bool,
     clock: &'static str,
     counters: Arc<TimerCounters>,
@@ -138,17 +138,17 @@ pub struct TimerPolicy {
 
 impl TimerPolicy {
     pub fn new(
-        max_per_entity: usize,
-        procedure: &'static str,
+        max_per_cell: usize,
+        tasklet: &'static str,
         event_time_clock: bool,
         clock: &'static str,
     ) -> Self {
         Self {
-            max_per_entity,
-            procedure,
+            max_per_cell,
+            tasklet,
             event_time_clock,
             clock,
-            counters: counters_for(procedure),
+            counters: counters_for(tasklet),
         }
     }
 
@@ -208,7 +208,7 @@ impl TimerSession {
         if !self.policy.event_time_clock {
             self.note_refused();
             return Err(TimerRefusal::EventTimeWithoutEventTimeClock {
-                procedure: self.policy.procedure.to_string(),
+                tasklet: self.policy.tasklet.to_string(),
                 clock: self.policy.clock.to_string(),
             });
         }
@@ -222,12 +222,12 @@ impl TimerSession {
 
     fn register(&mut self, kind: TimerKind, scheduled_at: u64) -> Result<u64, TimerRefusal> {
         if !self.pending.contains(kind, scheduled_at)
-            && self.pending.len() >= self.policy.max_per_entity
+            && self.pending.len() >= self.policy.max_per_cell
         {
             self.note_refused();
             return Err(TimerRefusal::CapExceeded {
-                procedure: self.policy.procedure.to_string(),
-                max: self.policy.max_per_entity,
+                tasklet: self.policy.tasklet.to_string(),
+                max: self.policy.max_per_cell,
             });
         }
         let op = TimerOp::register(kind, scheduled_at);
@@ -279,7 +279,7 @@ impl TimerSession {
 
 // ---------------------------------------------------------------- counters
 
-/// Per-Procedure timer counters: monotonic totals plus a signed `pending`
+/// Per-Tasklet timer counters: monotonic totals plus a signed `pending`
 /// gauge, all `Relaxed`.
 #[derive(Debug, Default)]
 pub struct TimerCounters {
@@ -292,7 +292,7 @@ pub struct TimerCounters {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimerCountersView {
-    pub procedure: &'static str,
+    pub tasklet: &'static str,
     pub pending: i64,
     pub registered_total: u64,
     pub fired_total: u64,
@@ -300,20 +300,20 @@ pub struct TimerCountersView {
     pub refused_total: u64,
 }
 
-static PER_PROCEDURE: std::sync::OnceLock<DashMap<&'static str, Arc<TimerCounters>>> =
+static PER_TASKLET: std::sync::OnceLock<DashMap<&'static str, Arc<TimerCounters>>> =
     std::sync::OnceLock::new();
 
 fn registry() -> &'static DashMap<&'static str, Arc<TimerCounters>> {
-    PER_PROCEDURE.get_or_init(DashMap::new)
+    PER_TASKLET.get_or_init(DashMap::new)
 }
 
-pub fn counters_for(procedure: &'static str) -> Arc<TimerCounters> {
-    if let Some(existing) = registry().get(procedure) {
+pub fn counters_for(tasklet: &'static str) -> Arc<TimerCounters> {
+    if let Some(existing) = registry().get(tasklet) {
         return Arc::clone(existing.value());
     }
     Arc::clone(
         registry()
-            .entry(procedure)
+            .entry(tasklet)
             .or_insert_with(|| Arc::new(TimerCounters::default()))
             .value(),
     )
@@ -325,7 +325,7 @@ pub fn counters_snapshot() -> Vec<TimerCountersView> {
         .map(|e| {
             let c = e.value();
             TimerCountersView {
-                procedure: e.key(),
+                tasklet: e.key(),
                 pending: c.pending.load(Ordering::Relaxed),
                 registered_total: c.registered_total.load(Ordering::Relaxed),
                 fired_total: c.fired_total.load(Ordering::Relaxed),
@@ -334,7 +334,7 @@ pub fn counters_snapshot() -> Vec<TimerCountersView> {
             }
         })
         .collect();
-    out.sort_by_key(|v| v.procedure);
+    out.sort_by_key(|v| v.tasklet);
     out
 }
 
@@ -354,13 +354,13 @@ pub fn timers_armed() -> usize {
 
 /// Reflect committed timer ops onto the wake list; event-time timers need
 /// nothing here.
-pub fn apply_ops(slot: &Arc<EntitySlot>, ops: &[TimerOp], stream: &Arc<FlezhaStream>) {
+pub fn apply_ops(slot: &Arc<CellSlot>, ops: &[TimerOp], stream: &Arc<FlezhaStream>) {
     let core = crate::poll_core::global();
     for op in ops.iter().filter(|op| op.kind == TimerKind::ProcessingTime) {
         if op.register {
             core.arm_timer(slot, op.scheduled_at, Arc::clone(stream));
         } else {
-            core.disarm_timer(&slot.entity_identity, op.scheduled_at);
+            core.disarm_timer(&slot.cell_identity, op.scheduled_at);
         }
     }
 }
@@ -368,7 +368,7 @@ pub fn apply_ops(slot: &Arc<EntitySlot>, ops: &[TimerOp], stream: &Arc<FlezhaStr
 /// Arm the wake that closes an open checkpoint interval at `max_delay_ms`. A
 /// close leaves its spent entry armed: it comes due, finds nothing open, and
 /// does nothing.
-pub fn arm_interval_deadline(slot: &Arc<EntitySlot>) {
+pub fn arm_interval_deadline(slot: &Arc<CellSlot>) {
     let deadline = {
         let mut buffer = slot.flush_buffer.lock_recover();
         slot.dispatcher.interval_deadline(&mut buffer)
@@ -378,9 +378,9 @@ pub fn arm_interval_deadline(slot: &Arc<EntitySlot>) {
     }
 }
 
-/// Re-arm a restored Entity's processing-time timers; anything past its
+/// Re-arm a restored Cell's processing-time timers; anything past its
 /// deadline fires on the next promotion, ascending.
-pub fn rearm_restored(slot: &Arc<EntitySlot>) {
+pub fn rearm_restored(slot: &Arc<CellSlot>) {
     let ops = slot
         .timers
         .lock_recover()
@@ -393,7 +393,7 @@ pub fn rearm_restored(slot: &Arc<EntitySlot>) {
     let Some(stream) = crate::state_sink::secondary_stream() else {
         tracing::debug!(
             target: "flezha::timer",
-            entity = slot.dispatcher.entity_label(),
+            cell = slot.dispatcher.cell_label(),
             pending = ops.len(),
             "restored processing-time timers not re-armed: no secondary stream installed"
         );
@@ -456,13 +456,13 @@ mod tests {
     /// A registration, a cancellation, a firing and a refusal each move
     /// exactly one counter.
     #[test]
-    fn the_per_procedure_counters_follow_the_committed_ops() {
+    fn the_per_tasklet_counters_follow_the_committed_ops() {
         let policy = TimerPolicy {
-            max_per_entity: 1,
-            procedure: "counter_probe_procedure",
+            max_per_cell: 1,
+            tasklet: "counter_probe_tasklet",
             event_time_clock: false,
             clock: "WallClock",
-            counters: counters_for("counter_probe_procedure"),
+            counters: counters_for("counter_probe_tasklet"),
         };
         let mut live = PendingTimers::default();
 
@@ -488,8 +488,8 @@ mod tests {
 
         let view = counters_snapshot()
             .into_iter()
-            .find(|v| v.procedure == "counter_probe_procedure")
-            .expect("the Procedure appears in the registry on first use");
+            .find(|v| v.tasklet == "counter_probe_tasklet")
+            .expect("the Tasklet appears in the registry on first use");
         assert_eq!(view.registered_total, 1);
         assert_eq!(view.cancelled_total, 1);
         assert_eq!(view.refused_total, 1);

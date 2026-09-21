@@ -14,7 +14,7 @@ npm run local     # a second operative, run with no controller at all
 ```
 
 Running it needs a Flezha controller on the configured transport. The test does
-not: a defined handler is an ordinary function, and `ProcedureTestHarness`
+not: a defined handler is an ordinary function, and `TaskletTestHarness`
 supplies the parts a runtime would otherwise own.
 
 See [`docs/sdk/node_sdk.md`](../../docs/sdk/node_sdk.md).

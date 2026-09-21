@@ -38,8 +38,8 @@ defmodule Flezha.AuthN.Cert do
 
   @doc """
   Extract a Namespace from a DER-encoded peer cert. Returns the
-  entity after `/ns/` in the SPIFFE SAN, or `"_system"` when no
-  SAN is present (or no `/ns/` entity).
+  cell after `/ns/` in the SPIFFE SAN, or `"_system"` when no
+  SAN is present (or no `/ns/` cell).
   """
   @spec namespace_from_peer(binary()) :: {:ok, namespace()}
   def namespace_from_peer(der) when is_binary(der) do
@@ -200,11 +200,11 @@ defmodule Flezha.AuthN.Cert do
   defp namespace_from_spiffe_uri(uri) do
     case URI.parse(uri) do
       %URI{path: path} when is_binary(path) ->
-        entities =
+        cells =
           path
           |> String.split("/", trim: true)
 
-        case entities do
+        case cells do
           ["ns", ns | _] -> ns
           _ -> "_system"
         end

@@ -2,7 +2,7 @@ defmodule Flezha.State.WalWriterCreditTest do
   @moduledoc """
   WalWriter side of credit-grant flow control: session-tagged drain
   reports on every outcome path (fsync, dedup, gap, shed, truncate) and
-  `EntityMailboxStatus` suppression for credit-speaking sessions.
+  `CellMailboxStatus` suppression for credit-speaking sessions.
   """
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
@@ -20,7 +20,7 @@ defmodule Flezha.State.WalWriterCreditTest do
   @session "wal-credit-session"
 
   setup do
-    stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _entity_id -> :ok end)
+    stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _cell_id -> :ok end)
 
     test_pid = self()
 
@@ -29,12 +29,12 @@ defmodule Flezha.State.WalWriterCreditTest do
       :ok
     end)
 
-    on_exit(&TestHelpers.reset_all_entities/0)
+    on_exit(&TestHelpers.reset_all_cells/0)
 
-    entity_id = TestHelpers.sample_entity_id("credit_#{System.unique_integer([:positive])}")
-    {:ok, pid} = Supervisor.find_or_start(entity_id)
+    cell_id = TestHelpers.sample_cell_id("credit_#{System.unique_integer([:positive])}")
+    {:ok, pid} = Supervisor.find_or_start(cell_id)
 
-    %{pid: pid, entity_id: entity_id}
+    %{pid: pid, cell_id: cell_id}
   end
 
   defp opts(n), do: %{channel: self(), session: @session, wire_size: n}
@@ -88,7 +88,7 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert_receive {:declare, :seq_gap, _, %{trigger: :seq_gap}}
   end
 
-  test "a hard-bound shed releases its bytes immediately", %{pid: pid, entity_id: entity_id} do
+  test "a hard-bound shed releases its bytes immediately", %{pid: pid, cell_id: cell_id} do
     append!(pid, 0, "a", opts(10))
     assert sync(pid) == 0
 
@@ -102,9 +102,9 @@ defmodule Flezha.State.WalWriterCreditTest do
     # flushes the first append's tracked bytes — drain those reports so the
     # flood accounting below starts from a clean mailbox.
     :ok = :sys.resume(pid)
-    {:ok, _} = Supervisor.delete_entity(entity_id)
+    {:ok, _} = Supervisor.delete_cell(cell_id)
     drain_credit_reports()
-    {:ok, pid2} = Supervisor.find_or_start(entity_id)
+    {:ok, pid2} = Supervisor.find_or_start(cell_id)
     :ok = :sys.suspend(pid2)
 
     for seq <- 0..19, do: append!(pid2, seq, "x", opts(10))
@@ -128,17 +128,17 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert total == 20 * 10
   end
 
-  describe "EntityMailboxStatus suppression (2.4)" do
+  describe "CellMailboxStatus suppression (2.4)" do
     setup do
       # Tiny watermarks read at writer init.
       Application.put_env(:flezha, :wal_high_watermark_bytes, 64)
       Application.put_env(:flezha, :wal_low_watermark_bytes, 32)
 
-      entity_id =
-        TestHelpers.sample_entity_id("credit_bp_#{System.unique_integer([:positive])}")
+      cell_id =
+        TestHelpers.sample_cell_id("credit_bp_#{System.unique_integer([:positive])}")
 
-      {:ok, pid} = Supervisor.find_or_start(entity_id)
-      %{pid: pid, entity_id: entity_id}
+      {:ok, pid} = Supervisor.find_or_start(cell_id)
+      %{pid: pid, cell_id: cell_id}
     end
 
     test "credit-speaking session receives no status flags", %{pid: pid} do
@@ -148,25 +148,23 @@ defmodule Flezha.State.WalWriterCreditTest do
 
       # Telemetry still fires for in-process observers…
       # …but no wire signal is shipped.
-      refute_received {:ctl_async, _, {:entity_mailbox_status, _}}
+      refute_received {:ctl_async, _, {:cell_mailbox_status, _}}
     end
 
-    test "legacy session keeps the byte-for-byte EntityMailboxStatus wire signal", %{pid: pid} do
+    test "legacy session keeps the byte-for-byte CellMailboxStatus wire signal", %{pid: pid} do
       body = String.duplicate("x", 100)
       WalWriter.append_async(pid, 0, TestHelpers.stub_header(), body, "exec-legacy")
       assert sync(pid) == 0
 
       assert_receive {:ctl_async, "exec-legacy",
-                      {:entity_mailbox_status,
-                       %RunnerCommands.EntityMailboxStatus{status: "full"}}},
+                      {:cell_mailbox_status, %RunnerCommands.CellMailboxStatus{status: "full"}}},
                      1_000
 
       # Draining below the low watermark ships :open exactly once.
       :ok = WalWriter.fsync(pid)
 
       assert_receive {:ctl_async, "exec-legacy",
-                      {:entity_mailbox_status,
-                       %RunnerCommands.EntityMailboxStatus{status: "open"}}},
+                      {:cell_mailbox_status, %RunnerCommands.CellMailboxStatus{status: "open"}}},
                      1_000
     end
   end

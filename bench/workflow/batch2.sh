@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Workflow bench matrix, batch 2: the sleep family (rest, wake storms, boot), a churn soak, repro cells.
+# Workflow bench matrix, batch 2: the sleep family (rest, wake storms, boot), a churn soak, repro cases.
 set -u
 cd "$(dirname "$0")/../.."
 OUT=bench/workflow/reports
-FILTER='intent mismatch|Connection closed|compact_entity|SignalHandler|authz|Setting up|Started 2'
+FILTER='intent mismatch|Connection closed|compact_cell|SignalHandler|authz|Setting up|Started 2'
 run() {
   local name="$1"; shift
   echo "=== $name: mix bench.workflow $* ($(date +%H:%M:%S))"

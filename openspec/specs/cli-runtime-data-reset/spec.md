@@ -2,13 +2,13 @@
 
 ## Purpose
 
-The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Entity WAL/snapshot tree, ProcessHub durable registry; optionally certs, parked DLQ records, schedules, the auth store, the audit trail, installed plugins and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-auth`, `--include-audit`, `--include-plugins`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts and every root it kept, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
+The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Cell WAL/snapshot tree, ProcessHub durable registry; optionally certs, parked DLQ records, schedules, the auth store, the audit trail, installed plugins and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-auth`, `--include-audit`, `--include-plugins`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts and every root it kept, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
 ## Requirements
 ### Requirement: `flz reset` clears Controller durable runtime data on disk
 
 The CLI SHALL provide a top-level `flz reset` subcommand that clears the Controller's durable runtime state so an operator can deterministically start fresh. By default the command SHALL clear the contents of:
 
-- `app_data/state/` — per-Entity WAL/snapshot/outbox files written by `operative-state-persistence`.
+- `app_data/state/` — per-Cell WAL/snapshot/outbox files written by `operative-state-persistence`.
 - `app_data/process_hub/` — ProcessHub durable registries written by `auto-restore-on-boot`.
 
 The command SHALL leave `app_data/certs/`, `app_data/dlq/`, `app_data/schedules/`, `app_data/auth/`, `app_data/audit/`, `app_data/plugins/` and the socket directory intact unless explicitly requested via `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-auth`, `--include-audit`, `--include-plugins`, `--include-sockets`, or `--all`, which requests all seven. The socket directory is resolved through the shared ladder and is frequently not under `app_data/`.
@@ -183,7 +183,7 @@ This resolution SHALL live in one shared helper — `cli/src/args.rs`, `app_data
 
 #### Scenario: Env var wins over the default
 
-- **GIVEN** `FLEZHA_APP_DATA_ROOT=/var/lib/flezha-prod` and the current directory is `/home/proc` containing `app_data/`
+- **GIVEN** `FLEZHA_APP_DATA_ROOT=/var/lib/flezha-prod` and the current directory is `/home/task` containing `app_data/`
 - **WHEN** the operator runs `flz reset --yes`
 - **THEN** `/var/lib/flezha-prod/state/`, `/var/lib/flezha-prod/process_hub/` are cleared; `./app_data/` under the cwd is not touched
 

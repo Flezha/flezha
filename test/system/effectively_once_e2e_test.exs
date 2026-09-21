@@ -29,13 +29,13 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   @moduletag timeout: 300_000
 
   @factory "tier_store"
-  @procedure "tier_store_procedure"
+  @tasklet "tier_store_tasklet"
 
   test "kills at each phase boundary converge the changelog sink to the no-crash state" do
     namespace = unique("eff_once")
     operative_id = unique("tier_store")
     id_path = unique_id_path()
-    entity_id = {operative_id, @procedure, ""}
+    cell_id = {operative_id, @tasklet, ""}
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
@@ -99,7 +99,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     # the flush cursor, then force a rebind: the restart must RE-DRIVE every
     # durable output with its original identity, and the sink must converge
     # to the same changelog regardless.
-    stale_cursor_and_crash_writers(operative_id, entity_id)
+    stale_cursor_and_crash_writers(operative_id, cell_id)
     force_fresh_rebind(namespace, operative_id)
 
     send_inputs(operative_id, namespace, ["k1:c"])
@@ -117,7 +117,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
     for {msg, md} <- outputs do
       assert md["flz.epoch"], "tier output missing its epoch stamp: #{inspect(md)}"
-      assert md["flz.entity"], "tier output missing its entity stamp"
+      assert md["flz.cell"], "tier output missing its cell stamp"
       assert md["flz.seq"], "tier output missing its outbox seq"
       assert md["flz.key"], "tier output missing its natural key: #{inspect(msg)}"
     end

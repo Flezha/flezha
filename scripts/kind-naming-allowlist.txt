@@ -117,7 +117,7 @@ docs/plugins/http_poll.md:would be unbounded$
 *:\((?:un)?bounded\)
 *:visible, bounded
 lib/flezha/process/parallel.ex:shape, bounded —
-flz_core/src/flusher.rs:Bounded — a gated Entity
+flz_core/src/flusher.rs:Bounded — a gated Cell
 
 # --- identifiers in the English sense -----------------------------------
 # `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, and

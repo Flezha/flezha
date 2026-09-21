@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
-use crate::entity::EntitySlot;
+use crate::cell::CellSlot;
 use crate::operative::instance::StreamInstance;
 use crate::operative::topology::OperativeTopology;
 use crate::workflow::instance::WorkflowInstance;
@@ -100,14 +100,14 @@ impl OperativeRegistry {
             })
     }
 
-    /// A live workflow Entity slot by wire identity, with its owning instance.
-    pub fn find_workflow_entity(
+    /// A live workflow Cell slot by wire identity, with its owning instance.
+    pub fn find_workflow_cell(
         &self,
-        entity_id: &[u8],
-    ) -> Option<(Arc<WorkflowInstance>, Arc<EntitySlot>)> {
+        cell_id: &[u8],
+    ) -> Option<(Arc<WorkflowInstance>, Arc<CellSlot>)> {
         self.inner.iter().find_map(|r| match &**r.value() {
             Operative::Workflow(bi) => bi
-                .entity_by_identity(entity_id)
+                .cell_by_identity(cell_id)
                 .map(|slot| (Arc::clone(bi), slot)),
             Operative::Stream(_) => None,
         })

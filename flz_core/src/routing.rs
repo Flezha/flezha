@@ -1,6 +1,6 @@
 //! The routing kernel: a frame off the wire into the operative it names
 //! ([`OperativeDispatchHandle::dispatch`]), a channel value to every consumer
-//! edge's Entity (`route_to_consumers`), and the end-of-slice broadcast. Live
+//! edge's Cell (`route_to_consumers`), and the end-of-slice broadcast. Live
 //! delivery and the controller's replay slice both travel these seams, and a
 //! `ConsumerEdge`'s closures become mailbox pushes in exactly one place
 //! (`deliver_edge`), so a ladder re-attempt cannot deliver differently from
@@ -14,17 +14,17 @@ use std::sync::Arc;
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
-use crate::admission::{admit_from_entity, admit_from_reader};
+use crate::admission::{admit_from_cell, admit_from_reader};
+use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
-use crate::entity::{make_entity_payload, EntityItem, EntitySlot};
 use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{Operative, OperativeRegistry};
-use crate::operative::topology::{ChannelLookup, EntityMode, ProcedureDescriptor};
+use crate::operative::topology::{CellMode, ChannelLookup, TaskletDescriptor};
 use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryParseLadder};
 
 /// Route one channel value to every consumer through its own edge — the one
-/// seam live delivery, the replay slice and an inter-procedure emit share. A
+/// seam live delivery, the replay slice and an inter-tasklet emit share. A
 /// closure that unwinds sends the value up the channel's ladder; the other
 /// consumers are still served.
 #[allow(clippy::too_many_arguments)]
@@ -35,7 +35,7 @@ pub fn route_to_consumers(
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
     replay: bool,
-    producer: Option<&Arc<EntitySlot>>,
+    producer: Option<&Arc<CellSlot>>,
 ) -> bool {
     let mut deferred = false;
     for edge in &channel.consumers {
@@ -77,7 +77,7 @@ pub(crate) fn deliver_edge(
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
     replay: bool,
-    producer: Option<&Arc<EntitySlot>>,
+    producer: Option<&Arc<CellSlot>>,
 ) -> Result<bool, Error> {
     match edge.transform_value(value).map_err(Error::Routing)? {
         None => deliver_to_consumer(
@@ -116,7 +116,7 @@ pub(crate) fn deliver_host_output(
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
-    producer: &Arc<EntitySlot>,
+    producer: &Arc<CellSlot>,
 ) -> Result<bool, Error> {
     let channel = instance
         .topology
@@ -125,15 +125,15 @@ pub(crate) fn deliver_host_output(
     let edge = channel
         .consumers
         .iter()
-        .find(|e| e.procedure == consumer)
+        .find(|e| e.tasklet == consumer)
         .ok_or_else(|| {
             Error::Routing(format!(
-                "edge output names procedure {consumer}, not a consumer of channel `{}`",
+                "edge output names tasklet {consumer}, not a consumer of channel `{}`",
                 channel.name
             ))
         })?;
-    // An inter-procedure value is never a replay member: the downstream
-    // Procedure receives corrected outputs already in order.
+    // An inter-tasklet value is never a replay member: the downstream
+    // Tasklet receives corrected outputs already in order.
     deliver_to_consumer(
         instance,
         channel,
@@ -146,7 +146,7 @@ pub(crate) fn deliver_host_output(
     )
 }
 
-/// One post-transform value to one consumer's Entity. `Err` is an unwinding
+/// One post-transform value to one consumer's Cell. `Err` is an unwinding
 /// key closure; an absent registry or an unmapped static key is a silent
 /// skip.
 #[allow(clippy::too_many_arguments)]
@@ -158,48 +158,48 @@ fn deliver_to_consumer(
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
     replay: bool,
-    producer: Option<&Arc<EntitySlot>>,
+    producer: Option<&Arc<CellSlot>>,
 ) -> Result<bool, Error> {
     let policy = channel.overflow_policy;
     let mut deferred = false;
     // The one place the two admission forms are chosen between: a value with a
-    // producing Entity withholds work from it, a value from the entry path (or
+    // producing Cell withholds work from it, a value from the entry path (or
     // a replay member, which only the entry path produces) parks the reader.
-    let mut admit = |consumer: &Arc<EntitySlot>| {
-        let item = EntityItem::Input(make_entity_payload(value, stream, consumed_offset, replay));
+    let mut admit = |consumer: &Arc<CellSlot>| {
+        let item = CellItem::Input(make_cell_payload(value, stream, consumed_offset, replay));
         match producer {
-            Some(p) if !replay => deferred |= admit_from_entity(p, consumer, item, policy),
+            Some(p) if !replay => deferred |= admit_from_cell(p, consumer, item, policy),
             _ => admit_from_reader(consumer, item, policy),
         }
     };
-    let consumer_procedure_id = edge.procedure;
-    let consumer = match instance.topology.procedure(consumer_procedure_id) {
+    let consumer_tasklet_id = edge.tasklet;
+    let consumer = match instance.topology.tasklet(consumer_tasklet_id) {
         Some(s) => s,
         None => return Ok(false),
     };
     match consumer.mode {
-        EntityMode::Dynamic => deliver_dynamic(instance, edge, value, &mut admit)?,
-        EntityMode::Single => deliver_single(instance, consumer_procedure_id, &mut admit),
-        EntityMode::Static => {
-            deliver_static(instance, consumer_procedure_id, consumer, value, &mut admit)
+        CellMode::Dynamic => deliver_dynamic(instance, edge, value, &mut admit)?,
+        CellMode::Single => deliver_single(instance, consumer_tasklet_id, &mut admit),
+        CellMode::Static => {
+            deliver_static(instance, consumer_tasklet_id, consumer, value, &mut admit)
         }
     }
     // The closure's borrow of `deferred` ends at its last use above.
     Ok(deferred)
 }
 
-/// A dynamic consumer: one Entity per key, minted on first sight. A host
+/// A dynamic consumer: one Cell per key, minted on first sight. A host
 /// class's keys ride the payload, consulted when no edge closure exists; a
-/// payload its host fanned out answers one key per Entity it reaches.
+/// payload its host fanned out answers one key per Cell it reaches.
 fn deliver_dynamic(
     instance: &StreamInstance,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
-    admit: &mut impl FnMut(&Arc<EntitySlot>),
+    admit: &mut impl FnMut(&Arc<CellSlot>),
 ) -> Result<(), Error> {
     let Some(registry) = instance
         .dynamic_registries
-        .get(edge.procedure as usize)
+        .get(edge.tasklet as usize)
         .and_then(|r| r.as_ref())
     else {
         return Ok(());
@@ -213,7 +213,7 @@ fn deliver_dynamic(
     };
     // A key this member does not own means the source and the topology
     // disagree about what a key is. Refuse on the first frame — before
-    // `get_or_create` mints any Entity — so a misconfigured group parks
+    // `get_or_create` mints any Cell — so a misconfigured group parks
     // its traffic instead of folding part of it into private state.
     if instance.partition.partitioned() {
         for key in keys {
@@ -230,49 +230,49 @@ fn deliver_dynamic(
 
 fn deliver_single(
     instance: &StreamInstance,
-    procedure_id: u32,
-    admit: &mut impl FnMut(&Arc<EntitySlot>),
+    tasklet_id: u32,
+    admit: &mut impl FnMut(&Arc<CellSlot>),
 ) {
     if let Some(slot) = instance
-        .entities
-        .get(procedure_id as usize)
+        .cells
+        .get(tasklet_id as usize)
         .and_then(|p| p.first())
     {
         admit(slot);
     }
 }
 
-/// A static consumer: the declared Entities the value's keys name, empty
+/// A static consumer: the declared Cells the value's keys name, empty
 /// meaning all of them. A partition member leaves its out-of-range declared
-/// Entities idle — not a mis-route, somebody else's entity.
+/// Cells idle — not a mis-route, somebody else's cell.
 fn deliver_static(
     instance: &StreamInstance,
-    procedure_id: u32,
-    consumer: &ProcedureDescriptor,
+    tasklet_id: u32,
+    consumer: &TaskletDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
-    admit: &mut impl FnMut(&Arc<EntitySlot>),
+    admit: &mut impl FnMut(&Arc<CellSlot>),
 ) {
-    let Some(entities) = instance.entities.get(procedure_id as usize) else {
+    let Some(cells) = instance.cells.get(tasklet_id as usize) else {
         return;
     };
-    let key_to_idx = instance.entity_key_to_idx.get(procedure_id as usize);
+    let key_to_idx = instance.cell_key_to_idx.get(tasklet_id as usize);
     let partition = instance.partition;
     let mut deliver_idx = |idx: usize| {
         if partition.partitioned()
             && !consumer
-                .entity_keys
+                .cell_keys
                 .get(idx)
                 .is_some_and(|key| partition.owns(key))
         {
             return;
         }
-        if let Some(slot) = entities.get(idx) {
+        if let Some(slot) = cells.get(idx) {
             admit(slot);
         }
     };
     if let Some(host_payload) = value.downcast_ref::<crate::host::HostPayload>() {
         if host_payload.keys.is_empty() {
-            for idx in 0..entities.len() {
+            for idx in 0..cells.len() {
                 deliver_idx(idx);
             }
         } else {
@@ -283,7 +283,7 @@ fn deliver_static(
             }
         }
     } else {
-        for key in (consumer.entities_for_erased)(value.as_ref()) {
+        for key in (consumer.cells_for_erased)(value.as_ref()) {
             if let Some(&idx) = key_to_idx.and_then(|m| m.get(key)) {
                 deliver_idx(idx);
             }
@@ -291,9 +291,9 @@ fn deliver_static(
     }
 }
 
-/// Close every Entity's replayed slice and wake their drains. A broadcast,
-/// not a marker on the last input: an input reaches one Entity by key. On
-/// the frame thread after every slice frame, so no Entity is still receiving
+/// Close every Cell's replayed slice and wake their drains. A broadcast,
+/// not a marker on the last input: an input reaches one Cell by key. On
+/// the frame thread after every slice frame, so no Cell is still receiving
 /// members when its slice closes.
 pub fn end_replay_slice(instance: &StreamInstance) {
     for slot in instance.all_slots() {
@@ -374,7 +374,7 @@ impl OperativeDispatchHandle {
             return;
         };
 
-        // The entry path has no producing Entity to withhold work from, so a
+        // The entry path has no producing Cell to withhold work from, so a
         // `DropNothing` push here parks this reader — the one park the core
         // keeps, and what carries ingress backpressure to the controller.
         route_to_consumers(
@@ -462,7 +462,7 @@ fn entry_channel_or_park<'a>(
     let requested: &str = match metadata.get("channel") {
         Some(name) => match topology.channel_of_kind(name, ChannelKind::Entry) {
             ChannelLookup::Found(id, channel) => return Some((id, channel)),
-            // A declared name of another kind — a sink, an inter-procedure
+            // A declared name of another kind — a sink, an inter-tasklet
             // channel — is no more an entry channel than one declared
             // nowhere, so both park and both name the entry set.
             ChannelLookup::WrongKind(_) | ChannelLookup::Undeclared => name,

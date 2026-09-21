@@ -23,7 +23,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.{Completion, Paths, ProcJournal}
+  alias Flezha.State.{Completion, Paths, TaskJournal}
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -152,7 +152,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
     # No ownership record names the instance here, so the park is bounded by
     # the namespace its durable state belongs to.
-    assert ProcJournal.append_parked(@ns, foreign, 3, nil) ==
+    assert TaskJournal.append_parked(@ns, foreign, 3, nil) ==
              {:error, {:namespace_conflict, foreign, "team-other"}}
 
     write_frame(
@@ -189,18 +189,18 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     assert_received {:rem_operative, ^runner_b, ^op}
   end
 
-  test "KB-325: runner B's ProcCommit for A's instance is refused, not journaled", ctx do
+  test "KB-325: runner B's TaskCommit for A's instance is refused, not journaled", ctx do
     %{operative_id: op, runner_b: runner_b} = ctx
 
     write_frame(
       ctx.channel_b,
-      {:proc_commit,
-       %RunnerCommands.ProcCommit{
+      {:task_commit,
+       %RunnerCommands.TaskCommit{
          operative_id: op,
-         proc_idx: 0,
+         task_idx: 0,
          iter: 0,
-         entities_ran: [],
-         handoff: [%RunnerCommands.ProcHandoffItem{channel_id: 1, payload: "forged-by-b"}],
+         cells_ran: [],
+         handoff: [%RunnerCommands.TaskHandoffItem{channel_id: 1, payload: "forged-by-b"}],
          outbox: [],
          compensating: false
        }}
@@ -210,7 +210,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     # the journal answered, so the reply is the barrier for the journal read.
     assert_receive {:written, ^runner_b, _ref, reply}, 2_000
 
-    %RunnerCommands.CommandRequest{command: {:proc_commit_response, response}} =
+    %RunnerCommands.CommandRequest{command: {:task_commit_response, response}} =
       ControlFrameTestHelper.decode_request(reply)
 
     assert {response.error, journaled?(op)} == {"not the owner of #{op}", false}
@@ -235,9 +235,9 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     assert_received {:rem_operative, ^runner_b, ^op}
   end
 
-  defp journaled?(instance_id), do: match?({:ok, [_ | _]}, ProcJournal.read(instance_id))
+  defp journaled?(instance_id), do: match?({:ok, [_ | _]}, TaskJournal.read(instance_id))
 
-  defp parked?(instance_id), do: match?(%{parked: true}, ProcJournal.restore_state(instance_id))
+  defp parked?(instance_id), do: match?(%{parked: true}, TaskJournal.restore_state(instance_id))
 
   defp start_channel(runner_id) do
     test_pid = self()

@@ -52,7 +52,7 @@ defmodule Flezha.Operative.PartitionGroup do
   A start over a group that already has live members CONVERGES instead of
   refusing: only the missing members are started, and only when `partitions`
   matches the identity the survivors declare — converge never changes N,
-  because changing N moves Entity state and a start never does (that is
+  because changing N moves Cell state and a start never does (that is
   `rescale/4`).
 
   `plugins_json` is decoded once per member with that member's id and partition
@@ -133,8 +133,8 @@ defmodule Flezha.Operative.PartitionGroup do
 
       ClassRegistry.keyless?(operative.factory_id) ->
         {:error,
-         "PartitionsWithoutKeyedProcedure: factory #{operative.factory_id} has no keyed " <>
-           "entry-fed procedure, so its partitions would each fold a slice of the input " <>
+         "PartitionsWithoutKeyedTasklet: factory #{operative.factory_id} has no keyed " <>
+           "entry-fed tasklet, so its partitions would each fold a slice of the input " <>
            "into a private copy of the same state — declare `key_by` on the entry edge " <>
            "before partitioning"}
 
@@ -207,7 +207,7 @@ defmodule Flezha.Operative.PartitionGroup do
         {:error,
          "cannot converge group #{group_id} to #{partitions} partitions: live member #{id} " <>
            "declares #{p.count} (range #{inspect(p.range)}); changing a group's partition " <>
-           "count moves Entity state, which a start never does — use `flz operative scale`"}
+           "count moves Cell state, which a start never does — use `flz operative scale`"}
     end
   end
 
@@ -328,7 +328,7 @@ defmodule Flezha.Operative.PartitionGroup do
   the operation safe rather than merely sequential: nothing durable moves until
   every member has consumed its input log and its DLQ is empty, and no member
   runs again until every owed move has landed. A crash between those two is
-  recoverable by re-running the command — each move is atomic per Entity, so a
+  recoverable by re-running the command — each move is atomic per Cell, so a
   re-run re-derives what is left from what is on disk.
 
   Exactly one rescale of a group runs at a time, cluster-wide. Two interleaved
@@ -378,7 +378,7 @@ defmodule Flezha.Operative.PartitionGroup do
        Map.merge(started, %{
          from: length(members),
          to: target,
-         entities_moved: length(moves),
+         cells_moved: length(moves),
          vacated: vacated
        })}
     end
@@ -403,7 +403,7 @@ defmodule Flezha.Operative.PartitionGroup do
             opts:
               builder.opts
               |> Keyword.drop([:plugins | Partition.opt_keys()])
-              # A rescale assembles the whole group's Entities on the node
+              # A rescale assembles the whole group's Cells on the node
               # running it; a member ProcessHub then places elsewhere pulls
               # its class tree from here before restoring.
               |> Keyword.put(:state_source_node, node())
@@ -448,7 +448,7 @@ defmodule Flezha.Operative.PartitionGroup do
   end
 
   # Sources off, every input log fully consumed, no parked entries anywhere.
-  # Until all three hold, moving an Entity's files would move it away from
+  # Until all three hold, moving a Cell's files would move it away from
   # input it has not read yet.
   defp quiesce_group(namespace, members, opts) do
     _ = PluginManager.disable_operatives(namespace, Enum.map(members, & &1.id))
@@ -511,50 +511,50 @@ defmodule Flezha.Operative.PartitionGroup do
       "rides its checkpoint cadence — retry with a longer --timeout, or drive a checkpoint."
   end
 
-  # Every Entity whose key group changes owner under the new ranges, as
-  # `{source_node, source_entity_id, dest_entity_id}`. Derived from what is on
+  # Every Cell whose key group changes owner under the new ranges, as
+  # `{source_node, source_cell_id, dest_cell_id}`. Derived from what is on
   # disk, which is what makes a re-run after a crash complete the remainder
   # rather than move anything twice.
   defp plan_moves(members, new_ranges, group_id) do
-    reserved = Paths.reserved_entity_keys()
+    reserved = Paths.reserved_cell_keys()
 
     for member <- members,
-        {_class, procedure, key} = entity <- entities_of_member(member),
+        {_class, tasklet, key} = cell <- cells_of_member(member),
         key not in reserved,
         new_index = Partition.owner(new_ranges, KeyGroup.group_of(key)),
         new_index != nil,
         new_class = Partition.member_id(group_id, new_index),
-        # A move is owed when the owner changes — and also when the Entity
+        # A move is owed when the owner changes — and also when the Cell
         # merely sits on another controller node, because the rescale gathers
         # the whole group here before the new members start.
         new_class != member.id or member_node(member) not in [nil, node()],
-        do: {member_node(member), entity, {new_class, procedure, key}}
+        do: {member_node(member), cell, {new_class, tasklet, key}}
   end
 
-  defp entities_of_member(%{id: member_id} = member) do
+  defp cells_of_member(%{id: member_id} = member) do
     case member_node(member) do
       nil ->
-        Paths.entities_of(member_id)
+        Paths.cells_of(member_id)
 
       source when source == node() ->
-        Paths.entities_of(member_id)
+        Paths.cells_of(member_id)
 
       source ->
-        peer_entities(source, member_id)
+        peer_cells(source, member_id)
     end
   end
 
   # A peer that cannot be reached would silently contribute no moves, leaving
-  # its Entities behind under a member that is about to stop. Say so.
-  defp peer_entities(source_node, member_id) do
+  # its Cells behind under a member that is about to stop. Say so.
+  defp peer_cells(source_node, member_id) do
     case :erpc.call(
            source_node,
            WalTransfer,
-           :entities,
+           :cells,
            [member_id],
            Durations.get(:partition_peer_call_ms)
          ) do
-      entities when is_list(entities) -> entities
+      cells when is_list(cells) -> cells
       other -> log_unreachable_peer(source_node, member_id, other)
     end
   catch
@@ -564,7 +564,7 @@ defmodule Flezha.Operative.PartitionGroup do
   defp log_unreachable_peer(source_node, member_id, reason) do
     Logger.error(
       "[PartitionGroup] #{member_id} lives on #{inspect(source_node)}, which did not answer " <>
-        "(#{inspect(reason)}): its Entities cannot be moved by this rescale"
+        "(#{inspect(reason)}): its Cells cannot be moved by this rescale"
     )
 
     []
@@ -611,7 +611,7 @@ defmodule Flezha.Operative.PartitionGroup do
   defp apply_moves(moves) do
     moves
     |> Enum.reduce_while(:ok, fn {source_node, source, destination}, :ok ->
-      case WalTransfer.move_entity(source_node, source, destination) do
+      case WalTransfer.move_cell(source_node, source, destination) do
         {:ok, _files} ->
           {:cont, :ok}
 
@@ -626,7 +626,7 @@ defmodule Flezha.Operative.PartitionGroup do
   end
 
   # An old member past the new count keeps only a fully-consumed input log once
-  # its Entities have moved out. Removing it is what stops a stale class tree
+  # its Cells have moved out. Removing it is what stops a stale class tree
   # from reading as durable evidence of an operative the fleet does not hold; its
   # stop already removed it from the hub's declared set and deleted its
   # registry row, so a returning node can never resurrect it.
@@ -645,6 +645,6 @@ defmodule Flezha.Operative.PartitionGroup do
   defp id_limit(), do: Identificator.limit(:operative)
 
   defp vacated?(class) do
-    Paths.entities_of(class) == [] and consumed?(class)
+    Paths.cells_of(class) == [] and consumed?(class)
   end
 end

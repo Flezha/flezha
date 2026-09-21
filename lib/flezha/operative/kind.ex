@@ -6,7 +6,7 @@ defmodule Flezha.Operative.Kind do
   a SPARSE capability map listing only what it has; `capable?/2` reads every
   capability with a `false` default, so a capability a kind does not declare is
   absent. `:stream` declares `persistent_state?`, `time_travel?`,
-  `dynamic_entities?` and `output_stall_watch?`; `:workflow` is a run-once job
+  `dynamic_cells?` and `output_stall_watch?`; `:workflow` is a run-once job
   and declares none.
 
   Invariant: gating is subtractive only. Adding a flag means adding the one
@@ -22,7 +22,7 @@ defmodule Flezha.Operative.Kind do
     stream: %{
       persistent_state?: true,
       time_travel?: true,
-      dynamic_entities?: true,
+      dynamic_cells?: true,
       output_stall_watch?: true
     },
     workflow: %{}

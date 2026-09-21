@@ -22,7 +22,7 @@ impl PollCore {
     /// Park until the core observes starvation — runnable work with nobody
     /// left to run it — or `timeout` elapses.
     ///
-    /// Starvation is *stuck*, not *busy*. Queued work — an entity round, or a
+    /// Starvation is *stuck*, not *busy*. Queued work — a cell round, or a
     /// direct activation a driver is blocked on — counts only once it has sat
     /// for [`STARVATION_DWELL`] with **no thread entering `poll` at all**: a
     /// saturated runner enters `poll` once per batch, i.e. orders of magnitude
@@ -79,7 +79,7 @@ impl PollCore {
             return true;
         }
         // A direct activation — a workflow step, a host crossing — is runnable
-        // whatever the cap says, and a driver is blocked on it; queued entity
+        // whatever the cap says, and a driver is blocked on it; queued cell
         // work at the cap is not runnable and is owed no thread.
         let runnable = !self.direct.lock_recover().is_empty()
             || (!ready_empty && self.outstanding_count.load(Ordering::Acquire) < self.max_inflight);

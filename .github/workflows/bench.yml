@@ -4,8 +4,8 @@ name: Bench Regression Gate
 # - bench-regression: mix bench --shape regression, reporting the end-to-end
 #   and receive-window rates. Fails only when the bench itself fails or its
 #   report carries no rate.
-# - bench-entity-scaling (informational): mix bench --shape
-#   entity --pool-sizes 1,8 reports the ratio to the PR check
+# - bench-cell-scaling (informational): mix bench --shape
+#   cell --pool-sizes 1,8 reports the ratio to the PR check
 #   output but does not gate the merge.
 
 on:
@@ -78,7 +78,7 @@ jobs:
             bench/reports/
           retention-days: 30
 
-  bench-entity-scaling:
+  bench-cell-scaling:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Informational. GitHub Actions runners are virtualized and the 4×
@@ -99,13 +99,13 @@ jobs:
       - name: Build Rust compute engine (release)
         run: cargo build --release -p rust_runner
 
-      - name: Run mix bench --shape entity --pool-sizes 1,8
+      - name: Run mix bench --shape cell --pool-sizes 1,8
         id: scaling
         run: |
           set -euo pipefail
-          MIX_ENV=prod mix bench --runtime rust --shape entity --pool-sizes 1,8 \
+          MIX_ENV=prod mix bench --runtime rust --shape cell --pool-sizes 1,8 \
             2>&1 | tee bench-scaling.log
-          REPORT=$(ls -1t bench/reports/bench-rust-entity-*.json 2>/dev/null | head -1 || true)
+          REPORT=$(ls -1t bench/reports/bench-rust-cell-*.json 2>/dev/null | head -1 || true)
           RATIO=$(jq -r '.metrics.scaling_ratio // empty' "${REPORT:-/dev/null}" 2>/dev/null || true)
           if [[ -z "$RATIO" ]]; then
             echo "::warning::Could not parse 'ratio (max/min)' from scaling output"
@@ -118,7 +118,7 @@ jobs:
         run: |
           RATIO="${{ steps.scaling.outputs.ratio }}"
           {
-            echo "## Entity scaling — informational"
+            echo "## Cell scaling — informational"
             echo
             echo "Measured ratio (pool=8 / pool=1): **${RATIO}**"
             echo

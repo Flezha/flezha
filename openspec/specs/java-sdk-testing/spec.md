@@ -6,7 +6,7 @@ Defines the testing strategy for the Java SDK: unit test coverage of the protoco
 ## Requirements
 ### Requirement: Unit Test Coverage for Protocol Layer
 
-The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperativeMessage` canonical-unsupported response), Operative registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Procedure dispatch (single-mode entity allocation, static-mode entity fan-out, sticky per-entity ordering, parallel entity execution, inter-procedure reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-procedure channels, reserved-key drop), operative-instance lifecycle (add via `AddOperative`, remove via `RemOperative`, state serialize via `EntityState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
+The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperativeMessage` canonical-unsupported response), Operative registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Tasklet dispatch (single-mode cell allocation, static-mode cell fan-out, sticky per-cell ordering, parallel cell execution, inter-tasklet reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-tasklet channels, reserved-key drop), operative-instance lifecycle (add via `AddOperative`, remove via `RemOperative`, state serialize via `CellState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
 
 Line coverage of the `flezha-sdk-runtime` and `flezha-sdk-api` modules SHALL reach ≥ 85%. That number is produced by JaCoCo's `report` goal, which the `coverage` profile in `sdk/java/pom.xml` binds to the `verify` phase, so `mvn -f sdk/java/pom.xml -P coverage verify` is the command that measures it; `mvn ... test` runs the suite and writes no coverage report. No Maven goal enforces the floor — the profile binds no `check` execution — so it is met by writing tests, not by a failing build.
 
@@ -22,11 +22,11 @@ Line coverage of the `flezha-sdk-runtime` and `flezha-sdk-api` modules SHALL rea
 
 #### Scenario: Each java-sdk requirement has at least one unit test
 - **WHEN** the unit test suite is enumerated
-- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Operative Registration`, `Procedure Interface and Per-Entity Dispatch`, and `Sticky Per-Entity Ordering Under ThreadPool Dispatch` requirements
+- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Operative Registration`, `Tasklet Interface and Per-Cell Dispatch`, and `Sticky Per-Cell Ordering Under ThreadPool Dispatch` requirements
 
 #### Scenario: Old API tests removed
 - **WHEN** the unit test suite is enumerated for tests referencing `OperativeHandler`, `OperativeRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
-- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `StreamOperative` / `Procedure` surface
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `StreamOperative` / `Tasklet` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -46,7 +46,7 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `StreamOperative` / `WorkflowOperative` / `Procedure` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Procedure `handleMessage`.
+The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `StreamOperative` / `WorkflowOperative` / `Tasklet` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Tasklet `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `scripts/build-dist.sh` produces `dist/java_runner.jar` and `java -jar dist/java_runner.jar my_namespace` is run while the agent is up
@@ -56,9 +56,9 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 - **WHEN** the factory ids the controller lists for a connected Java runner are compared to the union of the Java manifest's `fixtures`
 - **THEN** the two SHALL be equal sets, and for every non-deferred capability the Java manifest's ids SHALL equal the Rust manifest's
 
-#### Scenario: Java test app uses the new Procedure / ProcedureCtx API exclusively
+#### Scenario: Java test app uses the new Tasklet / TaskletCtx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `StreamOperative`, `Procedure`, `ProcedureCtx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
+- **THEN** zero matches SHALL be found — the test app's classes use only `StreamOperative`, `Tasklet`, `TaskletCtx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -82,7 +82,7 @@ The shared smoke tier `test/system/sdk_smoke_e2e_test.exs` SHALL exercise the se
 
 #### Scenario: Smoke tier runs under mix test for the Java runtime
 - **WHEN** a developer runs `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke`
-- **THEN** every transport cell in the Java manifest SHALL run, and each SHALL assert that operative output received by the agent matches the expected value
+- **THEN** every transport entry in the Java manifest SHALL run, and each SHALL assert that operative output received by the agent matches the expected value
 
 #### Scenario: Java-runtime reconnect under agent restart
 - **WHEN** the smoke tier restarts the agent while a Java test compute engine is running
@@ -112,43 +112,43 @@ The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests,
 - **WHEN** the repository is grep-searched for the literal string `OPERATIVE_MESSAGE_HANDLERS_PENDING` after this change merges
 - **THEN** the matches SHALL match the pre-change set — this change does NOT re-enable message-handler tests
 
-### Requirement: ProcedureTestHarness in flezha-sdk-testing artifact
+### Requirement: TaskletTestHarness in flezha-sdk-testing artifact
 
-The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.ProcedureTestHarness<Input, State, Output, Change extends com.flezha.sdk.state.Change>` as a public type. The harness SHALL support:
+The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.TaskletTestHarness<Input, State, Output, Change extends com.flezha.sdk.state.Change>` as a public type. The harness SHALL support:
 
-- `static <I, S, O, C extends Change> ProcedureTestHarness<I, S, O, C> of(Procedure<I, S, O, C, ?, ?> procedure)` — constructs a harness with state from `procedure.initState(Optional.empty(), Optional.empty())`.
+- `static <I, S, O, C extends Change> TaskletTestHarness<I, S, O, C> of(Tasklet<I, S, O, C, ?, ?> tasklet)` — constructs a harness with state from `tasklet.initState(Optional.empty(), Optional.empty())`.
 - `withInitialState(State state)` — explicit initial state.
-- `withPayload(Optional<String> entityKey, RestoreInitPayload payload)` — replicates the runtime's snapshot+changelog restoration flow.
-- `applyInputs(Iterable<Input> inputs)` — invokes `Procedure.run` for each input on the harness's owned state, recording emits and Changes; returns `this` for chaining.
+- `withPayload(Optional<String> cellKey, RestoreInitPayload payload)` — replicates the runtime's snapshot+changelog restoration flow.
+- `applyInputs(Iterable<Input> inputs)` — invokes `Tasklet.run` for each input on the harness's owned state, recording emits and Changes; returns `this` for chaining.
 - `expectChanges(List<Change> expected)` — asserts equality, throws `AssertionError` with diagnostic on mismatch, returns `this`.
 - `expectEmits(Class<C> type, List<C> expected)` — asserts emits of type `C` equal expected, returns `this`.
 - `expectState(State expected)` — asserts state equality (via Kryo bytes), returns `this`.
-- `replay(State initial, List<Change> log) -> State` — folds the log via `Procedure.applyChange`, returns terminal state.
+- `replay(State initial, List<Change> log) -> State` — folds the log via `Tasklet.applyChange`, returns terminal state.
 - `replayEquals() -> Optional<ReplayMismatch>` — replays self.recordedChanges against a re-constructed initial state and asserts byte-equality (via Kryo round-trip) with self.state. Empty optional = pass; non-empty carries `expectedBytes` and `actualBytes` for the test failure message.
 
 #### Scenario: Harness asserts on recorded Changes
 
-- **WHEN** a JUnit test runs `ProcedureTestHarness.of(new CounterProcedure()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new CounterChange(5), new CounterChange(3)))`
+- **WHEN** a JUnit test runs `TaskletTestHarness.of(new CounterTasklet()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new CounterChange(5), new CounterChange(3)))`
 - **THEN** the chain SHALL succeed with no `AssertionError` thrown; the harness's `recordedChanges` SHALL equal the expected list
 
 #### Scenario: Harness replays for determinism check
 
-- **WHEN** a JUnit test runs `ProcedureTestHarness.of(new CounterProcedure()).applyInputs(inputs).replayEquals()` against a deterministic `applyChange`
+- **WHEN** a JUnit test runs `TaskletTestHarness.of(new CounterTasklet()).applyInputs(inputs).replayEquals()` against a deterministic `applyChange`
 - **THEN** the result SHALL be `Optional.empty()` and the test SHALL pass
 
 #### Scenario: Harness detects non-deterministic applyChange
 
-- **WHEN** a Procedure's `applyChange` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
+- **WHEN** a Tasklet's `applyChange` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
 - **THEN** the result SHALL be `Optional.of(new ReplayMismatch(expectedBytes, actualBytes))` whose `toString()` renders a hex-diff identifying the divergent bytes
 
 #### Scenario: Harness compiles only for testing-scope dependencies
 
-- **WHEN** a downstream Java module depends on `flezha-sdk-testing` with `<scope>test</scope>` AND attempts to use `ProcedureTestHarness` from `src/main/java/`
+- **WHEN** a downstream Java module depends on `flezha-sdk-testing` with `<scope>test</scope>` AND attempts to use `TaskletTestHarness` from `src/main/java/`
 - **THEN** Maven SHALL fail the compile with a "package not visible at compile scope" error; the harness SHALL be visible only from `src/test/java/`
 
-### Requirement: ProcedureTestHarness JUnit assertions are AssertJ-style chainable
+### Requirement: TaskletTestHarness JUnit assertions are AssertJ-style chainable
 
-The `ProcedureTestHarness` API SHALL be method-chainable (each `expect*` method returns `this`), matching the AssertJ idiom that JUnit-using Java developers expect. Failures SHALL throw `AssertionError` (or a subclass) with a descriptive message including: the expected value, the actual value, and a per-element diff for collection assertions.
+The `TaskletTestHarness` API SHALL be method-chainable (each `expect*` method returns `this`), matching the AssertJ idiom that JUnit-using Java developers expect. Failures SHALL throw `AssertionError` (or a subclass) with a descriptive message including: the expected value, the actual value, and a per-element diff for collection assertions.
 
 #### Scenario: Chained assertions are evaluated in order
 
@@ -160,34 +160,34 @@ The `ProcedureTestHarness` API SHALL be method-chainable (each `expect*` method 
 - **WHEN** `expectChanges(List.of(new CounterChange(5), new CounterChange(3)))` is called and the actual recorded Changes are `List.of(new CounterChange(5), new CounterChange(7))`
 - **THEN** the thrown `AssertionError`'s message SHALL include the expected list, the actual list, AND a marker pointing at index 1 (the differing element)
 
-### Requirement: ProcedureTestHarness uses KryoCodec for byte-equality state comparison
+### Requirement: TaskletTestHarness uses KryoCodec for byte-equality state comparison
 
-`ProcedureTestHarness.replayEquals()` and `ProcedureTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec` (constructed from the Procedure's `kryoTypes()`) and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
+`TaskletTestHarness.replayEquals()` and `TaskletTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec` (constructed from the Tasklet's `kryoTypes()`) and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
 
-The Procedure's `kryoTypes()` SHALL include all classes reachable from `State` for `replayEquals` and `expectState` to work; missing types SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class.
+The Tasklet's `kryoTypes()` SHALL include all classes reachable from `State` for `replayEquals` and `expectState` to work; missing types SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class.
 
 #### Scenario: Record State works without registration of inner types
 
-- **WHEN** a Procedure declares `State = OhlcState` (a record carrying primitives only) AND `kryoTypes() = List.of(OhlcState.class)`
+- **WHEN** a Tasklet declares `State = OhlcState` (a record carrying primitives only) AND `kryoTypes() = List.of(OhlcState.class)`
 - **THEN** `replayEquals()` SHALL succeed via Kryo bytes equality
 
 #### Scenario: State referencing un-registered class throws diagnostic
 
-- **WHEN** a Procedure declares `State = OrderBookState` containing a `Map<Long, Level>` where `Level` is not in `kryoTypes()`
+- **WHEN** a Tasklet declares `State = OrderBookState` containing a `Map<Long, Level>` where `Level` is not in `kryoTypes()`
 - **THEN** `replayEquals()` SHALL throw `StateSerializeException::UnregisteredClass("Level")` with a clear pointer to the missing registration
 
-### Requirement: ProcedureTestHarness records emits without invoking the wire path
+### Requirement: TaskletTestHarness records emits without invoking the wire path
 
-The harness SHALL provide a `TestProcedureCtx` implementation of `ProcedureCtx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
+The harness SHALL provide a `TestTaskletCtx` implementation of `TaskletCtx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
 
 #### Scenario: emit calls recorded but not shipped
 
-- **WHEN** a test runs `harness.applyInputs(inputs)` against a Procedure that emits a `Candle` per input
+- **WHEN** a test runs `harness.applyInputs(inputs)` against a Tasklet that emits a `Candle` per input
 - **THEN** for each input that produced an emit, `harness.recordedEmits()` SHALL contain one `EmitRecord(channel: <name>, value: Candle, metadata: <map>)`; `NativeTransport.*` SHALL NOT be invoked
 
 #### Scenario: emitWithMeta records the metadata
 
-- **WHEN** a Procedure calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc"))` on a plugin-bound channel
+- **WHEN** a Tasklet calls `ctx.emitWithMeta(value, Map.of("trace_id", "abc"))` on a plugin-bound channel
 - **THEN** the recorded `EmitRecord.metadata` SHALL contain `{"trace_id": "abc"}` (the SDK's auto-attached `flezha.dedup_key` SHALL also be present in the metadata, because the test ctx mirrors the runtime's metadata-stamping behavior)
 
 ### Requirement: At least one harness test per java-sdk requirement scenario
@@ -231,11 +231,11 @@ The Java test compute-engine application SHALL live at `test/apps/java_runner/` 
 
 #### Scenario: Integration test runs from new path
 - **WHEN** the Java SDK integration matrix is run
-- **THEN** the matrix MUST locate the test app at `test/apps/java_runner/`, build it, and exercise the Controller↔Runner flow including Operative registration, Procedure execution, Entity state persistence, and survive-restart behavior
+- **THEN** the matrix MUST locate the test app at `test/apps/java_runner/`, build it, and exercise the Controller↔Runner flow including Operative registration, Tasklet execution, Cell state persistence, and survive-restart behavior
 
 ### Requirement: Test naming reflects canonical role vocabulary
 
-Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Runner, Operative, Procedure, Entity). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
+Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Runner, Operative, Tasklet, Cell). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
 
 #### Scenario: Test class names compile after rename
 - **WHEN** `mvn -f sdk/java test` is run
@@ -274,41 +274,41 @@ The Elixir↔Java integration suite SHALL exercise a run-once Java workflow oper
 - **WHEN** the suite starts a workflow operative whose `run` throws over either transport
 - **THEN** the controller SHALL receive `WorkflowCompleted{status:"error"}` carrying the throwable's message, the workflow operative SHALL be deregistered without retry, and no operative process SHALL remain
 
-### Requirement: ProcedureTestHarness replayEquals replays against the captured initial snapshot
+### Requirement: TaskletTestHarness replayEquals replays against the captured initial snapshot
 
-`ProcedureTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction — whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)` — and fold the recorded Changes onto a fresh deserialization of that snapshot, matching the Rust `ProcedureTestHarness`. It SHALL NOT rebuild the baseline by calling `initState(Optional.empty(), Optional.empty())` afresh at replay time. This makes the harness honor a `withInitialState`/`withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-entity window length supplied via the `@InitState` hook), which the prior `initState(empty)` reconstruction would report as a false replay divergence.
+`TaskletTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction — whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)` — and fold the recorded Changes onto a fresh deserialization of that snapshot, matching the Rust `TaskletTestHarness`. It SHALL NOT rebuild the baseline by calling `initState(Optional.empty(), Optional.empty())` afresh at replay time. This makes the harness honor a `withInitialState`/`withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-cell window length supplied via the `@InitState` hook), which the prior `initState(empty)` reconstruction would report as a false replay divergence.
 
-A stateless Procedure (`Change = NoChange`) SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing the state, since nothing is journaled and the `Stateless` state is not Kryo-registered.
+A stateless Tasklet (`Change = NoChange`) SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing the state, since nothing is journaled and the `Stateless` state is not Kryo-registered.
 
 #### Scenario: withInitialState baseline is honored
 
-- **WHEN** a harness is built via `withInitialState(state)` for a Procedure whose `State` has a key-derived field set outside the journaled Change log, inputs are applied, and `replayEquals()` runs
+- **WHEN** a harness is built via `withInitialState(state)` for a Tasklet whose `State` has a key-derived field set outside the journaled Change log, inputs are applied, and `replayEquals()` runs
 - **THEN** the recorded Changes are folded onto the captured `state` snapshot rather than a fresh `initState(Optional.empty(), Optional.empty())`, so the key-derived field matches and the result is `Optional.empty()`
 
-#### Scenario: Stateless Procedure keeps no replay baseline
+#### Scenario: Stateless Tasklet keeps no replay baseline
 
-- **WHEN** `replayEquals()` runs on a harness for a `NoChange` Procedure
+- **WHEN** `replayEquals()` runs on a harness for a `NoChange` Tasklet
 - **THEN** it returns `Optional.empty()` without serializing the stateless state, since no Changes are journaled
 
-### Requirement: ProcedureTestHarness verifies the determinism contract on the output side
+### Requirement: TaskletTestHarness verifies the determinism contract on the output side
 
-The Java `ProcedureTestHarness` SHALL provide `replayEmitsEqual()` — the output-side sibling of `replayEquals()` — which re-runs the recorded inputs against a fresh baseline and compares the resulting emit sequence (channel, key, metadata, and serialized payload) to the original. It SHALL return `Optional.empty()` when the replayed emits match, and a diagnostic describing the first divergence otherwise.
+The Java `TaskletTestHarness` SHALL provide `replayEmitsEqual()` — the output-side sibling of `replayEquals()` — which re-runs the recorded inputs against a fresh baseline and compares the resulting emit sequence (channel, key, metadata, and serialized payload) to the original. It SHALL return `Optional.empty()` when the replayed emits match, and a diagnostic describing the first divergence otherwise.
 
-This is what lets a Java author verify the determinism contract (`ctx.now()` / `ctx.stableId()` instead of `System.currentTimeMillis()` / `UUID.randomUUID()`) the same way a Rust author does with `ProcedureTestHarness::replay_emits_equal`.
+This is what lets a Java author verify the determinism contract (`ctx.now()` / `ctx.stableId()` instead of `System.currentTimeMillis()` / `UUID.randomUUID()`) the same way a Rust author does with `TaskletTestHarness::replay_emits_equal`.
 
-#### Scenario: A deterministic Procedure replays identical emits
+#### Scenario: A deterministic Tasklet replays identical emits
 
-- **WHEN** a Procedure derives its emitted key from `ctx.stableId()` and its timestamp from `ctx.now()`, and `replayEmitsEqual()` runs after applying inputs
+- **WHEN** a Tasklet derives its emitted key from `ctx.stableId()` and its timestamp from `ctx.now()`, and `replayEmitsEqual()` runs after applying inputs
 - **THEN** it SHALL return `Optional.empty()`
 
-#### Scenario: A Procedure reading ambient time is caught
+#### Scenario: A Tasklet reading ambient time is caught
 
-- **WHEN** a Procedure emits a value derived from `System.currentTimeMillis()` rather than `ctx.now()`, and `replayEmitsEqual()` runs
+- **WHEN** a Tasklet emits a value derived from `System.currentTimeMillis()` rather than `ctx.now()`, and `replayEmitsEqual()` runs
 - **THEN** it SHALL return a non-empty diagnostic naming the diverging emit
 
-### Requirement: ProcedureTestHarness supports injectable clocks
+### Requirement: TaskletTestHarness supports injectable clocks
 
-The `ProcedureTestHarness` SHALL support driving the Procedure's declared `Clock` from the test rather than from the ambient system clock: `withWallClock(long fixedMillis)` SHALL pin `ctx.now()` to a constant, and `withWallClockScript(long... millis)` SHALL serve one value per successive invocation. For an `EventTimeFrom` Procedure the harness SHALL serve the value the Procedure's `eventTime(input)` extractor returns; for a `LogicalClock` Procedure it SHALL serve the harness's durable change seq.
+The `TaskletTestHarness` SHALL support driving the Tasklet's declared `Clock` from the test rather than from the ambient system clock: `withWallClock(long fixedMillis)` SHALL pin `ctx.now()` to a constant, and `withWallClockScript(long... millis)` SHALL serve one value per successive invocation. For an `EventTimeFrom` Tasklet the harness SHALL serve the value the Tasklet's `eventTime(input)` extractor returns; for a `LogicalClock` Tasklet it SHALL serve the harness's durable change seq.
 
 #### Scenario: A fixed wall clock makes now() constant across invocations
 
@@ -320,29 +320,29 @@ The `ProcedureTestHarness` SHALL support driving the Procedure's declared `Clock
 - **WHEN** a harness built with `withWallClockScript(1000L, 2000L, 3000L)` applies three inputs
 - **THEN** the invocations' `ctx.now()` SHALL return `1000`, `2000`, and `3000` respectively
 
-### Requirement: ProcedureTestHarness asserts keyed emits and identity stamps
+### Requirement: TaskletTestHarness asserts keyed emits and identity stamps
 
-The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carrying none) and its user metadata, so tests can assert keyed-emit behaviour without invoking the wire path. The harness SHALL support declaring a channel keyed (`withKeyedChannel()`) and standing in for the Entity a key routed to (`withEntityKey(key)`), so that the keyed-channel contract — the Entity-key default and the refusals (`KeyRequiredOnKeyedChannel`, `KeyNotAllowedOnNonKeyedChannel`) — is exercisable in a unit test. The `flz.*` identity stamps themselves are minted by the runtime's frame writer and are NOT reproduced by the harness; assert them against the dispatcher.
+The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carrying none) and its user metadata, so tests can assert keyed-emit behaviour without invoking the wire path. The harness SHALL support declaring a channel keyed (`withKeyedChannel()`) and standing in for the Cell a key routed to (`withCellKey(key)`), so that the keyed-channel contract — the Cell-key default and the refusals (`KeyRequiredOnKeyedChannel`, `KeyNotAllowedOnNonKeyedChannel`) — is exercisable in a unit test. The `flz.*` identity stamps themselves are minted by the runtime's frame writer and are NOT reproduced by the harness; assert them against the dispatcher.
 
 #### Scenario: A keyed emit records its key
 
-- **WHEN** a Procedure calls `ctx.emitKeyed("BTC", candle)` on a channel the harness declared keyed
+- **WHEN** a Tasklet calls `ctx.emitKeyed("BTC", candle)` on a channel the harness declared keyed
 - **THEN** `harness.emitRecords()` SHALL contain one record whose key is `"BTC"`
 
-#### Scenario: A key-less emit in a keyed Entity records that Entity's key
+#### Scenario: A key-less emit in a keyed Cell records that Cell's key
 
-- **WHEN** a harness declared keyed and standing in for the Entity `"BTC/USD"` drives a Procedure that calls `ctx.emit(candle)`
-- **THEN** `harness.emitRecords()` SHALL contain one record whose key is `"BTC/USD"`, and `ctx.entityKey()` SHALL have served `"BTC/USD"`
+- **WHEN** a harness declared keyed and standing in for the Cell `"BTC/USD"` drives a Tasklet that calls `ctx.emit(candle)`
+- **THEN** `harness.emitRecords()` SHALL contain one record whose key is `"BTC/USD"`, and `ctx.cellKey()` SHALL have served `"BTC/USD"`
 
-#### Scenario: A key-less emit on a keyed channel is refused without an Entity key
+#### Scenario: A key-less emit on a keyed channel is refused without a Cell key
 
-- **WHEN** a harness declared keyed with no Entity key drives a Procedure that calls `ctx.emit(candle)`
-- **THEN** the harness ctx SHALL throw `ProcedureException.KeyRequiredOnKeyedChannel` and SHALL record nothing
+- **WHEN** a harness declared keyed with no Cell key drives a Tasklet that calls `ctx.emit(candle)`
+- **THEN** the harness ctx SHALL throw `TaskletException.KeyRequiredOnKeyedChannel` and SHALL record nothing
 
 #### Scenario: A reserved metadata key is rejected in the harness too
 
-- **WHEN** a Procedure calls `ctx.emitWithMeta(value, Map.of("flz.seq", "1.0"))` under the harness
-- **THEN** the harness ctx SHALL throw `ProcedureException.ReservedMetadataKey`, matching the runtime's behaviour
+- **WHEN** a Tasklet calls `ctx.emitWithMeta(value, Map.of("flz.seq", "1.0"))` under the harness
+- **THEN** the harness ctx SHALL throw `TaskletException.ReservedMetadataKey`, matching the runtime's behaviour
 
 ### Requirement: The reference Java runner carries the round-trip bench fixtures
 The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same sink channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures, so `mix bench.roundtrip --runtime java` selects a factory by id with no per-runtime branch. `bench_checkpoint` SHALL declare `checkpointAck()` and `checkpointEvery(n)`, and `outputsAtCheckpoint(maxDelayMs)` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.
@@ -360,7 +360,7 @@ A `:system` end-to-end test that proves a capability carried by more than one SD
 
 #### Scenario: The checkpoint-outputs proof runs on Java
 - **WHEN** `test/system/checkpoint_batched_outputs_e2e_test.exs` runs under `--include system`
-- **THEN** the three declared behaviours (no output before the checkpoint, one ordered batch at the close, the quiet-Entity delay) pass against a live Java runner as well as a live Rust runner
+- **THEN** the three declared behaviours (no output before the checkpoint, one ordered batch at the close, the quiet-Cell delay) pass against a live Java runner as well as a live Rust runner
 
 ### Requirement: The declaration key set is pinned for the core and the Java SDK
 A pinned fixture SHALL list every `HostClassDecl` key; a `flz_core` test SHALL assert that a fully populated declaration serialises to exactly that key set, and a Java unit test SHALL assert that a fully populated `HostClassDeclaration` emits every key in the fixture while a bare `checkpointAck()` emits none of the optional ones, so a key the core accepts that the Java SDK cannot spell fails the Java build.

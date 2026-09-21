@@ -89,7 +89,7 @@ Each SDK's test app carries `test/apps/<sdk>_runner/conformance.json`:
 | `build` | The one command that produces each profile's artifact |
 | `connect_timeout_ms` | How long the harness waits for the runner's handshake |
 | `transports` | The subset of `uds`, `quic` the standalone runner supports |
-| `dispatch` | How this host executes activations: `model` (one of `thread-pool`, `event-loop`, `process-per-entity`), `detail` (one sentence), and `env` (each environment variable that selects the topology → what it selects; `{}` when fixed) |
+| `dispatch` | How this host executes activations: `model` (one of `thread-pool`, `event-loop`, `process-per-cell`), `detail` (one sentence), and `env` (each environment variable that selects the topology → what it selects; `{}` when fixed) |
 | `toolchain` | The shell command that prints this SDK's toolchain version, e.g. `rustc --version` |
 | `deferred` | Capabilities this SDK does not carry, by name |
 | `fixtures` | Factory ids the app registers, grouped by capability |
@@ -117,8 +117,8 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 
 `runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
-`entity_timers`, `correction_window`, `keyed_channels`, `workflow`,
-`dynamic_entity`, `partitioned`, `schema_evolution`, `shorthand`.
+`cell_timers`, `correction_window`, `keyed_channels`, `workflow`,
+`dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`.
 
 A capability can carry no fixtures at all, where the scenarios that prove it
 need none of their own. Carrying fixtures and being required are independent:
@@ -141,7 +141,7 @@ manifest exactly once — under `deferred` or as a `fixtures` key — so one can
 neither forgotten nor claimed twice. The **required set**
 (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `retry_ladder`, `partitioned`, `pool_wedge`, `state_persistence`,
-`keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`,
+`keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers`,
 `effectively_once`, `correction_window`, `shorthand`) can never be deferred, and it holds
 **every capability no manifest defers**: a capability every SDK carries is one
 none of them may drop. The gate refuses drift in both directions, with a
@@ -393,7 +393,7 @@ so the conformance app runs the standalone binary protocol like the other six.
 
 ## The short form
 
-`shorthand` is a required capability: the §5 single-procedure short form is one
+`shorthand` is a required capability: the §5 single-tasklet short form is one
 every SDK carries, so no manifest may defer it. Five fixtures, each one
 operative declaration in every app, with no hand-written operative beside it:
 
@@ -408,8 +408,8 @@ operative declaration in every app, with no hand-written operative beside it:
 Text entries, so the bytes a sink carries are equal across runtimes: a JSON
 round trip re-spaces the start values in some languages.
 `test/system/shorthand_e2e_test.exs` drives all five on the selected runtime;
-`sugar_state_only` has no sink, so its proof is the entity state it keeps, read
-back through the live entity-state query.
+`sugar_state_only` has no sink, so its proof is the cell state it keeps, read
+back through the live cell-state query.
 
 The refusal table carries one row per short-form refusal, written with the step
 `shorthand(<id>|-, <sink>|-, <input>|-)`, the `.noout` modifier for a body
@@ -424,7 +424,7 @@ Two `needs` surfaces say what a spelling can write:
 | Surface | Carried by |
 | --- | --- |
 | `shorthand` | every manifest; the short form itself |
-| `shorthand_typed_output` | Rust, Java, Python — the SDKs that can see a procedure declares no output |
+| `shorthand_typed_output` | Rust, Java, Python — the SDKs that can see a tasklet declares no output |
 
 ### A compile-time refusal is cited, and the citation is checked
 
@@ -456,9 +456,9 @@ drops or spells differently is a diff on every other.
 
 The committed goldens are `candle`, `checkpoint_batched_store`,
 `commit_block_workflow`, `keyed_output_stamps`, `saga_block_workflow`,
-`static_entity`, `store_input`, `sugar_do_nothing`, `sugar_named_input`,
-`sugar_state_only`, `sugar_static_entity`, `sugar_workflow` and `tier_store`.
-The four short-form ones (every `sugar_*` but `sugar_static_entity`) pin that a
+`static_cell`, `store_input`, `sugar_do_nothing`, `sugar_named_input`,
+`sugar_state_only`, `sugar_static_cell`, `sugar_workflow` and `tier_store`.
+The four short-form ones (every `sugar_*` but `sugar_static_cell`) pin that a
 short form declares the entry channel, the sink when one is written and the
 kind its author wrote, in every runtime.
 
@@ -476,7 +476,7 @@ Every SDK test app SHALL:
   whatever its own template renders);
 - park until `FLEZHA_WORKFLOW_E2E_RELEASE` appears, in every workflow fixture a
   crash-resume scenario drives, so the runner keeps answering control pings and
-  a sibling procedure the driver has not reached stays dispatchable. The
+  a sibling tasklet the driver has not reached stays dispatchable. The
   obligation is one; its spelling follows the dispatch model the manifest
   declares. A worker-pool host parks a **pool worker** and never the driver
   thread. An event-loop host **suspends the activation and yields the loop** —
@@ -573,7 +573,7 @@ every SDK is measured against.
 
 A new SDK's arm is one row interpreter in its test app. It maps the step
 vocabulary to that SDK's builder, binds the palette roles to its own fixture
-procedures, and writes a report:
+tasklets, and writes a report:
 
 ```json
 {"runtime": "node",

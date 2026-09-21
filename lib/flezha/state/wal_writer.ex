@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriter do
   @moduledoc """
-  Per-Entity `GenServer` wrapping a single open WAL file handle.
+  Per-Cell `GenServer` wrapping a single open WAL file handle.
 
   Each appended record is framed by `Flezha.State.RecordFrame`, which owns the
   layout and its crc; nothing here restates either.
@@ -9,7 +9,7 @@ defmodule Flezha.State.WalWriter do
   `Flezha.State.FsyncBatcher` which drives the actual `:file.datasync/1`
   on its tick cadence. High-watermark crossings emit a telemetry event
   (`[:flezha, :state, :wal, :backpressure]`) that section-9 wiring picks
-  up to ship the wire-level `EntityMailboxStatus`.
+  up to ship the wire-level `CellMailboxStatus`.
   """
 
   use GenServer, restart: :transient
@@ -27,7 +27,7 @@ defmodule Flezha.State.WalWriter do
   Liveness view consumed by `Flezha.State.Watchdog`. `last_advance_at`
   moves only when `last_persisted_seq` increases; `last_change_seen_at`
   moves on every received Change frame (append, duplicate, or gap). A
-  Entity is *stalled* (vs idle) when Changes are still arriving but
+  Cell is *stalled* (vs idle) when Changes are still arriving but
   the persisted seq has stopped advancing. `wal_size_bytes` /
   `oldest_unsnapshotted_at` / `owning_runner` feed the Watchdog's
   size+age compaction triggers without a second disk scan.
@@ -46,8 +46,8 @@ defmodule Flezha.State.WalWriter do
 
   # ---------- Public API ----------
 
-  def start_link(entity_id) do
-    GenServer.start_link(__MODULE__, entity_id, name: via(entity_id))
+  def start_link(cell_id) do
+    GenServer.start_link(__MODULE__, cell_id, name: via(cell_id))
   end
 
   @doc """
@@ -164,7 +164,7 @@ defmodule Flezha.State.WalWriter do
     do: GenServer.cast(server, {:truncate_up_to, seq, opts})
 
   @doc """
-  Rewind the Entity to `seq` under `epoch`: keep the records at or below it,
+  Rewind the Cell to `seq` under `epoch`: keep the records at or below it,
   drop the snapshots above it, and re-seat the outbox on the survivors.
 
   The non-destructive sibling of the realign wipe. A realign discards a stale
@@ -200,7 +200,7 @@ defmodule Flezha.State.WalWriter do
   the replay too, which is what re-ordering it means.
 
   `{:error, :nothing_to_correct}` when no record is at or after the target —
-  the input is not actually late for this Entity.
+  the input is not actually late for this Cell.
   """
   @spec correction_baseline(GenServer.server(), non_neg_integer()) ::
           {:ok, %{seq: integer(), consumed_offset: integer()}} | {:error, term()}
@@ -244,13 +244,13 @@ defmodule Flezha.State.WalWriter do
   @spec close(GenServer.server()) :: :ok
   def close(server), do: GenServer.stop(server, :normal)
 
-  defp via(entity_id) do
-    {:via, Elixir.Registry, {WriterRegistry.name(), entity_id}}
+  defp via(cell_id) do
+    {:via, Elixir.Registry, {WriterRegistry.name(), cell_id}}
   end
 
   # ---------- GenServer ----------
 
-  # One writer per entity, so `server` is a resolved pid or registered name that
+  # One writer per cell, so `server` is a resolved pid or registered name that
   # can be mid-restart or gone. Every entry point declares the same refusal
   # rather than waiting out the default and dying with it.
   defp call(server, request, timeout \\ nil) do
@@ -260,9 +260,9 @@ defmodule Flezha.State.WalWriter do
   end
 
   @impl true
-  def init(entity_id) do
+  def init(cell_id) do
     Process.flag(:trap_exit, true)
-    {:ok, Boot.new(entity_id), {:continue, :open}}
+    {:ok, Boot.new(cell_id), {:continue, :open}}
   end
 
   @impl true
@@ -276,7 +276,7 @@ defmodule Flezha.State.WalWriter do
   # to it, or cut it, with that refusal — and stays alive doing so. Raising here
   # would be restarted straight back into the same file (`restart: :transient`),
   # and the read-only status calls below still answer, so the watchdog and the
-  # convergence loop keep seeing the Entity. The refusal is what leaves the
+  # convergence loop keep seeing the Cell. The refusal is what leaves the
   # operative unbound: the restore assembled from this file refuses too.
   @impl true
   def handle_call(request, _from, %{refusal: {_, _, _} = refusal} = state)
@@ -288,7 +288,7 @@ defmodule Flezha.State.WalWriter do
   def handle_call({:append, seq, header, change_bytes, runner_id}, _from, state) do
     # Every received Change frame — accepted, deduped, realigned, or rejected
     # as a gap — proves the SDK is still emitting, which distinguishes a
-    # stalled Entity from a genuinely idle one for the watchdog.
+    # stalled Cell from a genuinely idle one for the watchdog.
     now = State.now_ms()
     state = %{state | last_change_seen_at: now}
 
@@ -318,9 +318,9 @@ defmodule Flezha.State.WalWriter do
 
       seq != state.last_persisted_seq + 1 and state.last_persisted_seq == -1 ->
         # Empty-WAL gap: a cold takeover — this controller holds no baseline
-        # for an Entity the live runner already has state for. Not a
+        # for a Cell the live runner already has state for. Not a
         # protocol violation: shed the frame and pull a full-state baseline
-        # via CompactEntity instead of disconnecting the SDK.
+        # via CompactCell instead of disconnecting the SDK.
         {:reply, :awaiting_baseline, Epoch.await_baseline(state, seq, runner_id)}
 
       seq != state.last_persisted_seq + 1 ->
@@ -516,7 +516,7 @@ defmodule Flezha.State.WalWriter do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
         Admission.release_credit(credit_opts)
-        Admission.emit_seq_gap(new_state.entity_id, expected, got)
+        Admission.emit_seq_gap(new_state.cell_id, expected, got)
         {:noreply, Admission.open_gap(new_state, runner_id, :seq_gap)}
 
       {:reply, :ok, new_state} ->
@@ -682,7 +682,7 @@ defmodule Flezha.State.WalWriter do
 
     # One mark per fsync window: `pending_since_us` is nil exactly when nothing
     # written since the last sync is waiting on the batcher.
-    if state.pending_since_us == nil, do: FsyncBatcher.mark_dirty(state.entity_id)
+    if state.pending_since_us == nil, do: FsyncBatcher.mark_dirty(state.cell_id)
 
     new_pending = state.pending_bytes + size
 

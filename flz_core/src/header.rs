@@ -1,4 +1,4 @@
-//! 16-byte version header for durable per-Entity records.
+//! 16-byte version header for durable per-Cell records.
 //!
 //! Layout:
 //!  - 0:1   `sdk_lang: u8` — the writing SDK, per the allocation table below
@@ -29,18 +29,18 @@ pub enum RestoreError {
     LangMismatch { expected: u8, found: u8 },
     #[error(
         "record stamped schema_version {found} is below the readable floor \
-         {min_readable} the running procedure declares"
+         {min_readable} the running tasklet declares"
     )]
     SchemaTooOld { found: u32, min_readable: u32 },
     #[error(
-        "record stamped schema_version {found} is above the running procedure's \
+        "record stamped schema_version {found} is above the running tasklet's \
          {running}: older code cannot read newer state"
     )]
     SchemaFromTheFuture { found: u32, running: u32 },
     #[error("no migration from schema_version {from_version}: {reason}")]
     MigrationFailed { from_version: u32, reason: String },
-    #[error("crc32 mismatch on change record (entity={entity}, seq={seq})")]
-    CrcMismatch { entity: u32, seq: u64 },
+    #[error("crc32 mismatch on change record (cell={cell}, seq={seq})")]
+    CrcMismatch { cell: u32, seq: u64 },
 }
 
 /// The `sdk_lang` allocation table: durable bodies are per-SDK below the
@@ -146,7 +146,7 @@ impl HeaderTemplate {
     }
 }
 
-/// The header's fields; resolution against the running procedure is
+/// The header's fields; resolution against the running tasklet is
 /// [`resolve_record`] / [`resolve_state`].
 pub fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, RestoreError> {
     if bytes.len() < 16 {
@@ -164,7 +164,7 @@ pub fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, RestoreError> {
     })
 }
 
-/// What a stamped `schema_version` means to the procedure now running.
+/// What a stamped `schema_version` means to the tasklet now running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaDecision {
     Decode,
@@ -183,7 +183,7 @@ impl SchemaDecision {
 }
 
 /// The one place a stamped schema version is resolved against the reading
-/// procedure. A floor above `running` reads the running version only.
+/// tasklet. A floor above `running` reads the running version only.
 pub fn decide_schema(
     stamped: u32,
     running: u32,
@@ -210,7 +210,7 @@ pub fn decide_schema(
 }
 
 /// Which record a WAL entry is, by its format byte against the running
-/// procedure's declared change format.
+/// tasklet's declared change format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordKind {
     Change,
@@ -238,7 +238,7 @@ pub fn resolve_record(
     ))
 }
 
-/// Resolve a snapshot's header: the running procedure's state in its format.
+/// Resolve a snapshot's header: the running tasklet's state in its format.
 pub fn resolve_state(
     header: &DecodedHeader,
     expected: &HeaderTemplate,
@@ -423,7 +423,7 @@ mod tests {
 
     /// A Kryo-stamped record resolves for a Kryo class, not a postcard one.
     #[test]
-    fn the_expected_format_comes_from_the_running_procedure() {
+    fn the_expected_format_comes_from_the_running_tasklet() {
         let kryo = HeaderTemplate {
             sdk_lang: SDK_LANG_JAVA,
             sdk_version: 1,

@@ -2,7 +2,7 @@
 //! every control-plane write — command replies, keepalives, heartbeats,
 //! workflow completions and SDK-initiated requests — so those writes never
 //! interleave. Data-plane traffic bypasses it entirely: stream readers push
-//! straight into the targeted operative's entity mailboxes.
+//! straight into the targeted operative's cell mailboxes.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -100,17 +100,17 @@ impl RunnerNode {
     }
 
     /// Spawn a workflow instance that may be resuming: the driver holds its
-    /// first procedure until `resume_entity_count` restores have landed (`0`
-    /// runs at once). `proc_journal` rides the bind: a durable class with no
-    /// per-Entity state ships no restore at all.
+    /// first tasklet until `resume_cell_count` restores have landed (`0`
+    /// runs at once). `task_journal` rides the bind: a durable class with no
+    /// per-Cell state ships no restore at all.
     pub fn start_workflow_resumable(
         &self,
         factory_id: String,
         instance_id: String,
         args: String,
-        resume_entity_count: u32,
+        resume_cell_count: u32,
         inbox_tail_count: u32,
-        proc_journal: Option<crate::workflow::instance::JournalResume>,
+        task_journal: Option<crate::workflow::instance::JournalResume>,
     ) -> bool {
         if self.operative_registry.contains(&instance_id) {
             return true;
@@ -120,19 +120,19 @@ impl RunnerNode {
             None => return false,
         };
 
-        // Build the Entities + the instance now, synchronously, before the
+        // Build the Cells + the instance now, synchronously, before the
         // AddOperative frame is ACKed, and register it so the Controller's
         // RestoreInitState frames reach live slots and the driver holds its
-        // first Procedure until the restores land.
+        // first Tasklet until the restores land.
         let id: Arc<str> = Arc::from(instance_id.as_str());
-        let stage_entities = crate::workflow::driver::build_all_stage_entities(&spec, &id);
+        let stage_cells = crate::workflow::driver::build_all_stage_cells(&spec, &id);
         let (instance, inbox_rx) = crate::workflow::instance::WorkflowInstance::new(
             Arc::clone(&id),
             Arc::from(factory_id.as_str()),
-            stage_entities,
-            resume_entity_count as usize,
+            stage_cells,
+            resume_cell_count as usize,
             inbox_tail_count,
-            proc_journal,
+            task_journal,
         );
         self.operative_registry
             .register_workflow(Arc::clone(&instance));
@@ -185,15 +185,15 @@ impl RunnerNode {
         self.operative_registry.get_workflow(instance_id)
     }
 
-    /// A live workflow Entity slot by wire identity.
-    pub fn find_workflow_entity(
+    /// A live workflow Cell slot by wire identity.
+    pub fn find_workflow_cell(
         &self,
-        entity_id: &[u8],
+        cell_id: &[u8],
     ) -> Option<(
         Arc<crate::workflow::instance::WorkflowInstance>,
-        Arc<crate::entity::EntitySlot>,
+        Arc<crate::cell::CellSlot>,
     )> {
-        self.operative_registry.find_workflow_entity(entity_id)
+        self.operative_registry.find_workflow_cell(cell_id)
     }
 
     pub fn operative_dispatch_handle(&self) -> OperativeDispatchHandle {
@@ -284,7 +284,7 @@ fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<Operative
             .map(|(k, instance)| {
                 (
                     k,
-                    crate::command::entity_state::serialize_operative_state(&instance),
+                    crate::command::cell_state::serialize_operative_state(&instance),
                 )
             })
             .collect()
@@ -307,7 +307,7 @@ impl Coordinator {
 
         let ctx_arc = Arc::new(Mutex::new(ctx));
         // Expose the coordinator channel process-globally so the
-        // entity-state sink can drive a reconnect on a broken-pipe
+        // cell-state sink can drive a reconnect on a broken-pipe
         // flood without a handle threaded through every layer.
         crate::runner::install_reconnect_trigger(otx.clone());
         let otx_arc = Arc::new(Mutex::new(otx));
@@ -374,7 +374,7 @@ impl Coordinator {
             RunnerMessage::EmitControlRequest {
                 reference_id,
                 command,
-            } => self.write_control_request(reference_id, command),
+            } => self.write_control_request(reference_id, *command),
             RunnerMessage::RemoveFactory {
                 factory_id,
                 workflow,
@@ -551,27 +551,27 @@ fn heartbeat_metadata() -> HashMap<String, String> {
     // cross-SDK gate refuses.
     [
         // Dispatch progress: frozen with the runner alive is a wedged pool.
-        ("dispatches", crate::entity::dispatches_completed()),
+        ("dispatches", crate::cell::dispatches_completed()),
         // Overflow outcomes. `dispatches` frozen with `blocked_parks` climbing
         // is healthy backpressure; frozen with it flat is a wedge. The two drop
         // counters are the shed an operator would otherwise only find by
         // attaching a debugger to the runner.
-        ("blocked_parks", crate::entity::pushes_blocked_total()),
-        ("drops_newest", crate::entity::drops_newest_total()),
-        ("drops_oldest", crate::entity::drops_oldest_total()),
+        ("blocked_parks", crate::cell::pushes_blocked_total()),
+        ("drops_newest", crate::cell::drops_newest_total()),
+        ("drops_oldest", crate::cell::drops_oldest_total()),
         ("credit_parked", crate::credit::credit_parked()),
         // A discard is correct only where the controller re-forwards from a
         // durable log, so a climbing value is the operator's one handle on how
         // much a rebind threw away.
         (
             "restore_discarded_inputs",
-            crate::entity::restore_discarded_inputs(),
+            crate::cell::restore_discarded_inputs(),
         ),
         // Handout liveness: how many activations are underway and how long the
         // oldest has been out. `dispatches` freezing tells the controller the
-        // WHOLE pool stopped; these two are what make ONE wedged Entity visible
+        // WHOLE pool stopped; these two are what make ONE wedged Cell visible
         // among thousands that are still completing. Reporting only — the core
-        // cannot tell a ten-minute Procedure from a lost handout, so the
+        // cannot tell a ten-minute Tasklet from a lost handout, so the
         // decision is the controller's and the remedy is a rebind from durable
         // state.
         ("inflight", core.outstanding_count() as u64),
@@ -634,7 +634,7 @@ fn handle_reconnect(
     runner.set_connect_answered(answered);
 
     // Resume processing dispatch traffic against the preserved
-    // registry — without `set_status(Running)` the per-Entity
+    // registry — without `set_status(Running)` the per-Cell
     // mailboxes drain into a paused state and the controller sees
     // the SDK as a black hole even though its registry is intact.
     runner.set_status(RunnerStatus::Running);

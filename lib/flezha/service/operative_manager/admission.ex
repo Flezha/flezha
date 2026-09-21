@@ -106,10 +106,10 @@ defmodule Flezha.Service.OperativeManager.Admission do
     end
   end
 
-  def check_entity_quota(namespace, operative) do
-    case entity_count(operative) do
+  def check_cell_quota(namespace, operative) do
+    case cell_count(operative) do
       0 -> :ok
-      requested -> check_quota(namespace, :max_entities_per_operative, requested)
+      requested -> check_quota(namespace, :max_cells_per_operative, requested)
     end
   end
 
@@ -161,8 +161,8 @@ defmodule Flezha.Service.OperativeManager.Admission do
 
   def validate_factory(_namespace, _factory_id), do: :ok
 
-  def entity_count(operative) do
-    case Map.get(operative, :entities) do
+  def cell_count(operative) do
+    case Map.get(operative, :cells) do
       ps when is_list(ps) -> length(ps)
       n when is_integer(n) -> n
       _ -> 0

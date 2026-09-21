@@ -1,10 +1,10 @@
-//! `MigrationSerialization` — produces the per-Procedure / per-Entity
+//! `MigrationSerialization` — produces the per-Tasklet / per-Cell
 //! state blob per `operative-mvp-rust/design.md` Decision 10, then removes
 //! the StreamOperative instance from the local registry (the controller is migrating
 //! it elsewhere).
 
 use super::{CommandAction, Reply};
-use crate::command::entity_state::serialize_operative_state;
+use crate::command::cell_state::serialize_operative_state;
 use crate::pb::MigrationSerialization;
 use crate::runner::RunnerNode;
 

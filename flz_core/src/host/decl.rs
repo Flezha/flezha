@@ -57,14 +57,14 @@ pub enum HostLink {
         #[serde(default)]
         name: Option<String>,
     },
-    /// Closes the chain onto a consumer edge into a procedure index.
+    /// Closes the chain onto a consumer edge into a tasklet index.
     Into {
-        procedure: u32,
+        tasklet: u32,
     },
     /// Closes the chain as one source of a merge; `group` ties the sources of
     /// one merge together across the channels they are declared on.
     Merge {
-        procedure: u32,
+        tasklet: u32,
         group: u32,
     },
     /// The `branch(...)` sugar's declared arity.
@@ -77,7 +77,7 @@ pub enum HostLink {
 #[serde(rename_all = "snake_case")]
 pub enum HostChannelKind {
     Entry,
-    InterProc,
+    InterTask,
     Plugin,
 }
 
@@ -102,37 +102,37 @@ fn default_mailbox_capacity() -> usize {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HostProcedureDecl {
+pub struct HostTaskletDecl {
     pub name: String,
     #[serde(default)]
-    pub entity_mode: HostEntityModeDecl,
+    pub cell_mode: HostCellModeDecl,
     #[serde(default)]
-    pub entity_keys: Vec<String>,
+    pub cell_keys: Vec<String>,
     #[serde(default)]
     pub idle_ttl_ms: Option<u64>,
     #[serde(default)]
-    pub max_entities: Option<usize>,
-    /// The host overrides entities-for: entry payloads cross the prepare
+    pub max_cells: Option<usize>,
+    /// The host overrides cells-for: entry payloads cross the prepare
     /// crossing so it can answer which keys an input fans out to.
     #[serde(default)]
-    pub entities_for_overridden: bool,
-    /// The host declares a `compensate` hook on this procedure.
+    pub cells_for_overridden: bool,
+    /// The host declares a `compensate` hook on this tasklet.
     #[serde(default)]
     pub compensate_overridden: bool,
     #[serde(default = "default_clock")]
     pub clock: HostClock,
     #[serde(default = "default_mailbox_capacity")]
     pub mailbox_capacity: usize,
-    /// This procedure's Change type is the empty one: it journals nothing, so
+    /// This tasklet's Change type is the empty one: it journals nothing, so
     /// a logical clock over it never advances. An erased host with no
-    /// per-procedure change type writes the class's own `!persistent`.
+    /// per-tasklet change type writes the class's own `!persistent`.
     #[serde(default)]
     pub change_is_nochange: bool,
-    /// Stamped into every durable record this procedure writes; per
-    /// procedure, never class-wide.
+    /// Stamped into every durable record this tasklet writes; per
+    /// tasklet, never class-wide.
     #[serde(default = "default_decl_schema_version")]
     pub schema_version: u32,
-    /// The oldest `schema_version` this procedure still reads; defaults to
+    /// The oldest `schema_version` this tasklet still reads; defaults to
     /// its own.
     #[serde(default)]
     pub min_readable_schema_version: Option<u32>,
@@ -140,7 +140,7 @@ pub struct HostProcedureDecl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HostEntityModeDecl {
+pub enum HostCellModeDecl {
     #[default]
     Single,
     Static,
@@ -157,7 +157,7 @@ fn default_clock() -> HostClock {
 #[serde(deny_unknown_fields)]
 pub struct HostClassDecl {
     pub factory_id: String,
-    /// Change bytes in completions reach the per-Entity WAL.
+    /// Change bytes in completions reach the per-Cell WAL.
     #[serde(default)]
     pub persistent: bool,
     /// The language byte ([`crate::header`]); mandatory, since an untagged
@@ -194,9 +194,9 @@ pub struct HostClassDecl {
     #[serde(default)]
     pub sync_durability: bool,
     pub channels: Vec<HostChannelDecl>,
-    pub procedures: Vec<HostProcedureDecl>,
+    pub tasklets: Vec<HostTaskletDecl>,
     /// Present for a workflow class: its loop, rollback and ladder facts
-    /// over the procedures declared above.
+    /// over the tasklets declared above.
     #[serde(default)]
     pub workflow: Option<HostWorkflowDecl>,
 }
@@ -208,7 +208,7 @@ pub struct HostWorkflowDecl {
     pub loop_mode: HostLoopMode,
     #[serde(default)]
     pub rollback_mode: HostRollbackMode,
-    /// Attempts of the per-entity ladder; 0 is fail-fast.
+    /// Attempts of the per-cell ladder; 0 is fail-fast.
     #[serde(default = "default_workflow_retry_attempts")]
     pub retry_attempts: u32,
     #[serde(default = "workflow_backoff_ms")]

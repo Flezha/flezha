@@ -134,7 +134,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       hex = Enum.find_value(rows("frame"), fn [n, hex | _] -> n == "one_record" && hex end)
 
       assert {:error, reason} =
-               SdkRecord.fold(__MODULE__.NoProc, nil, <<>>, <<>>, bytes(hex), 0)
+               SdkRecord.fold(__MODULE__.NoTask, nil, <<>>, <<>>, bytes(hex), 0)
 
       assert reason =~ "sdk_lang mismatch"
       assert reason =~ "written by rust (1)"
@@ -149,7 +149,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       log =
         capture_log(fn ->
           assert {:error, reason} =
-                   SdkRecord.fold(__MODULE__.NoProc, nil, <<>>, <<>>, bytes(hex), 0)
+                   SdkRecord.fold(__MODULE__.NoTask, nil, <<>>, <<>>, bytes(hex), 0)
 
           assert reason =~ "durable record refused (crc_mismatch)"
           refute reason =~ "sdk_lang"
@@ -226,7 +226,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
 
           "from_future" ->
             assert {:error, reason} = result
-            assert reason =~ "is above the running procedure's #{running}"
+            assert reason =~ "is above the running tasklet's #{running}"
 
           "too_old:" <> named ->
             assert {:error, reason} = result
@@ -254,7 +254,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
     end
   end
 
-  defmodule NoProc do
+  defmodule NoTask do
     @moduledoc false
     def init_state(_key), do: %{}
     def apply_change(state, _change), do: state

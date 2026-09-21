@@ -20,30 +20,30 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
   test "put, get and delete round-trip opaque bytes", %{opts: opts} do
     blob = :crypto.strong_rand_bytes(64 * 1024)
 
-    assert :ok = LocalPath.put("blob/e/cls/proc/k/r-0-0-9", blob, opts)
-    assert {:ok, ^blob} = LocalPath.get("blob/e/cls/proc/k/r-0-0-9", opts)
+    assert :ok = LocalPath.put("blob/e/cls/task/k/r-0-0-9", blob, opts)
+    assert {:ok, ^blob} = LocalPath.get("blob/e/cls/task/k/r-0-0-9", opts)
 
-    assert :ok = LocalPath.delete("blob/e/cls/proc/k/r-0-0-9", opts)
-    assert {:error, :not_found} = LocalPath.get("blob/e/cls/proc/k/r-0-0-9", opts)
-    assert :ok = LocalPath.delete("blob/e/cls/proc/k/r-0-0-9", opts), "delete is idempotent"
+    assert :ok = LocalPath.delete("blob/e/cls/task/k/r-0-0-9", opts)
+    assert {:error, :not_found} = LocalPath.get("blob/e/cls/task/k/r-0-0-9", opts)
+    assert :ok = LocalPath.delete("blob/e/cls/task/k/r-0-0-9", opts), "delete is idempotent"
   end
 
   test "list is prefix-scoped, ages entries, and hides claim sidecars", %{opts: opts} do
-    assert :ok = LocalPath.put("manifest/e/cls/proc/_key", "a", opts)
-    assert :ok = LocalPath.put("manifest/e/other/proc/k", "b", opts)
-    assert :ok = LocalPath.put_if("manifest/e/cls/proc/_key", "a2", {:extend, 1}, opts)
+    assert :ok = LocalPath.put("manifest/e/cls/task/_key", "a", opts)
+    assert :ok = LocalPath.put("manifest/e/other/task/k", "b", opts)
+    assert :ok = LocalPath.put_if("manifest/e/cls/task/_key", "a2", {:extend, 1}, opts)
 
-    assert {:ok, [{"manifest/e/cls/proc/_key", age}]} = LocalPath.list("manifest/e/cls/", opts)
+    assert {:ok, [{"manifest/e/cls/task/_key", age}]} = LocalPath.list("manifest/e/cls/", opts)
     assert is_integer(age) and age >= 0
 
     {:ok, all} = LocalPath.list("", opts)
 
     assert Enum.sort(Enum.map(all, &elem(&1, 0))) ==
-             ["manifest/e/cls/proc/_key", "manifest/e/other/proc/k"]
+             ["manifest/e/cls/task/_key", "manifest/e/other/task/k"]
   end
 
   test "put_if extends an owned lineage and refuses a bid that is not ahead", %{opts: opts} do
-    key = "manifest/e/cls/proc/k"
+    key = "manifest/e/cls/task/k"
 
     assert :ok = LocalPath.put_if(key, "claim-1", {:claim, 1}, opts)
     assert :ok = LocalPath.put_if(key, "claim-1-again", {:extend, 1}, opts)
@@ -57,7 +57,7 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
   end
 
   test "an unconditional put preserves the stored claim", %{opts: opts} do
-    key = "manifest/e/cls/proc/k"
+    key = "manifest/e/cls/task/k"
 
     assert :ok = LocalPath.put_if(key, "claimed", {:claim, 3}, opts)
     assert :ok = LocalPath.put(key, "overwritten", opts)

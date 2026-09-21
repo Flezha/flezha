@@ -10,17 +10,17 @@ use std::sync::Arc;
 
 use super::activation::{refuse_completion, settle_item};
 use super::HostPayload;
-use crate::entity::{EntityItem, EntityPayload, EntitySlot};
+use crate::cell::{CellItem, CellPayload, CellSlot};
 use crate::poll_core::ItemAttempt;
 use crate::schema;
 use crate::test_support::{host_class, saturate, spin_until, stream_pair};
 
 /// Fill one consumer's single mailbox slot and claim its round, so nothing
 /// drains it until the test says so.
-fn saturate_slot(slot: &Arc<EntitySlot>) {
+fn saturate_slot(slot: &Arc<CellSlot>) {
     saturate(
         &slot.mailbox,
-        EntityItem::Input(EntityPayload {
+        CellItem::Input(CellPayload {
             value: Arc::new(0usize) as Arc<dyn Any + Send + Sync>,
             stream: stream_pair().0,
             consumed_offset: None,
@@ -34,7 +34,7 @@ fn saturate_slot(slot: &Arc<EntitySlot>) {
 /// each consumer in `consumers`.
 fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::ItemEffect) {
     let work = ItemAttempt {
-        item: EntityItem::Input(EntityPayload {
+        item: CellItem::Input(CellPayload {
             value: Arc::new(HostPayload {
                 bytes: b"input".to_vec(),
                 channel: 0,
@@ -77,20 +77,20 @@ fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::Item
     (work, effect)
 }
 
-/// Records this Entity has actually SHIPPED. `drain_to_frames` fetch-adds
-/// the per-Entity seq once per drained record, so the counter advancing is
+/// Records this Cell has actually SHIPPED. `drain_to_frames` fetch-adds
+/// the per-Cell seq once per drained record, so the counter advancing is
 /// exactly "a record left for the controller" — the one observable that
 /// means the same thing whichever mechanism carried the backpressure. A
 /// parked producer folds nothing; a deferring producer folds into a buffer
 /// the flusher will not drain while the push is outstanding.
-fn shipped(slot: &Arc<EntitySlot>) -> u64 {
-    crate::flusher::EntityFlusher::instance().drain_now_for_tests();
+fn shipped(slot: &Arc<CellSlot>) -> u64 {
+    crate::flusher::CellFlusher::instance().drain_now_for_tests();
     slot.change_seq.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// Pushes this consumer has refused for lack of room — its own counter, so a
 /// sibling test's blocked push cannot end the wait early.
-fn blocked_on(slot: &Arc<EntitySlot>) -> u64 {
+fn blocked_on(slot: &Arc<CellSlot>) -> u64 {
     slot.mailbox
         .counters()
         .pushes_blocked_total
@@ -99,7 +99,7 @@ fn blocked_on(slot: &Arc<EntitySlot>) -> u64 {
 
 /// One free slot on the consumer, announced exactly as a drain announces
 /// it: pop, then serve the waiter the room is owed to.
-fn free_one_slot(slot: &Arc<EntitySlot>) {
+fn free_one_slot(slot: &Arc<CellSlot>) {
     assert!(slot.mailbox.pop().is_some());
     slot.waiters.serve_one();
 }
@@ -108,8 +108,8 @@ fn free_one_slot(slot: &Arc<EntitySlot>) {
 fn no_record_carries_the_offset_until_the_edge_push_lands() {
     let id = format!("edge_order_{}", std::process::id());
     let instance = host_class::instance(&id, &["in"], &[], &[1]);
-    let producer = Arc::clone(&instance.entities[0][0]);
-    let consumer = Arc::clone(&instance.entities[1][0]);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let consumer = Arc::clone(&instance.cells[1][0]);
     saturate_slot(&consumer);
     let before = shipped(&producer);
     let blocked_before = blocked_on(&consumer);
@@ -153,8 +153,8 @@ fn no_record_carries_the_offset_until_the_edge_push_lands() {
 fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     let id = format!("edge_fanout_{}", std::process::id());
     let instance = host_class::instance(&id, &["in"], &[], &[1, 2, 3]);
-    let producer = Arc::clone(&instance.entities[0][0]);
-    let full = Arc::clone(&instance.entities[3][0]);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let full = Arc::clone(&instance.cells[3][0]);
     saturate_slot(&full);
     let before = shipped(&producer);
     let blocked_before = blocked_on(&full);
@@ -169,11 +169,11 @@ fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
         blocked_on(&full) > blocked_before || !producer.push_holdback.lock().unwrap().is_empty()
     });
     assert_eq!(
-        instance.entities[1][0].mailbox.len(),
+        instance.cells[1][0].mailbox.len(),
         1,
         "the consumers with room took theirs"
     );
-    assert_eq!(instance.entities[2][0].mailbox.len(), 1);
+    assert_eq!(instance.cells[2][0].mailbox.len(), 1);
     assert_eq!(
         shipped(&producer),
         before,

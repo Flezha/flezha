@@ -36,7 +36,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/proc/key", [])) == {:shutdown, 1}
+          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 1}
         end)
 
       # The path is logged only on the boot that WRITES the file; on every later
@@ -132,12 +132,12 @@ defmodule Flezha.AuthZ.EnforcementTest do
   end
 
   describe "destructive verbs are gated and audited (§4.2/§4.3)" do
-    test "bootstrap-pending refuses a destructive verb naming the bootstrap procedure" do
+    test "bootstrap-pending refuses a destructive verb naming the bootstrap tasklet" do
       assert AuthZ.enforcement_posture() == :bootstrap_pending
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/proc/key", [])) == {:shutdown, 1}
+          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 1}
         end)
 
       assert output =~ "flz auth bootstrap"
@@ -165,7 +165,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(fn ->
-          CliManager.state_delete("enf_test_op/proc/key", token: raw)
+          CliManager.state_delete("enf_test_op/task/key", token: raw)
         end)
 
       assert output =~ "deleted persisted state"
@@ -180,7 +180,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       assert signal.metadata.action == :"state.delete"
       assert signal.metadata.outcome == :ok
       assert signal.metadata.principal == "admin-1"
-      assert signal.metadata.entity == "enf_test_op/proc/key"
+      assert signal.metadata.cell == "enf_test_op/task/key"
     end
 
     test "a denial is audited as :authorization_denied" do

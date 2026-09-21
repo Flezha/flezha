@@ -14,7 +14,7 @@ defmodule Mix.Tasks.Bench do
 
       mix bench --num-operatives 1000 --messages-per-operative 1000
       mix bench --runtime java -n 100 -m 1000
-      mix bench --runtime rust --shape entity --pool-sizes 1,8
+      mix bench --runtime rust --shape cell --pool-sizes 1,8
 
   ## Options
 
@@ -26,14 +26,14 @@ defmodule Mix.Tasks.Bench do
       names the build command for a missing artifact.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
       regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
-      `entity` (the entity-stress shape, factory `entity_stress`, dimensions
+      `cell` (the cell-stress shape, factory `cell_stress`, dimensions
       fixed at `8 × 20_000` so the numbers stay comparable across runs, swept
       across the comma-list in
-      `--pool-sizes`), or `dynamic` (the dynamic entity-mode shape, factory
-      `dynamic_entity`, lazy per-key Entities with 8 keys/operative,
+      `--pool-sizes`), or `dynamic` (the dynamic cell-mode shape, factory
+      `dynamic_cell`, lazy per-key Cells with 8 keys/operative,
       dimensions from `-n` / `-m`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
-      only honored when `--shape entity`. Each value spawns a fresh
+      only honored when `--shape cell`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the scaling ratio is carried in the report.
     * `--warmup` / `-w` - Untimed messages per operative sent (and their
@@ -118,8 +118,8 @@ defmodule Mix.Tasks.Bench do
       :dynamic ->
         run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic, warmup)
 
-      :entity ->
-        run_entity_shape(num_operatives, messages_per_operative, pool_sizes, warmup)
+      :cell ->
+        run_cell_shape(num_operatives, messages_per_operative, pool_sizes, warmup)
     end
   end
 
@@ -137,7 +137,7 @@ defmodule Mix.Tasks.Bench do
         {"messages/operative", to_string(messages_per_operative)},
         {"warmup/operative", to_string(warmup)}
       ] ++
-        if(shape == :entity, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
+        if(shape == :cell, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
         [{"mix env", to_string(Mix.env())}]
     )
   end
@@ -145,7 +145,7 @@ defmodule Mix.Tasks.Bench do
   # ----- Single-namespace shapes: regression (default) and dynamic -----
   #
   # `:regression` is byte-identical to the historical default behaviour.
-  # `:dynamic` reuses the same harness with the `dynamic_entity`
+  # `:dynamic` reuses the same harness with the `dynamic_cell`
   # factory and keyed inputs (see `input_for_shape/3`).
 
   defp run_default_shape(runtime, num_operatives, messages_per_operative, shape, warmup) do
@@ -177,9 +177,9 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  # ----- Shape: entity (new — sweeps pool sizes, emits scaling summary) -----
+  # ----- Shape: cell (new — sweeps pool sizes, emits scaling summary) -----
 
-  defp run_entity_shape(num_operatives, messages_per_operative, pool_sizes, warmup) do
+  defp run_cell_shape(num_operatives, messages_per_operative, pool_sizes, warmup) do
     results =
       Enum.map(pool_sizes, fn pool ->
         # Always bring up a fresh bench namespace per pool size — the default
@@ -189,14 +189,14 @@ defmodule Mix.Tasks.Bench do
 
         try do
           Report.emit(%{durability: durability_backend()})
-          IO.puts("\nentity stress: worker pool = #{pool}\n")
+          IO.puts("\ncell stress: worker pool = #{pool}\n")
 
           metrics =
             run_performance_test(
               @bench_namespace,
               num_operatives,
               messages_per_operative,
-              :entity,
+              :cell,
               warmup
             )
 
@@ -206,7 +206,7 @@ defmodule Mix.Tasks.Bench do
         end
       end)
 
-    Report.finish(report_name(:entity), %{
+    Report.finish(report_name(:cell), %{
       metrics: %{
         per_pool: Map.new(results, fn {pool, m} -> {Integer.to_string(pool), m} end),
         scaling_ratio: print_scaling_summary(results)
@@ -253,11 +253,11 @@ defmodule Mix.Tasks.Bench do
 
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression
-  defp parse_shape("entity"), do: :entity
+  defp parse_shape("cell"), do: :cell
   defp parse_shape("dynamic"), do: :dynamic
 
   defp parse_shape(other) do
-    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"entity\", or \"dynamic\"."
+    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"cell\", or \"dynamic\"."
   end
 
   defp parse_pool_sizes(nil), do: [1, 8]
@@ -277,8 +277,8 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp factory_for_shape(:regression), do: "do_nothing"
-  defp factory_for_shape(:entity), do: "entity_stress"
-  defp factory_for_shape(:dynamic), do: "dynamic_entity"
+  defp factory_for_shape(:cell), do: "cell_stress"
+  defp factory_for_shape(:dynamic), do: "dynamic_cell"
 
   defp dimensions_for_shape(:regression, opts) do
     {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
@@ -288,10 +288,10 @@ defmodule Mix.Tasks.Bench do
     {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
   end
 
-  defp dimensions_for_shape(:entity, opts) do
+  defp dimensions_for_shape(:cell, opts) do
     if opts[:num_operatives] || opts[:messages_per_operative] do
       IO.warn(
-        "--shape entity ignores -n/-m; dimensions are fixed at 8 × 20_000 so the " <>
+        "--shape cell ignores -n/-m; dimensions are fixed at 8 × 20_000 so the " <>
           "numbers stay comparable across runs. Use --shape regression for " <>
           "custom dimensions."
       )
@@ -542,21 +542,21 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  # `do_nothing` echoes once per input (single procedure, single entity,
+  # `do_nothing` echoes once per input (single tasklet, single cell,
   # one plugin-bound emit), so each dispatched input produces one
-  # `:on_output` event. `entity_stress` chains four procedures × 8
-  # entities; only ProcedureD emits to a plugin, and only its `p0` entity
-  # is targeted by the pipeline routing so it runs once per ProcedureC emit.
-  # The entry procedure fans 8-wide → ProcedureA runs 8× → 8 emits to B[p0] →
+  # `:on_output` event. `cell_stress` chains four tasklets × 8
+  # cells; only TaskletD emits to a plugin, and only its `p0` cell
+  # is targeted by the pipeline routing so it runs once per TaskletC emit.
+  # The entry tasklet fans 8-wide → TaskletA runs 8× → 8 emits to B[p0] →
   # 8 emits to C[p0] → 8 emits to D[p0] → 8 plugin-bound emits per input.
   defp expected_responses(:regression, total_messages), do: total_messages
-  defp expected_responses(:entity, total_messages), do: total_messages * 8
-  # `dynamic_entity` emits once per input (one plugin-bound emit),
+  defp expected_responses(:cell, total_messages), do: total_messages * 8
+  # `dynamic_cell` emits once per input (one plugin-bound emit),
   # so each dispatched input produces one `:on_output` event.
   defp expected_responses(:dynamic, total_messages), do: total_messages
 
   # Per-shape wire input. The dynamic shape prefixes a workflow key
-  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Entities per operative
+  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Cells per operative
   # without tripping the soft cap; other shapes are key-agnostic.
   defp input_for_shape(:dynamic, operative_id, msg_num) do
     "k#{rem(msg_num, 8)}:test_msg_#{operative_id}_#{msg_num}"

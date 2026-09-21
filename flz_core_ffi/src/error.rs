@@ -54,7 +54,7 @@ mod tests {
     // nothing, because every veneer suite matches on the text alone.
     #[test]
     fn every_variant_renders_the_text_it_replaced() {
-        let declaration = "a host class declares at least one procedure";
+        let declaration = "a host class declares at least one tasklet";
         let truncated = flz_core::schema::decode_result(&[]).expect_err("no bytes");
 
         let rendered: Vec<(Error, String)> = vec![

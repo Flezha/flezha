@@ -2,7 +2,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   @moduledoc """
   One SDK Operative in isolation — no controller, no real transport. Its
   secondary is a native `LocalStream` whose controller side the calling test
-  owns, so every sink output and every record frame the Operative's Entities
+  owns, so every sink output and every record frame the Operative's Cells
   ship arrives at the test process as `{:flz_data, _id, payload_id, frame,
   metadata}`, in the order it was written. `frames/1` reads them back,
   `record/1` decodes a record frame, and the two record builders write the
@@ -21,7 +21,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   Start `op_module` as operative `op-1` (override with `:operative_id`,
   `:range`, `:runner`, `:credit`, `:hold_cap`).
 
-  `:hold_cap` bounds the reconnect holds of this Operative and of every Entity
+  `:hold_cap` bounds the reconnect holds of this Operative and of every Cell
   it starts. A test that drives shedding states it here rather than writing
   `FLEZHA_RECONNECT_RING_CAPACITY`: that variable is process-wide and read at
   every construction, so setting it decides the cap for whatever else in the
@@ -91,32 +91,32 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   end
 
   @doc "A record frame as `{seq, change, decoded_frame}`."
-  def record({"entity_state_change", frame, _meta}) do
+  def record({"cell_state_change", frame, _meta}) do
     {:ok, %{seq: seq, body: body} = decoded} = Wire.decode_frame(frame)
     {:ok, change} = Record.decode_body(body)
     {seq, change, decoded}
   end
 
-  @doc "`pid`, the Entity at `{operative_id, procedure, key}`, is evicted: its delete frame lands, then it ends."
-  def assert_evicted(pid, {operative_id, procedure, key}) do
+  @doc "`pid`, the Cell at `{operative_id, tasklet, key}`, is evicted: its delete frame lands, then it ends."
+  def assert_evicted(pid, {operative_id, tasklet, key}) do
     ref = Process.monitor(pid)
-    assert_receive {:flz_data, _, "delete_entity_state", frame, _}, 2_000
-    assert {:ok, {^operative_id, ^procedure, ^key}} = Wire.decode_entity_id(frame)
+    assert_receive {:flz_data, _, "delete_cell_state", frame, _}, 2_000
+    assert {:ok, {^operative_id, ^tasklet, ^key}} = Wire.decode_cell_id(frame)
     assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
   end
 
-  @doc "Kill the Entity of `procedure` untrappably through its `\"kill\"` input; the dead pid."
-  def kill!(op, procedure) do
-    pid = entity!(op, procedure)
+  @doc "Kill the Cell of `tasklet` untrappably through its `\"kill\"` input; the dead pid."
+  def kill!(op, tasklet) do
+    pid = cell!(op, tasklet)
     ref = Process.monitor(pid)
     Inbox.input(op, "in", "kill", %{})
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 2_000
     pid
   end
 
-  @doc "The Entity of `procedure` at `key`, which must exist."
-  def entity!(op, procedure, key \\ nil) do
-    {:ok, pid} = Operative.lookup(op, procedure, key)
+  @doc "The Cell of `tasklet` at `key`, which must exist."
+  def cell!(op, tasklet, key \\ nil) do
+    {:ok, pid} = Operative.lookup(op, tasklet, key)
     pid
   end
 
@@ -142,13 +142,13 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   end
 
   @doc "An effect record frame as `{seq, decoded_body}`; nil when the frame is not one."
-  def effect({"entity_effect_record", frame, _meta}) do
+  def effect({"cell_effect_record", frame, _meta}) do
     {:ok, %{seq: seq, header: header, body: body}} = Wire.decode_frame(frame)
     {seq, Wire.decode_effect_record(header, body)}
   end
 
   @doc "A timer-ops record frame as `{seq, ops, decoded_frame}`."
-  def timer_ops({"entity_state_change", frame, _meta}) do
+  def timer_ops({"cell_state_change", frame, _meta}) do
     {:ok, %{seq: seq, body: body} = decoded} = Wire.decode_frame(frame)
     {:ok, ops} = Wire.decode_timer_ops(body)
     {seq, ops, decoded}
@@ -156,16 +156,16 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
 
   @doc """
   What a frame *is*, with no regard to where it sits: `{:change, seq, change}`,
-  `{:timer_ops, seq, ops}`, `{:effect, seq, body}`, `{:delete, entity}` or
+  `{:timer_ops, seq, ops}`, `{:effect, seq, body}`, `{:delete, cell}` or
   `{:output, payload_id, value, metadata}`. A change record and a timer-ops record share the
-  `entity_state_change` payload id and are told apart by the header's format
+  `cell_state_change` payload id and are told apart by the header's format
   byte, so this is the only way to classify one frame on its own.
 
   Order is then a question about positions in `frames/1`'s list and identity a
   question about these terms — which is what a reader of this stream must ask
   separately, because records and outputs are written by two processes.
   """
-  def kind({"entity_state_change", frame, _meta} = f) do
+  def kind({"cell_state_change", frame, _meta} = f) do
     # Byte 9 of the 16-byte record header is the format id, as
     # `Wire.effect_record_header?/1` reads it.
     {:ok, %{header: <<_::binary-size(9), format, _::binary>>}} = Wire.decode_frame(frame)
@@ -179,19 +179,19 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
     end
   end
 
-  def kind({"entity_effect_record", _frame, _meta} = f) do
+  def kind({"cell_effect_record", _frame, _meta} = f) do
     {seq, body} = effect(f)
     {:effect, seq, body}
   end
 
-  def kind({"delete_entity_state", identity, _meta}) do
-    {:ok, entity} = Wire.decode_entity_id(identity)
-    {:delete, entity}
+  def kind({"delete_cell_state", identity, _meta}) do
+    {:ok, cell} = Wire.decode_cell_id(identity)
+    {:delete, cell}
   end
 
   # Everything else on this stream is a plugin output, whose payload id is the
   # operative's. The other record payload ids are named so one arriving where a
   # test does not expect it raises here instead of passing as an output.
-  def kind({payload_id, value, meta}) when payload_id != "entity_state_snapshot",
+  def kind({payload_id, value, meta}) when payload_id != "cell_state_snapshot",
     do: {:output, payload_id, value, meta}
 end

@@ -5,12 +5,12 @@
 
 use crate::util::{read_u32_be, read_u64_be};
 
-/// Snapshot + change-log bytes handed to `Procedure::init_state` on a warm
+/// Snapshot + change-log bytes handed to `Tasklet::init_state` on a warm
 /// restore, borrowed from the frame.
 pub struct RestoreInitPayload<'a> {
     /// The snapshot's stored header; empty exactly when `snapshot_bytes` is.
     pub snapshot_header: &'a [u8],
-    /// The raw state body the SDK shipped as `entity_state_snapshot`.
+    /// The raw state body the SDK shipped as `cell_state_snapshot`.
     pub snapshot_bytes: &'a [u8],
     /// Concatenated WAL records in the controller's on-disk framing.
     pub change_log_bytes: &'a [u8],
@@ -79,7 +79,7 @@ fn fold_record(
     hasher.update(record.change_bytes);
     if hasher.finalize() != record.trailing_crc {
         return Err(RestoreError::CrcMismatch {
-            entity: 0,
+            cell: 0,
             seq: record.seq,
         });
     }
@@ -317,7 +317,7 @@ mod tests {
         let err = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap_err();
 
         match err {
-            RestoreError::CrcMismatch { entity, seq } => assert_eq!((entity, seq), (0, 7)),
+            RestoreError::CrcMismatch { cell, seq } => assert_eq!((cell, seq), (0, 7)),
             other => panic!("expected a crc mismatch, got {other:?}"),
         }
         assert!(sink.changes.is_empty());

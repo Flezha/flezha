@@ -1,5 +1,5 @@
 //! The erased host surface: what a non-Rust SDK declares and drives through
-//! the C ABI. A host class is a topology declared as data; its entities carry
+//! the C ABI. A host class is a topology declared as data; its cells carry
 //! a [`BytesBuffer`] and a dispatcher that answers only metadata. The
 //! invariant: no host code runs in-process — the host polls
 //! [`crate::poll_core::PollCore`], runs its own user code, and completes
@@ -8,10 +8,10 @@
 
 mod activation;
 mod build;
+mod cell;
 mod chains;
 mod commands;
 mod decl;
-mod entity;
 mod issue;
 mod prepare;
 mod register;
@@ -27,15 +27,15 @@ mod decl_tests;
 #[cfg(feature = "bench-internals")]
 pub(crate) use activation::empty_effect;
 pub use activation::{abandon_activation, apply_result, to_schema};
+pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
     apply_state_locked, restore_fold_exclusive, snapshot_frame_crossing, state_json_locked,
 };
 pub use decl::{
-    HostAckGranularity, HostBeyondWindow, HostChannelDecl, HostChannelKind, HostCheckpointOutputs,
-    HostClassDecl, HostClock, HostEntityModeDecl, HostLink, HostLoopMode, HostOverflow,
-    HostProcedureDecl, HostRollbackMode, HostWorkflowDecl,
+    HostAckGranularity, HostBeyondWindow, HostCellModeDecl, HostChannelDecl, HostChannelKind,
+    HostCheckpointOutputs, HostClassDecl, HostClock, HostLink, HostLoopMode, HostOverflow,
+    HostRollbackMode, HostTaskletDecl, HostWorkflowDecl,
 };
-pub use entity::{entity_ref_of, BytesBuffer, HostPayload, HostProcedureFacts};
 pub use issue::{render_issues, TopologyIssue};
 pub use prepare::{
     deferred_end_replay_slice, maybe_stage_prepare, prepare_wants, HostPrepareState,

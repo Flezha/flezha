@@ -138,7 +138,7 @@ defmodule Flezha.Convergence.Probe.Judge do
   defp wedge_threshold(layer) do
     case StallClassifier.layer_scope(layer) do
       :fabric -> :driver_freeze_ms
-      :operative -> :entity_stall_ms
+      :operative -> :cell_stall_ms
       _ -> :stall_ms
     end
   end

@@ -13,27 +13,27 @@ use.
 
 #### Scenario: Host owns worker count
 - **WHEN** a host runs 1 poll worker and then 8 poll workers against the same core and workload
-- **THEN** the core SHALL function correctly in both configurations, and distinct entities' activations MAY be processed concurrently when multiple workers poll
+- **THEN** the core SHALL function correctly in both configurations, and distinct cells' activations MAY be processed concurrently when multiple workers poll
 
 #### Scenario: No host callback registration exists
 - **WHEN** the core's public API surface is enumerated
 - **THEN** it SHALL contain no function that accepts a host function pointer or closure for later invocation on a core-owned thread (the log callback on the FFI layer excepted)
 
-### Requirement: Per-entity exclusivity by handout
+### Requirement: Per-cell exclusivity by handout
 
 The core SHALL NOT hand out two activations for the same `(operative_instance,
-procedure, entity_key)` concurrently: an entity with an outstanding (polled,
+tasklet, cell_key)` concurrently: a cell with an outstanding (polled,
 uncompleted) activation SHALL NOT appear in any other poll result until its completion
 arrives. This restates the existing single-active-drainer invariant at the boundary.
 
-Because the handout is what gates the entity, every polled activation SHALL be
+Because the handout is what gates the cell, every polled activation SHALL be
 answered exactly once, by one of three calls: **complete**, **fail** (the
 retry-ladder path), or **abandon** — a new call that re-hands the activation's
-untouched items and releases the entity. A host SHALL make the answer
+untouched items and releases the cell. A host SHALL make the answer
 structural, so that an unwind, an exception, or an early return cannot skip it;
 discipline at each return site is not sufficient. Abandon SHALL re-hand only
 items the host has not processed, SHALL NOT count against the retry ladder, and
-SHALL leave the entity exactly as if it had never been polled.
+SHALL leave the cell exactly as if it had never been polled.
 
 The core SHALL NOT reclaim an outstanding activation on a timer or deadline. A
 long-running activation and a lost handout are indistinguishable at the
@@ -42,25 +42,25 @@ effectively-once tier promises once. Recovery from a handout a host lost despite
 the above is the controller's operative rebind, which resumes from durable
 state.
 
-#### Scenario: Same entity never outstanding twice
-- **WHEN** two host workers poll concurrently while 100 inputs for one entity and 100 for another are queued
-- **THEN** at no point SHALL both workers hold activations for the same entity, and each entity's inputs SHALL be delivered in enqueue order across its successive activations
+#### Scenario: Same cell never outstanding twice
+- **WHEN** two host workers poll concurrently while 100 inputs for one cell and 100 for another are queued
+- **THEN** at no point SHALL both workers hold activations for the same cell, and each cell's inputs SHALL be delivered in enqueue order across its successive activations
 
-#### Scenario: Completion releases the entity
-- **WHEN** an activation for entity E is completed and E has further queued inputs
+#### Scenario: Completion releases the cell
+- **WHEN** an activation for cell E is completed and E has further queued inputs
 - **THEN** a subsequent poll SHALL be able to return E's next activation
 
-#### Scenario: An unwound dispatch abandons rather than retiring the entity
-- **WHEN** a host worker holding an activation for entity E unwinds (panic, exception, or early return) without completing it
+#### Scenario: An unwound dispatch abandons rather than retiring the cell
+- **WHEN** a host worker holding an activation for cell E unwinds (panic, exception, or early return) without completing it
 - **THEN** the activation SHALL be abandoned, E's items SHALL be re-handed untouched, a subsequent poll SHALL be able to return E's next activation, and no retry-ladder attempt SHALL have been consumed
 
 #### Scenario: A slow activation is never reclaimed
 - **WHEN** an activation stays outstanding for longer than any configured interval because user code is still running
-- **THEN** the core SHALL NOT re-hand it, SHALL NOT hand the entity to another worker, and the activation SHALL complete normally whenever user code returns
+- **THEN** the core SHALL NOT re-hand it, SHALL NOT hand the cell to another worker, and the activation SHALL complete normally whenever user code returns
 
-### Requirement: Activation is a per-entity batch
+### Requirement: Activation is a per-cell batch
 
-An Activation SHALL target exactly one entity and carry a batch of one or more items,
+An Activation SHALL target exactly one cell and carry a batch of one or more items,
 each being an input (payload bytes, metadata, `consumed_offset`, replay flag) or a
 timer firing (kind, scheduled timestamp). Each item SHALL carry the core-evaluated
 `now` for the declared clock; the host SHALL NOT substitute ambient time for
@@ -68,7 +68,7 @@ timer firing (kind, scheduled timestamp). Each item SHALL carry the core-evaluat
 before inclusion (a stale entry fires nothing).
 
 #### Scenario: Batch amortizes the boundary
-- **WHEN** 50 inputs for one entity are queued before any worker polls
+- **WHEN** 50 inputs for one cell are queued before any worker polls
 - **THEN** the core MAY return them as one activation batch, and the host SHALL process them in order within the batch
 
 #### Scenario: fired_at is the scheduled timestamp
@@ -90,18 +90,18 @@ immediately; exhausted retries park; a park closes the checkpoint interval).
 
 #### Scenario: Retryable re-delivers with backoff
 - **WHEN** a completion reports `retryable_error` and the channel's retry budget is not exhausted
-- **THEN** the core SHALL re-hand the item in a later activation for that entity after the existing backoff ladder, and the retry counter SHALL ride the existing telemetry
+- **THEN** the core SHALL re-hand the item in a later activation for that cell after the existing backoff ladder, and the retry counter SHALL ride the existing telemetry
 
 ### Requirement: Host-participating commands are activation kinds
 
 The five control interactions requiring host participation SHALL be expressed as
 activation kinds — `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
-`MigrationSerialize` — subject to the same per-entity exclusivity. All other control
+`MigrationSerialize` — subject to the same per-cell exclusivity. All other control
 commands SHALL be handled entirely inside the core and SHALL NOT surface to the host.
 
 #### Scenario: Restore is a fold handed to the host
-- **WHEN** the controller ships `RestoreInitState` for an entity with a persisted change log
-- **THEN** the host SHALL receive a `RestoreFold` activation carrying the records, and input activations for that entity SHALL NOT be handed out before its fold completes
+- **WHEN** the controller ships `RestoreInitState` for a cell with a persisted change log
+- **THEN** the host SHALL receive a `RestoreFold` activation carrying the records, and input activations for that cell SHALL NOT be handed out before its fold completes
 
 #### Scenario: Snapshot request preserves compaction semantics
 - **WHEN** a `SnapshotRequest` activation completes with encoded state bytes
@@ -141,45 +141,45 @@ an edge output's consumer field on this path.
 
 #### Scenario: Replay re-keys identically
 - **WHEN** a journaled slice is re-forwarded by the controller through a keyed edge
-- **THEN** the host applies the same transform chain and key function at the same seam, and each value SHALL route to the same entity as the live run
+- **THEN** the host applies the same transform chain and key function at the same seam, and each value SHALL route to the same cell as the live run
 
 #### Scenario: Entry input into a keyed edge
 - **WHEN** an entry-channel input arrives for a consumer reached only via a keyed edge
-- **THEN** the core SHALL obtain the key via a `KeyRequest` activation before enqueueing to any entity mailbox, and no keyless drop path SHALL exist
+- **THEN** the core SHALL obtain the key via a `KeyRequest` activation before enqueueing to any cell mailbox, and no keyless drop path SHALL exist
 
 #### Scenario: A workflow stage emits once per released value
-- **WHEN** a host workflow procedure emits one value on a producing channel that declares two consumers
+- **WHEN** a host workflow tasklet emits one value on a producing channel that declares two consumers
 - **THEN** the completion SHALL carry exactly one edge output for that value, and the stage's released batch SHALL hold one value — not one per consumer — so the journaled handoff, every downstream node's input batch and every downstream plugin output SHALL be identical to the single-consumer case
 
-#### Scenario: A stream inter-procedure transform applies exactly once
-- **WHEN** a `map` declared on an inter-procedure edge between two stream procedures carries a value from the producing activation to the consuming one
-- **THEN** the consuming procedure SHALL receive the value with the map applied exactly once, and no host SHALL compose the chain with itself at delivery
+#### Scenario: A stream inter-tasklet transform applies exactly once
+- **WHEN** a `map` declared on an inter-tasklet edge between two stream tasklets carries a value from the producing activation to the consuming one
+- **THEN** the consuming tasklet SHALL receive the value with the map applied exactly once, and no host SHALL compose the chain with itself at delivery
 
 ### Requirement: Host classes reach full capability
 
 The host layer (`flz_core::host`) SHALL support, for byte-level host
 classes, everything the typed Rust host can declare: single, static, and
-dynamic entity modes (dynamic with idle-TTL eviction and the workflow
+dynamic cell modes (dynamic with idle-TTL eviction and the workflow
 evicted-keys trace), the effectively-once tier and checkpoint
 ack-granularity (completions carrying `consumed_offset` / `checkpoint`
 drive the same effect-record and interval semantics), late-input
 correction (window declaration, admission classification, slice replay),
-per-entity timers of both kinds, and inter-procedure edges whose values
+per-cell timers of both kinds, and inter-tasklet edges whose values
 cross as bytes routed on `(edge, key)`. Class declarations SHALL carry
 these facts and the core SHALL populate `AddOperative` response metadata
 from them exactly as the typed path does.
 
-#### Scenario: A dynamic host class routes by key and evicts idle entities
-- **WHEN** a host class declares a dynamic procedure with an idle TTL and inputs for keys `a` and `b` arrive
-- **THEN** the core SHALL create the entities lazily via the prepare crossing's keys, hand out per-entity activations exclusively, and after the TTL SHALL evict destructively, recording the key in the eviction trace
+#### Scenario: A dynamic host class routes by key and evicts idle cells
+- **WHEN** a host class declares a dynamic tasklet with an idle TTL and inputs for keys `a` and `b` arrive
+- **THEN** the core SHALL create the cells lazily via the prepare crossing's keys, hand out per-cell activations exclusively, and after the TTL SHALL evict destructively, recording the key in the eviction trace
 
 #### Scenario: An effectively-once host class holds its watermark to checkpoints
 - **WHEN** a checkpoint-ack host class completes three inputs without `checkpoint` and a fourth with it
 - **THEN** the shipped effect record SHALL carry the accumulated changes with the fourth input's offset, and a crash before it SHALL replay all four inputs
 
-#### Scenario: Inter-procedure values cross as bytes
-- **WHEN** a host procedure's completion carries an output targeting a consumer edge with a key
-- **THEN** the core SHALL enqueue the bytes to the consumer entity selected by `(edge, key)` and the consumer's next activation SHALL carry them as an input item, with no host closure evaluated in routing
+#### Scenario: Inter-tasklet values cross as bytes
+- **WHEN** a host tasklet's completion carries an output targeting a consumer edge with a key
+- **THEN** the core SHALL enqueue the bytes to the consumer cell selected by `(edge, key)` and the consumer's next activation SHALL carry them as an input item, with no host closure evaluated in routing
 
 ### Requirement: The prepare crossing serves keys and event times
 
@@ -203,26 +203,26 @@ core-side; a prepare failure enters the input channel's retry→park ladder.
 
 Workflow classes of BOTH language paths SHALL be driven by the core's workflow
 driver with stage execution handed out as activations through the poll seam:
-the driver accumulates a stage's per-entity batch, submits one step activation
-per entity partition, and its barriers await step completions AND controller
+the driver accumulates a stage's per-cell batch, submits one step activation
+per cell partition, and its barriers await step completions AND controller
 acks in the same order the driver scenarios pin per loop mode
 (`Once | PerInput | Chained`). No core-owned thread SHALL execute user code
 and no core thread SHALL block awaiting a host completion — the driver's
 count-based barrier is the only wait, and the work-stealing pool SHALL NOT
 exist. Saga compensation crosses as a dedicated activation flavor carrying the
-recorded outputs; the proc-journal, staged outbox, durable loop, suspension,
-entity-retry, and rewind semantics are unchanged. Every workflow class
-declares procedures, so every workflow host class runs through step
-activations; a step completion MAY carry a procedure's completion request,
+recorded outputs; the task-journal, staged outbox, durable loop, suspension,
+cell-retry, and rewind semantics are unchanged. Every workflow class
+declares tasklets, so every workflow host class runs through step
+activations; a step completion MAY carry a tasklet's completion request,
 which the driver folds at the iteration barrier.
 
 #### Scenario: A host step completion ends its workflow
-- **WHEN** a workflow host class's procedure answers its step activation with a completion request and a result
+- **WHEN** a workflow host class's tasklet answers its step activation with a completion request and a result
 - **THEN** the driver SHALL commit the iteration and drive the same `WorkflowCompleted` teardown the typed path produces, carrying that result
 
 #### Scenario: A structured chain's barrier waits for the host and the ack
 - **WHEN** a durable structured workflow class finishes a stage's activations
-- **THEN** the driver SHALL commit the proc boundary only after every entity's completion arrived AND the controller acked `ProcCommit`, and a crash-resume SHALL skip journaled procs exactly as the driver suites pin
+- **THEN** the driver SHALL commit the task boundary only after every cell's completion arrived AND the controller acked `TaskCommit`, and a crash-resume SHALL skip journaled tasks exactly as the driver suites pin
 
 #### Scenario: A Java workflow step costs one thread, not two
 - **WHEN** a Java workflow class runs a stage step
@@ -232,38 +232,38 @@ which the driver folds at the iteration barrier.
 
 #### Scenario: Typed Rust steps run on the SDK's poll workers
 - **WHEN** a typed Rust workflow class runs a parallel stage
-- **THEN** its per-entity step activations SHALL be picked up and executed by
-  the same worker threads that serve stream activations, sibling entities
+- **THEN** its per-cell step activations SHALL be picked up and executed by
+  the same worker threads that serve stream activations, sibling cells
   MAY genuinely interleave, and a step that panics SHALL report failure
   through the barrier without killing the worker that ran it
 
 ### Requirement: Deferred wakes never hold a thread
 
-The core SHALL maintain one deferred-wake list — "this entity becomes eligible
+The core SHALL maintain one deferred-wake list — "this cell becomes eligible
 at time T" — serviced by threads already waiting in `poll` and checked on every
 `poll` entry. Recording a deferred wake SHALL return the calling thread
 immediately. A retryable failure's backoff SHALL be expressed as a deferred
-wake: the failed head and unprocessed tail ride the existing per-entity
-holdback, the entity's exclusivity gates stay held across the window exactly as
+wake: the failed head and unprocessed tail ride the existing per-cell
+holdback, the cell's exclusivity gates stay held across the window exactly as
 they are across an in-line backoff, and the release-then-reclaim runs when the
 entry comes due. No thread SHALL sleep out a backoff delay, and no dedicated
 thread SHALL exist to service the list.
 
 #### Scenario: Correlated failure does not stall the runner
 
-- **WHEN** every entity's activation is failing retryably (a shared dependency
+- **WHEN** every cell's activation is failing retryably (a shared dependency
   is down) on a runner whose worker count equals the CPU count
 - **THEN** workers SHALL remain available to poll and run activations for
-  entities whose work would succeed, and each failing entity SHALL be re-handed
+  cells whose work would succeed, and each failing cell SHALL be re-handed
   no earlier than its backoff due time
 
 #### Scenario: Backoff preserves ordering and the holdback contract
 
-- **WHEN** a retryable failure defers an entity with a failed head and an
+- **WHEN** a retryable failure defers a cell with a failed head and an
   unprocessed tail
-- **THEN** the next activation for that entity SHALL begin with the held-back
+- **THEN** the next activation for that cell SHALL begin with the held-back
   items in their original order, ahead of anything that arrived during the
-  backoff window, and no other thread SHALL drain that entity before the due
+  backoff window, and no other thread SHALL drain that cell before the due
   time
 
 #### Scenario: Shutdown is not delayed by backoff
@@ -276,7 +276,7 @@ thread SHALL exist to service the list.
 
 The core SHALL own one process-wide limit on concurrently outstanding work
 activations (default 1024, env `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), enforced at
-work handout: when the limit is reached, `poll` SHALL NOT hand out entity work,
+work handout: when the limit is reached, `poll` SHALL NOT hand out cell work,
 and a completion that drops the count below the limit SHALL resume handout.
 The limit SHALL NOT gate direct command activations (restore folds, snapshot
 requests, workflow step crossings — these are barrier-bounded by their drivers)
@@ -287,7 +287,7 @@ The core SHALL expose starvation — runnable work exists, no thread is inside
 park in, answering in the same three-way shape as `poll` (observed / timeout /
 shutting down). No host-callback registration SHALL be introduced.
 
-Starvation SHALL mean stuck, not busy: queued entity work SHALL count only
+Starvation SHALL mean stuck, not busy: queued cell work SHALL count only
 once it has waited a dwell interval during which no thread entered `poll` at
 all, so that a saturated runner — which re-enters `poll` once per batch —
 never reads as starved. A due deferred wake SHALL count immediately, since
@@ -296,7 +296,7 @@ every `poll` pass promotes what has come due.
 #### Scenario: Handout stops at the cap and resumes on completion
 
 - **WHEN** the outstanding work count reaches the configured limit while more
-  entity work is queued
+  cell work is queued
 - **THEN** polling threads SHALL block as if no work were ready, and a single
   completion SHALL allow the next poll to return an activation
 
@@ -305,11 +305,11 @@ every `poll` pass promotes what has come due.
 - **WHEN** the outstanding work count is at the limit and a direct command
   activation (e.g., a restore fold) is enqueued
 - **THEN** the next poll SHALL return the command activation ahead of any
-  entity work
+  cell work
 
 #### Scenario: Starvation wakes a parked supervisor
 
-- **WHEN** entity work is queued while every poller is inside user code (none
+- **WHEN** cell work is queued while every poller is inside user code (none
   waiting in `poll`) and the limit is not reached
 - **THEN** a host thread parked in the starvation wait SHALL be woken
 
@@ -362,9 +362,9 @@ frame, no new payload id, and no new sensor process.
 The counters are reporting only: nothing in the SDK SHALL change behaviour based
 on them.
 
-#### Scenario: A stalled entity is visible while the runner looks healthy
+#### Scenario: A stalled cell is visible while the runner looks healthy
 - **GIVEN** a runner whose overall dispatch counter is still advancing
-- **WHEN** one entity's activation has been outstanding far longer than any other
+- **WHEN** one cell's activation has been outstanding far longer than any other
 - **THEN** the heartbeat SHALL report a non-zero outstanding count and an oldest-age reflecting that activation
 
 #### Scenario: An idle runner reports zero
@@ -381,12 +381,12 @@ When servicing the deferred-wake list, the core SHALL NOT hold a thread waiting 
 
 A re-recorded wake SHALL be re-recorded at a strictly later due time than the pass that observed it, so servicing does not spin, and the existing nearest-due wait shortening SHALL govern the retry cadence.
 
-A timer firing that is deferred this way SHALL NOT be dropped, and the ordering between a deferred firing and a later input for the same entity SHALL be no weaker than it is when both race for mailbox room today.
+A timer firing that is deferred this way SHALL NOT be dropped, and the ordering between a deferred firing and a later input for the same cell SHALL be no weaker than it is when both race for mailbox room today.
 
 #### Scenario: A due timer into a full mailbox does not wedge a single-poller host
 
-- **WHEN** a host runs exactly one poll thread, installs no inline-serve hook, and a processing-time timer comes due for an entity whose mailbox is full
-- **THEN** the poller SHALL return from the pass without parking, the entity's queued round SHALL be served, and the firing SHALL land on a later pass
+- **WHEN** a host runs exactly one poll thread, installs no inline-serve hook, and a processing-time timer comes due for a cell whose mailbox is full
+- **THEN** the poller SHALL return from the pass without parking, the cell's queued round SHALL be served, and the firing SHALL land on a later pass
 
 #### Scenario: The undeliverable wake is visible as starvation
 
@@ -418,25 +418,25 @@ producer**, never by holding the producer's caller.
 
 The one park that remains is the transport reader's on the entry path. It is
 permitted because the reader is a core-owned thread that no host language
-observes, it has no producing entity to withhold work from, and its stalling is
+observes, it has no producing cell to withhold work from, and its stalling is
 what carries ingress backpressure to the controller.
 
 #### Scenario: A single-threaded host completes an activation that cannot deliver
 
 - **WHEN** a host with exactly one thread completes an activation whose
-  inter-procedure output cannot be admitted to a full consumer mailbox
+  inter-tasklet output cannot be admitted to a full consumer mailbox
 - **THEN** the completion call SHALL return without waiting, and that thread
   SHALL be free to poll again
 
-### Requirement: An undeliverable inter-procedure output defers and gates its producer
+### Requirement: An undeliverable inter-tasklet output defers and gates its producer
 
-An inter-procedure output that cannot be admitted SHALL be appended to the
-producing entity's push holdback, and that entity's handout gates SHALL stay
+An inter-tasklet output that cannot be admitted SHALL be appended to the
+producing cell's push holdback, and that cell's handout gates SHALL stay
 held until the holdback drains. The producing
 thread SHALL return immediately.
 
-While a producing entity's holdback is non-empty, no durable record of that
-entity SHALL be shipped. An inter-procedure output has no durable copy, so the
+While a producing cell's holdback is non-empty, no durable record of that
+cell SHALL be shipped. An inter-tasklet output has no durable copy, so the
 only thing that can re-produce it is the producer re-running its input: a
 consumed offset that became durable ahead of the delivery it derives from would
 leave the replay floor skipping that input with the consumer never fed.
@@ -448,8 +448,8 @@ a retry backoff uses.
 Ordering SHALL be preserved by two rules, which together reproduce exactly what
 a parked producing thread achieved:
 
-- An entity with a non-empty push holdback SHALL NOT be handed a new activation.
-- A push made while that entity's holdback is non-empty SHALL be appended to it
+- A cell with a non-empty push holdback SHALL NOT be handed a new activation.
+- A push made while that cell's holdback is non-empty SHALL be appended to it
   rather than attempted. This is the rule that stops a batch's later items
   overtaking a deferred earlier one.
 
@@ -470,7 +470,7 @@ behind it. Reaching the bound SHALL be reported.
 
 - **WHEN** one activation emits `e1` into a full consumer and then emits `e2` on
   the same channel
-- **THEN** the consumer SHALL receive `e1` before `e2`, and the producing entity
+- **THEN** the consumer SHALL receive `e1` before `e2`, and the producing cell
   SHALL run no further activation until both have been admitted
 
 #### Scenario: A batch's later items do not overtake a deferred earlier one
@@ -482,26 +482,26 @@ behind it. Reaching the bound SHALL be reported.
 
 #### Scenario: A gated producer is not evicted
 
-- **WHEN** a dynamic-mode entity's idle TTL elapses while its push holdback is
+- **WHEN** a dynamic-mode cell's idle TTL elapses while its push holdback is
   non-empty
 - **THEN** the reaper SHALL skip it and SHALL NOT delete its state
 
 #### Scenario: A gated producer is reported, and is not diagnosed as a wedge
 
-- **WHEN** an entity has held an undelivered push for longer than the reporting
+- **WHEN** a cell has held an undelivered push for longer than the reporting
   threshold
 - **THEN** the data-channel heartbeat SHALL carry a pending-push count and the
   age of the oldest, and the controller's classifier SHALL report the condition
-  without minting a heal op — the entity named by the count is the one WAITING,
+  without minting a heal op — the cell named by the count is the one WAITING,
   and the remedy for a producer whose consumer is behind is never to rebind the
   producer
 
 #### Scenario: The consumer that is behind is named where an identity can be carried
 
-- **WHEN** a producing entity has held pushes against one consumer past the
+- **WHEN** a producing cell has held pushes against one consumer past the
   holdback bound
 - **THEN** the runner SHALL log one throttled line naming BOTH the producing
-  entity and the consumer that is behind, because the heartbeat's cross-SDK
+  cell and the consumer that is behind, because the heartbeat's cross-SDK
   contract carries counters and not identities
 
 ### Requirement: A host encodes an output without allocating a buffer per value

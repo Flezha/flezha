@@ -102,7 +102,7 @@ The system SHALL dispatch `:timer`-kind extensions via scheduled invocations. Wh
 
 ### Requirement: Active-extensions fast path
 
-The system SHALL maintain an `active_mask` integer in `Extension.Table` in which bit N is set if and only if extension at catalog index N has at least one subscriber. `Extension.run/3` MUST check this mask before invoking any dispatch logic; when the mask bit is clear the call MUST return the ctx unchanged (for `:fold` / `:transform`), `:ok` (for `:fanout`), or an empty-key outcome (for `:request`) without invoking user code or allocating list cells. A host's hot-path transform dispatch (the Overwatch's `:on_input` and `:on_output`) SHALL ask `Extension.active?/2` before building the chain's context: an unsubscribed chain is a passthrough answered before its `Ctx.IO` exists, so the fast path costs no allocation either.
+The system SHALL maintain an `active_mask` integer in `Extension.Table` in which bit N is set if and only if extension at catalog index N has at least one subscriber. `Extension.run/3` MUST check this mask before invoking any dispatch logic; when the mask bit is clear the call MUST return the ctx unchanged (for `:fold` / `:transform`), `:ok` (for `:fanout`), or an empty-key outcome (for `:request`) without invoking user code or allocating a list. A host's hot-path transform dispatch (the Overwatch's `:on_input` and `:on_output`) SHALL ask `Extension.active?/2` before building the chain's context: an unsubscribed chain is a passthrough answered before its `Ctx.IO` exists, so the fast path costs no allocation either.
 
 #### Scenario: Extension with no subscribers is zero-cost
 - **WHEN** `Extension.run/3` is called for an extension with zero subscribers

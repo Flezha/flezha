@@ -137,7 +137,7 @@ defmodule Flezha.AuthZ.RunnerNamespaceProofTest do
       assert {:ok, @ns_a} = RunnerProof.certificate_namespace(der)
     end
 
-    test "a certificate with no /ns/ entity names no namespace, so the secret is asked" do
+    test "a certificate with no /ns/ cell names no namespace, so the secret is asked" do
       assert :none =
                RunnerProof.certificate_namespace(
                  CertFixtures.self_signed_der(

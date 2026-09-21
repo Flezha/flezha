@@ -42,8 +42,8 @@ defmodule Flezha.Api.OperatorVerbGateTest do
     {:ok, entry_ref} =
       DlqStore.append(%{
         operative_class: @class,
-        procedure_id: "proc",
-        entity_key: "k",
+        tasklet_id: "task",
+        cell_key: "k",
         channel: "input",
         origin_offset: nil,
         error: "boom",
@@ -73,7 +73,7 @@ defmodule Flezha.Api.OperatorVerbGateTest do
       assert {:ok, _entries} = Dlq.list(@class, @operator)
       assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @operator)
       assert {:ok, _stats} = Dlq.stats(@operator)
-      assert {:ok, _procedures} = Dlq.procedures(nil, @operator)
+      assert {:ok, _tasklets} = Dlq.tasklets(nil, @operator)
     end
 
     test "still manages schedules, and a viewer still lists them" do

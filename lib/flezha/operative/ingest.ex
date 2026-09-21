@@ -20,7 +20,7 @@ defmodule Flezha.Operative.Ingest do
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
   alias Flezha.State.InputLog
-  alias Flezha.State.ProcInbox
+  alias Flezha.State.TaskInbox
   alias Flezha.Transport.LivenessCounters
 
   require Logger
@@ -154,7 +154,7 @@ defmodule Flezha.Operative.Ingest do
             reqids,
             label
           ),
-        else: ProcInbox.append_async(state.id, message, metadata, reqids, label)
+        else: TaskInbox.append_async(state.id, message, metadata, reqids, label)
 
     %{state | journal_reqids: reqids}
   end
@@ -166,13 +166,13 @@ defmodule Flezha.Operative.Ingest do
     do: {message, stamp(metadata, "flz.offset", offset)}
 
   defp journaled(%Overwatch{}, {message, metadata}, {:ok, seq}),
-    do: {message, stamp(metadata, "flz.inbox_offset", ProcInbox.offset(seq))}
+    do: {message, stamp(metadata, "flz.inbox_offset", TaskInbox.offset(seq))}
 
   defp journaled(%Overwatch{} = state, _payload, {:duplicate, seq}) do
     :telemetry.execute(
       [:flezha, :state, :inbox_duplicate],
       %{count: 1},
-      %{operative_id: state.id, offset: ProcInbox.offset(seq)}
+      %{operative_id: state.id, offset: TaskInbox.offset(seq)}
     )
 
     nil
@@ -211,7 +211,7 @@ defmodule Flezha.Operative.Ingest do
 
   # Forward what the journal answered with, and say what became of it. An unbound
   # stream is not a delivery failure for a durable target: the log holds the
-  # payload and the channel's next bind re-forwards the tail above the Entity's
+  # payload and the channel's next bind re-forwards the tail above the Cell's
   # consumed offset. `Replay.arm_bind_reforward/1` is what makes that true —
   # the claim is only worth `:ok` once the re-forward is actually scheduled.
   # Anything else — no durable log to hold it, or no channel that can ever bind —

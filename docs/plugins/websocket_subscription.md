@@ -217,7 +217,7 @@ placeholders:
 |---|---|
 | `{{payload}}` | the dispatched payload — **required** in any template |
 | `{{req_id}}` | the correlation id, under `sink_ack_mode: "required"` |
-| `{{entity}}` | the output's `flz.entity` stamp |
+| `{{cell}}` | the output's `flz.cell` stamp |
 | `{{seq}}` | the output's `flz.seq` stamp |
 
 ### Delivery semantics
@@ -235,8 +235,8 @@ overwrite, so the destination cannot participate in the guarantee.
 **Deduplication is the consumer's.** Under `"required"` a repeat is a normal
 event, so that mode requires a `sink_template` carrying `{{req_id}}` — the
 correlation the upstream echoes, exactly as it acknowledges a subscription
-delta. Put `{{entity}}` and `{{seq}}` in the same template and a consumer that
-tracks the last sequence it has applied per entity discards what it already
+delta. Put `{{cell}}` and `{{seq}}` in the same template and a consumer that
+tracks the last sequence it has applied per cell discards what it already
 has. That is the only place the dedup can work.
 
 An enable on an **effectively-once** operative warns, naming the plugin and the
@@ -253,7 +253,7 @@ requires a subscribe handshake sees it first. Nothing is dropped:
 - at the bound, the enqueueing caller is **parked** until the queue drains, so
   back-pressure reaches the operative rather than a frame reaching the floor;
 - a `"required"` frame whose retry budget is spent is **parked in the
-  dead-letter store**, attributed to the output's own entity and channel, and
+  dead-letter store**, attributed to the output's own cell and channel, and
   its hold is then answered so the cursor advances past exactly that range;
 - nothing is ever handed to the connection library's public send, whose
   disconnected path discards a frame with no error, no callback and no log.
@@ -289,7 +289,7 @@ direction would close that cycle and hang the operative permanently.
 | `channel_in` | names | &mdash; | no | Entry channel inbound frames are injected on, for a plugin whose two names differ. One name |
 | `channel_out` | names | &mdash; | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all |
 | `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
-| `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{entity}}/{{seq}} available |
+| `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available |
 | `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |
 | `sink_ack_mode` | enum | `"none"` | no | `"required"` answers the outbox hold on the upstream's ack instead of at handoff |
 <!-- provider-options:end -->

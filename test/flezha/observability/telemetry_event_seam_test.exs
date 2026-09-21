@@ -48,7 +48,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
     "lib/flezha/runner/control_channel/commits.ex" =>
       "`commit.telemetry`, whose names are written literally in the same module",
     "lib/flezha/state/wal_writer.ex" =>
-      "the outbox flush tuple, whose name is written literally in `state/proc_journal.ex`"
+      "the outbox flush tuple, whose name is written literally in `state/task_journal.ex`"
   }
 
   describe "clause 1: every event name reaches an exporter" do

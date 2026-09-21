@@ -17,7 +17,7 @@
 #      and the schedule definitions are all back — and the control-plane stores
 #      hydrate before the hubs start, which only a real boot can prove.
 #
-# Entity WAL recovery is NOT re-proved here; that is
+# Cell WAL recovery is NOT re-proved here; that is
 # `test/system/remote_durability_e2e_test.exs`, which destroys the state
 # directory of a live workflow and a live checkpoint stream against real
 # runners.
@@ -265,9 +265,9 @@ disk_death() { # disk_death <backend>
   fi
 
   # A parked failure, through the store's real durable append.
-  rpc "$first" 'Flezha.Dlq.Store.append(%{operative_class: "durval_class", procedure_id: "proc", entity_key: "k1", channel: "input", origin_offset: nil, error: "poison", attempts: 3, payload: "poison-bytes", park_id: "durval-1"})' \
+  rpc "$first" 'Flezha.Dlq.Store.append(%{operative_class: "durval_class", tasklet_id: "task", cell_key: "k1", channel: "input", origin_offset: nil, error: "poison", attempts: 3, payload: "poison-bytes", park_id: "durval-1"})' \
     >"$LOGDIR/${backend}-park.log" 2>&1
-  check "parked a record" "$LOGDIR/${backend}-park.log" "durval_class/proc/"
+  check "parked a record" "$LOGDIR/${backend}-park.log" "durval_class/task/"
 
   # A schedule: operator-declared intent, and the thing that creates a registry
   # cspec on this node.

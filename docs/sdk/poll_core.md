@@ -28,10 +28,10 @@ the C ABI and where the code lives; the system-level picture is
 
 | Path                                   | Purpose |
 | -------------------------------------- | ------- |
-| `flz_core/src/poll_core/`              | The activation engine (`mod.rs`, `assembly.rs`, `starvation.rs`, `wake.rs`): per-entity handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the in-flight cap, the deferred-wake list, starvation, `poll` / `complete` |
+| `flz_core/src/poll_core/`              | The activation engine (`mod.rs`, `assembly.rs`, `starvation.rs`, `wake.rs`): per-cell handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the in-flight cap, the deferred-wake list, starvation, `poll` / `complete` |
 | `flz_core/src/schema.rs`               | The versioned Activation / ActivationResult boundary contract (postcard; `SCHEMA_VERSION`; hex-pinned `fixture_tests`) |
-| `flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `entity.rs`, `workflow.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
-| `flz_core/src/entity.rs`, `mailbox.rs` | `EntitySlot`, bounded mailbox + inflight CAS, shared slot assembly |
+| `flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `cell.rs`, `workflow.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
+| `flz_core/src/cell.rs`, `mailbox.rs` | `CellSlot`, bounded mailbox + inflight CAS, shared slot assembly |
 | `flz_core/src/routing.rs`              | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
 | `flz_core/src/retry.rs`, `park.rs`     | The retry→park ladder: backoff computation, `RETRIES_TOTAL`, DLQ parks |
 | `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, late-input machinery, timers, restore payloads, record headers |
@@ -41,8 +41,8 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
-| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `procedure/`, `channel/` (builder DSL), `operative/` (typed dispatcher, poll pool), `entity/`, `workflow/`, `runner/`, `testing/` (harness), `diag.rs` |
-| `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-processor` (annotation processor), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`ProcedureTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
+| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `operative/` (typed dispatcher, poll pool), `cell/`, `workflow/`, `runner/`, `testing/` (harness), `diag.rs` |
+| `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-processor` (annotation processor), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`TaskletTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
 ## The core decides, the SDK brings the threads
 
@@ -50,14 +50,14 @@ This is the governing rule of the boundary, and the one an author of the next
 SDK has to read before choosing a threading model.
 
 **The core decides what runs and how much of it.** It picks the next
-activation, holds per-entity ordering, exclusivity, the retry ladder and
+activation, holds per-cell ordering, exclusivity, the retry ladder and
 durability, and caps how many work activations may be underway at once —
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
 cap `poll` blocks as if nothing were ready, and the completion that drops the
 count below it releases the next one. Direct activations (restore folds,
 snapshot requests, workflow steps) are exempt — they are barrier-bounded by the
 drivers that enqueue them and answer a caller blocked on a rendezvous or a
-stage barrier, so holding one behind capped entity work would deadlock that
+stage barrier, so holding one behind capped cell work would deadlock that
 caller. They are also what a queued direct activation with no thread inside
 `poll` reports as starvation: a blocked driver must be able to buy a thread.
 
@@ -86,7 +86,7 @@ by the host promising to bring more threads.
 
 The one park that remains is the **transport reader's**, on the entry path. It
 is permitted because that reader is a core-owned thread no host language
-observes, it has no producing Entity to withhold work from, and its stalling is
+observes, it has no producing Cell to withhold work from, and its stalling is
 what carries ingress backpressure to the controller. See "Backpressure without
 holding a thread" below.
 
@@ -141,13 +141,13 @@ field order IS the wire contract and `SCHEMA_VERSION` (currently 2) gates it.
 Every kind is pinned by hex byte fixtures (`schema.rs` `fixture_tests`) that
 each shim must reproduce byte-identically.
 
-An **Activation** targets exactly one entity and carries one `ActivationKind`:
+An **Activation** targets exactly one cell and carries one `ActivationKind`:
 
 | Kind                                                                 | What the host does |
 | -------------------------------------------------------------------- | ------------------ |
-| `Work(items)`                                                        | An ordered per-entity batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
-| `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize` | The five host-participating command kinds, under the same per-entity exclusivity. No other controller command produces an activation (pinned: a `Ping` generates none). |
-| `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches an entity mailbox. |
+| `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
+| `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize` | The five host-participating command kinds, under the same per-cell exclusivity. No other controller command produces an activation (pinned: a `Ping` generates none). |
+| `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches a cell mailbox. |
 | `CompensateRun`                                                      | An undo step of a workflow chain. |
 
 An **ActivationResult** (`ActivationOutcome::Work(Vec<ItemEffect>)`) carries,
@@ -156,10 +156,10 @@ consumes a typed drain: host-encoded change bytes (core-opaque), outputs
 `(edge | plugin, bytes, key?)`, `consumed_offset`, timer ops, the checkpoint
 flag, and a `Verdict` — `Ok` / `RetryableError` / `NonRetryableError`.
 
-## Per-entity exclusivity and ordering
+## Per-cell exclusivity and ordering
 
-The core never hands out two activations for the same entity concurrently —
-the single-active-drainer CAS gate, expressed at the boundary. An entity with
+The core never hands out two activations for the same cell concurrently —
+the single-active-drainer CAS gate, expressed at the boundary. A cell with
 an outstanding activation reappears in poll results only after its completion;
 its inputs are delivered in enqueue order across successive activations. Batch
 assembly also owns the consumed-floor skip, replay-slice buffering and
@@ -178,24 +178,24 @@ something. What waits differs by who produced the value:
 
 | producer | what waits |
 | --- | --- |
-| an activation's `ctx.emit`, or a host completion's edge outputs | the **producing Entity**: the push is appended to its push holdback and it is handed no further activation until the holdback drains |
+| an activation's `ctx.emit`, or a host completion's edge outputs | the **producing Cell**: the push is appended to its push holdback and it is handed no further activation until the holdback drains |
 | a due wake (a timer firing, an interval close) | the **wake list**: the entry is re-recorded at a later due time (see "The deferred-wake list") |
 | the shared transport reader on an entry channel | the **reader thread**, which parks — the one exception, and the thing that carries ingress backpressure to the controller |
 
-A producing Entity's gates stay held across the holdback exactly as they stay
-held across a retry backoff: nothing else could drain that Entity then either,
+A producing Cell's gates stay held across the holdback exactly as they stay
+held across a retry backoff: nothing else could drain that Cell then either,
 and producers just enqueue. The consumer's next free slot serves whoever is
-owed it — a parked thread, or a gated Entity whose holdback is then drained —
+owed it — a parked thread, or a gated Cell whose holdback is then drained —
 and a bounded fallback wake means a lost signal degrades to a retry rather than
-a hold. Because a gated Entity keeps its round claimed, the dynamic-mode reaper
+a hold. Because a gated Cell keeps its round claimed, the dynamic-mode reaper
 skips it with no check of its own, and a restore or a compaction waits on it
 the way it waits on a retry window.
 
 **Ordering is preserved by construction**, by two rules that together reproduce
 exactly what a parked producing thread achieved:
 
-1. an Entity with a non-empty push holdback is handed no new activation;
-2. a push made while that Entity's holdback is non-empty is **appended** to it
+1. a Cell with a non-empty push holdback is handed no new activation;
+2. a push made while that Cell's holdback is non-empty is **appended** to it
    rather than attempted — this is what stops item 2 of a completion's batch
    from overtaking item 1's held output.
 
@@ -204,9 +204,9 @@ succeed, so it reads a lock-free flag and never inspects the holdback under its
 lock: measured, the atomic load is free (14.39 ns against 14.79 ns for a bare
 `try_push`) and a mutex acquisition costs +64%.
 
-**A held push holds its durable record too.** An inter-procedure output has no
+**A held push holds its durable record too.** An inter-tasklet output has no
 durable copy, so the only thing that can re-produce it is the producer
-re-running its input. While an Entity owes a push, the flusher skips its buffer
+re-running its input. While a Cell owes a push, the flusher skips its buffer
 — the consumed offset must not become durable ahead of the edge delivery it
 derives from, or a crash would leave the replay floor skipping that input with
 the consumer never fed.
@@ -222,9 +222,9 @@ instead as `pending_pushes` and `pending_push_oldest_ms` on the data heartbeat.
 
 ### The host answers every activation exactly once
 
-Because the handout is what gates the entity, an activation that is never
-answered retires its entity **for the life of the process** — silently, since
-the runner-wide dispatch counter keeps climbing on every other entity. There
+Because the handout is what gates the cell, an activation that is never
+answered retires its cell **for the life of the process** — silently, since
+the runner-wide dispatch counter keeps climbing on every other cell. There
 are exactly three answers:
 
 | Answer | When | Ladder attempt |
@@ -233,7 +233,7 @@ are exactly three answers:
 | fail (`retry_after_failure`) | an item failed retryably | consumed |
 | `abandon` | the host could not finish: an unwound worker, a dead thread, a veneer whose language threw | **none** |
 
-Abandon re-hands the items the host did **not** process and leaves the entity
+Abandon re-hands the items the host did **not** process and leaves the cell
 exactly as if it had never been polled. Only untouched items may be passed:
 re-handing one that already ran would execute it twice, which is the one thing
 this seam may never do.
@@ -252,7 +252,7 @@ in the crate API, an error through `flz_core_last_error` at the ABI.
 ### What the core will never do
 
 **It never reclaims an outstanding activation on a timer.** From the boundary a
-ten-minute Procedure and a handout the host lost are byte-for-byte identical:
+ten-minute Tasklet and a handout the host lost are byte-for-byte identical:
 an entry in `outstanding` that has not been answered. A deadline that re-handed
 would re-execute work the effectively-once tier promises once, and would do it
 precisely to the slowest, most expensive activations in the system. There is no
@@ -262,7 +262,7 @@ one.
 What it does instead is **report**: `outstanding_count()` and
 `outstanding_oldest_age_ms()` ride the data-channel heartbeat as `inflight` and
 `inflight_oldest_ms`, the controller's classifier mints
-`entity_dispatch_stalled` from them, and the remedy is an operative rebind that
+`cell_dispatch_stalled` from them, and the remedy is an operative rebind that
 resumes from durable state — the path that is already safe. Detection is the
 core's; the judgement and the remedy are the controller's.
 
@@ -283,7 +283,7 @@ checkpoint interval. The backoff is `base × 2^(attempt−1)` (exponent capped a
 telemetry.
 
 **The backoff blocks no thread.** Reporting the failure returns the completing
-thread immediately; the entity's exclusivity gates stay held across the window
+thread immediately; the cell's exclusivity gates stay held across the window
 — nothing else could drain it during a backoff anyway — and the
 release-then-reclaim runs when the delay comes due. Under correlated failure
 this is what keeps a runner alive: with workers sized to the CPU count, a
@@ -293,9 +293,9 @@ Shutdown is not delayed either — there is no sleep left to run out.
 
 ## The deferred-wake list
 
-One ordered list answers "do something with this entity at time T": retry
+One ordered list answers "do something with this cell at time T": retry
 backoffs, processing-time timer deadlines
-([`entity_timers.md`](entity_timers.md)) and checkpoint-interval deadline
+([`cell_timers.md`](cell_timers.md)) and checkpoint-interval deadline
 closes. It owns **no thread**. Entries are promoted by whichever thread next
 enters or wakes inside `poll`, and the nearest entry shortens the poller wait.
 Recording one notifies blocked pollers so they re-compute that wait.
@@ -342,7 +342,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_schema_version`, `flz_core_context_new`, `flz_core_init_error`, `flz_core_last_error` | Version negotiation and error text |
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
 | `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
-| `flz_core_spawn_request`, `flz_core_spawn_result` | Procedure-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
+| `flz_core_spawn_request`, `flz_core_spawn_result` | Tasklet-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
 | `flz_core_set_log_callback` | The one host callback the core ever invokes |
 
@@ -368,8 +368,8 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   are promises resolved from the host's own threads.
 - **`flz_core_abandon(ctx, token)` exists because no unwind crosses the ABI.**
   A veneer whose host language throws, or whose thread dies, has no way to
-  reach `flz_core_complete`, and per-entity exclusivity would then retire that
-  entity for the life of the process. A veneer SHALL answer every polled
+  reach `flz_core_complete`, and per-cell exclusivity would then retire that
+  cell for the life of the process. A veneer SHALL answer every polled
   activation exactly once and SHALL make that structural in its own language —
   a `finally`, a destructor, a scope guard. An unknown or already-answered
   token is refused with `FLZ_ERR` and the reason in `flz_core_last_error`.
@@ -389,7 +389,7 @@ The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
 drives connect, AddOperative over the real control path, input activations, a
 timer firing, a restore fold, a live state read, a
 keyed dynamic route through the prepare crossing, an effectively-once floor
-skip, a workflow procedure completing its instance and shutdown entirely
+skip, a workflow tasklet completing its instance and shutdown entirely
 through the C ABI —
 a capability reachable in the crate API but not the ABI is a defect, not a
 backlog item.
@@ -399,45 +399,45 @@ backlog item.
 `flz_core_declare_class` accepts the complete host-class declaration
 (`flz_core::host::HostClassDecl`, JSON with `deny_unknown_fields` — a field
 the core never learned is a refusal, not a silent degrade): the channels graph
-(entry / inter-proc / plugin, per-channel retry, overflow, plugin keying),
-entity modes (single, static with declared keys, dynamic with idle-TTL eviction
-and `max_entities`), clock kinds (wall, logical, event-time), the
+(entry / inter-task / plugin, per-channel retry, overflow, plugin keying),
+cell modes (single, static with declared keys, dynamic with idle-TTL eviction
+and `max_cells`), clock kinds (wall, logical, event-time), the
 effectively-once tier and checkpoint ack-granularity, the late-input correction
 window, the record-header lang/format bytes (`sdk_lang`, `change_format_id` — a
 Java host's durable records claim Kryo), and workflow lifecycle facts
 (`workflow`: loop mode, rollback mode, stage retry, max-duration, wake-after;
-a workflow class declaring no procedure is refused).
+a workflow class declaring no tasklet is refused).
 
 At runtime the full contract crosses the boundary:
 
 - **The five command kinds are real activations.** `RestoreInitState` becomes
   a `RestoreFold` (the core walks the WAL records, folds cursors and timer ops
   itself, and hands the host only its own change bodies — effect records
-  unwrapped, plain bodies verbatim); `CompactEntity` a `SnapshotRequest` (the
+  unwrapped, plain bodies verbatim); `CompactCell` a `SnapshotRequest` (the
   core drains, re-states the pending timer set, and frames the answer);
-  `EntityState` a `LiveStateRead`; migration a `MigrationSerialize` /
-  `ApplyState`. Each runs under the entity's handout gate
+  `CellState` a `LiveStateRead`; migration a `MigrationSerialize` /
+  `ApplyState`. Each runs under the cell's handout gate
   (`PollCore::host_command`), so a fold completes before inputs flow.
 - **The prepare crossing** (`KeyRequest`, batched per entry channel) asks the
   host for routing keys and/or extracted event times before anything is
   enqueued; a per-payload failure climbs the entry channel's retry→park
   ladder, and the end-of-slice broadcast defers behind staged slice members.
 - **Tiers ride completions.** `ItemEffect` carries changes, outputs, timer ops,
-  `checkpoint` and a workflow procedure's `complete` request (a stream item
+  `checkpoint` and a workflow tasklet's `complete` request (a stream item
   carrying one fails, non-retryable, naming `CompleteOutsideWorkflow`); the core builds effect records (offsets are
   core-authoritative), stages checkpoint intervals, holds a
   failed-but-retryable attempt's changes out of the flusher's reach, and mints
   DLQ entries where the typed layer does.
-- **Inter-procedure edges route on `(edge, key)`**: outputs name their
+- **Inter-tasklet edges route on `(edge, key)`**: outputs name their
   consumer; keys and event times are producer-evaluated (the host holds the
   typed value and the extractor; the core holds neither).
 - **Workflow lifecycles run under poll**: a workflow chain hands out one
-  **step activation** per entity of the stage — a `Work` batch, or
+  **step activation** per cell of the stage — a `Work` batch, or
   `CompensateRun` for an undo — and collects the answers at its stage
   barrier. Both language
   paths take that route, so a step costs exactly one thread (the SDK's) and no
   core thread waits on a host: the driver is the only waiter, and its retry
-  timing lives there too. Barriers, proc-journal, loop modes, suspension and
+  timing lives there too. Barriers, task-journal, loop modes, suspension and
   rewind are driver machinery
   ([`../architecture/workflow_profile.md`](../architecture/workflow_profile.md)).
 
@@ -536,7 +536,7 @@ permits FFI from the CLI SAPI, and a worker thread is not it).
 
 ## What stays per-language
 
-The authoring surface (Procedure traits, the graph DSL), State and channel
+The authoring surface (Tasklet traits, the graph DSL), State and channel
 codecs, the poll loop's integration with the host's concurrency primitives,
 idiomatic errors, and the testing harness — the code that *should* feel
 native. Everything in that list changes in lockstep across the SDKs; the rule

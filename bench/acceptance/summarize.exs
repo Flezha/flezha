@@ -1,6 +1,6 @@
-# Median-per-cell summary + regression compare / baseline save.
-# Usage: mix run bench/acceptance/summarize.exs <results.tsv> <cells.tsv> <baseline.tsv> <save:0|1>
-[results_path, cells_path, baseline_path, save] = System.argv()
+# Median-per-case summary + regression compare / baseline save.
+# Usage: mix run bench/acceptance/summarize.exs <results.tsv> <cases.tsv> <baseline.tsv> <save:0|1>
+[results_path, cases_path, baseline_path, save] = System.argv()
 save? = save == "1"
 dir = Path.dirname(results_path)
 
@@ -89,9 +89,9 @@ median = fn
     if rem(n, 2) == 1, do: Enum.at(s, mid), else: (Enum.at(s, mid - 1) + Enum.at(s, mid)) / 2
 end
 
-# order cells as they appear in the profile's cells file
+# order cases as they appear in the profile's cases file
 order =
-  cells_path
+  cases_path
   |> File.stream!()
   |> Enum.flat_map(fn l ->
     l = String.trim(l)
@@ -162,7 +162,7 @@ verdict = fn name, tp, integ ->
 end
 
 # Higher throughput is better; lower latency/fsync/mem is better. Units live in
-# each cell so a reader never has to guess what 293.9 means.
+# each case so a reader never has to guess what 293.9 means.
 opt = fn
   nil -> "—"
   v -> v
@@ -172,7 +172,7 @@ title =
   "Workflow bench — profile #{profile} — #{DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_string()}"
 
 header =
-  "| cell | runtime | throughput (median) | latency p50 | peak mem | fsync p99 | integrity | runs | vs baseline |\n" <>
+  "| case | runtime | throughput (median) | latency p50 | peak mem | fsync p99 | integrity | runs | vs baseline |\n" <>
     "|---|---|---|---|---|---|---|---|---|\n"
 
 body =
@@ -192,10 +192,10 @@ legend = """
   turn→reply (turns), wake→reply (sleep).
 - **peak mem** — the controller BEAM's peak memory during the run (capacity
   signal; not the Rust/Java runner processes' RSS, and not CPU).
-- **fsync p99** — the slowest Entity's WAL fsync p99. A high value means the
+- **fsync p99** — the slowest Cell's WAL fsync p99. A high value means the
   **disk**, not the engine, is the ceiling.
 - **integrity** — `clean` = every record accounted for; `loss` = a record went
-  missing or duplicated (a bug, fails regardless of speed); `stall` = the cell
+  missing or duplicated (a bug, fails regardless of speed); `stall` = the case
   did not finish.
 - **vs baseline** — median throughput against the saved baseline: ❌ if >15 %
   slower or not clean, ⚠ 5–15 % slower, ✅ within 5 % or faster. `(no baseline)`
@@ -228,12 +228,12 @@ if save? do
     end) <> "\n"
   )
 
-  IO.puts("Baseline saved to #{baseline_path} (#{length(meds)} cells).")
+  IO.puts("Baseline saved to #{baseline_path} (#{length(meds)} cases).")
 else
   IO.puts(
     if(any_fail,
       do: "RESULT: ❌ REGRESSION / INTEGRITY FAILURE",
-      else: "RESULT: ✅ all cells within tolerance"
+      else: "RESULT: ✅ all cases within tolerance"
     )
   )
 

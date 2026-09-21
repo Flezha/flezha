@@ -1,5 +1,5 @@
 //! The workflow driver: one dedicated thread per instance that runs the
-//! procedure DAG, where a child runs only after every producer feeding it
+//! tasklet DAG, where a child runs only after every producer feeding it
 //! commits, and converges every exit trigger on one
 //! `WorkflowCompleted`. The invariant: the driver only ever blocks (inbox,
 //! barrier, commit ack) and is never a thread its own stages need; stage
@@ -14,19 +14,19 @@ use std::time::Duration;
 
 use crossbeam::channel::Receiver;
 
-use super::commit::{commit_iteration, commit_proc_boundary};
+use super::commit::{commit_iteration, commit_task_boundary};
 use super::compensation::{
-    emit_compensation_record, run_compensation, run_rewind_undo, stages_from_intents, EntityRun,
+    emit_compensation_record, run_compensation, run_rewind_undo, stages_from_intents, CellRun,
     StageRecord,
 };
 use super::instance::{InboxItem, JournalResume, WorkflowInstance};
 use super::resume::{journaled_stages, next_iteration_seed, park, IterationSeed, IterationStart};
-use super::spec::{ProcDag, WorkflowSpec};
+use super::spec::{TaskDag, WorkflowSpec};
 use super::{LoopMode, RollbackMode, WorkflowError};
-use crate::channel::{BuildEntityArgs, ConsumerEdge, ProcedureId, RetryPolicy};
-use crate::entity::EntitySlot;
-use crate::flusher::EntityFlusher;
-use crate::operative::topology::{EntityMode, OperativeTopology, ProcedureDescriptor};
+use crate::cell::CellSlot;
+use crate::channel::{BuildCellArgs, ConsumerEdge, RetryPolicy, TaskletId};
+use crate::flusher::CellFlusher;
+use crate::operative::topology::{CellMode, OperativeTopology, TaskletDescriptor};
 use crate::state_sink::COMPENSATION_INTENT_PAYLOAD_ID;
 
 pub(super) type Value = Arc<dyn Any + Send + Sync>;
@@ -49,10 +49,10 @@ pub(super) enum RunOutcome {
 /// Read-only context of one structured chain run.
 pub(super) struct ChainCtx<'a> {
     pub(super) topology: &'a Arc<OperativeTopology>,
-    pub(super) dag: &'a ProcDag,
+    pub(super) dag: &'a TaskDag,
     pub(super) instance: &'a WorkflowInstance,
     pub(super) instance_id: &'a Arc<str>,
-    pub(super) stage_entities: &'a [Vec<Arc<EntitySlot>>],
+    pub(super) stage_cells: &'a [Vec<Arc<CellSlot>>],
     pub(super) rollback_mode: RollbackMode,
     pub(super) loop_mode: LoopMode,
     pub(super) wake_after: Option<Duration>,
@@ -66,29 +66,29 @@ pub(super) struct ChainCtx<'a> {
 }
 
 impl ChainCtx<'_> {
-    /// Whether this run journals its proc boundaries — the one gate on both
-    /// the `ProcCommit` handshake and output staging. A transport-less run
+    /// Whether this run journals its task boundaries — the one gate on both
+    /// the `TaskCommit` handshake and output staging. A transport-less run
     /// has no journal, so its plugin output goes straight to the wire.
     pub(super) fn journaling(&self) -> bool {
         self.persistence_enabled && crate::runner::coordinator_installed()
     }
 
-    pub(super) fn proc(&self, node: usize) -> &ProcedureDescriptor {
+    pub(super) fn task(&self, node: usize) -> &TaskletDescriptor {
         self.topology
-            .procedure(self.dag.order[node])
-            .expect("dag procedure present in topology")
+            .tasklet(self.dag.order[node])
+            .expect("dag tasklet present in topology")
     }
 
     /// The edge from `producer`'s output channel into `child`; `None` when
     /// the producer's `Output` already IS the consumer's `Input`.
     pub(super) fn edge(&self, producer: usize, child: usize) -> Option<&ConsumerEdge> {
-        let channel_id = self.proc(producer).output_channel_id?;
+        let channel_id = self.task(producer).output_channel_id?;
         let target = self.dag.order[child];
         self.topology
             .channel(channel_id)?
             .consumers
             .iter()
-            .find(|e| e.procedure == target)
+            .find(|e| e.tasklet == target)
     }
 }
 
@@ -136,7 +136,7 @@ pub fn spawn(
         // Spawn failed: deregister this run's flusher entries and report a
         // terminal failure so the controller does not wait forever. The registry
         // entry is dropped by the controller's stop_operative on the completion.
-        deregister_flushers(&instance.stage_entities);
+        deregister_flushers(&instance.stage_cells);
         crate::runner::emit_workflow_completed(
             instance.instance_id.to_string(),
             "error".to_string(),
@@ -160,7 +160,7 @@ fn run(
         .max_duration
         .map(|d| spawn_duration_watcher(d, Arc::clone(&instance.cancel), Arc::clone(&finished)));
 
-    // Hold on the crash-resume gate until the Controller's Entity restores
+    // Hold on the crash-resume gate until the Controller's Cell restores
     // land, then drive the chain over the restored state.
     instance.wait_for_restore();
     let outcome = run_structured(&spec, &instance, &args, &inbox_rx);
@@ -169,10 +169,10 @@ fn run(
     if let Some(w) = watcher {
         let _ = w.join();
     }
-    // Deregister this run's per-Entity flusher entries. The registry entry
+    // Deregister this run's per-Cell flusher entries. The registry entry
     // itself stays until the controller's stop_operative teardown, so a
     // duplicate AddOperative before then is idempotent (no re-run).
-    deregister_flushers(&instance.stage_entities);
+    deregister_flushers(&instance.stage_cells);
 
     match outcome {
         RunOutcome::Terminal(status, error, result) => {
@@ -189,7 +189,7 @@ fn run(
     }
 }
 
-/// Structured path: walk the DAG; sibling branches and entities interleave.
+/// Structured path: walk the DAG; sibling branches and cells interleave.
 fn run_structured(
     spec: &WorkflowSpec,
     instance: &WorkflowInstance,
@@ -198,7 +198,7 @@ fn run_structured(
 ) -> RunOutcome {
     let topology = &spec.topology;
 
-    // Entities were built + registered up front by `start_workflow_resumable`
+    // Cells were built + registered up front by `start_workflow_resumable`
     // (so restore could reach them and the resume gate could hold); a durable
     // class has them already restored by the Controller's `RestoreInitState`
     // frames. The run's flusher entries are deregistered in `run`'s teardown.
@@ -207,7 +207,7 @@ fn run_structured(
         dag: &spec.dag,
         instance,
         instance_id: &instance.instance_id,
-        stage_entities: &instance.stage_entities,
+        stage_cells: &instance.stage_cells,
         rollback_mode: spec.rollback_mode,
         loop_mode: spec.loop_mode,
         wake_after: spec.wake_after,
@@ -220,35 +220,35 @@ fn run_structured(
     drive_chain(&ctx, args, &instance.cancel)
 }
 
-/// Every stage's Entities in DAG order, built before the driver thread so a
+/// Every stage's Cells in DAG order, built before the driver thread so a
 /// restore frame always finds them registered. Each slot's `instance` is a
 /// null `Weak`: the collecting path never routes through a `StreamInstance`.
-pub fn build_all_stage_entities(
+pub fn build_all_stage_cells(
     spec: &WorkflowSpec,
     instance_id: &Arc<str>,
-) -> Vec<Vec<Arc<EntitySlot>>> {
+) -> Vec<Vec<Arc<CellSlot>>> {
     let topology = &spec.topology;
-    let mut stage_entities: Vec<Vec<Arc<EntitySlot>>> = Vec::with_capacity(spec.dag.len());
-    for &proc_id in &spec.dag.order {
-        let proc = topology
-            .procedure(proc_id)
-            .expect("chain procedure present in topology");
-        stage_entities.push(build_stage_entities(
+    let mut stage_cells: Vec<Vec<Arc<CellSlot>>> = Vec::with_capacity(spec.dag.len());
+    for &task_id in &spec.dag.order {
+        let task = topology
+            .tasklet(task_id)
+            .expect("chain tasklet present in topology");
+        stage_cells.push(build_stage_cells(
             topology,
             instance_id,
-            proc_id,
-            proc,
+            task_id,
+            task,
             spec.persistence_enabled,
         ));
     }
-    stage_entities
+    stage_cells
 }
 
-fn deregister_flushers(stage_entities: &[Vec<Arc<EntitySlot>>]) {
-    for slots in stage_entities {
+fn deregister_flushers(stage_cells: &[Vec<Arc<CellSlot>>]) {
+    for slots in stage_cells {
         for slot in slots {
             if let Some(id) = slot.flusher_entry_id {
-                EntityFlusher::instance().deregister(id);
+                CellFlusher::instance().deregister(id);
             }
         }
     }
@@ -269,7 +269,7 @@ struct ResumePlan {
 /// intent markers accumulate during forward progress too.
 fn resume_plan(ctx: &ChainCtx) -> Result<ResumePlan, RunOutcome> {
     let resumed = stages_from_intents(ctx);
-    let journal = ctx.instance.proc_journal_resume();
+    let journal = ctx.instance.task_journal_resume();
     if !resumed.is_empty() && (journal.is_none() || ctx.instance.any_compensation_done()) {
         run_compensation(ctx, &[], &resumed);
         return Err(RunOutcome::Terminal(
@@ -310,9 +310,9 @@ fn resume_plan(ctx: &ChainCtx) -> Result<ResumePlan, RunOutcome> {
     // The root is index 0, so "the root already committed" IS "this is a
     // mid-iteration resume" — and a journal that somehow records a child without
     // its parent re-runs the whole iteration rather than trusting the fragment.
-    let committed_nodes: Vec<usize> = if resume.committed_proc_idxs.contains(&0) {
+    let committed_nodes: Vec<usize> = if resume.committed_task_idxs.contains(&0) {
         resume
-            .committed_proc_idxs
+            .committed_task_idxs
             .iter()
             .map(|&i| i as usize)
             .collect()
@@ -400,12 +400,12 @@ struct Seal<'a> {
     iter: u32,
     consumed_offset: u64,
     terminal_batch: &'a [Value],
-    /// A procedure's `complete`: the run ends once the commit is durable.
+    /// A tasklet's `complete`: the run ends once the commit is durable.
     completion: Option<Vec<u8>>,
 }
 
 /// The iteration boundary: commit it durably, then the loop enters the next
-/// iteration. A non-looping chain, or one a procedure completed, finishes
+/// iteration. A non-looping chain, or one a tasklet completed, finishes
 /// here; a refused commit undoes what is outstanding. `Err` ends the run.
 fn seal_iteration(
     ctx: &ChainCtx,
@@ -482,14 +482,14 @@ fn seed_frontier(
 pub(super) type Runnable = (usize, Vec<Value>);
 
 /// What a node or a whole iteration releases: its batch, and the completion
-/// a procedure asked for.
+/// a tasklet asked for.
 type Released = (Vec<Value>, Option<Vec<u8>>);
 
 /// One iteration of the DAG from `start`, frontier by frontier: a node runs,
 /// commits, and accumulates its batch into each child, which runs once every
 /// producer committed — so a join is dispatched exactly once. `completed`
 /// records stages in topological order. `Ok` is the batch the leaves
-/// released and the completion a procedure asked for; `Err` the terminal
+/// released and the completion a tasklet asked for; `Err` the terminal
 /// status of an abnormal exit.
 fn run_iteration(
     ctx: &ChainCtx,
@@ -538,9 +538,9 @@ fn run_iteration(
     Ok((children.leaf_batch, completion.result()))
 }
 
-/// The completion an iteration's procedures asked for, resolved so it never
-/// depends on which step answered first: the procedure latest in the chain's
-/// commit order wins, and within one procedure the greatest entity key.
+/// The completion an iteration's tasklets asked for, resolved so it never
+/// depends on which step answered first: the tasklet latest in the chain's
+/// commit order wins, and within one tasklet the greatest cell key.
 #[derive(Default)]
 pub(super) struct Completion(Option<(usize, Vec<u8>)>);
 
@@ -559,16 +559,11 @@ impl Completion {
     }
 }
 
-/// The completion one procedure asked for: its greatest entity key's.
-fn node_completion(ctx: &ChainCtx, node: usize, runs: &[EntityRun]) -> Option<Vec<u8>> {
-    let slots = &ctx.stage_entities[node];
+/// The completion one tasklet asked for: its greatest cell key's.
+fn node_completion(ctx: &ChainCtx, node: usize, runs: &[CellRun]) -> Option<Vec<u8>> {
+    let slots = &ctx.stage_cells[node];
     runs.iter()
-        .filter_map(|run| {
-            Some((
-                &slots[run.entity_index].entity_key,
-                run.completion.as_ref()?,
-            ))
-        })
+        .filter_map(|run| Some((&slots[run.cell_index].cell_key, run.completion.as_ref()?)))
         .max_by(|a, b| a.0.cmp(b.0))
         .map(|(_, result)| result.clone())
 }
@@ -618,7 +613,7 @@ impl Children<'_> {
     }
 }
 
-/// Record one committed node — intent markers first, then the proc-boundary
+/// Record one committed node — intent markers first, then the task-boundary
 /// commit, then its stage record — and answer its released batch and the
 /// completion it asked for. The order is the at-least-once contract: a crash
 /// between marker and ack resolves as "not committed → re-run". A node beside
@@ -633,26 +628,26 @@ fn advance_node(
     cancel: &AtomicBool,
     completed: &mut Vec<StageRecord>,
 ) -> Result<Released, (String, String)> {
-    if ctx.proc(node).compensate_overridden {
-        let slots = &ctx.stage_entities[node];
-        for seg_run in &out.entities {
+    if ctx.task(node).compensate_overridden {
+        let slots = &ctx.stage_cells[node];
+        for seg_run in &out.cells {
             emit_compensation_record(
                 COMPENSATION_INTENT_PAYLOAD_ID,
-                &slots[seg_run.entity_index].entity_identity,
+                &slots[seg_run.cell_index].cell_identity,
                 ctx.persistence_enabled,
             );
         }
     }
-    let asked = node_completion(ctx, node, &out.entities);
+    let asked = node_completion(ctx, node, &out.cells);
     let commit = if sibling_failed {
         Ok(())
     } else {
-        commit_proc_boundary(ctx, node, iter, &out.entities, &out.batch, asked.as_deref())
+        commit_task_boundary(ctx, node, iter, &out.cells, &out.batch, asked.as_deref())
     };
     completed.push(StageRecord {
         stage_idx: node,
         iter,
-        entities: out.entities,
+        cells: out.cells,
     });
     if let Err(e) = commit {
         return Err(abnormal_status(cancel, e));
@@ -680,36 +675,36 @@ pub(super) fn abnormal_status(cancel: &AtomicBool, error: WorkflowError) -> (Str
     }
 }
 
-/// One stage's slots through the stream `build_entity`, so state and identity
+/// One stage's slots through the stream `build_cell`, so state and identity
 /// are what a stream operative's would be.
-fn build_stage_entities(
+fn build_stage_cells(
     topology: &Arc<OperativeTopology>,
     instance_id: &Arc<str>,
-    proc_id: ProcedureId,
-    proc: &ProcedureDescriptor,
+    task_id: TaskletId,
+    task: &TaskletDescriptor,
     persistence_enabled: bool,
-) -> Vec<Arc<EntitySlot>> {
-    let build = |entity_key: Option<&str>, entity_index: usize| {
-        (proc.build_entity)(BuildEntityArgs {
+) -> Vec<Arc<CellSlot>> {
+    let build = |cell_key: Option<&str>, cell_index: usize| {
+        (task.build_cell)(BuildCellArgs {
             topology: Arc::clone(topology),
             instance: Weak::new(),
             instance_id: Arc::clone(instance_id),
-            procedure_id: proc_id,
-            entity_key,
-            entity_index,
+            tasklet_id: task_id,
+            cell_key,
+            cell_index,
             persistence_enabled,
         })
     };
-    match proc.mode {
-        EntityMode::Single => vec![build(None, 0)],
-        EntityMode::Static => proc
-            .entity_keys
+    match task.mode {
+        CellMode::Single => vec![build(None, 0)],
+        CellMode::Static => task
+            .cell_keys
             .iter()
             .enumerate()
             .map(|(idx, key)| build(Some(key), idx))
             .collect(),
-        // Rejected at registration; defensively yield no entities.
-        EntityMode::Dynamic => Vec::new(),
+        // Rejected at registration; defensively yield no cells.
+        CellMode::Dynamic => Vec::new(),
     }
 }
 

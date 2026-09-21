@@ -12,7 +12,7 @@ OPTIONS:
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
-    keyed sink adds a third field, entity=... seq=... key=..., and a frame
+    keyed sink adds a third field, cell=... seq=... key=..., and a frame
     with no channel prints - in its place. With --json each frame is one
     object carrying channel, payload (payload_base64 for bytes that are not
     text) and the frame's whole metadata map.

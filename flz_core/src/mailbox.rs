@@ -1,4 +1,4 @@
-//! Per-Entity mailbox: a bounded lock-free FIFO, its inflight flag, its
+//! Per-Cell mailbox: a bounded lock-free FIFO, its inflight flag, its
 //! counters, and the wait list of whoever is owed its next free slot. The
 //! invariant: a winning `claim_inflight` CAS is the one drainer, and a drainer
 //! that stores `inflight = false` re-checks the queue afterwards, so a push
@@ -13,12 +13,12 @@ use std::time::Duration;
 use crossbeam::queue::ArrayQueue;
 use crossbeam::sync::{Parker, Unparker};
 
-use crate::entity::{EntityCounters, EntitySlot};
+use crate::cell::{CellCounters, CellSlot};
 
 pub struct Mailbox<Payload: Send + 'static> {
     queue: ArrayQueue<Payload>,
     inflight: AtomicBool,
-    counters: EntityCounters,
+    counters: CellCounters,
 }
 
 impl<Payload: Send + 'static> Mailbox<Payload> {
@@ -27,7 +27,7 @@ impl<Payload: Send + 'static> Mailbox<Payload> {
         Mailbox {
             queue: ArrayQueue::new(capacity),
             inflight: AtomicBool::new(false),
-            counters: EntityCounters::default(),
+            counters: CellCounters::default(),
         }
     }
 
@@ -54,7 +54,7 @@ impl<Payload: Send + 'static> Mailbox<Payload> {
     }
 
     #[inline]
-    pub fn counters(&self) -> &EntityCounters {
+    pub fn counters(&self) -> &CellCounters {
         &self.counters
     }
 
@@ -84,7 +84,7 @@ impl<Payload: Send + 'static> Mailbox<Payload> {
 
     /// Whether a drainer holds this mailbox's round — queued for a poller or
     /// already inside one. With an empty queue, `false` is the whole of "this
-    /// Entity has nothing left to do".
+    /// Cell has nothing left to do".
     #[inline]
     pub fn is_inflight(&self) -> bool {
         self.inflight.load(Ordering::Acquire)
@@ -113,7 +113,7 @@ impl<Payload: Send + 'static> Mailbox<Payload> {
 }
 
 /// FIFO of whoever is owed this mailbox's next free slot under `DropNothing`
-/// — a parked entry-path thread or a producing Entity holding its push — served
+/// — a parked entry-path thread or a producing Cell holding its push — served
 /// one entry per successful pop. Every entry is somebody still waiting: a
 /// parked thread registers, rechecks the mailbox, parks without the lock, and
 /// removes its own entry on every exit. Wake order is best-effort.
@@ -127,7 +127,7 @@ enum Waiter {
     Thread { ticket: u64, unparker: Unparker },
     /// A producer gated on its holdback; `Weak` so the list cannot keep an
     /// evicted producer alive.
-    Producer(Weak<EntitySlot>),
+    Producer(Weak<CellSlot>),
 }
 
 impl Waiters {
@@ -186,11 +186,11 @@ impl Waiters {
         self.wait_for_room_until(mailbox, Some(timeout));
     }
 
-    /// Register a producing Entity as owed the next free slot; it holds no
+    /// Register a producing Cell as owed the next free slot; it holds no
     /// thread. At most one entry per producer, or its re-registrations would
     /// absorb wakes a parked thread is owed; the caller rechecks `is_full()`
     /// afterwards like a parking waiter does.
-    pub fn wait_producer(&self, producer: &Arc<EntitySlot>) {
+    pub fn wait_producer(&self, producer: &Arc<CellSlot>) {
         let mut deque = self.waiters.lock().expect("Waiters mutex poisoned");
         let already = deque
             .iter()

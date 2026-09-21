@@ -2,7 +2,7 @@ defmodule Flezha.State.TestHelpersTest do
   @moduledoc """
   The two roots every persistence module's `setup` rests on:
   `tmp_app_data_dir/0` hands back one nothing else owns, and
-  `reset_all_entities/0` empties the one the writers resolve.
+  `reset_all_cells/0` empties the one the writers resolve.
   """
 
   # async: false: the planted band is a range of `flezha_state_test_<n>` names
@@ -54,7 +54,7 @@ defmodule Flezha.State.TestHelpersTest do
 
   # Every writer, the bind-time restore and the operative teardown resolve
   # `Paths.state_root/0`, so a reset deriving a root of its own empties a
-  # directory nothing wrote to and the previous test's Entity rehydrates on the
+  # directory nothing wrote to and the previous test's Cell rehydrates on the
   # next bind. The identity is the one the suite really leaked on.
   #
   # The root is claimed through the application env because that is the one the
@@ -72,22 +72,22 @@ defmodule Flezha.State.TestHelpersTest do
 
     assert Paths.state_root() == root, "the writers resolve #{Paths.state_root()}, not #{root}"
 
-    entity_id = {"operative_2", "store_input_procedure", "_"}
-    TestHelpers.write_wal_of_lang(entity_id, 0)
+    cell_id = {"operative_2", "store_input_tasklet", "_"}
+    TestHelpers.write_wal_of_lang(cell_id, 0)
     # The second thing a rebind restores from, and it sits beside the WAL.
     input_log = Paths.input_log_path("operative_2")
     File.write!(input_log, "queued-input")
-    {:ok, writer} = Supervisor.find_or_start(entity_id)
+    {:ok, writer} = Supervisor.find_or_start(cell_id)
 
-    assert Restore.has_persisted_state?(entity_id)
+    assert Restore.has_persisted_state?(cell_id)
     assert File.exists?(input_log)
 
-    TestHelpers.reset_all_entities()
+    TestHelpers.reset_all_cells()
 
     refute Process.alive?(writer), "the reset returned with a writer still live"
 
-    refute Restore.has_persisted_state?(entity_id),
-           "the reset left #{Paths.wal_path(entity_id)} for the next bind to rehydrate"
+    refute Restore.has_persisted_state?(cell_id),
+           "the reset left #{Paths.wal_path(cell_id)} for the next bind to rehydrate"
 
     refute File.exists?(input_log), "the reset left #{input_log} for the next bind to replay"
   end

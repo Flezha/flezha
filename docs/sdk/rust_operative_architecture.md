@@ -1,8 +1,8 @@
 # Rust SDK Operative Architecture
 
 For operative authors and SDK implementers: the Rust SDK's runtime model
-(Stream Operative class, instance, Procedure, Entity, Channel, Runner), the
-path a message takes from the wire to `Procedure::run` and out to a plugin,
+(Stream Operative class, instance, Tasklet, Cell, Channel, Runner), the
+path a message takes from the wire to `Tasklet::run` and out to a plugin,
 the backpressure and emit contracts, and the limits. The authoring surface is
 specified in [`authoring_contract.md`](authoring_contract.md); the kernel
 underneath in [`poll_core.md`](poll_core.md) and
@@ -25,8 +25,8 @@ underneath in [`poll_core.md`](poll_core.md) and
             │  StreamInstance (one per start;         │
             │  `--partitions N` starts N of these)    │
             │   ┌────────────┐   ┌──────────────┐     │
-            │   │ Procedure A│ ->│ Procedure B  │ -> ... -> plugin
-            │   │ (entity 0) │   │ (entities    │     │
+            │   │ Tasklet A│ ->│ Tasklet B  │ -> ... -> plugin
+            │   │ (cell 0) │   │ (cells    │     │
             │   │            │   │  "1m", "1h") │     │
             │   └────────────┘   └──────────────┘     │
             └─────────────────────────────────────────┘
@@ -38,19 +38,19 @@ underneath in [`poll_core.md`](poll_core.md) and
   its inverse. The topology is built and validated at the declaring call site
   and shared (`Arc<OperativeTopology>`) by every instance of the class.
 - **Operative instance** (`StreamInstance`) — the live object spawned on
-  `AddOperative`. Each instance owns its per-Entity state and mailboxes;
+  `AddOperative`. Each instance owns its per-Cell state and mailboxes;
   instances are independent and routed by `operative_id` (the SDK calls it
   `instance_id`).
-- **Procedure** — the unit of compute: typed `Input` / `Output` / `State` /
-  `Change` / `Clock` / `Config`, a sync `run`, and an entity-mode declaration.
-- **Entity** — one lane of a Procedure with its own state and mailbox. Modes
-  (`EntityMode`): `Single` (default, one Entity), `Static` (fixed
-  `entity_keys()`, routed by `entities_for`), `Dynamic` (declared on the
-  wiring by `.key_by(f)`, Entities created per key at runtime). At most one
-  drain runs per Entity at any time (sticky ordering).
+- **Tasklet** — the unit of compute: typed `Input` / `Output` / `State` /
+  `Change` / `Clock` / `Config`, a sync `run`, and a cell-mode declaration.
+- **Cell** — one lane of a Tasklet with its own state and mailbox. Modes
+  (`CellMode`): `Single` (default, one Cell), `Static` (fixed
+  `cell_keys()`, routed by `cells_for`), `Dynamic` (declared on the
+  wiring by `.key_by(f)`, Cells created per key at runtime). At most one
+  drain runs per Cell at any time (sticky ordering).
 - **Channel** — the typed wire between producers and consumers (`ChannelKind`):
-  `Entry` (controller → SDK), `InterProcedure` (`Arc<T>` zero-copy between
-  Procedures), `PluginBound` (serialized to bytes and sent to a named plugin
+  `Entry` (controller → SDK), `InterTasklet` (`Arc<T>` zero-copy between
+  Tasklets), `PluginBound` (serialized to bytes and sent to a named plugin
   through the controller).
 - **Runner** — the poll-worker pool that drains mailboxes, one per process
   (`FlezhaRunner::start()`); see "Worker pool" below.
@@ -61,7 +61,7 @@ Every operative carries a **kind** (`:stream` by default, `:workflow`), set at
 start and frozen. `Flezha.Operative.Kind` is the one capability table: a kind
 declares only the capabilities it has, and the control plane reads every flag
 through `Kind.capable?/2` with a `false` default. `:stream` declares
-`persistent_state?`, `time_travel?`, `dynamic_entities?` and
+`persistent_state?`, `time_travel?`, `dynamic_cells?` and
 `output_stall_watch?`; `:workflow` declares none. A gate reads the flag instead
 of probing the compute unit — `flz state get` on a workflow operative answers
 `{:error, {:unsupported_for_kind, :persistent_state}}`.
@@ -72,37 +72,37 @@ A workflow operative is a run-once job: `flz operative start <factory> [--id <id
 --kind workflow` sets the optional `kind` on `AddOperative` (empty ⇒
 `:stream`). The SDK keeps one sealed registry of live units (`Operative::Stream`
 | `Operative::Workflow`) resolved once per frame at the dispatch boundary. A
-workflow class declares its procedures on the same builder a stream uses:
+workflow class declares its tasklets on the same builder a stream uses:
 
 ```rust
 struct Greet;
 impl flezha_runner::WorkflowOperative for Greet {
     fn factory_id() -> &'static str { "greet" }
-    fn procedures(c: &flezha_runner::ChannelBuilder) {
+    fn tasklets(c: &flezha_runner::ChannelBuilder) {
         c.input::<String>("in").into::<SayHello>().sink_named("out");
     }
 }
 flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
 ```
 
-`SayHello` is an ordinary `Procedure` whose `run` emits `format!("hello {input}")`.
+`SayHello` is an ordinary `Tasklet` whose `run` emits `format!("hello {input}")`.
 The entry channel is seeded once per started instance from `init_values`; a
-class declaring no procedure is refused at registration. A procedure ends a
+class declaring no tasklet is refused at registration. A tasklet ends a
 looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
 `WorkflowCompleted` on the control stream and the controller drives the one
-teardown path (`Flezha.Service.OperativeManager.stop_operative/3`). A procedure
+teardown path (`Flezha.Service.OperativeManager.stop_operative/3`). A tasklet
 that fails past its retry ladder is terminal: compensation, then teardown
 plus `[:flezha, :workflow, :failed]`, no re-run. A job that
 completes before the start RPC confirms its binding is reported as a successful
 start with no live `runner_id`. Lifecycle, durable loop, suspension, saga
-compensation, entity retry and finished-job retention are in
+compensation, cell retry and finished-job retention are in
 [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
 
 ## Public API
 
 ```rust
 use flezha_runner::{
-    Flezha, ChannelBuilder, StreamOperative, Procedure, ProcedureCtx, ProcedureError,
+    Flezha, ChannelBuilder, StreamOperative, Tasklet, TaskletCtx, TaskletError,
 };
 ```
 
@@ -134,10 +134,10 @@ then `runner.start()?;` (`run()` is immune, because it blocks until shutdown).
 
 ## Authoring sugar (default path)
 
-`#[flezha_runner::procedure]`, `#[derive(flezha_runner::State)]` and
+`#[flezha_runner::tasklet]`, `#[derive(flezha_runner::State)]` and
 `flezha_runner::operative!` (crate `flezha-macros`) are pure expansion over
-the `StreamOperative` / `Procedure` / `Change` traits: a sugared procedure and
-a hand-written one compose in one operative, and ejecting a sugared procedure
+the `StreamOperative` / `Tasklet` / `Change` traits: a sugared tasklet and
+a hand-written one compose in one operative, and ejecting a sugared tasklet
 is a paste of its expansion. The contract binding every SDK is
 [`authoring_contract.md`](authoring_contract.md).
 
@@ -147,13 +147,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Default, flezha_runner::State)]
 struct OhlcState { candles: Vec<f64> }
 
-#[flezha_runner::procedure(id = "parse_op")]
+#[flezha_runner::tasklet(id = "parse_op")]
 fn parse(input: String) -> f64 {
     input.parse().unwrap_or(0.0)
 }
 
 // `&mut State` ⇒ stateful; the return value is auto-emitted.
-#[flezha_runner::procedure(id = "ohlc_op", keys = ["1m", "1h", "1d", "1w"], entities_for = all_tfs)]
+#[flezha_runner::tasklet(id = "ohlc_op", keys = ["1m", "1h", "1d", "1w"], cells_for = all_tfs)]
 fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
     state.push_candles(price);            // journaled via #[derive(State)]
     format!("{price}").into_bytes()
@@ -170,10 +170,10 @@ flezha_runner::operative! {
 }
 ```
 
-A single-procedure operative needs no `operative!`: its `run` function takes
+A single-tasklet operative needs no `operative!`: its `run` function takes
 `#[flezha_runner::stream_operative]` or `#[flezha_runner::workflow_operative]`
 instead (the short form, below). Attribute opt-ins: `id`, `emits`, `keys` +
-`entities_for` (static mode), `key`, `idle_ttl` + `max_entities` (dynamic-mode
+`cells_for` (static mode), `key`, `idle_ttl` + `max_cells` (dynamic-mode
 knobs; the key itself is declared on the wiring with `.key_by(f)`), `capacity`,
 `clock`, and on the short-form attributes `sink`, `input` and `on_full`, which
 describe the operative's entry channel.
@@ -190,7 +190,7 @@ takes its name in.
 `#[flezha_runner::stream_operative]` or `#[flezha_runner::workflow_operative]`
 on a `run` function declares a whole operative of the kind the attribute names.
 It emits two types: the operative under the function's PascalCase name, which
-is what you register, and the procedure beside it, suffixed `Procedure`:
+is what you register, and the tasklet beside it, suffixed `Tasklet`:
 
 ```rust
 #[flezha_runner::stream_operative(id = "upcase", sink = "out")]
@@ -210,16 +210,16 @@ Flezha::create_runner("default")?
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` (or the `input` key's value),
-the procedure, a plugin sink named by `sink` when one is written, a factory id
+single tasklet: an entry channel named `input` (or the `input` key's value),
+the tasklet, a plugin sink named by `sink` when one is written, a factory id
 equal to `id`, and every class-level setting at its trait default. The
-procedure (`UpcaseProcedure`) is named `id` verbatim, so its entities keep their
+tasklet (`UpcaseTasklet`) is named `id` verbatim, so its cells keep their
 state path when the operative grows into the full form, and it wires into
-another operative's `channels()` body like any procedure. A workflow short form
+another operative's `channels()` body like any tasklet. A workflow short form
 is a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
 
-`sink` is optional. With none, the entry channel feeds the procedure and no
+`sink` is optional. With none, the entry channel feeds the tasklet and no
 plugin channel is declared: the operative that only keeps state.
 
 ```rust
@@ -232,7 +232,7 @@ fn counter(tick: String, state: &mut CounterState) {
 }
 ```
 
-Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window. Rust names no entry codec — an entry decodes by its declared type — so
 the short form takes no `codec` key.
@@ -241,7 +241,7 @@ The refusals are compile errors. A `sink` on a unit return with no `emits`
 fails with a message beginning `SinkWithoutOutput`, and a missing `id` names the
 attribute. A hand-written `StreamOperative` or `WorkflowOperative` impl beside a
 short form is rustc's conflicting-implementation error, which the contract calls
-`ShortFormWithTopology`. `#[flezha_runner::procedure]` declares a procedure
+`ShortFormWithTopology`. `#[flezha_runner::tasklet]` declares a tasklet
 only and refuses `sink`, `input`, `kind` and `on_full`.
 
 > A workflow short form started by a *spawn* does not see its payload yet —
@@ -250,15 +250,15 @@ only and refuses `sink`, `input`, `kind` and `on_full`.
 ## Escape hatch: the raw traits
 
 The sugar expands to this. Reach for it when the topology is not a single
-procedure or a linear chain.
+tasklet or a linear chain.
 
 ```rust
-use flezha_runner::{ChannelBuilder, Flezha, Procedure, ProcedureCtx, ProcedureError, StreamOperative};
+use flezha_runner::{ChannelBuilder, Flezha, Tasklet, TaskletCtx, TaskletError, StreamOperative};
 use flezha_runner::state::{NoChange, RestoreInitPayload, StateHandle, WallClock};
 
 #[derive(Default)]
-struct ParseProc;
-impl Procedure for ParseProc {
+struct ParseTask;
+impl Tasklet for ParseTask {
     type Input = String;
     type Output = f64;
     type State = ();
@@ -269,11 +269,11 @@ impl Procedure for ParseProc {
     fn name() -> &'static str { "parse_op" }
     fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
 
-    fn run(&mut self, input: String, _: StateHandle<'_, Self>, ctx: &mut ProcedureCtx<'_>)
-        -> Result<(), ProcedureError>
+    fn run(&mut self, input: String, _: StateHandle<'_, Self>, ctx: &mut TaskletCtx<'_>)
+        -> Result<(), TaskletError>
     {
         let price: f64 = input.parse().map_err(|e: std::num::ParseFloatError| {
-            ProcedureError::Custom(e.to_string())
+            TaskletError::Custom(e.to_string())
         })?;
         ctx.emit::<f64>(price)
     }
@@ -285,9 +285,9 @@ impl StreamOperative for MarketOperative {
 
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("trade.raw")
-            .into::<ParseProc>()          // ParseProc's output stream handle
+            .into::<ParseTask>()          // ParseTask's output stream handle
             .named("trade.parsed")
-            .into::<OhlcProc>()           // static-mode consumer, see below
+            .into::<OhlcTask>()           // static-mode consumer, see below
             .sink_named("ohlc.candles");  // plugin-bound terminal, named here
     }
 }
@@ -298,29 +298,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-A static-mode Procedure (`OhlcProc`) also declares `entity_keys()`, overrides
-`entities_for(&Input) -> Vec<&'static str>` and sets
-`const ENTITIES_FOR_OVERRIDDEN: bool = true` (a keyset without the override is
-`TopologyIssue::EntitiesForMissing`). A stateful Procedure declares a real
+A static-mode Tasklet (`OhlcTask`) also declares `cell_keys()`, overrides
+`cells_for(&Input) -> Vec<&'static str>` and sets
+`const CELLS_FOR_OVERRIDDEN: bool = true` (a keyset without the override is
+`TopologyIssue::CellsForMissing`). A stateful Tasklet declares a real
 `Change` and overrides `apply_change(&mut State, &Change)`; state is read via
 the `StateHandle`'s `Deref` and mutated with `state.apply(change)`. `run`,
 `apply_change` and `compensate` must be deterministic — time via `ctx.now()`,
-ids via `ctx.stable_id()`. `SimpleProcedure` is the tier between the attribute
+ids via `ctx.stable_id()`. `SimpleTasklet` is the tier between the attribute
 and the full trait. Other hooks: `from_config`, `on_timer`,
-`max_timers_per_entity` (10 000), `compact_after_bytes` (8 MiB), `compensate`
+`max_timers_per_cell` (10 000), `compact_after_bytes` (8 MiB), `compensate`
 + `COMPENSATE_OVERRIDDEN` (workflow saga), `SCHEMA_VERSION`.
 
 ### Java SDK parity
 
-The Java SDK is the same model: `Procedure<Input, State, Output, ChangeT,
+The Java SDK is the same model: `Tasklet<Input, State, Output, ChangeT,
 ClockT, ConfigT>` is a parameterized interface with `inputType()` /
 `outputType()` accessors, so bounds Rust checks at compile time become
 `StreamOperativeConfigurationException`s from `registerFactory(...)`;
-`entitiesForOverridden()` replaces the `ENTITIES_FOR_OVERRIDDEN` const;
+`cellsForOverridden()` replaces the `CELLS_FOR_OVERRIDDEN` const;
 dynamic mode is read off the wiring on both sides (the annotation processor
-refuses `@EntityKey`) with `entityIdleTtl()` as the only knob; zero-copy
+refuses `@CellKey`) with `cellIdleTtl()` as the only knob; zero-copy
 passes the value by reference, so the producer must treat an emitted value as
-immutable. `@Procedure` / `@State` / `@EntitiesFor` (`flezha-sdk-processor`)
+immutable. `@Tasklet` / `@State` / `@CellsFor` (`flezha-sdk-processor`)
 generate the impls, and a `@StreamOperative` or `@WorkflowOperative` class
 generates the short form's `<Class>StreamOperative` or
 `<Class>WorkflowOperative`, which the application registers with
@@ -335,27 +335,27 @@ Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
    a `Vec` index into `topology.channels`. A frame with no `channel` key goes
    to the class's first declared `Entry` channel; a name that is not one of the
    class's `Entry` channels — undeclared, or declared as a sink or an
-   inter-procedure channel — is parked to the dead-letter store under the name
+   inter-tasklet channel — is parked to the dead-letter store under the name
    it asked for, with one attempt and no retry wait. The channel's `wrap_input` turns the bytes into
    `Arc<dyn Any + Send + Sync>` (see "Entry decoding").
-2. **Entry channel → consumer Entity** — per consumer Procedure: `Single`
-   jumps to entity 0; `Static` does one HashMap lookup per key returned by
-   `entities_for(&input)`; `Dynamic` calls the edge's `key_by` closure and
-   does one `DashMap` lookup on the Procedure's `DynamicEntityRegistry`,
-   creating the Entity on a miss. The key function is total — an input is
+2. **Entry channel → consumer Cell** — per consumer Tasklet: `Single`
+   jumps to cell 0; `Static` does one HashMap lookup per key returned by
+   `cells_for(&input)`; `Dynamic` calls the edge's `key_by` closure and
+   does one `DashMap` lookup on the Tasklet's `DynamicCellRegistry`,
+   creating the Cell on a miss. The key function is total — an input is
    discarded by a `filter` declared before it, never by a keyless return.
 3. **Mailbox push** — one `ArrayQueue::try_push`, one Relaxed `pushes_total`
    increment, one `last_activity_at` store (the reaper's idle stamp), one
-   inflight compare-exchange. A winning CAS schedules the Entity's round on
+   inflight compare-exchange. A winning CAS schedules the Cell's round on
    the poll core; a losing one means an in-progress drain picks the item up
    through the missed-wake re-check. A full mailbox applies the channel's
    `OverflowPolicy` ("Backpressure" below).
-4. **Drain → `Procedure::run`** — the dispatcher downcasts to `Arc<S::Input>`,
+4. **Drain → `Tasklet::run`** — the dispatcher downcasts to `Arc<S::Input>`,
    takes the value out with `Arc::unwrap_or_clone` (a clone only when fan-out
    left the Arc shared) and calls the typed `run`. A returned `Err` or panic
    climbs the channel's `RetryPolicy` (default 3 attempts, 50 ms base,
    exponential with ±50 % jitter, capped at 5 s) and then parks the payload to
-   the dead-letter queue; `ProcedureError::NonRetryable` parks immediately.
+   the dead-letter queue; `TaskletError::NonRetryable` parks immediately.
 
 Bench shapes and floors: [`../operations/benchmarking.md`](../operations/benchmarking.md).
 
@@ -368,45 +368,45 @@ typed parse rides the channel's retry→DLQ ladder. `input_with(name, parser)`
 replaces the codec with a deterministic `Fn(Vec<u8>) -> Result<T, String>`.
 Producer-side transforms (`map`, `filter`, `flat_map`), `key_by`, `branch`
 and `merge` are in [`stream_transforms.md`](stream_transforms.md) and
-[`multi_input_procedures.md`](multi_input_procedures.md).
+[`multi_input_tasklets.md`](multi_input_tasklets.md).
 
-## Dynamic entity mode
+## Dynamic cell mode
 
 Dynamic mode is declared on the **wiring** — an edge carrying `.key_by(f)`
 makes its consumer dynamic — so a reader of `channels()` sees where work fans
-out. A dynamic Procedure owns zero Entities at startup; the first input whose
-key function returns `key` creates an `EntitySlot` (cold
-`init_state(Some(key), None)`) in the Procedure's `DynamicEntityRegistry`.
+out. A dynamic Tasklet owns zero Cells at startup; the first input whose
+key function returns `key` creates a `CellSlot` (cold
+`init_state(Some(key), None)`) in the Tasklet's `DynamicCellRegistry`.
 Concurrent producers for a fresh key share one slot. Declaring `.key_by` into
-a Procedure with a non-empty `entity_keys()` is refused
-(`TopologyIssue::KeyByOnUnkeyableTarget`). Two per-Procedure knobs:
+a Tasklet with a non-empty `cell_keys()` is refused
+(`TopologyIssue::KeyByOnUnkeyableTarget`). Two per-Tasklet knobs:
 
-- `entity_idle_ttl() -> Option<Duration>` — default `None`, no eviction and no
-  reaper. `Some(ttl)` spawns one `flezha-reaper` thread per Procedure that
+- `cell_idle_ttl() -> Option<Duration>` — default `None`, no eviction and no
+  reaper. `Some(ttl)` spawns one `flezha-reaper` thread per Tasklet that
   sweeps every `min(ttl / 4, 30 s)` (floored at 1 ms; `FLEZHA_REAP_INTERVAL_MS`
-  overrides) and evicts any Entity idle longer than `ttl`. A sweep takes the
-  Entity's drain gate and confirms an empty mailbox first, so it never
+  overrides) and evicts any Cell idle longer than `ttl`. A sweep takes the
+  Cell's drain gate and confirms an empty mailbox first, so it never
   interrupts a running `run`. **Eviction is destructive**: the slot, its
   pending timers and (when persistent) its on-disk WAL/snapshot go — a
-  `delete_entity_state` to the controller, durable-class like every other
+  `delete_cell_state` to the controller, durable-class like every other
   record, so an eviction inside a reconnect window holds the frame for the
   rebind rather than losing it — and a later input cold-starts fresh. The
   reaper waits for no reply and the controller writes none. The registry
   keeps the last 1024 evicted keys so a live read can say "idle-evicted"
   rather than "never existed".
-- `max_entities() -> usize` — default `100_000`, a soft cap: at the cap
+- `max_cells() -> usize` — default `100_000`, a soft cap: at the cap
   new-key inputs are dropped (`inputs_dropped_capped_total`), existing keys
   are unaffected. It bounds memory against a runaway `.key_by`, not
   admission; concurrent inserts may overshoot slightly.
 
 A **bind-time restore** is the other direction and does materialize a slot:
-the controller ships one `RestoreInitState` per Entity with durable state and
-the SDK creates the dynamic Entity to fold it into. Eviction deletes the
-files, so no restore is ever shipped for an evicted Entity. This is also what
+the controller ships one `RestoreInitState` per Cell with durable state and
+the SDK creates the dynamic Cell to fold it into. Eviction deletes the
+files, so no restore is ever shipped for an evicted Cell. This is also what
 carries a key across a partition rescale.
 
-Per-Procedure counters (`DynamicEntityCounters`, Relaxed):
-`entities_created_total`, `entities_evicted_total`,
+Per-Tasklet counters (`DynamicCellCounters`, Relaxed):
+`cells_created_total`, `cells_evicted_total`,
 `inputs_dropped_capped_total`.
 
 ## Partitioning
@@ -416,40 +416,40 @@ Operative. `--partitions N` starts N ordinary instances (`<id>#p0` …
 `<id>#p{N-1}`), each owning a contiguous range of the 256 key groups a
 routing key hashes into (`KeyGroupRange` on the `StreamInstance`). Nothing in
 this doc changes for a member; the one dispatch addition is a range check on
-each computed entity key that parks a mis-route before any state for that key
-exists. A class with no keyed entry-fed procedure refuses to be partitioned.
+each computed cell key that parks a mis-route before any state for that key
+exists. A class with no keyed entry-fed tasklet refuses to be partitioned.
 Group model, sources, forwarding, rescale: [`partitioned_operatives.md`](partitioned_operatives.md).
 
-## Per-Entity timers
+## Per-Cell timers
 
-A Procedure registers deadlines on its own Entity (`ctx.timer_at_event_time`,
+A Tasklet registers deadlines on its own Cell (`ctx.timer_at_event_time`,
 `ctx.timer_after`) and handles them in `on_timer`. Event-time timers fire on
-the dispatch path when an input advances the Entity's event-time high-water,
+the dispatch path when an input advances the Cell's event-time high-water,
 before that input; processing-time timers ride the poll core's deferred-wake
-list and are promoted onto the Entity's existing mailbox, so a firing obeys
+list and are promoted onto the Cell's existing mailbox, so a firing obeys
 the same ordering, overflow policy and single-drainer exclusion an input does.
-The pending set is folded state. Contract: [`entity_timers.md`](entity_timers.md).
+The pending set is folded state. Contract: [`cell_timers.md`](cell_timers.md).
 
 ## Backpressure and bounded mailboxes
 
-Each Entity's mailbox is a fixed-size lock-free `crossbeam` `ArrayQueue`
-allocated at operative startup. Capacity is declared per Procedure; the
+Each Cell's mailbox is a fixed-size lock-free `crossbeam` `ArrayQueue`
+allocated at operative startup. Capacity is declared per Tasklet; the
 policy applied when it is full is declared per channel.
 
 ### Capacity (consumer side)
 
 ```rust
-impl Procedure for OhlcProc {
+impl Tasklet for OhlcTask {
     fn mailbox_capacity() -> usize { 4096 }
     const MAILBOX_CAPACITY_OVERRIDDEN: bool = true;
     // ...
 }
 ```
 
-Resolution at `register_factory(R)`: the Procedure's value when
+Resolution at `register_factory(R)`: the Tasklet's value when
 `MAILBOX_CAPACITY_OVERRIDDEN = true`, else `FLEZHA_MAILBOX_CAPACITY`, else
 1024. Capacity must be in `1..=1_048_576`; out-of-range values fail
-registration naming the Procedure. Static-mode Procedures allocate one
+registration naming the Tasklet. Static-mode Tasklets allocate one
 mailbox per declared key, all at the same capacity.
 
 ### Policy (producer / wiring side)
@@ -457,16 +457,16 @@ mailbox per declared key, all at the same capacity.
 ```rust
 c.input::<Vec<u8>>("trade.raw")
     .on_full(OverflowPolicy::DropNewest)   // entry-side policy
-    .into::<ParseProc>()
-    .into::<OhlcProc>()
+    .into::<ParseTask>()
+    .into::<OhlcTask>()
     .named("ohlc.candles")
-    .on_full(OverflowPolicy::DropNothing)  // inter-procedure policy
-    .into::<IndicatorProc>();
+    .on_full(OverflowPolicy::DropNothing)  // inter-tasklet policy
+    .into::<IndicatorTask>();
 ```
 
 | `OverflowPolicy` | Behaviour |
 |---|---|
-| `DropNothing` (default, every kind) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Entity's `ctx.emit` never parks: the push is held in that Entity's push holdback, the Entity is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Entity, retries after a bounded 50 ms park on the consumer's `Waiters`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
+| `DropNothing` (default, every kind) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Cell's `ctx.emit` never parks: the push is held in that Cell's push holdback, the Cell is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Cell, retries after a bounded 50 ms park on the consumer's `Waiters`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
 | `DropNewest` | The incoming item is discarded; `drops_newest_total` += 1. |
 | `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1 **and `pushes_total` += 1** — the force-push admitted, so it is a successful enqueue by that counter's definition. Which item is evicted is best-effort under MPMC contention; the evicted one is named in a `flezha::mailbox` debug line. |
 
@@ -495,22 +495,22 @@ it. An Operative that prefers to shed (a live ticker where a stale price is
 worthless) declares `DropNewest` / `DropOldest` on its entry channel; the
 reader stays free and every drop is counted at the declaration site.
 
-### Per-Entity counters
+### Per-Cell counters
 
-`EntityCounters` on every mailbox, four `AtomicU64`s bumped `Relaxed`, plus a
+`CellCounters` on every mailbox, four `AtomicU64`s bumped `Relaxed`, plus a
 process-wide aggregate of each overflow outcome beside `DISPATCHES_COMPLETED`:
 
 | Counter | Bumped on | Readable |
 |---|---|---|
 | `pushes_total` | every admission, `DropOldest`'s force-push included | `slot.counters()` |
-| `pushes_blocked_total` | every `DropNothing` admission that found the mailbox full — a wait iteration on the entry path, an emit deferred or re-attempted on the producer path | `slot.counters()`; process-wide via `entity::pushes_blocked_total()` → heartbeat `blocked_parks` |
-| pending pushes | Entities currently holding an undelivered inter-procedure output, and the age of the oldest | `poll_core::global().pending_push_count()` / `pending_push_oldest_age_ms()` → heartbeat `pending_pushes`, `pending_push_oldest_ms` |
-| `drops_newest_total` | every drop under `DropNewest` | `slot.counters()`; process-wide via `entity::drops_newest_total()` → heartbeat `drops_newest` |
-| `drops_oldest_total` | every eviction under `DropOldest` | `slot.counters()`; process-wide via `entity::drops_oldest_total()` → heartbeat `drops_oldest` |
+| `pushes_blocked_total` | every `DropNothing` admission that found the mailbox full — a wait iteration on the entry path, an emit deferred or re-attempted on the producer path | `slot.counters()`; process-wide via `cell::pushes_blocked_total()` → heartbeat `blocked_parks` |
+| pending pushes | Cells currently holding an undelivered inter-tasklet output, and the age of the oldest | `poll_core::global().pending_push_count()` / `pending_push_oldest_age_ms()` → heartbeat `pending_pushes`, `pending_push_oldest_ms` |
+| `drops_newest_total` | every drop under `DropNewest` | `slot.counters()`; process-wide via `cell::drops_newest_total()` → heartbeat `drops_newest` |
+| `drops_oldest_total` | every eviction under `DropOldest` | `slot.counters()`; process-wide via `cell::drops_oldest_total()` → heartbeat `drops_oldest` |
 
-The per-Entity set is the breakdown a holder of the slot reads; what leaves the
+The per-Cell set is the breakdown a holder of the slot reads; what leaves the
 process is the aggregate, carried in the data-channel heartbeat's metadata
-beside `dispatches`, `credit_parked` and `inflight`. A per-Entity breakdown on
+beside `dispatches`, `credit_parked` and `inflight`. A per-Cell breakdown on
 that path would need a registry walk per heartbeat.
 
 `blocked_parks` counts **every full-mailbox admission, not episodes**. A runner
@@ -519,7 +519,7 @@ beside a frozen block count — byte for byte the picture a wedged runner shows 
 and that distinction is exactly what the controller's `runner_pool_wedged`
 verdict hangs off: dispatches frozen with blocks climbing is backpressure,
 dispatches frozen with blocks flat is a wedge. The entry path pays those as
-wait iterations of a parked thread; a producing Entity pays them as a deferral
+wait iterations of a parked thread; a producing Cell pays them as a deferral
 and its re-attempts, and reports the standing condition separately through
 `pending_pushes` / `pending_push_oldest_ms` — it holds no handout, so
 `inflight` is blind to it.
@@ -538,10 +538,10 @@ reader is the only producer and its park costs no pool thread.
 
 ## Emit paths
 
-### Inter-procedure zero-copy
+### Inter-tasklet zero-copy
 
-`ctx.emit::<C>(value)` on an `InterProcedure` channel wraps the value in one
-`Arc`, clones the `Arc` per consumer Entity, and each drain takes it out with
+`ctx.emit::<C>(value)` on an `InterTasklet` channel wraps the value in one
+`Arc`, clones the `Arc` per consumer Cell, and each drain takes it out with
 `Arc::unwrap_or_clone`: a single consumer gets the inner `T` with no clone;
 fan-out pays one value clone per consumer.
 
@@ -557,12 +557,12 @@ layer (for example `Flezha.Plugin.Provider.Kafka` with its `:channel` option)
 gates on `metadata["channel"]`.
 
 `ctx.emit_with_meta::<C>(value, meta)` appends user metadata to the plugin
-frame only; it returns `MetadataNotAllowedOnInterProcedureChannel` on an
-inter-procedure channel without a sink, `ReservedMetadataKey` for any key
+frame only; it returns `MetadataNotAllowedOnInterTaskletChannel` on an
+inter-tasklet channel without a sink, `ReservedMetadataKey` for any key
 under the reserved `flz.` prefix, and silently replaces a user-supplied
 `channel` entry with the real channel name. A channel declared `.keyed()`
-(requires a sink) stamps `flz.entity` / `flz.seq` / `flz.key` on every plugin
-frame: `emit` carries the Entity's own key (a single-entity Procedure fails
+(requires a sink) stamps `flz.cell` / `flz.seq` / `flz.key` on every plugin
+frame: `emit` carries the Cell's own key (a single-cell Tasklet fails
 with `KeyRequiredOnKeyedChannel`), `emit_keyed(key, value)` carries a
 replay-stable natural key (`KeyNotAllowedOnNonKeyedChannel` elsewhere).
 
@@ -572,7 +572,7 @@ replay-stable natural key (`KeyNotAllowedOnNonKeyedChannel` elsewhere).
 handle attach the channel's `plugin_sink: Option<PluginSink>` — the one
 representation of plugin egress. The `_named` half names the channel, which is
 what rides the frame; naming one channel with both a sink and `.named(...)` is
-`TopologyIssue::ChannelNamedTwice`. `kind` is derived at build time: `InterProcedure` when consumers are wired
+`TopologyIssue::ChannelNamedTwice`. `kind` is derived at build time: `InterTasklet` when consumers are wired
 after the sink (hybrid — one typed value reaches the consumer mailboxes and,
 serialized, the plugin), `PluginBound` when nothing consumes the channel
 (terminal). Order of `sink_with` and `.into::<S>()` is irrelevant; a second
@@ -580,43 +580,43 @@ sink on one channel is `TopologyIssue::DuplicatePluginSink`; wiring a
 consumer after `.sealed()` is a compile error.
 
 ```rust
-sma_stream                       // SmaProc's output handle, from `.into::<SmaProc>()`
+sma_stream                       // SmaTask's output handle, from `.into::<SmaTask>()`
     .sink_named_with("sma_out", sma_to_pb_bytes)
-    .into::<BollingerProc>();
+    .into::<BollingerTask>();
 ```
 
 Per emit on a hybrid channel the typed `Arc<T>` fans out to every consumer
 mailbox under the channel's `OverflowPolicy` first; then the serializer runs
 once inside `catch_unwind` and the bytes take the plugin-wire path, identical
 to a pure `PluginBound` frame. A panicking serializer never prevents
-inter-procedure delivery: the producer gets
-`ProcedureError::PluginSerializerPanic { channel, message }` and the dispatcher
+inter-tasklet delivery: the producer gets
+`TaskletError::PluginSerializerPanic { channel, message }` and the dispatcher
 stays alive. Channels naming one plugin fan in at the controller, told apart
 by the `channel` metadata key; Rust and Java frames are byte-identical there.
 
-## Per-Entity state and persistence
+## Per-Cell state and persistence
 
-Each `EntitySlot` holds `EntityState<S> { procedure: S, state: S::State }`
-behind a `Mutex` the inflight CAS keeps uncontended: the Procedure value is a
-per-Entity scratch buffer, `S::State` is the domain state, `init_state` runs
-once per Entity and later runs mutate in place through the `StateHandle`.
-State migration (`MigrationSerialization` / `EntityState`) walks the Entities
-per Procedure and produces the JSON shape in
+Each `CellSlot` holds `CellState<S> { tasklet: S, state: S::State }`
+behind a `Mutex` the inflight CAS keeps uncontended: the Tasklet value is a
+per-Cell scratch buffer, `S::State` is the domain state, `init_state` runs
+once per Cell and later runs mutate in place through the `StateHandle`.
+State migration (`MigrationSerialization` / `CellState`) walks the Cells
+per Tasklet and produces the JSON shape in
 [`protocol_spec.md`](protocol_spec.md) "Operative state JSON shape".
 
 Persistence rides the `Change` trait: `state.apply(change)` is a `Vec::push`
 on the hot path; serialization, coalescing and the wire send happen on one
 per-process flusher thread on a 5 ms linger (`FLEZHA_FLUSH_LINGER_MS`).
-`type Change = NoChange` opts a Procedure out. The class toggle
+`type Change = NoChange` opts a Tasklet out. The class toggle
 `StreamOperative::PERSISTENCE_ENABLED` (default `true`) is frozen at instance
 start; the runner overrides it per instance with the operative-start metadata
 key `operative_persistence.<OperativeClass>`. Trait surface, wire format,
-`ProcedureTestHarness` (`replay_equals`, `replay_emits_equal`) and the Java
+`TaskletTestHarness` (`replay_equals`, `replay_emits_equal`) and the Java
 port: [`state_persistence.md`](state_persistence.md).
 
 ## Limits
 
-- **Per-Procedure `handle_message` is not served by the SDK**: the
+- **Per-Tasklet `handle_message` is not served by the SDK**: the
   `OperativeMessage` command is answered `operative does not support
   handle_message` (`flz_core/src/command/operative_message.rs`); controller-side
   handlers are in [`../plugins/message_handlers.md`](../plugins/message_handlers.md).
@@ -626,29 +626,29 @@ port: [`state_persistence.md`](state_persistence.md).
   the removal succeeds and rehydration fails placement.
 - **Only the overflow aggregates leave the process** — `blocked_parks`,
   `drops_newest`, `drops_oldest`, `pending_pushes` and `pending_push_oldest_ms`
-  ride the data heartbeat; the per-Entity breakdown and the dynamic-entity
-  counters stay in-process, unexported to a metrics backend. Which Entity is
+  ride the data heartbeat; the per-Cell breakdown and the dynamic-cell
+  counters stay in-process, unexported to a metrics backend. Which Cell is
   behind is named only in the runner's own `flezha::mailbox` log — the
   heartbeat carries counters, not identities.
-- **`max_entities` is a soft cap** and `DropOldest` is best-effort under
-  contention; the Java SDK has no `maxEntities` knob at all.
+- **`max_cells` is a soft cap** and `DropOldest` is best-effort under
+  contention; the Java SDK has no `maxCells` knob at all.
 
 ## Where to look in the code
 
 | Concern | File |
 |---|---|
-| `StreamOperative` trait; `Procedure`, `ProcedureCtx`, `ProcedureError`, `SimpleProcedure` | `sdk/rust/src/operative/mod.rs`; `sdk/rust/src/procedure/{mod,ctx,error,simple}.rs` |
+| `StreamOperative` trait; `Tasklet`, `TaskletCtx`, `TaskletError`, `SimpleTasklet` | `sdk/rust/src/operative/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,error,simple}.rs` |
 | `ChannelBuilder`, `Stream<T>`, `TopologyIssue`, `Channel<T>` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/operative/builder.rs` |
-| Authoring macros | `sdk/rust/macros/src/{procedure,state,operative}.rs` |
+| Authoring macros | `sdk/rust/macros/src/{tasklet,state,operative}.rs` |
 | Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/operative/dispatcher.rs`, `poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
-| `StreamInstance`, `KeyGroupRange`; `OperativeTopology`, `EntityMode`; registries | `flz_core/src/operative/{instance,topology,registry}.rs` |
-| `EntitySlot`, `EntityCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/entity.rs`, `mailbox.rs`, `dynamic.rs` |
+| `StreamInstance`, `KeyGroupRange`; `OperativeTopology`, `CellMode`; registries | `flz_core/src/operative/{instance,topology,registry}.rs` |
+| `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |
 | Wire dispatch (`OperativeDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
-| Operative state JSON shape, `apply_init_values` | `flz_core/src/command/entity_state.rs` |
-| `WorkflowOperative`; `ProcedureTestHarness` | `sdk/rust/src/workflow/mod.rs`, `flz_core/src/workflow/mod.rs`; `sdk/rust/src/testing/harness.rs` |
+| Operative state JSON shape, `apply_init_values` | `flz_core/src/command/cell_state.rs` |
+| `WorkflowOperative`; `TaskletTestHarness` | `sdk/rust/src/workflow/mod.rs`, `flz_core/src/workflow/mod.rs`; `sdk/rust/src/testing/harness.rs` |
 
 ## See also
 

@@ -88,7 +88,7 @@ workload:
 | memory | `512Mi` | `2Gi` |
 
 The BEAM's steady-state footprint scales with the number of bound operatives and the
-per-Entity WAL write rate. Symptoms of limits set too low:
+per-Cell WAL write rate. Symptoms of limits set too low:
 
 - **Memory too low** → the container is `OOMKilled` (`kubectl describe pod` shows
   `Reason: OOMKilled`, and the restart is abrupt — no graceful drain, so in-flight
@@ -186,7 +186,7 @@ It carries **everything the controller must not lose**:
 
 - ProcessHub's persistent registry (`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`) — the recovery
   DETS files, i.e. operative child specs and recoverable plugin bindings.
-- Per-Entity WAL + snapshot files (`FLEZHA_STATE_DIR`) — operative state.
+- Per-Cell WAL + snapshot files (`FLEZHA_STATE_DIR`) — operative state.
 - The dead-letter queue store (`FLEZHA_DLQ_DIR`).
 
 Losing this volume reverts a controller to an empty recovery on restart. See the

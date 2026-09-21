@@ -9,7 +9,7 @@ defmodule Flezha.AuthZ.Quotas do
 
   Enforcement points:
 
-    * `OperativeManager.start_operative/2`   → `:operatives`, `:entities`,
+    * `OperativeManager.start_operative/2`   → `:operatives`, `:cells`,
       `:disk_bytes` (refuse new allocation while over `max_state_bytes`)
     * `FleetManager.connect_handler/4`       → `:runners` (`max_runners`)
     * Bounded-mailbox capacity provisioning  → `:mailbox_bytes`
@@ -36,7 +36,7 @@ defmodule Flezha.AuthZ.Quotas do
 
   @type kind ::
           :max_operatives
-          | :max_entities_per_operative
+          | :max_cells_per_operative
           | :max_mailbox_bytes_total
           | :max_message_rate_per_second
           | :max_state_bytes
@@ -52,7 +52,7 @@ defmodule Flezha.AuthZ.Quotas do
   `namespace` would exceed its quota.
 
   `kind` is one of the documented atoms above. `requested` is the
-  size of the allocation (1 for a operative/entity/runner; bytes
+  size of the allocation (1 for a operative/cell/runner; bytes
   for mailbox/disk).
   """
   @spec check_allocation(binary(), atom(), non_neg_integer()) :: :ok | quota_error()
@@ -151,7 +151,7 @@ defmodule Flezha.AuthZ.Quotas do
   # quota field reads natural in the namespace catalog while the
   # counter kind is a short atom.
   defp counter_for(:max_operatives), do: :operatives
-  defp counter_for(:max_entities_per_operative), do: :entities
+  defp counter_for(:max_cells_per_operative), do: :cells
   defp counter_for(:max_mailbox_bytes_total), do: :mailbox_bytes
   defp counter_for(:max_message_rate_per_second), do: :messages
   defp counter_for(:max_state_bytes), do: :disk_bytes

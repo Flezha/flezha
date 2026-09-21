@@ -154,7 +154,7 @@ defmodule Flezha.Runner.FleetManager.Session do
       case Map.get(state.stable_sessions, stable_id) do
         {old_session, _credential} when old_session != session_token ->
           # Unbind-old BEFORE bind-new: once the fence returns, nothing the
-          # superseded session forwards can land in any Entity WAL, so no
+          # superseded session forwards can land in any Cell WAL, so no
           # window exists in which both sessions hold a writable binding.
           fence_superseded_session(old_session)
           swap_bindings(namespace, old_session, session_token)
@@ -214,7 +214,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   # The write-path fence, in refusal order: mark the session superseded (the
   # WalWriter-side gate), then synchronously flip each of its StreamChannels
-  # off the Entity write path. Bounded calls — a wedged channel must not
+  # off the Cell write path. Bounded calls — a wedged channel must not
   # block the connect; its late-flushed frames are refused by the mark instead.
   def fence_superseded_session(old_session) do
     Marks.mark_session_superseded(old_session)

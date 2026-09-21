@@ -34,7 +34,7 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.ProcInbox
+  alias Flezha.State.TaskInbox
   alias Flezha.State.Restore
 
   require Logger
@@ -54,7 +54,7 @@ defmodule Flezha.Operative.Lifecycle do
     # after a restart (Identificator.unique_id/1 generates a fresh id
     # per connect), so we re-resolve via OperativeManager.await_runner/5
     # — the same bounded lookup HubManager.alter_child_data/2 performs.
-    case Overwatch.with_proc_span(:await_runner, operative.id, fn ->
+    case Overwatch.with_task_span(:await_runner, operative.id, fn ->
            OperativeManager.await_runner(
              state.namespace,
              operative.factory_id,
@@ -182,7 +182,7 @@ defmodule Flezha.Operative.Lifecycle do
              operative.factory_id,
              Overwatch.operative_class(state)
            ),
-         # Tier: restore every persisted Entity (awaited) and re-forward the
+         # Tier: restore every persisted Cell (awaited) and re-forward the
          # journaled input tail BEFORE sources activate, so replayed offsets
          # reach the runner ahead of fresh ones (fold order at the SDK).
          {:ok, state} <- tier_restore(state, effectively_once) do
@@ -299,21 +299,21 @@ defmodule Flezha.Operative.Lifecycle do
   end
 
   # Stamp everything a resuming bind carries onto the operative's opts so
-  # `control_unit` can set the `AddOperative` fields: how many Entity restores
-  # to wait for, and the proc-journal the driver resumes its iteration from. Only
+  # `control_unit` can set the `AddOperative` fields: how many Cell restores
+  # to wait for, and the task-journal the driver resumes its iteration from. Only
   # a workflow instance has a journal, and the kind check is what keeps an
   # stream bind from reading for a file that cannot exist.
   defp with_resume_state(operative, kind, operative_class) do
     opts =
       operative.opts
-      |> Keyword.put(:resume_entity_count, Replay.resume_entity_count(kind, operative_class))
+      |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(kind, operative_class))
       |> Keyword.put(
-        :proc_journal,
-        if(kind == :workflow, do: Commands.proc_journal_state(operative_class))
+        :task_journal,
+        if(kind == :workflow, do: Commands.task_journal_state(operative_class))
       )
       |> Keyword.put(
         :inbox_tail_count,
-        if(kind == :workflow, do: length(ProcInbox.undelivered(operative_class)), else: 0)
+        if(kind == :workflow, do: length(TaskInbox.undelivered(operative_class)), else: 0)
       )
 
     %{operative | opts: opts}
@@ -500,7 +500,7 @@ defmodule Flezha.Operative.Lifecycle do
     do: %Overwatch{state | timers: Timer.cancel(state.timers, :wake)}
 
   defp start_operative_sdk(runner_id, operative) do
-    Overwatch.with_proc_span(:start_operative, operative.id, fn ->
+    Overwatch.with_task_span(:start_operative, operative.id, fn ->
       GenServer.call(
         Identificator.control_unit(runner_id),
         {:start_operative, operative},

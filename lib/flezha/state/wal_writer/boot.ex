@@ -14,7 +14,7 @@ defmodule Flezha.State.WalWriter.Boot do
   alias Flezha.State.WalWriter.{Admission, Epoch, Settlement, State}
 
   @doc "The struct a writer starts from, before any disk I/O."
-  def new(entity_id) do
+  def new(cell_id) do
     Process.flag(:trap_exit, true)
     now = State.now_ms()
 
@@ -24,9 +24,9 @@ defmodule Flezha.State.WalWriter.Boot do
     # continue runs before any queued append, so appends queue in this writer's
     # mailbox — never the channel's. `-1` is the "no records yet" seq sentinel.
     state = %State{
-      entity_id: entity_id,
+      cell_id: cell_id,
       file_handle: nil,
-      wal_path: Paths.wal_path(entity_id),
+      wal_path: Paths.wal_path(cell_id),
       last_persisted_seq: -1,
       last_advance_at: now,
       last_change_seen_at: now,
@@ -34,7 +34,7 @@ defmodule Flezha.State.WalWriter.Boot do
       pending_bytes: 0,
       pending_since_us: nil,
       limits: Admission.limits(),
-      metrics: Metrics.for_entity(entity_id),
+      metrics: Metrics.for_cell(cell_id),
       latency_reservoir: :queue.new(),
       backpressured?: false,
       shedding?: false,
@@ -103,14 +103,14 @@ defmodule Flezha.State.WalWriter.Boot do
     # Restart re-drive (effectively-once): every durable effect record above
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
-    dedup = Outbox.read(state.entity_id)
+    dedup = Outbox.read(state.cell_id)
 
     {redrive, max_consumed} =
       Epoch.scan_effect_records_above(file, state.wal_path, dedup.outbox_flushed_seq)
 
     if is_integer(max_consumed) do
-      {rc, _sh, _pk} = state.entity_id
-      InputLog.record_consumed(rc, state.entity_id, max_consumed)
+      {rc, _sh, _pk} = state.cell_id
+      InputLog.record_consumed(rc, state.cell_id, max_consumed)
     end
 
     state = %{

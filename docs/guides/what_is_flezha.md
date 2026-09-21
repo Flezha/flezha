@@ -12,7 +12,7 @@ symbol's total traded volume in a Postgres table, always up to date.
 
 What you write is an **operative**, a short declaration of the path the data
 takes: trades enter on a channel, are grouped by symbol, pass through a
-**procedure**, and leave on a second channel. The procedure is the only real
+**tasklet**, and leave on a second channel. The tasklet is the only real
 logic, a few lines that add each trade to its symbol's total and emit the new
 total. The rest is already there:
 
@@ -23,7 +23,7 @@ total. The rest is already there:
   instead is a different command, not a code change.
 - **The totals survive a crash.** Each symbol's total is saved as it changes, so
   after a crash it continues from its last value, not from zero.
-- **A bad trade does not stop the stream.** A trade your procedure keeps failing
+- **A bad trade does not stop the stream.** A trade your tasklet keeps failing
   on is retried, then set aside in a dead-letter queue, where you can inspect it
   and send it through again.
 

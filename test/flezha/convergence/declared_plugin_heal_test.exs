@@ -46,7 +46,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
   @test_store_input_factory "store_input"
 
   setup _context do
-    TestHelpers.reset_all_entities()
+    TestHelpers.reset_all_cells()
     on_exit(fn -> FleetManager.stop_namespace(@temp_namespace) end)
     :ok
   end

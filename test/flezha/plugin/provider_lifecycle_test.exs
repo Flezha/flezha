@@ -252,10 +252,10 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     end
 
     test "the constructor refuses an entry that could not be listed or attributed" do
-      assert {:error, {:dlq_entry_missing, [:entity_key]}} =
+      assert {:error, {:dlq_entry_missing, [:cell_key]}} =
                Flezha.Dlq.Entry.new(%{
                  operative_class: "c",
-                 procedure_id: "p",
+                 tasklet_id: "p",
                  channel: "ch",
                  error: "boom"
                })
@@ -263,8 +263,8 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       assert {:ok, %Flezha.Dlq.Entry{error: "{:boom, 1}"}} =
                Flezha.Dlq.Entry.new(%{
                  operative_class: "c",
-                 procedure_id: "p",
-                 entity_key: "k",
+                 tasklet_id: "p",
+                 cell_key: "k",
                  channel: "ch",
                  error: {:boom, 1}
                })

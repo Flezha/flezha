@@ -275,7 +275,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
            group: "ohlc",
            from: 2,
            to: 3,
-           entities_moved: 1,
+           cells_moved: 1,
            vacated: ["ohlc#p2"],
            members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
            warnings: ["more partitions than runners"]
@@ -286,7 +286,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
       assert out =~ "WARNING: more partitions than runners"
       assert out =~ "Operative ohlc rescaled 2 -> 3"
-      assert out =~ "1 entities moved, 1 trees removed"
+      assert out =~ "1 cells moved, 1 trees removed"
       assert out =~ "  ohlc#p0"
     end
   end
@@ -382,7 +382,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "a keyed read goes to exactly the member owning the key's group" do
       parent = self()
 
-      stub(OperativeManager, :get_entity_state, fn "trading", id, _selector ->
+      stub(OperativeManager, :get_cell_state, fn "trading", id, _selector ->
         send(parent, {:read, id})
         {:ok, ~s({"candle":{"BTC-USD":{"high":42}}}), 7}
       end)
@@ -395,8 +395,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       assert out =~ "BTC-USD"
     end
 
-    test "a procedure-level read fans out and merges the members' entities" do
-      stub(OperativeManager, :get_entity_state, fn "trading", id, _selector ->
+    test "a tasklet-level read fans out and merges the members' cells" do
+      stub(OperativeManager, :get_cell_state, fn "trading", id, _selector ->
         case id do
           "ohlc#p0" -> {:ok, ~s({"candle":{"SOL-USD":{"high":1}}}), 3}
           "ohlc#p1" -> {:ok, ~s({"candle":{"BTC-USD":{"high":2}}}), 9}

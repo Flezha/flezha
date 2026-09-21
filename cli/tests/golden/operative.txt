@@ -13,7 +13,7 @@ COMMANDS:
     listen      Print the frames an operative emits or ingests
     send        Send a payload to an operative's input stream
     rewind      Rewind a workflow loop to a committed iteration
-    replay      Re-run an Entity's retained inputs from a point in the past
+    replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 
 EXAMPLES:

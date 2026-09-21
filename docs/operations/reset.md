@@ -1,7 +1,7 @@
 # Resetting Controller runtime data
 
 For operators who need a Controller to boot from a clean slate. `flz reset`
-clears the durable on-disk state under `app_data/` — every Entity's
+clears the durable on-disk state under `app_data/` — every Cell's
 WAL/snapshot/outbox files and the ProcessHub durable registry, optionally the
 TLS material, parked DLQ records, schedules, the auth store, the audit trail,
 installed plugins and UDS sockets — without deleting `app_data/` itself. It
@@ -29,7 +29,7 @@ in use.
 
 | Directory                     | Contents                               | Cleared               |
 | ----------------------------- | -------------------------------------- | --------------------- |
-| `app_data/state/`             | per-Entity WAL, snapshot, outbox files | by default            |
+| `app_data/state/`             | per-Cell WAL, snapshot, outbox files | by default              |
 | `app_data/process_hub/`       | ProcessHub durable registry (`.dets`)  | by default            |
 | `app_data/certs/`             | TLS material                           | `--include-certs`     |
 | `app_data/dlq/`               | parked dead-letter records             | `--include-dlq`       |

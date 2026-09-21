@@ -51,7 +51,7 @@ defmodule Flezha.Convergence.Planner do
     parked_operatives: [:reset_control_channel, :rebind_operative],
     data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_operative],
     unbound_operatives: [:rebind_operative],
-    resync_entities: [:resync_runner],
+    resync_cells: [:resync_runner],
     missing_plugins: [:start_plugin],
     extra_plugins: [:stop_plugin],
     unhealthy_plugins: [:restart_plugin],
@@ -189,7 +189,7 @@ defmodule Flezha.Convergence.Planner do
   end
 
   # Prerequisite order: evictions and channel resets, then the data-plane
-  # wedge (at most one op, of either kind), then (re)binds, Entity resyncs,
+  # wedge (at most one op, of either kind), then (re)binds, Cell resyncs,
   # plugin starts, and the row re-publish last. Each group preserves Delta
   # order within it.
   defp ordered_ops(%Diff{} = d, backoff) do
@@ -202,7 +202,7 @@ defmodule Flezha.Convergence.Planner do
       publish_ops(d)
   end
 
-  # The tick's classifier verdict, already resolved to the entity that can be
+  # The tick's classifier verdict, already resolved to the cell that can be
   # healed. Remedy by scope: a wedged runner is evicted (its operatives rebind
   # through the existing ordering), a wedged connection is resynced in place,
   # a wedged operative is rebound.
@@ -296,14 +296,14 @@ defmodule Flezha.Convergence.Planner do
   defp reasoned(:probe), do: %{}
   defp reasoned(reason), do: %{reason: reason}
 
-  # An Entity resync against the runner the fact named, keyed on the fact's
-  # reason and the Entity — the same primitive the output-stall ladder starts
+  # A Cell resync against the runner the fact named, keyed on the fact's
+  # reason and the Cell — the same primitive the output-stall ladder starts
   # with, aimed one level down.
-  defp resync_ops(%Diff{resync_entities: entities}) do
-    Enum.map(entities, fn {entity_id, runner_id, reason} ->
-      op(:resync_runner, nil, entity_id, %{
+  defp resync_ops(%Diff{resync_cells: cells}) do
+    Enum.map(cells, fn {cell_id, runner_id, reason} ->
+      op(:resync_runner, nil, cell_id, %{
         reason: reason,
-        entity_id: entity_id,
+        cell_id: cell_id,
         runner_id: runner_id
       })
     end)

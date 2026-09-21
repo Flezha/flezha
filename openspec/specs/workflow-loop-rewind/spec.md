@@ -2,24 +2,24 @@
 
 ## Purpose
 
-The workflow-loop-rewind capability lets an operator take a looping workflow operative back to a committed iteration: `flz operative rewind <instance> --to-iteration N` compensates the procedures of every iteration above N in reverse order, restores the inter-proc handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming sinks, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound procedure staged plugin output it declares no `compensate` hook to undo.
+The workflow-loop-rewind capability lets an operator take a looping workflow operative back to a committed iteration: `flz operative rewind <instance> --to-iteration N` compensates the tasklets of every iteration above N in reverse order, restores the inter-task handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming sinks, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound tasklet staged plugin output it declares no `compensate` hook to undo.
 
 ## Requirements
 
 ### Requirement: Rewind to a committed iteration
 
 `flz operative rewind <instance> --to-iteration N` SHALL: compensate the
-procedures of iterations above N in reverse order using the existing per-entity
-compensation machinery, restore the instance's inter-proc handoff and consumed inbox
+tasklets of iterations above N in reverse order using the existing per-cell
+compensation machinery, restore the instance's inter-task handoff and consumed inbox
 offset to the iteration-N boundary, bump the epoch, and resume the loop at
 iteration N+1. Iteration N SHALL remain committed. Rewinding to an iteration that
 has not committed SHALL be refused with a typed error reporting the committed
 range, and SHALL make no durable change.
 
-Entity **state** SHALL be returned to the boundary by the unwound procedures'
-own `compensate` hooks — the existing saga contract, in which a procedure that
+Cell **state** SHALL be returned to the boundary by the unwound tasklets'
+own `compensate` hooks — the existing saga contract, in which a tasklet that
 needs its effects undone declares one and reverses its own State change. The
-engine SHALL NOT truncate the per-Entity state WAL to do it. A procedure that
+engine SHALL NOT truncate the per-Cell state WAL to do it. A tasklet that
 declares no hook therefore leaves its State change in place, exactly as it does
 under an `AllOrNothing` crash rollback today.
 
@@ -36,13 +36,13 @@ crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
 
 - **WHEN** a chat operative has committed iterations 1..5 and the operator rewinds
   to iteration 3
-- **THEN** the procedures of iterations 5 and 4 are compensated in that order,
+- **THEN** the tasklets of iterations 5 and 4 are compensated in that order,
   the handoff equals the iteration-3 commit, and the next input is processed as
   iteration 4
 
 #### Scenario: Crash mid-rewind resumes without double compensation
 
-- **WHEN** the process crashes after compensating iteration 5's procedures but
+- **WHEN** the process crashes after compensating iteration 5's tasklets but
   before iteration 4's
 - **THEN** the resumed rewind compensates only iteration 4
 
@@ -55,15 +55,15 @@ crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
 
 ### Requirement: A rewound iteration's work is neither resumed nor flushed
 
-After a rewind to iteration N, the journal SHALL fold as though the procedures of
+After a rewind to iteration N, the journal SHALL fold as though the tasklets of
 iterations above N had not been committed: they SHALL NOT be skipped as
 already-done on resume, and any outbox entries they staged but had not yet flushed
-SHALL NOT be flushed. Procedures journaled after the rewind SHALL fold normally,
+SHALL NOT be flushed. Tasklets journaled after the rewind SHALL fold normally,
 including a re-run of an iteration that was unwound.
 
 #### Scenario: Unflushed output of an unwound iteration is not owed
 
-- **WHEN** iteration 5 committed a procedure whose outbox had not yet flushed, and
+- **WHEN** iteration 5 committed a tasklet whose outbox had not yet flushed, and
   the instance is rewound to iteration 3
 - **THEN** that outbox is never flushed, and the re-run of iteration 4 flushes only
   its own outputs
@@ -72,7 +72,7 @@ including a re-run of an iteration that was unwound.
 
 - **WHEN** iteration 4 re-runs after a rewind to iteration 3 and commits
 - **THEN** the journal folds to iteration 5 as the next iteration, and the re-run's
-  procedures are the ones resumed from
+  tasklets are the ones resumed from
 
 ### Requirement: Rewound outputs republish under a bumped epoch
 
@@ -96,19 +96,19 @@ correction.
 
 ### Requirement: Compensation-coverage guard
 
-A rewind SHALL be refused with a typed error when any procedure being unwound
-staged plugin output and its procedure declares no `compensate` hook. A workflow
+A rewind SHALL be refused with a typed error when any tasklet being unwound
+staged plugin output and its tasklet declares no `compensate` hook. A workflow
 operative's staged plugin output carries no natural key, so a re-run's output
 cannot be relied on to overwrite the original at every sink; a semantic undo is
 therefore the only coverage the engine can guarantee. The error SHALL name the
 uncovered channels, and no compensation and no epoch bump SHALL occur.
 
-A procedure that staged no plugin output SHALL require no coverage.
+A tasklet that staged no plugin output SHALL require no coverage.
 
-#### Scenario: Uncovered emitting procedure blocks rewind
+#### Scenario: Uncovered emitting tasklet blocks rewind
 
-- **WHEN** iteration 5 ran a procedure that staged output on a channel and that
-  procedure declares no `compensate`
+- **WHEN** iteration 5 ran a tasklet that staged output on a channel and that
+  tasklet declares no `compensate`
 - **THEN** the rewind is refused before any compensation runs, naming that channel,
   and the journal is unchanged
 

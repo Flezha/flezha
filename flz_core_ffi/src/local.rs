@@ -3,7 +3,7 @@
 //!
 //! Every call here is the C-ABI face of `flz_core::local::LocalRun`. The host
 //! keeps driving [`crate::flz_core_poll`] / [`crate::flz_core_complete`] as it
-//! always does — its poll loop is what runs the procedures, and local mode
+//! always does — its poll loop is what runs the tasklets, and local mode
 //! does not touch it. [`crate::flz_core_start`] is the alternative to
 //! [`flz_core_local_start`], never an addition: a context either dials a
 //! controller or holds a local run.
@@ -170,7 +170,7 @@ pub unsafe extern "C" fn flz_core_local_run_until_idle(
     }
 }
 
-/// End the local run and release its Entities. A context with none is a
+/// End the local run and release its Cells. A context with none is a
 /// no-op, so a host's close path needs no test of its own.
 ///
 /// Values already released stay readable. Dropping the run drops the sender,

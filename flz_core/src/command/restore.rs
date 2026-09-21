@@ -1,4 +1,4 @@
-//! `RestoreInitState`: rebuild a live Entity's state from the shipped
+//! `RestoreInitState`: rebuild a live Cell's state from the shipped
 //! snapshot and change log, then re-arm its `change_seq` to `terminal_seq +
 //! 1` so the next frame is contiguous with the persisted history. With no
 //! live slot the log is validated and its terminal seq acked.
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use prost::Message;
 
 use super::{CommandAction, Reply};
-use crate::entity::EntitySlot;
+use crate::cell::CellSlot;
 use crate::pb::{RestoreInitState, RestoreInitStateResponse};
 use crate::restore::{iter_change_log_records, RestoreOutcome};
 use crate::runner::RunnerNode;
@@ -17,19 +17,19 @@ use crate::util::LockRecover;
 
 impl CommandAction for RestoreInitState {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
-        let outcome = if let Some(slot) = find_entity_slot(runner, &self.entity_id) {
+        let outcome = if let Some(slot) = find_cell_slot(runner, &self.cell_id) {
             restore_into_slot(&slot, self, errors)
-        } else if let Some((instance, slot)) = runner.find_workflow_entity(&self.entity_id) {
-            // Durable workflow Entity: rebuild its committed state in place and
+        } else if let Some((instance, slot)) = runner.find_workflow_cell(&self.cell_id) {
+            // Durable workflow Cell: rebuild its committed state in place and
             // release one count on the driver's crash-resume gate. The frame
             // landed regardless of apply success, so the gate never stalls on a
             // corrupt record.
             let t = restore_into_slot(&slot, self, errors);
-            // Saga crash-resume (§4.3): carry the per-Entity compensation markers
+            // Saga crash-resume (§4.3): carry the per-Cell compensation markers
             // the controller persisted so the driver finishes an in-flight undo
-            // (intent) and skips entities already undone (done).
+            // (intent) and skips cells already undone (done).
             instance.note_compensation_markers(
-                &self.entity_id,
+                &self.cell_id,
                 self.has_compensation_intent,
                 self.has_compensation_done,
             );
@@ -48,7 +48,7 @@ impl CommandAction for RestoreInitState {
         };
 
         let response = RestoreInitStateResponse {
-            entity_id: self.entity_id.clone(),
+            cell_id: self.cell_id.clone(),
             terminal_seq: outcome.terminal_seq,
             migrated: outcome.migrated,
         };
@@ -80,16 +80,16 @@ impl RestoreInitState {
     }
 }
 
-/// Rebuild one Entity's state and re-arm its `change_seq`, through the host
+/// Rebuild one Cell's state and re-arm its `change_seq`, through the host
 /// crossing or the typed fold; a zeroed outcome on failure.
 fn restore_into_slot(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     cmd: &RestoreInitState,
     errors: &mut Vec<String>,
 ) -> RestoreOutcome {
-    // The fold runs under the entity's handout exclusivity: no input
+    // The fold runs under the cell's handout exclusivity: no input
     // activation is handed out before it completes.
-    crate::poll_core::global().with_entity_exclusive(slot, || {
+    crate::poll_core::global().with_cell_exclusive(slot, || {
         let folded = if slot.dispatcher.host_facts().is_some() {
             crate::host::restore_fold_exclusive(
                 slot,
@@ -118,7 +118,7 @@ fn restore_into_slot(
 }
 
 fn restore_typed_exclusive(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     cmd: &RestoreInitState,
     errors: &mut Vec<String>,
 ) -> Option<RestoreOutcome> {
@@ -133,7 +133,7 @@ fn restore_typed_exclusive(
         &cmd.snapshot_header,
         &cmd.snapshot_bytes,
         &cmd.change_log_bytes,
-        slot.entity_key.as_deref(),
+        slot.cell_key.as_deref(),
     ) {
         Ok(outcome) => Some(outcome),
         Err(e) => {
@@ -143,10 +143,10 @@ fn restore_typed_exclusive(
     }
 }
 
-fn reseat_restored(slot: &Arc<EntitySlot>, terminal: u64, change_log_bytes: &[u8]) {
+fn reseat_restored(slot: &Arc<CellSlot>, terminal: u64, change_log_bytes: &[u8]) {
     slot.change_seq.store(terminal + 1, Ordering::Release);
 
-    // A restore re-seats the Entity on a different past — the crash's,
+    // A restore re-seats the Cell on a different past — the crash's,
     // or (for a correction) a deliberately rewound one. An open
     // checkpoint interval's changes were never acknowledged, so the
     // restored state does not contain them and the re-forwarded inputs
@@ -159,21 +159,21 @@ fn reseat_restored(slot: &Arc<EntitySlot>, terminal: u64, change_log_bytes: &[u8
     let discarded = slot.discard_queued_input_on_restore();
     if discarded > 0 {
         eprintln!(
-            "[flezha] restore discarded {discarded} queued input(s) for entity {} \
+            "[flezha] restore discarded {discarded} queued input(s) for cell {} \
              — the controller re-forwards them from the durable input log",
-            slot.dispatcher.entity_label()
+            slot.dispatcher.cell_label()
         );
     }
 
     let cursors = restore_cursors(change_log_bytes);
     // Effectively-once: remember the highest input-log offset the
     // restored effect records durably consumed, so the crash-replay
-    // re-forward skips already-applied inputs (`drain_entity`).
+    // re-forward skips already-applied inputs (`drain_cell`).
     if let Some(floor) = cursors.consumed_offset {
         slot.consumed_floor.store(floor as i64, Ordering::Release);
     }
     // Correction: rebuild the event-time high-water, so a resumed
-    // Entity neither mistakes its own history for a flood of late
+    // Cell neither mistakes its own history for a flood of late
     // inputs (high-water too low) nor misses a genuinely late one.
     slot.event_time_high_water.store(
         cursors.event_time_high_water.map_or(-1, |t| t as i64),
@@ -195,7 +195,7 @@ struct RestoreCursors {
     event_time_high_water: Option<u64>,
 }
 
-/// The cursors a restored Entity resumes from, off its effect records.
+/// The cursors a restored Cell resumes from, off its effect records.
 fn restore_cursors(change_log_bytes: &[u8]) -> RestoreCursors {
     let mut cursors = RestoreCursors::default();
     for record in iter_change_log_records(change_log_bytes) {
@@ -213,38 +213,37 @@ fn restore_cursors(change_log_bytes: &[u8]) -> RestoreCursors {
     cursors
 }
 
-/// The live slot whose wire identity equals `entity_id`, cloned out so the
+/// The live slot whose wire identity equals `cell_id`, cloned out so the
 /// registry locks are released before the rebuild.
-pub fn find_entity_slot(runner: &RunnerNode, entity_id: &[u8]) -> Option<Arc<EntitySlot>> {
+pub fn find_cell_slot(runner: &RunnerNode, cell_id: &[u8]) -> Option<Arc<CellSlot>> {
     for instance in runner.get_operatives().values() {
-        for procedure_entities in instance.entities.iter() {
-            for slot in procedure_entities.iter() {
-                if slot.entity_identity.as_slice() == entity_id {
+        for tasklet_cells in instance.cells.iter() {
+            for slot in tasklet_cells.iter() {
+                if slot.cell_identity.as_slice() == cell_id {
                     return Some(Arc::clone(slot));
                 }
             }
         }
     }
 
-    find_dynamic_entity_slot(runner, entity_id)
+    find_dynamic_cell_slot(runner, cell_id)
 }
 
-/// A dynamic Entity has no slot until its first input; a restore names one
+/// A dynamic Cell has no slot until its first input; a restore names one
 /// the controller has state for, so it is materialized here rather than
-/// cold-started on top of its own WAL. An evicted Entity never gets one.
-fn find_dynamic_entity_slot(runner: &RunnerNode, entity_id: &[u8]) -> Option<Arc<EntitySlot>> {
-    let (instance_id, procedure_name, entity_key) =
-        crate::flusher::decode_entity_identity(entity_id)?;
+/// cold-started on top of its own WAL. An evicted Cell never gets one.
+fn find_dynamic_cell_slot(runner: &RunnerNode, cell_id: &[u8]) -> Option<Arc<CellSlot>> {
+    let (instance_id, tasklet_name, cell_key) = crate::flusher::decode_cell_identity(cell_id)?;
     let instance = runner.get_operatives().get(&instance_id).cloned()?;
-    let procedure_id = *instance
+    let tasklet_id = *instance
         .topology
-        .procedure_name_to_id
-        .get(procedure_name.as_str())?;
+        .tasklet_name_to_id
+        .get(tasklet_name.as_str())?;
 
     instance
         .dynamic_registries
-        .get(procedure_id as usize)?
+        .get(tasklet_id as usize)?
         .as_ref()?
-        .get_or_create(&entity_key)
+        .get_or_create(&cell_key)
         .ok()
 }

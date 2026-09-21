@@ -2,8 +2,8 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @moduledoc """
   What a shipped artifact set *is*, and the naming that addresses it.
 
-  A manifest entry describes one shippable unit — an Entity, a workflow
-  instance's proc-journal or durable inbox, an operative's input log, its parked
+  A manifest entry describes one shippable unit — a Cell, a workflow
+  instance's task-journal or durable inbox, an operative's input log, its parked
   failures, the ProcessHub registry cspec, or a control-plane store — as of one
   shipped cut. It is written **last** in every ship, so a crash mid-upload
   leaves the previous entry authoritative and the half-uploaded blobs invisible.
@@ -23,7 +23,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @version 1
 
   # What makes two entries the same shipped cut. Everything the manifest asserts
-  # about the Entity, and nothing about when it was asserted.
+  # about the Cell, and nothing about when it was asserted.
   #
   # `owner`/`claim` are here, not merely alongside: a takeover changes no data,
   # so without them `same_cut?/2` would report "nothing to write" and the new
@@ -31,7 +31,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @cut_keys [:epoch, :snapshots, :ranges, :file, :source_offsets, :markers, :owner, :claim]
 
   @type ref ::
-          {:entity, Paths.entity_id()}
+          {:cell, Paths.cell_id()}
           | {:input_log, binary()}
           | {:cspec, {binary(), binary()}}
           | {:dlq, {binary(), binary()}}
@@ -171,7 +171,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @doc """
   Whether two entries describe the same shipped cut. `shipped_at_ms` is
   deliberately ignored: a re-ship that found nothing new must not rewrite the
-  manifest, or a quiet entity would churn the backend once per sweep forever.
+  manifest, or a quiet cell would churn the backend once per sweep forever.
 
   `markers` IS compared, and has to be: a compensation marker appears after the
   state change it belongs to, so an entry that is otherwise identical must still
@@ -237,11 +237,11 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   #
   # Which classes carry a writer in their identity is the ownership model in
   # one line: the cspec and the control-plane stores are per-writer replicas of
-  # something no node replicates for another, while an Entity's state and an
+  # something no node replicates for another, while a Cell's state and an
   # operative's parked failures belong to whichever node runs it and are
   # arbitrated by the claim counter instead.
   @classes %{
-    "e" => {:entity, 3},
+    "e" => {:cell, 3},
     "i" => {:input_log, 1},
     "c" => {:cspec, 2},
     "d" => {:dlq, 2},
@@ -269,7 +269,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @spec ref_of_blob_key(binary()) :: {:ok, ref()} | :error
   def ref_of_blob_key("blob/" <> path) do
     # The blob name is the last segment and no segment can contain "/" —
-    # `Paths.encode_entity_key/1` emits url-base64, which has none.
+    # `Paths.encode_cell_key/1` emits url-base64, which has none.
     [tag | rest] = String.split(path, "/")
 
     with {:ok, {kind, segments}} <- Map.fetch(@classes, tag),
@@ -286,7 +286,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   Manifest-key prefix covering every artifact of `kind`, narrowed by the leading
   identity segments in `parts`.
 
-  `prefix(:entity, [class])` is every Entity of one operative class;
+  `prefix(:cell, [class])` is every Cell of one operative class;
   `prefix(:cspec)` is every registry replica there is.
   """
   @spec prefix(atom(), [binary()]) :: binary()
@@ -332,10 +332,10 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   defp identity([one]), do: one
   defp identity(parts), do: List.to_tuple(parts)
 
-  # Reuses the Entity-key filesystem encoding: the same "safe chars or
+  # Reuses the Cell-key filesystem encoding: the same "safe chars or
   # url-base64" rule that keeps a key legal as a filename keeps it legal as a
   # storage key segment, so one identity maps to one name on both sides.
-  defp segment(part), do: Paths.encode_entity_key(part)
+  defp segment(part), do: Paths.encode_cell_key(part)
 
-  defp unsegment(part), do: Paths.decode_entity_key(part)
+  defp unsegment(part), do: Paths.decode_cell_key(part)
 end

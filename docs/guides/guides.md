@@ -62,7 +62,7 @@ paper money, so nothing reaches a real exchange.
 | [`authorization.md`](tradedesk/authorization.md) | Keep authorization on, claim the admin, and issue the key tradedesk's runner connects with |
 | [`namespaces.md`](tradedesk/namespaces.md) | Give tradedesk a namespace of its own |
 | [`workflow_basics.md`](tradedesk/workflow_basics.md) | Write the paper-order workflow by hand: steps, retries and compensation, started by hand |
-| [`stream_basics.md`](tradedesk/stream_basics.md) | Write the stream operative by hand: chained procedures, `map`, `filter`, `key_by`, a merge, and state per symbol |
+| [`stream_basics.md`](tradedesk/stream_basics.md) | Write the stream operative by hand: chained tasklets, `map`, `filter`, `key_by`, a merge, and state per symbol |
 | [`durability.md`](tradedesk/durability.md) | Kill the runner mid-order: the order continues from its step, is never placed twice, and candles keep coming |
 | [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
 | [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operative scale` |

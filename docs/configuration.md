@@ -12,7 +12,7 @@ to when nothing is set; `(derived)` marks a default computed from another knob.
 |---|---|---|---|
 | 1. Environment variables | the process environment / deploy manifest | whole node | restart the node |
 | 2. Application env | `config/config.exs`, `config/runtime.exs`, `config/<env>.exs` | whole node | rebuild or restart (`runtime.exs` is read at boot) |
-| 3. Operative declarations | the SDK, in the operative's `channels()` and Procedure/Workflow class | one operative class | redeploy the runner — frozen at registration |
+| 3. Operative declarations | the SDK, in the operative's `channels()` and Tasklet/Workflow class | one operative class | redeploy the runner — frozen at registration |
 | 4. Plugin options | the plugin's `opts` map when it is installed | one plugin instance | re-install the plugin |
 
 Underneath all four sits the Erlang VM itself, which is configured before the
@@ -204,7 +204,7 @@ the value and the type.
 | `FLEZHA_CONVERGENCE_TICK_MS` | `5000` | `:convergence_tick_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `60000` | `:convergence_output_stall_grace_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `120000` | `:convergence_unmet_intent_grace_ms` (not in test) |
-| `FLEZHA_CONVERGENCE_ENTITY_STALL_MS` | `300000` | `:convergence_entity_stall_ms` (not in test) |
+| `FLEZHA_CONVERGENCE_CELL_STALL_MS` | `300000` | `:convergence_cell_stall_ms` (not in test) |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | `:convergence_fabric_503_polls` (not in test); consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503 |
 | `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_operatives` |
 | `FLEZHA_HEALTHZ_PORT` | `9569` | `:healthz_port` (not in test) |
@@ -360,7 +360,7 @@ default.
 | `+S` | Only where the pod's CPU limit is not the number you want; the VM already follows the limit |
 | `+zdbbl` | The distribution buffer bound, 1 MiB by default. Namespace hubs and WAL transfer ride distribution, so this is the flag to raise if a sending process is seen blocking on a busy dist port. No measurement here supports moving it, and it costs memory per connection |
 | `+stbt` | Scheduler binding. Worth trying on a dedicated machine only; wrong anywhere a quota or cpuset can move underneath the VM |
-| `+hms`, `+hmbs` | Per-process heap sizes. The cost scales with process count, and this controller runs a process per Entity |
+| `+hms`, `+hmbs` | Per-process heap sizes. The cost scales with process count, and this controller runs a process per Cell |
 | `-env ERL_FULLSWEEP_AFTER` | A memory-drift remedy chosen against a measured series, not a default. See [`operations/memory_drift.md`](operations/memory_drift.md) |
 
 The measurement protocol and the numbers behind every verdict here are in
@@ -384,7 +384,7 @@ crate also reads its rows inside the controller's NIF.
 | Variable | Default | Read by |
 |---|---|---|
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | `flz_core::persistent_id`, `Flezha.SDK.PersistentId` — the durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal |
-| `FLEZHA_MAILBOX_CAPACITY` | `1024` (range `1..1_048_576`) | per-Entity mailbox bound in all three SDKs; a Procedure that overrides `mailbox_capacity()` wins over it |
+| `FLEZHA_MAILBOX_CAPACITY` | `1024` (range `1..1_048_576`) | per-Cell mailbox bound in all three SDKs; a Tasklet that overrides `mailbox_capacity()` wins over it |
 | `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | `flz_transport` path helper — every SDK reaches it, Elixir through `flz_nif` |
 | `FLEZHA_TRANSPORT` | `uds` | `flz_transport` (`quic` is the only other value) |
 | `FLEZHA_QUIC_ADDRESSES` | `127.0.0.1:4433` | `flz_transport` — a comma list of controller endpoints, each a name or a literal with an optional port (default `4433`), re-resolved on **every** attempt. `FLEZHA_QUIC_ADDRESS` is not honoured and, set alone, refuses startup naming this one |
@@ -401,15 +401,15 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operative::poll_pool`, `FlezhaEnv` |
 | `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operative::poll_pool`, `FlezhaEnv`) |
 | `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` |
-| `FLEZHA_DROP_NOTHING_NONPARKING` | `false` (off) | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Entity cannot deliver is held in that Entity's push holdback and the Entity is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
-| `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Entity may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
+| `FLEZHA_DROP_NOTHING_NONPARKING` | `false` (off) | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Cell cannot deliver is held in that Cell's push holdback and the Cell is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
+| `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Cell may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | `true` (on) | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
-| `FLEZHA_REAP_INTERVAL_MS` | `min(entity_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operative — idle-Entity reaper cadence |
-| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and `Flezha.SDK.Hold` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/workflow output, never a control frame and never the heartbeat. In `flz_core` one ring holds them all; the same knob bounds four holders in the Elixir SDK — the Operative's plugin-bound outputs, the frames a stopping Entity hands to it, each Entity's own change records, and the workflow driver's writes the runner relays — an Operative reads it once and hands it to its own two holds and to the Entities it starts, so those three hold at one number, while the runner's own hold and a workflow stage's Entities read it for themselves; and a rebind replays a stopped Entity's frames first, then an Entity's records, then the outputs of the same dispatch |
+| `FLEZHA_REAP_INTERVAL_MS` | `min(cell_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operative — idle-Cell reaper cadence |
+| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and `Flezha.SDK.Hold` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/workflow output, never a control frame and never the heartbeat. In `flz_core` one ring holds them all; the same knob bounds four holders in the Elixir SDK — the Operative's plugin-bound outputs, the frames a stopping Cell hands to it, each Cell's own change records, and the workflow driver's writes the runner relays — an Operative reads it once and hands it to its own two holds and to the Cells it starts, so those three hold at one number, while the runner's own hold and a workflow stage's Cells read it for themselves; and a rebind replays a stopped Cell's frames first, then a Cell's records, then the outputs of the same dispatch |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — write failures inside the window that request a reconnect. The Elixir SDK reads them for its `data_heartbeat`, which is owed no delivery and whose misses are the only signal an idle runner gives |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — an unanswered reconnect request re-arms after this, so it cannot disarm the detector for good |
-| `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` | `30000` | `flz_core::workflow::driver` — proc-commit ack deadline |
+| `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` | `30000` | `flz_core::workflow::driver` — task-commit ack deadline |
 | `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | `flz_core::workflow::driver` and the Elixir SDK's workflow driver — inbox-loop park hysteresis |
 | `FLEZHA_WORKFLOW_DRIVER_STACK_KIB` | platform default | `flz_core::workflow::driver` — driver-thread stack size; address space only |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
@@ -478,9 +478,9 @@ into a full consumer mailbox has to wait. This flag changes *what* waits.
   could have run the consumer, nothing ever frees the slot and the process is
   finished.
 - **On:** the value goes onto a per-producer holdback queue and the pushing
-  thread returns immediately. The *producing Entity* is handed no further work
+  thread returns immediately. The *producing Cell* is handed no further work
   until its queue drains. Nothing is discarded and order is preserved either
-  way — only the waiting moves, from the thread to the Entity.
+  way — only the waiting moves, from the thread to the Cell.
 
 **The default is off. Nothing changes until someone sets it.** Setting it is a
 deployment decision, not an authoring one: no channel declaration, wire literal
@@ -584,7 +584,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:default_workflow_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_output_stall_timeout_ms` | `60_000` | `lib/flezha/state/persistence_resolver.ex` |
 | `:operative_persistence` / `:time_travel_retention_hours` / `:workflow_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:sync_durability` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex` — per-class operator overrides, `%{"OperativeClass" => value}`, winning over the SDK declaration and the instance metadata |
-| `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Entity-scale payload bound |
+| `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Cell-scale payload bound |
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_pending_msg_cap` | `5_000` | `lib/flezha/state/wal_writer.ex` |
@@ -616,11 +616,11 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/operative_manager.ex` |
 | `:overwatch_ping_enabled` | `true` | `lib/flezha/operative/lifecycle.ex` |
 | `:overwatch_ping_timeout_ms` | `2_000` | `lib/flezha/runner/control_unit.ex` |
-| `:overwatch_proc_warn_ms` | `2_000` | `lib/flezha/operative/overwatch.ex` |
+| `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/operative/overwatch.ex` |
 | `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
 | `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
 | `:correction_debounce_ms` | `200` | `lib/flezha/operative/replay.ex` |
-| `:bind_restore_concurrency` | `16` | `lib/flezha/operative/replay.ex` — how many of a class's Entities a bind restores at once |
+| `:bind_restore_concurrency` | `16` | `lib/flezha/operative/replay.ex` — how many of a class's Cells a bind restores at once |
 | `:placement_load_cap_percent` | `100` | `lib/flezha/runner/fleet_manager/load.ex` — the fairness cap on runner selection, as a percentage of the fair share |
 | `:placement_load_refresh_ms` | `1_000` | `lib/flezha/runner/fleet_manager.ex` — how long the per-runner operative count a placement reads may go without being rebuilt from the hub registry |
 | `:control_unit_heartbeat_interval_ms` | `15_000` | `lib/flezha/runner/control_unit.ex` |
@@ -639,7 +639,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
 | `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/healthz/server.ex` |
 | `:convergence_fabric_503_polls` | `3` | `lib/flezha/healthz/server.ex` |
-| `:convergence_entity_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operative classifier calls that Entity stalled; a non-positive value leaves the default in place |
+| `:convergence_cell_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operative classifier calls that Cell stalled; a non-positive value leaves the default in place |
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |
 | `:healthz_port` / `:healthz_bind` | `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback) | `lib/flezha/healthz/server.ex` |
 | `:output_watchdog_interval_ms` | `10_000` | `lib/flezha/state/watchdog.ex` |
@@ -707,7 +707,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 
 Declared in code and shipped to the controller at registration: inside
 `channels()` on a stream operative, or as trait/interface overrides on a
-Procedure or Workflow class. Rust names first, Java in parentheses. The Elixir
+Tasklet or Workflow class. Rust names first, Java in parentheses. The Elixir
 SDK carries the channel and edge options and `mailbox_capacity/0`; it has no
 delivery-tier or workflow declarations.
 
@@ -718,8 +718,8 @@ delivery-tier or workflow declarations.
 | `effectively_once()` (`effectivelyOnce`) | off — at-least-once | Every emit rides an atomic effect record through the WAL, and the outbox cursor advances only on a sink's confirmation. Registration refuses it unless every plugin-bound channel is `.keyed()`. |
 | `checkpoint_ack()` (`checkpointAck`) | off — acknowledge per input | Hold the consumed offset until the interval closes, so state and offset advance together. Requires `effectively_once()`. |
 | `checkpoint_every(n)` (`checkpointEvery`) | absent — only `ctx.checkpoint()` closes the interval | Close the interval after `n` inputs; an explicit checkpoint still closes it early. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
-| `outputs_at_checkpoint(max_delay_ms)` (`outputsAtCheckpoint`) | absent — outputs flush as produced | Hold the interval's outputs and ship them inside its checkpoint record as one batch. `max_delay_ms` is required and bounds how long a quiet Entity holds an output. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
-| `correction_window(window_ms)` (`correctionWindow`) | absent — a late input is just an input | A late input inside the window rewinds the Entity to a baseline and replays the affected slice in event-time order. Needs an `EventTimeFrom` clock. |
+| `outputs_at_checkpoint(max_delay_ms)` (`outputsAtCheckpoint`) | absent — outputs flush as produced | Hold the interval's outputs and ship them inside its checkpoint record as one batch. `max_delay_ms` is required and bounds how long a quiet Cell holds an output. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
+| `correction_window(window_ms)` (`correctionWindow`) | absent — a late input is just an input | A late input inside the window rewinds the Cell to a baseline and replays the affected slice in event-time order. Needs an `EventTimeFrom` clock. |
 | `beyond_window_policy(policy)` (`beyondWindowPolicy`) | `ProcessAsArrival` | Fate of an input later than the window: process it as an arrival, or `Drop` it. |
 
 `outputs_at_checkpoint` is a dial, not a switch: the interval closes on
@@ -735,24 +735,24 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 
 | Declaration | Default | What it does |
 |---|---|---|
-| `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Entity mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
+| `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Cell mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
 | `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue. The Elixir SDK refuses `0`. |
 | `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts; the wait holds no thread. |
-| `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.entity` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
-| `.key_by(f)` (`keyBy`) | absent — one Entity | Route by a key function, making the consumer dynamic-entity. |
+| `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
+| `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |
 | `.sink(name)` / `.sink_with(name, f)` (`sink`) | — | Wire the channel to a named plugin; a second sink on one channel is a registration error. |
 | `.sealed()` (`sealed`) | — | Type-level statement that nothing follows the channel; touches no builder state. |
 
-### Procedure-level options
+### Tasklet-level options
 
-Overridden on the `Procedure` trait (Rust) or Procedure class (Java).
+Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 
 | Override | Default | What it does |
 |---|---|---|
-| `compact_after_bytes()` (`compactAfterBytes`) | 8 MiB, in lockstep with `:default_compact_after_bytes` | Per-Entity WAL size reported to the controller as the snapshot-compaction trigger. |
-| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Entity; precedence is the override, then `FLEZHA_MAILBOX_CAPACITY`, then the default. Rust overrides must also set `MAILBOX_CAPACITY_OVERRIDDEN = true`. |
-| `entity_idle_ttl()` (`entityIdleTtl`; Elixir `entity_idle_ttl_ms/0`) | `None` — no eviction | Evict a dynamic Entity after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
-| `max_entities()` (Elixir `max_entities/0`) | `100_000` | Soft cap on live dynamic Entities per Procedure; new keys past it are dropped. |
+| `compact_after_bytes()` (`compactAfterBytes`) | 8 MiB, in lockstep with `:default_compact_after_bytes` | Per-Cell WAL size reported to the controller as the snapshot-compaction trigger. |
+| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell; precedence is the override, then `FLEZHA_MAILBOX_CAPACITY`, then the default. Rust overrides must also set `MAILBOX_CAPACITY_OVERRIDDEN = true`. |
+| `cell_idle_ttl()` (`cellIdleTtl`; Elixir `cell_idle_ttl_ms/0`) | `None` — no eviction | Evict a dynamic Cell after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
+| `max_cells()` (Elixir `max_cells/0`) | `100_000` | Soft cap on live dynamic Cells per Tasklet; new keys past it are dropped. |
 | `type Clock` | — (must be declared) | `WallClock`, `EventTimeFrom<..>` or `LogicalClock`; decides `ctx.now()` and event-time ordering. |
 
 ### Workflow class options
@@ -765,9 +765,9 @@ Overridden on the `WorkflowOperative` trait (Rust) or interface (Java).
 | `self_terminating()` (`selfTerminating`) | `true` | Whether the run ends on its own or waits for a stop. |
 | `loop_mode()` (`loopMode`) | `Once` | `Once`, `PerInput` or `Chained` looping over the durable inbox. |
 | `wake_after()` (`wakeAfter`) | none | Deadline at which a parked loop rehydrates without input. |
-| `retry_attempts()` / `retry_backoff()` (`retryAttempts` / `retryBackoff`) | `3` / `500 ms` | Pre-commit retry ladder for a failing proc. |
-| `barrier_retry_attempts()` (`barrierRetryAttempts`) | `3` | Re-sends of a proc-commit barrier whose ack timed out before the run ends abnormally. |
-| `rollback_mode()` (`rollbackMode`) | `AllOrNothing` | How a rewind undoes journaled procs: `AllOrNothing` or `KeepProgress`. |
+| `retry_attempts()` / `retry_backoff()` (`retryAttempts` / `retryBackoff`) | `3` / `500 ms` | Pre-commit retry ladder for a failing task. |
+| `barrier_retry_attempts()` (`barrierRetryAttempts`) | `3` | Re-sends of a task-commit barrier whose ack timed out before the run ends abnormally. |
+| `rollback_mode()` (`rollbackMode`) | `AllOrNothing` | How a rewind undoes journaled tasks: `AllOrNothing` or `KeepProgress`. |
 | `PERSISTENCE_ENABLED` (`persistenceEnabled`) | `true` | `false` keeps the instance in memory only: a crash re-runs from the top. |
 | `SYNC_DURABILITY` (`syncDurability`) | `false` | Ack a commit barrier only after its remote ship (RPO 0); inert without a durability backend, workflow classes only. |
 

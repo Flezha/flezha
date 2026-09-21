@@ -276,7 +276,7 @@ defmodule Flezha.Config.Keys do
     {:memory_report_interval_ms, :ms, nil, key: true, env: "FLEZHA_MEMORY_REPORT_INTERVAL_MS"},
 
     # ---- state: compaction, watermarks, credit ------------------------------
-    # An Entity whose un-snapshotted WAL exceeds this is compacted. A class that
+    # A Cell whose un-snapshotted WAL exceeds this is compacted. A class that
     # declares `compact_after_bytes()` ships it in the `AddOperative` metadata
     # and that per-class value is resolved ahead of this default; an operator
     # `%{class => bytes}` override wins over both.
@@ -301,7 +301,7 @@ defmodule Flezha.Config.Keys do
     # window is resolved per operative class, so the site holds the halving.
     {:credit_low_watermark_bytes, :int, nil, key: true},
     # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
-    # every session to the legacy EntityMailboxStatus and shed path.
+    # every session to the legacy CellMailboxStatus and shed path.
     {:credit_flow_control_enabled, :bool, true, key: true, env: "FLEZHA_CREDIT_FLOW_CONTROL"},
     {:time_travel_retention_hours, :term, %{}, key: true},
     {:default_workflow_completed_retention_hours, :int, 72,
@@ -506,8 +506,8 @@ defmodule Flezha.Config.Keys do
     {:worker_pool_max, :positive_int, nil,
      runtimes: [:rust, :java, :node, :python, :ruby, :php], env: "FLEZHA_WORKER_POOL_MAX"},
     {:node_workers, :positive_int, nil, runtimes: [:node], env: "FLEZHA_NODE_WORKERS"},
-    # The cadence at which a keyed host sweeps idle entities. The default is
-    # the caller's: a quarter of the entity TTL, so a shorter-lived entity is
+    # The cadence at which a keyed host sweeps idle cells. The default is
+    # the caller's: a quarter of the cell TTL, so a shorter-lived cell is
     # swept sooner without a second row.
     {:reap_interval_ms, :ms, nil, runtimes: [:elixir_sdk, :rust], env: "FLEZHA_REAP_INTERVAL_MS"},
     {:runner_id_path, :path, "/var/lib/flezha-runner/id",
@@ -746,7 +746,7 @@ defmodule Flezha.Config.Keys do
   def render_default(%{default: nil}), do: "unset"
 
   # The variable is days; the key it fills is seconds, because that is what
-  # every reader of the key wants. The published cell is the variable's unit.
+  # every reader of the key wants. The published default is the variable's unit.
   def render_default(%{type: {:custom, :days_to_seconds}, default: seconds}),
     do: to_string(div(seconds, 86_400))
 

@@ -5,7 +5,7 @@ defmodule Flezha.AuthZ.Policy do
   Roles inherit upward: `admin` ⊇ `operator` ⊇ `app` ⊇ `viewer`, with three
   roles outside the hierarchy: `runner` grants only `runner.connect`, `spawner`
   adds to it only `operative.start` and `operative.send`, which a
-  procedure-requested spawn needs and which also judge the administration
+  tasklet-requested spawn needs and which also judge the administration
   surface's start and send, and `stopper` adds to it only `operative.stop`.
   `app` holds everything `spawner` and `stopper` do, and `operator` inherits
   everything `app` adds except the connect. An operator credential is not a
@@ -42,7 +42,7 @@ defmodule Flezha.AuthZ.Policy do
     :"schedule.list"
   ]
 
-  # What a procedure-requested spawn performs: a start, or a delivery.
+  # What a tasklet-requested spawn performs: a start, or a delivery.
   @spawn_actions [:"operative.start", :"operative.send"]
 
   # What a stop performs. Held apart from the spawn so `spawner` and `stopper`

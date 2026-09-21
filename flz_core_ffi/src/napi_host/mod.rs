@@ -12,7 +12,7 @@
 //!   observation with one more fetcher.
 //!
 //! Dispatch targets are threadsafe-function handles, one per registered event
-//! loop; `pick_loop` keeps an entity on the loop that holds its state.
+//! loop; `pick_loop` keeps a cell on the loop that holds its state.
 
 mod pool;
 
@@ -101,7 +101,7 @@ fn abandon_held_by(target: u32) {
         2,
         &format!(
             "dispatch loop {target} ended holding {} activation(s); abandoning them so their \
-             entities are not retired",
+             cells are not retired",
             orphans.len()
         ),
     );
@@ -180,21 +180,21 @@ fn abandon_quietly(token: u64) {
 
 /// Which dispatch loop an activation belongs to.
 ///
-/// **Affinity by entity, not round-robin.** The core's exclusivity guarantee
-/// means no two activations for one entity run at once, so round-robin would
+/// **Affinity by cell, not round-robin.** The core's exclusivity guarantee
+/// means no two activations for one cell run at once, so round-robin would
 /// be safe for concurrency — but a dispatch loop is a separate JavaScript
-/// isolate, and after a restore fold it is the loop that holds that entity's
+/// isolate, and after a restore fold it is the loop that holds that cell's
 /// materialized state. Sending the next activation elsewhere would find no
-/// state to fold into. Work that names no entity — the prepare crossing, which
+/// state to fold into. Work that names no cell — the prepare crossing, which
 /// runs before any key exists — round-robins instead.
 ///
 /// This is the whole difference between the single-loop and multi-loop
 /// configurations: with one target both arms answer 0.
 ///
-/// The prepare crossing is the ONLY activation that names no entity — it runs
+/// The prepare crossing is the ONLY activation that names no cell — it runs
 /// before the key exists, which is what it is computing — so it is the only
-/// one that round-robins. A missing `entity_key` does not mean "no entity": a
-/// single-entity procedure's entity is the one with no key of its own, and it
+/// one that round-robins. A missing `cell_key` does not mean "no cell": a
+/// single-cell tasklet's cell is the one with no key of its own, and it
 /// holds state exactly like a keyed one.
 fn pick_loop(activation: &schema::Activation, loops: usize) -> usize {
     if matches!(activation.kind, schema::ActivationKind::KeyRequest(_)) {
@@ -206,8 +206,8 @@ fn pick_loop(activation: &schema::Activation, loops: usize) -> usize {
         .operative
         .as_bytes()
         .iter()
-        .chain(target.procedure.to_be_bytes().iter())
-        .chain(target.entity_key.as_deref().unwrap_or("").as_bytes())
+        .chain(target.tasklet.to_be_bytes().iter())
+        .chain(target.cell_key.as_deref().unwrap_or("").as_bytes())
     {
         hash = (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193);
     }
@@ -217,8 +217,8 @@ fn pick_loop(activation: &schema::Activation, loops: usize) -> usize {
 /// Hand one decoded activation to the loop `pick_loop` selects.
 ///
 /// Returns whether a loop took it. Anything else abandons: an activation the
-/// host cannot deliver would otherwise retire its entity for the life of the
-/// process, which is the one failure per-entity exclusivity makes permanent.
+/// host cannot deliver would otherwise retire its cell for the life of the
+/// process, which is the one failure per-cell exclusivity makes permanent.
 fn hand_off(token: u64, activation: schema::Activation) -> bool {
     let live = targets();
     if live.is_empty() {
@@ -421,7 +421,7 @@ pub fn stop_fetching() {
 ///
 /// Asynchronous, because it waits: a fetcher leaves when its poll reports the
 /// core shutting down, which the core says only once the shutdown `shutdown()`
-/// began has shipped every Entity's state through these same fetchers. So this
+/// began has shipped every Cell's state through these same fetchers. So this
 /// takes that sequence plus one poll turn, and the pool still holds completions
 /// the core is waiting on.
 #[napi(ts_return_type = "Promise<void>")]
@@ -443,7 +443,7 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
             // Releasing every target un-refs the loops the host was keeping
             // alive, so a drained runner's process can exit on its own. What
             // a target still held is abandoned rather than left to retire its
-            // entity.
+            // cell.
             let departing: Vec<u32> = targets().iter().map(|t| t.id).collect();
             targets().clear();
             for id in departing {
@@ -595,11 +595,11 @@ pub(crate) fn set_log_callback(callback: Option<Function<JsLogLine, ()>>) -> Res
 mod tests {
     use super::*;
 
-    fn activation(operative: &str, procedure: u32, key: Option<&str>) -> schema::Activation {
+    fn activation(operative: &str, tasklet: u32, key: Option<&str>) -> schema::Activation {
         activation_of(
             schema::ActivationKind::Work(vec![]),
             operative,
-            procedure,
+            tasklet,
             key,
         )
     }
@@ -607,15 +607,15 @@ mod tests {
     fn activation_of(
         kind: schema::ActivationKind,
         operative: &str,
-        procedure: u32,
+        tasklet: u32,
         key: Option<&str>,
     ) -> schema::Activation {
         schema::Activation {
             token: 1,
-            target: schema::EntityRef {
+            target: schema::CellRef {
                 operative: operative.to_string(),
-                procedure,
-                entity_key: key.map(str::to_string),
+                tasklet,
+                cell_key: key.map(str::to_string),
             },
             kind,
             change_seq: 0,
@@ -623,11 +623,11 @@ mod tests {
         }
     }
 
-    /// One entity, one loop. A dispatch loop is a separate isolate holding
-    /// that entity's materialized state after its restore fold, so an
+    /// One cell, one loop. A dispatch loop is a separate isolate holding
+    /// that cell's materialized state after its restore fold, so an
     /// activation sent elsewhere would find nothing to fold into.
     #[test]
-    fn an_entity_always_picks_the_same_loop() {
+    fn a_cell_always_picks_the_same_loop() {
         let first = pick_loop(&activation("op", 3, Some("AAPL")), 4);
         for _ in 0..50 {
             assert_eq!(pick_loop(&activation("op", 3, Some("AAPL")), 4), first);
@@ -637,17 +637,17 @@ mod tests {
         assert_eq!(pick_loop(&activation("op", 3, Some("AAPL")), 1), 0);
     }
 
-    /// Distinct entities are spread rather than piled onto one loop.
+    /// Distinct cells are spread rather than piled onto one loop.
     #[test]
-    fn distinct_entities_reach_more_than_one_loop() {
+    fn distinct_cells_reach_more_than_one_loop() {
         let mut seen = std::collections::HashSet::new();
         for n in 0..64 {
             seen.insert(pick_loop(&activation("op", 0, Some(&format!("k{n}"))), 4));
         }
-        assert!(seen.len() > 1, "every entity landed on one loop: {seen:?}");
+        assert!(seen.len() > 1, "every cell landed on one loop: {seen:?}");
     }
 
-    /// The prepare crossing runs before any key exists, so it names no entity
+    /// The prepare crossing runs before any key exists, so it names no cell
     /// and round-robins: there is no state anywhere to be near.
     #[test]
     fn the_prepare_crossing_round_robins() {
@@ -669,24 +669,21 @@ mod tests {
         assert_eq!(pick_loop(&crossing(), 3), (start + 2) % 3);
     }
 
-    /// A single-entity procedure carries no `entity_key`, and that is NOT the
-    /// same as naming no entity: its one entity holds state exactly like a
+    /// A single-cell tasklet carries no `cell_key`, and that is NOT the
+    /// same as naming no cell: its one cell holds state exactly like a
     /// keyed one, so its activations must reach the loop that folded it.
     #[test]
-    fn a_single_entity_procedure_is_not_round_robined() {
+    fn a_single_cell_tasklet_is_not_round_robined() {
         let single = || activation("op", 5, None);
         let home = pick_loop(&single(), 4);
         for _ in 0..50 {
             assert_eq!(pick_loop(&single(), 4), home);
         }
-        // And it is a different home from another procedure's single entity,
-        // so one loop does not collect every unkeyed procedure.
+        // And it is a different home from another tasklet's single cell,
+        // so one loop does not collect every unkeyed tasklet.
         let others: std::collections::HashSet<usize> = (0..32)
             .map(|p| pick_loop(&activation("op", p, None), 4))
             .collect();
-        assert!(
-            others.len() > 1,
-            "every unkeyed procedure landed on one loop"
-        );
+        assert!(others.len() > 1, "every unkeyed tasklet landed on one loop");
     }
 }

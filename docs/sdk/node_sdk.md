@@ -1,7 +1,7 @@
 # Node SDK
 
 `@flezha/sdk` is a poll host over `flz_core`, the runner kernel the Rust and
-Java SDKs also drive. The kernel owns transport, ordering, per-entity
+Java SDKs also drive. The kernel owns transport, ordering, per-cell
 exclusivity, durability, retries, timers, credit, routing and the workflow
 driver. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
@@ -58,14 +58,14 @@ naming the host it detected, the package it looked for and the build above.
 ## Writing an operative
 
 ```ts
-import { createRunner, defineOperative, defineProcedure } from '@flezha/sdk';
+import { createRunner, defineOperative, defineTasklet } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
 interface Candle { symbol: string; close: number }
 
-const Ohlc = defineProcedure({
+const Ohlc = defineTasklet({
   name: 'ohlc',
-  dynamicEntities: { idleTtlMs: 60_000 },
+  dynamicCells: { idleTtlMs: 60_000 },
   initialState: () => ({ high: 0, low: 0, close: 0 }),
   applyChange: (state, change: { close: number }) => {
     state.close = change.close;
@@ -92,8 +92,8 @@ await runner.registerFactory('./candles.js');
 await runner.run();
 ```
 
-**A wrong edge is a compile error.** `.into(procedure)` accepts only a
-procedure whose declared input the producing edge's value satisfies, so a
+**A wrong edge is a compile error.** `.into(tasklet)` accepts only a
+tasklet whose declared input the producing edge's value satisfies, so a
 mismatched wiring is rejected before the program runs. Those refusals are
 pinned by fixtures under `sdk/node/types-tests/`, which fail the build if a
 refusal stops working. Everything static typing cannot see — cycles, missing
@@ -111,12 +111,12 @@ is what makes enabling worker threads a flag rather than a rewrite.
 
 ### The short form
 
-An operative of one procedure can be one declaration: `defineOperative` or
-`defineWorkflow` carrying that procedure's `run` body in place of `channels`.
+An operative of one tasklet can be one declaration: `defineOperative` or
+`defineWorkflow` carrying that tasklet's `run` body in place of `channels`.
 The function's name is the kind. `factoryId` is required, `sink` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
-takes. The procedure's own fields (`initialState`, `applyChange`, `entities`,
-`clock`, `mailboxCapacity`, `schemaVersion` and the rest `defineProcedure`
+takes. The tasklet's own fields (`initialState`, `applyChange`, `cells`,
+`clock`, `mailboxCapacity`, `schemaVersion` and the rest `defineTasklet`
 reads) are written beside `run`.
 
 ```ts
@@ -146,14 +146,14 @@ await runner.run();
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input`, or the `input` field's value,
-decoded by `codec`; the procedure, named `factoryId` verbatim, so its entities
+single tasklet: an entry channel named `input`, or the `input` field's value,
+decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
 keep their state path when it grows into the full form; a plugin sink named by
 `sink`; and every class-level setting at its default. A workflow short form is
 a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
 
-With no `sink` there is no plugin channel, so the procedure has no output
+With no `sink` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and returns nothing.
 
 ```ts
@@ -171,7 +171,7 @@ export const counter = defineOperative({
 });
 ```
 
-Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window.
 
@@ -181,8 +181,8 @@ malformed short form is refused while the module loads rather than inside
 `channels`), and `DuplicateFactoryId`, raised when the runner declares a second
 operative, of either kind, under a factory id it holds. A key written where it
 does not belong is refused naming the key: a class-level setting, `name` or
-`kind` beside `run`, `sink`, `input`, `codec` or a procedure field beside `channels`, and `kind`,
-`sink`, `input` or `codec` on a `defineProcedure`. There is no `SinkWithoutOutput`: a plain `.mjs`
+`kind` beside `run`, `sink`, `input`, `codec` or a tasklet field beside `channels`, and `kind`,
+`sink`, `input` or `codec` on a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs`
 author runs no type checker and this SDK ships no build step, so a body that
 returns nothing cannot be seen here. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name.
@@ -218,11 +218,11 @@ loop cannot do:
 
 - **CPU-bound handlers.** A synchronous compute loop blocks its event loop and
   there is no other fix. The SDK observes its own loops and warns, naming the
-  procedure and the observed delay, when a loop is held past 500 ms.
+  tasklet and the observed delay, when a loop is held past 500 ms.
 - **Replacement.** A wedged worker can be killed and restarted, and the
   configured loop count restored. A wedged main thread cannot: the runner keeps
   heartbeating, `inflight_oldest_ms` climbs, and the controller's classifier
-  mints `entity_dispatch_stalled` and evicts the runner.
+  mints `cell_dispatch_stalled` and evicts the runner.
 
 Both configurations run the same handler modules, the same dispatch path and
 the same registration form. Selecting the loop is the only difference.
@@ -239,10 +239,10 @@ counter, a run-once flag, an `AsyncLocalStorage` expected to span activations.
 Durable state is unaffected: the core owns it, through the declared change
 fold.
 
-An activation for a given entity always reaches the same loop. That is not a
+An activation for a given cell always reaches the same loop. That is not a
 performance choice: after a restore fold, the loop that folded holds that
-entity's materialized state, and a loop is a separate isolate. Work that names
-no entity — the prepare crossing, which runs before any key exists —
+cell's materialized state, and a loop is a separate isolate. Work that names
+no cell — the prepare crossing, which runs before any key exists —
 round-robins instead.
 
 ## What must never block the event loop
@@ -276,7 +276,7 @@ invocation.
 A channel names the format of its payload with `{ codec }` on `input` and on
 `sink`, typed as the `ChannelCodec` union:
 
-| Codec | An entry hands the procedure | A sink sends |
+| Codec | An entry hands the tasklet | A sink sends |
 | --- | --- | --- |
 | `'text'` | a `string` (`Stream<string>`); invalid UTF-8 fails the decode | a `string` as UTF-8; any other value fails the emit |
 | `'bytes'` | a `Uint8Array` (`Stream<Uint8Array>`) | a `Uint8Array` or `Buffer` unchanged; any other value fails the emit |
@@ -302,9 +302,9 @@ A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails
 the emit naming the channel; `'msgpack'` carries a `bigint` at any width.
 
-A value passed between two procedures of one operative never crosses a channel
+A value passed between two tasklets of one operative never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
-procedure the binary instead, since an Elixir string is its binary, so the same
+tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are an object here and a string there.
 
 ## Durable state
@@ -347,9 +347,9 @@ try {
 ```
 
 `onSink` registers against the sink's **channel** name, which is the producing
-procedure's name unless the declaration `named` it. `feed`, `runUntilIdle` and
+tasklet's name unless the declaration `named` it. `feed`, `runUntilIdle` and
 the sink drain are promises because each parks in the core, and the fetchers
-that run the procedures need this event loop free. Worked example:
+that run the tasklets need this event loop free. Worked example:
 [`examples/node/local_word_count.mjs`](../../examples/node/local_word_count.mjs).
 
 **State is held in memory and nothing is durable** — no write-ahead log, no
@@ -359,12 +359,12 @@ multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
 [`../quickstart.md`](../quickstart.md).
 
-## Testing a procedure
+## Testing a tasklet
 
 ```ts
-import { ProcedureTestHarness } from '@flezha/sdk/testing';
+import { TaskletTestHarness } from '@flezha/sdk/testing';
 
-const harness = ProcedureTestHarness.of(Ohlc, { entityKey: 'AAPL' });
+const harness = TaskletTestHarness.of(Ohlc, { cellKey: 'AAPL' });
 const applied = await harness.input({ symbol: 'AAPL', price: 10, at: 0 });
 assert.deepEqual(applied.emits, [{ symbol: 'AAPL', close: 10 }]);
 harness.replayEquals();
@@ -372,7 +372,7 @@ harness.replayEquals();
 
 `replayEquals()` folds the recorded change log against a freshly constructed
 initial state and requires the result to equal the live one — the engine
-rebuilds an entity exactly that way on a warm restart, so a difference is what
+rebuilds a cell exactly that way on a warm restart, so a difference is what
 a restart would lose. A handler is also an ordinary function: a plain unit test
 can call it with no runner started and no controller running.
 

@@ -1,6 +1,6 @@
 defmodule Flezha.State.Outbox do
   @moduledoc """
-  Per-Entity dedup file (`<key>.outbox.dedup`) and the delivery-confirmation
+  Per-Cell dedup file (`<key>.outbox.dedup`) and the delivery-confirmation
   seam over it.
 
   The file holds the persistence watermark `last_persisted_seq`, the outbox
@@ -23,7 +23,7 @@ defmodule Flezha.State.Outbox do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.SDK.Wire
   alias Flezha.State.{Paths, WriterRegistry}
-  alias Flezha.State.ProcJournal
+  alias Flezha.State.TaskJournal
 
   @type t :: %{
           last_persisted_seq: non_neg_integer(),
@@ -31,9 +31,9 @@ defmodule Flezha.State.Outbox do
           epoch: non_neg_integer()
         }
 
-  @spec read(Paths.entity_id()) :: t()
-  def read(entity_id) do
-    path = Paths.outbox_dedup_path(entity_id)
+  @spec read(Paths.cell_id()) :: t()
+  def read(cell_id) do
+    path = Paths.outbox_dedup_path(cell_id)
 
     case File.read(path) do
       {:ok, <<seq::64-big, flushed::64-big-signed, epoch::64-big>>} ->
@@ -47,8 +47,8 @@ defmodule Flezha.State.Outbox do
     end
   end
 
-  @spec write(Paths.entity_id(), t()) :: :ok | {:error, term()}
-  def write(entity_id, %{
+  @spec write(Paths.cell_id(), t()) :: :ok | {:error, term()}
+  def write(cell_id, %{
         last_persisted_seq: seq,
         outbox_flushed_seq: flushed,
         epoch: epoch
@@ -58,11 +58,11 @@ defmodule Flezha.State.Outbox do
     bytes = <<seq::64-big, flushed::64-big-signed, epoch::64-big>>
 
     # The declaration creates no directory here: the WAL open owns that, so a
-    # cache write can never resurrect a deleted Entity dir (it fails with
+    # cache write can never resurrect a deleted Cell dir (it fails with
     # `:enoent` instead), and it owes no fsync of its own — the writer's batch
     # is what makes the watermark mean anything.
     Paths.atomic_install(
-      Paths.outbox_dedup_path(entity_id),
+      Paths.outbox_dedup_path(cell_id),
       &:file.write(&1, bytes),
       :outbox_dedup
     )
@@ -85,14 +85,14 @@ defmodule Flezha.State.Outbox do
           | {:marker, byte(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
 
   @typedoc "Decoded `flz.ack` token: who owns the cursor, whose output it is, what it completes."
-  @type ack :: %{owner: Paths.entity_id(), target: Paths.entity_id(), key: key()}
+  @type ack :: %{owner: Paths.cell_id(), target: Paths.cell_id(), key: key()}
 
   @typedoc """
   One stamped output on its way to the chain: the payload, the metadata it
   carries, and the entry the dispatcher settles it under — the decoded ack, so
   neither the dispatcher nor the chain pays a token decode.
   """
-  @type output :: {binary(), map(), %{owner: Paths.entity_id(), key: key()}}
+  @type output :: {binary(), map(), %{owner: Paths.cell_id(), key: key()}}
 
   @doc "Metadata key carrying the confirmation token on a durable output."
   @spec ack_key() :: binary()
@@ -114,11 +114,11 @@ defmodule Flezha.State.Outbox do
   once with `token/2` and passes it as `:ack`.
   """
   @spec stamp(binary(), map()) :: output()
-  def stamp(payload, %{owner: owner, entry: entry, entity: entity} = identity) do
+  def stamp(payload, %{owner: owner, entry: entry, cell: cell} = identity) do
     stamps =
       identity
       |> Map.drop([:owner, :entry, :metadata])
-      |> Map.put_new_lazy(:ack, fn -> token(owner, entity, entry) end)
+      |> Map.put_new_lazy(:ack, fn -> token(owner, cell, entry) end)
       |> output_stamps()
 
     {payload, Map.merge(Map.new(Map.get(identity, :metadata, %{})), stamps),
@@ -155,17 +155,17 @@ defmodule Flezha.State.Outbox do
   @doc """
   Mint the confirmation token for one outbox entry: who owns the cursor it
   moves, whose output it is, and what one confirmation completes. `target`
-  defaults to the owner — true for a stream Entity, whose writer owns its own
+  defaults to the owner — true for a stream Cell, whose writer owns its own
   output; a workflow instance's journal writer owns output belonging to other
-  Entities.
+  Cells.
   """
-  @spec token(Paths.entity_id(), key()) :: binary()
+  @spec token(Paths.cell_id(), key()) :: binary()
   def token(owner, key), do: token(owner, owner, key)
 
-  @spec token(Paths.entity_id(), Paths.entity_id() | binary(), key()) :: binary()
+  @spec token(Paths.cell_id(), Paths.cell_id() | binary(), key()) :: binary()
   def token(owner, target, key) do
-    owner = entity_bytes(owner)
-    target = entity_bytes(target)
+    owner = cell_bytes(owner)
+    target = cell_bytes(target)
     # An elided target reads back as the owner: the stream tier's every token
     # would otherwise carry the same identity twice.
     target = if target == owner, do: <<>>, else: target
@@ -243,7 +243,7 @@ defmodule Flezha.State.Outbox do
 
   @doc """
   A hold whose retry budget is permanently exhausted: park the payload through
-  the dead-letter store — attributed to the output's own Entity and channel —
+  the dead-letter store — attributed to the output's own Cell and channel —
   then answer the hold so the cursor advances past exactly the parked range.
   Loud and replayable, never a silent drop.
   """
@@ -254,8 +254,8 @@ defmodule Flezha.State.Outbox do
       entry =
         DlqEntry.new!(%{
           operative_class: rc,
-          procedure_id: sh,
-          entity_key: pk,
+          tasklet_id: sh,
+          cell_key: pk,
           channel: Map.get(metadata, "channel", ""),
           error: error,
           attempts: attempts,
@@ -292,13 +292,13 @@ defmodule Flezha.State.Outbox do
   Run a completed entry's journal-marker completion. Called by the owning
   writer, which must not append to its own log from inside its own callback.
   """
-  @spec complete(Paths.entity_id(), key()) :: :ok
-  def complete({instance_id, _, _}, {:marker, for_type, proc_idx, iter, epoch}) do
-    ProcJournal.mark_flushed(instance_id, for_type, proc_idx, iter, epoch)
+  @spec complete(Paths.cell_id(), key()) :: :ok
+  def complete({instance_id, _, _}, {:marker, for_type, task_idx, iter, epoch}) do
+    TaskJournal.mark_flushed(instance_id, for_type, task_idx, iter, epoch)
   end
 
   @doc """
-  Decode a token into the writer that owns it, the Entity the output belongs
+  Decode a token into the writer that owns it, the Cell the output belongs
   to, and the entry key one confirmation completes.
   """
   @spec decode(binary()) :: {:ok, ack()} | :error
@@ -314,7 +314,7 @@ defmodule Flezha.State.Outbox do
          <<owner_len::16-big, owner::binary-size(owner_len), target_len::16-big,
            target::binary-size(target_len), key::binary>>
        ) do
-    with {:ok, owner_id} <- Wire.decode_entity_id(owner),
+    with {:ok, owner_id} <- Wire.decode_cell_id(owner),
          {:ok, target_id} <- decode_target(target, owner_id),
          {:ok, key} <- decode_key(key) do
       {:ok, %{owner: owner_id, target: target_id, key: key}}
@@ -326,17 +326,17 @@ defmodule Flezha.State.Outbox do
   defp decode_body(_), do: :error
 
   defp decode_target(<<>>, owner_id), do: {:ok, owner_id}
-  defp decode_target(bytes, _owner_id), do: Wire.decode_entity_id(bytes)
+  defp decode_target(bytes, _owner_id), do: Wire.decode_cell_id(bytes)
 
   defp encode_key({:cursor, seq}), do: <<1, seq::64-big>>
 
-  defp encode_key({:marker, for_type, proc_idx, iter, epoch}),
-    do: <<2, for_type::8, proc_idx::16-big, iter::32-big, epoch::32-big>>
+  defp encode_key({:marker, for_type, task_idx, iter, epoch}),
+    do: <<2, for_type::8, task_idx::16-big, iter::32-big, epoch::32-big>>
 
   defp decode_key(<<1, seq::64-big>>), do: {:ok, {:cursor, seq}}
 
-  defp decode_key(<<2, for_type::8, proc_idx::16-big, iter::32-big, epoch::32-big>>),
-    do: {:ok, {:marker, for_type, proc_idx, iter, epoch}}
+  defp decode_key(<<2, for_type::8, task_idx::16-big, iter::32-big, epoch::32-big>>),
+    do: {:ok, {:marker, for_type, task_idx, iter, epoch}}
 
   defp decode_key(_), do: :error
 
@@ -375,27 +375,27 @@ defmodule Flezha.State.Outbox do
     end
   end
 
-  defp entity_bytes({rc, sh, pk}), do: Wire.encode_entity_id(rc, sh, pk)
-  defp entity_bytes(bytes) when is_binary(bytes), do: bytes
+  defp cell_bytes({rc, sh, pk}), do: Wire.encode_cell_id(rc, sh, pk)
+  defp cell_bytes(bytes) when is_binary(bytes), do: bytes
 
   defp encode(bytes), do: Base.url_encode64(bytes, padding: false)
 
   # ---------- output identity ----------
 
   @doc """
-  Canonical label of an Entity identity — `<operative_class>/<procedure_id>/<entity_key>`,
-  the value carried by the `flz.entity` output stamp. Accepts the decoded triple
+  Canonical label of a Cell identity — `<operative_class>/<tasklet_id>/<cell_key>`,
+  the value carried by the `flz.cell` output stamp. Accepts the decoded triple
   or the on-wire identity bytes (undecodable bytes fall back to lowercase hex, so a
   corrupt identity is still traceable rather than fatal).
   """
-  @spec entity_label({binary(), binary(), binary()} | binary()) :: binary()
-  def entity_label({operative_class, procedure_id, entity_key}),
-    do: "#{operative_class}/#{procedure_id}/#{entity_key}"
+  @spec cell_label({binary(), binary(), binary()} | binary()) :: binary()
+  def cell_label({operative_class, tasklet_id, cell_key}),
+    do: "#{operative_class}/#{tasklet_id}/#{cell_key}"
 
-  def entity_label(entity_id) when is_binary(entity_id) do
-    case Wire.decode_entity_id(entity_id) do
-      {:ok, entity} -> entity_label(entity)
-      {:error, _} -> Base.encode16(entity_id, case: :lower)
+  def cell_label(cell_id) when is_binary(cell_id) do
+    case Wire.decode_cell_id(cell_id) do
+      {:ok, cell} -> cell_label(cell)
+      {:error, _} -> Base.encode16(cell_id, case: :lower)
     end
   end
 
@@ -407,8 +407,8 @@ defmodule Flezha.State.Outbox do
 
   Both durable outbox flushes mint it: the stream effectively-once tier
   (`Flezha.State.WalWriter`, `seq` = `<change_seq>.<emit_ordinal>`) and the
-  workflow transactional outbox (`Flezha.State.ProcJournal`, `seq` =
-  `<proc_idx>.<seq_in_proc>`, an undo carrying a trailing `.1`). `seq` is a numeric
+  workflow transactional outbox (`Flezha.State.TaskJournal`, `seq` =
+  `<task_idx>.<seq_in_task>`, an undo carrying a trailing `.1`). `seq` is a numeric
   dotted sequence so a sink can order it; `key` is omitted when the output
   carries no natural key.
 
@@ -418,7 +418,7 @@ defmodule Flezha.State.Outbox do
   cursor is waiting on this".
   """
   @spec output_stamps(%{
-          required(:entity) => {binary(), binary(), binary()} | binary(),
+          required(:cell) => {binary(), binary(), binary()} | binary(),
           required(:seq) => binary(),
           required(:epoch) => non_neg_integer(),
           required(:channel) => binary(),
@@ -428,7 +428,7 @@ defmodule Flezha.State.Outbox do
   def output_stamps(identity) do
     stamps = %{
       "channel" => identity.channel,
-      "flz.entity" => entity_label(identity.entity),
+      "flz.cell" => cell_label(identity.cell),
       "flz.seq" => identity.seq,
       "flz.epoch" => Integer.to_string(identity.epoch)
     }
@@ -444,11 +444,11 @@ defmodule Flezha.State.Outbox do
   defp put_stamp(stamps, _key, _value), do: stamps
 
   @doc """
-  The identity `output_stamps/1` put on an output, read back: the Entity, the
-  seq, the epoch, and a `sort` key ordering two identities of one Entity. The
+  The identity `output_stamps/1` put on an output, read back: the Cell, the
+  seq, the epoch, and a `sort` key ordering two identities of one Cell. The
   one reading every sink that guards on `(epoch, seq)` shares.
 
-  An output has an identity when it names an Entity and a numeric dotted seq,
+  An output has an identity when it names a Cell and a numeric dotted seq,
   not when it carries an epoch: a `.keyed()` channel off the effectively-once
   tier is stamped by the SDK, which cannot mint one. An absent epoch is epoch 0,
   where the outbox lineage starts, and every controller-side path that bumps it
@@ -458,20 +458,20 @@ defmodule Flezha.State.Outbox do
   @spec output_identity(map()) ::
           {:ok,
            %{
-             entity: binary(),
+             cell: binary(),
              seq: binary(),
              epoch: integer(),
              sort: {integer(), [non_neg_integer()]}
            }}
           | :none
   def output_identity(metadata) when is_map(metadata) do
-    entity = Map.get(metadata, "flz.entity", "")
+    cell = Map.get(metadata, "flz.cell", "")
     seq = Map.get(metadata, "flz.seq", "")
 
-    if entity != "" and is_binary(seq) and seq =~ ~r/^\d+(\.\d+)*$/ do
+    if cell != "" and is_binary(seq) and seq =~ ~r/^\d+(\.\d+)*$/ do
       epoch = parse_epoch(Map.get(metadata, "flz.epoch"))
       sort = {epoch, seq |> String.split(".") |> Enum.map(&String.to_integer/1)}
-      {:ok, %{entity: entity, seq: seq, epoch: epoch, sort: sort}}
+      {:ok, %{cell: cell, seq: seq, epoch: epoch, sort: sort}}
     else
       :none
     end

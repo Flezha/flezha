@@ -58,7 +58,7 @@ defmodule Flezha.Transport.LivenessCounters do
   # advancing while it is frozen means the runner process is alive and its
   # dispatch pool is wedged. `hb_inflight` and `hb_inflight_oldest_ms` mirror
   # the handout self-report — `hb_dispatches` freezing says the WHOLE pool
-  # stopped, these two are what make ONE wedged Entity visible while the runner
+  # stopped, these two are what make ONE wedged Cell visible while the runner
   # keeps completing work. `hb_pending_pushes` and `hb_pending_push_oldest_ms`
   # mirror the deferred-push self-report: a gated producer holds no handout, so
   # `hb_inflight` is blind to it and backpressure that withholds work would
@@ -149,7 +149,7 @@ defmodule Flezha.Transport.LivenessCounters do
         scope: :runner,
         aggregate: :sum,
         heartbeat: "inflight",
-        surface: [{:verdict, :entity_dispatch_stalled}, {:metric, :inflight}]
+        surface: [{:verdict, :cell_dispatch_stalled}, {:metric, :inflight}]
       ],
       [
         name: :hb_inflight_oldest_ms,
@@ -158,7 +158,7 @@ defmodule Flezha.Transport.LivenessCounters do
         # An age, not a count: two runners' oldest handouts do not add up.
         aggregate: :max,
         heartbeat: "inflight_oldest_ms",
-        surface: [{:verdict, :entity_dispatch_stalled}, {:metric, :inflight_oldest_ms}]
+        surface: [{:verdict, :cell_dispatch_stalled}, {:metric, :inflight_oldest_ms}]
       ],
       [
         name: :hb_blocked_parks,
@@ -194,7 +194,7 @@ defmodule Flezha.Transport.LivenessCounters do
         aggregate: :sum,
         measurement: :count,
         heartbeat: "pending_pushes",
-        surface: [{:verdict, :entity_dispatch_stalled}, {:metric, :mailbox_pending_pushes}]
+        surface: [{:verdict, :cell_dispatch_stalled}, {:metric, :mailbox_pending_pushes}]
       ],
       [
         name: :hb_pending_push_oldest_ms,
@@ -202,7 +202,7 @@ defmodule Flezha.Transport.LivenessCounters do
         scope: :runner,
         aggregate: :max,
         heartbeat: "pending_push_oldest_ms",
-        surface: [{:verdict, :entity_dispatch_stalled}, {:metric, :pending_push_oldest_ms}]
+        surface: [{:verdict, :cell_dispatch_stalled}, {:metric, :pending_push_oldest_ms}]
       ],
       [
         name: :hb_restore_discarded_inputs,
@@ -248,7 +248,7 @@ defmodule Flezha.Transport.LivenessCounters do
       [
         name: :stale_writer_refused,
         kind: :count,
-        # Counted here per channel AND in `Flezha.State.Metrics` per Entity, and
+        # Counted here per channel AND in `Flezha.State.Metrics` per Cell, and
         # exported from the second: different keys, so the two are not a
         # duplicate. The bridged event is the surface this slot reaches.
         surface: [{:telemetry, [:flezha, :state, :stale_writer_refused]}]

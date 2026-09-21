@@ -6,7 +6,7 @@ name: Naming
 # `DropOldest`; check-overflow-naming fails a PR that reintroduces `Block` as a
 # policy name. Local mode is a way to run an application, not a way to test one;
 # check-local-mode-naming fails a PR that names a local-mode symbol or its
-# documentation page as testing material — `ProcedureTestHarness` and its
+# documentation page as testing material — `TaskletTestHarness` and its
 # per-SDK twins keep their names, and tests of local mode are out of that gate's
 # scope by construction rather than by exemption.
 # check-module-naming fails a PR that reintroduces one of the eight

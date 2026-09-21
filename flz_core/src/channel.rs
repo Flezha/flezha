@@ -6,7 +6,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 pub type ChannelId = u32;
-pub type ProcedureId = u32;
+pub type TaskletId = u32;
 
 /// What an edge's transform yields for one value: nothing, one value, or a
 /// fan-out. Only the fan-out pays a `Vec`.
@@ -63,11 +63,11 @@ pub type EdgeTransformFn =
 /// it never declines. Pure, as [`EdgeTransformFn`] is.
 pub type EdgeKeyFn = Arc<dyn Fn(&dyn Any) -> String + Send + Sync + 'static>;
 
-/// One consumer subscription on a channel; a plain `.into::<Proc>()` carries
+/// One consumer subscription on a channel; a plain `.into::<Task>()` carries
 /// neither closure.
 #[derive(Clone)]
 pub struct ConsumerEdge {
-    pub procedure: ProcedureId,
+    pub tasklet: TaskletId,
     pub transform: Option<EdgeTransformFn>,
     pub key: Option<EdgeKeyFn>,
 }
@@ -104,7 +104,7 @@ fn contain<R>(what: &str, f: impl FnOnce() -> R) -> Result<R, String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelKind {
     Entry,
-    InterProcedure,
+    InterTasklet,
     PluginBound,
 }
 
@@ -122,7 +122,7 @@ pub enum OverflowPolicy {
 }
 
 /// Retry-then-park policy for a failing invocation: after `max_attempts`, or
-/// at once on a non-retryable error, the payload parks and the entity
+/// at once on a non-retryable error, the payload parks and the cell
 /// advances.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryPolicy {
@@ -155,7 +155,7 @@ pub struct PluginSink {
 pub struct ChannelDescriptor {
     pub name: Arc<str>,
     pub kind: ChannelKind,
-    pub producer: Option<ProcedureId>,
+    pub producer: Option<TaskletId>,
     pub consumers: Vec<ConsumerEdge>,
     /// Wire bytes into the typed payload; `Some` on entry channels only.
     pub wrap_input: Option<EntryWrapFn>,
@@ -168,22 +168,22 @@ pub struct ChannelDescriptor {
     pub keyed: bool,
     pub overflow_policy: OverflowPolicy,
     pub retry: RetryPolicy,
-    /// Byte codec for inter-procedure payloads, derived by the runtime and
+    /// Byte codec for inter-tasklet payloads, derived by the runtime and
     /// declared by no SDK. `Some` exactly when `kind` is
-    /// [`ChannelKind::InterProcedure`], because that is the channel the journal
-    /// reads back: a durable structured workflow re-seeds a resumed procedure
+    /// [`ChannelKind::InterTasklet`], because that is the channel the journal
+    /// reads back: a durable structured workflow re-seeds a resumed tasklet
     /// through it, and nothing re-seeds from an entry or a plugin-bound
     /// terminal.
     pub codec: Option<ChannelCodec>,
 }
 
 impl ChannelDescriptor {
-    pub fn consumer_ids(&self) -> impl Iterator<Item = ProcedureId> + '_ {
-        self.consumers.iter().map(|e| e.procedure)
+    pub fn consumer_ids(&self) -> impl Iterator<Item = TaskletId> + '_ {
+        self.consumers.iter().map(|e| e.tasklet)
     }
 }
 
-/// The byte codec of an inter-procedure channel's payload.
+/// The byte codec of an inter-tasklet channel's payload.
 #[derive(Clone)]
 pub struct ChannelCodec {
     pub encode: CodecEncodeFn,
@@ -199,7 +199,7 @@ pub type PluginSerializeFn = Arc<dyn Fn(&dyn Any) -> Vec<u8> + Send + Sync + 'st
 
 pub type ErasedFn<R> = Arc<dyn Fn(&dyn Any) -> R + Send + Sync + 'static>;
 
-pub type EntitiesForFn = ErasedFn<Vec<&'static str>>;
+pub type CellsForFn = ErasedFn<Vec<&'static str>>;
 
 pub type SerializeStateFn =
     Arc<dyn Fn(&Box<dyn Any + Send>) -> Result<serde_json::Value, String> + Send + Sync + 'static>;
@@ -207,16 +207,16 @@ pub type SerializeStateFn =
 pub type DeserializeStateFn =
     Arc<dyn Fn(&serde_json::Value) -> Result<Box<dyn Any + Send>, String> + Send + Sync + 'static>;
 
-pub type EntityBuilder =
-    Box<dyn Fn(BuildEntityArgs<'_>) -> Arc<crate::entity::EntitySlot> + Send + Sync + 'static>;
+pub type CellBuilder =
+    Box<dyn Fn(BuildCellArgs<'_>) -> Arc<crate::cell::CellSlot> + Send + Sync + 'static>;
 
-pub struct BuildEntityArgs<'a> {
+pub struct BuildCellArgs<'a> {
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
     pub instance: std::sync::Weak<crate::operative::instance::StreamInstance>,
     /// The operative INSTANCE id, which keys the WAL.
     pub instance_id: Arc<str>,
-    pub procedure_id: ProcedureId,
-    pub entity_key: Option<&'a str>,
-    pub entity_index: usize,
+    pub tasklet_id: TaskletId,
+    pub cell_key: Option<&'a str>,
+    pub cell_index: usize,
     pub persistence_enabled: bool,
 }

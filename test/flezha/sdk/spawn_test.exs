@@ -1,7 +1,7 @@
 defmodule Flezha.SDK.SpawnTest do
   @moduledoc """
-  Procedure-requested spawn in the SDK's own core, mirroring the reference's
-  matrix in `sdk/rust/src/procedure/tests/spawn.rs`: the outcome mapping, the
+  Tasklet-requested spawn in the SDK's own core, mirroring the reference's
+  matrix in `sdk/rust/src/tasklet/tests/spawn.rs`: the outcome mapping, the
   call's options, the handle's two reads, the replay skip, the answers with no
   runner and with no control plane, and the runner server's waiter: its
   deadline, its claim and the one warning a failure nobody read gets.
@@ -112,7 +112,7 @@ defmodule Flezha.SDK.SpawnTest do
     end
   end
 
-  describe "the context a procedure is handed" do
+  describe "the context a tasklet is handed" do
     test "with no runner the request resolves unavailable at once and sends nothing" do
       ctx = Ctx.new(Spawner, nil, 0)
 
@@ -290,7 +290,7 @@ defmodule Flezha.SDK.SpawnTest do
     end
   end
 
-  describe "inside a running procedure" do
+  describe "inside a running tasklet" do
     test "a refused spawn leaves the invocation intact: the emit ships once and the handle resolves the refusal" do
       %{op: op, counters: counters} = start_operative(SpawnerOp)
       Inbox.input(op, "in", "w-refused", %{})

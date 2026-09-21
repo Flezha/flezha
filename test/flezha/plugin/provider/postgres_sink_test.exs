@@ -69,47 +69,47 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   defp health(opts, pid), do: Postgres.health(Map.put(opts, :owned_pid, pid))
 
-  defp stamps(entity, seq, epoch, key) do
-    %{"flz.entity" => entity, "flz.seq" => seq, "flz.epoch" => epoch, "flz.key" => key}
+  defp stamps(cell, seq, epoch, key) do
+    %{"flz.cell" => cell, "flz.seq" => seq, "flz.epoch" => epoch, "flz.key" => key}
   end
 
   # A `.keyed()` channel WITHOUT the effectively-once tier: the SDK stamps the
   # identity but cannot mint an epoch — only the controller's outbox lineage owns one.
-  defp keyed_stamps(entity, seq, key) do
-    %{"flz.entity" => entity, "flz.seq" => seq, "flz.key" => key}
+  defp keyed_stamps(cell, seq, key) do
+    %{"flz.cell" => cell, "flz.seq" => seq, "flz.key" => key}
   end
 
   test "batch of 3 records commits rows and progress atomically", %{db: db} do
     {opts, pid} = start_provider()
-    entity = "op/tier_op/"
+    cell = "op/tier_op/"
 
-    emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
-    emit(opts, "v2", stamps(entity, "2.0", "1", "k2"))
-    emit(opts, "v3", stamps(entity, "2.1", "1", "k1"))
+    emit(opts, "v1", stamps(cell, "1.0", "1", "k1"))
+    emit(opts, "v2", stamps(cell, "2.0", "1", "k2"))
+    emit(opts, "v3", stamps(cell, "2.1", "1", "k1"))
 
     assert wait_until(fn -> length(rows(db)) == 2 end, 10_000)
 
     assert [
-             ["k1", ^entity, "2.1", 1, "v3", %DateTime{}],
-             ["k2", ^entity, "2.0", 1, "v2", %DateTime{}]
+             ["k1", ^cell, "2.1", 1, "v3", %DateTime{}],
+             ["k2", ^cell, "2.0", 1, "v2", %DateTime{}]
            ] = rows(db)
 
     # Progress committed in the same transaction as the rows.
-    assert [[^entity, "2.1", 1]] = progress(db)
+    assert [[^cell, "2.1", 1]] = progress(db)
     assert health(opts, pid) == :healthy
   end
 
   test "re-driven batch is a byte-identical no-op", %{db: db} do
     {opts, pid} = start_provider()
-    entity = "op/tier_op/"
+    cell = "op/tier_op/"
     batch = [{"a", "1.0", "k1"}, {"b", "2.0", "k2"}, {"c", "3.0", "k1"}]
 
     deliver = fn ->
-      for {payload, seq, key} <- batch, do: emit(opts, payload, stamps(entity, seq, "1", key))
+      for {payload, seq, key} <- batch, do: emit(opts, payload, stamps(cell, seq, "1", key))
     end
 
     deliver.()
-    assert wait_until(fn -> progress(db) == [[entity, "3.0", 1]] end, 10_000)
+    assert wait_until(fn -> progress(db) == [[cell, "3.0", 1]] end, 10_000)
     first = {rows(db), progress(db)}
 
     # Crash-between-flush-and-cursor-advance: the identical batch again.
@@ -124,17 +124,17 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     db: db
   } do
     rc = "pg_#{System.unique_integer([:positive])}"
-    entity_id = {rc, "proc", "k1"}
-    :ok = TestHelpers.stub_outbox_owner(entity_id)
+    cell_id = {rc, "task", "k1"}
+    :ok = TestHelpers.stub_outbox_owner(cell_id)
 
     {opts, _pid} = start_provider()
-    entity = "#{rc}/proc/k1"
+    cell = "#{rc}/task/k1"
 
     ack = fn seq ->
       Map.put(
-        stamps(entity, "#{seq}.0", "1", "k#{seq}"),
+        stamps(cell, "#{seq}.0", "1", "k#{seq}"),
         Outbox.ack_key(),
-        Outbox.token(entity_id, {:cursor, seq})
+        Outbox.token(cell_id, {:cursor, seq})
       )
     end
 
@@ -144,7 +144,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     assert :ok =
              TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
 
-    assert wait_until(fn -> progress(db) == [[entity, "2.0", 1]] end, 10_000)
+    assert wait_until(fn -> progress(db) == [[cell, "2.0", 1]] end, 10_000)
 
     before = {rows(db), progress(db)}
 
@@ -162,13 +162,13 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "stale epoch cannot regress a row or the watermark", %{db: db} do
     {opts, pid} = start_provider()
-    entity = "op/tier_op/"
+    cell = "op/tier_op/"
 
-    emit(opts, "new", stamps(entity, "1.0", "2", "k1"))
-    assert wait_until(fn -> progress(db) == [[entity, "1.0", 2]] end, 10_000)
+    emit(opts, "new", stamps(cell, "1.0", "2", "k1"))
+    assert wait_until(fn -> progress(db) == [[cell, "1.0", 2]] end, 10_000)
     first = {rows(db), progress(db)}
 
-    emit(opts, "stale", stamps(entity, "9.0", "1", "k1"))
+    emit(opts, "stale", stamps(cell, "9.0", "1", "k1"))
     assert wait_until(fn -> SinkWorker.stats(pid).buffer_len == 0 end, 10_000)
 
     assert {rows(db), progress(db)} == first,
@@ -187,33 +187,33 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "a keyed record without the tier updates its row on every emit", %{db: db} do
     {opts, _pid} = start_provider()
-    entity = "op/keyed_op/BTC-USD"
+    cell = "op/keyed_op/BTC-USD"
 
-    emit(opts, "candle-v1", keyed_stamps(entity, "4.0", "k1"))
+    emit(opts, "candle-v1", keyed_stamps(cell, "4.0", "k1"))
     assert wait_until(fn -> rows(db) != [] end, 10_000)
 
-    emit(opts, "candle-v2", keyed_stamps(entity, "5.0", "k1"))
+    emit(opts, "candle-v2", keyed_stamps(cell, "5.0", "k1"))
 
     assert wait_until(
-             fn -> match?([["k1", ^entity, "5.0", 0, "candle-v2", _]], rows(db)) end,
+             fn -> match?([["k1", ^cell, "5.0", 0, "candle-v2", _]], rows(db)) end,
              10_000
            ),
            "a second, newer keyed emit must UPDATE the row — an absent epoch is epoch 0, " <>
              "not a reason to strip the seq and freeze the row forever"
 
-    # The identity is complete, so the Entity's sink progress advances with it.
-    assert progress(db) == [[entity, "5.0", 0]]
+    # The identity is complete, so the Cell's sink progress advances with it.
+    assert progress(db) == [[cell, "5.0", 0]]
   end
 
   test "a keyed record without the tier is still guarded against regression", %{db: db} do
     {opts, pid} = start_provider()
-    entity = "op/keyed_op/BTC-USD"
+    cell = "op/keyed_op/BTC-USD"
 
-    emit(opts, "newer", keyed_stamps(entity, "5.0", "k1"))
-    assert wait_until(fn -> progress(db) == [[entity, "5.0", 0]] end, 10_000)
+    emit(opts, "newer", keyed_stamps(cell, "5.0", "k1"))
+    assert wait_until(fn -> progress(db) == [[cell, "5.0", 0]] end, 10_000)
     first = {rows(db), progress(db)}
 
-    emit(opts, "older", keyed_stamps(entity, "4.0", "k1"))
+    emit(opts, "older", keyed_stamps(cell, "4.0", "k1"))
     assert wait_until(fn -> SinkWorker.stats(pid).buffer_len == 0 end, 10_000)
 
     assert {rows(db), progress(db)} == first,
@@ -222,16 +222,16 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "a tier record outranks a tier-off record for the same key", %{db: db} do
     {opts, _pid} = start_provider()
-    entity = "op/keyed_op/BTC-USD"
+    cell = "op/keyed_op/BTC-USD"
 
-    emit(opts, "tier-off", keyed_stamps(entity, "9.0", "k1"))
-    assert wait_until(fn -> progress(db) == [[entity, "9.0", 0]] end, 10_000)
+    emit(opts, "tier-off", keyed_stamps(cell, "9.0", "k1"))
+    assert wait_until(fn -> progress(db) == [[cell, "9.0", 0]] end, 10_000)
 
     # Epoch 1 beats epoch 0 whatever the seq — the operative turned the tier on.
-    emit(opts, "tier-on", stamps(entity, "1.0", "1", "k1"))
+    emit(opts, "tier-on", stamps(cell, "1.0", "1", "k1"))
 
     assert wait_until(
-             fn -> match?([["k1", ^entity, "1.0", 1, "tier-on", _]], rows(db)) end,
+             fn -> match?([["k1", ^cell, "1.0", 1, "tier-on", _]], rows(db)) end,
              10_000
            ),
            "a higher epoch must admit and overwrite regardless of seq"
@@ -239,25 +239,25 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "a row left degenerate by the epoch gate self-heals on the next emit", %{db: db} do
     {opts, _pid} = start_provider()
-    entity = "op/keyed_op/BTC-USD"
+    cell = "op/keyed_op/BTC-USD"
 
     # The tables are created on the first flush, so seed one before writing directly.
     emit(opts, "seed", %{})
     assert wait_until(fn -> length(rows(db)) == 1 end, 10_000)
 
     # Exactly what the old classification wrote for a tier-off keyed record: the
-    # stable key, but no entity and no seq — a row nothing could ever update.
+    # stable key, but no cell and no seq — a row nothing could ever update.
     Postgrex.query!(
       db,
-      "INSERT INTO flezha_records (key, entity, seq, epoch, payload, updated_at) " <>
+      "INSERT INTO flezha_records (key, cell, seq, epoch, payload, updated_at) " <>
         "VALUES ('k1', '', '', 0, 'stale', now())",
       []
     )
 
-    emit(opts, "fresh", keyed_stamps(entity, "1.0", "k1"))
+    emit(opts, "fresh", keyed_stamps(cell, "1.0", "k1"))
 
     assert wait_until(
-             fn -> Enum.any?(rows(db), &match?(["k1", ^entity, "1.0", 0, "fresh", _], &1)) end,
+             fn -> Enum.any?(rows(db), &match?(["k1", ^cell, "1.0", 0, "fresh", _], &1)) end,
              10_000
            ),
            "a non-empty seq array outranks the empty one, so a degenerate row heals itself"
@@ -277,9 +277,9 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     refute table_exists?(db, "flezha_records"), "auto_create off must never run DDL"
 
     # Records delivered while the tables are missing are retried, not dropped.
-    entity = "op/tier_op/"
-    emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
-    emit(opts, "v2", stamps(entity, "2.0", "1", "k2"))
+    cell = "op/tier_op/"
+    emit(opts, "v1", stamps(cell, "1.0", "1", "k1"))
+    emit(opts, "v2", stamps(cell, "2.0", "1", "k2"))
 
     assert NodeTestHelper.wait_until(
              fn ->
@@ -296,7 +296,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     assert wait_until(fn -> length(rows(db)) == 2 end, 15_000),
            "buffered records must commit once the tables appear"
 
-    assert [[^entity, "2.0", 1]] = progress(db)
+    assert [[^cell, "2.0", 1]] = progress(db)
     assert wait_until(fn -> health(opts, pid) == :healthy end, 10_000)
   end
 
@@ -306,8 +306,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     {opts, pid} =
       start_provider(%{port: 59_999, unhealthy_after_ms: 1, retry_max_backoff_ms: 200})
 
-    entity = "op/tier_op/"
-    emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
+    cell = "op/tier_op/"
+    emit(opts, "v1", stamps(cell, "1.0", "1", "k1"))
 
     assert wait_until(
              fn ->

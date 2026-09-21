@@ -1,7 +1,7 @@
 //! Inbound `ParkPayloadAck` (controller → SDK): the dead-letter entry
 //! identified by `park_id` is durable in the controller's DLQ store. Wakes
-//! the dispatch thread blocked in `entity::park::park_blocking` so the
-//! parked entity drops its poison payload and advances. Runs on the
+//! the dispatch thread blocked in `cell::park::park_blocking` so the
+//! parked cell drops its poison payload and advances. Runs on the
 //! control coordinator and never blocks.
 
 use super::{CommandAction, Reply};

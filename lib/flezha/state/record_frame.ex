@@ -197,7 +197,7 @@ defmodule Flezha.State.RecordFrame do
   @spec scan_for_last_valid_seq(:file.io_device(), Path.t()) ::
           {:ok, integer()} | {:error, Frame.refusal()}
   def scan_for_last_valid_seq(device, path) do
-    # `-1`, not `0`, for an empty file: the SDK's per-Entity seq is 0-based
+    # `-1`, not `0`, for an empty file: the SDK's per-Cell seq is 0-based
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
     # operative. `-1` is the same "no records yet" sentinel `realign_epoch` uses.

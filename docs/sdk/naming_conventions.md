@@ -105,7 +105,7 @@ Topology declaration reads in flow order on a **stream handle**. `input`
 declares an entry channel (its name is explicit — an external address of the
 operative; an operative may declare several, one per external source, and the
 controller routes each inbound frame to its entry by `metadata["channel"]`),
-`.into(Proc)` wires a consumer and returns *that procedure's* output stream,
+`.into(Task)` wires a consumer and returns *that tasklet's* output stream,
 and plugin egress is `sink()` / `sink(name)` / `sink(name, serializer)` (Rust,
 which has no overloading: `sink()` / `sink_named(name)` / `sink_with(f)` /
 `sink_named_with(name, f)`). The name a sink carries IS the channel's name —
@@ -124,18 +124,18 @@ transform does not compile, and changes nothing about the topology.
 Channel config (`keyed`, `onFull` / `on_full`, `retryMax` / `retry_max`,
 `retryBackoffMs` / `retry_backoff_ms`, `named`) chains on the handle in any
 order relative to consumer wiring. There is no codec method on any handle: the
-runtime derives an inter-procedure channel's journal codec. Branching is handle reuse
+runtime derives an inter-tasklet channel's journal codec. Branching is handle reuse
 (hold the handle in a variable, wire it twice) or the equivalent
 `branch(arm1, arm2, ...)` sugar; fan-in is two streams naming one consumer, or
 `merge` for an explicit multi-input edge.
 
-### 10. A node is named by its class unless `into(Proc, "node_name")` names it
+### 10. A node is named by its class unless `into(Task, "node_name")` names it
 
-Node identity = the procedure's `name()`, unless an explicit node name is
+Node identity = the tasklet's `name()`, unless an explicit node name is
 given at wiring time (`into(Filter.class, "spam_filter")` in Java,
 `into_named::<Filter>("spam_filter")` in Rust — rule 4's per-language
 spelling). The node name replaces `name()` for everything identity feeds:
-per-entity state directories, journal entries, the derived channel name and
+per-cell state directories, journal entries, the derived channel name and
 diagnostics. Two unnamed mentions of one class are the same node (which is how
 fan-in is spelled); node identities are unique per operative. Channel names
 auto-derive from the producer node's identity, so renaming a language class
@@ -160,7 +160,7 @@ discard at `warn`.
 
 Anything an SDK surface says about an event carries the `on<Event>` prefix,
 whichever shape it takes: `on_full` / `onFull` declares the policy for a full
-mailbox, `on_timer` / `onTimer` is the Procedure hook a timer firing calls, and
+mailbox, `on_timer` / `onTimer` is the Tasklet hook a timer firing calls, and
 `on_sink` / `onSink` registers a local-mode sink callback. `on*` is that prefix
 in every SDK, so `addListener`, `subscribe` and `watch` synonyms are not used
 for any of those shapes.

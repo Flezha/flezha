@@ -82,7 +82,7 @@ pub const FLZ_SPAWN_PENDING: i32 = 1;
 pub const FLZ_SPAWN_FAILED: i32 = 2;
 
 /// A polled activation the host has not answered, with the spawn handles its
-/// procedures made: they live exactly as long as it does.
+/// tasklets made: they live exactly as long as it does.
 struct Outstanding {
     activation: EngineActivation,
     spawns: Vec<u64>,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn flz_core_last_error(ctx: *const FlzContext) -> *const c
 }
 
 /// Declare a host class from its JSON form — the complete host-class
-/// declaration (`flz_core::host::HostClassDecl`): channels graph, entity
+/// declaration (`flz_core::host::HostClassDecl`): channels graph, cell
 /// modes, clock kinds, delivery tier, correction window, header lang/format,
 /// mailbox/retry/overflow policies. A declaration the core cannot honor is
 /// refused with an error naming the field.
@@ -454,12 +454,12 @@ pub unsafe extern "C" fn flz_core_complete(
 }
 
 /// Abandon a polled activation: re-hand its untouched items and release its
-/// entity, exactly as if it had never been polled. Accepted from any thread.
+/// cell, exactly as if it had never been polled. Accepted from any thread.
 ///
 /// The third and last way to answer a handout, and the one the ABI must name
 /// explicitly because **no unwind crosses this boundary**: a veneer whose host
 /// language throws, or whose thread dies, cannot reach [`flz_core_complete`],
-/// and per-entity exclusivity would then retire that entity for the life of
+/// and per-cell exclusivity would then retire that cell for the life of
 /// the process. A veneer SHALL answer every polled activation exactly once and
 /// SHALL make that structural in its own language — a `finally`, a
 /// destructor, a scope guard — not a discipline at each return site.
@@ -492,7 +492,7 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
 /// runner loop. Unpolled work follows the existing durability rules (it is
 /// journaled controller-side and re-forwarded on the next bind).
 ///
-/// Returns at once. The notification serializes each Entity through the host,
+/// Returns at once. The notification serializes each Cell through the host,
 /// which needs the caller's loops still polling, so the sequence runs on its
 /// own thread and the core reports shutting down only once it is done. That
 /// thread reads nothing of `ctx`, so freeing the context cannot race it. The
@@ -715,7 +715,7 @@ pub unsafe extern "C" fn flz_core_buf_free(buf: *mut u8, len: usize) {
     }
 }
 
-/// Destroy the context. Outstanding activations are dropped; their entities
+/// Destroy the context. Outstanding activations are dropped; their cells
 /// release on the engine's drain-tail protocol at the next round.
 ///
 /// # Safety

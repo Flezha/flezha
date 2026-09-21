@@ -194,20 +194,20 @@ defmodule Flezha.Observability.PrometheusExportTest do
 
     test "a tuple metadata value renders instead of killing the registry" do
       # The shape two live TelemetryBridge paths carry today: the WAL writer's
-      # 3-tuple entity id, and operative-forward's {:unreachable, _} reason.
+      # 3-tuple cell id, and operative-forward's {:unreachable, _} reason.
       source = metric_source(:wal_tuple)
       registry = Process.whereis(PrometheusRegistry)
 
       text =
         record_and_render(source, :wal_backpressure, %{value: 1}, %{
-          entity_id: {"order_class", "proc_a", "key-1"},
+          cell_id: {"order_class", "task_a", "key-1"},
           status: :full
         })
 
       assert Process.alive?(registry)
 
       labels = series_labels(text, "#{source}_wal_backpressure")
-      assert labels["entity_id"] == ~s({"order_class", "proc_a", "key-1"})
+      assert labels["cell_id"] == ~s({"order_class", "task_a", "key-1"})
       assert labels["status"] == "full"
     end
 
@@ -219,7 +219,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
       poison = metric_source(:poison_after)
 
       record_and_render(healthy, :requests, %{count: 1}, %{path: "/x"})
-      record_and_render(poison, :backpressure, %{value: 1}, %{entity_id: {:a, :b, :c}})
+      record_and_render(poison, :backpressure, %{value: 1}, %{cell_id: {:a, :b, :c}})
 
       for tab <- [
             :flezha_prom_counters,
@@ -397,7 +397,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
             source: source,
             name: :wal_backpressure,
             measurements: %{value: i},
-            metadata: %{entity_id: {"c", "p", "k#{i}"}, status: status}
+            metadata: %{cell_id: {"c", "p", "k#{i}"}, status: status}
           })
         )
 

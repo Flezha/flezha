@@ -79,7 +79,7 @@ defmodule Flezha.Observability.Signal do
 
   A signal's metadata holds arbitrary terms — the Logger bridge alone attaches
   a map and an `{m, f, a}` tuple to every log event, and the WAL writer a
-  3-tuple entity id. `to_string/1` cannot carry them: it raises for a map, a
+  3-tuple cell id. `to_string/1` cannot carry them: it raises for a map, a
   tuple or a pid, and for a list it returns the binary of the elements,
   silently changing what the term says. So only the types with an unambiguous
   `String.Chars` rendering take that route; everything else is inspected, lists

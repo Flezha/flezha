@@ -11,7 +11,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   (identical sender-window semantics). Tagged `:system` (boots real
   subprocesses); run with
   `mix test --include system test/system/credit_flow_e2e_test.exs`.
-  The Java cell needs the committed fat jar — refresh with
+  The Java run needs the committed fat jar — refresh with
   `scripts/build-dist.sh` after any SDK change.
   """
 
@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
   @namespace "credit_flow_e2e"
   @factory "store_input"
-  @procedure "store_input_procedure"
+  @tasklet "store_input_tasklet"
 
   # A ~300 KiB burst against a 64 KiB window with a 1 s fsync tick: the
   # window exhausts within the first second and refills at ~64 KiB/s, so
@@ -74,7 +74,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     :ok
   end
 
-  test "an overdriven entity parks on credit, resumes on grants, zero sheds and zero drops" do
+  test "an overdriven cell parks on credit, resumes on grants, zero sheds and zero drops" do
     run_credit_scenario()
   end
 
@@ -105,7 +105,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     # The priming Change proves state frames flow at all (separating a
     # broken persistence path from a broken handshake in the failure mode).
-    assert wait_for_entity(operative_id, @procedure, 30_000)
+    assert wait_for_cell(operative_id, @tasklet, 30_000)
 
     credit_row = wait_until(fn -> active_credit_row(ce_id) end, 30_000)
     assert credit_row, "credit handshake never completed: #{credit_rows(ce_id)}"
@@ -123,12 +123,12 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     # Zero drops: every Change lands in seq order despite the parking
     # (seq 0 was the priming input).
-    entity_id = wait_for_entity(operative_id, @procedure, 30_000)
-    writer = wait_for_writer(entity_id, 10_000)
+    cell_id = wait_for_cell(operative_id, @tasklet, 30_000)
+    writer = wait_for_writer(cell_id, 10_000)
     await_seq(writer, @input_count, 60_000)
 
     # Zero sheds / zero overruns: the sender honoured its window end-to-end.
-    metrics = Metrics.for_entity(entity_id)
+    metrics = Metrics.for_cell(cell_id)
     assert Metrics.get(metrics, :wal_shed_total) == 0
 
     # The verdict is read from the channel the handshake settled on, by name:

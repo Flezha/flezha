@@ -39,11 +39,11 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     ],
     Dlq => [
       {:list, [nil]},
-      {:get, ["rc/proc/id"]},
+      {:get, ["rc/task/id"]},
       {:stats, []},
-      {:procedures, [nil]},
-      {:drop, ["rc/proc/id"]},
-      {:replay, ["rc/proc/id"]}
+      {:tasklets, [nil]},
+      {:drop, ["rc/task/id"]},
+      {:replay, ["rc/task/id"]}
     ],
     Fleet => [
       {:runners, ["default"]},
@@ -74,7 +74,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:partition_groups, [[]]},
       {:kind_known?, [:stream]},
       {:kind_capabilities, [:stream]},
-      {:entity_state, ["default", "rc", "key"]},
+      {:cell_state, ["default", "rc", "key"]},
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
       {:stop, ["default", "rc"]},
@@ -107,7 +107,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:state_metrics, []},
       {:rescale, ["default", "group", 2, []]},
       {:rewind, ["default", "rc", 1]},
-      {:time_travel, ["entity", :latest]}
+      {:time_travel, ["cell", :latest]}
     ]
   }
 

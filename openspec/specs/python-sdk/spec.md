@@ -29,31 +29,31 @@ The runner SHALL report, in its startup line, the wheel build tier, the active e
 
 ### Requirement: Decorator-Based Authoring Surface
 
-The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.procedure`, `@flezha.stream_operative` and `@flezha.workflow_operative`. A decorated handler SHALL be an ordinary Python callable, callable directly in a unit test without any Flezha runtime present. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O. A class procedure's body SHALL be its `run` method, the name every SDK gives a procedure's body; a decorated class defining `process` and no `run` SHALL raise `DeclarationError` naming `run`. A function procedure is its own body.
+The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.tasklet`, `@flezha.stream_operative` and `@flezha.workflow_operative`. A decorated handler SHALL be an ordinary Python callable, callable directly in a unit test without any Flezha runtime present. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O. A class tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a decorated class defining `process` and no `run` SHALL raise `DeclarationError` naming `run`. A function tasklet is its own body.
 
-Declaration SHALL be a pure expansion onto the shared authoring contract's surface — introducing no new runtime path, protocol message or WAL change — and decorated procedures SHALL compose with one another in a single operative graph.
+Declaration SHALL be a pure expansion onto the shared authoring contract's surface — introducing no new runtime path, protocol message or WAL change — and decorated tasklets SHALL compose with one another in a single operative graph.
 
 #### Scenario: A decorated handler is directly callable
-- **WHEN** a user defines `@flezha.procedure def price(tick: Tick) -> Quote: ...` and calls `price(some_tick)` from a plain unit test with no runner started
+- **WHEN** a user defines `@flezha.tasklet def price(tick: Tick) -> Quote: ...` and calls `price(some_tick)` from a plain unit test with no runner started
 - **THEN** the function executes as an ordinary Python function and returns a `Quote`
 
 #### Scenario: Decorating performs no I/O
-- **WHEN** a module containing `@flezha.procedure` and `@flezha.stream_operative` declarations is imported with no controller running
+- **WHEN** a module containing `@flezha.tasklet` and `@flezha.stream_operative` declarations is imported with no controller running
 - **THEN** the import SHALL succeed, open no socket, and start no thread
 
-#### Scenario: A class procedure's body is its run method
-- **WHEN** a class decorated `@flezha.procedure` defines `run(self, value, ctx)` and an operative wires it
-- **THEN** each input SHALL reach `run`, and its return value SHALL be the procedure's output
+#### Scenario: A class tasklet's body is its run method
+- **WHEN** a class decorated `@flezha.tasklet` defines `run(self, value, ctx)` and an operative wires it
+- **THEN** each input SHALL reach `run`, and its return value SHALL be the tasklet's output
 
 #### Scenario: The old body method is refused
-- **WHEN** a class decorated `@flezha.procedure` defines `process` and no `run`
+- **WHEN** a class decorated `@flezha.tasklet` defines `process` and no `run`
 - **THEN** decorating it SHALL raise `DeclarationError` naming `run`
 
 ### Requirement: Type Hints Drive Graph Wiring, And The Graph Is Statically Checkable
 
-The Python SDK SHALL derive procedure input and output types from the type hints on the decorated handler's signature and SHALL use them to wire the operative graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs.
+The Python SDK SHALL derive tasklet input and output types from the type hints on the decorated handler's signature and SHALL use them to wire the operative graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs.
 
-A handler whose parameter or return annotation is missing, or whose annotated types cannot be connected into a valid graph, SHALL raise at the `register_factory` call site — before any input is served — with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable procedure, node identity collision, missing event-time extractor when an event-time clock is declared, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
+A handler whose parameter or return annotation is missing, or whose annotated types cannot be connected into a valid graph, SHALL raise at the `register_factory` call site — before any input is served — with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable tasklet, node identity collision, missing event-time extractor when an event-time clock is declared, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
 
 #### Scenario: A wrong edge type is a type error before it is a runtime error
 - **WHEN** a user wires a handler returning `Invoice` into a handler accepting `Shipment` and runs a standard type checker
@@ -64,12 +64,12 @@ A handler whose parameter or return annotation is missing, or whose annotated ty
 - **THEN** `register_factory` SHALL raise a topology error naming both handlers and the incompatible types, and the runner SHALL NOT connect
 
 #### Scenario: Missing annotation is refused at registration
-- **WHEN** a user declares `@flezha.procedure def handle(order): ...` with no parameter annotation
+- **WHEN** a user declares `@flezha.tasklet def handle(order): ...` with no parameter annotation
 - **THEN** `register_factory` SHALL raise an error naming the handler and the unannotated parameter
 
 #### Scenario: Refusal happens before any input is served
 - **WHEN** an operative graph contains a cycle
-- **THEN** the error SHALL be raised from the `register_factory` call site, and no entity, mailbox or connection SHALL have been created
+- **THEN** the error SHALL be raised from the `register_factory` call site, and no cell, mailbox or connection SHALL have been created
 
 ### Requirement: Durable State Mutation Is Rejected Outside the Change Mechanism
 
@@ -86,12 +86,12 @@ The runtime itself SHALL retain the ability to apply changes and to restore stat
 - **THEN** the mutation SHALL be applied to the live state, recorded for replay, and SHALL NOT raise
 
 #### Scenario: Recorded changes reproduce state on replay
-- **WHEN** an Entity's state is rebuilt from its snapshot and recorded change log
+- **WHEN** a Cell's state is rebuilt from its snapshot and recorded change log
 - **THEN** the resulting state SHALL equal the live state at the moment of the last recorded change
 
 ### Requirement: Deterministic Time and Identity With Ambient-Use Warnings
 
-`ctx.now()` SHALL return the invocation's time value, computed once by the runtime from the procedure's declared clock before the handler executes, returning that same value for every call within the invocation. `ctx.stable_id()` SHALL return a deterministic, replay-stable 128-bit identifier derived from the entity identity, the invocation's durable change seq, and a per-invocation call ordinal; repeated calls within one invocation SHALL differ, and the n-th call of a replayed invocation SHALL equal the n-th call of the original. Both SHALL be computed by the engine, so Python values are bit-identical to the other SDKs' without a Python-side implementation.
+`ctx.now()` SHALL return the invocation's time value, computed once by the runtime from the tasklet's declared clock before the handler executes, returning that same value for every call within the invocation. `ctx.stable_id()` SHALL return a deterministic, replay-stable 128-bit identifier derived from the cell identity, the invocation's durable change seq, and a per-invocation call ordinal; repeated calls within one invocation SHALL differ, and the n-th call of a replayed invocation SHALL equal the n-th call of the original. Both SHALL be computed by the engine, so Python values are bit-identical to the other SDKs' without a Python-side implementation.
 
 The SDK SHALL detect ambient non-deterministic calls — including `time.time()`, `datetime.now()` and `uuid.uuid4()` — made inside a handler invocation, and SHALL emit a warning naming the source file and line and directing the user to `ctx.now()` or `ctx.stable_id()`. Detection SHALL warn and SHALL NOT raise or abort the invocation.
 
@@ -109,9 +109,9 @@ The SDK SHALL detect ambient non-deterministic calls — including `time.time()`
 
 ### Requirement: Emit Semantics and Reserved Metadata
 
-`ctx.emit(value)` SHALL route to the procedure's declared output channel; `ctx.emit(channel, value)` SHALL select a channel explicitly. Emitting SHALL respect the keyed-channel rules: a channel declared keyed SHALL require a key, a channel not declared keyed SHALL refuse one, and both refusals SHALL name the channel. Metadata on a pure inter-procedure channel with no plugin sink SHALL be refused.
+`ctx.emit(value)` SHALL route to the tasklet's declared output channel; `ctx.emit(channel, value)` SHALL select a channel explicitly. Emitting SHALL respect the keyed-channel rules: a channel declared keyed SHALL require a key, a channel not declared keyed SHALL refuse one, and both refusals SHALL name the channel. Metadata on a pure inter-tasklet channel with no plugin sink SHALL be refused.
 
-User-supplied metadata keys in the reserved `flz.` namespace SHALL be rejected with an error naming the key, so identity stamps can neither be spoofed nor clobbered. The runtime SHALL stamp `flz.entity`, `flz.seq`, and on keyed emits `flz.key`, onto plugin-bound frames, applied after user metadata.
+User-supplied metadata keys in the reserved `flz.` namespace SHALL be rejected with an error naming the key, so identity stamps can neither be spoofed nor clobbered. The runtime SHALL stamp `flz.cell`, `flz.seq`, and on keyed emits `flz.key`, onto plugin-bound frames, applied after user metadata.
 
 #### Scenario: Keyed channel requires a key
 - **WHEN** a handler emits without a key on a channel declared keyed
@@ -142,7 +142,7 @@ The SDK SHALL NOT use `pickle` for durable state or change bytes, on either the 
 Encoding SHALL be validated at registration: a `@flezha.state` class containing a field the codec cannot represent SHALL raise at the `register_factory` call site naming the class and field. Integer offsets, seqs and timestamps SHALL round-trip without narrowing, including values above 2^63.
 
 #### Scenario: Added field remains loadable
-- **WHEN** state is persisted, a new field with a default is added to the `@flezha.state` class, and the Entity is restored
+- **WHEN** state is persisted, a new field with a default is added to the `@flezha.state` class, and the Cell is restored
 - **THEN** restore SHALL succeed and the new field SHALL take its default
 
 #### Scenario: Unrepresentable field is refused at registration
@@ -235,7 +235,7 @@ covered by a test that fails when it is removed.
 ### Requirement: The Python builder submits its topology to the reference check
 
 The Python SDK's builder SHALL record the authoring calls it receives — channels, the
-ordered links of each chain, merges, branches, class flags and procedure facts — into the
+ordered links of each chain, merges, branches, class flags and tasklet facts — into the
 declaration record and SHALL take its verdict from the reference check, so that every name
 of the `TopologyIssue` vocabulary is refused with the reference sentence and no rule is
 carried in the builder. The decorator-based surface SHALL stay as it is; only the judgement moves.
@@ -259,9 +259,9 @@ The SDK SHALL prove the set by one conformance run over every row of
 
 ### Requirement: The Channels builder carries merge, the latest-document router and flat_map
 
-`Channels.merge()` SHALL return a merge handle with `from_(source, map)` (`from` being a keyword), `key_by(key)`, `into(procedure)` and `into(procedure, name)`, with the `multi-input-procedures` semantics: a source is an entry edge or an inter-procedure edge declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged procedure's own output edge. The builder SHALL record each source as a chain closed by the core's `merge` link under one group per merge and SHALL take the merge refusals from the reference check. `Channels.route_latest(documents, traffic, key_fn)` and `route_latest_named(documents, traffic, key_fn, name)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-entity procedure with journaled `{document, version, delivered}` state. `Edge.flat_map(fn)` SHALL exist beside `map` and `filter`: the callable answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, the chain is applied as a list so `filter` and `flat_map` are one mechanism, and the record carries the same `transform` link as `map`.
+`Channels.merge()` SHALL return a merge handle with `from_(source, map)` (`from` being a keyword), `key_by(key)`, `into(tasklet)` and `into(tasklet, name)`, with the `multi-input-tasklets` semantics: a source is an entry edge or an inter-tasklet edge declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output edge. The builder SHALL record each source as a chain closed by the core's `merge` link under one group per merge and SHALL take the merge refusals from the reference check. `Channels.route_latest(documents, traffic, key_fn)` and `route_latest_named(documents, traffic, key_fn, name)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. `Edge.flat_map(fn)` SHALL exist beside `map` and `filter`: the callable answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, the chain is applied as a list so `filter` and `flat_map` are one mechanism, and the record carries the same `transform` link as `map`.
 
-#### Scenario: Two channels merge into one procedure
+#### Scenario: Two channels merge into one tasklet
 - **WHEN** an operative declares `c.merge().from_(ticks, tick_input).from_(quotes, quote_input).key_by(lambda v: v["symbol"]).into(detector)`
 - **THEN** registration SHALL succeed with one detector node fed by two consumer edges, each applying its own mapping, and a value from either entry SHALL reach the handler as the mapped value keyed by `symbol`
 
@@ -270,34 +270,34 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** registration SHALL refuse with `DuplicateMergeSource` naming the channel, and a merge with one source SHALL refuse with `MergeTooFewSources`
 
 #### Scenario: One input becomes three deliveries
-- **WHEN** an edge declares `.flat_map(lambda line: [part for part in line.split(",") if part])` into a procedure and the dispatcher is handed `a,b,c`
+- **WHEN** an edge declares `.flat_map(lambda line: [part for part in line.split(",") if part])` into a tasklet and the dispatcher is handed `a,b,c`
 - **THEN** the handler SHALL run three times, once per element, under one consumed offset, and a line the callable answers `[]` for SHALL run it zero times
 
 #### Scenario: The router delivers on a key's own traffic
-- **WHEN** `c.route_latest(config, trades, lambda t: t["symbol"])` is declared and `ProcedureTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
+- **WHEN** `c.route_latest(config, trades, lambda t: t["symbol"])` is declared and `TaskletTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
 - **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
 
-### Requirement: The single-procedure short form is four decorator keywords
-The short form SHALL be declared with `@flezha.stream_operative` or `@flezha.workflow_operative`, the same decorators that declare a full-form operative, and SHALL NOT be declared with `flezha.procedure`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operative decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.procedure` takes but `name`, which it hands to the generated procedure; the kind is the decorator's own name and SHALL NOT be a keyword.
+### Requirement: The single-tasklet short form is four decorator keywords
+The short form SHALL be declared with `@flezha.stream_operative` or `@flezha.workflow_operative`, the same decorators that declare a full-form operative, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operative decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; the kind is the decorator's own name and SHALL NOT be a keyword.
 
-A decorated object SHALL be a short form when it is a procedure body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operative of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated procedure named `id` and that procedure to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the procedure and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
+A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operative of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
 
-At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a body whose return annotation is absent or `None`, and `ShortFormWithTopology` for a decorated object carrying both a procedure body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operative, and `Runner.register_modules` SHALL register the operatives a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a body whose return annotation is absent or `None`, and `ShortFormWithTopology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operative, and `Runner.register_modules` SHALL register the operatives a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
 #### Scenario: A decorated function is a whole stream operative
 
 - **WHEN** a module declares `@flezha.stream_operative(id="upcase", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a procedure named `upcase` and sink `out`, and the module declares no `flezha.procedure`
+- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module declares no `flezha.tasklet`
 
 #### Scenario: A decorated function is a whole workflow operative
 
 - **WHEN** a module declares `@flezha.workflow_operative(id="place", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, and an instance is started with init values
-- **THEN** the procedure receives the start values as text on `order`, its return value reaches `placed`, and the instance completes
+- **THEN** the tasklet receives the start values as text on `order`, its return value reaches `placed`, and the instance completes
 
 #### Scenario: A short form with no sink is declared
 
 - **WHEN** a module declares `@flezha.stream_operative(id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
-- **THEN** the operative declares `ticks` into the procedure and no plugin channel, and the procedure's changes are journaled as any procedure's are
+- **THEN** the operative declares `ticks` into the tasklet and no plugin channel, and the tasklet's changes are journaled as any tasklet's are
 
 #### Scenario: A codec needs no sink
 
@@ -311,17 +311,17 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 
 #### Scenario: A builder body is still the full form
 
-- **WHEN** `@flezha.stream_operative(id="static_entity")` decorates `def f(c: flezha.Channels) -> None`
-- **THEN** it declares a full-form operative from that body, and no procedure is generated
+- **WHEN** `@flezha.stream_operative(id="static_cell")` decorates `def f(c: flezha.Channels) -> None`
+- **THEN** it declares a full-form operative from that body, and no tasklet is generated
 
-#### Scenario: A procedure body beside a channels body is refused
+#### Scenario: A tasklet body beside a channels body is refused
 
 - **WHEN** a decorated class declares both a `run` body and a `channels` body
 - **THEN** importing it raises `DeclarationError` naming `ShortFormWithTopology`
 
-#### Scenario: An operative keyword on a procedure is refused
+#### Scenario: An operative keyword on a tasklet is refused
 
-- **WHEN** a module declares `@flezha.procedure(name="upcase", sink="out")`
+- **WHEN** a module declares `@flezha.tasklet(name="upcase", sink="out")`
 - **THEN** importing it raises `DeclarationError` naming `sink` and `flezha.stream_operative`
 
 #### Scenario: A derived id is refused
@@ -334,8 +334,8 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 - **WHEN** a module declares `@flezha.stream_operative(id="drain", sink="out") def drain(s: str) -> None`
 - **THEN** importing it raises `DeclarationError` naming `SinkWithoutOutput`
 
-#### Scenario: The generated procedure composes in another topology
+#### Scenario: The generated tasklet composes in another topology
 
-- **WHEN** a short form's generated procedure is named in another operative's `Channels` body
-- **THEN** it wires as any procedure does, and the short form's own operative is declared only if the runner is also handed it or its module
+- **WHEN** a short form's generated tasklet is named in another operative's `Channels` body
+- **THEN** it wires as any tasklet does, and the short form's own operative is declared only if the runner is also handed it or its module
 

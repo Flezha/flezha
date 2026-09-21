@@ -1,7 +1,7 @@
 defmodule Flezha.SDK.RecordHoldTest do
   @moduledoc """
-  Every frame the SDK writes to a secondary stream that no stream will take: an
-  Entity's records, the delete an evicted one ships, and the workflow driver's
+  Every frame the SDK writes to a secondary stream that no stream will take: a
+  Cell's records, the delete an evicted one ships, and the workflow driver's
   writes the runner relays. Each is held and replayed on the next bound stream,
   in the order it was written, still ahead of the outputs of its own dispatch —
   and the credit window is debited by the write rather than by the hold.
@@ -9,7 +9,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   # async: false: the reason WAS `FLEZHA_RECONNECT_RING_CAPACITY`, and the cap
   # tests now state their bound instead of writing it, so that reason is gone
   # and no other has been established. The module keeps its own Operatives,
-  # Entities, counters and streams, and its Mimic stub is private to the test
+  # Cells, counters and streams, and its Mimic stub is private to the test
   # process, so nothing here is known to be shared. Flipping it is a deliberate
   # change to the async budget and is nobody's side effect.
   use ExUnit.Case, async: false
@@ -17,7 +17,7 @@ defmodule Flezha.SDK.RecordHoldTest do
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Codec, Counters, Credit, Entity, Hold, Record, RunnerServer}
+  alias Flezha.SDK.{Codec, Counters, Credit, Cell, Hold, Record, RunnerServer}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.SDK.Wire
@@ -39,11 +39,11 @@ defmodule Flezha.SDK.RecordHoldTest do
   # read answers only behind the queued inputs, and a cast is in the router's
   # mailbox before the dispatch that sent it returns. Without it a rebind can
   # overtake the dispatches it is meant to follow.
-  defp settled(op, procedure, seq),
-    do: assert({:ok, _state, ^seq} = Entity.read(entity!(op, procedure), 1_000))
+  defp settled(op, tasklet, seq),
+    do: assert({:ok, _state, ^seq} = Cell.read(cell!(op, tasklet), 1_000))
 
   # A secondary this process owns whose stream is already gone: what a rebind
-  # onto a wire that died again hands the Entity.
+  # onto a wire that died again hands the Cell.
   defp dead_secondary do
     {sdk, _ctrl} = SdkOperativeHarness.own_secondary()
     :ok = close_secondary(sdk)
@@ -115,13 +115,13 @@ defmodule Flezha.SDK.RecordHoldTest do
     %{op: op} = start_operative(CounterOp, credit: credit)
 
     # A window one byte wide: a record that debited on the way into the hold
-    # would park the Entity here, waiting on a controller that is not there.
+    # would park the Cell here, waiting on a controller that is not there.
     Credit.arm(credit, "session-1", 1)
     assert Credit.session(credit) == "session-1"
 
     send(op, {:secondaries, []})
     for n <- 1..3, do: feed(op, n)
-    assert :ok = Entity.rebind(entity!(op, "counter"), [])
+    assert :ok = Cell.rebind(cell!(op, "counter"), [])
     assert Counters.credit_parked(counters) == 0
 
     # A reconnect disarms the session before it re-establishes the sockets, so
@@ -140,9 +140,9 @@ defmodule Flezha.SDK.RecordHoldTest do
     rebind_secondary(op)
     assert [{:change, 0, _}, {:timer_ops, 1, _}, {:output, _, _, _}] = kinds(3)
 
-    pid = entity!(op, "timer")
-    assert {:ok, 1, _size} = Entity.snapshot(pid)
-    [{"entity_state_snapshot", frame, _}, restated] = frames(2)
+    pid = cell!(op, "timer")
+    assert {:ok, 1, _size} = Cell.snapshot(pid)
+    [{"cell_state_snapshot", frame, _}, restated] = frames(2)
 
     # The snapshot folds every seq the replay put on the wire — `change_seq - 1`
     # — and the pending timers are re-stated above it, exactly as they are when
@@ -161,29 +161,29 @@ defmodule Flezha.SDK.RecordHoldTest do
     # Nothing is held here: the dispatch went out on a live stream. What the
     # eviction cannot ship is the delete itself.
     :ok = close_secondary(sdk)
-    assert Entity.evict(entity!(op, "counter")) == :evicted
+    assert Cell.evict(cell!(op, "counter")) == :evicted
 
     rebind_secondary(op)
     assert [{:delete, {"op-1", "counter", ""}}] = kinds(1)
   end
 
-  test "an Entity evicted while holding hands its records and its delete on" do
+  test "a Cell evicted while holding hands its records and its delete on" do
     %{op: op} = start_operative(CounterOp)
     send(op, {:secondaries, []})
     feed(op, 2)
     settled(op, "counter", 1)
 
-    entity = entity!(op, "counter")
-    ref = Process.monitor(entity)
-    assert Entity.evict(entity) == :evicted
-    assert_receive {:DOWN, ^ref, :process, ^entity, :normal}, 1_000
+    cell = cell!(op, "counter")
+    ref = Process.monitor(cell)
+    assert Cell.evict(cell) == :evicted
+    assert_receive {:DOWN, ^ref, :process, ^cell, :normal}, 1_000
 
     rebind_secondary(op)
     feed(op, 7)
 
-    # The dead Entity's frames go first, so its record still precedes the
+    # The dead Cell's frames go first, so its record still precedes the
     # output of the dispatch that produced it and its delete still precedes
-    # anything the replacement Entity writes.
+    # anything the replacement Cell writes.
     assert [
              {:change, 0, {:delta, 2}},
              {:delete, {"op-1", "counter", ""}},
@@ -198,7 +198,7 @@ defmodule Flezha.SDK.RecordHoldTest do
     send(op, {:secondaries, []})
     feed(op, 2)
     settled(op, "counter", 1)
-    assert Entity.evict(entity!(op, "counter")) == :evicted
+    assert Cell.evict(cell!(op, "counter")) == :evicted
 
     rebind_secondary(op)
 

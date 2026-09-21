@@ -98,7 +98,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_contextNew(
 }
 
 /// Start the declared class as a local run: no controller, no socket. The
-/// JVM keeps driving `poll`/`complete`, which is what runs the procedures.
+/// JVM keeps driving `poll`/`complete`, which is what runs the tasklets.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localStart(
     mut env: JNIEnv,
@@ -337,8 +337,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_complete(
 }
 
 /// Abandon a polled activation by token: re-hand its untouched items and
-/// release its entity. Java's `finally` calls it when a throwable escaped the
-/// dispatch, so an unanswered activation can never retire an entity.
+/// release its cell. Java's `finally` calls it when a throwable escaped the
+/// dispatch, so an unanswered activation can never retire a cell.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_abandon(
     mut env: JNIEnv,

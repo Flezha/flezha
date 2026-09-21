@@ -1,58 +1,58 @@
 //! `OperativeTopology`: the immutable, registration-time facts of a class —
-//! its channels, procedures and tier — shared by every instance.
+//! its channels, tasklets and tier — shared by every instance.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::channel::{
-    ChannelDescriptor, ChannelId, ChannelKind, DeserializeStateFn, EntitiesForFn, EntityBuilder,
-    ProcedureId, SerializeStateFn,
+    CellBuilder, CellsForFn, ChannelDescriptor, ChannelId, ChannelKind, DeserializeStateFn,
+    SerializeStateFn, TaskletId,
 };
 
-/// How a Procedure maps inputs to Entities: a declared keyset is `Static`, a
+/// How a Tasklet maps inputs to Cells: a declared keyset is `Static`, a
 /// keyed edge into it `Dynamic`, neither `Single`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntityMode {
+pub enum CellMode {
     Single,
     Static,
-    /// Entities minted on first sight of a key.
+    /// Cells minted on first sight of a key.
     Dynamic,
 }
 
-/// One Procedure's registration-time facts; channel ids pre-resolved so the
+/// One Tasklet's registration-time facts; channel ids pre-resolved so the
 /// hot path looks no name up.
-pub struct ProcedureDescriptor {
+pub struct TaskletDescriptor {
     pub name: Arc<str>,
-    pub entity_keys: Vec<&'static str>,
-    pub entities_for_overridden: bool,
-    /// The workflow driver compensates only a procedure with this set.
+    pub cell_keys: Vec<&'static str>,
+    pub cells_for_overridden: bool,
+    /// The workflow driver compensates only a tasklet with this set.
     pub compensate_overridden: bool,
-    pub mode: EntityMode,
+    pub mode: CellMode,
     /// Dynamic-mode idle eviction window; `None` never evicts.
     pub idle_ttl: Option<Duration>,
-    /// Dynamic-mode cap on live Entities.
-    pub max_entities: usize,
-    /// Channels this procedure consumes; several is a fan-in.
+    /// Dynamic-mode cap on live Cells.
+    pub max_cells: usize,
+    /// Channels this tasklet consumes; several is a fan-in.
     pub input_channel_ids: Vec<ChannelId>,
     pub output_channel_id: Option<ChannelId>,
     pub input_type_id: std::any::TypeId,
     pub output_type_id: std::any::TypeId,
-    /// Per-Entity mailbox capacity after override / env / default precedence.
+    /// Per-Cell mailbox capacity after override / env / default precedence.
     pub mailbox_capacity: usize,
     /// Whether the class declared its capacity explicitly.
     pub mailbox_capacity_overridden: bool,
-    /// The per-Entity WAL size the controller compacts at, announced in the
+    /// The per-Cell WAL size the controller compacts at, announced in the
     /// `AddOperative` response.
     pub compact_after_bytes: usize,
-    /// `Some` for a host-run procedure: the declared facts read before any
-    /// entity exists.
-    pub host_facts: Option<std::sync::Arc<crate::host::HostProcedureFacts>>,
-    pub build_entity: EntityBuilder,
-    pub entities_for_erased: EntitiesForFn,
-    /// An Entity's state as the live-read / migration JSON.
+    /// `Some` for a host-run tasklet: the declared facts read before any
+    /// cell exists.
+    pub host_facts: Option<std::sync::Arc<crate::host::HostTaskletFacts>>,
+    pub build_cell: CellBuilder,
+    pub cells_for_erased: CellsForFn,
+    /// A Cell's state as the live-read / migration JSON.
     pub serialize_state: SerializeStateFn,
-    /// The JSON back into the erased state `EntitySlot::state` holds.
+    /// The JSON back into the erased state `CellSlot::state` holds.
     pub deserialize_state: DeserializeStateFn,
 }
 
@@ -67,8 +67,8 @@ pub struct OperativeTopology {
     pub sdk_lang: u8,
     pub channels: Vec<ChannelDescriptor>,
     pub name_to_id: HashMap<&'static str, ChannelId>,
-    pub procedures: Vec<ProcedureDescriptor>,
-    pub procedure_name_to_id: HashMap<&'static str, ProcedureId>,
+    pub tasklets: Vec<TaskletDescriptor>,
+    pub tasklet_name_to_id: HashMap<&'static str, TaskletId>,
     pub factory_id: &'static str,
     /// The class's declared persistence; the instance resolves the runner
     /// override against it.
@@ -171,8 +171,8 @@ impl OperativeTopology {
         self.channels.get(id as usize)
     }
 
-    pub fn procedure(&self, id: ProcedureId) -> Option<&ProcedureDescriptor> {
-        self.procedures.get(id as usize)
+    pub fn tasklet(&self, id: TaskletId) -> Option<&TaskletDescriptor> {
+        self.tasklets.get(id as usize)
     }
 
     /// The declared channel of `kind` under `name`. The one resolution every

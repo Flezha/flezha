@@ -1,34 +1,34 @@
 defmodule Flezha.SDK.CorrectionWindowTest do
   @moduledoc """
   Late-input correction in the SDK's own core: the lateness classification
-  against the Entity's event-time high-water, the correction request it sends
+  against the Cell's event-time high-water, the correction request it sends
   instead of dispatching, the beyond-window policy, and the replayed slice it
   holds to its end marker and folds in event-time order. No controller and no
   real transport — frames are read off a native `LocalStream` the test owns.
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Entity, Hold, Record, Spawn}
-  alias Flezha.SDK.Entity.{State, Tier}
+  alias Flezha.SDK.{Channels, Ctx, Cell, Hold, Record, Spawn}
+  alias Flezha.SDK.Cell.{State, Tier}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.Wire
-  alias FlezhaTest.Helper.SdkTierFixtures.{CorrectionDropOp, CorrectionOp, CorrectionProc}
+  alias FlezhaTest.Helper.SdkTierFixtures.{CorrectionDropOp, CorrectionOp, CorrectionTask}
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
   @window 600_000
-  @proc "correction_procedure"
+  @task "correction_tasklet"
 
   # The correction probe, spawning once per input and folding what the handle
   # answered into the output it records.
-  defmodule SpawningCorrectionProc do
+  defmodule SpawningCorrectionTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "spawning_correction_procedure"
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "spawning_correction_tasklet"
     def clock, do: :event_time
-    defdelegate init_state(key), to: CorrectionProc
-    defdelegate apply_change(state, at), to: CorrectionProc
-    defdelegate event_time_of(input), to: CorrectionProc
+    defdelegate init_state(key), to: CorrectionTask
+    defdelegate apply_change(state, at), to: CorrectionTask
+    defdelegate event_time_of(input), to: CorrectionTask
 
     def run(input, s, ctx) do
       handle = Ctx.spawn_workflow(ctx, "worker", input, id: "w-" <> input)
@@ -48,7 +48,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
         |> Channels.effectively_once()
         |> Channels.correction_window(600_000)
         |> Channels.input("input")
-        |> Channels.into(SpawningCorrectionProc)
+        |> Channels.into(SpawningCorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -68,7 +68,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   # The controller's payload-less end-of-slice broadcast: no channel, no body.
   defp end_slice(op), do: Inbox.input(op, nil, "", %{"flz.replay_end" => "1"})
 
-  defp folds({"entity_effect_record", _, _} = frame) do
+  defp folds({"cell_effect_record", _, _} = frame) do
     {seq, body} = effect(frame)
 
     {seq,
@@ -139,7 +139,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
   end
 
-  test "the Entity state stays inside credo's struct-field cap" do
+  test "the Cell state stays inside credo's struct-field cap" do
     assert %State{} |> Map.from_struct() |> map_size() == 30
   end
 
@@ -212,7 +212,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       replay(op, "100:first", 4)
       end_slice(op)
 
-      assert [{"entity_effect_record", _, _} = f1, f2] = frames(2)
+      assert [{"cell_effect_record", _, _} = f1, f2] = frames(2)
       assert {1, [100]} = folds(f1)
       assert {2, [100]} = folds(f2)
       assert [%{payload: "100:first"}] = elem(effect(f1), 1).outputs
@@ -250,7 +250,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       assert [{0, 299_000}] == frames(1) |> Enum.map(&target/1)
     end
 
-    test "the broadcast reaches an Entity that buffered nothing without stalling it" do
+    test "the broadcast reaches a Cell that buffered nothing without stalling it" do
       %{op: op} = start_operative(CorrectionOp)
 
       push(op, "300000:seed", 0)
@@ -268,11 +268,11 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
 
       replay(op, "100:a", 1)
-      pid = entity!(op, @proc)
+      pid = cell!(op, @task)
       assert [{100, %{}}] = :sys.get_state(pid).tier.slice
 
       snap = Record.encode_body(%{order: [300_000]})
-      assert {:ok, 0, false} = Entity.restore(pid, Record.header(snap, 1), snap, <<>>, 0)
+      assert {:ok, 0, false} = Cell.restore(pid, Record.header(snap, 1), snap, <<>>, 0)
       assert [] == :sys.get_state(pid).tier.slice
 
       end_slice(op)
@@ -303,10 +303,10 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   defp outputs(frame),
     do: frame |> effect() |> elem(1) |> Map.fetch!(:outputs) |> Enum.map(& &1.payload)
 
-  test "an Entity of a correction class still reports its procedure name" do
+  test "a Cell of a correction class still reports its tasklet name" do
     %{op: op} = start_operative(CorrectionOp)
     push(op, "1:a", 0)
     assert [_] = frames(1)
-    assert is_pid(entity!(op, @proc))
+    assert is_pid(cell!(op, @task))
   end
 end

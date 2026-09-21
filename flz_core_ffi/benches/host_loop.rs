@@ -1,6 +1,6 @@
 //! The erased-path twin of `sdk/rust/benches/dispatch.rs`'s
-//! `regression_100x1x1x10k`: the same shape (100 instances × 1 procedure × 1
-//! entity × 10K inputs, no change), fed through the same
+//! `regression_100x1x1x10k`: the same shape (100 instances × 1 tasklet × 1
+//! cell × 10K inputs, no change), fed through the same
 //! `OperativeDispatchHandle`, but the class is a `HostClassDecl` whose
 //! activations leave through `flz_core_poll` and come back through
 //! `flz_core_complete` from a fixed set of fetcher threads — `to_schema` →
@@ -81,14 +81,14 @@ fn host_loop_bench(c: &mut Criterion) {
 
     let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
     assert!(!ctx.is_null(), "context creation");
-    // One entry channel, one wall-clock single-entity procedure, no state:
+    // One entry channel, one wall-clock single-cell tasklet, no state:
     // the erased twin of `RegressionOperative`. The entry channel keeps the
     // `drop_nothing` default the typed bench opts into explicitly.
     let decl = br#"{
         "factory_id": "host_loop_bench",
         "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [{"name": "input", "kind": "entry", "consumers": [0]}],
-        "procedures": [{"name": "host_pass"}]
+        "tasklets": [{"name": "host_pass"}]
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },

@@ -1,25 +1,25 @@
 defmodule Flezha.Boot.StatePathMigrator do
   @moduledoc """
-  One-shot, idempotent migrations of the per-Entity state tree, oldest
+  One-shot, idempotent migrations of the per-Cell state tree, oldest
   layout first:
 
-    1. Legacy `{runner_id}/{operative_class}/{procedure_id}/` → flat
-       `{operative_class}/{procedure_id}/` (`auto-restore-on-boot`).
+    1. Legacy `{runner_id}/{operative_class}/{tasklet_id}/` → flat
+       `{operative_class}/{tasklet_id}/` (`auto-restore-on-boot`).
     2. Flat `{operative_class}/...` → namespaced
        `_system/{operative_class}/...` (`finish-platform-authn-authz`) —
        one atomic `rename/2` per class dir, so an interrupted pass leaves
        whole classes either moved or not, and a re-run moves the rest.
 
   Runs synchronously during `Flezha.Application.start/2` BEFORE
-  `Flezha.State.Supervisor` opens any per-Entity `WalWriter`. The
+  `Flezha.State.Supervisor` opens any per-Cell `WalWriter`. The
   `.layout` marker at the state root (written after a completed pass 2)
   is what makes later boots skip both passes — the two legacy layouts and
-  the namespaced one are structurally indistinguishable (`ns/class/proc`
-  and `runner/class/proc` are both three levels), so presence of the
+  the namespaced one are structurally indistinguishable (`ns/class/task`
+  and `runner/class/task` are both three levels), so presence of the
   marker, not shape, is the discriminator.
 
   Collision policy for pass 1: when two runner-keyed copies of the same
-  Entity exist (because the runner_id rotated and both old + new
+  Cell exist (because the runner_id rotated and both old + new
   survived), the file with the higher last-modified time wins; the loser
   is preserved alongside as `<key>.<ext>.preserved-{old_runner_id}` so an
   operator can inspect it.
@@ -171,15 +171,15 @@ defmodule Flezha.Boot.StatePathMigrator do
 
       if File.dir?(legacy_rc) do
         File.ls!(legacy_rc)
-        |> Enum.reduce(acc, fn procedure_id, acc ->
-          legacy_procedure = Path.join(legacy_rc, procedure_id)
+        |> Enum.reduce(acc, fn tasklet_id, acc ->
+          legacy_tasklet = Path.join(legacy_rc, tasklet_id)
 
-          if File.dir?(legacy_procedure) do
-            migrate_procedure(
+          if File.dir?(legacy_tasklet) do
+            migrate_tasklet(
               runner_id,
               operative_class,
-              procedure_id,
-              legacy_procedure,
+              tasklet_id,
+              legacy_tasklet,
               root,
               acc
             )
@@ -199,18 +199,18 @@ defmodule Flezha.Boot.StatePathMigrator do
     end)
   end
 
-  defp migrate_procedure(runner_id, operative_class, procedure_id, legacy_procedure, root, acc) do
-    flat_procedure = Path.join([root, operative_class, procedure_id])
-    File.mkdir_p!(flat_procedure)
+  defp migrate_tasklet(runner_id, operative_class, tasklet_id, legacy_tasklet, root, acc) do
+    flat_tasklet = Path.join([root, operative_class, tasklet_id])
+    File.mkdir_p!(flat_tasklet)
 
-    File.ls!(legacy_procedure)
+    File.ls!(legacy_tasklet)
     |> Enum.reduce(acc, fn name, acc ->
-      from = Path.join(legacy_procedure, name)
-      to = Path.join(flat_procedure, name)
+      from = Path.join(legacy_tasklet, name)
+      to = Path.join(flat_tasklet, name)
       move_file(from, to, runner_id, acc)
     end)
     |> tap(fn _ ->
-      _ = remove_if_empty(legacy_procedure)
+      _ = remove_if_empty(legacy_tasklet)
     end)
   end
 

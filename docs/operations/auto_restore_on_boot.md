@@ -15,7 +15,7 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
 | Layer | Path | Owner |
 |---|---|---|
 | ProcessHub durable registry (cspecs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (`registry_backend: {:durable_ets, …}`) |
-| Per-Entity WAL + snapshots | `app_data/state/<namespace>/<operative_class>/<procedure_id>/<entity_key>.{wal,snap.<seq>,outbox.dedup}` | `Flezha.State.Supervisor` |
+| Per-Cell WAL + snapshots | `app_data/state/<namespace>/<operative_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup}` | `Flezha.State.Supervisor` |
 | Remote manifest + artifacts backing both (unless opted out) | Postgres / S3 / file, `FLEZHA_DURABILITY_BACKEND` | `Flezha.State.DurabilityTier` (`Shipper` out, `Hydrator` back) |
 
 ## Boot sequence
@@ -49,7 +49,7 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
    is held unbound by its Overwatch and bound by the convergence rebind when a runner
    advertising its factory arrives.
 5. `Overwatch.init/1` rebuilds each Operative's plugin table from the cspec's `opts[:plugins]`.
-   On bind, `Flezha.Operative.Replay.restore_on_bind/2` enumerates the Entities on disk
+   On bind, `Flezha.Operative.Replay.restore_on_bind/2` enumerates the Cells on disk
    (hydrating from the remote tier first when local state is absent) and ships a
    `RestoreInitState` for each — unless the Operative arrived via HotSwap with in-band state.
 6. `Flezha.Boot.Loader` finishes its sequence and the application records that fact; it does
@@ -78,12 +78,12 @@ placed anything yet.
 
 | Scenario | Replay? | Result |
 |---|---|---|
-| Cluster-wide cold boot | Yes, automatic | Each node's first round finds the whole difference; the hash ring picks the owner, a duplicate `child_id` start is idempotent. Plugins re-attach in `Overwatch.init/1`, Entity state ships on bind. |
+| Cluster-wide cold boot | Yes, automatic | Each node's first round finds the whole difference; the hash ring picks the owner, a duplicate `child_id` start is idempotent. Plugins re-attach in `Overwatch.init/1`, Cell state ships on bind. |
 | One controller restarts into a healthy cluster (incl. rolling rollouts) | No | The difference against the live cluster is empty; the node reaches `:normal` after the grace and tramples nothing. |
 | Single-node deployment | Yes, automatic | No peer can hand rows back; the first round starts the whole durable list. |
 | Runner pod restart with `runner_id` rotation | N/A | The controller never went down; the state layout has no `runner_id` component, so the new runner receives `RestoreInitState` from the same files. |
 | HotSwap migration, source runner alive | N/A | State travels in-band; `restore_on_bind/2` does not fire. Source files are left for the retention sweeper. |
-| HotSwap migration, source runner already dead | N/A | The handover is empty, so the destination pulls the Entity files over `:erpc` (`Flezha.State.WalTransfer.pull_operative/3`) and replays them — one-shot, not replication. A destination crash mid-flight leaves the source files intact and ProcessHub retries. |
+| HotSwap migration, source runner already dead | N/A | The handover is empty, so the destination pulls the Cell files over `:erpc` (`Flezha.State.WalTransfer.pull_operative/3`) and replays them — one-shot, not replication. A destination crash mid-flight leaves the source files intact and ProcessHub retries. |
 | Network partition during boot | Yes (suspect) | A brief duplicate-start window while healing; the hub's `PartitionTolerance.Divergence` strategy and the round's duplicate resolution settle it. Fragile environments can set `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
 | Quorum loss (3 nodes, 2 die) | Only the survivor's gaps | Returning nodes start only what nothing in the cluster holds; the survivor stays authoritative for what it runs. |
 | Subset rejoin (cluster down, some nodes return) | Yes | **The one tolerated loss**: rows held only on non-returning nodes are gone — unless the remote tier is on, in which case their cspecs and state hydrate from the backend. |

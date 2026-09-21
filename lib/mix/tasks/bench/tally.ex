@@ -147,13 +147,13 @@ defmodule Mix.Tasks.Bench.Tally do
   end
 
   @doc """
-  The slowest entity's WAL fsync p99: a disk that stalls shows here first,
+  The slowest cell's WAL fsync p99: a disk that stalls shows here first,
   before it shows as a broker timeout or a backed-up input log.
   """
   @spec fsync_p99_ms() :: number()
   def fsync_p99_ms do
     Metrics.snapshot_all()
-    |> Enum.map(fn {_entity, counters} -> Map.get(counters, :flush_latency_ms_p99, 0) end)
+    |> Enum.map(fn {_cell, counters} -> Map.get(counters, :flush_latency_ms_p99, 0) end)
     |> Enum.max(fn -> 0 end)
   end
 end

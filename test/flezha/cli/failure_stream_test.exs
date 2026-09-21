@@ -30,7 +30,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   defp failures do
     [
       {"operative", fn -> Cli.Operative.operative_stop("default", "no-such-op-xyz", @call) end},
-      {"operative", fn -> Cli.Operative.entity_state("default", "no-such-op-xyz", @call) end},
+      {"operative", fn -> Cli.Operative.cell_state("default", "no-such-op-xyz", @call) end},
       {"plugin", fn -> Cli.Plugin.disable_plugin("no-such-plugin-xyz", @call) end},
       {"state", fn -> Cli.State.state_retention("some_class", "not-a-number", @call) end},
       {"observe", fn -> Cli.Observe.observability_render_enable("no-such-source-xyz", @call) end},

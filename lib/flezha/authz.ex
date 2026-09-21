@@ -99,7 +99,7 @@ defmodule Flezha.AuthZ do
     * `:open` — the explicit configuration opt-out; every call is allowed.
     * `:bootstrap_pending` — enforcement is configured on but no
       `admin@_system` claim exists yet: gated verbs refuse (naming the
-      bootstrap procedure) while dataflow — internal machinery and
+      bootstrap tasklet) while dataflow — internal machinery and
       runner connections over the authenticated transport — continues.
     * `:enforced` — the bootstrap was claimed; full policy checks apply.
   """

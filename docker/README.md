@@ -20,7 +20,7 @@ Day-to-day work needs only the host triple, from `scripts/build-native.sh`. See
 The controller recovers its own operatives and their plugins on boot from
 ProcessHub's durable registry — the enable is written into the operative's
 child spec (`Flezha.Service.PluginManager.enable_plugin/2`), so one record
-carries both. Per-Entity state comes from the WAL and snapshot files beside it.
+carries both. Per-Cell state comes from the WAL and snapshot files beside it.
 
 Two directories must therefore survive a container restart, and the prod
 `docker-compose.yml` gives each a named volume:
@@ -28,7 +28,7 @@ Two directories must therefore survive a container restart, and the prod
 - `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` (`/flezha/app_data/process_hub`,
   volume `flezha_process_hub`) — ProcessHub's persistent registry.
 - `FLEZHA_STATE_DIR` (`/flezha/app_data/state`, volume `flezha_state`) —
-  per-Entity WAL and snapshot files.
+  per-Cell WAL and snapshot files.
 
 If you override either path, make sure the new location is (a) persistent
 across container restarts and (b) owned by the non-root `flezha` user

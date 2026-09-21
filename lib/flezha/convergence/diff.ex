@@ -15,7 +15,7 @@ defmodule Flezha.Convergence.Diff do
   @type operative_ref :: {atom(), binary()}
 
   @typedoc """
-  The tick's data-plane stall verdict resolved to the entity a heal primitive
+  The tick's data-plane stall verdict resolved to the cell a heal primitive
   can act on, or `nil` when the verdict is `:ok`, fabric-scoped (only a
   process restart reaches those — `/healthz` owns them), or names nothing the
   probe observed.
@@ -37,7 +37,7 @@ defmodule Flezha.Convergence.Diff do
           misbound_operatives: [{operative_ref(), binary(), misbound_reason()}],
           parked_operatives: [{operative_ref(), map(), binary() | nil}],
           stalled_operatives: [operative_ref()],
-          resync_entities: [{tuple(), binary(), atom()}],
+          resync_cells: [{tuple(), binary(), atom()}],
           missing_plugins: [{operative_ref(), binary(), map()}],
           extra_plugins: [{operative_ref(), binary(), pid()}],
           unhealthy_plugins: [{operative_ref(), binary(), map(), term()}],
@@ -51,7 +51,7 @@ defmodule Flezha.Convergence.Diff do
             misbound_operatives: [],
             parked_operatives: [],
             stalled_operatives: [],
-            resync_entities: [],
+            resync_cells: [],
             missing_plugins: [],
             extra_plugins: [],
             unhealthy_plugins: [],
@@ -69,7 +69,7 @@ defmodule Flezha.Convergence.Diff do
     :misbound_operatives,
     :parked_operatives,
     :stalled_operatives,
-    :resync_entities,
+    :resync_cells,
     :missing_plugins,
     :extra_plugins,
     :unhealthy_plugins,
@@ -124,7 +124,7 @@ defmodule Flezha.Convergence.Diff do
       misbound_operatives: Enum.reverse(misbound),
       parked_operatives: Enum.reverse(parked),
       stalled_operatives: stalled_refs(declared, verdicts),
-      resync_entities: resync_entities(facts),
+      resync_cells: resync_cells(facts),
       missing_plugins: missing,
       extra_plugins: extra,
       unhealthy_plugins: unhealthy,
@@ -282,13 +282,13 @@ defmodule Flezha.Convergence.Diff do
         do: {ns, rid}
   end
 
-  # An Entity whose durable log stopped agreeing with its runner: a seq gap the
+  # A Cell whose durable log stopped agreeing with its runner: a seq gap the
   # WAL admission declared, or a compaction the Watchdog gave up on. The fact
   # names the runner to resync against; the loop's table paces the attempts.
-  defp resync_entities(facts) do
-    for {{kind, entity_id}, %{args: %{runner_id: runner_id}}} <- facts,
+  defp resync_cells(facts) do
+    for {{kind, cell_id}, %{args: %{runner_id: runner_id}}} <- facts,
         kind in [:seq_gap, :compaction_gave_up],
-        do: {entity_id, runner_id, kind}
+        do: {cell_id, runner_id, kind}
   end
 
   # A durable row naming a runner other than the one the operative is bound to:

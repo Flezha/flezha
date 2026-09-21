@@ -32,13 +32,13 @@ defmodule Flezha.Runner.StreamChannel do
     GenServer.start_link(__MODULE__, {runner_id, type, name}, name: name)
   end
 
-  # Every payload-id this channel forwards onto an Entity's durable write path;
+  # Every payload-id this channel forwards onto a Cell's durable write path;
   # the takeover fence (`:fence_write_path`) refuses exactly this set.
-  @entity_write_payloads [
-    "entity_state_change",
-    "entity_effect_record",
-    "entity_state_snapshot",
-    "delete_entity_state",
+  @cell_write_payloads [
+    "cell_state_change",
+    "cell_effect_record",
+    "cell_state_snapshot",
+    "delete_cell_state",
     "compensation_intent",
     "compensation_done",
     "park_payload"
@@ -258,7 +258,7 @@ defmodule Flezha.Runner.StreamChannel do
     {:reply, :ok, unbind(state)}
   end
 
-  # Takeover fence: unbind this channel from the Entity write path.
+  # Takeover fence: unbind this channel from the Cell write path.
   # Synchronous, so the takeover transaction knows that once this returns no
   # further durable-write forward can leave this channel — the single state
   # flip that stops a superseded session, with zero added work anywhere else.
@@ -275,13 +275,13 @@ defmodule Flezha.Runner.StreamChannel do
   #
   # Fenced (superseded-session) channel: refuse every durable-write forward
   # at the binding. In-flight frames from the old session die here instead of
-  # reaching an Entity's WAL/snapshot files after the takeover unbind.
+  # reaching a Cell's WAL/snapshot files after the takeover unbind.
   @impl true
   def handle_info(
         {:flz_data, _stream_id, payload_id, message, _metadata},
         %{fenced?: true} = state
       )
-      when payload_id in @entity_write_payloads do
+      when payload_id in @cell_write_payloads do
     Records.refuse_stale_forward(state, payload_id, message)
     {:noreply, state}
   end
@@ -290,30 +290,30 @@ defmodule Flezha.Runner.StreamChannel do
   # layout and append path; the `format_id = 2` header is the durable
   # marker the WalWriter keys the fsync-gated outbox flush on.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id in ["entity_state_change", "entity_effect_record"] do
-    state = Records.handle_entity_state_change(state, message)
+      when payload_id in ["cell_state_change", "cell_effect_record"] do
+    state = Records.handle_cell_state_change(state, message)
     {:noreply, mark_seen(state)}
   end
 
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "entity_state_snapshot" do
-    Records.handle_entity_state_snapshot(state, message)
+      when payload_id == "cell_state_snapshot" do
+    Records.handle_cell_state_snapshot(state, message)
     {:noreply, mark_seen(state)}
   end
 
   # Dynamic-mode hard-delete: the runner evicted a persistence-enabled
-  # Entity. Drop its WAL/snapshot/outbox files so a later recreate
+  # Cell. Drop its WAL/snapshot/outbox files so a later recreate
   # cold-starts. Fire-and-forget — no response frame is written back.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "delete_entity_state" do
-    Records.handle_delete_entity_state(state, message)
+      when payload_id == "delete_cell_state" do
+    Records.handle_delete_cell_state(state, message)
     {:noreply, mark_seen(state)}
   end
 
   # Workflow-operative saga compensation markers (SDK → controller). A durable
-  # workflow records each procedure's forward completion (`compensation_intent`)
+  # workflow records each tasklet's forward completion (`compensation_intent`)
   # and each compensation's completion (`compensation_done`); persisted per
-  # Entity and shipped back on the next `RestoreInitState` so a respawn finishes
+  # Cell and shipped back on the next `RestoreInitState` so a respawn finishes
   # the remaining hooks and skips already-undone ones. Fire-and-forget.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id in ["compensation_intent", "compensation_done"] do
@@ -324,14 +324,14 @@ defmodule Flezha.Runner.StreamChannel do
   # Dead-letter park (SDK → controller, tier-off sessions): append the
   # poison payload to the durable DLQ store. The ParkPayloadAck control
   # command fires only after the entry is fsynced — park-then-advance, so
-  # the parked entity never advances past a payload the controller could
+  # the parked cell never advances past a payload the controller could
   # still lose.
   def handle_info({:flz_data, _stream_id, "park_payload", message, _metadata}, state) do
     Records.handle_park_payload(state, message)
     {:noreply, mark_seen(state)}
   end
 
-  # Late-input correction (SDK → controller): an Entity saw an input behind its
+  # Late-input correction (SDK → controller): a Cell saw an input behind its
   # event-time high-water but inside the declared window. Only the SDK can know
   # that — the event time comes from user code — so detection is its half and
   # orchestration is the Overwatch's.
@@ -399,7 +399,7 @@ defmodule Flezha.Runner.StreamChannel do
 
   # Credit handshake outcome, sent by the offer Task. The ack activates the
   # ledger; a nack (pre-credit SDK, timeout, transport error) pins the attach
-  # to the legacy EntityMailboxStatus path. Session mismatches are stale
+  # to the legacy CellMailboxStatus path. Session mismatches are stale
   # outcomes from a superseded attach and are dropped.
   def handle_info(
         {:credit_ack, session},

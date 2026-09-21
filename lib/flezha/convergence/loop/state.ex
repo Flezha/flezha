@@ -51,12 +51,12 @@ defmodule Flezha.Convergence.Loop.State do
             # one health answer every surface reads, and what lets a state that
             # holds keep its `since_ms` instead of being re-stamped every tick.
             verdicts: %{},
-            # operative_id => %{detail:, entity:} producing-liveness STUCK
+            # operative_id => %{detail:, cell:} producing-liveness STUCK
             # verdicts (fed but progress markers flat past grace). Report-only:
             # healing stays on the output-stall ladder.
             stuck_operatives: %{},
             # [{taken_at_ms, tier-cursor markers}] — grace-window baselines for
-            # the classifier's cursor-delta checks. Holds only Entities with
+            # the classifier's cursor-delta checks. Holds only Cells with
             # effectively-once tier cursors (empty until that tier lands).
             progress_history: [],
             # Operatives with durable state evidence but no live intent — the

@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.SdkSpawnFixtures do
   @moduledoc """
-  The stream class the procedure-requested spawn tests drive: one spawn per
+  The stream class the tasklet-requested spawn tests drive: one spawn per
   input, named by the input, whose answer is read inside the invocation and
   emitted on `out`. An `unread:` input spawns and reads nothing, so a failure
   nobody reads has something to be logged for.
@@ -10,7 +10,7 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
 
   defmodule Spawner do
     @moduledoc false
-    @behaviour Flezha.SDK.Procedure
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "spawner"
     def init_state(_), do: nil
 

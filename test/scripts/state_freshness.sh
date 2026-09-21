@@ -183,8 +183,8 @@ note "waiting for initial handshake"
 INITIAL_CE_ID="$(wait_for_ce_id)"
 note "initial runner_id: ${INITIAL_CE_ID}"
 
-PROC_A="state_freshness_a_$$"
-start_operative "${PROC_A}" "60_000"
+TASK_A="state_freshness_a_$$"
+start_operative "${TASK_A}" "60_000"
 
 # Brief settle so the operative's `start_operative_sdk` round-trip
 # completes before we yank the rust container.
@@ -197,7 +197,7 @@ note "stopping rust container with SIGTERM"
 # before we read state. The cast applies in microseconds; 1 s is ample.
 sleep 1
 
-assert_snapshot_present "${PROC_A}" "scenario A (periodic-enabled)"
+assert_snapshot_present "${TASK_A}" "scenario A (periodic-enabled)"
 
 # Bring rust back to leave the stack in a sane state for scenario B.
 "${COMPOSE[@]}" up -d rust
@@ -206,14 +206,14 @@ wait_for_ce_id >/dev/null
 
 # --- Scenario B: disabled-snapshot operative ---------------------------------
 
-PROC_B="state_freshness_b_$$"
-start_operative "${PROC_B}" "0"
+TASK_B="state_freshness_b_$$"
+start_operative "${TASK_B}" "0"
 sleep 2
 
 note "stopping rust container with SIGTERM (scenario B)"
 "${COMPOSE[@]}" stop --timeout 10 rust
 sleep 1
 
-assert_snapshot_present "${PROC_B}" "scenario B (disabled-snapshot)"
+assert_snapshot_present "${TASK_B}" "scenario B (disabled-snapshot)"
 
 note "PASS: both state-freshness scenarios populated agent.Overwatch.state.snapshot via RunnerShutdownNotification"

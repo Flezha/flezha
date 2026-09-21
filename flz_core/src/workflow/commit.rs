@@ -1,7 +1,7 @@
-//! The workflow driver's durability barriers: `ProcCommit` at a proc boundary
+//! The workflow driver's durability barriers: `TaskCommit` at a task boundary
 //! and `IterCommit` at an iteration boundary, each a "journal this, then tell
 //! me it is durable" round trip over the reference-id-keyed reply path. The
-//! invariant: a child procedure never runs ahead of its producer's committed
+//! invariant: a child tasklet never runs ahead of its producer's committed
 //! record, and a barrier is journaled once by its identity, so a re-send is
 //! acked from the existing entry.
 
@@ -9,11 +9,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use super::compensation::{EntityRun, StagedOutput};
+use super::compensation::{CellRun, StagedOutput};
 use super::driver::{ChainCtx, Value, CANCEL_POLL_CHUNK};
 use super::WorkflowError;
+use crate::cell::CellSlot;
 use crate::channel::RetryPolicy;
-use crate::entity::EntitySlot;
 
 /// One wait for a commit response (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`); an
 /// expired wait re-sends under the same `reference_id`, up to the class's
@@ -21,16 +21,16 @@ use crate::entity::EntitySlot;
 const ACK_TIMEOUT_DEFAULT_MS: u64 = 30_000;
 const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS";
 
-/// Ship `ProcCommit` for a completed stage (its handoff through the output
+/// Ship `TaskCommit` for a completed stage (its handoff through the output
 /// channel's codec, its staged plugin output as the outbox, the completion it
 /// asked for) and block for the durable ack. Skipped for a run that does not
-/// journal, which never stages. A refused ack ends the run; the un-acked proc
+/// journal, which never stages. A refused ack ends the run; the un-acked task
 /// re-runs on resume.
-pub(super) fn commit_proc_boundary(
+pub(super) fn commit_task_boundary(
     ctx: &ChainCtx,
     stage_idx: usize,
     iter: u32,
-    entities: &[EntityRun],
+    cells: &[CellRun],
     batch: &[Value],
     completion: Option<&[u8]>,
 ) -> Result<(), WorkflowError> {
@@ -38,13 +38,13 @@ pub(super) fn commit_proc_boundary(
         return Ok(());
     }
 
-    let slots = &ctx.stage_entities[stage_idx];
-    let handoff = encode_handoff(ctx, ctx.proc(stage_idx).output_channel_id, batch)
-        .map_err(|e| WorkflowError::from(format!("proc {stage_idx} {e}")))?;
+    let slots = &ctx.stage_cells[stage_idx];
+    let handoff = encode_handoff(ctx, ctx.task(stage_idx).output_channel_id, batch)
+        .map_err(|e| WorkflowError::from(format!("task {stage_idx} {e}")))?;
 
-    let entities_ran: Vec<Vec<u8>> = entities
+    let cells_ran: Vec<Vec<u8>> = cells
         .iter()
-        .map(|seg_run| slots[seg_run.entity_index].entity_identity.as_ref().clone())
+        .map(|seg_run| slots[seg_run.cell_index].cell_identity.as_ref().clone())
         .collect();
 
     ship_and_await(
@@ -52,15 +52,15 @@ pub(super) fn commit_proc_boundary(
         stage_idx,
         "commit",
         true,
-        crate::pb::command_request::Command::ProcCommit(crate::pb::ProcCommit {
+        crate::pb::command_request::Command::TaskCommit(crate::pb::TaskCommit {
             operative_id: ctx.instance_id.to_string(),
-            proc_idx: stage_idx as u32,
+            task_idx: stage_idx as u32,
             iter,
-            entities_ran,
+            cells_ran,
             handoff,
-            outbox: entities
+            outbox: cells
                 .iter()
-                .flat_map(|seg_run| outbox_items(&slots[seg_run.entity_index], &seg_run.staged))
+                .flat_map(|seg_run| outbox_items(&slots[seg_run.cell_index], &seg_run.staged))
                 .collect(),
             compensating: false,
             completes: completion.is_some(),
@@ -70,7 +70,7 @@ pub(super) fn commit_proc_boundary(
 }
 
 /// Ship `IterCommit` for a finished iteration, with the completion a
-/// procedure asked for, and block for the durable ack; the next iteration
+/// tasklet asked for, and block for the durable ack; the next iteration
 /// starts only on it, so a crash re-runs at most the in-flight one.
 pub(super) fn commit_iteration(
     ctx: &ChainCtx,
@@ -85,13 +85,13 @@ pub(super) fn commit_iteration(
 
     // The terminal handoff re-seeds iteration N+1 of a handoff-chained loop
     // after a crash; an inbox-driven loop re-seeds from its inbox instead and
-    // ships whatever the terminal procedure released (empty when it has no
+    // ships whatever the terminal tasklet released (empty when it has no
     // codec'd output channel, and for a branching graph, which has no single
-    // terminal procedure — registration refuses to chain a loop over one).
+    // terminal tasklet — registration refuses to chain a loop over one).
     let terminal_channel = ctx
         .dag
         .single_leaf()
-        .and_then(|leaf| ctx.proc(leaf).output_channel_id);
+        .and_then(|leaf| ctx.task(leaf).output_channel_id);
     let handoff = encode_handoff(ctx, terminal_channel, batch)
         .map_err(|e| WorkflowError::from(format!("iteration {iter} {e}")))?;
 
@@ -117,7 +117,7 @@ fn encode_handoff(
     ctx: &ChainCtx,
     channel_id: Option<u32>,
     batch: &[Value],
-) -> Result<Vec<crate::pb::ProcHandoffItem>, WorkflowError> {
+) -> Result<Vec<crate::pb::TaskHandoffItem>, WorkflowError> {
     let Some(channel_id) = channel_id else {
         return Ok(Vec::new());
     };
@@ -133,7 +133,7 @@ fn encode_handoff(
         .iter()
         .map(|value| {
             (codec.encode)(value.as_ref())
-                .map(|payload| crate::pb::ProcHandoffItem {
+                .map(|payload| crate::pb::TaskHandoffItem {
                     channel_id,
                     payload,
                 })
@@ -146,19 +146,19 @@ fn encode_handoff(
         .collect()
 }
 
-/// One entity's staged plugin output as outbox entries, keyed by its wire
+/// One cell's staged plugin output as outbox entries, keyed by its wire
 /// identity and emit order.
 pub(super) fn outbox_items(
-    slot: &Arc<EntitySlot>,
+    slot: &Arc<CellSlot>,
     staged: &[StagedOutput],
-) -> Vec<crate::pb::ProcOutboxItem> {
+) -> Vec<crate::pb::TaskOutboxItem> {
     staged
         .iter()
         .enumerate()
         .map(
-            |(seq_in_proc, (channel, payload))| crate::pb::ProcOutboxItem {
-                entity_id: slot.entity_identity.as_ref().clone(),
-                seq_in_proc: seq_in_proc as u32,
+            |(seq_in_task, (channel, payload))| crate::pb::TaskOutboxItem {
+                cell_id: slot.cell_identity.as_ref().clone(),
+                seq_in_task: seq_in_task as u32,
                 channel: channel.clone(),
                 payload: payload.clone(),
             },
@@ -179,7 +179,7 @@ pub(super) fn ship_and_await(
     command: crate::pb::command_request::Command,
 ) -> Result<(), WorkflowError> {
     let reference_id = format!(
-        "proc-commit-{}-{}-{}",
+        "task-commit-{}-{}-{}",
         ctx.instance_id,
         idx,
         crate::util::nonce_suffix()

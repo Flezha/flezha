@@ -6,7 +6,7 @@
 //!
 //! An integration test, not a unit one, because a poll loop takes work off
 //! the process-wide `PollCore`: its own binary is what keeps it from
-//! draining Entities the crate's unit tests scheduled.
+//! draining Cells the crate's unit tests scheduled.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,17 +31,17 @@ fn one_run() -> MutexGuard<'static, ()> {
     ONE_RUN.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// `entry → normalize → (inter-procedure) → total → sink`, the graph every
+/// `entry → normalize → (inter-tasklet) → total → sink`, the graph every
 /// SDK's local-mode example declares. `total` is dynamic, so the run mints
-/// one Entity per key the upstream procedure resolves.
+/// one Cell per key the upstream tasklet resolves.
 const TWO_STEP: &str = r#"{
     "factory_id": "local_two_step", "sdk_lang": 1, "sdk_version": "0.1.0", "persistent": true,
-    "channels": [{"name": "lines",  "kind": "entry",      "chains": [[{"link": "into", "procedure": 0}]]},
-                 {"name": "mid",    "kind": "inter_proc", "producer": 0,
-                                    "chains": [[{"link": "into", "procedure": 1}]]},
+    "channels": [{"name": "lines",  "kind": "entry",      "chains": [[{"link": "into", "tasklet": 0}]]},
+                 {"name": "mid",    "kind": "inter_task", "producer": 0,
+                                    "chains": [[{"link": "into", "tasklet": 1}]]},
                  {"name": "totals", "kind": "plugin",     "producer": 1, "keyed": true,
                                     "chains": [[{"link": "sink", "name": "totals"}]]}],
-    "procedures": [{"name": "normalize"}, {"name": "total", "entity_mode": "dynamic"}]
+    "tasklets": [{"name": "normalize"}, {"name": "total", "cell_mode": "dynamic"}]
 }"#;
 
 fn declare(json: &str) {
@@ -198,7 +198,7 @@ fn sink_output(channel: &str, key: &str, payload: &[u8]) -> Output {
         key: Some(key.to_string()),
         event_time: None,
         metadata: vec![
-            ("flz.entity".to_string(), format!("total/{key}")),
+            ("flz.cell".to_string(), format!("total/{key}")),
             ("flz.seq".to_string(), "0.0".to_string()),
             ("flz.key".to_string(), key.to_string()),
         ],
@@ -206,12 +206,12 @@ fn sink_output(channel: &str, key: &str, payload: &[u8]) -> Output {
     }
 }
 
-/// The two-step answer: `normalize` (procedure 0) forwards its payload onto
-/// channel 1 keyed by its first byte; `total` (procedure 1) releases what it
+/// The two-step answer: `normalize` (tasklet 0) forwards its payload onto
+/// channel 1 keyed by its first byte; `total` (tasklet 1) releases what it
 /// received on the `totals` sink.
 fn two_step_answer(activation: &Activation, payload: &[u8]) -> Vec<Output> {
     let key = String::from_utf8_lossy(&payload[..1]).to_string();
-    match activation.target.procedure {
+    match activation.target.tasklet {
         0 => vec![edge_output(1, 1, &key, payload)],
         _ => vec![sink_output("totals", &key, payload)],
     }
@@ -236,7 +236,7 @@ fn payloads(seen: &Arc<Mutex<Vec<SinkOutput>>>) -> Vec<String> {
 }
 
 #[test]
-fn a_two_procedure_graph_runs_with_no_controller() {
+fn a_two_tasklet_graph_runs_with_no_controller() {
     let _serialized = one_run();
     declare(TWO_STEP);
     let _host = Host::spawn(two_step_answer);
@@ -254,18 +254,18 @@ fn a_two_procedure_graph_runs_with_no_controller() {
     assert_eq!(
         payloads(&seen),
         vec!["a1", "a2", "b1"],
-        "both procedures ran and the sink saw every value in release order"
+        "both tasklets ran and the sink saw every value in release order"
     );
-    // Two distinct keys, so `total` minted two Entities and no more: the
-    // inter-procedure hop resolved the key through the deployed router.
-    let dynamic_entities: usize = run
+    // Two distinct keys, so `total` minted two Cells and no more: the
+    // inter-tasklet hop resolved the key through the deployed router.
+    let dynamic_cells: usize = run
         .instance()
         .dynamic_registries
         .iter()
         .flatten()
-        .map(|registry| registry.entities.len())
+        .map(|registry| registry.cells.len())
         .sum();
-    assert_eq!(dynamic_entities, 2, "one Entity per resolved key");
+    assert_eq!(dynamic_cells, 2, "one Cell per resolved key");
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn a_filtered_value_never_reaches_the_consumer_and_a_fan_out_reaches_it_twice() 
     // answer. `normalize` drops anything starting `x` and fans a `d` out into
     // two edge values.
     let _host = Host::spawn(|activation, payload| {
-        if activation.target.procedure != 0 {
+        if activation.target.tasklet != 0 {
             let key = String::from_utf8_lossy(&payload[..1]).to_string();
             return vec![sink_output("totals", &key, payload)];
         }
@@ -329,7 +329,7 @@ fn a_keyed_sink_value_carries_the_stamps_a_deployed_run_stamps() {
         Some("z")
     );
     assert_eq!(
-        output.metadata.get("flz.entity").map(String::as_str),
+        output.metadata.get("flz.cell").map(String::as_str),
         Some("total/z")
     );
     assert_eq!(
@@ -389,7 +389,7 @@ fn a_channel_the_declaration_does_not_carry_is_refused_by_name() {
     let not_entry = run.feed("mid", b"x".to_vec()).expect_err("refused");
     assert!(
         not_entry.to_string().contains("mid") && not_entry.to_string().contains("Entry"),
-        "an inter-procedure channel is not an entry: {not_entry}"
+        "an inter-tasklet channel is not an entry: {not_entry}"
     );
 
     let not_sink = run.on_sink("lines", Arc::new(|_| {})).expect_err("refused");
@@ -406,8 +406,8 @@ fn a_controller_only_declaration_is_refused_at_startup() {
         r#"{
         "factory_id": "local_tier", "sdk_lang": 1, "sdk_version": "0.1.0",
         "persistent": true, "effectively_once": true,
-        "channels": [{"name": "lines", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
-        "procedures": [{"name": "only"}]
+        "channels": [{"name": "lines", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
+        "tasklets": [{"name": "only"}]
     }"#,
     );
     let refusal = LocalRun::start("local_tier", "tier-1")
@@ -492,10 +492,10 @@ fn the_same_declaration_serves_local_mode_and_class_registration() {
 /// unless it says otherwise.
 const PROCESSING_TIMER: &str = r#"{
     "factory_id": "local_pt_timer", "sdk_lang": 1, "sdk_version": "0.1.0",
-    "channels": [{"name": "ticks", "kind": "entry",  "chains": [[{"link": "into", "procedure": 0}]]},
+    "channels": [{"name": "ticks", "kind": "entry",  "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "fired", "kind": "plugin", "producer": 0,
                                    "chains": [[{"link": "sink", "name": "fired"}]]}],
-    "procedures": [{"name": "tick"}]
+    "tasklets": [{"name": "tick"}]
 }"#;
 
 /// The same graph on the event-time clock, so an input's own time drives the
@@ -503,10 +503,10 @@ const PROCESSING_TIMER: &str = r#"{
 /// the host to be told what time it carries.
 const EVENT_TIMER: &str = r#"{
     "factory_id": "local_et_timer", "sdk_lang": 1, "sdk_version": "0.1.0",
-    "channels": [{"name": "ticks", "kind": "entry",  "chains": [[{"link": "into", "procedure": 0}]]},
+    "channels": [{"name": "ticks", "kind": "entry",  "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "fired", "kind": "plugin", "producer": 0,
                                    "chains": [[{"link": "sink", "name": "fired"}]]}],
-    "procedures": [{"name": "tick", "clock": "event_time"}]
+    "tasklets": [{"name": "tick", "clock": "event_time"}]
 }"#;
 
 /// Every timestamp a [`timer_host`] armed, in registration order.
@@ -596,26 +596,26 @@ fn a_local_run_fires_an_event_time_timer_on_the_advancing_high_water() {
 
 /// `in → relay → out`, keyed on the way in, so every entry payload crosses to
 /// the host for its key before it is dispatched. The shape the conformance
-/// fixtures call `partition_relay` and `dynamic_entity`.
+/// fixtures call `partition_relay` and `dynamic_cell`.
 const KEYED_ENTRY: &str = r#"{
     "factory_id": "local_keyed_entry", "sdk_lang": 1, "sdk_version": "0.1.0",
-    "channels": [{"name": "in",  "kind": "entry",  "chains": [[{"link": "into", "procedure": 0}]]},
+    "channels": [{"name": "in",  "kind": "entry",  "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
                                  "chains": [[{"link": "sink", "name": "out"}]]}],
-    "procedures": [{"name": "relay", "entity_mode": "dynamic"}]
+    "tasklets": [{"name": "relay", "cell_mode": "dynamic"}]
 }"#;
 
 /// `in → relay → out`, keyed on the way in, retried on a failed crossing.
 const KEYED_ENTRY_RETRIED: &str = r#"{
     "factory_id": "local_keyed_entry_retried", "sdk_lang": 1, "sdk_version": "0.1.0",
     "channels": [{"name": "in",  "kind": "entry", "retry_max": 3, "retry_backoff_ms": 40,
-                                 "chains": [[{"link": "into", "procedure": 0}]]},
+                                 "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "out", "kind": "plugin", "producer": 0, "keyed": true,
                                  "chains": [[{"link": "sink", "name": "out"}]]}],
-    "procedures": [{"name": "relay", "entity_mode": "dynamic"}]
+    "tasklets": [{"name": "relay", "cell_mode": "dynamic"}]
 }"#;
 
-/// The procedure of both keyed classes: it releases what reaches it, under
+/// The tasklet of both keyed classes: it releases what reaches it, under
 /// the key it was dispatched with.
 fn echo_keyed(_activation: &Activation, item: &WorkItem) -> ItemEffect {
     match item {

@@ -1,7 +1,7 @@
 # PHP SDK
 
 A poll host over `flz_core`, through `ext-ffi`. The SDK contains no kernel
-code: transport, framing, ordering, per-entity exclusivity, durability,
+code: transport, framing, ordering, per-cell exclusivity, durability,
 retries, the retry→park ladder, timers, credit, routing, the workflow driver
 and reconnect all live in the core. This package brings the authoring surface,
 the codec for user types, the concurrency host and idiomatic errors.
@@ -70,17 +70,17 @@ that has them downloads nothing.
 
 ```php
 use Flezha\Attribute\Operative;
-use Flezha\Attribute\Proc;
+use Flezha\Attribute\Task;
 use Flezha\Ctx;
 use Flezha\Flezha;
 use Flezha\Graph\Builder;
-use Flezha\Procedure;
+use Flezha\Tasklet;
 use Flezha\StreamOperative;
 
-#[Proc(dynamicEntities: true)]
-final class OrderTotals extends Procedure
+#[Task(dynamicCells: true)]
+final class OrderTotals extends Tasklet
 {
-    public function state(?string $entityKey): mixed
+    public function state(?string $cellKey): mixed
     {
         return ['total' => 0];
     }
@@ -113,8 +113,8 @@ final class OrderTotalsOperative extends StreamOperative
 Flezha::createRunner('default')->registerFactory(OrderTotalsOperative::class)->run();
 ```
 
-A `#[Proc]` attribute carries the scalar declarations; the methods carry the
-behaviour. Only `run()` is required. Which optional hooks a procedure declares
+A `#[Task]` attribute carries the scalar declarations; the methods carry the
+behaviour. Only `run()` is required. Which optional hooks a tasklet declares
 is read from the methods it **overrides** — `applyChange` overridden means it
 folds changes, `onTimer` overridden means it may register timers — so a
 declaration and its implementation cannot disagree.
@@ -125,10 +125,10 @@ the Rust builder's compile-time refusals.
 
 ### The short form
 
-An operative class that defines its one procedure's `run` instead of
-`channels()` is a whole operative: one class, no procedure class beside it. The
+An operative class that defines its one tasklet's `run` instead of
+`channels()` is a whole operative: one class, no tasklet class beside it. The
 kind is the class it extends, and `#[Operative]` names the channels around that
-procedure: `sink` is the plugin sink its output reaches, `input` the entry
+tasklet: `sink` is the plugin sink its output reaches, `input` the entry
 channel, and `codec` the entry codec the builder's `input` takes.
 
 ```php
@@ -157,25 +157,25 @@ Flezha::createRunner('default')
 ```
 
 The generated operative is the one you would have written by hand with that
-single procedure: an entry channel named `input` (or the `input` argument's
-value) decoded by `codec`, the procedure, a plugin sink named by `sink`, a
+single tasklet: an entry channel named `input` (or the `input` argument's
+value) decoded by `codec`, the tasklet, a plugin sink named by `sink`, a
 factory id equal to `factoryId`, and every class-level setting at its default.
-The procedure is named `factoryId` verbatim, so the full form that wires a
-procedure of that name keeps every entity where it was. It runs the class's
+The tasklet is named `factoryId` verbatim, so the full form that wires a
+tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`state`, `applyChange`, ...),
-and a `#[Proc]` on the class carries its settings, all but `name`. A workflow
+and a `#[Task]` on the class carries its settings, all but `name`. A workflow
 short form is a `once` workflow, seeded on its entry channel from
 `flz operative start --kind workflow --init-values`.
 
 `sink` is optional. Without one, the operative declares its entry channel into
-the procedure and no plugin channel, which is all an operative that only keeps
+the tasklet and no plugin channel, which is all an operative that only keeps
 state needs:
 
 ```php
 #[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
 final class Counter extends StreamOperative
 {
-    public function state(?string $entityKey): mixed
+    public function state(?string $cellKey): mixed
     {
         return ['seen' => []];
     }
@@ -194,7 +194,7 @@ final class Counter extends StreamOperative
 }
 ```
 
-Anything more is the full form: a second procedure, a fan-out, a merge, a keyed
+Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
 window.
 
@@ -204,13 +204,13 @@ any operative is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
 `ShortFormWithTopology`, and one defining neither naming both. A second
 operative of either kind under a factory id the runner holds is refused naming
-`DuplicateFactoryId`. `#[Proc]` takes no `kind`, `sink`, `input` or `codec`,
-and a procedure carrying one is refused naming `#[Operative]`. `#[Proc]` on a
-class defining `channels()` is refused too: a full form's procedure settings go
-on its procedure classes. A hook a short form defines is held to the signature
-`Procedure` gives it, and one PHP would refuse on a procedure is refused naming
+`DuplicateFactoryId`. `#[Task]` takes no `kind`, `sink`, `input` or `codec`,
+and a tasklet carrying one is refused naming `#[Operative]`. `#[Task]` on a
+class defining `channels()` is refused too: a full form's tasklet settings go
+on its tasklet classes. A hook a short form defines is held to the signature
+`Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
 the hook. There is no
-`SinkWithoutOutput`: `run` is declared `: mixed` on both `Procedure` and
+`SinkWithoutOutput`: `run` is declared `: mixed` on both `Tasklet` and
 `Operative`, and PHP forbids an override narrowing that to `: void`, so a body
 declaring no output cannot be written at all. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name.
@@ -223,14 +223,14 @@ declaring no output cannot be written at all. The manifest leaves
 A channel names the format of its payload with `codec:` on `input` and on
 `sink`, a case of the `Flezha\ChannelCodec` enum:
 
-| Codec | An entry hands the procedure | A sink sends |
+| Codec | An entry hands the tasklet | A sink sends |
 | --- | --- | --- |
 | `ChannelCodec::Text` | the string, if it is valid UTF-8; otherwise the decode fails | a valid UTF-8 string as it is; any other value fails the emit |
 | `ChannelCodec::Bytes` | the string as it arrived | any string as it is; any other value fails the emit |
 | `ChannelCodec::Json` | the decoded JSON, an object as an array | any value as JSON, a string quoted |
 
 ```php
-$c->input('in', codec: ChannelCodec::Text)->into(EchoProcedure::class)->sink('out');
+$c->input('in', codec: ChannelCodec::Text)->into(EchoTasklet::class)->sink('out');
 ```
 
 An entry with no codec and no decoder reads JSON: `{"a":1}` arrives as
@@ -248,9 +248,9 @@ string that is not valid UTF-8 or an object that is not `Codable` has no JSON
 form, and sending one to a sink that names no codec fails the emit naming the
 channel.
 
-A value passed between two procedures of one operative never crosses a channel
+A value passed between two tasklets of one operative never crosses a channel
 codec: it stays JSON. An Elixir entry declared with no decoder hands its
-procedure the binary instead, so the same bytes on an undeclared entry are an
+tasklet the binary instead, so the same bytes on an undeclared entry are an
 array here and a string there.
 
 ### State and Change
@@ -268,8 +268,8 @@ final class Totals implements \Flezha\Codable
     public static function fromArray(array $data): static { return new self((int) $data['count']); }
 }
 
-#[Proc(stateType: Totals::class)]
-final class Counting extends Procedure { /* ... */ }
+#[Task(stateType: Totals::class)]
+final class Counting extends Tasklet { /* ... */ }
 ```
 
 **Never PHP's `serialize()`.** It embeds fully-qualified class names and
@@ -286,13 +286,13 @@ learns at startup rather than at the first restore.
 The same encoding answers `flz state get` and a migration handover, because it
 already is JSON. There is no second form to convert between.
 
-### Testing a procedure
+### Testing a tasklet
 
-`Flezha\Testing\Harness` drives one procedure without a controller, through the
+`Flezha\Testing\Harness` drives one tasklet without a controller, through the
 same dispatch and restore functions a runner uses:
 
 ```php
-$harness = new Harness(OrderTotals::class, entityKey: 'alice');
+$harness = new Harness(OrderTotals::class, cellKey: 'alice');
 $harness->feed(['amount' => 5]);
 $harness->assertReplayEquals();
 ```
@@ -332,7 +332,7 @@ try {
 ```
 
 `onSink` registers against the sink's **channel** name, which is the producing
-procedure's name unless the declaration named it.
+tasklet's name unless the declaration named it.
 
 **This host has one thread, so `runUntilIdle` drives the loop rather than
 parking in the core.** Under the default `sync` executor the caller *is* the
@@ -354,7 +354,7 @@ refused at startup, naming it. Walk-through:
 One loop processes one activation at a time, so a deployment is described by
 two numbers under either executor — only the unit of concurrency changes:
 
-- **throughput per loop ≈ 1 ÷ procedure-body latency.** A 1 ms CPU-bound body
+- **throughput per loop ≈ 1 ÷ tasklet-body latency.** A 1 ms CPU-bound body
   gives about 1000/s; a 20 ms query gives about 50/s.
 - **in-flight concurrency = loop count.** Processes under `SyncExecutor`;
   threads × processes under `SwooleExecutor`. A body that waits 2 s on a remote
@@ -366,7 +366,7 @@ that is 20 processes — 20 Kubernetes replicas, or a systemd template unit with
 threads.
 
 The runner **measures** this rather than leaving it to be assumed: at shutdown
-it logs the activations it served and the mean procedure-body time, with the
+it logs the activations it served and the mean tasklet-body time, with the
 per-loop throughput that implies.
 
 The ceiling differs, and that is the whole reason both executors exist. A
@@ -439,8 +439,8 @@ the boundary, and anything shaped as "hand this callable to a thread" has
 exactly one possible implementation, the inline one. Multiplicity is
 expressible under every PHP threading model.
 
-**Safety comes from the core, not the adapter.** `PollCore` holds per-entity
-exclusivity — it will never hand out two activations for the same entity
+**Safety comes from the core, not the adapter.** `PollCore` holds per-cell
+exclusivity — it will never hand out two activations for the same cell
 concurrently, however many threads poll it — so no executor can produce a race
 in user state. An executor can affect throughput and latency; it cannot affect
 correctness. That is what makes it safe to ship two and to let you write a
@@ -460,7 +460,7 @@ it, and the entry script reads the variable itself.
 
 **`SyncExecutor`** — the default. One loop on the calling thread, zero Composer
 dependencies, no extension beyond `ext-ffi`, and it runs on the
-non-thread-safe (NTS) build every distribution ships. A procedure body that
+non-thread-safe (NTS) build every distribution ships. A tasklet body that
 performs blocking I/O is *correct*, not degraded: the body runs, the activation
 completes, the next one is polled. Scale by replicas, and get per-process
 failure isolation — a dead process drops one runner and the controller
@@ -505,7 +505,7 @@ something to do, and it is the only one of the two that a `SyncExecutor` cannot
 scale by adding processes.
 
 Both numbers are bounded by a fixture whose body does almost no work, so they
-measure the *seam*, not the ceiling: the wider the procedure body, the more of
+measure the *seam*, not the ceiling: the wider the tasklet body, the more of
 the host's cores a single operative can reach, which is the claim the executor
 exists for. Take your own measurement with your own body before sizing on
 either row.
@@ -513,7 +513,7 @@ either row.
 ### The entry script is re-entered
 
 A `SwooleExecutor` worker bootstraps a **fresh interpreter from the runner's
-own entry script**, rebuilds the PHP-side procedure registry and attaches to
+own entry script**, rebuilds the PHP-side tasklet registry and attaches to
 the existing context by its address — `flz_core_declare_class` is per context,
 not per thread. Two consequences for the script you write:
 

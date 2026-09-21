@@ -22,7 +22,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   test "an unknown class defaults to :stream and reads every flag true", %{class: class} do
     assert ClassRegistry.get(class) == :stream
     assert ClassRegistry.capable?(class, :time_travel?)
-    assert ClassRegistry.capable?(class, :dynamic_entities?)
+    assert ClassRegistry.capable?(class, :dynamic_cells?)
     assert ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
@@ -31,7 +31,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
     assert ClassRegistry.get(class) == :workflow
     refute ClassRegistry.capable?(class, :time_travel?)
-    refute ClassRegistry.capable?(class, :dynamic_entities?)
+    refute ClassRegistry.capable?(class, :dynamic_cells?)
     refute ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
@@ -133,8 +133,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
       ClassRegistry.put_declarations(class, %{
         effectively_once: true,
         checkpoint_ack: true,
-        compensable_procs: [0, 2],
-        leaf_procs: [1, 2],
+        compensable_tasks: [0, 2],
+        leaf_tasks: [1, 2],
         correction_window_ms: 60_000,
         compact_after_bytes: 4_194_304,
         sync_durability: true
@@ -142,8 +142,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
     assert ClassRegistry.effectively_once?(class)
     assert ClassRegistry.checkpoint_ack?(class)
-    assert ClassRegistry.compensable_procs(class) == [0, 2]
-    assert ClassRegistry.leaf_procs(class) == [1, 2]
+    assert ClassRegistry.compensable_tasks(class) == [0, 2]
+    assert ClassRegistry.leaf_tasks(class) == [1, 2]
     assert ClassRegistry.correction_window_ms(class) == 60_000
     assert ClassRegistry.compact_after_bytes(class) == 4_194_304
     assert ClassRegistry.sync_durability?(class)
@@ -154,8 +154,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
       ClassRegistry.put_declarations(class, %{
         effectively_once: false,
         checkpoint_ack: false,
-        compensable_procs: nil,
-        leaf_procs: nil,
+        compensable_tasks: nil,
+        leaf_tasks: nil,
         correction_window_ms: nil,
         compact_after_bytes: nil,
         sync_durability: false
@@ -163,8 +163,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
     refute ClassRegistry.effectively_once?(class)
     refute ClassRegistry.checkpoint_ack?(class)
-    refute ClassRegistry.compensable_procs(class)
-    refute ClassRegistry.leaf_procs(class)
+    refute ClassRegistry.compensable_tasks(class)
+    refute ClassRegistry.leaf_tasks(class)
     refute ClassRegistry.correction_window_ms(class)
     refute ClassRegistry.compact_after_bytes(class)
     refute ClassRegistry.sync_durability?(class)

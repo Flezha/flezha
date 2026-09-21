@@ -9,7 +9,7 @@ DESCRIPTION:
     Controller is up; stop it first with `flz controller stop`.
 
     By default clears:
-        app_data/state/         (per-Entity WAL/snapshot/outbox)
+        app_data/state/         (per-Cell WAL/snapshot/outbox)
         app_data/process_hub/   (ProcessHub durable registry)
 
     Opt-in clears (off by default):

@@ -14,7 +14,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
   alias Mix.Tasks.Bench.Workflow.Run
 
   describe "table/3" do
-    test "columns align to their widest cell and the rule matches" do
+    test "columns align to their widest field and the rule matches" do
       rendered =
         Report.table(
           ["phase", "elapsed"],
@@ -44,7 +44,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
       end
     end
 
-    test "a row is never padded past its last cell" do
+    test "a row is never padded past its last field" do
       rendered = Report.table(["phase", "note"], [["send", ""]])
       assert rendered |> String.split("\n") |> List.last() == "send"
     end
@@ -279,14 +279,14 @@ defmodule Mix.Tasks.Bench.ReportTest do
       # models inside a closed vocabulary.
       for runtime <- PortPilot.runtimes() do
         note = Report.dispatch_note(runtime)
-        assert note =~ ~r/thread-pool|event-loop|process-per-entity/
+        assert note =~ ~r/thread-pool|event-loop|process-per-cell/
       end
     end
 
     test "names each selecting variable and its current value" do
       assert Report.dispatch_note(:rust) =~ "FLEZHA_WORKER_POOL_SIZE=default"
       # A topology with no selector says only its model.
-      assert Report.dispatch_note(:elixir) == "process-per-entity"
+      assert Report.dispatch_note(:elixir) == "process-per-cell"
     end
   end
 

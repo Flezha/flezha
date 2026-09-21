@@ -73,7 +73,7 @@ pub(crate) const TABLE: Command = Command {
             .taking(OPERATIVE_ID)
             .reading(&[TO_ITERATION, NAMESPACE]),
         Verb::new("replay", handle_replay)
-            .taking(&[Positional::required("<operative/procedure/key>")])
+            .taking(&[Positional::required("<operative/tasklet/key>")])
             .reading(&[FROM, NAMESPACE]),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -131,7 +131,7 @@ fn handle_start(read: &Reading) {
 }
 
 /// `flz operative scale <group> <partitions>` — rescale a partition group.
-/// The group is quiesced, every Entity whose key group changes owner is moved,
+/// The group is quiesced, every Cell whose key group changes owner is moved,
 /// and the new member set is started; a refusal changes nothing.
 fn handle_scale(read: &Reading) {
     let group_id = read.pos("<group>");
@@ -219,8 +219,8 @@ fn handle_rewind(read: &Reading) {
     );
 }
 
-/// `flz operative replay <operative/procedure/key> --from <seq|ts>` — re-run a
-/// Entity's retained inputs from a point in the past through the current code,
+/// `flz operative replay <operative/tasklet/key> --from <seq|ts>` — re-run a
+/// Cell's retained inputs from a point in the past through the current code,
 /// republishing under a bumped epoch so a guarded sink overwrites the stale rows
 /// by natural key. "Deploy a fix, heal the recent past."
 ///
@@ -232,19 +232,19 @@ fn handle_replay(read: &Reading) {
         "operative_replay",
         &[
             text(read.namespace()),
-            text(read.pos("<operative/procedure/key>")),
+            text(read.pos("<operative/tasklet/key>")),
             text(read.opt(FROM.long).unwrap_or_default()),
         ],
         &[],
         read.token(),
-        rpc::UNKNOWN_STATUS.diagnosing("Failed to replay entity"),
+        rpc::UNKNOWN_STATUS.diagnosing("Failed to replay cell"),
     );
 }
 
 fn handle_state(read: &Reading) {
-    // entity_state halts non-zero on error verdicts (not_found / refused).
+    // cell_state halts non-zero on error verdicts (not_found / refused).
     rpc::run(
-        "entity_state",
+        "cell_state",
         &[text(read.namespace()), text(read.pos(OPERATIVE_ID[0].name))],
         &[],
         read.token(),

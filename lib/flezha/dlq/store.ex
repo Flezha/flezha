@@ -2,7 +2,7 @@ defmodule Flezha.Dlq.Store do
   @moduledoc """
   Durable dead-letter store (`dead-letter-queue`).
 
-  One controller-wide GenServer owning `app_data/dlq/<operative_class>/<procedure_id>/`:
+  One controller-wide GenServer owning `app_data/dlq/<operative_class>/<tasklet_id>/`:
   a JSONL metadata index (`entries.jsonl`, one record per parked payload)
   with payload bytes in adjacent `<entry_id>.bin` blob files. Appends are
   fsynced before the caller's durable-ack callback fires — the SDK holds
@@ -10,7 +10,7 @@ defmodule Flezha.Dlq.Store do
   crash-safe.
 
   Idempotence rides the entry id, a hash of the park's origin identity:
-  `entity_key@origin_offset` when the effectively-once tier provides an
+  `cell_key@origin_offset` when the effectively-once tier provides an
   offset, else `channel:sha256(payload)` — so ack-lost re-sends and
   crash-replay re-parks land on the existing entry instead of duplicating
   it. A re-park that arrives while the entry is `replaying` (an operator
@@ -60,7 +60,7 @@ defmodule Flezha.Dlq.Store do
     do: GenServer.cast(server, {:append, entry, on_durable})
 
   @doc """
-  Park what a runner's `park_payload` frame decoded to, for `entity_id`. The
+  Park what a runner's `park_payload` frame decoded to, for `cell_id`. The
   frame's fields ARE the entry's, so the record is built here rather than at the
   data channel: the wire form and the durable record are one shape, and the
   channel that carries it does not need to know the second.
@@ -71,16 +71,16 @@ defmodule Flezha.Dlq.Store do
           map(),
           (String.t() -> any())
         ) :: :ok
-  def park_async(server \\ __MODULE__, entity_id, park, on_durable)
+  def park_async(server \\ __MODULE__, cell_id, park, on_durable)
 
-  def park_async(server, {operative_class, procedure_id, entity_key}, park, on_durable) do
+  def park_async(server, {operative_class, tasklet_id, cell_key}, park, on_durable) do
     entry =
       park
       |> Map.take([:channel, :origin_offset, :error, :attempts, :payload, :park_id])
       |> Map.merge(%{
         operative_class: operative_class,
-        procedure_id: procedure_id,
-        entity_key: entity_key
+        tasklet_id: tasklet_id,
+        cell_key: cell_key
       })
       |> Entry.new!()
 
@@ -95,7 +95,7 @@ defmodule Flezha.Dlq.Store do
   def list(server \\ __MODULE__, operative_class),
     do: GenServer.call(server, {:list, operative_class}, 30_000)
 
-  @doc "Fetch one entry (with payload bytes) by `<class>/<procedure>/<id>` ref."
+  @doc "Fetch one entry (with payload bytes) by `<class>/<tasklet>/<id>` ref."
   @spec get(pid() | atom(), String.t()) :: {:ok, map(), binary() | nil} | {:error, term()}
   def get(server \\ __MODULE__, entry_ref), do: GenServer.call(server, {:get, entry_ref}, 30_000)
 
@@ -116,7 +116,7 @@ defmodule Flezha.Dlq.Store do
   @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def resolve(server \\ __MODULE__, entry_ref), do: drop(server, entry_ref)
 
-  @doc "Per-procedure usage: `[%{operative_class, procedure_id, entries, bytes}]`."
+  @doc "Per-tasklet usage: `[%{operative_class, tasklet_id, entries, bytes}]`."
   @spec stats(pid() | atom()) :: [map()]
   def stats(server \\ __MODULE__), do: GenServer.call(server, :stats, 30_000)
 
@@ -125,14 +125,14 @@ defmodule Flezha.Dlq.Store do
   def sweep(server \\ __MODULE__), do: GenServer.call(server, :sweep, 60_000)
 
   @doc """
-  Every `{operative_class, procedure_id}` with a parked-failure directory on
+  Every `{operative_class, tasklet_id}` with a parked-failure directory on
   disk, as the directory names — `nil` lists every class.
 
   The names are already path-sanitised, which is what makes them safe to use as
-  a durable artifact identity: `proc_dir/2` maps one back to the same directory.
+  a durable artifact identity: `task_dir/2` maps one back to the same directory.
   """
-  @spec procedures(String.t() | nil) :: [{String.t(), String.t()}]
-  def procedures(operative_class \\ nil) do
+  @spec tasklets(String.t() | nil) :: [{String.t(), String.t()}]
+  def tasklets(operative_class \\ nil) do
     classes =
       case operative_class do
         nil -> File.ls(root()) |> ok_or([])
@@ -148,9 +148,9 @@ defmodule Flezha.Dlq.Store do
     end)
   end
 
-  @doc "Directory holding one procedure's parked failures."
-  @spec proc_dir(String.t(), String.t()) :: String.t()
-  def proc_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
+  @doc "Directory holding one tasklet's parked failures."
+  @spec task_dir(String.t(), String.t()) :: String.t()
+  def task_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
 
   @doc """
   One identity component as it appears on disk. The durable-tier artifact for a
@@ -176,7 +176,7 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call({:list, operative_class}, _from, state) do
     entries =
-      procedures(operative_class)
+      tasklets(operative_class)
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -224,13 +224,13 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call(:stats, _from, state) do
     stats =
-      procedures()
+      tasklets()
       |> Enum.map(fn {rc, sh} ->
         entries = load_entries(rc, sh)
 
         %{
           operative_class: rc,
-          procedure_id: sh,
+          tasklet_id: sh,
           entries: length(entries),
           bytes: dir_bytes(rc, sh)
         }
@@ -267,7 +267,7 @@ defmodule Flezha.Dlq.Store do
 
   defp do_append(entry) do
     rc = Map.fetch!(entry, :operative_class)
-    sh = Map.fetch!(entry, :procedure_id)
+    sh = Map.fetch!(entry, :tasklet_id)
     id = entry_id(entry)
     payload = Map.get(entry, :payload)
 
@@ -286,7 +286,7 @@ defmodule Flezha.Dlq.Store do
   end
 
   defp write_new_entry(rc, sh, id, entry, payload) do
-    dir = proc_dir(rc, sh)
+    dir = task_dir(rc, sh)
     File.mkdir_p!(dir)
 
     if payload do
@@ -299,8 +299,8 @@ defmodule Flezha.Dlq.Store do
       "id" => id,
       "ts_ms" => System.system_time(:millisecond),
       "operative_class" => rc,
-      "procedure_id" => sh,
-      "entity_key" => Map.get(entry, :entity_key, ""),
+      "tasklet_id" => sh,
+      "cell_key" => Map.get(entry, :cell_key, ""),
       "channel" => Map.get(entry, :channel, ""),
       "origin_offset" => Map.get(entry, :origin_offset),
       "error" => Map.get(entry, :error, ""),
@@ -314,8 +314,8 @@ defmodule Flezha.Dlq.Store do
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
       operative_class: rc,
-      procedure_id: sh,
-      entity_key: record["entity_key"],
+      tasklet_id: sh,
+      cell_key: record["cell_key"],
       channel: record["channel"],
       generation: record["generation"]
     })
@@ -345,8 +345,8 @@ defmodule Flezha.Dlq.Store do
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
       operative_class: rc,
-      procedure_id: sh,
-      entity_key: existing["entity_key"],
+      tasklet_id: sh,
+      cell_key: existing["cell_key"],
       channel: existing["channel"],
       generation: (existing["generation"] || 1) + 1
     })
@@ -363,7 +363,7 @@ defmodule Flezha.Dlq.Store do
     key =
       case {Map.get(entry, :origin_offset), Map.get(entry, :payload)} do
         {offset, _} when is_integer(offset) ->
-          "#{Map.get(entry, :entity_key, "")}@#{offset}"
+          "#{Map.get(entry, :cell_key, "")}@#{offset}"
 
         {nil, payload} when is_binary(payload) ->
           "#{Map.get(entry, :channel, "")}:#{Base.encode16(:crypto.hash(:sha256, payload))}"
@@ -383,7 +383,7 @@ defmodule Flezha.Dlq.Store do
     cutoff_ms = System.system_time(:millisecond) - retention_s * 1000
 
     all =
-      procedures()
+      tasklets()
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -405,20 +405,20 @@ defmodule Flezha.Dlq.Store do
 
   defp retention_drop(entry, reason) do
     rc = entry["operative_class"]
-    sh = entry["procedure_id"]
+    sh = entry["tasklet_id"]
     bytes = entry_bytes(entry)
 
     Logger.warning(
       "[dlq] RETENTION DROP (#{reason}): discarding parked payload " <>
         "#{ref(rc, sh, entry["id"])} channel=#{entry["channel"]} " <>
-        "entity=#{entry["entity_key"]} error=#{inspect(entry["error"])} — " <>
+        "cell=#{entry["cell_key"]} error=#{inspect(entry["error"])} — " <>
         "this data was never replayed and is now permanently lost"
     )
 
     :telemetry.execute([:flezha, :dlq, :retention_dropped], %{count: 1, bytes: bytes}, %{
       operative_class: rc,
-      procedure_id: sh,
-      entity_key: entry["entity_key"],
+      tasklet_id: sh,
+      cell_key: entry["cell_key"],
       channel: entry["channel"],
       entry_id: entry["id"],
       reason: reason
@@ -436,9 +436,9 @@ defmodule Flezha.Dlq.Store do
 
   # ---------- index file plumbing ----------
 
-  defp entries_path(rc, sh), do: Path.join(proc_dir(rc, sh), @entries_file)
+  defp entries_path(rc, sh), do: Path.join(task_dir(rc, sh), @entries_file)
 
-  defp blob_path(rc, sh, id), do: Path.join(proc_dir(rc, sh), id <> ".bin")
+  defp blob_path(rc, sh, id), do: Path.join(task_dir(rc, sh), id <> ".bin")
 
   defp ref(rc, sh, id), do: "#{rc}/#{sh}/#{id}"
 
@@ -527,7 +527,7 @@ defmodule Flezha.Dlq.Store do
   end
 
   defp dir_bytes(rc, sh) do
-    dir = proc_dir(rc, sh)
+    dir = task_dir(rc, sh)
 
     File.ls(dir)
     |> ok_or([])
@@ -540,7 +540,7 @@ defmodule Flezha.Dlq.Store do
     |> Enum.sum()
   end
 
-  # One procedure's parked set changed: republish the usage gauge, and offer the
+  # One tasklet's parked set changed: republish the usage gauge, and offer the
   # directory to the durability tier, which ships it whole. A drop has to reach
   # the backend as surely as a park — a stale remote copy would resurrect an
   # entry the operator already resolved. Inert while no backend is configured.
@@ -548,7 +548,7 @@ defmodule Flezha.Dlq.Store do
     :telemetry.execute(
       [:flezha, :dlq, :usage],
       %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
-      %{operative_class: rc, procedure_id: sh}
+      %{operative_class: rc, tasklet_id: sh}
     )
 
     DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})

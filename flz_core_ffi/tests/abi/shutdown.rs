@@ -1,4 +1,4 @@
-//! The last phase: `flz_core_shutdown` ships every live Entity's state before
+//! The last phase: `flz_core_shutdown` ships every live Cell's state before
 //! it wakes the pollers, and a stopping runner opens no new control
 //! connection. On its own because it is the one phase that ends the runner.
 
@@ -11,7 +11,7 @@ use flz_core_ffi::*;
 
 use crate::harness::{abi_complete_mapped, abi_poll, Controller, Demanded};
 
-/// `flz_core_shutdown` ships every live Entity's state as a
+/// `flz_core_shutdown` ships every live Cell's state as a
 /// `RunnerShutdownNotification` before the core reports shutting down: the
 /// poller blocked at that moment is handed the migration serializes first, the
 /// controller sees the notification, and only then is the poller woken.

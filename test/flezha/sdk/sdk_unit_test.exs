@@ -7,14 +7,14 @@ defmodule Flezha.SDK.UnitTest do
   alias Flezha.SDK.Transport
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 
-  # A ctx built without a procedure has no name to refuse with; the tests
+  # A ctx built without a tasklet has no name to refuse with; the tests
   # that build one declare the policy themselves.
-  @timer_policy %{procedure: "unit", cap: 10_000, clock: :wall}
+  @timer_policy %{tasklet: "unit", cap: 10_000, clock: :wall}
 
   # --- fixtures ---
 
-  defmodule EchoProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule EchoTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "echo"
     def init_state(_), do: nil
 
@@ -34,13 +34,13 @@ defmodule Flezha.SDK.UnitTest do
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(EchoProc)
+        |> Channels.into(EchoTask)
         |> Channels.named("echo")
         |> Channels.sink()
   end
 
-  defmodule KeyedProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule KeyedTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "keyed"
     def init_state(_), do: 0
     def run(_input, state, _ctx), do: {:ok, state + 1}
@@ -55,15 +55,15 @@ defmodule Flezha.SDK.UnitTest do
       |> Channels.input("in")
       |> Channels.filter(fn s -> s != "drop" end)
       |> Channels.key_by(fn s -> s end)
-      |> Channels.into(KeyedProc)
+      |> Channels.into(KeyedTask)
       |> Channels.named("k")
       |> Channels.sink()
     end
   end
 
-  defmodule EventTimeProc do
-    @behaviour Flezha.SDK.Procedure
-    def name, do: "event_time_proc"
+  defmodule EventTimeTask do
+    @behaviour Flezha.SDK.Tasklet
+    def name, do: "event_time_task"
     def init_state(_), do: 0
     def clock, do: :event_time
     def event_time_of(input), do: String.to_integer(input)
@@ -71,12 +71,12 @@ defmodule Flezha.SDK.UnitTest do
     def run(_input, state, _ctx), do: {:ok, state}
   end
 
-  defmodule StaticProc do
-    @behaviour Flezha.SDK.Procedure
+  defmodule StaticTask do
+    @behaviour Flezha.SDK.Tasklet
     def name, do: "static"
     def init_state(_), do: nil
     def run(_i, s, _c), do: {:ok, s}
-    def entity_keys, do: ["a", "b"]
+    def cell_keys, do: ["a", "b"]
   end
 
   defmodule StaticOp do
@@ -87,12 +87,12 @@ defmodule Flezha.SDK.UnitTest do
       do:
         c
         |> Channels.input("in")
-        |> Channels.into(StaticProc)
+        |> Channels.into(StaticTask)
         |> Channels.named("s")
         |> Channels.sink()
   end
 
-  # --- entity mode derivation ---
+  # --- cell mode derivation ---
 
   test "a linear echo topology compiles Single and keyless" do
     assert {:ok, topo} = Topology.build(EchoOp)
@@ -102,14 +102,14 @@ defmodule Flezha.SDK.UnitTest do
     assert topo.keyless?
   end
 
-  test "a key_by edge into a keyless procedure is Dynamic and not keyless" do
+  test "a key_by edge into a keyless tasklet is Dynamic and not keyless" do
     assert {:ok, topo} = Topology.build(DynamicOp)
     assert [mode] = Map.values(topo.node_mode)
     assert mode == :dynamic
     refute topo.keyless?
   end
 
-  test "a procedure declaring entity_keys is Static" do
+  test "a tasklet declaring cell_keys is Static" do
     assert {:ok, topo} = Topology.build(StaticOp)
     assert [mode] = Map.values(topo.node_mode)
     assert mode == :static
@@ -151,7 +151,7 @@ defmodule Flezha.SDK.UnitTest do
 
   test "UnservableClock, EventTimeClockWithoutExtractor, UnknownClock — a clock the runtime cannot serve" do
     defmodule LogicalNoChange do
-      @behaviour Flezha.SDK.Procedure
+      @behaviour Flezha.SDK.Tasklet
       def name, do: "logical_no_change"
       def clock, do: :logical
       def init_state(_), do: nil
@@ -159,7 +159,7 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     defmodule EventTimeNoExtractor do
-      @behaviour Flezha.SDK.Procedure
+      @behaviour Flezha.SDK.Tasklet
       def name, do: "event_time_no_extractor"
       def clock, do: :event_time
       def init_state(_), do: nil
@@ -167,7 +167,7 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     defmodule Sundial do
-      @behaviour Flezha.SDK.Procedure
+      @behaviour Flezha.SDK.Tasklet
       def name, do: "sundial"
       def clock, do: :sundial
       def init_state(_), do: nil
@@ -212,9 +212,9 @@ defmodule Flezha.SDK.UnitTest do
         do:
           c
           |> Channels.input("in")
-          |> Channels.into(EchoProc)
+          |> Channels.into(EchoTask)
           |> Channels.keyed()
-          |> Channels.into(KeyedProc)
+          |> Channels.into(KeyedTask)
     end
 
     defmodule SyncStream do
@@ -222,7 +222,7 @@ defmodule Flezha.SDK.UnitTest do
       def sync_durability, do: true
 
       def channels(c),
-        do: c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.sink()
+        do: c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink()
     end
 
     assert {:KeyedChannelWithoutPluginWire, "echo"} = one_issue(KeyedNoWire)
@@ -264,7 +264,7 @@ defmodule Flezha.SDK.UnitTest do
   test "emits accumulate and flush; reserved flz. keys refuse" do
     ctx = Ctx.new(nil, "k", 123, timer_policy: @timer_policy)
     assert Ctx.now(ctx) == 123
-    assert Ctx.entity_key(ctx) == "k"
+    assert Ctx.cell_key(ctx) == "k"
     assert :ok = Ctx.emit(ctx, :a)
     assert :ok = Ctx.emit_with_meta(ctx, :b, %{"m" => "1"})
 
@@ -294,7 +294,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.checkpoint_every(3)
         |> Channels.outputs_at_checkpoint(50)
         |> Channels.input("in")
-        |> Channels.into(KeyedProc)
+        |> Channels.into(KeyedTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -310,7 +310,7 @@ defmodule Flezha.SDK.UnitTest do
         |> Channels.checkpoint_every(3)
         |> Channels.effectively_once()
         |> Channels.input("in")
-        |> Channels.into(KeyedProc)
+        |> Channels.into(KeyedTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
@@ -335,7 +335,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.effectively_once()
           |> Channels.outputs_at_checkpoint(0)
           |> Channels.input("in")
-          |> Channels.into(KeyedProc)
+          |> Channels.into(KeyedTask)
           |> Channels.named("sink")
           |> Channels.keyed()
           |> Channels.sink()
@@ -356,7 +356,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.effectively_once()
           |> Channels.beyond_window_policy(:drop)
           |> Channels.input("in")
-          |> Channels.into(EventTimeProc)
+          |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
           |> Channels.sink()
@@ -379,7 +379,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.correction_window(600_000)
           |> Channels.input("in")
           |> Channels.on_full(:drop_oldest)
-          |> Channels.into(EventTimeProc)
+          |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
           |> Channels.sink()
@@ -401,7 +401,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.beyond_window_policy(:drop)
           |> Channels.effectively_once()
           |> Channels.input("in")
-          |> Channels.into(EventTimeProc)
+          |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
           |> Channels.sink()
@@ -417,7 +417,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.beyond_window_policy(:drop)
           |> Channels.correction_window(600_000)
           |> Channels.input("in")
-          |> Channels.into(EventTimeProc)
+          |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
           |> Channels.sink()
@@ -440,7 +440,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.effectively_once()
           |> Channels.correction_window(600_000)
           |> Channels.input("in")
-          |> Channels.into(EventTimeProc)
+          |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
           |> Channels.keyed()
           |> Channels.sink()
@@ -481,7 +481,7 @@ defmodule Flezha.SDK.UnitTest do
     Ctx.discard(empty)
   end
 
-  test "checkpoint/1 raises a flag the Entity reads, and discard/1 clears both tier slots" do
+  test "checkpoint/1 raises a flag the Cell reads, and discard/1 clears both tier slots" do
     ctx = Ctx.new(nil, nil, 0, identity: "i", seq: 1, timer_policy: @timer_policy)
     refute Ctx.checkpointed?(ctx)
     assert :ok = Ctx.checkpoint(ctx)

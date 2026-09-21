@@ -11,7 +11,7 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
   config, so the name is free; it dies with the test process.
 
       become_loop()
-      assert_receive {:declare, :seq_gap, ^entity_id, %{runner_id: "e1"}}
+      assert_receive {:declare, :seq_gap, ^cell_id, %{runner_id: "e1"}}
   """
   def become_loop() do
     Process.register(self(), Flezha.Convergence.Loop)

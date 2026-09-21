@@ -110,14 +110,14 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
           @ns,
           [
             call("Operative.start", [%{id: "app_read_target", factory_id: "do_nothing"}]),
-            call("Operative.entity_state", ["app_read_target", "default"]),
+            call("Operative.cell_state", ["app_read_target", "default"]),
             call("PluginManager.list", [])
           ],
           secrets
         )
 
       assert [_start, state, plugins] = answers(port, 3)
-      assert {"Operative.entity_state", verdict, _} = state
+      assert {"Operative.cell_state", verdict, _} = state
       assert verdict in ["ok", "err"]
       assert {"PluginManager.list", "ok", _} = plugins
 

@@ -16,7 +16,7 @@ defmodule FlezhaTest.Operative.IngestTest do
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.{InputLog, ProcInbox, Supervisor, TestHelpers}
+  alias Flezha.State.{InputLog, TaskInbox, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -129,7 +129,7 @@ defmodule FlezhaTest.Operative.IngestTest do
       {:ok, host} = start_supervised({Host, state})
 
       assert {:ok, :suspended} = GenServer.call(host, {:ingest, "turn", %{}})
-      assert [%{offset: 1, message: "turn"}] = ProcInbox.undelivered(inst)
+      assert [%{offset: 1, message: "turn"}] = TaskInbox.undelivered(inst)
       assert_receive :rehydrate_asked
     end
 
@@ -182,7 +182,7 @@ defmodule FlezhaTest.Operative.IngestTest do
         start_supervised({Host, state(inst, durable_workflow: true, channel: channel)})
 
       assert :ok = GenServer.call(host, {:ingest, "x", %{}})
-      assert [%{message: "x"}] = ProcInbox.undelivered(inst)
+      assert [%{message: "x"}] = TaskInbox.undelivered(inst)
     end
 
     test "a durable target with no channel that can ever bind is refused" do
@@ -193,7 +193,7 @@ defmodule FlezhaTest.Operative.IngestTest do
       # claim the input-delivery guarantee forbids. The inbox still holds the
       # payload, and the sender's retry is absorbed by the inbox's dedup.
       assert {:error, :not_ready} = GenServer.call(host, {:ingest, "x", %{}})
-      assert [%{message: "x"}] = ProcInbox.undelivered(inst)
+      assert [%{message: "x"}] = TaskInbox.undelivered(inst)
     end
   end
 
@@ -291,7 +291,7 @@ defmodule FlezhaTest.Operative.IngestTest do
     # three of them fit once it is.
     @window 128
     defp fill(), do: String.duplicate("x", 200)
-    defp entity(inst), do: {inst, "proc", "a"}
+    defp cell(inst), do: {inst, "task", "a"}
 
     setup do
       FlezhaTest.Case.install([:state_tree])
@@ -320,7 +320,7 @@ defmodule FlezhaTest.Operative.IngestTest do
       refute_received {:channel_got, _, _}
 
       # Consuming offset 0 mints the credit: the parked call answers.
-      InputLog.record_consumed(inst, entity(inst), 0)
+      InputLog.record_consumed(inst, cell(inst), 0)
       assert :ok = Task.await(parked, 2_000)
       assert_receive {:channel_got, ^inst, {"b", %{"flz.offset" => "1"}}}
     end
@@ -333,7 +333,7 @@ defmodule FlezhaTest.Operative.IngestTest do
       reqids = :gen_server.send_request(host, {:ingest, "c", %{}}, :c, reqids)
       assert :timeout = :gen_server.wait_response(reqids, 150, true)
 
-      InputLog.record_consumed(inst, entity(inst), 0)
+      InputLog.record_consumed(inst, cell(inst), 0)
       assert {{:reply, :ok}, :b, reqids} = :gen_server.wait_response(reqids, 2_000, true)
       assert {{:reply, :ok}, :c, _} = :gen_server.wait_response(reqids, 2_000, true)
 
@@ -348,7 +348,7 @@ defmodule FlezhaTest.Operative.IngestTest do
       assert :pong = GenServer.call(host, :ping)
       refute_received {:channel_got, _, _}
 
-      InputLog.record_consumed(inst, entity(inst), 0)
+      InputLog.record_consumed(inst, cell(inst), 0)
 
       forwarded =
         for _ <- 1..3 do
