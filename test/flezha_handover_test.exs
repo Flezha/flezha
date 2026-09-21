@@ -40,6 +40,7 @@ defmodule FlezhaTest.Handover do
     :ok
   end
 
+  @tag :multi_node
   @tag :drain_migration
   test "graceful shutdown drains an operative to a peer through live handover" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node1)
@@ -80,6 +81,7 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
+  @tag :multi_node
   @tag :drain_migration_forced
   test "a deferring operative is force-migrated at the drain deadline without wedging" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node2)
@@ -401,6 +403,7 @@ defmodule FlezhaTest.Handover do
     assert HubManager.hub_alive?(namespace) === true
   end
 
+  @tag :multi_node
   @tag :runner_disconnect_migrate_hub
   test "runner disconnect migrate hub" do
     namespace = @temp_namespace
@@ -563,15 +566,17 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
-  # The runner that shipped a graceful-shutdown snapshot is followed by one that
-  # takes more input and dies hard; the migration must not ship the old snapshot.
-  @tag :stale_shutdown_snapshot
+  # A stale snapshot arises two ways: a runner's graceful shutdown hands one
+  # over, and a caller reads one. A migration away from a runner that later dies
+  # hard must ship neither in place of the changes made after it.
+  @tag :multi_node
+  @tag :stale_snapshot
   @tag timeout: 180_000
-  test "a graceful-shutdown snapshot does not erase later changes on a cross-controller migration" do
-    {peer_pid, peer} = start_healing_peer(:stale_snap_a)
+  test "a migration after a hard kill ships neither a shutdown snapshot nor one read earlier" do
+    {peer_pid, peer} = start_healing_peer(:stale_snap)
     local_runner = NodeTestHelper.start_runner(@temp_namespace)
     {rem_a, os_pid_a} = start_remote_runner(peer)
-    op = start_operative_on_peer(peer, "stale_graceful", @temp_namespace)
+    op = start_operative_on_peer(peer, "stale_snapshot", @temp_namespace)
     assert bound_runner(op) == rem_a
 
     # B is up before A leaves, so the peer rebinds rather than re-placing.
@@ -599,25 +604,8 @@ defmodule FlezhaTest.Handover do
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "before_snapshot") end, 15_000),
            "runner B never received the state: #{inspect(cell_state(op))}"
 
-    OperativeTestHelper.send_sync_io(op, @temp_namespace, "after_snapshot", %{})
-    assert NodeTestHelper.wait_until(fn -> state_has?(op, "after_snapshot") end, 10_000)
-
-    await_durable(peer, op)
-    signal_runner(os_pid_b, "-KILL")
-    assert_pulled_with(op, local_runner, "after_snapshot")
-    NodeTestHelper.stop_peer_node(peer_pid, peer)
-  end
-
-  @tag :stale_read_snapshot
-  @tag timeout: 180_000
-  test "a snapshot read earlier does not erase later changes on a cross-controller migration" do
-    {peer_pid, peer} = start_healing_peer(:stale_snap_b)
-    local_runner = NodeTestHelper.start_runner(@temp_namespace)
-    {rem_a, os_pid_a} = start_remote_runner(peer)
-    op = start_operative_on_peer(peer, "stale_read", @temp_namespace)
-    assert bound_runner(op) == rem_a
-
-    OperativeTestHelper.send_sync_io(op, @temp_namespace, "before_snapshot", %{})
+    # The rebind dropped A's shutdown snapshot, so a read kept from here would
+    # be the only snapshot left to ship.
     assert {:ok, snapshot} = OperativeManager.create_snapshot(@temp_namespace, op)
     assert contains?(snapshot, "before_snapshot")
 
@@ -625,7 +613,7 @@ defmodule FlezhaTest.Handover do
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "after_snapshot") end, 10_000)
 
     await_durable(peer, op)
-    signal_runner(os_pid_a, "-KILL")
+    signal_runner(os_pid_b, "-KILL")
     assert_pulled_with(op, local_runner, "after_snapshot")
     NodeTestHelper.stop_peer_node(peer_pid, peer)
   end

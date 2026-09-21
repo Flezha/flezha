@@ -672,7 +672,13 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   test "a committed running-migrate seeds the runner from the stored snapshot and drops it" do
     Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
     runner_id = "runner_b_#{System.unique_integer([:positive])}"
-    start_answering_control_unit(runner_id)
+    test_pid = self()
+
+    answer_control_unit_once(runner_id, fn {:start_operative, operative} ->
+      send(test_pid, {:started_with, operative.init_values, ClassRegistry.owner(operative.id)})
+      {:ok, %{}}
+    end)
+
     state = %{running_state() | snapshot: ~s({"store_input_tasklet":{"text_inputs":["s"]}})}
     :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
     on_exit(fn -> ClassRegistry.delete(state.id) end)
@@ -699,6 +705,24 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
     assert {%{source_node: _}, "final_state_of_runner_a"} =
              Overwatch.prepare_handover_state(state)
+  end
+
+  # fails when: a snapshot read is kept on the Overwatch, so a handover after
+  # the runner dies hard ships that read and skips the pull of every change the
+  # runner made after it.
+  test "a snapshot read is not kept for a later handover" do
+    runner_id = "runner_read_#{System.unique_integer([:positive])}"
+    state = %{running_state() | runner_id: runner_id}
+
+    answer_control_unit_once(runner_id, fn {:send_control, {:cell_state, _}, _metadata} ->
+      {:ok, "read_earlier"}
+    end)
+
+    assert {:reply, {:ok, "read_earlier"}, read} =
+             Overwatch.handle_call(:create_snapshot, {self(), make_ref()}, state)
+
+    # The runner is gone now, so the handover has nothing of its own to ship.
+    assert {%{source_node: _}, nil} = Overwatch.prepare_handover_state(read)
   end
 
   # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
@@ -740,9 +764,10 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     }
   end
 
-  # Stands in for `runner_id`'s control unit for one `:start_operative` call,
-  # reporting the init values the operative was started with.
-  defp start_answering_control_unit(runner_id) do
+  # Stands in for `runner_id`'s control unit for one call and is then gone, as
+  # a runner is once it dies. `answer` runs inside the stand-in and turns the
+  # request into the reply.
+  defp answer_control_unit_once(runner_id, answer) do
     test_pid = self()
     {:via, Registry, {registry, key}} = Flezha.Identificator.control_unit(runner_id)
 
@@ -751,10 +776,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
       send(test_pid, :control_unit_registered)
 
       receive do
-        {:"$gen_call", from, {:start_operative, operative}} ->
-          owner = ClassRegistry.owner(operative.id)
-          send(test_pid, {:started_with, operative.init_values, owner})
-          GenServer.reply(from, {:ok, %{}})
+        {:"$gen_call", from, request} -> GenServer.reply(from, answer.(request))
       end
     end)
 
