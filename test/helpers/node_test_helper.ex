@@ -250,7 +250,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     EventManager.add_handler(:runner_connected_event)
 
     {port, _command} =
-      PortPilot.open_port(command,
+      open_runner_port(command,
         transport: transport,
         env: Keyword.get(opts, :env, []),
         port_opts: Keyword.get(opts, :port_opts, [])
@@ -260,13 +260,27 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       receive do
         {:runner_connected_event, {^namespace, runner_id}} -> runner_id
       after
-        connect_timeout -> raise "temporary test runner not connected"
+        connect_timeout ->
+          raise "temporary test runner not connected; it printed:\n" <>
+                  read_port(port, fn _ -> false end, 100)
       end
 
     # Remove the handler to duplicate events.
     EventManager.rem_handler(:runner_connected_event)
 
     {port, runner_id}
+  end
+
+  @doc """
+  `PortPilot.open_port/2` for a test's runner. The runner's stderr rides its
+  port, so what it prints reaches the test that owns it instead of the suite's
+  console.
+  """
+  def open_runner_port(command, opts \\ []) do
+    PortPilot.open_port(
+      command,
+      Keyword.update(opts, :port_opts, [:stderr_to_stdout], &[:stderr_to_stdout | &1])
+    )
   end
 
   # ---------- SDK conformance: the runtime axis ----------

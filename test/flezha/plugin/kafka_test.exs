@@ -557,6 +557,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
           | send_fn: fn _w, _r, _ns ->
               send(test_pid, :broker_entered)
               NodeTestHelper.park()
+              {:ok, make_ref()}
             end
         }
       end)
@@ -577,6 +578,9 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       assert elapsed_us < 1_000_000,
              "the enqueue waited #{div(elapsed_us, 1_000)}ms on a broker that never answers"
 
+      # Released, the send hands back a dispatch whose answer never comes, so
+      # the worker takes its shutdown instead of being killed after 5 s.
+      send(producer_pid, :unpark)
       WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
 

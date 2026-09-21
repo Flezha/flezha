@@ -432,7 +432,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   @tag timeout: 120_000
   test "a runnerless namespace holding more operatives than the restart intensity keeps them all" do
     on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
-    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 1_000))
+    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
 
     hub_id = Identificator.hub(@namespace)
     ids = for i <- 1..101, do: "held_burst_#{i}"
@@ -472,7 +472,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     # Past every bind wait, with margin: under the old shape the burst of stops
     # lands inside one `dsup_max_seconds` window.
-    refute_receive {:DOWN, _, :process, _, _}, 3_000
+    refute_receive {:DOWN, _, :process, _, _}, 1_000
 
     assert Enum.all?(pids, &Process.alive?/1),
            "the namespace lost operatives its dist_sup gave up restarting"

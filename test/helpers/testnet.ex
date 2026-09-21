@@ -40,7 +40,7 @@ defmodule Flezha.Testnet do
     port =
       Port.open(
         {:spawn, command},
-        [:binary, env: [{~c"FLEZHA_TESTNET_WS_PORT", ~c"#{ws_port()}"}]]
+        [:binary, :stderr_to_stdout, env: [{~c"FLEZHA_TESTNET_WS_PORT", ~c"#{ws_port()}"}]]
       )
 
     Port.monitor(port)

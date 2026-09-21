@@ -22,6 +22,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.SourceWalk
 
   @apps_root "test/apps"
   @system_dir "test/system"
@@ -742,8 +743,9 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       apps =
         for runtime <- runtimes(),
             file <-
-              Path.wildcard(
-                "#{@apps_root}/#{runtime}_runner/**/*.{rs,java,ex,exs,ts,js,mjs,json}"
+              SourceWalk.files(
+                ["#{@apps_root}/#{runtime}_runner"],
+                ~w(.rs .java .ex .exs .ts .js .mjs .json)
               ),
             do: {runtime, file}
 

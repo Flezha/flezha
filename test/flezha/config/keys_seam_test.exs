@@ -28,6 +28,8 @@ defmodule Flezha.Config.KeysSeamTest do
   @elixir_read ~r/System\.get_env\("FLEZHA_|System\.get_env\(@|Application\.(get_env|fetch_env!?)\(:flezha/
   @rust_read ~r/env::var(_os)?\(("FLEZHA_|[A-Z][A-Z0-9_]*\))/
 
+  # A regex attribute or literal is re-imported every time it is evaluated, so
+  # a clause that runs one over every line of the tree binds it once first.
   @env_name ~r/FLEZHA_[A-Z0-9_]+/
 
   @rust_roots ~w(flz_core/src flz_transport/src flz_nif/src flz_core_ffi/src sdk/rust/src)
@@ -58,20 +60,24 @@ defmodule Flezha.Config.KeysSeamTest do
 
   describe "nothing reads a knob outside the seam" do
     test "an application-env or environment read names the file, the line and its row" do
+      elixir_read = @elixir_read
+
       offences =
         for {path, line, number} <- lines(elixir_sources()),
             path not in @seam,
-            Regex.match?(@elixir_read, line),
+            Regex.match?(elixir_read, line),
             do: offence(path, number, line)
 
       assert offences == []
     end
 
     test "a crate that reads the environment itself names the file, the line and its row" do
+      rust_read = @rust_read
+
       offences =
         for {path, line, number} <- lines(rust_sources()),
             path not in @seam,
-            Regex.match?(@rust_read, line),
+            Regex.match?(rust_read, line),
             do: offence(path, number, line)
 
       assert offences == []
@@ -113,9 +119,11 @@ defmodule Flezha.Config.KeysSeamTest do
     end
 
     test "every variable named in the controller, its crates and its SDKs is a row" do
+      env_name = @env_name
+
       undeclared =
         for {path, line, number} <- lines(elixir_sources() ++ rust_sources() ++ sdk_sources()),
-            [var] <- Regex.scan(@env_name, line),
+            [var] <- Regex.scan(env_name, line),
             is_nil(Keys.by_env(var)),
             uniq: true,
             do: "#{path}:#{number}: #{var} is named and no row declares it"
@@ -168,10 +176,11 @@ defmodule Flezha.Config.KeysSeamTest do
       # Every `DEFAULT_*` constant a crate hands its env reader for a name this
       # table declares. Two independent statements of one value, so a change to
       # either is a red build rather than a silent divergence.
+      handed = ~r/env_\w+\(\s*"(FLEZHA_[A-Z0-9_]+)",\s*([A-Z][A-Z0-9_]*)/
+
       drifted =
         for {path, line, number} <- lines(rust_sources()),
-            [_, var, constant] <-
-              Regex.scan(~r/env_\w+\(\s*"(FLEZHA_[A-Z0-9_]+)",\s*([A-Z][A-Z0-9_]*)/, line),
+            [_, var, constant] <- Regex.scan(handed, line),
             row = Keys.by_env(var),
             row != nil,
             row.default != nil,
@@ -240,10 +249,12 @@ defmodule Flezha.Config.KeysSeamTest do
 
   describe "every runtime that reads a name is declared to" do
     test "a name read in an SDK's own source is a row that names that SDK" do
+      env_name = @env_name
+
       undeclared =
         for {runtime, roots} <- @runtime_roots,
             {path, line, _number} <- lines(sources(roots)),
-            [var] <- Regex.scan(@env_name, line),
+            [var] <- Regex.scan(env_name, line),
             row = Keys.by_env(var),
             row != nil,
             runtime not in row.runtimes,
@@ -401,9 +412,9 @@ defmodule Flezha.Config.KeysSeamTest do
   # sizes as, evaluated the way the crate does.
   defp rust_const(name) do
     with [path | _] <-
-           Enum.filter(rust_sources(), &String.contains?(File.read!(&1), "#{name}:")),
+           Enum.filter(rust_sources(), &String.contains?(SourceWalk.read(&1), "#{name}:")),
          [[_, expression]] <-
-           Regex.scan(~r/#{name}: [a-z0-9]+ = ([0-9_ *+]+);/, File.read!(path)) do
+           Regex.scan(~r/#{name}: [a-z0-9]+ = ([0-9_ *+]+);/, SourceWalk.read(path)) do
       expression
       |> String.replace("_", "")
       |> String.split("*")

@@ -318,7 +318,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
       # `max_restarts: 0` makes a restart fatal to the supervisor, so one
       # assertion covers both halves: the operative did not die, and nothing
       # brought it back.
-      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 1_500
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 600
       assert Process.alive?(sup)
       assert [{_, ^pid, _, _}] = Supervisor.which_children(sup)
 

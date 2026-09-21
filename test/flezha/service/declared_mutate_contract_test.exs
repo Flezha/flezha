@@ -39,6 +39,8 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
     Application.put_env(:flezha, :process_hub_reconcile_grace_ms, 50)
     Application.put_env(:flezha, :process_hub_reconcile_interval_ms, 60_000)
+    # No runner is ever seeded, so the start's placement could only wait out its budget.
+    Application.put_env(:flezha, :hub_runner_assign_wait_ms, 0)
 
     on_exit(fn ->
       # Not per-enable: `enable/1` runs inside a Task in the concurrency case,

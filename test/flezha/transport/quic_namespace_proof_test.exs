@@ -30,6 +30,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
   alias Flezha.Transport.Stream, as: TStream
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @ns_a "quic-cred-orders"
   @ns_b "quic-cred-payments"
@@ -50,7 +51,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
   # generated client pair. The caller owns closing the port.
   defp dial_quic(namespace, env) do
     command = PortPilot.launch_command(:rust, :test, namespace)
-    {port, _cmd} = PortPilot.open_port(command, transport: :quic, env: env)
+    {port, _cmd} = NodeTestHelper.open_runner_port(command, transport: :quic, env: env)
     port
   end
 

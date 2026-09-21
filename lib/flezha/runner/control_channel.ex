@@ -287,8 +287,8 @@ defmodule Flezha.Runner.ControlChannel do
 
   # NIF transport: connection closed
   @impl true
-  def handle_info({:flz_closed, _stream_id, _reason}, state) do
-    handle_connection_closed(state)
+  def handle_info({:flz_closed, _stream_id, reason}, state) do
+    handle_connection_closed(state, reason)
   end
 
   # A refused rebind, whose reason the control unit logged, is asked for again,
@@ -343,7 +343,7 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, state}
   end
 
-  defp handle_connection_closed(state) do
+  defp handle_connection_closed(state, reason \\ nil) do
     # Severity only. The eviction below runs identically either way — see
     # `runner-controller-connection-healing`: a real socket close drops the
     # runner immediately and unconditionally.
@@ -353,7 +353,8 @@ defmodule Flezha.Runner.ControlChannel do
       )
     else
       Logger.warning(
-        "Connection closed for control socket for #{state.runner_id} on #{state.namespace}"
+        "Connection closed for control socket for #{state.runner_id} on #{state.namespace}" <>
+          if(reason, do: " (#{reason})", else: "")
       )
     end
 

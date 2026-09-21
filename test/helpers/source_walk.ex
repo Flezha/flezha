@@ -4,7 +4,7 @@ defmodule FlezhaTest.Helper.SourceWalk do
 
   A seam test asks the same three questions of the tree — which files are
   source, what do they say, and where does each line sit — and the answers have
-  to be the same for every one of them. Two rules hold:
+  to be the same for every one of them. Three rules hold:
 
     * **Source is a source extension.** A `.pyc` beside a `.py` and a `.so`
       beside a `.rs` carry every string their source does, so a walk that reads
@@ -12,6 +12,10 @@ defmodule FlezhaTest.Helper.SourceWalk do
     * **A file the tree holds is walked, tracked or not.** A blind walk always
       flatters; an untracked module is still a module, and a bypass written into
       one is still a bypass.
+    * **Build output is never entered.** What `_build`, `deps`, `target`,
+      `dist`, `cover` and `node_modules` hold was built or fetched, not written
+      here, and a runner's `node_modules` links back to its own SDK: a walk that
+      follows it reads that SDK again at every turn of the loop.
 
   Every answer is held for the run. The tree cannot change while a suite is in
   flight, and a gate asks the same question once per clause: `Flezha.Process.SeamTest`
@@ -20,23 +24,28 @@ defmodule FlezhaTest.Helper.SourceWalk do
 
   @source_extensions ~w(.ex .exs .rs .java .ts .mjs .js .py .rb .php .toml .sh .eex)
 
-  @doc "Every source file under `roots`, in a stable order."
-  @spec files([binary()]) :: [binary()]
-  def files(roots) do
-    held({:files, roots}, fn ->
-      for root <- roots,
-          path <- Path.wildcard("#{root}/**/*"),
-          Path.extname(path) in @source_extensions,
-          File.regular?(path),
-          uniq: true,
-          do: path
+  @build_output ~w(node_modules target dist _build deps cover)
+
+  @doc """
+  Every file under `roots`, whatever its extension, in a stable order: for a
+  gate that reads documents and workflows as well as code. A root that is a
+  file is itself.
+  """
+  @spec tree([binary()]) :: [binary()]
+  def tree(roots) do
+    held({:tree, roots}, fn ->
+      for root <- roots, path <- Enum.sort(walk(root)), uniq: true, do: path
     end)
   end
 
-  @doc "Every source file under `roots` whose extension is one of `extensions`."
+  @doc "Every source file under `roots`, in a stable order."
+  @spec files([binary()]) :: [binary()]
+  def files(roots), do: files(roots, @source_extensions)
+
+  @doc "Every file under `roots` whose extension is one of `extensions`."
   @spec files([binary()], [binary()]) :: [binary()]
   def files(roots, extensions),
-    do: for(path <- files(roots), Path.extname(path) in extensions, do: path)
+    do: for(path <- tree(roots), Path.extname(path) in extensions, do: path)
 
   @doc "The contents of `paths`, joined — for a gate that asks whether a name appears."
   @spec text([binary()]) :: binary()
@@ -56,11 +65,9 @@ defmodule FlezhaTest.Helper.SourceWalk do
   """
   @spec code_lines([binary()]) :: [{binary(), binary(), pos_integer()}]
   def code_lines(paths) do
-    Enum.flat_map(paths, fn path ->
-      held({:code_lines, path}, fn ->
-        Enum.reject(number(path), fn {_p, line, _n} -> Regex.match?(~r/^\s*#/, line) end)
-      end)
-    end)
+    # Bound once: a regex literal is rebuilt every time it is evaluated.
+    comment = ~r/^\s*#/
+    Enum.flat_map(paths, fn path -> held({:code_lines, path}, fn -> code(path, comment) end) end)
   end
 
   @doc "The contents of `path`, read once for the run."
@@ -87,17 +94,51 @@ defmodule FlezhaTest.Helper.SourceWalk do
         do: {path, line, number}
   end
 
+  defp code(path, comment),
+    do: Enum.reject(number(path), fn {_p, line, _n} -> Regex.match?(comment, line) end)
+
+  # A dot entry is tool state (`.git`, `.venv`), never source a gate judges.
+  defp walk(path) do
+    case File.ls(path) do
+      {:ok, names} ->
+        for name <- names,
+            not String.starts_with?(name, "."),
+            name not in @build_output,
+            file <- walk(Path.join(path, name)),
+            do: file
+
+      {:error, _not_a_directory} ->
+        if File.regular?(path), do: [path], else: []
+    end
+  end
+
   # Two modules racing for the same key both build it and both store the same
-  # value, which is why this needs no lock.
+  # value, which is why this needs no lock. Not `:persistent_term`: a new key
+  # there waits for every scheduler to make progress, which a loaded suite
+  # turns into milliseconds per file.
   defp held(key, build) do
-    case :persistent_term.get({__MODULE__, key}, :absent) do
-      :absent ->
-        value = build.()
-        :persistent_term.put({__MODULE__, key}, value)
+    table = table()
+
+    case :ets.lookup(table, key) do
+      [{^key, value}] ->
         value
 
-      value ->
+      [] ->
+        value = build.()
+        :ets.insert(table, {key, value})
         value
+    end
+  end
+
+  # An unlinked agent owns the table, so it outlives the test that created it.
+  defp table do
+    with :undefined <- :ets.whereis(__MODULE__) do
+      create = fn -> :ets.new(__MODULE__, [:named_table, :public, read_concurrency: true]) end
+
+      case Agent.start(create, name: __MODULE__) do
+        {:ok, _owner} -> __MODULE__
+        {:error, {:already_started, owner}} -> Agent.get(owner, & &1)
+      end
     end
   end
 end

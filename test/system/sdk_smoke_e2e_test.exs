@@ -127,10 +127,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
            scenario: "hybrid channel"
       test "one emit on a hybrid channel reaches the plugin sink and the consumer", ctx do
         {port, _id} =
-          NodeTestHelper.start_runner_port(ctx.namespace,
-            transport: ctx.transport,
-            port_opts: [:stderr_to_stdout]
-          )
+          NodeTestHelper.start_runner_port(ctx.namespace, transport: ctx.transport)
 
         # This is the module's only test that keeps the port, and it stops
         # reading it the moment its line appears — so the runner can be left

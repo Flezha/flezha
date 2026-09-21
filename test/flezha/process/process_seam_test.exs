@@ -185,8 +185,8 @@ defmodule Flezha.Process.SeamTest do
     # The kind is the argument after the `{m, f, a}` tuple, so the scan anchors
     # on the tuple's closing bracket rather than on a comma.
     used =
-      for path <- Path.wildcard("lib/flezha/**/*.ex"),
-          [_, kind] <- Regex.scan(~r/Cspec\.build\(.*?\]\},\s*:(\w+)/s, File.read!(path)),
+      for path <- SourceWalk.files(["lib/flezha"], [".ex"]),
+          [_, kind] <- Regex.scan(~r/Cspec\.build\(.*?\]\},\s*:(\w+)/s, SourceWalk.read(path)),
           do: String.to_atom(kind)
 
     assert used != [], "no site builds a child spec — the shape moved"
@@ -194,8 +194,8 @@ defmodule Flezha.Process.SeamTest do
   end
 
   test "every armed timer key is declared by its module" do
-    for path <- Path.wildcard("lib/flezha/**/*.ex"),
-        src = File.read!(path),
+    for path <- SourceWalk.files(["lib/flezha"], [".ex"]),
+        src = SourceWalk.read(path),
         [_, declared] <- Regex.scan(~r/use Flezha\.Process\.Timer, keys: \[([^\]]*)\]/, src) do
       keys = declared |> String.split(",") |> Enum.map(&String.trim/1)
 

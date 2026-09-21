@@ -429,7 +429,7 @@ defmodule Flezha.SDK.DispatchTest do
 
     # Every input either ran (released here as it reports in) or was shed:
     # the two accounts add up to the burst once it is through.
-    runs = release_runs_until(fn runs -> runs + Counters.drops_newest(counters) == 10 end)
+    runs = release_runs_until(fn runs -> runs + Counters.drops_newest(counters) == 10 end, 200)
     outputs = collect_outputs(runs)
     assert outputs != []
     assert length(outputs) < 10
@@ -482,7 +482,7 @@ defmodule Flezha.SDK.DispatchTest do
 
     # Released as each reports in — the router is parked on the full mailbox
     # between runs, and an output is delivered only once it moves again.
-    assert release_runs_until(fn runs -> runs == 10 end) == 10
+    assert release_runs_until(fn runs -> runs == 10 end, 0) == 10
     assert length(collect_outputs(10)) == 10
   end
 
@@ -605,14 +605,15 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   # Release every gated run as it reports in, until `done?.(runs)` holds;
-  # answers how many ran.
-  defp release_runs_until(done?, runs \\ 0) do
-    if NodeTestHelper.wait_until(fn -> done?.(runs) end, 200, 5) do
+  # answers how many ran. `settle_ms` is how long `done?` may take to hold with
+  # no further run: a drop count settles on its own, a run count never does.
+  defp release_runs_until(done?, settle_ms, runs \\ 0) do
+    if NodeTestHelper.wait_until(fn -> done?.(runs) end, settle_ms, 5) do
       runs
     else
       assert_receive {:running, _input, cell}, 1_000
       send(cell, :release)
-      release_runs_until(done?, runs + 1)
+      release_runs_until(done?, settle_ms, runs + 1)
     end
   end
 

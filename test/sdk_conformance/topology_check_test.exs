@@ -248,15 +248,13 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   end
 
   # Every file under the seam's roots whose text uses one of the spellings the
-  # fold replaced. The whole line set is read, comments included, because a
-  # commented-out refusal is a spelling somebody is about to restore.
+  # fold replaced. The whole text is read, comments included, because a
+  # commented-out refusal is a spelling somebody is about to restore. No
+  # spelling spans or anchors to a line, so the text is matched whole.
   defp matching_files do
     @roots
     |> SourceWalk.files()
-    |> SourceWalk.lines()
-    |> Enum.filter(fn {_path, line, _number} -> Regex.match?(@shape, line) end)
-    |> Enum.map(fn {path, _line, _number} -> path end)
-    |> Enum.uniq()
+    |> Enum.filter(&Regex.match?(@shape, SourceWalk.read(&1)))
     |> Enum.sort()
   end
 

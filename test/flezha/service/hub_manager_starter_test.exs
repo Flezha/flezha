@@ -32,6 +32,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Starter
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
@@ -155,6 +156,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
     end
 
     test "leaves a hub declared to hold operatives, even once recovery settles" do
+      Application.put_env(:flezha, :hub_runner_assign_wait_ms, 0)
       namespace = leave_registry_on_disk()
       run_starter()
       start_durable(namespace, "declared_op")
@@ -173,7 +175,14 @@ defmodule Flezha.Service.HubManagerStarterTest do
 
     test "outlives real ticks once recovery settles on its own, with no runner" do
       # The previous boot declared an operative whose runner never comes back.
+      seed_wait = TestHelpers.override_env(:hub_runner_assign_wait_ms, 0)
       namespace = leave_registry_on_disk(&start_durable(&1, "declared_op"))
+      seed_wait.()
+
+      # A 50 ms grace opens each boot's first round before the 2 s settle
+      # window. The replay keeps its full placement wait, so the ticks below
+      # meet a declared operative that nothing has placed yet.
+      Application.put_env(:flezha, :process_hub_reconcile_grace_ms, 50)
 
       # Settled and holding nothing: the same ticks must reclaim this one, or
       # they never reached the reclaim at all.

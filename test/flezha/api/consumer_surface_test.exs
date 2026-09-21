@@ -31,20 +31,30 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
 
   # What the console calls today and this tree does not answer. Phase 3 of
   # `publish-a-controller-consumer-api` moves the console onto the published
-  # surface, in the sibling repository, and empties this list.
+  # surface, in the sibling repository, and empties this list. The console's own
+  # tasklet/cell rename takes off the entries that still use the old names.
   #
   # module-naming-record:begin
+  # tasklet-cell-naming-record:begin
   @unresolved_today %{
     {Flezha.AuthZ.RoleStore, :list_for_namespace, 1} => :withdrawn,
+    {Flezha.Dlq.Store, :procedures, 1} => :withdrawn,
     {Flezha.Operative.Lifecycle, :rewind, 2} => :moved,
     {Flezha.Service.CliManager, :cluster_status_recovery, 2} => :withdrawn,
     {Flezha.Service.ConfigManager, :get_provider_info, 0} => :withdrawn,
     {Flezha.Service.Identificator, :hub, 1} => :moved,
+    {Flezha.Service.OperativeManager, :get_entity_state, 3} => :withdrawn,
     {Flezha.Service.PluginHelper, :enable_io_listener, 4} => :withdrawn,
     {Flezha.State.PersistenceResolver, :workflow_completed_retention_hours, 1} => :withdrawn,
+    {Flezha.State.ProcInbox, :last_offset, 1} => :moved,
+    {Flezha.State.ProcInbox, :undelivered, 1} => :moved,
+    {Flezha.State.ProcJournal, :committed_iterations, 1} => :moved,
+    {Flezha.State.ProcJournal, :consumed_offset, 1} => :moved,
+    {Flezha.State.ProcJournal, :read, 1} => :moved,
     {Flezha.State.Registry, :operative_classes, 0} => :moved
   }
 
+  # tasklet-cell-naming-record:end
   # module-naming-record:end
 
   setup_all do

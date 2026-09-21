@@ -11,6 +11,7 @@ defmodule FlezhaTest.Layout.TableTest do
 
   alias Flezha.Config.Keys
   alias Flezha.Layout.Table, as: Layout
+  alias FlezhaTest.Helper.SourceWalk
 
   @fixture "test/fixtures/layout_rows.txt"
 
@@ -91,12 +92,11 @@ defmodule FlezhaTest.Layout.TableTest do
   describe "no bypass" do
     test "no module outside the table spells an app_data subtree literal" do
       offenders =
-        Path.wildcard("lib/**/*.ex")
-        |> Enum.reject(&(&1 == "lib/flezha/layout/table.ex"))
-        |> Enum.reject(&(&1 == "lib/flezha/config/keys.ex"))
+        SourceWalk.files(["lib"], [".ex"])
+        |> Enum.reject(&(&1 in ["lib/flezha/layout/table.ex", "lib/flezha/config/keys.ex"]))
         |> Enum.filter(fn file ->
           file
-          |> File.read!()
+          |> SourceWalk.read()
           |> strip_prose()
           |> String.match?(~r|app_data/[a-z_]+|)
         end)
@@ -112,10 +112,10 @@ defmodule FlezhaTest.Layout.TableTest do
       # fail and an `rm_rf` that reclaims nothing. The bracket form is a
       # deliberate multi-segment build and is not this shape.
       offenders =
-        (Path.wildcard("lib/**/*.ex") ++ Path.wildcard("test/**/*.exs"))
+        (SourceWalk.files(["lib"], [".ex"]) ++ SourceWalk.files(["test"], [".exs"]))
         |> Enum.reject(&(&1 == __ENV__.file |> Path.relative_to_cwd()))
         |> Enum.filter(fn file ->
-          File.read!(file) =~ ~r/Path\.join\((Paths|Registry|Layout)\.(state_root|dir)\(/
+          SourceWalk.read(file) =~ ~r/Path\.join\((Paths|Registry|Layout)\.(state_root|dir)\(/
         end)
 
       assert offenders == []

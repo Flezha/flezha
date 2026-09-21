@@ -480,10 +480,7 @@ impl<T: Transport> DriverLoop<T> {
                             state.inbox.deliver(owner, id, frames);
                             (true, closed)
                         }
-                        Err(e) => {
-                            eprintln!("[flz_nif] frame too large on stream {}: {}", id, e);
-                            (false, Some(CloseReason::FrameTooLarge))
-                        }
+                        Err(_) => (false, Some(CloseReason::FrameTooLarge)),
                     }
                 }
             };

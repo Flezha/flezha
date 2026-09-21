@@ -471,7 +471,7 @@ defmodule Flezha.Runner.StreamChannel do
   # this clause runs, state.stream_ref is nil and no outbound send may use
   # the dead ref. The acceptor will pick this channel up via :stream_ref_status
   # on the next incoming data stream for the same runner_id.
-  def handle_info({:flz_closed, _stream_id, _reason}, state) do
+  def handle_info({:flz_closed, _stream_id, reason}, state) do
     # A close the controller itself asked for is not an incident: it is
     # reported, not diagnosed. Only the REPORTING sits inside this branch —
     # the binding clear and the credit reset below are unconditional, because
@@ -479,7 +479,7 @@ defmodule Flezha.Runner.StreamChannel do
     if Marks.runner_retiring?(state.runner_id) do
       Logger.info("IO socket closed for retiring runner #{state.runner_id}.")
     else
-      Logger.warning("Connection closed for IO socket.")
+      Logger.warning("Connection closed for IO socket (#{reason}).")
 
       # Emit output_stall immediately for every operative in the mapping so the
       # convergence Loop triggers a rebind tick rather than waiting for the

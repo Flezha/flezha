@@ -31,11 +31,6 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
   # This file spells the shapes it looks for, as data.
   @tier_self "test/sdk_conformance/tier_gate_test.exs"
 
-  # Directory names the walk never enters. Every one holds build output, and a
-  # tier is selected in source: of the 129 MB under the four roots, 126 MB is
-  # jars, bundles and beam files beneath `test/apps/`, which this read whole.
-  @build_output ~w(node_modules target dist _build deps cover)
-
   describe "test tiers" do
     test "every selector names a declared tier" do
       for {path, line, token} <- tier_selectors(), token not in tier_tag_strings() do
@@ -222,53 +217,38 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
 
   # Every `--include <tag>` / `--only <tag>` in the four roots, with where it is.
   defp tier_selectors do
+    selector = ~r/(?:--include|--only)\s+([a-z_0-9]+)/
+
     for path <- tier_readable_files(),
-        {line, lineno} <- Enum.with_index(String.split(File.read!(path), "\n"), 1),
-        [_, token] <- Regex.scan(~r/(?:--include|--only)\s+([a-z_0-9]+)/, line),
+        String.contains?(SourceWalk.read(path), ["--include", "--only"]),
+        {_path, line, lineno} <- SourceWalk.lines([path]),
+        [_, token] <- Regex.scan(selector, line),
         do: {path, lineno, token}
   end
 
   # A bare `@tag :name` / `@moduletag :name` whose name reads as a tier
   # selector. `_e2e` is the suffix the tree used for exactly that.
   defp selector_shaped_tags do
-    for path <- Path.wildcard("test/**/*.exs"),
-        {line, lineno} <- Enum.with_index(String.split(File.read!(path), "\n"), 1),
-        [_, tag] <- Regex.scan(~r/@(?:module)?tag\s+:([a-z_0-9]+_e2e)\s*$/, line),
+    e2e_tag = ~r/@(?:module)?tag\s+:([a-z_0-9]+_e2e)\s*$/
+
+    for path <- SourceWalk.files(["test"], [".exs"]),
+        String.contains?(SourceWalk.read(path), "_e2e"),
+        {_path, line, lineno} <- SourceWalk.lines([path]),
+        [_, tag] <- Regex.scan(e2e_tag, line),
         do: {path, lineno, tag}
   end
 
   defp all_tags do
-    for path <- Path.wildcard("test/**/*.exs"),
-        [_, tag] <-
-          Regex.scan(
-            ~r/@(?:module)?tag\s+(?::([a-z_0-9]+)\s*$|([a-z_0-9]+): true)/m,
-            File.read!(path)
-          )
+    tag = ~r/@(?:module)?tag\s+(?::([a-z_0-9]+)\s*$|([a-z_0-9]+): true)/m
+
+    for path <- SourceWalk.files(["test"], [".exs"]),
+        [_, name] <-
+          tag
+          |> Regex.scan(SourceWalk.read(path))
           |> Enum.map(fn parts -> [hd(parts), Enum.find(tl(parts), &(&1 != ""))] end),
         uniq: true,
-        do: tag
+        do: name
   end
 
-  defp tier_readable_files do
-    Enum.flat_map(@tier_selector_roots, fn root ->
-      cond do
-        File.regular?(root) ->
-          [root]
-
-        File.dir?(root) ->
-          root
-          |> Path.join("**/*")
-          |> Path.wildcard()
-          |> Enum.filter(&source_file?/1)
-
-        true ->
-          []
-      end
-    end)
-  end
-
-  defp source_file?(path) do
-    File.regular?(path) and path != @tier_self and
-      not Enum.any?(Path.split(path), &(&1 in @build_output))
-  end
+  defp tier_readable_files, do: List.delete(SourceWalk.tree(@tier_selector_roots), @tier_self)
 end

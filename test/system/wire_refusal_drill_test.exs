@@ -133,11 +133,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
 
   defp boot(namespace, env \\ []) do
     {port, runner_id} =
-      NodeTestHelper.start_runner_port(namespace,
-        transport: :uds,
-        env: env,
-        port_opts: [:stderr_to_stdout]
-      )
+      NodeTestHelper.start_runner_port(namespace, transport: :uds, env: env)
 
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
     {port, runner_id}

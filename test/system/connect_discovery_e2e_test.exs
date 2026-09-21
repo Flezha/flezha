@@ -137,10 +137,10 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
     command = PortPilot.launch_command(NodeTestHelper.spawn_runtime(), :test, namespace)
 
     {port, _command} =
-      PortPilot.open_port(command,
+      NodeTestHelper.open_runner_port(command,
         transport: :uds,
         env: Keyword.fetch!(opts, :env),
-        port_opts: [:stderr_to_stdout, :exit_status]
+        port_opts: [:exit_status]
       )
 
     output = collect(port, System.monotonic_time(:millisecond) + budget, "")

@@ -392,11 +392,13 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
             socket = receive(do: ({:socket, pid} -> pid))
             send(socket, {{:sink_frame, "answer", %{}}, self(), ref})
 
+            # The chain's own budget. Any length will do: the socket cannot
+            # read the ask until this call is answered.
             outcome =
               receive do
                 {^ref, :ok} -> :shipped
               after
-                2_000 -> :blocked
+                100 -> :blocked
               end
 
             GenServer.reply(from, :ok)

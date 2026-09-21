@@ -3,7 +3,6 @@ defmodule FlezhaQuicTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.PortPilot
   alias Flezha.State.Paths
   alias FlezhaTest.Fixtures.OperativeFixture
   alias FlezhaTest.Helper.MessageTestHelper
@@ -154,7 +153,7 @@ defmodule FlezhaQuicTest do
         "--target-dir=./target -- #{refused_namespace}"
 
     {port, _command} =
-      PortPilot.open_port(command,
+      NodeTestHelper.open_runner_port(command,
         transport: :quic,
         env: [
           {"FLEZHA_QUIC_CLIENT_CERT", "/nonexistent/client.pem"},

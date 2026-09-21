@@ -15,6 +15,8 @@ defmodule FlezhaTest.Helper.RpcSurface do
   `module_info/1`, so the two failure classes read the tree's source.
   """
 
+  alias FlezhaTest.Helper.SourceWalk
+
   @type entry :: {module(), atom(), arity(), String.t()}
   @type verdict :: :ok | {:moved, [module()]} | {:privatised, module()} | :withdrawn
 
@@ -205,6 +207,6 @@ defmodule FlezhaTest.Helper.RpcSurface do
   defp head_matches?(_head, _fun, _arity), do: false
 
   defp lib_sources do
-    "lib/**/*.ex" |> Path.wildcard() |> Enum.map(&{&1, File.read!(&1)})
+    for path <- SourceWalk.files(["lib"], [".ex"]), do: {path, SourceWalk.read(path)}
   end
 end
