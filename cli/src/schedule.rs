@@ -1,7 +1,7 @@
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
-use crate::operative::plugins_json_or_refuse;
+use crate::operative::{first_message_opts, plugins_json_or_refuse, CHANNEL, TEXT};
 use crate::rpc::{self, text, Opt};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
@@ -18,7 +18,17 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::new("add", handle_add)
             .taking(NAME)
-            .reading(&[CRON, TZ, FACTORY, NAMESPACE, INIT_VALUES, KIND, PLUGINS])
+            .reading(&[
+                CRON,
+                TZ,
+                FACTORY,
+                NAMESPACE,
+                INIT_VALUES,
+                TEXT,
+                CHANNEL,
+                KIND,
+                PLUGINS,
+            ])
             .strict(),
         Verb::new("list", |read| {
             rpc::run("schedule_list", &[], &[], read.token(), rpc::PROPAGATE)
@@ -39,9 +49,10 @@ pub(crate) const TABLE: Command = Command {
 
 /// The flags travel as the options list: the three required ones first, then
 /// each optional one the operator wrote, so an absent flag is absent from the
-/// request and the controller applies its own default. `--plugins` is carried
-/// as the text it was written as, whatever it parses as: the controller's
-/// decoder reads the JSON itself, at every firing.
+/// request and the controller applies its own default. `--plugins` and
+/// `--text` are carried as the text they were written as, whatever they parse
+/// as: the controller's decoder reads the JSON itself, at every firing, and
+/// the message is stored verbatim.
 fn handle_add(read: &Reading) {
     let plugins = read.opt(PLUGINS.long).map(plugins_json_or_refuse);
 
@@ -54,6 +65,13 @@ fn handle_add(read: &Reading) {
     for (key, value) in [
         ("namespace", read.opt(NAMESPACE.long)),
         ("init_values", read.opt(INIT_VALUES.long)),
+    ] {
+        if let Some(value) = value {
+            opts.push((key, text(value)));
+        }
+    }
+    opts.extend(first_message_opts(read));
+    for (key, value) in [
         ("kind", read.opt(KIND.long)),
         ("plugins", plugins.as_deref()),
     ] {

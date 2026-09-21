@@ -69,13 +69,16 @@ pub(super) fn commit_task_boundary(
     )
 }
 
-/// Ship `IterCommit` for a finished iteration, with the completion a
-/// tasklet asked for, and block for the durable ack; the next iteration
-/// starts only on it, so a crash re-runs at most the in-flight one.
+/// Ship `IterCommit` for a finished iteration, naming the entry channel
+/// whose chain it ran (so a resumed chained loop re-enters that chain) and
+/// the completion a tasklet asked for, and block for the durable ack; the
+/// next iteration starts only on it, so a crash re-runs at most the
+/// in-flight one.
 pub(super) fn commit_iteration(
     ctx: &ChainCtx,
     iter: u32,
     consumed_offset: u64,
+    channel_id: crate::channel::ChannelId,
     batch: &[Value],
     completion: Option<&[u8]>,
 ) -> Result<(), WorkflowError> {
@@ -84,16 +87,22 @@ pub(super) fn commit_iteration(
     }
 
     // The terminal handoff re-seeds iteration N+1 of a handoff-chained loop
-    // after a crash; an inbox-driven loop re-seeds from its inbox instead and
-    // ships whatever the terminal tasklet released (empty when it has no
-    // codec'd output channel, and for a branching graph, which has no single
-    // terminal tasklet — registration refuses to chain a loop over one).
+    // after a crash; a message-fed loop re-seeds from its inbox instead and
+    // ships whatever the chain's terminal tasklet released (empty when it has
+    // no codec'd output channel, and for a branching chain, which has no
+    // single terminal tasklet — registration refuses to chain a loop over one).
     let terminal_channel = ctx
         .dag
-        .single_leaf()
+        .chain(channel_id)
+        .and_then(|chain| chain.single_leaf(ctx.dag))
         .and_then(|leaf| ctx.task(leaf).output_channel_id);
     let handoff = encode_handoff(ctx, terminal_channel, batch)
         .map_err(|e| WorkflowError::from(format!("iteration {iter} {e}")))?;
+    let entry_channel = ctx
+        .topology
+        .channel(channel_id)
+        .map(|c| c.name.to_string())
+        .unwrap_or_default();
 
     ship_and_await(
         ctx,
@@ -107,6 +116,7 @@ pub(super) fn commit_iteration(
             handoff,
             completes: completion.is_some(),
             result: completion.map(<[u8]>::to_vec).unwrap_or_default(),
+            entry_channel,
         }),
     )
 }

@@ -164,8 +164,10 @@ The tasklet is named `factoryId` verbatim, so the full form that wires a
 tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`state`, `applyChange`, ...),
 and a `#[Task]` on the class carries its settings, all but `name`. A workflow
-short form is a `once` workflow, seeded on its entry channel from
-`flz operative start --kind workflow --init-values`.
+short form is a `once` workflow, run once over its first message:
+`flz operative start --kind workflow --text '<payload>'`, or a start followed
+by `flz operative send`; a second message to a `once` instance is accepted and
+never read.
 
 `sink` is optional. Without one, the operative declares its entry channel into
 the tasklet and no plugin channel, which is all an operative that only keeps
@@ -214,9 +216,6 @@ the hook. There is no
 `Operative`, and PHP forbids an override narrowing that to `: void`, so a body
 declaring no output cannot be written at all. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name.
-
-> A workflow short form started by a *spawn* does not see its payload yet —
-> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ### Channel payloads
 

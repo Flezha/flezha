@@ -137,11 +137,12 @@ defmodule FlezhaTest.Operative.IngestTest do
       inst = instance_id()
       state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
+      sent_once = %{"flz.msg_id" => "m-again"}
 
-      assert :ok = GenServer.call(host, {:ingest, "again", %{}})
+      assert :ok = GenServer.call(host, {:ingest, "again", sent_once})
       assert_receive {:channel_got, ^inst, {"again", %{"flz.inbox_offset" => "1"}}}
 
-      assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", %{}})
+      assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", sent_once})
       refute_received {:channel_got, _, _}
     end
 

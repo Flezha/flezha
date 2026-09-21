@@ -129,15 +129,17 @@ a typed error directing the author to keep bulk data in Cell state.
 ### Requirement: Crash-resume skips journaled tasklets and re-seeds from the journaled handoff
 
 On respawn of a durable structured workflow instance, the controller SHALL ship
-the journal state (the resume iteration, committed task indexes, and the latest
-journaled handoff) to the SDK **on the bind** (`AddOperative.task_journal`), which
-is instance-scoped and therefore reaches a class that has no per-Cell state
-and so receives no `RestoreInitState`. When no compensation is in flight, the
-driver SHALL skip every tasklet recorded `task_committed` and SHALL seed the
-first uncommitted tasklet's input batch from the journaled handoff instead of
-the entry channel. Compensation-in-flight resume (existing behavior) SHALL take
-precedence unchanged. An instance with no journal (pre-upgrade or opted-out)
-SHALL keep the re-run-from-top behavior.
+the journal state (the resume iteration, the entry channel of the last committed
+iteration, committed task indexes, and the latest journaled handoff) to the SDK
+**on the bind** (`AddOperative.task_journal`), which is instance-scoped and therefore
+reaches a class that has no per-Cell state and so receives no `RestoreInitState`.
+When no compensation is in flight, the driver SHALL skip every tasklet recorded
+`task_committed` and SHALL seed each uncommitted tasklet that has a committed producer
+from that producer's journaled handoff instead of the entry channel; an uncommitted root
+of a message-fed iteration SHALL be seeded from the message the controller re-forwards
+for that iteration, and a join SHALL wait only for the producers of the chain that
+iteration runs. Compensation-in-flight resume (existing behavior) SHALL take precedence
+unchanged. An instance with no journal (opted-out) SHALL keep the re-run-from-top behavior.
 
 #### Scenario: Mid-chain crash resumes at the first uncommitted tasklet
 
@@ -147,7 +149,12 @@ SHALL keep the re-run-from-top behavior.
 #### Scenario: Crash before the first commit re-runs from the top
 
 - **WHEN** a chain crashes while tasklet A is still running (no `task_committed` entry)
-- **THEN** on respawn the chain SHALL re-run from tasklet A seeded from the entry channel (at-least-once)
+- **THEN** on respawn the chain SHALL re-run from tasklet A seeded from the re-forwarded message on its entry channel (at-least-once)
+
+#### Scenario: A join on a resume counts only this pass's producers
+
+- **WHEN** a workflow declares entry `a` feeding A→J and entry `b` feeding B→J, a pass on `a` crashes after `task_committed(A)`, and the instance resumes
+- **THEN** J SHALL run seeded from A's handoff without waiting for B, which is not a producer of `a`'s pass
 
 #### Scenario: An instance with no per-Cell state still resumes at its iteration
 

@@ -123,10 +123,10 @@ channel carries both a sink and a transformed consumer: close the transform on
 its `.into(...)` first, then attach the sink to the held handle.
 
 A re-declaration carrying neither transform nor key is the legal fan-in /
-repeated-`.into` no-op — one consumer edge, not two — in every SDK. A workflow operative also
-refuses any closure on an **entry** channel
-(`BuildWorkflowError::MergeFromEntryChannel`): the workflow seed bypasses the
-routing seam, so the closure could never be selected.
+repeated-`.into` no-op (one consumer edge, not two) in every SDK. On a workflow operative
+an **entry** channel's closures run as on a stream: the driver applies them when it seeds the
+pass on that channel's chain, so a message reaches the first tasklet mapped, filtered or fanned
+out as declared.
 
 ## Two asymmetries between the SDKs
 

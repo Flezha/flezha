@@ -5,7 +5,7 @@ TBD - created by archiving change workflow-operative-functionality. Update Purpo
 ## Requirements
 ### Requirement: A workflow operative is spawned on demand and terminates on an exit trigger
 
-A workflow operative SHALL be spawned on demand with `args` (`init_values`), each spawn independent and representing **one job/session** (cells are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all tasklets done**: its chain of tasklets has run to the final tasklet's completion with no loop active; (b) a tasklet calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. A stream operative SHALL never reach a terminal trigger, and a tasklet of a stream operative calling `ctx.complete` SHALL fail that input with an error naming `CompleteOutsideWorkflow`.
+A workflow operative SHALL be spawned on demand with `init_values` as initial state per tasklet and SHALL take its input as messages on its entry channels, each spawn independent and representing **one job/session** (cells are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all tasklets done**: its chain of tasklets has run to the final tasklet's completion with no loop active; (b) a tasklet calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operative stop`. Waiting for a message SHALL NOT be an exit trigger. A stream operative SHALL never reach a terminal trigger, and a tasklet of a stream operative calling `ctx.complete` SHALL fail that input with an error naming `CompleteOutsideWorkflow`.
 
 #### Scenario: The chain running to its end terminates the operative
 
@@ -27,33 +27,19 @@ A workflow operative SHALL be spawned on demand with `args` (`init_values`), eac
 - **WHEN** a workflow operative declares `max_duration` and is still running when it elapses
 - **THEN** the SDK SHALL cooperatively cancel in-flight work and tear the operative down
 
-### Requirement: A workflow operative may receive input after it starts
+#### Scenario: Waiting for a message does not end the instance
 
-A workflow operative MAY declare an entry channel and **receive input after it has started** (an inbox). The SDK dispatch path SHALL route a data frame addressed to a running workflow instance to its current tasklet's entry channel/cell, rather than dropping it. For a **durable** workflow instance, post-start input SHALL additionally be journaled to the instance's durable inbox before delivery, so input sent while the instance is suspended, crashed, or migrating SHALL NOT be lost and SHALL be delivered on rehydrate. An operative waiting on its inbox SHALL block/sleep while idle and SHALL NOT busy-spin; a **looping durable** operative waiting at a committed iteration boundary SHALL be suspended (evicted from runner memory) per the `workflow-durable-suspension` capability instead of holding live resources.
-
-#### Scenario: Input delivered after start reaches the tasklet
-
-- **WHEN** a workflow operative has started and a data frame is sent to it
-- **THEN** the frame SHALL be delivered to the running tasklet's entry channel and processed, not dropped
-
-#### Scenario: Input sent while the instance is down is not lost
-
-- **WHEN** a data frame is sent to a durable workflow instance that is suspended or crashed
-- **THEN** the frame SHALL be durably journaled and delivered when the instance rehydrates
-
-#### Scenario: An idle interactive operative does not busy-spin
-
-- **WHEN** a workflow operative is waiting for the next input with none available
-- **THEN** it SHALL sleep/block until input arrives or a cancellation (duration/external stop) trips, without consuming CPU in a spin loop — and, for a looping durable operative at a committed iteration boundary, it SHALL be evicted from memory rather than occupying the runner
+- **WHEN** a `once` workflow instance is started without a message and none arrives within the idle window
+- **THEN** it SHALL NOT complete; a durable instance SHALL park and an opted-out one SHALL keep waiting, until a message, a stop or its `max_duration`
 
 ### Requirement: Internal loop with an intrinsic terminal condition
 
-A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iteration per inbox item, or `Chained`, each iteration seeded by the previous one's terminal output), never by a loop written inside a tasklet body. Waiting for the next item SHALL happen at a committed iteration boundary, observe the cancellation token (duration or external stop), and block or park while idle. A loop SHALL have at least one **non-timeout** exit: a tasklet's `ctx.complete`, a chained loop's empty batch, or external stop. Authoring a workflow operative whose **only** possible exit is external cancellation SHALL be rejected at registration with a clear error directing the author to add a terminal condition. A declared `max_duration` MAY additionally bound any loop as a backstop but SHALL NOT be required when a non-timeout exit exists.
+A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iteration per message, or `Chained`, each iteration seeded by the previous one's terminal output into the chain the first message started), never by a loop written inside a tasklet body. Waiting for the next message SHALL happen at a committed iteration boundary, observe the cancellation token (duration or external stop), and block or park while idle. A loop SHALL have at least one **non-timeout** exit: a tasklet's `ctx.complete`, a chained loop's empty batch, or external stop. Authoring a workflow operative whose **only** possible exit is external cancellation SHALL be rejected at registration with a clear error directing the author to add a terminal condition. A declared `max_duration` MAY additionally bound any loop as a backstop but SHALL NOT be required when a non-timeout exit exists.
 
 #### Scenario: A loop ends on a tasklet's completion
 
-- **WHEN** a `PerInput` workflow's tasklet calls `ctx.complete(result)` while handling an item
-- **THEN** the loop SHALL NOT wait for another item after that iteration commits, and the operative SHALL proceed toward terminal teardown with status `ok`
+- **WHEN** a `PerInput` workflow's tasklet calls `ctx.complete(result)` while handling a message
+- **THEN** the loop SHALL NOT wait for another message after that iteration commits, and the operative SHALL proceed toward terminal teardown with status `ok`
 
 #### Scenario: Loop exits on cancellation
 
@@ -118,4 +104,43 @@ Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown,
 - **GIVEN** a workflow instance bound to runner A's stable identity and a second session B in the namespace
 - **WHEN** B emits `WorkflowCompleted` naming the instance
 - **THEN** the instance SHALL keep running on A, no completion record SHALL be written, `flz operative info` SHALL not report it finished, and B SHALL be sent `RemOperative` for it once
+
+### Requirement: A workflow operative receives its input through the stream's entrance
+
+A workflow operative SHALL declare one or more entry channels and SHALL receive every message through the same entrance a stream operative's frames take: the channel the message names SHALL be resolved among the declared entry channels, a message naming none SHALL take the first declared entry channel, a message naming a channel the operative does not declare SHALL be parked under that name rather than dropped or rerouted, the entry channel's parser (`input_with(name, parser)` or its codec) SHALL run, and the entry edge's `map`, `filter` and `flat_map` SHALL run before the first tasklet sees the value. A message the entrance cannot read SHALL ride the entry channel's retry ladder and then be parked to the dead-letter queue under the channel's identity, and SHALL NOT count as a message: a `PER_INPUT` loop SHALL take the next one and a `ONCE` or `CHAINED` instance SHALL keep waiting for its message; the run SHALL NOT end or compensate for it, in any loop mode. For a **durable** workflow instance, every message SHALL additionally be journaled to the instance's durable inbox before delivery, so a message sent while the instance is suspended, crashed, or migrating SHALL NOT be lost and SHALL be delivered on rehydrate. An operative waiting for a message SHALL block or sleep while idle and SHALL NOT busy-spin; a **durable** operative waiting at a committed iteration boundary, the boundary before its first pass included, SHALL be suspended (evicted from runner memory) per the `workflow-durable-suspension` capability instead of holding live resources.
+
+#### Scenario: A message is delivered through the entry channel it names
+
+- **WHEN** a workflow operative declaring entry channels `orders` and `cancels` receives a frame with `channel = "cancels"`
+- **THEN** the frame SHALL be parsed by `cancels`'s parser, mapped by `cancels`'s edge transforms and delivered to `cancels`'s consumer tasklets, and `orders`'s chain SHALL NOT run in that pass
+
+#### Scenario: A message naming no channel takes the first entry channel
+
+- **WHEN** a spawn payload with no `channel` metadata reaches a workflow declaring `orders` first
+- **THEN** it SHALL enter `orders`
+
+#### Scenario: A message naming an undeclared channel is parked
+
+- **WHEN** a frame with `channel = "refunds"` reaches a workflow that declares no such entry channel
+- **THEN** the payload SHALL be parked under `refunds` with the declared entry set in its error, no tasklet SHALL run, and the instance SHALL keep waiting
+
+#### Scenario: An unreadable message rides the ladder and does not count
+
+- **WHEN** a `once` workflow whose entry channel decodes JSON receives a message that is not JSON
+- **THEN** the message SHALL ride the entry channel's retry ladder and be parked to the dead-letter queue, the instance SHALL NOT complete or compensate, and the next readable message SHALL run its pass
+
+#### Scenario: An unreadable message on a host SDK is told apart from a tasklet failure
+
+- **WHEN** a Java, Node, Python, Ruby or PHP workflow's entry decoder rejects a message
+- **THEN** the SDK SHALL report the activation as unreadable, the core SHALL park the message to the dead-letter queue under the entry channel after the ladder, and the run SHALL NOT end, whereas a readable message on which the tasklet throws SHALL end the run as a tasklet failure does
+
+#### Scenario: Input sent while the instance is down is not lost
+
+- **WHEN** a data frame is sent to a durable workflow instance that is suspended or crashed
+- **THEN** the frame SHALL be durably journaled and delivered when the instance rehydrates
+
+#### Scenario: An idle instance does not busy-spin
+
+- **WHEN** a workflow operative is waiting for the next message with none available
+- **THEN** it SHALL sleep/block until a message arrives or a cancellation (duration/external stop) trips, without consuming CPU in a spin loop, and a durable operative at a committed iteration boundary SHALL be evicted from memory rather than occupying the runner
 

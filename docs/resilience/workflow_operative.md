@@ -27,10 +27,12 @@ repeated here; [`data_durability.md`](data_durability.md) says what is lost when
 
 ## Lifecycle: exit triggers, inbox, one teardown
 
-An instance is spawned with `args` (`init_values` seeds the root) from the CLI
-(`flz operative start`), a schedule (`flz schedule`) or a running tasklet
-(`ctx.spawn_workflow`, [`../sdk/tasklet_requested_spawn.md`](../sdk/tasklet_requested_spawn.md))
-and terminates on the first of: chain quiescence (every leaf committed); a tasklet's
+An instance is spawned with `init_values` as its tasklets' initial state, as a stream is,
+from the CLI (`flz operative start`), a schedule (`flz schedule`) or a running tasklet
+(`ctx.spawn_workflow`, [`../sdk/tasklet_requested_spawn.md`](../sdk/tasklet_requested_spawn.md)),
+takes its input as messages on its entry channels (the first may ride the start:
+`flz operative start --text`, a schedule's stored `--text`, a spawn's payload) and terminates
+on the first of: chain quiescence (every leaf committed); a tasklet's
 `ctx.complete(result)`, honoured once its iteration commits; a loop that runs out of work (a
 chained loop's empty batch); `max_duration()` / `maxDuration()`
 elapsing (a cooperative cancellation token); `flz operative stop` (a cooperative `WorkflowStop`
@@ -48,8 +50,11 @@ arrival, and even when an output of that run was lost rather than delivered. The
 *waited for*: up to 60 s, re-driving `TaskJournal.flush_pending/1`, until
 `TaskJournal.pending_entries/1` is empty. A deadline hit is logged (`... still owed`) and the
 retained journal keeps the debt. `status = "error"` tears down identically — there is no
-platform retry of a failed tasklet. A frame addressed to a running instance is routed to its
-inbox, never dropped; a `PerInput` loop runs one iteration per inbox item.
+platform retry of a failed tasklet. A frame addressed to a running instance takes the
+stream's entrance (channel resolved, parsed, transformed, parked when it cannot enter) into the
+instance's inbox, never dropped; every loop mode reads it: `Once` its one message, `PerInput`
+one per iteration, `Chained` the first and then its own carry. An instance with no message
+waits, and a second message to a `Once` instance is accepted and never read.
 
 ## Durable loop and suspension
 
@@ -74,16 +79,19 @@ iteration.
 **The durable inbox.** `Ingest` holds the one append-before-forward seam: post-start
 input goes to `<state_root>/<ns>/<inst>/<inst>/inbox.wal` before it is forwarded, stamped
 `flz.inbox_offset` (WAL seq + 1; offset 0 means nothing consumed); a failed append is not
-forwarded. The record header is the first 16 bytes of `sha256(dedup_id)` — `flz.msg_id` when the
-sender stamps one, else a hash of the payload — and the writer's `dedup: true` index refuses a
-duplicate inside the window, the file above its last release. Delivery is filtered by the
-journal's **released** offset (the maximum consumed offset over the raw journal, which no rewind
-lowers), so a re-sent consumed message is absorbed rather than re-delivered.
+forwarded. The record header is the first 16 bytes of `sha256(flz.msg_id)` and the writer's
+`dedup: true` index refuses a duplicate inside the window, the file above its last release; a
+message without an id is always appended, as a stream processes every frame it is sent.
+Delivery is filtered by the journal's **released** offset (the maximum consumed offset of any
+iteration commit or park over the raw journal, which no rewind lowers), so a re-sent consumed
+message is absorbed rather than re-delivered.
 
-**Suspension.** A `PerInput` loop whose inbox stays empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
+**Suspension.** An instance of any loop mode whose inbox stays empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
 (default 5 000; read in the shared core, so Rust and Java agree, and by the Elixir SDK's own driver) at a committed boundary tears
-its run down without a completion and ships `IterPark`. The controller journals
-`parked(iter[, wake_deadline_ms])` **before** `Migration.suspend/3` evicts the instance
+its run down without a completion and ships `IterPark`, naming the last message it parked to
+the dead-letter queue unread. The controller journals
+`parked(iter[, wake_deadline_ms], consumed_offset)`, which releases that message from the inbox
+as an iteration commit releases its input, **before** `Migration.suspend/3` evicts the instance
 (`RemOperative`, runner tag `nil`); a park whose append fails leaves the instance bound and
 logged. The Overwatch and the registry entry stay, and the Overwatch **hibernates**
 (`:hibernate` on both suspension entries, releasing its bind-time heap).

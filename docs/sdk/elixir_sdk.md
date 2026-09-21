@@ -153,8 +153,10 @@ entry channel named `"input"` (or the `input` option's value) into it and, with
 `sink`, it to that plugin sink. Every other operative callback is left undefined
 so its default applies. Because the tasklet is named after the factory id,
 its cells keep their state path when the module grows into the full form. A
-workflow short form is a `once` workflow, seeded on its entry channel from
-`flz operative start --kind workflow --init-values`.
+workflow short form is a `once` workflow, run once over its first message:
+`flz operative start --kind workflow --text '<payload>'`, or a start followed
+by `flz operative send`; a second message to a `once` instance is accepted
+and never read.
 
 `run/3` is written as in a tasklet: the ctx functions are imported, a `state`
 block and `defchange` work, and the options `use Flezha.SDK.Tasklet` takes
@@ -185,9 +187,6 @@ a short-form option on a full form each name the option, and
 `use Flezha.SDK.Tasklet` refuses `kind`, `sink` and `input`, naming the
 operative macros. This SDK cannot see a tasklet's output type, so it owes no
 `SinkWithoutOutput` and its manifest does not list `shorthand_typed_output`.
-
-> A workflow short form started by a *spawn* does not see its payload yet —
-> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ### The behaviours beneath
 

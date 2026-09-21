@@ -201,6 +201,22 @@ impl OperativeTopology {
             })
     }
 
+    /// Each entry channel with the tasklets it feeds, in declaration order:
+    /// the roots of a workflow's chains.
+    pub fn entry_consumers(&self) -> Vec<(ChannelId, Vec<TaskletId>)> {
+        self.channels
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.kind == ChannelKind::Entry)
+            .map(|(id, c)| {
+                (
+                    id as ChannelId,
+                    c.consumers.iter().map(|e| e.tasklet).collect(),
+                )
+            })
+            .collect()
+    }
+
     /// The declared channel names of one kind, sorted, so every refusal and
     /// every park names the same set in the same order — and so the Elixir
     /// SDK, whose channels live in a map, can name it identically.

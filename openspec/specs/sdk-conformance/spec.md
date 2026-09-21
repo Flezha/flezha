@@ -797,8 +797,8 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 #### Scenario: A workflow short form completes on every runtime
 
-- **WHEN** the scenario starts `sugar_workflow` with init values under any runtime
-- **THEN** `sugar_workflow_placed` carries the start values' bytes and the instance completes with status `ok`
+- **WHEN** the scenario starts `sugar_workflow` under any runtime and sends it one message on `order`
+- **THEN** `sugar_workflow_placed` carries the message's bytes and the instance completes with status `ok`
 
 #### Scenario: A sinkless short form is proven by its state on every runtime
 

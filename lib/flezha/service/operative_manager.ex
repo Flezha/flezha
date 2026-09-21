@@ -584,10 +584,11 @@ defmodule Flezha.Service.OperativeManager do
 
   defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context) do
     requested = if instance_id == "", do: nil, else: instance_id
+    {:ok, seed} = OperativeBuilder.seed_input(payload, nil)
 
     start = fn _call ->
       namespace
-      |> start_workflow(requested, factory_id, %{}, seed_input: payload)
+      |> start_workflow(requested, factory_id, %{}, seed_input: seed)
       |> start_answer(requested)
     end
 

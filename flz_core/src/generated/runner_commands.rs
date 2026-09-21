@@ -395,6 +395,10 @@ pub struct IterCommit {
     pub completes: bool,
     #[prost(bytes = "vec", tag = "6")]
     pub result: ::prost::alloc::vec::Vec<u8>,
+    /// The entry channel whose chain the iteration ran; a resumed chained
+    /// loop feeds its carry back into that chain.
+    #[prost(string, tag = "7")]
+    pub entry_channel: ::prost::alloc::string::String,
 }
 /// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
 /// is durable (fsync). Same reference_id / terminal-error contract as
@@ -415,7 +419,9 @@ pub struct IterCommitResponse {
 /// and evicts the instance from the runner; the registry keeps it `suspended`
 /// until a new inbox append — or the wake deadline — rehydrates it
 /// (workflow-durable-suspension). `wake_deadline_ms` is 0 when the operative
-/// declared no durable timer.
+/// declared no durable timer. `consumed_offset` is the highest durable-inbox
+/// offset the run parked to the dead-letter queue unread, 0 when none: consumed
+/// without a pass, so the Controller releases it rather than re-delivering it.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterPark {
     #[prost(string, tag = "1")]
@@ -424,6 +430,8 @@ pub struct IterPark {
     pub iter: u32,
     #[prost(uint64, tag = "3")]
     pub wake_deadline_ms: u64,
+    #[prost(uint64, tag = "4")]
+    pub consumed_offset: u64,
 }
 /// One journaled forward task commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
@@ -497,6 +505,10 @@ pub struct TaskJournalState {
     pub completed: bool,
     #[prost(bytes = "vec", tag = "11")]
     pub result: ::prost::alloc::vec::Vec<u8>,
+    /// The entry channel the last committed iteration named; empty before
+    /// any iteration committed.
+    #[prost(string, tag = "12")]
+    pub entry_channel: ::prost::alloc::string::String,
 }
 /// Per-Cell state restore handshake: Controller ships latest snapshot
 /// bytes plus tail-WAL bytes, SDK applies them to the cell's State

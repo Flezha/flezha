@@ -122,12 +122,22 @@ A graph node SHALL be identified by its Tasklet class unless an explicit node na
 - **THEN** registration SHALL fail naming both nodes
 
 ### Requirement: Graphs are DAGs; fan-in accumulates in both SDKs
-The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single operative ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In workflow operatives a fan-in node SHALL be dispatched only after every one of its producers has completed and committed, and its input batch SHALL be the concatenation of all producers' released outputs. In stream operatives the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive.
+The shared graph-shape rule for both kinds SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single operative ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. An entry channel MAY feed more than one tasklet. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In workflow operatives each entry channel roots its own chain, the tasklets reachable from that channel's consumers; a message runs only the chain of the channel it arrived on, and a fan-in node SHALL be dispatched only after every one of its producers **in that pass's chain** has completed and committed, with an input batch that is the concatenation of those producers' released outputs. A producer of another chain SHALL NOT be waited for, live or on a crash-resume. In stream operatives the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive. No registration refusal SHALL exist for an entry channel feeding several tasklets, for several entry channels on a workflow, or for an entry channel as a merge source on a workflow.
 
 #### Scenario: Workflow join runs once with both contributions
 
 - **WHEN** a workflow graph A→(B,C)→D runs to completion
 - **THEN** D SHALL be dispatched exactly once, after both B and C committed, with an input batch containing both B's and C's released outputs
+
+#### Scenario: A join where two chains meet waits only for this pass's producer
+
+- **WHEN** a workflow declares entry `a` feeding A→J and entry `b` feeding B→J, and a message arrives on `a`
+- **THEN** J SHALL be dispatched once A committed, with A's released output only, and B SHALL NOT run in that pass
+
+#### Scenario: An entry channel fans out to two roots
+
+- **WHEN** a workflow declares entry channel `order` feeding both `reserve` and `audit`
+- **THEN** a message on `order` SHALL be delivered to both, each through its own edge's transforms, in the same first level of the pass
 
 #### Scenario: Cycle is refused
 

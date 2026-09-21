@@ -11,10 +11,12 @@ defmodule Flezha.State.TaskInbox do
 
   Offsets are the record's WAL seq **plus one**, so `0` is free to mean "nothing
   consumed yet" and "not journaled"; they are monotonic and survive truncation.
-  A re-sent message is absorbed rather than delivered twice, the record header
-  being a digest of `dedup_id`. Truncation is advisory cleanup — a lost truncate
-  costs disk and a wider dedup window, never correctness, because delivery is
-  filtered by the journal's consumed offset.
+  A message re-sent under the same `flz.msg_id` is absorbed rather than
+  delivered twice, the record header being a digest of that id; a message
+  without one is always appended, as a stream processes every frame it is
+  sent. Truncation is advisory cleanup — a lost truncate costs disk and a wider
+  dedup window, never correctness, because delivery is filtered by the
+  journal's consumed offset.
   """
 
   alias Flezha.State.{
@@ -26,7 +28,7 @@ defmodule Flezha.State.TaskInbox do
     WalWriter
   }
 
-  @append_opts [sync: :batched, dedup: true]
+  @append_opts [sync: :batched]
 
   @msg_id_key "flz.msg_id"
 
@@ -39,7 +41,7 @@ defmodule Flezha.State.TaskInbox do
 
   @doc """
   Append one post-start input, durable before returning, and answer its offset.
-  A duplicate dedup id in the undelivered window is dropped and answers
+  A duplicate `flz.msg_id` in the undelivered window is dropped and answers
   `{:duplicate, existing_offset}` — exactly one entry exists and the operative
   receives the message once.
   """
@@ -47,9 +49,9 @@ defmodule Flezha.State.TaskInbox do
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
   def append(instance_id, message, metadata)
       when is_binary(instance_id) and is_binary(message) and is_map(metadata) do
-    {header, body} = encode(message, metadata)
+    {header, body, opts} = encode(message, metadata)
 
-    case RecordLog.append(Paths.inbox_id(instance_id), header, body, @append_opts) do
+    case RecordLog.append(Paths.inbox_id(instance_id), header, body, opts) do
       {:ok, seq} -> {:ok, offset(seq)}
       {:duplicate, seq} -> {:duplicate, offset(seq)}
       {:error, _} = err -> err
@@ -67,21 +69,17 @@ defmodule Flezha.State.TaskInbox do
           :gen_server.request_id_collection()
   def append_async(instance_id, message, metadata, reqids, label)
       when is_binary(instance_id) and is_binary(message) and is_map(metadata) do
-    {header, body} = encode(message, metadata)
+    {header, body, opts} = encode(message, metadata)
 
-    RecordLog.append_async(
-      Paths.inbox_id(instance_id),
-      header,
-      body,
-      @append_opts,
-      reqids,
-      label
-    )
+    RecordLog.append_async(Paths.inbox_id(instance_id), header, body, opts, reqids, label)
   end
 
+  # The writer's dedup window is consulted only for a message that carries an
+  # id: one without is appended whatever came before it.
   defp encode(message, metadata) do
-    dedup_id = dedup_id(message, metadata)
-    {header(dedup_id), encode_entry(dedup_id, message, metadata)}
+    dedup_id = dedup_id(metadata)
+    opts = Keyword.put(@append_opts, :dedup, dedup_id != "")
+    {header(dedup_id), encode_entry(dedup_id, message, metadata), opts}
   end
 
   # The record header is the dedup id's digest, so the writer refuses a
@@ -188,13 +186,12 @@ defmodule Flezha.State.TaskInbox do
 
   def decode_entry(_offset, _short), do: {:error, :short_entry}
 
-  # The sender's message id when it supplied one; otherwise a payload hash, which
-  # absorbs an accidental re-send but cannot tell two legitimately identical
-  # payloads apart (documented — such a sender must stamp `flz.msg_id`).
-  defp dedup_id(message, metadata) do
+  # The sender's message id when it supplied one, else empty: two identical
+  # payloads without ids are two messages.
+  defp dedup_id(metadata) do
     case Map.get(metadata, @msg_id_key) do
-      id when is_binary(id) and id != "" -> id
-      _ -> :crypto.hash(:sha256, message)
+      id when is_binary(id) -> id
+      _ -> ""
     end
   end
 end

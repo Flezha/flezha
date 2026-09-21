@@ -8,7 +8,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use flz_transport::service::payloader;
@@ -20,8 +20,56 @@ use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
 use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{Operative, OperativeRegistry};
-use crate::operative::topology::{CellMode, ChannelLookup, TaskletDescriptor};
-use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryParseLadder};
+use crate::operative::topology::{CellMode, ChannelLookup, OperativeTopology, TaskletDescriptor};
+use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryDeliver, EntryParseLadder};
+use crate::workflow::instance::{Inbound, InboxItem, WorkflowInstance};
+
+/// What the entrance reads off an instance of either kind: the topology the
+/// channel name resolves against, the id a park is filed under and the
+/// count of ladders holding a payload off-thread for it.
+pub trait EntryView: Send + Sync + 'static {
+    fn topology(&self) -> &Arc<OperativeTopology>;
+    fn instance_id(&self) -> &Arc<str>;
+    fn ladders(&self) -> &AtomicUsize;
+
+    /// The entrance parked a message instead of delivering it, durably;
+    /// `offset` is the one the controller stamped on it.
+    fn entry_parked(&self, _offset: Option<u64>) {}
+}
+
+impl EntryView for StreamInstance {
+    fn topology(&self) -> &Arc<OperativeTopology> {
+        &self.topology
+    }
+
+    fn instance_id(&self) -> &Arc<str> {
+        &self.instance_id
+    }
+
+    fn ladders(&self) -> &AtomicUsize {
+        &self.ladders
+    }
+}
+
+impl EntryView for WorkflowInstance {
+    fn topology(&self) -> &Arc<OperativeTopology> {
+        self.topology()
+    }
+
+    fn instance_id(&self) -> &Arc<str> {
+        &self.instance_id
+    }
+
+    fn ladders(&self) -> &AtomicUsize {
+        &self.ladders
+    }
+
+    /// The driver counts the message consumed without a pass, so the park
+    /// record releases it from the durable inbox.
+    fn entry_parked(&self, offset: Option<u64>) {
+        self.push_inbox(Inbound::Parked(offset.unwrap_or(0)));
+    }
+}
 
 /// Route one channel value to every consumer through its own edge — the one
 /// seam live delivery, the replay slice and an inter-tasklet emit share. A
@@ -334,11 +382,12 @@ pub struct OperativeDispatchHandle {
 
 impl OperativeDispatchHandle {
     /// A frame off the wire into the operative it names: the entry channel
-    /// resolved, the bytes wrapped, the value routed. A name the operative
-    /// does not declare is parked under that name rather than dropped or
-    /// rerouted; past that, the input-liveness signal is taken before anything
-    /// can decline the frame. A replay-end broadcast defers behind a host
-    /// class's staged slice members.
+    /// resolved, the bytes wrapped, the value routed to a stream's consumers
+    /// or into a workflow's inbox. A name the operative does not declare is
+    /// parked under that name rather than dropped or rerouted; past that, the
+    /// input-liveness signal is taken before anything can decline the frame.
+    /// A replay-end broadcast defers behind a host class's staged slice
+    /// members.
     pub fn dispatch(
         &self,
         instance_id: &str,
@@ -346,101 +395,119 @@ impl OperativeDispatchHandle {
         metadata: &HashMap<String, String>,
         stream: Arc<FlezhaStream>,
     ) {
-        let Some(instance) = self.stream_instance(instance_id, &payload, metadata) else {
+        let Some(unit) = self.registry.get_operative(instance_id) else {
+            eprintln!("[flezha] operative instance {} not found", instance_id);
             return;
         };
-
-        if metadata.contains_key("flz.replay_end") {
-            crate::host::deferred_end_replay_slice(&instance);
-            return;
-        }
-
-        let Some((channel_id, channel)) = entry_channel_or_park(&instance, &payload, metadata)
-        else {
-            return;
-        };
-
-        let (consumed_offset, replay) = frame_facts(metadata);
-
-        let Some(typed_payload) = enter_channel(
-            &instance,
-            channel_id,
-            channel,
-            payload,
-            &stream,
-            consumed_offset,
-            replay,
-        ) else {
-            return;
-        };
-
-        // The entry path has no producing Cell to withhold work from, so a
-        // `DropNothing` push here parks this reader — the one park the core
-        // keeps, and what carries ingress backpressure to the controller.
-        route_to_consumers(
-            &instance,
-            channel,
-            &typed_payload,
-            &stream,
-            consumed_offset,
-            replay,
-            None,
-        );
-    }
-}
-
-impl OperativeDispatchHandle {
-    /// The stream instance a frame names; a workflow instance takes it as
-    /// inbox input and answers `None`.
-    fn stream_instance(
-        &self,
-        instance_id: &str,
-        payload: &[u8],
-        metadata: &HashMap<String, String>,
-    ) -> Option<Arc<StreamInstance>> {
-        match self.registry.get_operative(instance_id) {
-            Some(unit) => match &*unit {
-                Operative::Stream(ri) => Some(Arc::clone(ri)),
-                Operative::Workflow(instance) => {
-                    route_inbox_frame(instance, instance_id, payload.to_vec(), metadata);
-                    None
-                }
-            },
-            None => {
-                eprintln!("[flezha] operative instance {} not found", instance_id);
-                None
-            }
+        match &*unit {
+            Operative::Stream(instance) => route_stream_frame(instance, payload, metadata, stream),
+            Operative::Workflow(instance) => feed_workflow_frame(instance, payload, metadata),
         }
     }
 }
 
-/// What the controller stamped: the input-log offset and whether the frame
-/// is a replayed slice member.
-fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, bool) {
-    let consumed_offset = metadata
-        .get("flz.offset")
-        .and_then(|s| s.parse::<u64>().ok());
-    (consumed_offset, metadata.contains_key("flz.replay"))
+fn route_stream_frame(
+    instance: &Arc<StreamInstance>,
+    payload: Vec<u8>,
+    metadata: &HashMap<String, String>,
+    stream: Arc<FlezhaStream>,
+) {
+    if metadata.contains_key("flz.replay_end") {
+        crate::host::deferred_end_replay_slice(instance);
+        return;
+    }
+
+    let (consumed_offset, replay) = frame_facts(metadata, "flz.offset");
+    let Some((channel_id, channel)) =
+        entry_channel_or_park(instance, &payload, metadata, consumed_offset)
+    else {
+        return;
+    };
+
+    let Some(typed_payload) = enter_channel(
+        instance,
+        channel_id,
+        channel,
+        payload,
+        &stream,
+        consumed_offset,
+        replay,
+    ) else {
+        return;
+    };
+
+    // The entry path has no producing Cell to withhold work from, so a
+    // `DropNothing` push here parks this reader — the one park the core
+    // keeps, and what carries ingress backpressure to the controller.
+    route_to_consumers(
+        instance,
+        channel,
+        &typed_payload,
+        &stream,
+        consumed_offset,
+        replay,
+        None,
+    );
 }
 
-/// Post-start input into the running driver's inbox with its stamped offset;
-/// dropped only when the instance is not running.
-fn route_inbox_frame(
-    instance: &crate::workflow::instance::WorkflowInstance,
-    instance_id: &str,
+/// A message into a workflow instance through the same entrance a stream's
+/// frame takes: the channel name resolved, the bytes wrapped, the typed
+/// value pushed into the driver's inbox with the durable-inbox offset the
+/// controller stamped. The entry edge's transforms run when the driver
+/// seeds the pass, on the chain the channel roots.
+pub fn feed_workflow_frame(
+    instance: &Arc<WorkflowInstance>,
     payload: Vec<u8>,
     metadata: &HashMap<String, String>,
 ) {
-    let offset = metadata
-        .get(crate::workflow::INBOX_OFFSET_KEY)
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
-    if !instance.push_inbox(payload, offset) {
-        eprintln!(
-            "[flezha] inbox frame for workflow unit {} dropped (not running / no inbox)",
-            instance_id
-        );
+    let (journaled, replay) = frame_facts(metadata, crate::workflow::INBOX_OFFSET_KEY);
+    let offset = journaled.unwrap_or(0);
+    let Some((channel_id, channel)) =
+        entry_channel_or_park(instance, &payload, metadata, journaled)
+    else {
+        return;
+    };
+    let deliver = || {
+        let instance = Arc::clone(instance);
+        Box::new(move |value: Arc<dyn Any + Send + Sync>| {
+            push_inbox_or_refuse(&instance, channel_id, value, offset, replay)
+        }) as EntryDeliver
+    };
+    if let Some(value) = wrap_entry(instance, channel_id, channel, payload, journaled, deliver) {
+        if let Err(e) = push_inbox_or_refuse(instance, channel_id, value, offset, replay) {
+            eprintln!("[flezha] {e}");
+        }
     }
+}
+
+fn push_inbox_or_refuse(
+    instance: &WorkflowInstance,
+    channel_id: ChannelId,
+    value: Arc<dyn Any + Send + Sync>,
+    offset: u64,
+    replay: bool,
+) -> Result<(), String> {
+    if instance.push_inbox(Inbound::Message(InboxItem {
+        channel_id,
+        value,
+        offset,
+        replay,
+    })) {
+        Ok(())
+    } else {
+        Err(format!(
+            "inbox frame for workflow unit {} dropped (not running / no inbox)",
+            instance.instance_id
+        ))
+    }
+}
+
+/// What the controller stamped: the offset under `offset_key` (a stream's
+/// input log, a workflow's durable inbox) and whether the frame is a
+/// replayed slice member.
+fn frame_facts(metadata: &HashMap<String, String>, offset_key: &str) -> (Option<u64>, bool) {
+    let consumed_offset = metadata.get(offset_key).and_then(|s| s.parse::<u64>().ok());
+    (consumed_offset, metadata.contains_key("flz.replay"))
 }
 
 /// The reason a frame that named no channel did not enter: there was nothing
@@ -450,13 +517,15 @@ pub(crate) const NO_ENTRY_CHANNEL_ERROR: &str = "the operative declares no entry
 /// The entry channel a frame enters: the one its `channel` metadata names, or
 /// the first declared entry channel when it names none. `None` when it names
 /// a channel the operative does not declare — the payload is then parked under
-/// that name, neither dropped nor routed to some other channel.
-fn entry_channel_or_park<'a>(
-    instance: &'a Arc<StreamInstance>,
+/// that name, with the offset the controller stamped on the frame, neither
+/// dropped nor routed to some other channel.
+fn entry_channel_or_park<'a, V: EntryView>(
+    instance: &'a Arc<V>,
     payload: &[u8],
     metadata: &HashMap<String, String>,
+    consumed_offset: Option<u64>,
 ) -> Option<(ChannelId, &'a ChannelDescriptor)> {
-    let topology = &instance.topology;
+    let topology = instance.topology();
     // The name the frame asked for; empty when it asked for none and there is
     // no entry channel to default to.
     let requested: &str = match metadata.get("channel") {
@@ -472,7 +541,7 @@ fn entry_channel_or_park<'a>(
             None => "",
         },
     };
-    park_unresolved_entry(instance, requested, payload, metadata);
+    park_unresolved_entry(instance, requested, payload, consumed_offset);
     None
 }
 
@@ -492,31 +561,29 @@ fn unresolved_entry_error(declared: &[&str], requested: &str) -> String {
 /// name it asked for, off the reader thread as every other park is. The budget
 /// is one — the same declared set answers every re-attempt — so the ladder
 /// parks without waiting.
-fn park_unresolved_entry(
-    instance: &Arc<StreamInstance>,
+fn park_unresolved_entry<V: EntryView>(
+    instance: &Arc<V>,
     requested: &str,
     payload: &[u8],
-    metadata: &HashMap<String, String>,
+    consumed_offset: Option<u64>,
 ) {
-    let declared = instance.topology.declared_names(ChannelKind::Entry);
+    let declared = instance.topology().declared_names(ChannelKind::Entry);
     let error = unresolved_entry_error(&declared, requested);
-    // The replay flag is deliberately not read: an input-log replay parks
-    // again, and the controller's store keys an entry on its ORIGIN identity
-    // (offset, or channel and payload hash) rather than on the park id, so a
-    // re-park of a frame that parked before is the same row. Skipping the
-    // replay would instead lose a frame that only became unresolved after the
-    // class changed.
-    let (consumed_offset, _replay) = frame_facts(metadata);
-    let instance_id = instance.instance_id.to_string();
+    // A replay parks again rather than being skipped: the controller's store
+    // keys an entry on its ORIGIN identity (offset, or channel and payload
+    // hash) rather than on the park id, so a re-park of a frame that parked
+    // before is the same row. Skipping the replay would instead lose a frame
+    // that only became unresolved after the class changed.
+    let parked = Arc::clone(instance);
     let requested = requested.to_string();
     let payload = payload.to_vec();
     crate::retry::spawn_park_thread(instance, "flezha-unresolved-entry-park", move || {
-        crate::retry::run_retry_park_ladder(
+        crate::retry::run_entrance_ladder(
+            &*parked,
             &format!("entry channel `{requested}`"),
             // The budget of one, and the identity slot a frame-controlled name
             // never reaches, are the target's to decide.
             crate::retry::ParkTarget::unresolved(&requested),
-            &instance_id,
             consumed_offset,
             Some(payload),
             error,
@@ -548,34 +615,55 @@ fn enter_channel(
         replay,
         stream,
     )?;
+    // The ladder's re-attempt runs off the reader thread with no producing
+    // Cell in hand, so it takes the entry form of delivery.
+    let deliver = || {
+        let instance = Arc::clone(instance);
+        let stream = Arc::clone(stream);
+        Box::new(move |value: Arc<dyn Any + Send + Sync>| {
+            let channel = instance
+                .topology
+                .channel(channel_id)
+                .ok_or_else(|| format!("entry channel {channel_id} left the topology"))?;
+            route_to_consumers(
+                &instance,
+                channel,
+                &value,
+                &stream,
+                consumed_offset,
+                replay,
+                None,
+            );
+            Ok(())
+        }) as EntryDeliver
+    };
     wrap_entry(
         instance,
         channel_id,
         channel,
         payload,
-        stream,
         consumed_offset,
-        replay,
+        deliver,
     )
 }
 
 /// The wire bytes through `wrap_input`. A parsed entry's failure rides the
-/// ladder, so its bytes are kept; a passthrough entry keeps the drop-and-log
-/// path and no clone.
-fn wrap_entry(
-    instance: &Arc<StreamInstance>,
+/// ladder, so its bytes are kept and `deliver` is built for the re-attempts;
+/// a passthrough entry keeps the drop-and-log path and no clone.
+fn wrap_entry<V: EntryView>(
+    instance: &Arc<V>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
-    stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
-    replay: bool,
+    deliver: impl FnOnce() -> EntryDeliver,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
     let retry_bytes = channel.entry_parsed.then(|| payload.clone());
     let Some(wrap) = &channel.wrap_input else {
         eprintln!(
             "[flezha] operative {} channel `{}` has no entry wrapper",
-            instance.instance_id, channel.name
+            instance.instance_id(),
+            channel.name
         );
         return None;
     };
@@ -588,13 +676,14 @@ fn wrap_entry(
                     channel_id,
                     bytes,
                     first_error: e,
-                    stream: Arc::clone(stream),
                     consumed_offset,
-                    replay,
+                    deliver: deliver(),
                 }),
                 None => eprintln!(
                     "[flezha] operative {} channel `{}`: wrap_input failed: {}",
-                    instance.instance_id, channel.name, e
+                    instance.instance_id(),
+                    channel.name,
+                    e
                 ),
             }
             None

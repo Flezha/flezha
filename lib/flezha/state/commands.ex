@@ -162,6 +162,9 @@ defmodule Flezha.State.Commands do
         %RunnerCommands.TaskJournalState{
           committed_task_idxs: resume.committed_task_idxs,
           iter: resume.iter,
+          # The chain the last committed iteration ran, which a resumed
+          # chained loop feeds its carry back into.
+          entry_channel: resume.entry_channel,
           # The previous iteration's terminal batch — what re-seeds iteration
           # N+1 of a handoff-chained loop.
           handoff: handoff_items(resume.handoff),

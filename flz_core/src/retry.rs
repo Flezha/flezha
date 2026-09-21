@@ -17,7 +17,7 @@ use flz_transport::utility::noise::{noise, xorshift64};
 use crate::channel::{ChannelDescriptor, RetryPolicy};
 use crate::operative::instance::StreamInstance;
 use crate::park::RETRIES_TOTAL;
-use crate::routing::{deliver_edge, route_to_consumers};
+use crate::routing::{deliver_edge, EntryView};
 
 /// What a park is attributed to, and how hard the ladder tries first.
 ///
@@ -104,39 +104,42 @@ fn backoff(base_ms: u64, attempt: u32) -> Duration {
     Duration::from_millis(jittered.min(crate::channel::RETRY_BACKOFF_MAX_MS))
 }
 
+/// Where a re-parsed entry value goes: a stream's consumers, a workflow's
+/// inbox. The one place the two kinds differ on the entry ladder.
+pub type EntryDeliver = Box<dyn Fn(Arc<dyn Any + Send + Sync>) -> Result<(), String> + Send + Sync>;
+
 /// A poison entry payload on its channel's ladder, off the reader thread;
 /// parked under the entry channel's identity when exhausted.
-pub struct EntryParseLadder {
-    pub instance: Arc<StreamInstance>,
+pub struct EntryParseLadder<V: EntryView> {
+    pub instance: Arc<V>,
     pub channel_id: u32,
     pub bytes: Vec<u8>,
     pub first_error: String,
-    pub stream: Arc<FlezhaStream>,
     pub consumed_offset: Option<u64>,
-    pub replay: bool,
+    pub deliver: EntryDeliver,
 }
 
-pub fn spawn_entry_parse_ladder(ladder: EntryParseLadder) {
+pub fn spawn_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
     let instance = Arc::clone(&ladder.instance);
     spawn_park_thread(&instance, "flezha-entry-parse-park", move || {
         run_entry_parse_ladder(ladder)
     });
 }
 
-fn run_entry_parse_ladder(ladder: EntryParseLadder) {
+fn run_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
     let channel = ladder
         .instance
-        .topology
+        .topology()
         .channel(ladder.channel_id)
         .expect("entry channel present in topology");
     let wrap = channel
         .wrap_input
         .as_ref()
         .expect("parsed entry channel carries a wrap_input");
-    run_retry_park_ladder(
+    run_entrance_ladder(
+        &*ladder.instance,
         &format!("entry channel `{}`", channel.name),
         ParkTarget::entry(channel),
-        &ladder.instance.instance_id,
         ladder.consumed_offset,
         Some(ladder.bytes.clone()),
         ladder.first_error.clone(),
@@ -144,25 +147,41 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
             // A parser violating the determinism contract may succeed on a
             // re-attempt; deliver rather than drop.
             let typed = wrap(ladder.bytes.clone())?;
-            route_to_consumers(
-                &ladder.instance,
-                channel,
-                &typed,
-                &ladder.stream,
-                ladder.consumed_offset,
-                ladder.replay,
-                None,
-            );
-            Ok(())
+            (ladder.deliver)(typed)
         },
     );
+}
+
+/// The ladder for a payload that has not reached `instance` yet: climbed as
+/// [`run_retry_park_ladder`] climbs, and `instance` told when it parked.
+pub(crate) fn run_entrance_ladder<V: EntryView>(
+    instance: &V,
+    label: &str,
+    target: ParkTarget<'_>,
+    consumed_offset: Option<u64>,
+    payload: Option<Vec<u8>>,
+    first_error: String,
+    attempt_step: impl FnMut() -> Result<(), String>,
+) {
+    let parked = run_retry_park_ladder(
+        label,
+        target,
+        instance.instance_id(),
+        consumed_offset,
+        payload,
+        first_error,
+        attempt_step,
+    );
+    if parked {
+        instance.entry_parked(consumed_offset);
+    }
 }
 
 /// Re-attempt one step per the target's budget, then park what still fails;
 /// `attempt_step` re-runs AND delivers, so the ladders differ only in the
 /// step. A [`ParkTarget`] travels rather than a `ChannelDescriptor`, because a
 /// frame naming a channel the operative does not declare has no descriptor to
-/// park under and must park all the same.
+/// park under and must park all the same. `true` when the ladder parked.
 pub(crate) fn run_retry_park_ladder(
     label: &str,
     target: ParkTarget<'_>,
@@ -171,13 +190,8 @@ pub(crate) fn run_retry_park_ladder(
     payload: Option<Vec<u8>>,
     first_error: String,
     mut attempt_step: impl FnMut() -> Result<(), String>,
-) {
-    let ParkTarget {
-        channel,
-        tasklet_id,
-        cell_suffix,
-        retry,
-    } = target;
+) -> bool {
+    let retry = target.retry;
     let mut attempt: u32 = 1; // the routing-thread run was attempt 1
     let mut error = first_error;
     while attempt < retry.max_attempts {
@@ -185,15 +199,44 @@ pub(crate) fn run_retry_park_ladder(
         crate::util::sleep_interruptible(delay, None);
         attempt += 1;
         match attempt_step() {
-            Ok(()) => return,
+            Ok(()) => return false,
             Err(e) => error = e,
         }
     }
+    park_exhausted(
+        label,
+        target,
+        instance_id,
+        consumed_offset,
+        payload,
+        error,
+        attempt,
+    );
+    true
+}
 
+/// Park what a ladder could not deliver after `attempts`, under the
+/// target's identity; the tail every exhausted ladder ends in, whether it
+/// climbed here or at a workflow stage's barrier.
+pub(crate) fn park_exhausted(
+    label: &str,
+    target: ParkTarget<'_>,
+    instance_id: &str,
+    consumed_offset: Option<u64>,
+    payload: Option<Vec<u8>>,
+    error: String,
+    attempts: u32,
+) {
+    let ParkTarget {
+        channel,
+        tasklet_id,
+        cell_suffix,
+        ..
+    } = target;
     crate::park::PARKED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     eprintln!(
         "[flezha] {} parking payload to DLQ after {} attempt(s): {}",
-        label, attempt, error
+        label, attempts, error
     );
     let identity = crate::flusher::encode_cell_identity(instance_id, tasklet_id, cell_suffix);
     let body = crate::park::ParkBody {
@@ -205,7 +248,7 @@ pub(crate) fn run_retry_park_ladder(
         entry: crate::flusher::DlqEntryBody {
             channel: channel.to_string(),
             error,
-            attempts: attempt,
+            attempts,
             payload,
         },
     };
@@ -247,8 +290,8 @@ pub(crate) fn spawn_edge_ladder(
 /// A ladder off the routing thread; a failure to spawn is reported. The ladder
 /// counts as running for `instance` until its closure is dropped, whether it
 /// ran or its thread never started.
-pub(crate) fn spawn_park_thread(
-    instance: &Arc<StreamInstance>,
+pub(crate) fn spawn_park_thread<V: EntryView>(
+    instance: &Arc<V>,
     name: &str,
     run: impl FnOnce() + Send + 'static,
 ) {
@@ -265,18 +308,18 @@ pub(crate) fn spawn_park_thread(
 }
 
 /// One count in an instance's running ladders, given back on drop.
-struct LadderRunning(Arc<StreamInstance>);
+struct LadderRunning<V: EntryView>(Arc<V>);
 
-impl LadderRunning {
-    fn hold(instance: &Arc<StreamInstance>) -> LadderRunning {
-        instance.ladders.fetch_add(1, Ordering::AcqRel);
+impl<V: EntryView> LadderRunning<V> {
+    fn hold(instance: &Arc<V>) -> LadderRunning<V> {
+        instance.ladders().fetch_add(1, Ordering::AcqRel);
         LadderRunning(Arc::clone(instance))
     }
 }
 
-impl Drop for LadderRunning {
+impl<V: EntryView> Drop for LadderRunning<V> {
     fn drop(&mut self) {
-        self.0.ladders.fetch_sub(1, Ordering::AcqRel);
+        self.0.ladders().fetch_sub(1, Ordering::AcqRel);
     }
 }
 

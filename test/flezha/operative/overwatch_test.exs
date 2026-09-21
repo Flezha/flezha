@@ -86,6 +86,42 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
            }
   end
 
+  test "a seeded first message is ingested first, on the entry channel its metadata names" do
+    operative_id = "seed_input_first_test"
+
+    operative = %Builder{
+      id: operative_id,
+      factory_id: @factory,
+      opts: [seed_input: {"seeded-first", %{"channel" => "input"}}]
+    }
+
+    assert {:ok, _} = OperativeManager.start_operative(@namespace, operative)
+    # A send that lands after the bind is the instance's second input: the
+    # seed rides the bind itself, so nothing can be ingested ahead of it.
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn ->
+               not match?(
+                 {:error, _},
+                 OperativeManager.send_io_confirming(operative_id, @namespace, "second", %{})
+               )
+             end,
+             5_000
+           )
+
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> text_inputs(operative_id) == ["seeded-first", "second"] end,
+             5_000
+           ),
+           "the seed did not land first: #{inspect(text_inputs(operative_id))}"
+  end
+
+  defp text_inputs(operative_id) do
+    case OperativeManager.get_cell_state(@namespace, operative_id) do
+      {:ok, json} -> get_in(Payloader.json_to_map(json), ["store_input_tasklet", "text_inputs"])
+      _ -> nil
+    end
+  end
+
   test "4.2.2 cold start with non-empty inline init_values bypasses chain" do
     operative_id = "init_state_inline_bypass_test"
 

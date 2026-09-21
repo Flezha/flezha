@@ -68,6 +68,9 @@ message ConnectSocket {
 message AddOperative {
     string operative_id = 1;
     string factory_id = 2;
+    // Initial state per tasklet name, a JSON object, for both kinds: a
+    // workflow's tasklets take it as a stream's do, and a workflow's input
+    // is the messages on its entry channels, never this document.
     string init_values = 3;
     // Operative kind for this unit: "stream" or "workflow". Default
     // (when populated by the Controller from the operative's :kind) is
@@ -294,6 +297,9 @@ message IterCommit {
     repeated TaskHandoffItem handoff = 4;
     bool completes = 5;
     bytes result = 6;
+    // The entry channel whose chain the iteration ran; a resumed chained
+    // loop feeds its carry back into that chain.
+    string entry_channel = 7;
 }
 
 // Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
@@ -312,11 +318,14 @@ message IterCommitResponse {
 // and evicts the instance from the runner; the registry keeps it `suspended`
 // until a new inbox append — or the wake deadline — rehydrates it
 // (workflow-durable-suspension). `wake_deadline_ms` is 0 when the operative
-// declared no durable timer.
+// declared no durable timer. `consumed_offset` is the highest durable-inbox
+// offset the run parked to the dead-letter queue unread, 0 when none: consumed
+// without a pass, so the Controller releases it rather than re-delivering it.
 message IterPark {
     string operative_id = 1;
     uint32 iter = 2;
     uint64 wake_deadline_ms = 3;
+    uint64 consumed_offset = 4;
 }
 
 // One journaled forward task commit, shipped back on crash-resume so the driver
@@ -372,6 +381,9 @@ message TaskJournalState {
     repeated TaskEdgeHandoff task_handoffs = 9;
     bool completed = 10;
     bytes result = 11;
+    // The entry channel the last committed iteration named; empty before
+    // any iteration committed.
+    string entry_channel = 12;
 }
 
 // Per-Cell state restore handshake: Controller ships latest snapshot

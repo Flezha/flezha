@@ -7,18 +7,19 @@ The workflow-durable-loop capability turns the structured workflow chain into a 
 ### Requirement: A structured workflow chain can loop with a durable per-iteration commit
 
 A structured workflow class SHALL be able to declare its chain as a loop: each
-iteration seeds from the next inbox item or the previous iteration's handoff,
-runs the chain under the existing per-task commit gating, and ends with an
-iteration commit — the controller SHALL append `iter_committed(N,
-consumed_inbox_offset)` to the task-journal, trigger boundary snapshot compaction
+iteration seeds from the next message in the inbox or from the previous iteration's
+handoff, runs the chain the pass's entry channel roots under the existing per-task
+commit gating, and ends with an iteration commit — the controller SHALL append
+`iter_committed(N, consumed_inbox_offset, entry_channel)` to the task-journal, naming
+the entry channel whose chain the iteration ran, trigger boundary snapshot compaction
 for the instance's cells (existing CompactCell machinery), and flush the
 iteration's staged outbox. The `iter_committed` append SHALL be made durable
 by the `FsyncBatcher` tick like a task commit, and its ack SHALL follow the
 sync. Once `iter_committed(N)` is durable the controller SHALL cut the
 task-journal below the oldest entry its fold still needs — the pending outbox
 entries, the latest `rewound` marker with the commits it has yet to undo, and
-the latest `iter_committed` that carries the resume point and the epoch — so
-the journal a loop keeps is bounded by one iteration plus a settled prefix
+the latest `iter_committed` that carries the resume point, the entry channel and the
+epoch — so the journal a loop keeps is bounded by one iteration plus a settled prefix
 below the cut threshold (64 KiB by default), never by its history. The cut
 SHALL be the journal writer's own work, off the process that acks, and a
 class whose tasklets declare compensation SHALL keep its history (the saga
@@ -35,12 +36,12 @@ loop contract.
 #### Scenario: Turn ends with journal + snapshot + flush
 
 - **WHEN** a looping workflow operative finishes iteration N
-- **THEN** the journal SHALL hold `iter_committed(N)` with the consumed inbox offset, the cells SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
+- **THEN** the journal SHALL hold `iter_committed(N)` with the consumed inbox offset and the pass's entry channel, the cells SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
 
 #### Scenario: The journal does not grow with the turns
 
 - **WHEN** a looping workflow operative with no compensable tasklet has committed 1 000 iterations whose outboxes were all flushed
-- **THEN** its task-journal SHALL hold the entries of the current iteration plus at most the cut threshold of settled prefix, and a rehydrate SHALL restore from them the resume point, consumed offset, handoff and epoch a full history would have given
+- **THEN** its task-journal SHALL hold the entries of the current iteration plus at most the cut threshold of settled prefix, and a rehydrate SHALL restore from them the resume point, consumed offset, entry channel, handoff and epoch a full history would have given
 
 #### Scenario: A class with compensable tasklets keeps its history
 
@@ -54,7 +55,7 @@ loop contract.
 
 #### Scenario: A re-sent message is absorbed across a writer restart
 
-- **WHEN** the inbox writer is reopened and a message already in the undelivered window is sent again
+- **WHEN** the inbox writer is reopened and a message carrying an `flz.msg_id` already in the undelivered window is sent again
 - **THEN** the append SHALL answer the existing entry's offset from the window rebuilt off the file, and the operative SHALL receive the message once
 
 #### Scenario: Snapshot failure does not lose the commit
@@ -68,13 +69,31 @@ On respawn of a looping durable workflow instance, the driver SHALL resume at
 iteration `N+1` where `N` is the highest journaled `iter_committed` — never at
 the loop start — with cell state restored from the iteration-boundary
 snapshots (or WAL replay) and input delivered from the recorded consumed
-offset. Work of an uncommitted in-flight iteration MAY re-run (at-least-once,
-existing author contract).
+offset. A message-fed iteration (`ONCE` pass 0, every `PER_INPUT` pass, `CHAINED`
+pass 0) that was in flight at the crash SHALL be resumed over the message the
+controller re-forwards for it: that message's channel is the pass's channel, its
+tasklets that the journal records committed SHALL be skipped and re-seed their
+children from the journaled handoff, its roots not yet committed SHALL re-run
+over the message, and the iteration SHALL commit that message's offset, so the
+message drives one iteration and never seeds a second. A carry-fed `CHAINED`
+iteration SHALL resume into the chain the journaled entry channel names. Work
+of an uncommitted in-flight iteration MAY re-run (at-least-once, existing
+author contract).
 
 #### Scenario: Resume from the last committed iteration
 
 - **WHEN** a looping instance crashes during iteration 3 after `iter_committed(2)` was journaled
 - **THEN** on respawn it SHALL resume iteration 3 (re-seeded from inbox offset recorded at iteration 2's commit), and iterations 1–2 SHALL NOT re-run
+
+#### Scenario: A mid-iteration resume consumes its message once
+
+- **WHEN** a `per_input` instance crashes in iteration 3 after its root tasklet committed and before `iter_committed(3)`, and the controller re-forwards the message iteration 3 had taken
+- **THEN** the resumed iteration 3 SHALL skip the committed root, run the rest from its journaled handoff, commit with that message's offset, and iteration 4 SHALL wait for a new message rather than run over the same one
+
+#### Scenario: A resumed chained iteration re-enters its chain
+
+- **WHEN** a `chained` instance with two entry channels crashes in iteration 2 after `iter_committed(1)` named entry channel `b`
+- **THEN** the resumed iteration 2 SHALL feed the journaled handoff into `b`'s chain
 
 ### Requirement: KeepProgress rollback is journal-backed
 

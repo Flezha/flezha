@@ -538,11 +538,11 @@ channel named by `input` (or `input` when none is written) and decoded by
 `codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the sink
 when one is written; a factory id equal to the identity; and every class-level
 setting at that SDK's default for that kind. A stream short form is a default
-stream. A workflow short form is a `once` workflow: `flz operative start --kind
-workflow --init-values '<json>'` seeds the entry channel, the tasklet runs
-once, its output reaches the sink after the commit, and the instance
-completes. A workflow short form started by a spawn does not see its payload
-yet; that is `KB-381`, not a property of the short form.
+stream. A workflow short form is a `once` workflow: its entry channel receives
+the instance's first message, from a spawn, `flz operative send` or
+`flz operative start --text`, the tasklet runs once, its output reaches the
+sink after the commit, and the instance completes; `--init-values` is the
+tasklet's initial state, as on a stream.
 
 **The expansion is an ordinary tasklet and an ordinary operative, and the
 tasklet is named after the factory id, verbatim.** A cell lives at

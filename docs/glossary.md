@@ -206,11 +206,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   reverse-topological order, each journaled with its undo outbox. `RollbackMode::AllOrNothing`
   (default) unwinds every committed iteration, `KeepProgress` only the in-flight one; a hookless
   tasklet is skipped, and an undo handle must live in cell state.
-- **Durable loop** — `LoopMode::Once` (default), `PerInput` (one iteration per inbox item) or
-  `Chained` (iteration N+1 seeded by N's terminal output). The **iteration boundary**
+- **Durable loop** — `LoopMode::Once` (default, one pass over the first message), `PerInput`
+  (one iteration per message) or `Chained` (the first message, then iteration N+1 seeded by
+  N's terminal output into that message's chain). The **iteration boundary**
   (`IterCommit`) is where suspension, the keep-progress unit and rewind attach.
 - **Durable inbox** — a workflow instance's input, journaled to `inbox.wal` (`Flezha.State.TaskInbox`)
-  before it is forwarded and deduplicated by message id or payload hash within the undelivered window.
+  before it is forwarded and deduplicated by `flz.msg_id` within the undelivered window; a message
+  without an id is never a duplicate.
 - **Suspension / rehydrate** — between iterations the instance is evicted from its runner entirely
   (`IterPark`, journaled first) while the Overwatch and registry entry remain; a new message or a
   durable wake timer rehydrates it through the ordinary bind path.

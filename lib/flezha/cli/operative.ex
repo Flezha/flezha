@@ -7,6 +7,7 @@ defmodule Flezha.Service.Cli.Operative do
   alias Flezha.AuthZ.Namespace
   alias Flezha.Identificator
   alias Flezha.Observability.Signal
+  alias Flezha.Operative.Builder
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
@@ -19,9 +20,11 @@ defmodule Flezha.Service.Cli.Operative do
 
   @doc """
   Starts an operative and prints the id it runs under. The call's options carry
-  `id` (generated when absent), `plugins` (a JSON array, `[]` when absent) and
-  `kind` (`stream` when absent). Answers `{:ok, %{id:, outcome:}}`, which the
-  start's audit record reads.
+  `id` (generated when absent), `plugins` (a JSON array, `[]` when absent),
+  `kind` (`stream` when absent) and, for a first message, `text` with an
+  optional `channel`, delivered as the instance's first input on the
+  mechanism a tasklet's spawn uses. Answers `{:ok, %{id:, outcome:}}`, which
+  the start's audit record reads.
   """
   def operative_start(namespace, factory_id, init_values, format, opts_json, %{opts: opts}) do
     format = Context.atom!(format, [:text, :json], "format")
@@ -33,12 +36,12 @@ defmodule Flezha.Service.Cli.Operative do
 
     {partitions, opts_kw} = pop_partitions(opts_kw)
 
-    operative = %Flezha.Operative.Builder{
+    operative = %Builder{
       id: Keyword.get(opts, :id),
       factory_id: factory_id,
       kind: parse_kind(Keyword.get(opts, :kind, "stream")),
       init_values: Context.json!(init_values, "--init-values"),
-      opts: opts_kw
+      opts: seed_input(opts_kw, Keyword.get(opts, :text), Keyword.get(opts, :channel))
     }
 
     plugins_json = Keyword.get(opts, :plugins, "[]")
@@ -47,6 +50,16 @@ defmodule Flezha.Service.Cli.Operative do
     if partitions >= 2,
       do: start_partitioned(namespace, operative, partitions, plugins_json, format),
       else: start_operative(namespace, operative, plugins_json, format)
+  end
+
+  # `--text` is the instance's first input, on the entry channel `--channel`
+  # names or the first declared one.
+  defp seed_input(opts_kw, text, channel) do
+    case Builder.seed_input(text, channel) do
+      {:ok, nil} -> opts_kw
+      {:ok, seed} -> Keyword.put(opts_kw, :seed_input, seed)
+      {:error, reason} -> Context.halt!("error: #{reason}; give --text too")
+    end
   end
 
   # `--partitions` arrives as a decimal string like every CLI opt. Absent or

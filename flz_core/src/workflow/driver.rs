@@ -19,12 +19,12 @@ use super::compensation::{
     emit_compensation_record, run_compensation, run_rewind_undo, stages_from_intents, CellRun,
     StageRecord,
 };
-use super::instance::{InboxItem, JournalResume, WorkflowInstance};
+use super::instance::{Inbound, JournalResume, WorkflowInstance};
 use super::resume::{journaled_stages, next_iteration_seed, park, IterationSeed, IterationStart};
-use super::spec::{TaskDag, WorkflowSpec};
+use super::spec::{EntryChain, TaskDag, WorkflowSpec};
 use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::cell::CellSlot;
-use crate::channel::{BuildCellArgs, ConsumerEdge, RetryPolicy, TaskletId};
+use crate::channel::{BuildCellArgs, ChannelId, ConsumerEdge, RetryPolicy, TaskletId};
 use crate::flusher::CellFlusher;
 use crate::operative::topology::{CellMode, OperativeTopology, TaskletDescriptor};
 use crate::state_sink::COMPENSATION_INTENT_PAYLOAD_ID;
@@ -56,13 +56,16 @@ pub(super) struct ChainCtx<'a> {
     pub(super) rollback_mode: RollbackMode,
     pub(super) loop_mode: LoopMode,
     pub(super) wake_after: Option<Duration>,
-    pub(super) inbox: &'a Receiver<InboxItem>,
+    pub(super) inbox: &'a Receiver<Inbound>,
     pub(super) retry: RetryPolicy,
     pub(super) barrier_retry_attempts: u32,
     pub(super) persistence_enabled: bool,
     /// Inbox items the controller still owes this bind; the park-idle clock
     /// starts at zero.
     pub(super) owed_inbox: std::cell::Cell<u32>,
+    /// The highest durable-inbox offset this run parked to the dead-letter
+    /// queue unread: consumed without a pass, and released by the park record.
+    pub(super) parked_offset: std::cell::Cell<u64>,
 }
 
 impl ChainCtx<'_> {
@@ -77,6 +80,21 @@ impl ChainCtx<'_> {
         self.topology
             .tasklet(self.dag.order[node])
             .expect("dag tasklet present in topology")
+    }
+
+    /// A message went to the dead-letter queue instead of into a pass.
+    pub(super) fn note_parked(&self, offset: u64) {
+        self.parked_offset.set(self.parked_offset.get().max(offset));
+    }
+
+    /// The chain the entry channel `channel_id` roots.
+    pub(super) fn chain(&self, channel_id: ChannelId) -> Result<&EntryChain, WorkflowError> {
+        self.dag.chain(channel_id).ok_or_else(|| {
+            WorkflowError::non_retryable(format!(
+                "channel {channel_id} is not an entry channel of workflow {}",
+                self.instance_id
+            ))
+        })
     }
 
     /// The edge from `producer`'s output channel into `child`; `None` when
@@ -116,12 +134,7 @@ pub(super) fn extend_mapped(
 
 /// Spawn the driver for an instance the caller already registered — before
 /// the `AddOperative` ack, so nothing arriving right after is lost.
-pub fn spawn(
-    spec: Arc<WorkflowSpec>,
-    instance: Arc<WorkflowInstance>,
-    inbox_rx: Receiver<InboxItem>,
-    args: String,
-) {
+pub fn spawn(instance: Arc<WorkflowInstance>, inbox_rx: Receiver<Inbound>) {
     let name = format!("flezha-workflow-{}", instance.instance_id);
     let thread_instance = Arc::clone(&instance);
     let mut builder = thread::Builder::new().name(name);
@@ -130,7 +143,7 @@ pub fn spawn(
         0 => {}
         kib => builder = builder.stack_size(kib * 1024),
     }
-    let spawned = builder.spawn(move || run(spec, thread_instance, inbox_rx, args));
+    let spawned = builder.spawn(move || run(thread_instance, inbox_rx));
 
     if let Err(e) = spawned {
         // Spawn failed: deregister this run's flusher entries and report a
@@ -146,12 +159,8 @@ pub fn spawn(
     }
 }
 
-fn run(
-    spec: Arc<WorkflowSpec>,
-    instance: Arc<WorkflowInstance>,
-    inbox_rx: Receiver<InboxItem>,
-    args: String,
-) {
+fn run(instance: Arc<WorkflowInstance>, inbox_rx: Receiver<Inbound>) {
+    let spec = Arc::clone(&instance.spec);
     let finished = Arc::new(AtomicBool::new(false));
 
     // max_duration backstop: trip `cancel` once it elapses, unless the body
@@ -163,7 +172,7 @@ fn run(
     // Hold on the crash-resume gate until the Controller's Cell restores
     // land, then drive the chain over the restored state.
     instance.wait_for_restore();
-    let outcome = run_structured(&spec, &instance, &args, &inbox_rx);
+    let outcome = run_structured(&spec, &instance, &inbox_rx);
 
     finished.store(true, Ordering::Release);
     if let Some(w) = watcher {
@@ -193,8 +202,7 @@ fn run(
 fn run_structured(
     spec: &WorkflowSpec,
     instance: &WorkflowInstance,
-    args: &str,
-    inbox: &Receiver<InboxItem>,
+    inbox: &Receiver<Inbound>,
 ) -> RunOutcome {
     let topology = &spec.topology;
 
@@ -216,8 +224,9 @@ fn run_structured(
         barrier_retry_attempts: spec.barrier_retry_attempts,
         persistence_enabled: spec.persistence_enabled,
         owed_inbox: std::cell::Cell::new(instance.owed_inbox),
+        parked_offset: std::cell::Cell::new(0),
     };
-    drive_chain(&ctx, args, &instance.cancel)
+    drive_chain(&ctx, &instance.cancel)
 }
 
 /// Every stage's Cells in DAG order, built before the driver thread so a
@@ -244,7 +253,7 @@ pub fn build_all_stage_cells(
     stage_cells
 }
 
-fn deregister_flushers(stage_cells: &[Vec<Arc<CellSlot>>]) {
+pub(crate) fn deregister_flushers(stage_cells: &[Vec<Arc<CellSlot>>]) {
     for slots in stage_cells {
         for slot in slots {
             if let Some(id) = slot.flusher_entry_id {
@@ -307,10 +316,14 @@ fn resume_plan(ctx: &ChainCtx) -> Result<ResumePlan, RunOutcome> {
         run_rewind_undo(ctx, &resume.rewind_undo);
     }
 
-    // The root is index 0, so "the root already committed" IS "this is a
-    // mid-iteration resume" — and a journal that somehow records a child without
-    // its parent re-runs the whole iteration rather than trusting the fragment.
-    let committed_nodes: Vec<usize> = if resume.committed_task_idxs.contains(&0) {
+    // A committed root of some chain IS "this is a mid-iteration resume" — and
+    // a journal that somehow records a child without its parent re-runs the
+    // whole iteration rather than trusting the fragment.
+    let root_committed = resume
+        .committed_task_idxs
+        .iter()
+        .any(|&i| ctx.dag.is_root(i as usize));
+    let committed_nodes: Vec<usize> = if root_committed {
         resume
             .committed_task_idxs
             .iter()
@@ -327,7 +340,7 @@ fn resume_plan(ctx: &ChainCtx) -> Result<ResumePlan, RunOutcome> {
     })
 }
 
-fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
+fn drive_chain(ctx: &ChainCtx, cancel: &AtomicBool) -> RunOutcome {
     let ResumePlan {
         resume,
         mut committed,
@@ -342,6 +355,9 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
     // Terminal batch of the previous iteration, carried in memory by a
     // handoff-chained loop; on resume it comes back from the journal instead.
     let mut carry: Option<Vec<Value>> = None;
+    // The chain the loop's first message picked; a carry-fed pass re-enters
+    // it, and a resume reads it back from the journaled entry channel.
+    let mut pass_channel: Option<ChannelId> = None;
     // Consumed by the first pass; every later iteration runs the whole graph.
     let mut resumed_stages = Some(in_flight);
 
@@ -351,25 +367,30 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
         let mut completed: Vec<StageRecord> = resumed_stages.take().unwrap_or_default();
         let seed = next_iteration_seed(
             ctx,
-            args,
             iter,
             &resume,
             &committed_nodes,
             carry.take(),
+            pass_channel,
             cancel,
         );
         let (start, consumed) = match seed_frontier(ctx, seed, iter, cancel, &committed, &completed)
         {
-            Ok(seeded) => seeded,
+            Ok(Some(seeded)) => seeded,
+            // Nothing entered: back to waiting, with nothing to seal.
+            Ok(None) => continue,
             Err(outcome) => return outcome,
         };
         if let Some(offset) = consumed {
             consumed_offset = offset;
         }
+        let channel = start.channel;
+        pass_channel = Some(channel);
         let (terminal_batch, completion) =
-            match run_iteration(ctx, iter, start, cancel, &mut completed) {
+            match run_iteration(ctx, iter, start, consumed, cancel, &mut completed) {
                 Ok(released) => released,
-                Err((status, error)) => {
+                Err(IterationEnd::Unread) => continue,
+                Err(IterationEnd::Failed(status, error)) => {
                     run_compensation(ctx, &committed, &completed);
                     return RunOutcome::Terminal(status, error, Vec::new());
                 }
@@ -379,6 +400,7 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
             Seal {
                 iter,
                 consumed_offset,
+                channel,
                 terminal_batch: &terminal_batch,
                 completion,
             },
@@ -399,6 +421,8 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
 struct Seal<'a> {
     iter: u32,
     consumed_offset: u64,
+    /// The entry channel whose chain the iteration ran.
+    channel: ChannelId,
     terminal_batch: &'a [Value],
     /// A tasklet's `complete`: the run ends once the commit is durable.
     completion: Option<Vec<u8>>,
@@ -425,6 +449,7 @@ fn seal_iteration(
         ctx,
         seal.iter,
         seal.consumed_offset,
+        seal.channel,
         seal.terminal_batch,
         seal.completion.as_deref(),
     ) {
@@ -442,7 +467,8 @@ fn seal_iteration(
     }
 }
 
-/// The frontier a seed opens, or the outcome that ends the run instead.
+/// The frontier a seed opens, `None` when the message was parked instead
+/// and the loop goes back to waiting, or the outcome that ends the run.
 fn seed_frontier(
     ctx: &ChainCtx,
     seed: IterationSeed,
@@ -450,9 +476,10 @@ fn seed_frontier(
     cancel: &AtomicBool,
     committed: &[Vec<StageRecord>],
     completed: &[StageRecord],
-) -> Result<(IterationStart, Option<u64>), RunOutcome> {
+) -> Result<Option<(IterationStart, Option<u64>)>, RunOutcome> {
     match seed {
-        IterationSeed::Frontier(start, consumed) => Ok((start, consumed)),
+        IterationSeed::Frontier(start, consumed) => Ok(Some((start, consumed))),
+        IterationSeed::Unread => Ok(None),
         // The loop ran out of work (single pass done, chained loop released
         // an empty batch, inbox closed): a clean terminal.
         IterationSeed::Done => Err(terminal_or_cancelled(cancel)),
@@ -465,9 +492,8 @@ fn seed_frontier(
             String::new(),
             Vec::new(),
         )),
-        // The seed cannot be built (an unre-seedable journaled handoff, an
-        // entry payload the channel rejects) — terminate abnormally and undo
-        // what is outstanding.
+        // The seed cannot be built (an unre-seedable journaled handoff) —
+        // terminate abnormally and undo what is outstanding.
         IterationSeed::Failed(e) => {
             run_compensation(ctx, committed, completed);
             Err(RunOutcome::Terminal(
@@ -485,26 +511,44 @@ pub(super) type Runnable = (usize, Vec<Value>);
 /// a tasklet asked for.
 type Released = (Vec<Value>, Option<Vec<u8>>);
 
+/// How an iteration ends short of its leaves: abnormally with a terminal
+/// status, or without having run because its message was unreadable and
+/// went to the dead-letter queue instead.
+enum IterationEnd {
+    Failed(String, String),
+    Unread,
+}
+
+impl From<(String, String)> for IterationEnd {
+    fn from((status, error): (String, String)) -> Self {
+        IterationEnd::Failed(status, error)
+    }
+}
+
 /// One iteration of the DAG from `start`, frontier by frontier: a node runs,
 /// commits, and accumulates its batch into each child, which runs once every
-/// producer committed — so a join is dispatched exactly once. `completed`
-/// records stages in topological order. `Ok` is the batch the leaves
-/// released and the completion a tasklet asked for; `Err` the terminal
-/// status of an abnormal exit.
+/// producer in this pass's chain committed — so a join is dispatched exactly
+/// once. `completed` records stages in topological order. `Ok` is the batch
+/// the leaves released and the completion a tasklet asked for; `Err` the
+/// terminal status of an abnormal exit, or that the message was unreadable.
 fn run_iteration(
     ctx: &ChainCtx,
     iter: u32,
     start: IterationStart,
+    origin_offset: Option<u64>,
     cancel: &AtomicBool,
     completed: &mut Vec<StageRecord>,
-) -> Result<Released, (String, String)> {
+) -> Result<Released, IterationEnd> {
     let IterationStart {
+        channel,
         ready: mut frontier,
         mut pending,
         mut waiting,
         mut completion,
     } = start;
+    let chain = ctx.chain(channel).map_err(|e| abnormal_status(cancel, e))?;
     let mut children = Children {
+        chain,
         pending: &mut pending,
         waiting: &mut waiting,
         leaf_batch: Vec::new(),
@@ -514,10 +558,19 @@ fn run_iteration(
         // A cooperative stop before a level starts is partial progress: stop
         // advancing and roll back what completed.
         if cancel.load(Ordering::Acquire) {
-            return Err(("cancelled".to_string(), String::new()));
+            return Err(("cancelled".to_string(), String::new()).into());
         }
 
         let (level, failure) = super::step::run_stage(ctx, frontier);
+        // A root whose ladder exhausted on an unreadable message: the message
+        // is parked under its entry channel and, with nothing of the pass
+        // committed, the pass never happened.
+        if let Some(unread) = failure.as_ref().filter(|f| f.error.unreadable) {
+            if completed.is_empty() && chain.roots.contains(&unread.node) {
+                super::step::park_unreadable(ctx, channel, origin_offset, unread);
+                return Err(IterationEnd::Unread);
+            }
+        }
         let mut next: Vec<Runnable> = Vec::new();
 
         for (node, out) in level {
@@ -529,8 +582,8 @@ fn run_iteration(
             }
         }
 
-        if let Some(e) = failure {
-            return Err(abnormal_status(cancel, e));
+        if let Some(failure) = failure {
+            return Err(abnormal_status(cancel, failure.error).into());
         }
         frontier = next;
     }
@@ -568,9 +621,10 @@ fn node_completion(ctx: &ChainCtx, node: usize, runs: &[CellRun]) -> Option<Vec<
         .map(|(_, result)| result.clone())
 }
 
-/// Each child's input batch accumulating until every producer committed, and
-/// what the leaves released.
+/// Each child's input batch accumulating until every producer in the pass's
+/// chain committed, and what the leaves released.
 struct Children<'a> {
+    chain: &'a EntryChain,
     pending: &'a mut HashMap<usize, Vec<Value>>,
     waiting: &'a mut HashMap<usize, usize>,
     leaf_batch: Vec<Value>,
@@ -579,6 +633,8 @@ struct Children<'a> {
 impl Children<'_> {
     /// Accumulate — never overwrite — this producer's output into each child
     /// through that edge's mapping; a leaf's batch is the iteration's output.
+    /// A child waits for its producers in this chain only: a producer of
+    /// another chain is not running and is never waited for.
     fn accumulate(
         &mut self,
         ctx: &ChainCtx,
@@ -602,7 +658,7 @@ impl Children<'_> {
             let outstanding = self
                 .waiting
                 .entry(child)
-                .or_insert_with(|| ctx.dag.parents[child].len());
+                .or_insert_with(|| self.chain.parents_in_chain(child));
             *outstanding -= 1;
             if *outstanding == 0 {
                 self.waiting.remove(&child);

@@ -23,7 +23,7 @@ core, and Elixir in its own core. The call shapes SHALL be:
 
 With an `id` and `if_running: deliver` (the default when an `id` is given), the controller SHALL
 spawn a workflow instance of `factory_id` under that id if absent, or deliver `payload` to the
-existing instance's inbox if present. With an `id` and `if_running: error`, an existing instance
+existing instance as one more message if present. With an `id` and `if_running: error`, an existing instance
 SHALL yield an `already_running` result to the requester. Without an `id`, the controller SHALL
 generate one as the `generated-operative-ids` capability defines and SHALL always spawn a new
 instance: there is no running instance to deliver to, so `if_running` has no meaning. Rust and
@@ -31,8 +31,12 @@ Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an 
 written there; Elixir, Python, Ruby, PHP and Node SHALL raise an argument error at the call when
 `if_running` is given without an `id`, and SHALL send nothing.
 
-The spawned instance SHALL receive `payload` as its first inbox frame and SHALL follow all
-existing workflow lifecycle semantics (quota, exit triggers, `WorkflowCompleted`, teardown,
+The payload SHALL be encoded as the SDK's sink with no codec encodes a value, the rule `ctx.complete`
+already applies: bytes as they are, a string as UTF-8, any other value as JSON. It SHALL be an ordinary
+entry message of the spawned instance, delivered through the entrance every message takes: it names no
+channel, so it SHALL enter the instance's first declared entry channel, be decoded by that channel's
+codec or parser, and run the chain that channel roots, in every loop mode. The spawned instance SHALL
+follow all existing workflow lifecycle semantics (quota, exit triggers, `WorkflowCompleted`, teardown,
 retention). The handle SHALL resolve to a result carrying `id`, the instance id the request
 resolved to (the caller's or the generated one), and `outcome`, one of `spawned`, `delivered`
 or `skipped_on_replay`.
@@ -44,7 +48,7 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 #### Scenario: First request spawns, second delivers
 
 - **WHEN** two tasklets issue a spawn of factory `worker` with id `w1` and `deliver`, carrying `p1` then `p2`, in sequence
-- **THEN** exactly one workflow instance `w1` SHALL exist, its inbox SHALL have received `p1` then `p2`, and the two results SHALL be `{id: "w1", outcome: spawned}` and `{id: "w1", outcome: delivered}`
+- **THEN** exactly one workflow instance `w1` SHALL exist, it SHALL have received the messages `p1` then `p2`, and the two results SHALL be `{id: "w1", outcome: spawned}` and `{id: "w1", outcome: delivered}`
 
 #### Scenario: error policy reports instead of delivering
 
@@ -55,6 +59,16 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 
 - **WHEN** a tasklet issues `ctx.spawn_workflow("worker", p1)` and then `ctx.spawn_workflow("worker", p2)` with no id
 - **THEN** two workflow instances SHALL exist, each with a generated id beginning `worker-`, the first holding `p1` and the second `p2`, and both results SHALL have outcome `spawned` and differing ids
+
+#### Scenario: A once workflow runs on the payload it was spawned with
+
+- **WHEN** a tasklet issues `ctx.spawn_workflow("paper_order", ticket)` and `paper_order` is a `once` workflow whose entry channel decodes the ticket's type
+- **THEN** the spawned instance's first tasklet SHALL receive the decoded ticket, the pass SHALL complete and the instance SHALL end with status `ok`, on every SDK
+
+#### Scenario: A host SDK's payload is readable by a text entry
+
+- **WHEN** a Python, Ruby, Node or PHP tasklet issues `ctx.spawn_workflow("place", "o-1")` and `place`'s entry channel is declared with the `text` codec
+- **THEN** the spawned instance's tasklet SHALL receive the string `o-1`, and a payload that is a dict, hash, object or array SHALL arrive as its JSON
 
 #### Scenario: if_running without an id is refused at the call
 

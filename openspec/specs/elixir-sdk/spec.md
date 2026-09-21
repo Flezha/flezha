@@ -696,8 +696,10 @@ the kind from the `AddOperative` it sends rather than from the advertisement.
 
 Registration SHALL accumulate refusals into `{:error, {:invalid_workflow, issues}}` (never a
 raise) using the reference's names: `NoWorkflowBody` (no `tasklets/1`), `ExternalStopOnly` (not
-self-terminating and no duration cap), `ZeroRetryBackoff`, `NoEntryChannel`, `EntryRoot` (an entry feeding more than one tasklet),
-`MergeFromEntryChannel`, `DynamicCells` and `BranchingChainedLoop`. A refusal the shared
+self-terminating and no duration cap), `ZeroRetryBackoff`, `NoEntryChannel`, `DynamicCells` and
+`BranchingChainedLoop`. `EntryRoot` and `MergeFromEntryChannel` SHALL NOT exist: an entry channel
+may feed several tasklets, a class may declare several entry channels, each rooting its own chain,
+and an entry channel may be a merge source, because every message carries the channel it arrived on. A refusal the shared
 topology already raises SHALL be carried through as `{:Topology, issue}` rather than restated,
 and the reference's `Cycle`, `Disconnected` and `MultipleOutputChannels` SHALL NOT exist here:
 the first two are unreachable because the shared topology refuses a cycle first and a node
@@ -706,9 +708,13 @@ channel. A missing inter-tasklet codec SHALL be named by no SDK, this one includ
 inter-tasklet value has a serialization everywhere, so there is nothing for an author to
 declare and nothing to refuse.
 
-A structured class SHALL drive its DAG frontier by frontier: a tasklet becomes runnable only
-once every producer feeding it has committed, so a fan-out interleaves independently and a
-fan-in is dispatched exactly once with the accumulated batch of all its producers. Each stage
+A structured class SHALL drive its DAG frontier by frontier, over the chain of the entry channel
+the pass's message arrived on: a tasklet becomes runnable only once every producer feeding it in
+that chain has committed, so a fan-out interleaves independently, a fan-in is dispatched exactly
+once with the accumulated batch of this pass's producers, and a producer of another chain is
+never waited for. A message SHALL enter through the same `resolve_channel`, `parse` and park
+functions the stream operative's `{:input, ...}` handler uses, so an undeclared channel name and
+an unreadable payload park as a stream's do and start no pass. Each stage
 SHALL be committed durably before the next begins, its plugin-bound output SHALL be staged into
 that commit rather than shipped, and the class's leaf and compensable positions SHALL be
 declared to the controller in the `AddOperative` response.
@@ -739,6 +745,16 @@ declared to the controller in the `AddOperative` response.
 - **WHEN** a tasklet of a `:per_input` class calls `Flezha.SDK.Ctx.complete(ctx, result)` while handling a message
 - **THEN** the iteration is committed durably, and the instance then completes with `result`
   instead of waiting for the next message
+
+#### Scenario: A message names the chain it starts
+
+- **WHEN** a class declares entries `a` and `b`, each into its own tasklet, and a message arrives naming `b`
+- **THEN** `b`'s tasklet runs over the parsed message and `a`'s does not, and a join fed by both waits only for the producer in `b`'s chain
+
+#### Scenario: An unreadable message parks and starts no pass
+
+- **WHEN** a `:once` class whose entry parser raises receives a message the parser rejects
+- **THEN** the message is parked to the dead-letter queue as the stream operative parks one, no stage is dispatched, and the instance keeps waiting for its message
 
 ### Requirement: One plugin sink per channel and plugin
 
@@ -1023,8 +1039,11 @@ reaches such a caller. The request SHALL be written as a `:control` frame.
 
 ### Requirement: The Elixir per-input loop waits for its inbox as the shared core does
 
-A `:per_input` workflow loop in the Elixir SDK SHALL seed every iteration, the first included,
-from the next input in its inbox and never from the spawn args. With nothing queued it SHALL
+A workflow of any loop mode in the Elixir SDK SHALL seed every message-fed pass, the first
+included, from the next message in its inbox and never from `init_values`, which are applied as
+Cell state through the same `Commands.apply_json/3` a stream instance takes: a `:once` class its one
+pass, a `:per_input` class every pass, a `:chained` class its first pass, the later ones from the
+previous terminal batch into the chain the first message picked. With nothing queued it SHALL
 wait, for up to 60 seconds while a rehydrating bind still owes it inputs and otherwise for
 `FLEZHA_WORKFLOW_PARK_IDLE_MS`, and SHALL park only when that wait ends with nothing to consume.
 A class that journals nothing SHALL wait until an input or a stop arrives, because it cannot
@@ -1033,8 +1052,13 @@ An iteration SHALL commit the durable-inbox offset its input carried in `flz.inb
 
 #### Scenario: The first iteration consumes the first input
 
-- **WHEN** a per-input loop is started with spawn args and one input then arrives
-- **THEN** its first committed iteration ran over that input, and no iteration ran over the args
+- **WHEN** a per-input loop is started with `init_values` and one message then arrives
+- **THEN** its first committed iteration ran over that message, its Cells started from the `init_values` state, and no iteration ran over the document
+
+#### Scenario: A once class waits for its message
+
+- **WHEN** a `:once` class is started with no message
+- **THEN** it dispatches no stage, parks after the idle window when it journals, waits when it does not, and runs its one pass over the first message that arrives
 
 #### Scenario: An empty inbox parks only after the idle window
 

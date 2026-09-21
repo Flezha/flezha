@@ -52,6 +52,8 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
         factory_id: "fac",
         namespace: "default",
         init_values: %{"a" => 1},
+        text: nil,
+        channel: nil,
         plugins: "[]"
       },
       Map.new(overrides)

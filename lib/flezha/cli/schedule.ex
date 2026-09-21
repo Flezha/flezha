@@ -53,6 +53,8 @@ defmodule Flezha.Service.Cli.Schedule do
              factory_id: factory_id,
              namespace: ns,
              init_values: init_map,
+             text: Keyword.get(opts, :text),
+             channel: Keyword.get(opts, :channel),
              plugins: plugins_json
            }) do
       schedule_warn_absent_factory(ns, factory_id)
@@ -210,6 +212,9 @@ defmodule Flezha.Service.Cli.Schedule do
     do: "only workflow operatives are schedulable (got kind #{kind})"
 
   defp schedule_error_message({:invalid_plugins, msg}), do: "invalid --plugins: #{msg}"
+
+  defp schedule_error_message({:invalid_first_message, msg}),
+    do: "invalid --text/--channel: #{msg}"
 
   defp schedule_error_message({:invalid_plugins_json, reason}),
     do: "invalid --plugins JSON: #{Context.format_reason(reason)}"

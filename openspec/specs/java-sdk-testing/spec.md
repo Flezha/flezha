@@ -257,11 +257,11 @@ The Java reference test app at `test/apps/java_runner/` SHALL register at least 
 
 ### Requirement: Integration matrix exercises a run-once Java workflow operative over both transports
 
-The Elixir↔Java integration suite SHALL exercise a run-once Java workflow operative against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the workflow operative's `run` executes exactly once with the supplied `args`; emitted output reaches a bound plugin; a `WorkflowCompleted{status:"ok"}` is received and the workflow operative is torn down and absent from the durable registry; and a deliberately-failing workflow operative emits `WorkflowCompleted{status:"error"}` with its message and is likewise deregistered without retry.
+The Elixir↔Java integration suite SHALL exercise a run-once Java workflow operative against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the workflow operative's `run` executes exactly once with the first message sent to the instance; emitted output reaches a bound plugin; a `WorkflowCompleted{status:"ok"}` is received and the workflow operative is torn down and absent from the durable registry; and a deliberately-failing workflow operative emits `WorkflowCompleted{status:"error"}` with its message and is likewise deregistered without retry.
 
 #### Scenario: Run-once Java workflow operative completes and is torn down over UDS
 
-- **WHEN** the suite starts an `EchoOperative` on a Java runner over UDS with `args="hi"` and a bound output plugin
+- **WHEN** the suite starts an `EchoOperative` on a Java runner over UDS with a bound output plugin and sends it the message `hi`
 - **THEN** the workflow operative SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `WorkflowCompleted{status:"ok"}`, and the workflow operative SHALL be removed from the durable registry
 
 #### Scenario: Run-once Java workflow operative completes and is torn down over QUIC
@@ -394,3 +394,4 @@ not ask.
 - **GIVEN** a test excluded because it fails for a recorded reason
 - **WHEN** its exclusion is read
 - **THEN** it SHALL name that reason, and SHALL NOT be replaced by a configuration that passes
+

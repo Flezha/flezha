@@ -54,15 +54,20 @@ Routing is **per channel**: a downstream tasklet receives exactly the values rel
 channels it consumes. A join is explicit — two streams wiring the same consumer — and the join
 tasklet **accumulates** every producer's contribution rather than overwriting one with the
 other. Branches stay independent mid-flight; where they must meet, they meet at a join.
-Registration refuses anything that is not a DAG rooted at the entry, naming the offending node:
+Registration refuses anything that is not a DAG rooted at the entry channels, naming the
+offending node:
 
 | Shape | Refusal |
 | --- | --- |
 | a tasklet's output can reach its own input (a cycle) | `Cycle` |
 | one tasklet produces two output channels | `MultipleOutputChannels` |
-| the entry channel feeds anything other than exactly one tasklet | `EntryRoot` |
-| a tasklet is unreachable from the entry channel | `Disconnected` |
-| a handoff-chained loop over a branching topology | `BranchingChainedLoop` |
+| a tasklet is unreachable from any entry channel | `Disconnected` |
+| a handoff-chained loop over a branching chain | `BranchingChainedLoop` |
+
+An entry channel may feed several tasklets, and a class may declare several entry channels:
+each roots its own chain, the tasklets reachable from its consumers, and a message runs only
+the chain of the channel it arrived on. A join where two chains meet waits only for the
+producers of the chain that runs, live and on a crash-resume.
 
 Within one tasklet, cells run in parallel exactly as in stream — single or static
 cell mode, per-cell state, per-cell WAL. Dynamic cell mode is refused: a workflow chain
@@ -107,7 +112,7 @@ sequenceDiagram
     participant EX as ⚙️ Runner (workflow)
     participant SINK as 📤 Sink
 
-    CTRL->>EX: start (args seed the root tasklet)
+    CTRL->>EX: start, then the first message enters the root tasklet's chain
     Note over EX: --- level 0 — the root ---
     EX->>EX: root's cells run in parallel
     Note over EX: BARRIER — every cell of every node in the level joins
@@ -283,9 +288,9 @@ An operative may run its graph more than once.
 
 | Mode | Behaviour |
 | --- | --- |
-| `Once` (default) | one pass from the spawn args, then terminate |
-| `PerInput` | one iteration per inbox item — the chat / agent turn |
-| `Chained` | iteration N+1 is seeded by iteration N's terminal output — converges when the batch comes back empty |
+| `Once` (default) | one pass over the first message, then terminate; a second message is never read |
+| `PerInput` | one iteration per message: the chat / agent turn |
+| `Chained` | the first pass over the first message; iteration N+1 is seeded by iteration N's terminal output into the chain that message started; it converges when the batch comes back empty |
 
 ```mermaid
 stateDiagram-v2
@@ -317,8 +322,8 @@ failure in that cleanup costs work, not correctness.
 
 **The durable inbox.** A workflow operative's input is journaled to a per-instance `inbox.wal`
 before it is forwarded — the same append-before-forward seam the effectively-once tier uses. A
-duplicate (by an explicit message id, else a payload hash, within the undelivered window) is
-absorbed and never delivered twice. A failed append is not forwarded.
+duplicate (a repeat of `flz.msg_id` within the undelivered window; a message without an id is
+never a duplicate) is absorbed and never delivered twice. A failed append is not forwarded.
 
 ## Suspension
 

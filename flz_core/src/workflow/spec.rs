@@ -1,25 +1,123 @@
 //! The frozen registration-time result of authoring a workflow class: a
-//! validated tasklet DAG (single-rooted, acyclic, no dynamic cells),
-//! plus the class's loop, rollback and durability facts.
+//! validated tasklet DAG (acyclic, every node reachable from an entry
+//! channel, no dynamic cells) with one chain per entry channel, plus the
+//! class's loop, rollback and durability facts.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::{LoopMode, RollbackMode};
-use crate::channel::{RetryPolicy, TaskletId};
-use crate::operative::topology::OperativeTopology;
+use crate::channel::{ChannelId, ChannelKind, RetryPolicy, TaskletId};
+use crate::operative::topology::{OperativeTopology, TaskletDescriptor};
 
-/// The tasklet DAG in Kahn order from the root, so every producer sits at
-/// a lower index than its consumer. A node's index is its `stage_idx` and
-/// its wire `task_idx`, and reversing the order is the compensation order.
+/// The tasklet DAG in Kahn order from the entry channels' consumers, so
+/// every producer sits at a lower index than its consumer. A node's index is
+/// its `stage_idx` and its wire `task_idx`, and reversing the order is the
+/// compensation order. Each entry channel roots a chain: a message runs only
+/// the chain of the channel it arrived on.
 #[derive(Debug, Default)]
 pub struct TaskDag {
     pub order: Vec<TaskletId>,
     pub parents: Vec<Vec<usize>>,
     pub children: Vec<Vec<usize>>,
+    pub chains: Vec<EntryChain>,
+}
+
+/// One entry channel's chain: the positions it feeds, everything reachable
+/// from them, and each member's count of parents inside the chain, which is
+/// what a join waits for in a pass on this channel.
+#[derive(Debug, Clone)]
+pub struct EntryChain {
+    pub channel_id: ChannelId,
+    pub roots: Vec<usize>,
+    members: Vec<bool>,
+    parents_in_chain: Vec<usize>,
+}
+
+impl EntryChain {
+    pub fn contains(&self, node: usize) -> bool {
+        self.members.get(node).copied().unwrap_or(false)
+    }
+
+    /// The producers of `node` that run in a pass on this channel.
+    pub fn parents_in_chain(&self, node: usize) -> usize {
+        self.parents_in_chain.get(node).copied().unwrap_or(0)
+    }
+
+    /// The chain's nodes with no children.
+    pub fn leaves<'a>(&'a self, dag: &'a TaskDag) -> impl Iterator<Item = usize> + 'a {
+        dag.leaves().filter(|&leaf| self.contains(leaf))
+    }
+
+    /// The chain's single leaf, when there is exactly one.
+    pub fn single_leaf(&self, dag: &TaskDag) -> Option<usize> {
+        let mut leaves = self.leaves(dag);
+        let first = leaves.next()?;
+        leaves.next().is_none().then_some(first)
+    }
 }
 
 impl TaskDag {
+    /// The DAG over positions, with one chain per entry channel computed by
+    /// reachability from the positions that channel feeds. `entries` pairs
+    /// each entry channel with the positions of its consumers.
+    pub fn new(
+        order: Vec<TaskletId>,
+        parents: Vec<Vec<usize>>,
+        children: Vec<Vec<usize>>,
+        entries: impl IntoIterator<Item = (ChannelId, Vec<usize>)>,
+    ) -> Self {
+        let chains = entries
+            .into_iter()
+            .map(|(channel_id, roots)| {
+                let members = reachable(&children, roots.iter().copied());
+                let parents_in_chain = parents
+                    .iter()
+                    .map(|ps| ps.iter().filter(|&&p| members[p]).count())
+                    .collect();
+                EntryChain {
+                    channel_id,
+                    roots,
+                    members,
+                    parents_in_chain,
+                }
+            })
+            .collect();
+        Self {
+            order,
+            parents,
+            children,
+            chains,
+        }
+    }
+
+    /// The DAG a walk over every tasklet found, re-indexed positionally so
+    /// stage `i`'s parents and children are stage indices too, each list
+    /// ascending as a level's nodes commit, with one chain per entry channel
+    /// from the positions `entries` feed.
+    pub fn from_walk(walk: GraphOrder, entries: Vec<(ChannelId, Vec<TaskletId>)>) -> Self {
+        let positions = |nodes: &[usize]| {
+            let mut at: Vec<usize> = nodes.iter().map(|&node| walk.pos[node]).collect();
+            at.sort_unstable();
+            at
+        };
+        let parents = walk
+            .order
+            .iter()
+            .map(|&id| positions(&walk.parents[id as usize]))
+            .collect();
+        let children = walk
+            .order
+            .iter()
+            .map(|&id| positions(&walk.children[id as usize]))
+            .collect();
+        let entries = entries.into_iter().map(|(channel_id, consumers)| {
+            let roots = consumers.iter().map(|&id| walk.pos[id as usize]).collect();
+            (channel_id, roots)
+        });
+        Self::new(walk.order, parents, children, entries)
+    }
+
     pub fn len(&self) -> usize {
         self.order.len()
     }
@@ -33,15 +131,45 @@ impl TaskDag {
         (0..self.len()).filter(|&i| self.children[i].is_empty())
     }
 
-    /// The single leaf, when there is exactly one.
-    pub fn single_leaf(&self) -> Option<usize> {
-        let mut leaves = self.leaves();
-        let first = leaves.next()?;
-        leaves.next().is_none().then_some(first)
+    /// The chain the entry channel `channel_id` roots.
+    pub fn chain(&self, channel_id: ChannelId) -> Option<&EntryChain> {
+        self.chains.iter().find(|c| c.channel_id == channel_id)
+    }
+
+    /// Whether `node` is fed by an entry channel.
+    pub fn is_root(&self, node: usize) -> bool {
+        self.chains.iter().any(|c| c.roots.contains(&node))
+    }
+
+    /// The first chain a handoff-chained loop cannot carry forward: one with
+    /// several leaves, so no single terminal batch.
+    pub fn branching_chain(&self) -> Option<&EntryChain> {
+        self.chains
+            .iter()
+            .find(|chain| chain.single_leaf(self).is_none())
+    }
+
+    /// The first chain's terminal whose output is not an inter-tasklet
+    /// channel, so it releases nothing a handoff-chained loop's journal
+    /// carries into the next iteration.
+    pub fn terminal_without_handoff<'t>(
+        &self,
+        topology: &'t OperativeTopology,
+    ) -> Option<&'t TaskletDescriptor> {
+        self.chains
+            .iter()
+            .filter_map(|chain| chain.single_leaf(self))
+            .filter_map(|leaf| topology.tasklet(self.order[leaf]))
+            .find(|terminal| {
+                !terminal
+                    .output_channel_id
+                    .and_then(|id| topology.channel(id))
+                    .is_some_and(|channel| channel.kind == ChannelKind::InterTasklet)
+            })
     }
 }
 
-/// Where a graph walk starts. `Roots` is the single-rooted shape a structured
+/// Where a graph walk starts. `Roots` is the entry-rooted shape a structured
 /// workflow declares, so a node the roots do not reach is left out of the
 /// order; `EveryIndegreeZero` is the stream shape, where a disconnected node
 /// still takes a position and unreachability is reported separately.
@@ -90,9 +218,9 @@ fn adjacency(
 }
 
 /// Which nodes `roots` reach, following `children`.
-fn reachable(children: &[Vec<usize>], roots: &[TaskletId]) -> Vec<bool> {
+fn reachable(children: &[Vec<usize>], roots: impl Iterator<Item = usize>) -> Vec<bool> {
     let mut reached = vec![false; children.len()];
-    let mut stack: Vec<usize> = roots.iter().map(|&r| r as usize).collect();
+    let mut stack: Vec<usize> = roots.collect();
     while let Some(node) = stack.pop() {
         if std::mem::replace(&mut reached[node], true) {
             continue;
@@ -112,16 +240,20 @@ pub fn graph_order(
     seed: GraphSeed,
 ) -> GraphOrder {
     let (parents, children, mut indegree) = adjacency(n, edges);
-    let reached = reachable(&children, roots);
+    let reached = reachable(&children, roots.iter().map(|&r| r as usize));
     let unreachable = (0..n).find(|&i| !reached[i]).map(|i| i as TaskletId);
 
+    // A tasklet several entry channels feed is one root, queued once.
     let mut queued = vec![false; n];
-    let mut queue: std::collections::VecDeque<usize> = match seed {
+    let mut queue = std::collections::VecDeque::new();
+    let seeds: Vec<usize> = match seed {
         GraphSeed::Roots => roots.iter().map(|&r| r as usize).collect(),
         GraphSeed::EveryIndegreeZero => (0..n).filter(|&i| indegree[i] == 0).collect(),
     };
-    for &node in &queue {
-        queued[node] = true;
+    for node in seeds {
+        if !std::mem::replace(&mut queued[node], true) {
+            queue.push_back(node);
+        }
     }
     let mut order = Vec::with_capacity(n);
     let mut pos = vec![usize::MAX; n];
@@ -196,7 +328,7 @@ pub enum BuildWorkflowError {
 
     #[error(
         "workflow operative `{factory_id}` declares tasklets but no entry channel; a structured \
-         workflow must declare one input channel (c.input::<T>(...)) to seed its first tasklet"
+         workflow must declare an input channel (c.input::<T>(...)) its messages arrive on"
     )]
     NoEntryChannel { factory_id: &'static str },
 
@@ -221,34 +353,10 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares entry channel `{channel}` feeding {consumers} \
-         tasklets; a bounded topology has a single root — the entry channel must feed exactly \
-         one tasklet, which then fans out"
-    )]
-    EntryRoot {
-        factory_id: &'static str,
-        channel: String,
-        consumers: usize,
-    },
-
-    #[error(
-        "workflow operative `{factory_id}` merges entry channel `{channel}` into tasklet \
-         `{tasklet}`; a workflow operative is seeded from its spawn args (and, for a `PerInput` \
-         loop, its inbox items) through ONE entry channel, and neither carries the channel a \
-         payload arrived on — so an entry channel cannot be one merge source among several. \
-         Merge the output streams of two or more of this operative's tasklets instead"
-    )]
-    MergeFromEntryChannel {
-        factory_id: &'static str,
-        channel: String,
-        tasklet: String,
-    },
-
-    #[error(
         "workflow operative `{factory_id}` declares a handoff-chained loop over a branching \
-         topology ({leaves} terminal tasklets); iteration N+1 is seeded from iteration N's \
-         terminal batch, which a graph with several leaves does not define. Use \
-         `LoopMode::PerInput`, or keep the chained loop converging on one terminal"
+         chain ({leaves} terminal tasklets); iteration N+1 is seeded from iteration N's \
+         terminal batch, which a chain with several leaves does not define. Use \
+         `LoopMode::PerInput`, or keep every chain of the loop converging on one terminal"
     )]
     BranchingChainedLoop {
         factory_id: &'static str,
@@ -273,7 +381,7 @@ pub enum BuildWorkflowError {
 
     #[error(
         "workflow operative `{factory_id}` declares tasklet `{tasklet}` that is not reachable \
-         from the entry channel; every tasklet must hang off the one graph rooted there"
+         from any entry channel; every tasklet must hang off a chain rooted at one"
     )]
     Disconnected {
         factory_id: &'static str,
@@ -292,7 +400,7 @@ pub enum BuildWorkflowError {
 
     #[error(
         "workflow operative `{factory_id}` declares no tasklets; a workflow runs a graph of \
-         tasklets from one entry channel, declared in tasklets() on the builder a stream uses"
+         tasklets from its entry channels, declared in tasklets() on the builder a stream uses"
     )]
     NoTasklets { factory_id: &'static str },
 

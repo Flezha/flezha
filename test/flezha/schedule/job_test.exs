@@ -109,6 +109,49 @@ defmodule Flezha.Schedule.JobTest do
       assert builder.id =~ ~r/^job@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/
     end
 
+    test "a fired instance receives the stored first message on its channel" do
+      test_pid = self()
+
+      expect(OperativeManager, :start_workflow, fn "default", id, _factory, _init, opts ->
+        send(test_pid, {:spawned, opts})
+        {:ok, %{operative_id: id}}
+      end)
+
+      start_supervised!({Job, Helper.entry(%{text: ~s({"day":"today"}), channel: "requests"})})
+
+      assert_receive {:spawned, opts}, 2_000
+      assert Keyword.get(opts, :seed_input) == {~s({"day":"today"}), %{"channel" => "requests"}}
+    end
+
+    test "an entry stored without a message fires an instance that waits for one" do
+      test_pid = self()
+
+      expect(OperativeManager, :start_workflow, fn "default", id, _factory, _init, opts ->
+        send(test_pid, {:spawned, opts})
+        {:ok, %{operative_id: id}}
+      end)
+
+      start_supervised!({Job, Helper.entry()})
+
+      assert_receive {:spawned, opts}, 2_000
+      refute Keyword.has_key?(opts, :seed_input)
+    end
+
+    test "a manual run carries the stored first message too" do
+      test_pid = self()
+
+      expect(OperativeManager, :start_workflow, fn "default", id, _factory, _init, opts ->
+        send(test_pid, {:spawned, opts})
+        {:ok, %{operative_id: id}}
+      end)
+
+      entry = Helper.entry(%{text: "hello", channel: nil})
+      assert {:ok, %{operative_id: "job@manual-1"}} = Job.spawn_instance(entry, "job@manual-1")
+
+      assert_receive {:spawned, opts}, 2_000
+      assert Keyword.get(opts, :seed_input) == {"hello", %{}}
+    end
+
     test "a due slot fires and re-arms" do
       test_pid = self()
 

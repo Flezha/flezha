@@ -6,8 +6,10 @@ defmodule Flezha.Operative.Builder do
   The `opts` keyword list is opaque to most callers; four keys are
   contractual — `:default_input_type` (the tag the Overwatch reads when
   metadata omits one), `:plugins` (subscribed at operative start),
-  `:seed_input` (delivered as the instance's first input during its bind) and
-  `:operative_class` (the on-disk persistence key, defaulting to `operative.id`).
+  `:seed_input` (`{message, metadata}`, delivered as the instance's first
+  input during its bind, on the entry channel `metadata["channel"]` names or
+  the first declared one) and `:operative_class` (the on-disk persistence
+  key, defaulting to `operative.id`).
 
   Invariant: `:kind` is set at start and frozen for the operative's lifetime.
   See `Flezha.Operative.Kind` for the kind/capability model.
@@ -50,6 +52,25 @@ defmodule Flezha.Operative.Builder do
       {:ok, struct!(__MODULE__, fields)}
     end
   end
+
+  @doc """
+  The `:seed_input` a first message makes: `text` on the entry channel
+  `channel` names, or on the first declared one when `channel` is `nil`;
+  `nil` when there is no message. A channel names a message's entry channel,
+  so one without `text` is refused.
+  """
+  @spec seed_input(binary() | nil, binary() | nil) ::
+          {:ok, {binary(), map()} | nil} | {:error, String.t()}
+  def seed_input(nil, nil), do: {:ok, nil}
+  def seed_input(text, nil) when is_binary(text), do: {:ok, {text, %{}}}
+
+  def seed_input(text, channel) when is_binary(text) and is_binary(channel),
+    do: {:ok, {text, %{"channel" => channel}}}
+
+  def seed_input(nil, channel) when is_binary(channel),
+    do: {:error, "--channel names the entry channel of --text"}
+
+  def seed_input(_text, _channel), do: {:error, "the first message and its channel are text"}
 
   defp required(fields) do
     case Enum.reject([:factory_id], &Keyword.has_key?(fields, &1)) do

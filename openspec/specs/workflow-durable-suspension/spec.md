@@ -6,14 +6,15 @@ The workflow-durable-suspension capability lets a waiting durable workflow insta
 ## Requirements
 ### Requirement: Post-start input is durably journaled before delivery
 
-The controller SHALL append every post-start input for a durable workflow
+The controller SHALL append every message for a durable workflow
 instance to a per-instance append-only `inbox.wal` (same WalWriter/FsyncBatcher
-substrate as `task.journal`) with a monotonic offset and a dedup id — the
-sender-supplied message id when present, else a payload hash — **before**
-forwarding it to the runner. A duplicate dedup id within the undelivered
-window SHALL be dropped at append. Entries at or below the consumed offset
-recorded by `iter_committed` SHALL be truncated. Message payloads SHALL live
-only in `inbox.wal`, never in `task.journal`.
+substrate as `task.journal`) with a monotonic offset and, when the sender supplied
+one, its `flz.msg_id` as the dedup id — **before** forwarding it to the runner. A
+duplicate `flz.msg_id` within the undelivered window SHALL be dropped at append. A
+message without an `flz.msg_id` SHALL have no dedup id and SHALL always be appended:
+two identical payloads without ids are two messages, as they are on a stream. Entries
+at or below the consumed offset recorded by `iter_committed` SHALL be truncated.
+Message payloads SHALL live only in `inbox.wal`, never in `task.journal`.
 
 #### Scenario: Input survives the instance being down
 
@@ -22,8 +23,13 @@ only in `inbox.wal`, never in `task.journal`.
 
 #### Scenario: Duplicate send is absorbed
 
-- **WHEN** the same message (same dedup id) is sent twice before the instance consumes it
+- **WHEN** a message carrying `flz.msg_id` `m-7` is sent twice before the instance consumes it
 - **THEN** exactly one inbox entry SHALL exist and the operative SHALL receive it once
+
+#### Scenario: Identical payloads without an id are both processed
+
+- **WHEN** the same payload is sent twice with no `flz.msg_id` before the instance consumes it
+- **THEN** two inbox entries SHALL exist and a `per_input` loop SHALL run one iteration for each
 
 #### Scenario: Consumed entries are truncated
 
@@ -32,12 +38,14 @@ only in `inbox.wal`, never in `task.journal`.
 
 ### Requirement: A waiting loop parks durably and is evicted from memory
 
-The SDK SHALL, when a looping durable workflow instance blocks on an empty
-inbox at a committed iteration boundary, send a park notification (iteration N,
-optional wake deadline) and the controller SHALL journal `parked(N[,
-deadline])`, then tear the instance down without a terminal completion:
+The SDK SHALL, when a durable workflow instance of any loop mode blocks on an empty
+inbox at a committed iteration boundary — the boundary before its first pass included —
+send a park notification (iteration N, optional wake deadline, and the highest inbox
+offset the run parked to the dead-letter queue unread) and the controller SHALL journal
+`parked(N[, deadline], offset)`, release the inbox up to that offset as it releases an
+iteration's consumed input, then tear the instance down without a terminal completion:
 registry state `suspended`, zero live runner resources. An iteration boundary
-SHALL be the only place an instance waits for input: no tasklet SHALL block
+SHALL be the only place an instance waits for a message: no tasklet SHALL block
 on its inbox mid-iteration, so parking SHALL only occur at a committed
 iteration boundary. An eviction-hysteresis knob SHALL avoid park/rehydrate
 thrash under trickling input.
@@ -54,6 +62,16 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 
 - **WHEN** a looping instance commits iteration N and its inbox stays empty past the idle threshold
 - **THEN** `parked(N)` SHALL be journaled, the instance SHALL be removed from runner memory, and the registry SHALL report it `suspended`
+
+#### Scenario: A once instance waiting for its first message parks
+
+- **WHEN** a durable `once` instance is started without a message and none arrives within the idle threshold
+- **THEN** `parked(0)` SHALL be journaled, the instance SHALL be removed from runner memory, the registry SHALL report it `suspended`, and the next message SHALL rehydrate it into pass 0
+
+#### Scenario: A message parked unread does not wake the instance again
+
+- **WHEN** a durable instance waiting for a message receives one it cannot read, parks it to the dead-letter queue, and then waits past the idle threshold
+- **THEN** its park notification SHALL carry that message's inbox offset, the message SHALL no longer be undelivered, and the instance SHALL stay `suspended` rather than be rehydrated to receive it again; a rehydrated instance that was owed the message SHALL count it as received and park on the idle threshold
 
 #### Scenario: A message arriving mid-iteration waits for the boundary
 

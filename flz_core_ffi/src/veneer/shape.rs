@@ -182,6 +182,7 @@ pub mod word {
     pub const OK: &str = "ok";
     pub const RETRYABLE: &str = "retryable";
     pub const NON_RETRYABLE: &str = "non_retryable";
+    pub const UNREADABLE: &str = "unreadable";
     pub const EVENT_TIME: &str = "event_time";
     pub const PROCESSING_TIME: &str = "processing_time";
 
@@ -623,6 +624,9 @@ fn verdict<S: Source>(s: &S, h: &S::Map) -> Result<schema::Verdict, S::Error> {
             message: message()?,
         },
         word::NON_RETRYABLE => schema::Verdict::NonRetryableError {
+            message: message()?,
+        },
+        word::UNREADABLE => schema::Verdict::Unreadable {
             message: message()?,
         },
         other => return Err(unknown::<S>("verdict", other)),

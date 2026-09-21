@@ -53,6 +53,8 @@ impl CommandAction for AddOperative {
 }
 
 impl AddOperative {
+    /// Bind a workflow operative and seed its tasklets' state from
+    /// `init_values`, as a stream's are seeded.
     fn start_workflow(
         &self,
         runner: &mut RunnerNode,
@@ -60,18 +62,20 @@ impl AddOperative {
         instance_id: &str,
         errors: &mut Vec<String>,
     ) {
-        if !runner.start_workflow_resumable(
+        match runner.start_workflow_resumable(
             factory_id.to_string(),
             instance_id.to_string(),
-            self.init_values.clone(),
+            &self.init_values,
             self.resume_cell_count,
             self.inbox_tail_count,
             self.task_journal.as_ref().map(Into::into),
         ) {
-            errors.push(format!(
+            Ok(true) => {}
+            Ok(false) => errors.push(format!(
                 "WorkflowOperative class with factory_id {} is not registered",
                 factory_id
-            ));
+            )),
+            Err(e) => errors.push(e.to_string()),
         }
     }
 
@@ -97,7 +101,7 @@ impl AddOperative {
             Some(instance) => {
                 if !self.init_values.is_empty() {
                     if let Err(e) =
-                        crate::command::cell_state::apply_init_values(&instance, &self.init_values)
+                        crate::command::cell_state::apply_init_values(&*instance, &self.init_values)
                     {
                         errors.push(e.to_string());
                     }

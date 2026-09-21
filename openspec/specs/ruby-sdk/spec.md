@@ -123,7 +123,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 ### Requirement: The single-tasklet short form is a class-body declaration
 The short form SHALL be a `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass, the same base a full-form operative subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operative base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operative already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels` or `tasklets`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels` or `tasklets`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
 `Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
@@ -134,8 +134,8 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 #### Scenario: An operative class with a run body is a whole workflow operative
 
-- **WHEN** `class Place < Flezha::WorkflowOperative` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, and an instance is started with init values
-- **THEN** `run` receives the start values as text, its return value reaches `placed`, and the instance completes
+- **WHEN** `class Place < Flezha::WorkflowOperative` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, an instance is started, and one message is sent on `order`
+- **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
 
 #### Scenario: A short form with no sink is declared
 

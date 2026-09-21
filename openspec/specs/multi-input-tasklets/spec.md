@@ -4,7 +4,7 @@
 TBD - created by archiving change add-multi-input-tasklets. Update Purpose after archive.
 ## Requirements
 ### Requirement: A tasklet SHALL be authorable over multiple source channels via a mapped sum-type input
-Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge authoring form in which a tasklet declares a single `Input` sum type and subscribes to two or more source channels, each subscription supplying a pure mapping from the source channel's payload into that `Input` type. On a stream operative, entry channels and inter-tasklet typed channels SHALL both be valid sources. On a workflow operative, only inter-tasklet typed channels SHALL be valid sources: a workflow operative is seeded through one entry channel from its spawn args (and, for a per-input loop, its inbox items), neither of which carries the channel a payload arrived on, so no mapping could be selected — that shape SHALL be refused at definition time rather than accepted. The single-input `into` form SHALL remain unchanged.
+Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge authoring form in which a tasklet declares a single `Input` sum type and subscribes to two or more source channels, each subscription supplying a pure mapping from the source channel's payload into that `Input` type. On a stream operative and on a workflow operative alike, entry channels and inter-tasklet typed channels SHALL both be valid sources: every message a workflow receives carries the channel it arrived on, so the mapping of that source is selected as it is on a stream. On a workflow, a merged tasklet fed by an entry channel SHALL be a root of that channel's chain, and a merge of two entry channels SHALL run the merged tasklet once per message, on the message's mapping, in the pass that message starts. The single-input `into` form SHALL remain unchanged.
 
 #### Scenario: Two typed channels feed one tasklet
 
@@ -16,10 +16,10 @@ Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge
 - **WHEN** an entry channel (sealed payload of type `T`) is one of a stream operative's merge sources with mapping `Fn(T) -> I`
 - **THEN** frames injected on that entry (including by source providers and `flz operative send`) SHALL be delivered mapped, with no parser tasklet required
 
-#### Scenario: Entry channel as a workflow merge source is refused
+#### Scenario: Entry channel as a workflow merge source
 
-- **WHEN** a workflow operative declares a merge whose sources include an entry channel
-- **THEN** `register_factory` / `registerFactory` SHALL return a named definition-time error identifying the entry channel and the merged tasklet, and SHALL NOT register the class
+- **WHEN** a `per_input` workflow operative merges entry channel `orders: Order` and inter-tasklet channel `checked: Checked` into `Book` with two mappings
+- **THEN** a message on `orders` SHALL reach `Book` as `Input::Order(..)` through `orders`'s mapping in the pass it starts, a value released on `checked` SHALL reach `Book` as `Input::Checked(..)`, and registration SHALL accept the class on every SDK
 
 #### Scenario: A mapping that panics on a workflow chain does not strand the instance
 
@@ -31,10 +31,15 @@ Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge
 - **WHEN** a merge mapping panics (Rust) or throws (Java) while a crash-resumed chain re-seeds a consumer from a journaled handoff
 - **THEN** it SHALL be contained and the operative SHALL still emit `WorkflowCompleted` with status `error`, and the saga SHALL compensate whatever that SDK's resumed iteration recorded as completed — the journaled tasklets on Rust, and none on Java, whose resumed iteration does not record them. That difference is a pre-existing property of Java's workflow resume, not of the merge, and is documented as a known limitation rather than relied on
 
+#### Scenario: An entry mapping that fails on a workflow parks the message
+
+- **WHEN** a merge mapping on a workflow operative's entry-channel source panics or throws on a message
+- **THEN** the message SHALL ride the entry channel's ladder and be parked to the dead-letter queue as a stream's would, no pass SHALL start, and the instance SHALL keep waiting
+
 #### Scenario: SDK parity
 
 - **WHEN** the `merged_input` fixture is started on any of the seven runtimes and one frame is injected on each of its two entry channels
-- **THEN** the merged tasklet SHALL emit one line per source on the `merged` sink, each tagged by that source's mapping, and every SDK's own suite SHALL carry the mirrored merge tests: two typed sources into one tasklet, an entry channel as a source, per-source FIFO under interleaving, the key evaluated on the mapped value, and the definition-time refusals
+- **THEN** the merged tasklet SHALL emit one line per source on the `merged` sink, each tagged by that source's mapping, and every SDK's own suite SHALL carry the mirrored merge tests: two typed sources into one tasklet, an entry channel as a source on both kinds, per-source FIFO under interleaving, the key evaluated on the mapped value, and the definition-time refusals
 
 ### Requirement: Merged delivery SHALL preserve per-source FIFO order and replay determinism
 Frames SHALL be journaled per source channel unchanged; per-source mappings and any edge transforms and key function SHALL run identically on live delivery and WAL replay, so a warm restart replays a merged tasklet to the same state as live processing. Per-source FIFO ordering SHALL be preserved; no ordering SHALL be guaranteed across sources. `cells_for` and the edge key function SHALL be evaluated on the mapped input value; a merge's key function SHALL be declared once on the merge rather than per source, because every source has been mapped into one type by the time keying runs. Mappings, transforms, and key functions SHALL be pure and total; none is offered a retry, and on a workflow chain — where they run on the driver thread rather than inside a cell invocation — an unwinding closure SHALL be contained so the operative still terminates observably. Where a producer's released batch is mapped into its consumers, the mapping SHALL be applied only after that producer's completion has been recorded, so the producer is always within the saga's undo scope, and both SDKs SHALL unwind the same set of tasklets in the same order. Where a crash-resumed chain's mapping is applied to a journaled handoff, the undo scope is whatever that SDK's resumed iteration records as completed, which is not the same on both SDKs.
@@ -84,3 +89,4 @@ Value transforms (`map`, `filter`, `flat_map`) declared on a merge SHALL apply t
 
 - **WHEN** a source handle declares `.filter(...)` and is then passed to `merge().from(source, Map::new)`
 - **THEN** the predicate SHALL receive that source's own payload type and SHALL run before the source's mapping
+

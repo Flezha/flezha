@@ -296,10 +296,10 @@ fn spawn_prepare_ladder(
             .topology
             .channel(channel_id)
             .expect("prepare channel present in topology");
-        crate::retry::run_retry_park_ladder(
+        crate::retry::run_entrance_ladder(
+            &*instance,
             &format!("prepare for entry channel `{}`", channel.name),
             crate::retry::ParkTarget::entry(channel),
-            &instance.instance_id,
             entry.consumed_offset,
             Some(entry.bytes.clone()),
             first_error.message,

@@ -83,17 +83,32 @@ defmodule Flezha.State.TaskJournal.Codec do
     end
   end
 
-  defp decode_payload(:iter_committed, <<consumed_offset::64-big, rest::binary>>) do
+  defp decode_payload(
+         :iter_committed,
+         <<consumed_offset::64-big, chan_len::16-big, entry_channel::binary-size(chan_len),
+           rest::binary>>
+       ) do
     with {:ok, handoff, rest} <- decode_handoff(rest),
          {:ok, completion} <- decode_completion(rest) do
-      {:ok, %{consumed_offset: consumed_offset, handoff: handoff, completion: completion}}
+      {:ok,
+       %{
+         consumed_offset: consumed_offset,
+         entry_channel: entry_channel,
+         handoff: handoff,
+         completion: completion
+       }}
     else
       _ -> {:error, :bad_payload}
     end
   end
 
-  defp decode_payload(:parked, <<deadline::64-big>>),
-    do: {:ok, %{wake_deadline_ms: if(deadline == 0, do: nil, else: deadline)}}
+  defp decode_payload(:parked, <<deadline::64-big, consumed_offset::64-big>>),
+    do:
+      {:ok,
+       %{
+         wake_deadline_ms: if(deadline == 0, do: nil, else: deadline),
+         consumed_offset: consumed_offset
+       }}
 
   defp decode_payload(:compensated, payload) do
     case decode_outbox(payload) do

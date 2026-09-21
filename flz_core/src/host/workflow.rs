@@ -53,6 +53,9 @@ fn fold_effect(
         schema::Verdict::NonRetryableError { message } => {
             return Err(WorkflowError::new(message, true));
         }
+        schema::Verdict::Unreadable { message } => {
+            return Err(WorkflowError::unreadable(message));
+        }
     }
     if !effect.changes.is_empty() {
         let mut buffer = flush_buffer.lock_recover();
@@ -80,4 +83,61 @@ fn fold_effect(
         sink.complete(result);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Nothing;
+    impl WorkflowCollectSink for Nothing {
+        fn collect(&mut self, _: Arc<dyn Any + Send + Sync>) {}
+        fn emit_plugin_bytes(&mut self, _: &str, _: Vec<u8>) {}
+        fn complete(&mut self, _: Vec<u8>) {}
+    }
+
+    fn effect(verdict: schema::Verdict) -> schema::ItemEffect {
+        schema::ItemEffect {
+            verdict,
+            changes: Vec::new(),
+            outputs: Vec::new(),
+            consumed_offset: None,
+            event_time: 0,
+            timers: Vec::new(),
+            checkpoint: false,
+            dlq: None,
+            complete: None,
+        }
+    }
+
+    /// The one verdict a host's entry decoder answers folds into the one
+    /// step error the driver parks on instead of ending the run.
+    #[test]
+    fn an_unreadable_verdict_folds_into_an_unreadable_step_error() {
+        let buffer: Mutex<Box<dyn FlushableBuffer>> = Mutex::new(Box::new(BytesBuffer::default()));
+
+        let unreadable = fold_workflow_outcome(
+            &buffer,
+            schema::ActivationOutcome::Work(vec![effect(schema::Verdict::Unreadable {
+                message: "not json".to_string(),
+            })]),
+            &mut Nothing,
+        )
+        .expect_err("an unreadable message is the step's failure");
+        assert!(unreadable.unreadable && !unreadable.non_retryable);
+        assert_eq!(unreadable.message, "not json");
+
+        let failed = fold_workflow_outcome(
+            &buffer,
+            schema::ActivationOutcome::Work(vec![effect(schema::Verdict::RetryableError {
+                message: "boom".to_string(),
+            })]),
+            &mut Nothing,
+        )
+        .expect_err("a tasklet failure is the step's failure");
+        assert!(
+            !failed.unreadable,
+            "a readable message the tasklet failed on is not unreadable"
+        );
+    }
 }

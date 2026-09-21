@@ -5,7 +5,7 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 ## Requirements
 ### Requirement: The controller SHALL maintain a durable registry of cron schedules for workflow spawns
 
-`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: workflow` SHALL be schedulable; scheduling a stream factory SHALL be rejected at `add`. Cron syntax, timezone, kind, and the plugin spec SHALL be validated at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
+`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--text payload] [--channel ch] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: workflow` SHALL be schedulable; scheduling a stream factory SHALL be rejected at `add`. Cron syntax, timezone, kind, and the plugin spec SHALL be validated at `add`. `--init-values` SHALL be the initial state per tasklet the fired instance starts with, as it is for `flz operative start`; `--text` SHALL be the first message every fired instance receives, on the entry channel `--channel` names or on the first declared one, stored verbatim; an entry stored without `--text` SHALL fire an instance that waits for its first message. `--channel` without `--text` SHALL be refused at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
 
 #### Scenario: Schedule survives restart
 
@@ -16,6 +16,11 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 
 - **WHEN** `schedule add` is issued with a malformed cron expression or unknown timezone
 - **THEN** the command SHALL fail with a message naming the invalid field and no entry SHALL be stored
+
+#### Scenario: A first message is stored with the entry
+
+- **WHEN** `flz schedule add nightly --cron "0 2 * * *" --tz UTC --factory report --text '{"day":"today"}' --channel requests` is issued
+- **THEN** the stored entry SHALL hold the text and the channel verbatim, and `flz schedule list` SHALL show the entry
 
 #### Scenario: Unusable plugin spec rejected at add time
 
@@ -34,7 +39,7 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 
 ### Requirement: Each slot SHALL fire exactly once cluster-wide via the standard workflow spawn path
 
-At each matching slot (evaluated in the entry's IANA timezone by a single schedule process that exists on exactly one node cluster-wide, hosted in the dedicated `:flz_schedules` hub), the controller SHALL spawn a fresh workflow instance with deterministic id `<name>@<slot>` and the stored `init_values`, through the same start path as `flz operative start` (quota, plugins, teardown, retention inherited). The fire SHALL succeed whenever any controller node in the cluster holds a runner advertising the entry's factory in the entry's namespace: the node hosting the schedule process SHALL NOT affect the outcome, and the spawn SHALL be routed to a capable node at fire time against the fleet state current at that moment. A fire SHALL be refused as unsatisfiable only when no node in the cluster holds such a runner, and the refusal SHALL say so cluster-wide (not "no runners" on the deciding node alone). The entry's stored plugin spec SHALL be decoded at each firing and attached at spawn, with the fire's namespace and instance id stamped on every plugin and each plugin's id prefixed by the instance id so concurrent slots never share one. A firing whose plugin spec cannot be decoded SHALL NOT spawn an instance and SHALL be logged and reported on telemetry as a spawn failure. A duplicate fire attempt for the same slot SHALL no-op on the deterministic id. DST: nonexistent local times skip; ambiguous local times fire once.
+At each matching slot (evaluated in the entry's IANA timezone by a single schedule process that exists on exactly one node cluster-wide, hosted in the dedicated `:flz_schedules` hub), the controller SHALL spawn a fresh workflow instance with deterministic id `<name>@<slot>`, the stored `init_values` as its initial state and the stored first message, when one is stored, delivered as the instance's first input on the mechanism a tasklet's spawn uses, through the same start path as `flz operative start` (quota, plugins, teardown, retention inherited). The fire SHALL succeed whenever any controller node in the cluster holds a runner advertising the entry's factory in the entry's namespace: the node hosting the schedule process SHALL NOT affect the outcome, and the spawn SHALL be routed to a capable node at fire time against the fleet state current at that moment. A fire SHALL be refused as unsatisfiable only when no node in the cluster holds such a runner, and the refusal SHALL say so cluster-wide (not "no runners" on the deciding node alone). The entry's stored plugin spec SHALL be decoded at each firing and attached at spawn, with the fire's namespace and instance id stamped on every plugin and each plugin's id prefixed by the instance id so concurrent slots never share one. A firing whose plugin spec cannot be decoded SHALL NOT spawn an instance and SHALL be logged and reported on telemetry as a spawn failure. A duplicate fire attempt for the same slot SHALL no-op on the deterministic id. DST: nonexistent local times skip; ambiguous local times fire once.
 
 #### Scenario: The runner lives on a different node than the schedule process
 
@@ -45,6 +50,11 @@ At each matching slot (evaluated in the entry's IANA timezone by a single schedu
 
 - **WHEN** the namespace's only runner disconnects from node A and reconnects on node B between two slots, with the schedule process staying where it is
 - **THEN** the next slot SHALL fire successfully on node B with no operator action
+
+#### Scenario: A fired instance runs on the stored first message
+
+- **WHEN** a schedule storing `--text '{"day":"today"}'` fires a `once` workflow
+- **THEN** the spawned instance SHALL run its pass over that message on the stored channel or the first declared entry channel, and SHALL end with status `ok`
 
 #### Scenario: A fired instance produces output through its scheduled plugins
 
@@ -74,7 +84,7 @@ At each matching slot (evaluated in the entry's IANA timezone by a single schedu
 #### Scenario: Manual immediate run
 
 - **WHEN** `flz schedule run <name>` is issued
-- **THEN** one instance SHALL spawn immediately with the stored configuration and an id distinct from cron slots, whether or not the schedule hub is running on that node — routed to a capable node exactly like a cron fire
+- **THEN** one instance SHALL spawn immediately with the stored configuration, its stored first message included, and an id distinct from cron slots, whether or not the schedule hub is running on that node — routed to a capable node exactly like a cron fire
 
 ### Requirement: Missed slots SHALL be skipped, and overlapping runs SHALL be permitted by distinct slot ids
 
@@ -141,18 +151,18 @@ works on a node whose schedule hub is down.
 ### Requirement: The schedule verbs SHALL carry their optional flags as one options document
 
 A schedule verb's optional flags SHALL travel to the controller as one options
-document (the namespace, the initial values, the kind, the plugin spec and the
-caller's credential), the keyword list every other gated schedule verb already
+document (the namespace, the initial values, the first message's text and channel, the kind, the
+plugin spec and the caller's credential), the keyword list every other gated schedule verb already
 carries its credential in, rather than as positional arguments with defaults.
 This rule governs the request the CLI builds, not the spelling of the
 operator-facing flags. A value that must reach the controller as text, such as
-the plugin spec the decoder reads verbatim, SHALL be carried as text whatever it
+the plugin spec the decoder reads verbatim and the first message, SHALL be carried as text whatever it
 parses as.
 
 #### Scenario: An optional flag is absent
 
 - **WHEN** `flz schedule add` is issued without `--namespace`, `--init-values`,
-  `--plugins` or `--kind`
+  `--text`, `--channel`, `--plugins` or `--kind`
 - **THEN** the controller SHALL apply the same defaults it applies today, and the
   request SHALL carry no positional placeholder for the absent flag
 
@@ -161,6 +171,11 @@ parses as.
 - **WHEN** `flz schedule add --plugins '[{"provider": …}]'` is issued
 - **THEN** the controller SHALL receive the JSON text, and the stored entry SHALL
   hold it verbatim as the registry requirement demands
+
+#### Scenario: The first message arrives as the text the operator wrote
+
+- **WHEN** `flz schedule add --text 'hello' --channel requests` is issued
+- **THEN** the request SHALL carry `text` and `channel` in the options document as text, and the stored entry SHALL hold both verbatim
 
 #### Scenario: No schedule verb exceeds the arity ceiling
 

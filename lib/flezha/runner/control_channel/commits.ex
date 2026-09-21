@@ -250,7 +250,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       consumed_offset: consumed_offset,
       handoff: handoff,
       completes: completes,
-      result: result
+      result: result,
+      entry_channel: entry_channel
     } = commit
 
     runner_id = state.runner_id
@@ -258,7 +259,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     %{
       operative_id: operative_id,
       barrier:
-        {:iter_committed, iter, consumed_offset, handoff_items(handoff),
+        {:iter_committed, iter, consumed_offset, entry_channel, handoff_items(handoff),
          completion(completes, result)},
       telemetry:
         {[:flezha, :state, :iter_commit], %{count: 1, consumed_offset: consumed_offset},

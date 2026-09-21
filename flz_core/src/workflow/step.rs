@@ -15,7 +15,7 @@ use super::compensation::{CellRun, StagedOutput};
 use super::driver::{ChainCtx, Runnable, Value, CANCEL_POLL_CHUNK};
 use super::{WorkflowCollectSink, WorkflowError};
 use crate::cell::CellSlot;
-use crate::channel::RetryPolicy;
+use crate::channel::{ChannelId, RetryPolicy};
 use crate::operative::topology::{CellMode, TaskletDescriptor};
 use crate::poll_core::EnginePayload;
 use crate::util::LockRecover;
@@ -45,15 +45,24 @@ struct StepKey {
     cell_index: usize,
 }
 
+/// The first failure of a stage: the node, the error its ladder ended on,
+/// the items that partition was running and how many attempts it made.
+pub(super) struct StageFailure {
+    pub(super) node: usize,
+    pub(super) error: WorkflowError,
+    items: Vec<Value>,
+    attempts: u32,
+}
+
 /// Run one frontier as step activations and join on one barrier. A failing
 /// cell climbs its ladder in place; its siblings are never re-run. Answers
 /// every node that completed whole (ascending, so parents precede children)
-/// plus the first error; a node with a failing cell yields nothing, one with
-/// nothing to do yields an empty `StageOut`.
+/// plus the first failure; a node with a failing cell yields nothing, one
+/// with nothing to do yields an empty `StageOut`.
 pub(super) fn run_stage(
     ctx: &ChainCtx,
     frontier: Vec<Runnable>,
-) -> (Vec<(usize, StageOut)>, Option<WorkflowError>) {
+) -> (Vec<(usize, StageOut)>, Option<StageFailure>) {
     let mut barrier = StageBarrier::new(frontier.iter().map(|(node, _)| *node), ctx.retry);
     for (node, batch) in &frontier {
         let slots = &ctx.stage_cells[*node];
@@ -130,6 +139,38 @@ fn partition(task: &TaskletDescriptor, cell_count: usize, batch: &[Value]) -> Ve
     buckets
 }
 
+/// A message a host's entry decoder rejected, parked to the dead-letter
+/// queue under the pass's entry channel after the stage's ladder climbed:
+/// the stream's rule for an unreadable entry payload, at the one place a
+/// host workflow decodes it. The run consumes it without a pass.
+pub(super) fn park_unreadable(
+    ctx: &ChainCtx,
+    channel_id: ChannelId,
+    origin_offset: Option<u64>,
+    failure: &StageFailure,
+) {
+    let Some(channel) = ctx.topology.channel(channel_id) else {
+        return;
+    };
+    // A host's value carries the wire bytes; a typed core's does not, and a
+    // typed core never answers this verdict.
+    let payload = failure
+        .items
+        .iter()
+        .find_map(|item| item.downcast_ref::<crate::host::HostPayload>())
+        .map(|p| p.bytes.clone());
+    crate::retry::park_exhausted(
+        &format!("entry channel `{}`", channel.name),
+        crate::retry::ParkTarget::entry(channel),
+        ctx.instance_id,
+        origin_offset,
+        payload,
+        failure.error.message.clone(),
+        failure.attempts,
+    );
+    ctx.note_parked(origin_offset.unwrap_or(0));
+}
+
 /// The driver's stage barrier: every partition of a frontier, its place on
 /// the ladder, and the answers so far.
 struct StageBarrier {
@@ -138,7 +179,7 @@ struct StageBarrier {
     ladders: HashMap<StepKey, Ladder>,
     runs: BTreeMap<usize, Vec<CellRun>>,
     failed: HashSet<usize>,
-    first_err: Option<WorkflowError>,
+    first_err: Option<StageFailure>,
     max_attempts: u32,
 }
 
@@ -170,7 +211,7 @@ impl StageBarrier {
 
     /// Wait for every submitted partition — even on failure, so nothing is
     /// mid-run when the level completes — timing the ladder here.
-    fn join(mut self, ctx: &ChainCtx) -> (Vec<(usize, StageOut)>, Option<WorkflowError>) {
+    fn join(mut self, ctx: &ChainCtx) -> (Vec<(usize, StageOut)>, Option<StageFailure>) {
         while !self.ladders.is_empty() {
             match self.next_answer(ctx) {
                 Some(StepDone {
@@ -261,8 +302,11 @@ impl StageBarrier {
             return;
         };
         if error.non_retryable || ladder.attempt >= self.max_attempts {
-            self.ladders.remove(&key);
-            self.fail(key.node, error);
+            let ladder = self
+                .ladders
+                .remove(&key)
+                .expect("the ladder was just found");
+            self.fail_with(key.node, error, ladder.items, ladder.attempt);
             return;
         }
         let delay = crate::retry::note_failed_attempt(
@@ -275,8 +319,17 @@ impl StageBarrier {
     }
 
     fn fail(&mut self, node: usize, error: WorkflowError) {
+        self.fail_with(node, error, Vec::new(), 0);
+    }
+
+    fn fail_with(&mut self, node: usize, error: WorkflowError, items: Vec<Value>, attempts: u32) {
         self.failed.insert(node);
-        self.first_err.get_or_insert(error);
+        self.first_err.get_or_insert(StageFailure {
+            node,
+            error,
+            items,
+            attempts,
+        });
     }
 
     /// Give up on every unresolved partition rather than hang the level.
@@ -299,7 +352,7 @@ impl StageBarrier {
         }
     }
 
-    fn into_level(self) -> (Vec<(usize, StageOut)>, Option<WorkflowError>) {
+    fn into_level(self) -> (Vec<(usize, StageOut)>, Option<StageFailure>) {
         let level = self
             .runs
             .into_iter()

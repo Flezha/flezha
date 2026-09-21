@@ -5,14 +5,18 @@
 //!
 //! [`OperativeRegistry`]: crate::operative::registry::OperativeRegistry
 
+use std::any::Any;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 
+use super::spec::WorkflowSpec;
 use crate::cell::CellSlot;
+use crate::channel::ChannelId;
+use crate::operative::topology::OperativeTopology;
 
 /// The crash-resume wait's cap; a restore that never lands degrades to a
 /// best-effort re-run rather than a hung operative.
@@ -40,20 +44,36 @@ fn handoff_items(items: &[crate::pb::TaskHandoffItem]) -> Vec<(u32, Vec<u8>)> {
         .collect()
 }
 
-/// One post-start input with its durable-inbox offset; `0` when unjournaled.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One message through the entrance: the entry channel it named, its value
+/// as that channel's `wrap_input` made it, its durable-inbox offset (`0`
+/// when unjournaled) and whether the controller re-forwarded it.
+#[derive(Clone)]
 pub struct InboxItem {
-    pub payload: Vec<u8>,
+    pub channel_id: ChannelId,
+    pub value: Arc<dyn Any + Send + Sync>,
     pub offset: u64,
+    pub replay: bool,
+}
+
+/// What the entrance hands the driver: a message to run a pass over, or the
+/// durable-inbox offset (`0` when unjournaled) of one it parked to the
+/// dead-letter queue instead, which the run consumes without a pass.
+pub enum Inbound {
+    Message(InboxItem),
+    Parked(u64),
 }
 
 pub struct WorkflowInstance {
     pub instance_id: Arc<str>,
     /// The class this instance was spawned from.
     pub factory_id: Arc<str>,
+    pub spec: Arc<WorkflowSpec>,
     /// Tripped by a stop, a removal or `max_duration`.
     pub cancel: Arc<AtomicBool>,
-    inbox_tx: Sender<InboxItem>,
+    inbox_tx: Sender<Inbound>,
+    /// Retry ladders still running for this instance, each holding a payload
+    /// on its own thread rather than in the inbox.
+    pub(crate) ladders: AtomicUsize,
     /// Inbox items the controller still owes this bind; the loop does not
     /// park before they arrive.
     pub owed_inbox: u32,
@@ -74,13 +94,17 @@ pub struct WorkflowInstance {
 }
 
 /// Committed task-journal state for one crash-resume: the iteration to
-/// resume at (after the highest committed one), the tasklets committed
-/// inside it with what each released, the previous terminal batch, and every
-/// forward commit for the compensation planner.
+/// resume at (after the highest committed one), the entry channel whose
+/// chain the last committed iteration ran, the tasklets committed inside the
+/// resumed one with what each released, the previous terminal batch, and
+/// every forward commit for the compensation planner.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JournalResume {
     pub committed_task_idxs: Vec<u32>,
     pub iter: u32,
+    /// The name of the entry channel the last committed iteration's chain
+    /// belongs to; empty before any iteration committed.
+    pub entry_channel: String,
     pub handoff: Vec<(u32, Vec<u8>)>,
     pub task_handoffs: Vec<EdgeHandoff>,
     pub committed_tasks: Vec<CommittedTask>,
@@ -113,6 +137,7 @@ impl From<&crate::pb::TaskJournalState> for JournalResume {
         Self {
             committed_task_idxs: journal.committed_task_idxs.clone(),
             iter: journal.iter,
+            entry_channel: journal.entry_channel.clone(),
             handoff: handoff_items(&journal.handoff),
             task_handoffs: journal
                 .task_handoffs
@@ -135,18 +160,20 @@ impl WorkflowInstance {
     /// gate the driver (0 runs at once).
     pub fn new(
         instance_id: Arc<str>,
-        factory_id: Arc<str>,
+        spec: Arc<WorkflowSpec>,
         stage_cells: Vec<Vec<Arc<CellSlot>>>,
         expected: usize,
         owed_inbox: u32,
         task_journal: Option<JournalResume>,
-    ) -> (Arc<Self>, Receiver<InboxItem>) {
+    ) -> (Arc<Self>, Receiver<Inbound>) {
         let (inbox_tx, inbox_rx) = unbounded();
         let instance = Arc::new(Self {
             instance_id,
-            factory_id,
+            factory_id: Arc::from(spec.topology.factory_id),
+            spec,
             cancel: Arc::new(AtomicBool::new(false)),
             inbox_tx,
+            ladders: AtomicUsize::new(0),
             stage_cells,
             expected,
             owed_inbox,
@@ -191,9 +218,25 @@ impl WorkflowInstance {
         self.cancel.store(true, Ordering::Release);
     }
 
-    /// An input into the driver's inbox; `false` once the driver finished.
-    pub fn push_inbox(&self, payload: Vec<u8>, offset: u64) -> bool {
-        self.inbox_tx.send(InboxItem { payload, offset }).is_ok()
+    /// Into the driver's inbox; `false` once the driver finished.
+    pub fn push_inbox(&self, item: Inbound) -> bool {
+        self.inbox_tx.send(item).is_ok()
+    }
+
+    pub fn topology(&self) -> &Arc<OperativeTopology> {
+        &self.spec.topology
+    }
+
+    /// The slots of the stage that runs tasklet `tasklet_id`, in the order
+    /// `build_stage_cells` built them: a static stage's in `cell_keys` order.
+    pub fn cells_of(&self, tasklet_id: crate::channel::TaskletId) -> Option<&[Arc<CellSlot>]> {
+        let position = self
+            .spec
+            .dag
+            .order
+            .iter()
+            .position(|&id| id == tasklet_id)?;
+        self.stage_cells.get(position).map(Vec::as_slice)
     }
 
     /// One of this instance's slots by wire identity.
@@ -251,15 +294,15 @@ mod tests {
 
     /// An instance with no Cells, enough for the resume-count logic.
     fn gate(expected: usize) -> Arc<WorkflowInstance> {
-        WorkflowInstance::new(
-            Arc::from("gate-test"),
-            Arc::from("gate-factory"),
-            Vec::new(),
-            expected,
-            0,
-            None,
-        )
-        .0
+        let factory_id = format!("gate_factory_{}", std::process::id());
+        let json = format!(
+            r#"{{"factory_id":"{factory_id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}],"workflow":{{}}}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+        let spec = super::super::registry::get_class(&factory_id).expect("class registered");
+        WorkflowInstance::new(Arc::from("gate-test"), spec, Vec::new(), expected, 0, None).0
     }
 
     #[test]

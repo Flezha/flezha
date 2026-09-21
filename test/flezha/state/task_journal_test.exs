@@ -215,7 +215,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
         Codec.encode_outbox([])
       ])
 
-    old_iter = Codec.encode_entry(3, 0, 1, [<<5::64-big>>, Codec.encode_handoff([])])
+    old_iter = Codec.encode_entry(3, 0, 1, [<<5::64-big, 0::16-big>>, Codec.encode_handoff([])])
     File.write!(path, TestHelpers.build_wal_record(3, <<0::128>>, old_task), [:append])
     File.write!(path, TestHelpers.build_wal_record(4, <<0::128>>, old_iter), [:append])
 

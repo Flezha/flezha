@@ -59,7 +59,7 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** | At-least-once | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the durable inbox. |
 | **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's `inbox.wal` before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
 | **Controller redeploy while a workflow instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + inbox + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
-| **Workflow operative runner SIGKILL** (persistence opted out) | **Full — re-runs from the top** | At-least-once | No WAL; the operative re-runs from `args` and its memory-only inbox is lost. Idempotent by author contract, or don't opt out. |
+| **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and its memory-only inbox is lost. Idempotent by author contract, or don't opt out. |
 | **Workflow operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Poison payload** (fails every retry) | **No loss** | Cell continues | Retry-then-park: after `retry_max` attempts the payload is parked durably to the DLQ *before* the Cell advances. Only retention (30 d / 4 GiB, loud) ever discards it. |
 
@@ -317,8 +317,8 @@ per-instance `inbox.wal` — the same `WalWriter` + `FsyncBatcher` substrate as 
 **before** it is forwarded: a crash after the append re-delivers on rehydrate (at-least-once
 *into* the operative, exactly-once *completion* via the consumed offset), and an append that
 fails is not forwarded. Offsets are 1-based (`0` means nothing consumed); a duplicate of
-`flz.msg_id` (else the payload hash) inside the undelivered window is absorbed at append, so an
-at-least-once sender cannot produce a duplicate turn. Delivery is filtered by the journal's
+`flz.msg_id` inside the undelivered window is absorbed at append, so an at-least-once sender
+cannot produce a duplicate turn, while a message without an id is always appended. Delivery is filtered by the journal's
 *released* offset, which a rewind never lowers, so a deferred truncation costs disk, never a
 re-delivery.
 
@@ -333,8 +333,8 @@ suspension".
 stream with **no** new identity scheme, dedup store, ledger or wire format. Three existing parts
 assemble the guarantee: the source's outbox stamps `flz.seq` / `flz.key` / `flz.epoch` and makes
 the record durable; the plugin's worker holds the record and retries until the target confirms;
-the target's ingest absorbs a repeat of `flz.msg_id` (else payload hash) inside its undelivered
-window and is offset-addressed under the tier.
+the target's ingest absorbs a repeat of `flz.msg_id` inside its undelivered window and is
+offset-addressed under the tier.
 
 **The guarantee is derived, never configured** — there is no delivery-mode option, because a
 source with no outbox has nothing to re-send from:

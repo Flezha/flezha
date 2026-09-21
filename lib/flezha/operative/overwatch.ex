@@ -276,20 +276,26 @@ defmodule Flezha.Operative.Overwatch do
     |> seed_input(operative)
   end
 
-  # A tasklet-requested spawn's payload, ingested as the instance's first
-  # input. It runs inside the bind continue, which is what makes it first: no
-  # other message in the mailbox — including a concurrent requester's delivery —
-  # can be ingested ahead of it. A durable instance whose inbox already holds
-  # entries is a restart rather than a spawn; its payload is journaled, so
-  # re-seeding it would duplicate.
+  # The instance's first input (a tasklet-requested spawn's payload, or the
+  # message `flz operative start --text` and a schedule carry), ingested with
+  # its metadata (the entry channel it names) inside the bind continue, which
+  # is what makes it first: no other message in the mailbox — including a
+  # concurrent requester's delivery — can be ingested ahead of it. A durable
+  # instance whose inbox already holds entries is a restart rather than a
+  # spawn; its payload is journaled, so re-seeding it would duplicate.
   defp seed_input({:noreply, %__MODULE__{} = state} = result, operative) do
-    payload = Keyword.get(operative.opts, :seed_input)
+    case Keyword.get(operative.opts, :seed_input) do
+      {message, metadata}
+      when is_binary(message) and is_map(metadata) and is_nil(state.init_error) ->
+        if fresh_inbox?(state) do
+          {_verdict, state} = Ingest.confirming_ingest(state, message, metadata, :cast)
+          {:noreply, state}
+        else
+          result
+        end
 
-    if is_binary(payload) and is_nil(state.init_error) and fresh_inbox?(state) do
-      {_verdict, state} = Ingest.confirming_ingest(state, payload, %{}, :cast)
-      {:noreply, state}
-    else
-      result
+      _ ->
+        result
     end
   end
 

@@ -1,13 +1,18 @@
-//! The **workflow** operative kind: spawned with `args`, run to an exit
-//! trigger, torn down. It drives the stream building blocks (tasklets,
-//! channels, cells, `ctx.emit`) under a lifecycle: a tasklet DAG, an
-//! inbox for post-start input, and exit triggers (the chain finishing, a
-//! tasklet's `complete`, a loop running out of work, `max_duration`, an
-//! external stop) that all converge on one `WorkflowCompleted`.
+//! The **workflow** operative kind: spawned with `init_values` as initial
+//! state per tasklet, exactly as a stream is, fed by messages on its entry
+//! channels through the stream's entrance, run to an exit trigger, torn
+//! down. It drives the stream building blocks (tasklets, channels, cells,
+//! `ctx.emit`) under a lifecycle: a tasklet DAG with one chain per entry
+//! channel, an inbox the entrance fills, and exit triggers (the chain
+//! finishing, a tasklet's `complete`, a loop running out of work,
+//! `max_duration`, an external stop) that all converge on one
+//! `WorkflowCompleted`.
 
 mod commit;
 pub mod compensation;
 pub mod driver;
+#[cfg(all(test, unix))]
+mod driver_tests;
 pub mod instance;
 pub mod registry;
 mod resume;
@@ -22,18 +27,20 @@ use std::sync::Arc;
 /// by the controller before forwarding.
 pub const INBOX_OFFSET_KEY: &str = "flz.inbox_offset";
 
-/// How a structured chain repeats. Every iteration ends with a durable
-/// commit, so a crash resumes after the last committed one.
+/// How a structured chain repeats. Every message-fed pass waits for its
+/// message the same way: a durable instance idle past the threshold at a
+/// committed boundary, the one before its first pass included, parks until
+/// the next message or its wake deadline. Every iteration ends with a
+/// durable commit, so a crash resumes after the last committed one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopMode {
-    /// One pass, seeded from the spawn args.
+    /// One pass over the first message, then done.
     Once,
-    /// One iteration per inbox item. A durable instance idle past the
-    /// threshold at a committed boundary parks until the next input or its
-    /// wake deadline.
+    /// One iteration per message.
     PerInput,
-    /// One iteration per pass, each seeded by the previous terminal handoff;
-    /// ends on an empty batch. Never parks.
+    /// The first pass over the first message; every later one seeded by the
+    /// previous terminal handoff into the chain that message picked, ending
+    /// on an empty batch.
     Chained,
 }
 
@@ -55,14 +62,24 @@ pub const COMPLETE_OUTSIDE_WORKFLOW: &str =
 pub struct WorkflowError {
     pub message: String,
     pub non_retryable: bool,
+    /// A host's entry decoder could not read the message: once the ladder
+    /// exhausts, the message parks and the run goes on waiting rather than
+    /// ending.
+    pub unreadable: bool,
 }
 
 impl WorkflowError {
     /// A permanent failure: no retry, the tasklet fails at once.
     pub fn non_retryable(message: impl Into<String>) -> Self {
+        Self::new(message, true)
+    }
+
+    /// A message the entry decoder rejected.
+    pub fn unreadable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            non_retryable: true,
+            non_retryable: false,
+            unreadable: true,
         }
     }
 
@@ -70,6 +87,7 @@ impl WorkflowError {
         Self {
             message: message.into(),
             non_retryable,
+            unreadable: false,
         }
     }
 }

@@ -70,6 +70,30 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
     do:
       NodeTestHelper.wait_until(fn -> TaskJournal.pending_entries(operative_id) == [] end, 30_000)
 
+  # --- durable-loop helpers ---------------------------------------------------
+
+  def send_turn(namespace, operative_id, text, channel \\ "in") do
+    :ok = OperativeManager.send_io(operative_id, namespace, text, %{"channel" => channel})
+  end
+
+  def committed_iters(operative_id) do
+    {:ok, entries} = TaskJournal.read(operative_id)
+    for %{type: :iter_committed, iter: iter} <- entries, do: iter
+  end
+
+  def consumed_offsets(operative_id) do
+    {:ok, entries} = TaskJournal.read(operative_id)
+    for %{type: :iter_committed, payload: %{consumed_offset: o}} <- entries, do: o
+  end
+
+  # A pass in flight: its root committed, the iteration not yet.
+  def root_committed_without_iteration?(operative_id) do
+    {:ok, entries} = TaskJournal.read(operative_id)
+
+    Enum.any?(entries, &(&1.type == :task_committed and &1.task_idx == 0)) and
+      not Enum.any?(entries, &(&1.type == :iter_committed))
+  end
+
   def boot_runner(namespace, ctx, id_path, opts) do
     env =
       [{"FLEZHA_RUNNER_ID_PATH", id_path}] ++
@@ -90,14 +114,18 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   end
 
   # Start one workflow operative of `factory_id` on `namespace`, returning the
-  # start info (every workflow scenario here seeds the same args and differs only
-  # in its class and its plugins).
+  # start info. Every once chain here takes the same first message,
+  # `{"seed":"go"}`, delivered as `flz operative start --text` delivers one; a
+  # loop passes `first_message: nil` and sends its turns itself.
   def start_workflow(namespace, operative_id, factory_id, opts) do
+    {first_message, opts} = Keyword.pop(opts, :first_message, ~s({"seed":"go"}))
+    opts = if first_message, do: [{:seed_input, {first_message, %{}}} | opts], else: opts
+
     builder = %Builder{
       id: operative_id,
       factory_id: factory_id,
       kind: :workflow,
-      init_values: %{"seed" => "go"},
+      init_values: %{},
       opts: opts
     }
 

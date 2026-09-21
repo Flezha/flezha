@@ -5,13 +5,14 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   parks when its inbox is empty and rehydrates on the next input; a rewind that
   compensates back to an earlier iteration and bumps the epoch; the cell
   retry ladder and what it does when it exhausts; a branching tree, whose
-  fan-out either joins once or unwinds every branch before their parent; and a
-  loop a tasklet ends with `complete`.
+  fan-out either joins once or unwinds every branch before their parent; a
+  loop a tasklet ends with `complete`; and an unreadable message a waiting
+  instance dead-letters without waking up for it again.
 
-  All but the last prove controller mechanics rather than a runner, so those
-  scenarios pin the reference SDK; the completion is each SDK's own, so its scenario
-  runs on the selected runtime. Tagged `:system` (boots real subprocesses) — excluded from the
-  default `mix test`; run with:
+  All but the last two prove controller mechanics rather than a runner, so those
+  scenarios pin the reference SDK; the completion and the entry decoder are each
+  SDK's own, so their scenarios run on the selected runtime. Tagged `:system`
+  (boots real subprocesses) — excluded from the default `mix test`; run with:
 
       mix test --only workflow_crash_resume
       mix test test/system/workflow_control_flow_e2e_test.exs --include system
@@ -25,6 +26,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
   import FlezhaTest.Helper.WorkflowResumeHarness
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Replay
   alias Flezha.Runner.FleetManager
@@ -71,6 +73,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       info =
         start_workflow(namespace, operative_id, "chat_loop_workflow",
+          first_message: nil,
           plugins: [forward_sink("chat_sink", collector)]
         )
 
@@ -229,6 +232,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
         )
 
       start_workflow(namespace, operative_id, "chat_loop_workflow",
+        first_message: nil,
         plugins: [forward_sink("chat_sink", collector)]
       )
 
@@ -274,6 +278,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
         )
 
       start_workflow(namespace, operative_id, "stateless_loop_workflow",
+        first_message: nil,
         plugins: [forward_sink("chat_sink", collector)]
       )
 
@@ -323,6 +328,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
         )
 
       start_workflow(namespace, operative_id, "chat_loop_workflow",
+        first_message: nil,
         plugins: [forward_sink("chat_sink", collector)]
       )
 
@@ -351,6 +357,62 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
+  describe "an unreadable message (uds)" do
+    # Not pinned to the reference SDK: whether the entry reads a message is
+    # each runtime's own decoder. Every test app's `typed_once_workflow` decodes
+    # its `order` entry as a JSON ticket and completes with the ticket's text.
+    @describetag transport: :uds, scenario: :uds_unreadable
+
+    test "is dead-lettered and consumed, so the waiting instance stays suspended until a readable one",
+         ctx do
+      namespace = unique("workflow_unreadable")
+      operative_id = unique("typed_once_workflow")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      parent = self()
+      handler = {__MODULE__, :rehydrating, operative_id}
+
+      :telemetry.attach(
+        handler,
+        [:flezha, :workflow, :rehydrating],
+        fn _e, _meas, meta, _ ->
+          if meta.operative_id == operative_id, do: send(parent, :rehydrating)
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      {_port, _exec} =
+        boot_runner(namespace, ctx, id_path,
+          release?: false,
+          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+        )
+
+      start_workflow(namespace, operative_id, "typed_once_workflow", first_message: nil)
+      send_turn(namespace, operative_id, "not json", "order")
+
+      assert NodeTestHelper.wait_until(fn -> DlqStore.list(operative_id) != [] end, 30_000),
+             "the unreadable message was never dead-lettered"
+
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 30_000),
+             "the instance waiting for a readable message never suspended"
+
+      # The parked message counts as consumed: the inbox owes nothing, so the
+      # suspension holds instead of rehydrating to deliver it again.
+      assert TaskInbox.undelivered(operative_id) == []
+      refute_receive :rehydrating, 3_000
+      assert suspended?(namespace, operative_id)
+      assert [_one] = DlqStore.list(operative_id)
+
+      send_turn(namespace, operative_id, ~s({"text":"after"}), "order")
+      await_status(operative_id, "ok", 60_000)
+      assert {:ok, %{result: "after"}} = Completion.read(operative_id)
+    end
+  end
+
   describe "loop rewind (reference/uds)" do
     @describetag transport: :uds, scenario: :uds_rewind, reference_runtime: true
 
@@ -376,6 +438,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {_port, _exec} = boot_runner(namespace, ctx, id_path, release?: false)
 
       start_workflow(namespace, operative_id, "chat_rewind_workflow",
+        first_message: nil,
         plugins: [forward_sink("chat_sink", collector)]
       )
 
@@ -628,20 +691,6 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   # The sink's collector accumulates, so each wait is for the running total.
   defp replies(collector, count, operative_id) do
     collector |> await_outputs(count, operative_id) |> Enum.map(fn {payload, _md} -> payload end)
-  end
-
-  defp send_turn(namespace, operative_id, text) do
-    :ok = OperativeManager.send_io(operative_id, namespace, text, %{"channel" => "in"})
-  end
-
-  defp committed_iters(operative_id) do
-    {:ok, entries} = TaskJournal.read(operative_id)
-    for %{type: :iter_committed, iter: iter} <- entries, do: iter
-  end
-
-  defp consumed_offsets(operative_id) do
-    {:ok, entries} = TaskJournal.read(operative_id)
-    for %{type: :iter_committed, payload: %{consumed_offset: o}} <- entries, do: o
   end
 
   defp suspended?(namespace, operative_id) do

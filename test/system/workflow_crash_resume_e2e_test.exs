@@ -49,12 +49,15 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   use FlezhaTest.SystemCase, capability: :workflow
 
   # The shared tier-e2e mechanics.
-  import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, unique: 1, unique_id_path: 0]
+  import FlezhaTest.Helper.TierE2EHarness,
+    only: [cleanup: 3, kill_overwatch: 2, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
 
   import FlezhaTest.Helper.WorkflowResumeHarness
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Replay
+  alias Flezha.Runner.FleetManager
+  alias Flezha.State.Completion
   alias Flezha.Service.CliManager
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
@@ -306,10 +309,88 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert {:ok, []} = TaskJournal.read(operative_id)
       refute File.exists?(Paths.journal_path(operative_id))
 
+      # The controller journals the message it forwarded, in the instance's
+      # inbox; the class's own state is what an opted-out class never writes.
       assert [Paths.class_dir(operative_id), "**", "*.wal"]
              |> Path.join()
-             |> Path.wildcard() == [],
+             |> Path.wildcard()
+             |> Enum.reject(&(&1 == Paths.inbox_path(operative_id))) == [],
              "an opted-out class must write no WAL"
+    end
+  end
+
+  describe "a mid-iteration resume of a message-fed pass (reference/uds)" do
+    @describetag transport: :uds, scenario: :uds_message_resume, reference_runtime: true
+
+    # `workflow-durable-loop`: the runner dies after the root's `task_committed`
+    # and before the pass's `iter_committed`. The controller re-forwards the
+    # message that pass had taken, and the resumed pass takes it as its own:
+    # the message drives exactly one iteration, sealed with its offset, and
+    # the next iteration waits for a new message rather than running over the
+    # same one again.
+    test "the re-forwarded message drives one iteration after the resume, never two", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("workflow_msg_resume")
+      operative_id = unique("reply_block_loop_workflow")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      {port_a, exec_a} = boot_runner(namespace, ctx, id_path, release?: false)
+
+      info =
+        start_workflow(namespace, operative_id, "reply_block_loop_workflow",
+          first_message: nil,
+          plugins: [forward_sink("reply_sink", collector)]
+        )
+
+      assert info.runner_id == exec_a
+
+      # The turn commits at the root, then the reply blocks until the release.
+      send_turn(namespace, operative_id, "reply-crash")
+
+      assert NodeTestHelper.wait_until(
+               fn -> root_committed_without_iteration?(operative_id) end,
+               30_000
+             ),
+             "the root never committed ahead of the iteration on the first runner"
+
+      refute Completion.exists?(operative_id)
+
+      sigkill(os_pid(port_a))
+      {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
+      assert exec_b != exec_a, "replacement must mint a fresh session token"
+
+      assert NodeTestHelper.wait_until(
+               fn -> exec_a not in FleetManager.active_runners(namespace) end,
+               15_000
+             ),
+             "dead runner was never evicted after the replacement connected"
+
+      kill_overwatch(namespace, operative_id)
+
+      assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0] end, 60_000),
+             "the resumed pass did not commit iteration 0: " <>
+               inspect(committed_iters(operative_id))
+
+      assert consumed_offsets(operative_id) == [1],
+             "the resumed pass did not seal with its message's offset"
+
+      # A second message is the next iteration; the crashed turn's reply is
+      # seen exactly once.
+      send_turn(namespace, operative_id, "next")
+
+      assert NodeTestHelper.wait_until(
+               fn -> committed_iters(operative_id) == [0, 1] end,
+               60_000
+             ),
+             "the next message did not run as iteration 1: " <>
+               inspect(committed_iters(operative_id))
+
+      assert consumed_offsets(operative_id) == [1, 2]
+
+      assert collector |> await_outputs(2, operative_id) |> Enum.map(&elem(&1, 0)) ==
+               ["reply:reply-crash", "reply:next"]
     end
   end
 

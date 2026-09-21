@@ -299,7 +299,13 @@ whose optional flags were spelled as positional arguments with defaults SHALL ca
 them in that list instead, so that the credential is always the last slot and a new
 optional flag has somewhere to go. A verb whose only free argument is a JSON document
 SHALL keep the document and gain the list beside it. This rule governs the request the
-CLI builds, not the spelling of the operator-facing flags.
+CLI builds, not the spelling of the operator-facing flags. `flz operative start` SHALL
+read a first message as `send` spells it, `--text`/`-t` with an optional `--channel`/`-c`,
+for both operative kinds, and SHALL carry `text` and `channel` in the options list as text;
+the controller SHALL deliver that message as the instance's first input on the mechanism a
+tasklet's spawn uses, and an instance started without `--text` SHALL wait for `send`.
+`--channel` without `--text` SHALL be refused by the verb. `--init-values` SHALL mean initial
+state per tasklet for both kinds.
 
 #### Scenario: A verb with no options still ends with the list
 
@@ -313,6 +319,20 @@ CLI builds, not the spelling of the operator-facing flags.
 - **THEN** the request SHALL carry `id`, `plugins` and `kind` in the options list, as text
   where the controller reads text, and SHALL carry no positional placeholder for an
   absent flag
+
+#### Scenario: `operative start` carries a first message
+
+- **WHEN** `flz operative start paper_order --kind workflow --text '{"symbol":"AAPL"}' --channel order` is run
+- **THEN** the options list SHALL carry `text` and `channel` as text, the instance SHALL
+  receive that message as its first input on `order`, and a `once` workflow SHALL run its
+  pass over it
+
+#### Scenario: `operative start` without a message starts an instance that waits
+
+- **WHEN** `flz operative start paper_order --kind workflow` is run and
+  `flz operative send <id> --text '{"symbol":"AAPL"}'` follows
+- **THEN** the options list SHALL carry no `text` entry, the instance SHALL wait for its
+  first message, and the send SHALL be that message
 
 #### Scenario: `operative start` without an id carries none
 

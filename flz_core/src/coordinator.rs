@@ -16,6 +16,7 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 use tracing::warn;
 
+use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{get_class as get_operative_class, Operative, OperativeRegistry};
 use crate::pb::command_request::Command;
@@ -93,31 +94,39 @@ impl RunnerNode {
         Some(self.operative_registry.register_stream(instance))
     }
 
-    /// Spawn a workflow instance and its driver; `false` when no such class
-    /// is registered.
-    pub fn start_workflow(&self, factory_id: String, instance_id: String, args: String) -> bool {
-        self.start_workflow_resumable(factory_id, instance_id, args, 0, 0, None)
+    /// Spawn a workflow instance and its driver, with `init_values` as its
+    /// tasklets' initial state; `false` when no such class is registered.
+    pub fn start_workflow(
+        &self,
+        factory_id: String,
+        instance_id: String,
+        init_values: &str,
+    ) -> Result<bool, Error> {
+        self.start_workflow_resumable(factory_id, instance_id, init_values, 0, 0, None)
     }
 
     /// Spawn a workflow instance that may be resuming: the driver holds its
     /// first tasklet until `resume_cell_count` restores have landed (`0`
     /// runs at once). `task_journal` rides the bind: a durable class with no
-    /// per-Cell state ships no restore at all.
+    /// per-Cell state ships no restore at all. `init_values` is applied as
+    /// per-Cell state before the driver starts, so it is in place before the
+    /// `AddOperative` ack and any message; `Ok(false)` names an unregistered
+    /// class, `Err` a document that is not a JSON object.
     pub fn start_workflow_resumable(
         &self,
         factory_id: String,
         instance_id: String,
-        args: String,
+        init_values: &str,
         resume_cell_count: u32,
         inbox_tail_count: u32,
         task_journal: Option<crate::workflow::instance::JournalResume>,
-    ) -> bool {
+    ) -> Result<bool, Error> {
         if self.operative_registry.contains(&instance_id) {
-            return true;
+            return Ok(true);
         }
         let spec = match crate::workflow::registry::get_class(&factory_id) {
             Some(spec) => spec,
-            None => return false,
+            None => return Ok(false),
         };
 
         // Build the Cells + the instance now, synchronously, before the
@@ -128,16 +137,21 @@ impl RunnerNode {
         let stage_cells = crate::workflow::driver::build_all_stage_cells(&spec, &id);
         let (instance, inbox_rx) = crate::workflow::instance::WorkflowInstance::new(
             Arc::clone(&id),
-            Arc::from(factory_id.as_str()),
+            spec,
             stage_cells,
             resume_cell_count as usize,
             inbox_tail_count,
             task_journal,
         );
+        if let Err(e) = crate::command::cell_state::apply_init_values(&*instance, init_values) {
+            // Refused before it ran: the Cells' flusher entries go with it.
+            crate::workflow::driver::deregister_flushers(&instance.stage_cells);
+            return Err(e);
+        }
         self.operative_registry
             .register_workflow(Arc::clone(&instance));
-        crate::workflow::driver::spawn(spec, instance, inbox_rx, args);
-        true
+        crate::workflow::driver::spawn(instance, inbox_rx);
+        Ok(true)
     }
 
     /// Unregister a class with no live instance; `Err(n)` names how many

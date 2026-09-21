@@ -190,8 +190,9 @@ body:   [dedup_len: u16 BE][dedup_id][meta_len: u32 BE][meta][payload]
 Journal entry types: `1 = task_committed` (the cells that ran, the serialized inter-task
 handoff and the tasklet's staged outbox — ONE durable write), `2 = outbox_flushed` (that
 outbox reached the plugins), `3 = iter_committed` (a loop iteration finished: the inbox offset
-it consumed plus its terminal handoff), `4 = parked` (the loop is suspended at a committed
-boundary, with an optional wake deadline), `5 = compensated` (a compensation hook's undo
+it consumed, the entry channel whose chain it ran, and its terminal handoff), `4 = parked` (the
+loop is suspended at a committed boundary, with an optional wake deadline and the last inbox
+offset it parked to the dead-letter queue unread), `5 = compensated` (a compensation hook's undo
 outbox), `6 = rewound` (the loop was rewound to the iteration in this entry's `iter` field).
 
 ```text
@@ -199,8 +200,8 @@ task_committed: [n_cells: u16 BE] n × ([len: u16 BE][cell_identity])
                 [handoff]
                 [outbox]
                 [completion]
-iter_committed: [consumed_offset: u64 BE][handoff][completion]
-parked:         [wake_deadline_ms: u64 BE]   # 0 = no deadline
+iter_committed: [consumed_offset: u64 BE][len: u16 BE][entry_channel][handoff][completion]
+parked:         [wake_deadline_ms: u64 BE][consumed_offset: u64 BE]   # 0 = no deadline / none
 compensated:    [outbox]
 outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
 rewound:        <empty>          # the target iteration is the `iter` field

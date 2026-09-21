@@ -308,6 +308,8 @@ OPTIONS:
     --namespace <ns>            Namespace to start in (default: default)
     --kind <stream|workflow>    Operative kind (default: stream)
     --init-values <json>        Seed state at start
+    --text <payload>, -t        First message, delivered as `send` does
+    --channel <ch>, -c          Entry channel the first message names
     --plugins <json-array>      Plugin specs attached at start
     --partitions <N>            Start N partition members as one group
     --snapshot-interval <N>     Changes between snapshots
@@ -334,14 +336,19 @@ INIT VALUES:
 
     A name the class does not carry is ignored, not refused: the runner logs
     it and the start still succeeds, so check the spelling. A workflow
-    operative applies no state: the whole document seeds its entry channel,
-    decoded into that channel's declared type.
+    operative's tasklets take the document as state the same way.
+
+FIRST MESSAGE:
+    --text is the instance's first input, on the entry channel --channel
+    names or the first declared one, for both kinds; a workflow started
+    without it waits for `flz operative send`. --channel needs --text.
 
 EXAMPLES:
     flz operative start do_nothing
     flz operative start do_nothing --id my_operative
     flz operative start candles --id ohlc --partitions 3
-    flz operative start order_aggregator -i orders --namespace prod -o json"#;
+    flz operative start order_aggregator -i orders --namespace prod -o json
+    flz operative start paper_order --kind workflow --text '{"symbol":"AAPL"}' --channel order"#;
 
 pub(crate) const OPERATIVE_LISTEN: Help = r#"flz operative listen - Print the frames an operative emits or ingests
 
@@ -562,8 +569,12 @@ USAGE:
 
 SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
-        [--namespace <ns>] [--init-values <json>] [--plugins <json>] [--kind workflow]
+        [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
+        [--plugins <json>] [--kind workflow]
                  Add a durable schedule (workflow operatives only).
+                 --init-values is the state every fired instance starts with;
+                 --text is the first message it receives, on the entry channel
+                 --channel names or the first declared one.
                  --plugins takes the same array as `operative start --plugins`;
                  each firing prefixes the plugin ids with its instance id.
     list         List schedules with their next fire time
@@ -574,6 +585,7 @@ SUBCOMMANDS:
 
 EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest
+    flz schedule add nightly --cron "0 2 * * *" --tz UTC --factory report --text '{"day":"today"}' --channel requests
     flz schedule list
     flz schedule run digest
 

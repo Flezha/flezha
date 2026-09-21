@@ -150,8 +150,9 @@ single tasklet: an entry channel named `input`, or the `input` field's value,
 decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
 keep their state path when it grows into the full form; a plugin sink named by
 `sink`; and every class-level setting at its default. A workflow short form is
-a `once` workflow, seeded on its entry channel from
-`flz operative start --kind workflow --init-values`.
+a `once` workflow, run once over its first message: `flz operative start
+--kind workflow --text '<payload>'`, or a start followed by `flz operative
+send`; a second message to a `once` instance is accepted and never read.
 
 With no `sink` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and returns nothing.
@@ -186,9 +187,6 @@ does not belong is refused naming the key: a class-level setting, `name` or
 author runs no type checker and this SDK ships no build step, so a body that
 returns nothing cannot be seen here. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name.
-
-> A workflow short form started by a *spawn* does not see its payload yet:
-> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## The parallelism model, as arithmetic
 

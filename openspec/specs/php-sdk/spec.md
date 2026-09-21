@@ -271,7 +271,7 @@ The short form SHALL be declared with the `#[Operative]` attribute a full-form o
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
 `Runner::registerFactory` SHALL accept such a class string and register the generated operative, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
@@ -282,8 +282,8 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 #### Scenario: An attributed class is a whole workflow operative
 
-- **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, and an instance is started with init values
-- **THEN** `run` receives the start values as text, its return value reaches `placed`, and the instance completes
+- **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
+- **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
 
 #### Scenario: A short form with no sink is declared
 

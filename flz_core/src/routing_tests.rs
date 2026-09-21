@@ -13,6 +13,7 @@ use crate::flusher::SendFrameFn;
 use crate::operative::instance::StreamInstance;
 use crate::state_sink;
 use crate::test_support::{capture_parks, host_class};
+use crate::workflow::instance::{Inbound, InboxItem, WorkflowInstance};
 
 const OPERATIVE: &str = "op-plugin-emit";
 const BODY: &[u8] = b"the operative's only output";
@@ -67,6 +68,254 @@ fn entry_less_instance(id: &'static str) -> Arc<StreamInstance> {
         ack_granularity: Default::default(),
     };
     StreamInstance::new(Arc::new(topology), Arc::from(id))
+}
+
+/// One frame into a workflow instance, through the dispatch a stream reader
+/// makes; a `None` channel is the metadata a spawn payload carries.
+fn feed_workflow(
+    instance: &Arc<WorkflowInstance>,
+    metadata: &HashMap<String, String>,
+    payload: &[u8],
+) {
+    let registry = Arc::new(crate::operative::registry::OperativeRegistry::new());
+    registry.register_workflow(Arc::clone(instance));
+    OperativeDispatchHandle { registry }.dispatch(
+        &instance.instance_id,
+        payload.to_vec(),
+        metadata,
+        dead_stream(),
+    );
+}
+
+fn channel_metadata(channel: &str) -> HashMap<String, String> {
+    HashMap::from([("channel".to_string(), channel.to_string())])
+}
+
+/// A frame naming `channel` at durable-inbox offset `offset`.
+fn journaled_metadata(channel: &str, offset: u64) -> HashMap<String, String> {
+    HashMap::from([
+        ("channel".to_string(), channel.to_string()),
+        (
+            crate::workflow::INBOX_OFFSET_KEY.to_string(),
+            offset.to_string(),
+        ),
+    ])
+}
+
+/// What the entrance handed the driver next, waiting out an off-thread park.
+fn next_inbound(inbox: &crossbeam::channel::Receiver<Inbound>) -> Inbound {
+    inbox
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the entrance handed the driver nothing")
+}
+
+fn next_message(inbox: &crossbeam::channel::Receiver<Inbound>) -> InboxItem {
+    match next_inbound(inbox) {
+        Inbound::Message(item) => item,
+        Inbound::Parked(offset) => panic!("parked at offset {offset}, not delivered"),
+    }
+}
+
+fn next_parked(inbox: &crossbeam::channel::Receiver<Inbound>) -> u64 {
+    match next_inbound(inbox) {
+        Inbound::Parked(offset) => offset,
+        Inbound::Message(_) => panic!("delivered, not parked"),
+    }
+}
+
+/// A workflow whose one entry channel parses: `poison` is refused, anything
+/// else becomes its text, on a ladder of two. No host declaration builds a
+/// parsed entry, so the topology is hand-built as a typed SDK builds one.
+fn parsing_workflow(
+    id: &'static str,
+) -> (Arc<WorkflowInstance>, crossbeam::channel::Receiver<Inbound>) {
+    use crate::channel::{ChannelDescriptor, ConsumerEdge, OverflowPolicy, RetryPolicy};
+    let wrap: crate::channel::EntryWrapFn = Arc::new(|bytes: Vec<u8>| {
+        if bytes == b"poison" {
+            return Err("poison".to_string());
+        }
+        Ok(Arc::new(String::from_utf8_lossy(&bytes).to_string()) as Arc<dyn Any + Send + Sync>)
+    });
+    let topology = crate::operative::topology::OperativeTopology {
+        sdk_lang: 1,
+        channels: vec![ChannelDescriptor {
+            name: Arc::from("in"),
+            kind: ChannelKind::Entry,
+            producer: None,
+            consumers: vec![ConsumerEdge {
+                tasklet: 0,
+                transform: None,
+                key: None,
+            }],
+            wrap_input: Some(wrap),
+            entry_parsed: true,
+            plugin_sink: None,
+            keyed: false,
+            overflow_policy: OverflowPolicy::DropNothing,
+            retry: RetryPolicy {
+                max_attempts: 2,
+                backoff_base_ms: 1,
+            },
+            codec: None,
+        }],
+        name_to_id: HashMap::from([("in", 0)]),
+        tasklets: Vec::new(),
+        tasklet_name_to_id: HashMap::new(),
+        factory_id: id,
+        persistence_enabled_const: false,
+        effectively_once: false,
+        correction: None,
+        ack_granularity: Default::default(),
+    };
+    let spec = crate::workflow::spec::WorkflowSpec {
+        topology: Arc::new(topology),
+        dag: crate::workflow::spec::TaskDag::new(
+            vec![0],
+            vec![vec![]],
+            vec![vec![]],
+            [(0, vec![0])],
+        ),
+        max_duration: None,
+        rollback_mode: crate::workflow::RollbackMode::AllOrNothing,
+        loop_mode: crate::workflow::LoopMode::Once,
+        wake_after: None,
+        retry: RetryPolicy {
+            max_attempts: 1,
+            backoff_base_ms: 1,
+        },
+        barrier_retry_attempts: 1,
+        persistence_enabled: false,
+        sync_durability: false,
+    };
+    WorkflowInstance::new(Arc::from(id), Arc::new(spec), Vec::new(), 0, 0, None)
+}
+
+#[test]
+fn a_workflow_frame_naming_an_undeclared_channel_parks_under_that_name() {
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let parks = capture_parks();
+    let (instance, inbox) = host_class::workflow("wf_undeclared", &["orders"]);
+
+    feed_workflow(
+        &instance,
+        &journaled_metadata("refunds", 4),
+        b"payload-bytes",
+    );
+
+    assert_eq!(
+        next_parked(&inbox),
+        4,
+        "the driver counts the parked message consumed"
+    );
+    let park = parks.lock().expect("park capture poisoned").remove(0);
+    assert_eq!(
+        park.body.origin_offset,
+        Some(4),
+        "parked with its durable-inbox offset"
+    );
+    assert_eq!(park.body.entry.channel, "refunds");
+    assert!(
+        park.body.entry.error.contains("orders"),
+        "the error names the declared set: {}",
+        park.body.entry.error
+    );
+    assert_eq!(
+        park.body.entry.payload.as_deref(),
+        Some(&b"payload-bytes"[..])
+    );
+    assert_eq!(park.identity.1, "_unresolved");
+    assert!(inbox.try_recv().is_err(), "no message entered the inbox");
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_workflow_frame_naming_no_channel_enters_the_first_entry_channel() {
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let _parks = capture_parks();
+    let (instance, inbox) = host_class::workflow("wf_default", &["first", "second"]);
+
+    feed_workflow(&instance, &HashMap::new(), b"payload-bytes");
+
+    let item = next_message(&inbox);
+    assert_eq!(
+        item.channel_id, 0,
+        "the first declared entry channel took it"
+    );
+    assert_eq!((item.offset, item.replay), (0, false));
+    let host = item
+        .value
+        .downcast_ref::<crate::host::HostPayload>()
+        .expect("the entry wrapper's value");
+    assert_eq!(host.bytes, b"payload-bytes");
+    assert_eq!(host.channel, 0);
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_workflow_frame_on_the_second_entry_channel_carries_that_channel_and_its_facts() {
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let _parks = capture_parks();
+    let (instance, inbox) = host_class::workflow("wf_second", &["first", "second"]);
+    let metadata = HashMap::from([
+        ("channel".to_string(), "second".to_string()),
+        (
+            crate::workflow::INBOX_OFFSET_KEY.to_string(),
+            "7".to_string(),
+        ),
+        ("flz.replay".to_string(), "1".to_string()),
+    ]);
+
+    feed_workflow(&instance, &metadata, b"payload-bytes");
+
+    let item = next_message(&inbox);
+    assert_eq!(
+        item.channel_id, 1,
+        "the named channel took it, not the first"
+    );
+    assert_eq!(item.offset, 7, "the durable-inbox offset rides the item");
+    assert!(item.replay, "a re-forwarded message says so");
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_workflow_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_channel() {
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let parks = capture_parks();
+    let (instance, inbox) = parsing_workflow("wf_parsed");
+
+    feed_workflow(&instance, &journaled_metadata("in", 5), b"poison");
+
+    assert_eq!(
+        next_parked(&inbox),
+        5,
+        "the driver counts the parked message consumed"
+    );
+    let park = parks.lock().expect("park capture poisoned").remove(0);
+    assert_eq!(park.body.origin_offset, Some(5));
+    assert_eq!(
+        park.body.entry.channel, "in",
+        "parked under the entry channel"
+    );
+    assert_eq!(
+        park.body.entry.attempts, 2,
+        "the ladder climbed its two rungs"
+    );
+    assert_eq!(park.body.entry.payload.as_deref(), Some(&b"poison"[..]));
+    assert_eq!(park.identity.1, "in");
+    assert!(inbox.try_recv().is_err(), "no message entered the inbox");
+
+    // The next message enters as the parsed value.
+    feed_workflow(&instance, &channel_metadata("in"), b"fine");
+    let item = next_message(&inbox);
+    assert_eq!(
+        item.value.downcast_ref::<String>().map(String::as_str),
+        Some("fine")
+    );
+    state_sink::reset_for_test();
 }
 
 fn queued(instance: &Arc<StreamInstance>) -> usize {

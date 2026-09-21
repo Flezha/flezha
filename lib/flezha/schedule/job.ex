@@ -27,6 +27,7 @@ defmodule Flezha.Schedule.Job do
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
+  alias Flezha.Operative.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
   alias Flezha.Service.OperativeManager
@@ -78,8 +79,16 @@ defmodule Flezha.Schedule.Job do
     end
   end
 
+  # The stored first message rides the bind as a spawn's payload does, on the
+  # entry channel the entry names or the first declared one.
   defp start(entry, instance_id, plugins, attempt) do
     opts = if plugins == [], do: [], else: [plugins: plugins]
+
+    opts =
+      case Builder.seed_input(Map.get(entry, :text), Map.get(entry, :channel)) do
+        {:ok, nil} -> opts
+        {:ok, seed} -> [{:seed_input, seed} | opts]
+      end
 
     case OperativeManager.start_workflow(
            entry.namespace,

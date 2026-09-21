@@ -156,8 +156,8 @@ The processor SHALL generate `<Class>Tasklet`, whose `name()` is the written `id
 
 #### Scenario: An annotated class is a whole workflow operative
 
-- **WHEN** a class `Place` is annotated `@WorkflowOperative(id = "place", sink = "placed", input = "order")`, is registered, and an instance is started with init values
-- **THEN** `run` receives the start values on `order`, its return value reaches `placed`, and the instance completes as a `once` workflow
+- **WHEN** a class `Place` is annotated `@WorkflowOperative(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
+- **THEN** `run` receives the message on `order`, its return value reaches `placed`, and the instance completes as a `once` workflow
 
 #### Scenario: A short form with no sink is declared
 

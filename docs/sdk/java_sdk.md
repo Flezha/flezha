@@ -111,8 +111,10 @@ The generated operative is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` element's
 value; the tasklet; a plugin sink named by `sink` when one is written; a
 `factoryId()` equal to `id`; and every other operative method at its interface
-default. A workflow short form is a `once` workflow, seeded on its entry channel
-from `flz operative start --kind workflow --init-values`. Both annotations also
+default. A workflow short form is a `once` workflow, run once over its first
+message: `flz operative start --kind workflow --text '<payload>'`, or a start
+followed by `flz operative send`; a second message to a `once` instance is
+accepted and never read. Both annotations also
 carry the tasklet's own elements, spelled as on `@Tasklet`: `key`, `emits`,
 `keys` with an `@CellsFor` method and `capacity`; and `onFull` for the entry
 channel.
@@ -152,9 +154,6 @@ fails `registerFactory` with `DuplicateFactoryId`.
 
 Nothing registers itself. There is no aggregator class: every operative a
 runner declares is one the application handed to `registerFactory`.
-
-> A workflow short form started by a *spawn* does not see its payload yet —
-> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## Scope
 

@@ -86,8 +86,10 @@ flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
 ```
 
 `SayHello` is an ordinary `Tasklet` whose `run` emits `format!("hello {input}")`.
-The entry channel is seeded once per started instance from `init_values`; a
-class declaring no tasklet is refused at registration. A tasklet ends a
+The entry channel takes the instance's first message, from a spawn,
+`flz operative send` or `flz operative start --text`; `init_values` is the
+tasklets' initial state, as on a stream. A class declaring no tasklet is
+refused at registration. A tasklet ends a
 looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
 `WorkflowCompleted` on the control stream and the controller drives the one
 teardown path (`Flezha.Service.OperativeManager.stop_operative/3`). A tasklet
@@ -216,8 +218,9 @@ equal to `id`, and every class-level setting at its trait default. The
 tasklet (`UpcaseTasklet`) is named `id` verbatim, so its cells keep their
 state path when the operative grows into the full form, and it wires into
 another operative's `channels()` body like any tasklet. A workflow short form
-is a `once` workflow, seeded on its entry channel from
-`flz operative start --kind workflow --init-values`.
+is a `once` workflow, run once over its first message: `flz operative start
+--kind workflow --text '<payload>'`, or a start followed by `flz operative
+send`; a second message to a `once` instance is accepted and never read.
 
 `sink` is optional. With none, the entry channel feeds the tasklet and no
 plugin channel is declared: the operative that only keeps state.
@@ -243,9 +246,6 @@ attribute. A hand-written `StreamOperative` or `WorkflowOperative` impl beside a
 short form is rustc's conflicting-implementation error, which the contract calls
 `ShortFormWithTopology`. `#[flezha_runner::tasklet]` declares a tasklet
 only and refuses `sink`, `input`, `kind` and `on_full`.
-
-> A workflow short form started by a *spawn* does not see its payload yet —
-> `KB-381`. Start it with `--init-values` until that is fixed.
 
 ## Escape hatch: the raw traits
 

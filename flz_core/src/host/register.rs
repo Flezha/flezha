@@ -21,7 +21,6 @@ use super::decl::{
     HostClock, HostLoopMode, HostOverflow, HostTaskletDecl, HostWorkflowDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
-use crate::channel::ChannelKind;
 use crate::error::Error;
 use crate::operative::topology::OperativeTopology;
 use crate::workflow::spec::{graph_order, GraphSeed, TaskDag};
@@ -565,27 +564,17 @@ fn refuse_loop_terminal_without_handoff(
     if !decl.persistent || workflow.loop_mode != HostLoopMode::Chained {
         return Ok(());
     }
-    let Some(terminal) = dag
-        .single_leaf()
-        .and_then(|leaf| topology.tasklet(dag.order[leaf]))
-    else {
-        return Ok(());
-    };
-    let carries_handoff = terminal
-        .output_channel_id
-        .and_then(|cid| topology.channel(cid))
-        .is_some_and(|ch| ch.kind == ChannelKind::InterTasklet);
-    if carries_handoff {
-        return Ok(());
+    match dag.terminal_without_handoff(topology) {
+        Some(terminal) => Err(Error::Declaration(format!(
+            "a durable handoff-chained loop's terminal tasklet `{}` releases no inter-tasklet \
+             handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that \
+             owns no output channel, or whose only output is plugin-bound, has nothing the journal \
+             carries. Take the sink off the terminal's own channel, or declare the loop `per_input`; \
+             wiring another tasklet behind the sink only moves the rule onto that one",
+            terminal.name
+        ))),
+        None => Ok(()),
     }
-    Err(Error::Declaration(format!(
-        "a durable handoff-chained loop's terminal tasklet `{}` releases no inter-tasklet \
-         handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that \
-         owns no output channel, or whose only output is plugin-bound, has nothing the journal \
-         carries. Take the sink off the terminal's own channel, or declare the loop `per_input`; \
-         wiring another tasklet behind the sink only moves the rule onto that one",
-        terminal.name
-    )))
 }
 
 /// A structured chain: its DAG from the topology, a chained loop decided
@@ -596,12 +585,18 @@ fn register_structured_workflow(
     topology: Arc<OperativeTopology>,
 ) -> Result<(), Error> {
     let dag = build_host_dag(&topology)?;
-    if workflow.loop_mode == HostLoopMode::Chained && dag.single_leaf().is_none() {
-        return Err(Error::Declaration(format!(
-            "a handoff-chained loop needs exactly one terminal tasklet; the graph \
-             has {}",
-            dag.leaves().count()
-        )));
+    if workflow.loop_mode == HostLoopMode::Chained {
+        if let Some(branching) = dag.branching_chain() {
+            return Err(Error::Declaration(format!(
+                "a handoff-chained loop needs exactly one terminal tasklet per chain; the \
+                 chain of entry channel `{}` has {}",
+                topology
+                    .channel(branching.channel_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_default(),
+                branching.leaves(&dag).count()
+            )));
+        }
     }
     refuse_loop_terminal_without_handoff(decl, workflow, &topology, &dag)?;
     let loop_mode = match workflow.loop_mode {

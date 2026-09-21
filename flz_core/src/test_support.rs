@@ -150,4 +150,36 @@ pub(crate) mod host_class {
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
         StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
+
+    /// A host `once` workflow class: an entry channel per name in `entries`,
+    /// each into the one tasklet `p0`, whose stage ladder has
+    /// `retry_attempts` rungs of 1 ms.
+    pub(crate) fn workflow_json(id: &str, entries: &[&str], retry_attempts: u32) -> String {
+        let entry_json = entry_channels(entries);
+        format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
+                 "channels":[{entry_json}
+                             {{"name":"out","kind":"plugin","producer":0,
+                               "chains":[[{{"link":"sink","name":"out"}}]]}}],
+                 "tasklets":[{{"name":"p0"}}],
+                 "workflow":{{"retry_attempts":{retry_attempts},"retry_backoff_ms":1}}}}"#
+        )
+    }
+
+    /// A host workflow instance built as the bind builds it, without its
+    /// driver, so a test reads the inbox the entrance fills.
+    pub(crate) fn workflow(
+        id: &str,
+        entries: &[&str],
+    ) -> (
+        Arc<crate::workflow::instance::WorkflowInstance>,
+        crossbeam::channel::Receiver<crate::workflow::instance::Inbound>,
+    ) {
+        crate::host::register_host_class_json(workflow_json(id, entries, 1).as_bytes())
+            .expect("class registers");
+        let spec = crate::workflow::registry::get_class(id).expect("class registered");
+        let instance_id: Arc<str> = Arc::from(format!("{id}_inst").as_str());
+        let stage_cells = crate::workflow::driver::build_all_stage_cells(&spec, &instance_id);
+        crate::workflow::instance::WorkflowInstance::new(instance_id, spec, stage_cells, 0, 0, None)
+    }
 }

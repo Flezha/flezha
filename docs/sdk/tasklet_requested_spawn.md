@@ -84,10 +84,14 @@ Concurrent requests for one id resolve to **exactly one** spawn plus deliveries 
 A completed, torn-down id counts as free, so a request arriving after the worker finished
 starts a fresh one — workers must be idempotent per batch.
 
-The payload is the instance's first input by construction: it rides the `:seed_input` start
-opt and is ingested inside the instance's bind, ahead of anything else in its mailbox. A
-durable instance whose inbox already holds entries is a restart, not a spawn, and is not
-re-seeded.
+The payload is the instance's first message by construction: it rides the `:seed_input` start
+opt and is ingested inside the instance's bind, ahead of anything else in its mailbox, through
+the same entrance every message takes. It names no channel, so it enters the first declared
+entry channel, is decoded by that channel's codec or parser, and runs the chain that channel
+roots, in every loop mode. Every SDK encodes it as its sink with no codec encodes a value,
+the rule `ctx.complete` applies: bytes as they are, a string as UTF-8, anything else as JSON,
+so a `text` or `json` entry reads it. A durable instance whose inbox already holds entries is
+a restart, not a spawn, and is not re-seeded.
 
 ## Failures resolve the handle, never `run`
 

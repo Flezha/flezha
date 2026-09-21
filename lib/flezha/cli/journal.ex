@@ -79,6 +79,7 @@ defmodule Flezha.Service.Cli.Journal do
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
     |> Map.put(:consumed_offset, payload.consumed_offset)
+    |> Map.put(:entry_channel, payload.entry_channel)
     |> journal_completion(payload.completion)
   end
 
@@ -86,6 +87,7 @@ defmodule Flezha.Service.Cli.Journal do
     entry
     |> base_journal_row()
     |> Map.put(:wake_deadline_ms, payload.wake_deadline_ms)
+    |> Map.put(:consumed_offset, payload.consumed_offset)
   end
 
   # `for_type` names which entry's outbox this marks delivered — a tasklet
@@ -201,12 +203,11 @@ defmodule Flezha.Service.Cli.Journal do
   @doc """
   `flz state inbox <instance>` — the durable inbox of a workflow instance
   (`workflow-durable-suspension`): every appended input with its offset, marking
-  which are still undelivered (above the consumed offset the last committed
-  iteration recorded).
+  which are still undelivered (above the offset the journal has released).
   """
   def state_inbox(instance_id, output_format, _call) do
     entries = TaskInbox.read(instance_id)
-    consumed = TaskJournal.consumed_offset(instance_id)
+    consumed = TaskJournal.released_offset(instance_id)
 
     rows =
       Enum.map(entries, fn entry ->

@@ -661,6 +661,8 @@ When the SDK receives an `AddOperative{operative_id, factory_id, init_values}` c
 - For single-mode Tasklets: deserialize the JSON value directly into `S::State` via the per-Tasklet `deserialize_state` fn pointer (captured at registration time and workflow on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Cell's state with the deserialized value.
 - For static-mode Tasklets: walk the inner object's keys; for each `(key, value)` pair where `key` is a declared `cell_key`, deserialize the inner value into `S::State` and overwrite that Cell's state.
 
+The rule SHALL be the same for a stream instance and a workflow instance: a workflow's stage Cells are built through the stream `build_cell` and take `init_values` through the same application, before the `AddOperative` acknowledgement and therefore before any message can reach the instance. No kind SHALL read `init_values` as anything but state.
+
 Top-level keys that do not match any Tasklet name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `cell_key` SHALL also be ignored.
 
 If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Cell's state untouched after the cold-start `Tasklet::init_state(cell_key, None)` returned by the build path.
@@ -676,6 +678,11 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Cell's st
 
 - **WHEN** the SDK receives `AddOperative{...init_values: "{\"ohlc\":{\"1m\":{\"high\":5},\"1h\":{\"high\":10}}}"}` for an Operative with `cell_keys = ["1m", "1h"]`
 - **THEN** the SDK SHALL deserialize `{"high":5}` into the `"1m"` Cell's state AND deserialize `{"high":10}` into the `"1h"` Cell's state
+
+#### Scenario: A workflow instance takes init_values as state
+
+- **WHEN** the SDK receives `AddOperative{..., kind: "workflow", init_values: "{\"reserve_funds\":{\"budget\":100}}"}` for a workflow class whose tasklet `reserve_funds` holds state
+- **THEN** the `reserve_funds` Cell's state SHALL be `{"budget":100}` before the instance's first message is read, and no entry channel SHALL receive the document
 
 #### Scenario: Empty init_values uses the default path
 

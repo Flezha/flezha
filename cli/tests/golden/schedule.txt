@@ -5,8 +5,12 @@ USAGE:
 
 SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
-        [--namespace <ns>] [--init-values <json>] [--plugins <json>] [--kind workflow]
+        [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
+        [--plugins <json>] [--kind workflow]
                  Add a durable schedule (workflow operatives only).
+                 --init-values is the state every fired instance starts with;
+                 --text is the first message it receives, on the entry channel
+                 --channel names or the first declared one.
                  --plugins takes the same array as `operative start --plugins`;
                  each firing prefixes the plugin ids with its instance id.
     list         List schedules with their next fire time
@@ -17,6 +21,7 @@ SUBCOMMANDS:
 
 EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest
+    flz schedule add nightly --cron "0 2 * * *" --tz UTC --factory report --text '{"day":"today"}' --channel requests
     flz schedule list
     flz schedule run digest
 

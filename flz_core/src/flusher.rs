@@ -187,6 +187,15 @@ impl CellFlusher {
         id
     }
 
+    /// Whether a Cell of `operative_class` is registered, for tests.
+    #[cfg(test)]
+    pub(crate) fn holds_class(&self, operative_class: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            decode_cell_identity(&entry.cell_identity)
+                .is_some_and(|(class, _, _)| class == operative_class)
+        })
+    }
+
     /// One synchronous drain pass, for tests.
     #[doc(hidden)]
     pub fn drain_now_for_tests(&self) {

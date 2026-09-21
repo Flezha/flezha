@@ -90,7 +90,7 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     refute_receive {:message_forward, _payload, _metadata}, 500
   end
 
-  test "a workflow short form runs once on its start values and completes", ctx do
+  test "a workflow short form runs once on its first message and completes", ctx do
     operative_id = unique("sugar_workflow")
 
     assert {:ok, _} =
@@ -98,12 +98,12 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
                id: operative_id,
                factory_id: "sugar_workflow",
                kind: :workflow,
-               init_values: %{"order" => "o-1"},
                opts: [plugins: [sink(ctx.namespace, operative_id)]]
              })
 
-    # The entry channel is seeded from the start values on iteration 0, so what
-    # reaches the sink is the start values' own bytes.
+    # The instance waits for its message; the send on `order` is what runs the
+    # one pass, so what reaches the sink is the message's own bytes.
+    send_until_accepted(ctx.namespace, operative_id, "o-1", %{"channel" => "order"})
     assert [payload] = receive_payloads(1)
     assert payload =~ "o-1"
 
@@ -112,6 +112,21 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     # the whole loop having run.
     assert wait_until(fn -> not registered?(ctx.namespace, operative_id) end, 30_000),
            "the workflow short form never completed"
+  end
+
+  # A send that lands before the bind is retryable; only an accepted one is
+  # the instance's message.
+  defp send_until_accepted(namespace, operative_id, message, metadata) do
+    assert wait_until(
+             fn ->
+               not match?(
+                 {:error, _},
+                 OperativeManager.send_io_confirming(operative_id, namespace, message, metadata)
+               )
+             end,
+             10_000
+           ),
+           "the message was never accepted"
   end
 
   defp start(namespace, factory) do

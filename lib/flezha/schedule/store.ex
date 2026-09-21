@@ -14,6 +14,7 @@ defmodule Flezha.Schedule.Store do
 
   alias Flezha.DetsStore
   alias Flezha.Identificator
+  alias Flezha.Operative.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
 
@@ -32,6 +33,8 @@ defmodule Flezha.Schedule.Store do
           required(:factory_id) => binary(),
           required(:namespace) => binary(),
           required(:init_values) => map(),
+          required(:text) => binary() | nil,
+          required(:channel) => binary() | nil,
           required(:plugins) => binary(),
           required(:created_at) => binary()
         }
@@ -45,7 +48,9 @@ defmodule Flezha.Schedule.Store do
   @doc """
   Validate and durably add a schedule. `fields` must carry `:name`,
   `:cron`, `:timezone`, `:factory_id`, `:namespace` and `:init_values`;
-  `:plugins` (the raw `--plugins` JSON array) is optional.
+  `:plugins` (the raw `--plugins` JSON array), `:text` (the first message
+  every fired instance receives, stored verbatim) and `:channel` (the entry
+  channel that message names, refused without `:text`) are optional.
   """
   @spec add(map()) :: {:ok, entry()} | {:error, term()}
   def add(fields) when is_map(fields) do
@@ -54,6 +59,7 @@ defmodule Flezha.Schedule.Store do
          :ok <- validate_timezone(fields[:timezone]),
          :ok <- validate_factory_id(fields[:factory_id]),
          :ok <- validate_init_values(fields[:init_values]),
+         :ok <- validate_first_message(fields[:text], fields[:channel]),
          {:ok, plugins} <- validate_plugins(fields[:plugins]) do
       entry = %{
         name: fields[:name],
@@ -62,6 +68,8 @@ defmodule Flezha.Schedule.Store do
         factory_id: fields[:factory_id],
         namespace: fields[:namespace],
         init_values: fields[:init_values],
+        text: fields[:text],
+        channel: fields[:channel],
         plugins: plugins,
         created_at: DateTime.to_iso8601(DateTime.utc_now())
       }
@@ -163,6 +171,15 @@ defmodule Flezha.Schedule.Store do
 
   defp validate_init_values(_),
     do: {:error, {:invalid_init_values, "init_values must be a JSON object"}}
+
+  # The first message is stored as the text the operator wrote, validated as
+  # the seed a firing makes of it.
+  defp validate_first_message(text, channel) do
+    case Builder.seed_input(text, channel) do
+      {:ok, _seed} -> :ok
+      {:error, reason} -> {:error, {:invalid_first_message, reason}}
+    end
+  end
 
   # Structural only: provider ids are resolved at every firing against the
   # controller that is actually running, so a decoded plugin must never be

@@ -16,7 +16,9 @@ const SNAPSHOT_INTERVAL: OptSpec =
     OptSpec::number("--snapshot-interval", "--snapshot-interval", "<N>");
 const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<ms>");
 const PAYLOAD: OptSpec = OptSpec::text("--text", "-t", "<payload>").required();
-const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
+/// `send`'s payload spelling on `start`, where a first message is optional.
+pub(crate) const TEXT: OptSpec = OptSpec::text("--text", "-t", "<payload>");
+pub(crate) const CHANNEL: OptSpec = OptSpec::text("--channel", "-c", "<ch>");
 const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration", "<N>").required();
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
 const INPUT: OptSpec = OptSpec::switch("--input", "--input");
@@ -33,6 +35,8 @@ pub(crate) const TABLE: Command = Command {
                 KIND,
                 NAMESPACE,
                 INIT_VALUES,
+                TEXT,
+                CHANNEL,
                 PLUGINS,
                 PARTITIONS,
                 SNAPSHOT_INTERVAL,
@@ -99,9 +103,11 @@ fn start_opts(read: &Reading) -> String {
     serialize_flags(&opts)
 }
 
-/// `--id`, `--plugins` and `--kind` ride the options list, and only when
-/// written: an absent flag is absent from the request and the controller
-/// applies its default, which for the id is one it generates.
+/// `--id`, `--plugins`, `--kind`, `--text` and `--channel` ride the options
+/// list, and only when written: an absent flag is absent from the request and
+/// the controller applies its default, which for the id is one it generates.
+/// `--text` is the instance's first message, on the entry channel `--channel`
+/// names; a channel with no text names nothing and is refused.
 fn handle_start(read: &Reading) {
     let mut opts: Vec<Opt> = Vec::new();
 
@@ -114,6 +120,7 @@ fn handle_start(read: &Reading) {
     if let Some(kind) = read.opt(KIND.long) {
         opts.push(("kind", text(kind)));
     }
+    opts.extend(first_message_opts(read));
 
     rpc::run(
         "operative_start",
@@ -128,6 +135,23 @@ fn handle_start(read: &Reading) {
         read.token(),
         rpc::REFUSED,
     );
+}
+
+/// The first message a `start` or a `schedule add` carries: `text` and,
+/// when written, `channel`, as text; `--channel` without `--text` is refused.
+pub(crate) fn first_message_opts<'a>(read: &'a Reading) -> Vec<Opt<'a>> {
+    let mut opts: Vec<Opt> = Vec::new();
+    let payload = read.opt(TEXT.long);
+    if let Some(payload) = payload {
+        opts.push(("text", text(payload)));
+    }
+    if let Some(channel) = read.opt(CHANNEL.long) {
+        args::or_refuse(payload.ok_or_else(|| {
+            "Error: --channel names the entry channel of --text; give --text too".to_string()
+        }));
+        opts.push(("channel", text(channel)));
+    }
+    opts
 }
 
 /// `flz operative scale <group> <partitions>` — rescale a partition group.

@@ -50,6 +50,14 @@ defmodule Flezha.Schedule.StoreTest do
     assert bare.plugins == "[]"
   end
 
+  test "the first message and its channel round-trip verbatim and default to none" do
+    assert {:ok, entry} = Store.add(fields(%{text: ~s({"day":"today"}), channel: "requests"}))
+    assert {:ok, %{text: ~s({"day":"today"}), channel: "requests"}} = Store.get(entry.name)
+
+    assert {:ok, bare} = Store.add(fields(%{name: "bare"}))
+    assert {:ok, %{text: nil, channel: nil}} = Store.get(bare.name)
+  end
+
   test "a duplicate name is rejected" do
     assert {:ok, _} = Store.add(fields())
     assert {:error, :already_exists} = Store.add(fields())
@@ -69,6 +77,11 @@ defmodule Flezha.Schedule.StoreTest do
     assert msg =~ "at most 11 bytes"
     assert {:error, {:invalid_factory, _}} = Store.add(fields(%{factory_id: ""}))
     assert {:error, {:invalid_init_values, _}} = Store.add(fields(%{init_values: "nope"}))
+    assert {:error, {:invalid_first_message, msg}} = Store.add(fields(%{channel: "requests"}))
+    assert msg =~ "--text"
+
+    assert {:error, {:invalid_first_message, "the first message and its channel are text"}} =
+             Store.add(fields(%{text: 42}))
 
     assert {:error, {:invalid_plugins, _}} =
              Store.add(fields(%{plugins: "{\"not\":\"an array\"}"}))

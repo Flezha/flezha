@@ -282,9 +282,9 @@ and counters: [`rust_operative_architecture.md`](rust_operative_architecture.md)
 
 ### Operative state JSON shape
 
-`MigrationSerialization` / `MigrationDeserialization` / `CellState` and a
-stream operative's `AddOperative.init_values` all carry a JSON blob whose shape
-is:
+`MigrationSerialization` / `MigrationDeserialization` / `CellState` and an
+operative's `AddOperative.init_values`, for both kinds, all carry a JSON blob
+whose shape is:
 
 - Single-mode tasklets (no Cell keys): `{"<tasklet_name>": <state>}`
 - Static-mode tasklets (`cell_keys()` non-empty):
@@ -316,9 +316,11 @@ minted on first sight of a key and none exists at the bind, so the entry
 reaches nothing. Migration is unaffected, because a dynamic tasklet's
 Cells are restored from their own records rather than through this path.
 
-A workflow operative does not use this shape at all. Its `init_values` seeds
-the entry channel whole, decoded into that channel's declared type, and is
-never applied as state.
+A workflow operative takes this shape exactly as a stream operative does: its
+`init_values` are applied as its tasklets' initial state before the
+`AddOperative` acknowledgement, so before any message can reach it. Nothing
+seeds an entry channel from the document; a workflow's input is the messages
+sent to it.
 
 ### Frame buffering
 
@@ -620,7 +622,7 @@ message AddOperative {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance scheduled on its driver thread, its entry channel seeded with the whole `init_values` decoded into that channel's declared type; a durable driver holds its first tasklet until `resume_cell_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
+| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance scheduled on its driver thread, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable driver holds its first tasklet until `resume_cell_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedTasklet: ...` |
@@ -806,10 +808,13 @@ naming namespace, runner, factory id and affected operatives.
 `SpawnWorkflowRequest { instance_id, factory_id, payload: bytes, if_running:
 string }` travels runner → controller (tag 34) when a tasklet asks for a
 workflow instance (`ctx.spawn_workflow` / `ctx.spawnWorkflow`). The controller
-spawns `factory_id` under `instance_id` when free, with `payload` as the first
-inbox entry (empty = spawn only); otherwise `if_running` applies: `"deliver"`
-(default; any unrecognised value reads as deliver) appends `payload` to the
-running instance's inbox, `"error"` refuses. An empty `instance_id` asks the
+spawns `factory_id` under `instance_id` when free, with `payload` as its first
+message (empty = spawn only): an ordinary entry message naming no channel, so
+it enters the first declared entry channel, encoded by the SDK's no-codec sink
+rule (bytes as they are, a string as UTF-8, anything else as JSON); otherwise
+`if_running` applies: `"deliver"` (default; any unrecognised value reads as
+deliver) sends `payload` to the running instance as one more message,
+`"error"` refuses. An empty `instance_id` asks the
 controller to generate one; such a request always spawns and `if_running` is
 ignored.
 
@@ -883,10 +888,15 @@ parks to the dead-letter queue under that name, with one attempt), wraps the pay
 bytes through that
 channel's declared type, and pushes the item onto every consumer Tasklet's
 Cell mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
-`flz.replay_end` ride along as described in §11. For a **workflow** instance
-it routes the frame to the running driver's inbox with the `flz.inbox_offset`
-it carries (an instance that is not running or has no inbox drops it with a
-log line). Dispatch onto host threads, per-Cell ordering and exclusivity are
+`flz.replay_end` ride along as described in §11. A **workflow** instance takes
+the same entrance: the channel is resolved the same way (an undeclared name
+parks under that name), the payload is wrapped through the channel's declared
+type or parser, a parse failure rides the entry channel's retry ladder to the
+dead-letter queue, and the typed value is pushed into the running driver's
+inbox with the channel it entered on and the `flz.inbox_offset` it carries;
+the entry edge's transforms run when the driver seeds the pass on that
+channel's chain (an instance that is not running or has no inbox drops the
+value with a log line). Dispatch onto host threads, per-Cell ordering and exclusivity are
 the poll core's job ([`poll_core.md`](poll_core.md)).
 
 **Output (secondary streams).** Every plugin-bound emit becomes one frame with
@@ -1388,6 +1398,7 @@ message TaskJournalState {
     repeated TaskEdgeHandoff task_handoffs = 9;    // in-flight iteration, per committed task
     bool   completed = 10;                         // the last committed iteration ended the instance
     bytes  result = 11;                            // and ended it with this
+    string entry_channel = 12;                     // the chain the last committed iteration ran
 }
 ```
 
@@ -1510,19 +1521,23 @@ message IterCommit {
     repeated TaskHandoffItem handoff = 4;   // the iteration's terminal batch
     bool completes = 5;                     // a tasklet of this iteration called `ctx.complete`
     bytes result = 6;                       // the resolved result the instance ends with
+    string entry_channel = 7;               // the entry channel whose chain the iteration ran
 }
 message IterCommitResponse { string operative_id = 1; uint32 iter = 2; string error = 3; }
 ```
 
 Emitted at each **iteration** boundary of a looping durable structured
 instance, after the last tasklet's `TaskCommit` is acked. A class opts into
-looping with `loop_mode()`: `PerInput` runs one iteration per inbox item,
-`Chained` seeds each iteration from the previous terminal handoff; the default
-`Once` never emits this frame. Every `TaskCommit` inside iteration `N` carries
+looping with `loop_mode()`: `PerInput` runs one iteration per message,
+`Chained` takes the first message and seeds each later iteration from the
+previous terminal handoff into the chain that message started; the default
+`Once` takes one message, runs one pass and never emits this frame. Every
+message-fed pass takes its message from the inbox the same way, and every
+iteration names in `entry_channel` the entry channel whose chain it ran. Every `TaskCommit` inside iteration `N` carries
 `iter = N`, so redo-vs-skip works at both granularities from one scan.
 
-The controller appends ONE `iter_committed(iter, consumed_offset)` entry
-carrying the terminal handoff, fsyncs, and acks under the same batching,
+The controller appends ONE `iter_committed(iter, consumed_offset, entry_channel)`
+entry carrying the terminal handoff, fsyncs, and acks under the same batching,
 terminal-error and bounded re-send contract as `TaskCommitResponse` (a re-sent
 `IterCommit` is journaled once by `{iter, epoch}`). Everything after the ack is
 cleanup: a boundary `CompactCell` per Cell of the instance, the flush of
@@ -1542,18 +1557,27 @@ message IterPark {
     string operative_id = 1;
     uint32 iter = 2;               // the last COMMITTED iteration
     uint64 wake_deadline_ms = 3;   // 0 = wake on input only
+    uint64 consumed_offset = 4;    // the last message parked unread; 0 = none
 }
 ```
 
-A `PerInput` loop whose inbox has been empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
-(default 5 s) at a **committed** iteration boundary tears its own run down and
+A durable instance of any loop mode whose inbox has been empty past
+`FLEZHA_WORKFLOW_PARK_IDLE_MS` (default 5 s) at a **committed** iteration
+boundary, the boundary before its first pass included, tears its own run down and
 emits this instead of `WorkflowCompleted` — suspension is not a terminal
 outcome, and it is only ever offered at a committed boundary. A rehydrated loop
 waits up to 60 s for the inbox tail the controller owes it
 (`AddOperative.inbox_tail_count`) before it may park again.
 
-The controller journals `parked(iter[, wake_deadline_ms])` — durable BEFORE
-the eviction — then evicts the instance from its runner (`RemOperative`). The
+A message the run parked to the dead-letter queue unread (an undeclared
+channel, a parse the entry's ladder never got past, a host decoder's unreadable
+verdict) is consumed without a pass; `consumed_offset` names the highest such
+inbox offset, so the park releases it as an `IterCommit` releases its input and
+a suspended instance is not rehydrated to receive it again.
+
+The controller journals `parked(iter[, wake_deadline_ms], consumed_offset)`,
+durable BEFORE the eviction, then evicts the instance from its runner
+(`RemOperative`). The
 registry entry and the controller-side Overwatch stay: it is the **runner**
 that holds zero resources, and `flz operative info` reports the instance
 `suspended`. Rehydration has one path, whichever wakes it — a new inbox
@@ -1569,13 +1593,15 @@ Post-start input for a **durable workflow** instance is appended to the
 instance's `inbox.wal` **before** it is forwarded, and the forwarded frame
 carries the assigned 1-based offset as `flz.inbox_offset` (absent ⇒ not
 journaled: an opted-out class). The runner threads it back through
-`IterCommit.consumed_offset`, which lets the controller release the consumed
-prefix and stops a rehydrate re-delivering it. Dedup at append is keyed on the
-sender's `flz.msg_id` metadata when present, else a payload hash, over the
-window of the file above its last release: a duplicate inside the undelivered
-window is absorbed, so an at-least-once sender cannot produce a duplicate
-turn. The dedup identity is the first 16 bytes of `sha256(dedup_id)` in the
-record header, so an append reads no file and folds no journal.
+`IterCommit.consumed_offset`, or `IterPark.consumed_offset` for a message it
+parked unread, which lets the controller release the consumed prefix and stops
+a rehydrate re-delivering it. Dedup at append is keyed on the
+sender's `flz.msg_id` metadata only, over the window of the file above its
+last release: a duplicate inside the undelivered window is absorbed, so an
+at-least-once sender cannot produce a duplicate turn, and a message without
+an id is always appended, as a stream processes every frame it is sent. The
+dedup identity is the first 16 bytes of `sha256(flz.msg_id)` in the record
+header, so an append reads no file and folds no journal.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 

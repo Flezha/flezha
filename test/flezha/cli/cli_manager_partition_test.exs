@@ -143,6 +143,24 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       assert_received {:started, %{id: "demo"}, []}
     end
 
+    test "a first message rides the start as the instance's seed input" do
+      started_as(self())
+
+      capture_io(fn -> start("text", id: "demo", text: "hi", channel: "order") end)
+
+      assert_received {:started, %{id: "demo", opts: opts}, _}
+      assert opts[:seed_input] == {"hi", %{"channel" => "order"}}
+    end
+
+    test "a channel without a first message is refused before anything starts" do
+      started_as(self())
+
+      err = capture_io(:stderr, fn -> catch_exit(start("text", id: "demo", channel: "order")) end)
+
+      assert err =~ "error: --channel names the entry channel of --text; give --text too"
+      refute_received {:started, _, _}
+    end
+
     test "a start without an id prints the id the controller generated" do
       started_as(self())
 

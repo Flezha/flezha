@@ -165,8 +165,9 @@ is written, a factory id equal to `id`, and every class-level setting at its
 default. The tasklet is named `id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
 another operative's channels body. A workflow short form is a `once` workflow,
-seeded on its entry channel from `flz operative start --kind workflow
---init-values`.
+run once over its first message: `flz operative start --kind workflow --text
+'<payload>'`, or a start followed by `flz operative send`; a second message to
+a `once` instance is accepted and never read.
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a loop mode, a retry ladder, the effectively-once tier, a correction
@@ -181,9 +182,6 @@ registered. A missing `id`, a class-level setting on a short form, and `sink`,
 `input`, `codec` or a tasklet keyword on a channels body are refused where the
 decorator runs too, as is `kind`, `sink`, `input` or `codec` on
 `flezha.tasklet`.
-
-> A workflow short form started by a *spawn* does not see its payload yet
-> (`KB-381`). Start it with `--init-values` until that is fixed.
 
 ### Type hints are the declaration
 

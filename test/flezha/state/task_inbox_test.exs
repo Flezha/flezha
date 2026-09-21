@@ -76,19 +76,20 @@ defmodule FlezhaTest.State.TaskInboxTest do
 
     assert length(TaskInbox.read(inst)) == 1
 
-    # Without a sender id, the payload hash is the dedup handle.
+    # Without a sender id there is nothing to match: two identical payloads
+    # are two messages, as they are on a stream.
     assert {:ok, 2} = TaskInbox.append(inst, "anon", %{})
-    assert {:duplicate, 2} = TaskInbox.append(inst, "anon", %{})
-    # A different payload is a different message.
-    assert {:ok, 3} = TaskInbox.append(inst, "anon-2", %{})
+    assert {:ok, 3} = TaskInbox.append(inst, "anon", %{})
+    assert {:ok, 4} = TaskInbox.append(inst, "anon", %{"flz.msg_id" => ""})
+    assert length(TaskInbox.read(inst)) == 4
   end
 
   test "the undelivered window is bounded by the consumed offset" do
     inst = instance_id()
 
-    {:ok, 1} = TaskInbox.append(inst, "a", %{})
-    {:ok, 2} = TaskInbox.append(inst, "b", %{})
-    {:ok, 3} = TaskInbox.append(inst, "c", %{})
+    {:ok, 1} = TaskInbox.append(inst, "a", %{"flz.msg_id" => "a"})
+    {:ok, 2} = TaskInbox.append(inst, "b", %{"flz.msg_id" => "b"})
+    {:ok, 3} = TaskInbox.append(inst, "c", %{"flz.msg_id" => "c"})
 
     assert Enum.map(TaskInbox.undelivered(inst), & &1.offset) == [1, 2, 3]
 
@@ -97,12 +98,24 @@ defmodule FlezhaTest.State.TaskInboxTest do
     assert Enum.map(TaskInbox.undelivered(inst), & &1.offset) == [3]
     :ok = TaskInbox.truncate(inst, 2)
 
-    # A payload identical to a CONSUMED one is a new message: the dedup window
+    # An id identical to a CONSUMED one is a new message: the dedup window
     # only covers what the operative has not seen yet.
-    assert {:ok, 4} = TaskInbox.append(inst, "a", %{})
+    assert {:ok, 4} = TaskInbox.append(inst, "a", %{"flz.msg_id" => "a"})
     # … while an undelivered one is still absorbed.
-    assert {:duplicate, 3} = TaskInbox.append(inst, "c", %{})
+    assert {:duplicate, 3} = TaskInbox.append(inst, "c", %{"flz.msg_id" => "c"})
     assert Enum.map(TaskInbox.undelivered(inst), & &1.offset) == [3, 4]
+  end
+
+  test "a message the run parked unread is released by its park record" do
+    inst = instance_id()
+    {:ok, 1} = TaskInbox.append(inst, "not json", %{})
+    {:ok, 2} = TaskInbox.append(inst, "sent after the park", %{})
+
+    # The run dead-lettered offset 1 without a pass, then suspended.
+    :ok = TaskJournal.append_parked("default", inst, 0, nil, 1)
+
+    assert Enum.map(TaskInbox.undelivered(inst), & &1.offset) == [2]
+    assert TaskJournal.restore_state(inst).parked
   end
 
   test "a release below the cut threshold defers the rewrite but not the window" do
@@ -115,9 +128,12 @@ defmodule FlezhaTest.State.TaskInboxTest do
     assert Enum.map(TaskInbox.read(inst), & &1.offset) == [1, 2, 3],
            "a few hundred bytes are not worth an fsync'd rewrite yet"
 
-    # Released is released: a consumed payload is a new message.
-    assert {:ok, 4} = TaskInbox.append(inst, "m1", %{})
-    assert {:duplicate, 3} = TaskInbox.append(inst, "m3", %{})
+    # Released is released: a consumed id is a new message; an unreleased one
+    # is still in the window.
+    for n <- 1..3, do: {:ok, _} = TaskInbox.append(inst, "k#{n}", %{"flz.msg_id" => "k#{n}"})
+    :ok = TaskInbox.truncate(inst, 5)
+    assert {:ok, 7} = TaskInbox.append(inst, "k1", %{"flz.msg_id" => "k1"})
+    assert {:duplicate, 6} = TaskInbox.append(inst, "k3", %{"flz.msg_id" => "k3"})
   end
 
   test "a duplicate is absorbed across a writer restart" do
@@ -136,8 +152,9 @@ defmodule FlezhaTest.State.TaskInboxTest do
   test "the ingest's append answers once the batch has synced, in seq space" do
     inst = instance_id()
 
-    reqids = TaskInbox.append_async(inst, "one", %{}, :gen_server.reqids_new(), :one)
-    reqids = TaskInbox.append_async(inst, "one", %{}, reqids, :dup)
+    meta = %{"flz.msg_id" => "one"}
+    reqids = TaskInbox.append_async(inst, "one", meta, :gen_server.reqids_new(), :one)
+    reqids = TaskInbox.append_async(inst, "one", meta, reqids, :dup)
 
     assert {{:reply, {:ok, seq}}, :one, reqids} = :gen_server.wait_response(reqids, 2_000, true)
     assert TaskInbox.offset(seq) == 1

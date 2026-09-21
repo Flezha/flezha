@@ -52,15 +52,15 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     :ok
   end
 
-  test "task runs once on start and is deregistered on completion" do
+  test "task runs once on its first message and is deregistered on completion" do
     operative_id = "task_e2e_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
       id: operative_id,
       factory_id: @factory,
       kind: :workflow,
-      init_values: %{"msg" => "hi"},
-      opts: []
+      init_values: %{},
+      opts: [seed_input: {"hi", %{}}]
     }
 
     # Start succeeds even for a near-instant task: a run-once unit may
@@ -122,6 +122,64 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
     assert for({"named", id, outcome} <- results, do: {id, outcome}) ==
              [{named, "spawned"}, {named, "delivered"}]
+  end
+
+  # KB-381: a tasklet spawns a `once` workflow whose entry channel `order`
+  # decodes the payload's type. The spawned instance runs its one pass over
+  # the decoded ticket (the runner prints `once_ran <text>`), completes with
+  # status `ok` carrying the text, and is torn down. The runner's stdout is the
+  # only place the spawn result and the pass are observable.
+  test "a once workflow spawned by a tasklet runs its pass on the payload and completes ok" do
+    namespace = "spawn_once_e2e"
+    {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
+
+    on_exit(fn ->
+      try do
+        OperativeManager.stop_all_operatives(namespace)
+        FleetManager.stop_namespace(namespace)
+      catch
+        _, _ -> :ok
+      end
+
+      ensure_port_dead(port)
+    end)
+
+    requester = "spawn_once_requester_#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             OperativeManager.start_operative(namespace, %Builder{
+               id: requester,
+               factory_id: "spawn_once_requester",
+               kind: :stream
+             })
+
+    assert :ok = OperativeManager.send_io_confirming(requester, namespace, "ticket-7", %{})
+
+    seen = NodeTestHelper.read_port(port, &(once_results(&1) != [] and &1 =~ "once_ran "), 60_000)
+    assert [{spawned, "spawned"}] = once_results(seen), "no spawn result in:\n#{seen}"
+    assert seen =~ "once_ran ticket-7", "the spawned pass never ran on its payload:\n#{seen}"
+
+    assert wait_until(
+             fn -> match?({:ok, %{status: "ok"}}, Flezha.State.Completion.read(spawned)) end,
+             30_000
+           ),
+           "the spawned once workflow did not complete ok: " <>
+             inspect(Flezha.State.Completion.read(spawned))
+
+    assert {:ok, %{result: "ticket-7"}} = Flezha.State.Completion.read(spawned)
+
+    assert wait_until(
+             fn ->
+               not match?({:ok, pid} when is_pid(pid), HubManager.get_pid(namespace, spawned))
+             end,
+             15_000
+           ),
+           "the completed instance was never deregistered"
+  end
+
+  defp once_results(seen) do
+    for [_line, id, outcome] <- Regex.scan(~r/^spawn_result once (\S+) (.+)$/m, seen),
+        do: {id, String.trim(outcome)}
   end
 
   defp spawn_results(seen) do

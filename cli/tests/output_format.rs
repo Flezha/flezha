@@ -556,6 +556,20 @@ const CASES: &[(&[&str], Want)] = &[
         &["operative", "start", "echo", "--json", "--init-values", r#"{"a":1}"#],
         Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{\"a\":1}", "json", "{}", [])"#),
     ),
+    // A first message rides the options list as text, with the entry channel
+    // it names; a channel with no message names nothing.
+    (
+        &["operative", "start", "paper_order", "--kind", "workflow", "--text", r#"{"symbol":"AAPL"}"#, "--channel", "order"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "paper_order", "{}", "text", "{}", [kind: "workflow", text: "{\"symbol\":\"AAPL\"}", channel: "order"])"#),
+    ),
+    (
+        &["operative", "start", "echo", "-t", "hello"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "text", "{}", [text: "hello"])"#),
+    ),
+    (
+        &["operative", "start", "echo", "--channel", "order"],
+        Refused("--channel names the entry channel of --text"),
+    ),
     (
         &["operative", "start", "my_echo", "echo"],
         Refused("unknown argument 'echo'"),
@@ -619,6 +633,14 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f"],
         Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f"])"#),
+    ),
+    (
+        &["schedule", "add", "nightly", "--cron", "0 2 * * *", "--tz", "UTC", "--factory", "report", "--text", "hello", "--channel", "requests"],
+        Rpc(r#"Flezha.Service.CliManager.schedule_add("nightly", [cron: "0 2 * * *", tz: "UTC", factory: "report", text: "hello", channel: "requests"])"#),
+    ),
+    (
+        &["schedule", "add", "nightly", "--cron", "0 2 * * *", "--tz", "UTC", "--factory", "report", "--channel", "requests"],
+        Refused("--channel names the entry channel of --text"),
     ),
     (
         &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],

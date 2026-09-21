@@ -28,7 +28,7 @@ use crate::operative::topology::{
     AckGranularity, BeyondWindowPolicy, CellMode, CheckpointOutputs, CheckpointPolicy,
     CorrectionPolicy, OperativeTopology, TaskletDescriptor,
 };
-use crate::workflow::spec::{graph_order, GraphOrder, GraphSeed, TaskDag, WorkflowSpec};
+use crate::workflow::spec::{graph_order, GraphSeed, TaskDag, WorkflowSpec};
 use crate::workflow::{LoopMode, RollbackMode};
 
 /// The class facts every tasklet and the topology read, resolved once so
@@ -309,51 +309,34 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
     }
 }
 
-/// Kahn toposort from the entry root, refusing what the typed builder
-/// refuses: several entry consumers, several outputs, cycles, disconnected
-/// tasklets.
+/// Kahn toposort from every entry channel's consumers, refusing what the
+/// typed builder refuses: no entry channel, several outputs, cycles,
+/// disconnected tasklets.
 pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<TaskDag, Error> {
-    let root = refuse_dag_shape(topology)?;
+    let entries = topology.entry_consumers();
+    if entries.is_empty() {
+        return Err(Error::Declaration(
+            "a structured workflow class declares an entry channel its messages arrive on"
+                .to_string(),
+        ));
+    }
+    refuse_several_outputs(topology)?;
     let n = topology.tasklets.len();
-    let GraphOrder {
-        order,
-        parents,
-        children,
-        on_cycle,
-        ..
-    } = graph_order(
-        n,
-        &inter_task_edges(topology),
-        &[root as TaskletId],
-        GraphSeed::Roots,
-    );
-    if order.len() != n {
-        let missing = on_cycle
+    let roots: Vec<TaskletId> = entries
+        .iter()
+        .flat_map(|(_, c)| c.iter().copied())
+        .collect();
+    let walk = graph_order(n, &inter_task_edges(topology), &roots, GraphSeed::Roots);
+    if walk.order.len() != n {
+        let missing = walk
+            .on_cycle
             .map(|i| topology.tasklets[i as usize].name.to_string())
             .unwrap_or_default();
         return Err(Error::Declaration(format!(
-            "tasklet `{missing}` is on a cycle or not reachable from the entry channel"
+            "tasklet `{missing}` is on a cycle or not reachable from any entry channel"
         )));
     }
-    // Re-index parents/children positionally by order (the driver's shape).
-    let index_of: HashMap<usize, usize> = order
-        .iter()
-        .enumerate()
-        .map(|(pos, &p)| (p as usize, pos))
-        .collect();
-    let dag_parents: Vec<Vec<usize>> = order
-        .iter()
-        .map(|&p| parents[p as usize].iter().map(|pp| index_of[pp]).collect())
-        .collect();
-    let dag_children: Vec<Vec<usize>> = order
-        .iter()
-        .map(|&p| children[p as usize].iter().map(|cc| index_of[cc]).collect())
-        .collect();
-    Ok(TaskDag {
-        order,
-        parents: dag_parents,
-        children: dag_children,
-    })
+    Ok(TaskDag::from_walk(walk, entries))
 }
 
 /// Producer → consumer pairs over the inter-task channels only: a workflow's
@@ -374,23 +357,8 @@ fn inter_task_edges(topology: &OperativeTopology) -> Vec<(TaskletId, TaskletId)>
     edges
 }
 
-/// The root of a well-shaped chain: one entry channel feeding one tasklet,
-/// no tasklet producing two channels.
-fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, Error> {
-    let entry = topology
-        .channels
-        .iter()
-        .find(|c| c.kind == ChannelKind::Entry)
-        .ok_or_else(|| {
-            Error::Declaration("a structured workflow class declares one entry channel".to_string())
-        })?;
-    if entry.consumers.len() != 1 {
-        return Err(Error::Declaration(format!(
-            "a bounded topology has a single root; entry channel `{}` feeds {} tasklets",
-            entry.name,
-            entry.consumers.len()
-        )));
-    }
+/// No tasklet producing two channels: a stage has one output a child reads.
+fn refuse_several_outputs(topology: &OperativeTopology) -> Result<(), Error> {
     for (task_id, _) in topology.tasklets.iter().enumerate() {
         let produced = topology
             .channels
@@ -405,5 +373,5 @@ fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, Error> {
             )));
         }
     }
-    Ok(entry.consumers[0].tasklet as usize)
+    Ok(())
 }

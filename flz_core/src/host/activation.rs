@@ -302,7 +302,8 @@ fn settle_items(
                 core.retry_after_failure(token, rest, message);
                 return Ok(());
             }
-            schema::Verdict::NonRetryableError { message } => {
+            schema::Verdict::NonRetryableError { message }
+            | schema::Verdict::Unreadable { message } => {
                 settle_item(slot, &work, effect, Some((message, work.attempt)));
                 crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
             }

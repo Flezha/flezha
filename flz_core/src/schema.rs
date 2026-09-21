@@ -160,8 +160,19 @@ pub struct ItemEffect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Verdict {
     Ok,
-    RetryableError { message: String },
-    NonRetryableError { message: String },
+    RetryableError {
+        message: String,
+    },
+    NonRetryableError {
+        message: String,
+    },
+    /// The host's entry decoder rejected the payload: only an entry channel's
+    /// decoder answers this. A stream parks the item as a non-retryable error;
+    /// a workflow parks the message once the stage's ladder exhausts and goes
+    /// on waiting instead of ending.
+    Unreadable {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

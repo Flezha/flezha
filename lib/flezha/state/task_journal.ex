@@ -65,8 +65,12 @@ defmodule Flezha.State.TaskJournal do
           iter: non_neg_integer(),
           payload:
             %{cells_ran: [binary()], handoff: [handoff_item()], outbox: [outbox_entry()]}
-            | %{consumed_offset: non_neg_integer(), handoff: [handoff_item()]}
-            | %{wake_deadline_ms: non_neg_integer() | nil}
+            | %{
+                consumed_offset: non_neg_integer(),
+                entry_channel: String.t(),
+                handoff: [handoff_item()]
+              }
+            | %{wake_deadline_ms: non_neg_integer() | nil, consumed_offset: non_neg_integer()}
             | %{outbox: [outbox_entry()]}
             | %{for_type: entry_type_name()}
             | %{}
@@ -86,7 +90,7 @@ defmodule Flezha.State.TaskJournal do
           {:task_committed, non_neg_integer(), non_neg_integer(), [binary()], [handoff_item()],
            [outbox_entry()], completion()}
           | {:compensated, non_neg_integer(), non_neg_integer(), [outbox_entry()]}
-          | {:iter_committed, non_neg_integer(), non_neg_integer(), [handoff_item()],
+          | {:iter_committed, non_neg_integer(), non_neg_integer(), String.t(), [handoff_item()],
              completion()}
 
   @typedoc "The result a tasklet's `complete` asked for, or `nil` when none did."
@@ -128,40 +132,62 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Append one `iter_committed` entry — loop iteration `iter` finished, having
-  consumed the inbox up to `consumed_offset` and released `handoff` as its
-  terminal batch, and ended the instance when `completion` is not `nil` —
-  durable before the reply. The commit boundary a crash-resume restarts after:
-  iterations at or below `iter` never re-run.
+  run the chain of entry channel `entry_channel`, consumed the inbox up to
+  `consumed_offset` and released `handoff` as its terminal batch, and ended
+  the instance when `completion` is not `nil` — durable before the reply. The
+  commit boundary a crash-resume restarts after: iterations at or below
+  `iter` never re-run, and a chained loop re-enters the named chain.
   """
   @spec append_iter_committed(
           binary(),
           non_neg_integer(),
           non_neg_integer(),
           [handoff_item()],
-          completion()
+          completion(),
+          String.t()
         ) :: :ok | {:error, term()}
-  def append_iter_committed(instance_id, iter, consumed_offset, handoff, completion \\ nil)
-      when is_binary(instance_id) and is_integer(iter) and iter >= 0 do
-    append_barrier(instance_id, {:iter_committed, iter, consumed_offset, handoff, completion})
+  def append_iter_committed(
+        instance_id,
+        iter,
+        consumed_offset,
+        handoff,
+        completion \\ nil,
+        entry_channel \\ ""
+      )
+      when is_binary(instance_id) and is_integer(iter) and iter >= 0 and
+             is_binary(entry_channel) do
+    append_barrier(
+      instance_id,
+      {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion}
+    )
   end
 
   @doc """
   Append one `parked` entry — the loop is suspended at the committed boundary of
   iteration `iter`, to be rehydrated by a new inbox append or, when
-  `wake_deadline_ms` is non-nil, by its durable timer. Durable before the
-  instance is evicted, so suspension survives a controller redeploy.
+  `wake_deadline_ms` is non-nil, by its durable timer. `consumed_offset` is the
+  highest inbox offset the run parked to the dead-letter queue unread (`0` when
+  none), which the inbox releases as an iteration's consumed input. Durable
+  before the instance is evicted, so suspension survives a controller redeploy.
 
   The park is named from `namespace` by an instance id alone, so one for an
   instance whose durable state another namespace owns is refused.
   """
-  @spec append_parked(binary(), binary(), non_neg_integer(), non_neg_integer() | nil) ::
-          :ok | {:error, term()}
-  def append_parked(namespace, instance_id, iter, wake_deadline_ms \\ nil)
-      when is_binary(namespace) and is_binary(instance_id) and is_integer(iter) and iter >= 0 do
+  @spec append_parked(
+          binary(),
+          binary(),
+          non_neg_integer(),
+          non_neg_integer() | nil,
+          non_neg_integer()
+        ) :: :ok | {:error, term()}
+  def append_parked(namespace, instance_id, iter, wake_deadline_ms \\ nil, consumed_offset \\ 0)
+      when is_binary(namespace) and is_binary(instance_id) and is_integer(iter) and iter >= 0 and
+             is_integer(consumed_offset) and consumed_offset >= 0 do
     owner = Paths.namespace_of_class(instance_id)
+    payload = <<wake_deadline_ms || 0::64-big, consumed_offset::64-big>>
 
     if owner in [namespace, "_system"],
-      do: append(instance_id, @type_parked, 0, iter, <<wake_deadline_ms || 0::64-big>>),
+      do: append(instance_id, @type_parked, 0, iter, payload),
       else: {:error, {:namespace_conflict, instance_id, owner}}
   end
 
@@ -372,6 +398,7 @@ defmodule Flezha.State.TaskJournal do
         %{
           committed_task_idxs: in_flight |> Enum.map(& &1.task_idx) |> Enum.uniq() |> Enum.sort(),
           iter: resume_iter,
+          entry_channel: entry_channel_of(last_iter),
           handoff: iter_handoff(last_iter),
           task_handoffs: task_handoffs(in_flight),
           committed_tasks: for(%{type: :task_committed} = e <- entries, do: committed_task(e)),
@@ -400,19 +427,19 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  The highest inbox offset any iteration ever consumed — what the inbox has
-  released, whether or not its file has been rewritten yet. Unlike
-  `consumed_offset/1` a rewind does not move it back: the rewound iterations'
-  inputs were released when they committed, and a rewind is undo-and-continue,
-  never a replay. The delivery set (`TaskInbox.undelivered/1`) is everything
-  above it.
+  The highest inbox offset any iteration ever consumed, or a park recorded as
+  parked to the dead-letter queue unread: what the inbox has released, whether
+  or not its file has been rewritten yet. Unlike `consumed_offset/1` a rewind
+  does not move it back: the rewound iterations' inputs were released when they
+  committed, and a rewind is undo-and-continue, never a replay. The delivery set
+  (`TaskInbox.undelivered/1`) is everything above it.
   """
   @spec released_offset(binary()) :: non_neg_integer()
   def released_offset(instance_id) when is_binary(instance_id) do
     {:ok, raw} = read(instance_id)
 
     raw
-    |> Enum.filter(&(&1.type == :iter_committed))
+    |> Enum.filter(&(&1.type in [:iter_committed, :parked]))
     |> Enum.map(&consumed_offset_of/1)
     |> Enum.max(fn -> 0 end)
   end
@@ -559,6 +586,9 @@ defmodule Flezha.State.TaskJournal do
   defp consumed_offset_of(nil), do: 0
   defp consumed_offset_of(%{payload: %{consumed_offset: offset}}), do: offset
 
+  defp entry_channel_of(nil), do: ""
+  defp entry_channel_of(%{payload: %{entry_channel: channel}}), do: channel
+
   defp completion_of(nil), do: nil
   defp completion_of(%{payload: %{completion: completion}}), do: completion
 
@@ -626,14 +656,17 @@ defmodule Flezha.State.TaskJournal do
   defp barrier_record({:compensated, task_idx, iter, outbox}),
     do: {@type_compensated, task_idx, iter, Codec.encode_outbox(outbox)}
 
-  defp barrier_record({:iter_committed, iter, consumed_offset, handoff, completion}),
-    do:
-      {@type_iter_committed, 0, iter,
-       [
-         <<consumed_offset::64-big>>,
-         Codec.encode_handoff(handoff),
-         Codec.encode_completion(completion)
-       ]}
+  defp barrier_record(
+         {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion}
+       ),
+       do:
+         {@type_iter_committed, 0, iter,
+          [
+            <<consumed_offset::64-big, byte_size(entry_channel)::16-big>>,
+            entry_channel,
+            Codec.encode_handoff(handoff),
+            Codec.encode_completion(completion)
+          ]}
 
   # `epoch` defaults to the instance's current one (a journal read); a caller
   # already holding the entry it is marking passes that entry's epoch instead,

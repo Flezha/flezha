@@ -220,7 +220,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     %RunnerCommands.IterPark{
       operative_id: operative_id,
       iter: iter,
-      wake_deadline_ms: wake_deadline_ms
+      wake_deadline_ms: wake_deadline_ms,
+      consumed_offset: consumed_offset
     } = park
 
     deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
@@ -234,7 +235,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     namespace = state.namespace
 
     Task.start(fn ->
-      case TaskJournal.append_parked(namespace, operative_id, iter, deadline) do
+      case TaskJournal.append_parked(namespace, operative_id, iter, deadline, consumed_offset) do
         :ok ->
           suspend_parked(namespace, operative_id, iter, deadline)
 

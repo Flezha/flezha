@@ -90,7 +90,6 @@ Definition-time, alongside every other topology issue:
 | fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `StreamOperativeConfigurationException` |
 | same Channel subscribed twice | `TopologyIssue::DuplicateMergeSource` (names the Channel) | `DuplicateMergeSource` (names the Channel) |
 | source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::EdgeAlreadyWired` (names Channel + Tasklet) | `EdgeAlreadyWired` (names both) |
-| an entry Channel as a **workflow** merge source | `BuildWorkflowError::MergeFromEntryChannel` | `MergeFromEntryChannel` in the `WorkflowOperativeConfigurationException` |
 | mapped type ≠ the Tasklet's `Input` | compile error at `.into::<Task>()` (`Tasklet<Input = I>` bound) | registration error naming both types (`wireConsumer` compares the declared merge type) |
 
 A duplicated source reports only `DuplicateMergeSource`: the arity check
@@ -101,11 +100,12 @@ counts every `.from` written, not surviving sources.
 The mapping is applied where the driver accumulates a producer's released
 batch into its child and again where a crash-resume re-seeds that child from
 the journaled handoff, so a resumed merge sees exactly what the live one did.
-An **entry** Channel cannot be a source: a workflow is seeded from its spawn
-args (and, for a `PerInput` loop, its inbox items), neither of which names
-the Channel a payload arrived on, so no mapping could be selected and a second
-entry Channel would never be read. Merge the output streams of two or more of
-the operative's tasklets instead.
+An **entry** Channel is a source on a workflow as on a stream: every message
+carries the Channel it arrived on, so its mapping is selected the same way. A
+merged tasklet fed by an entry Channel is a root of that Channel's chain, and
+a merge of two entry Channels runs the merged tasklet once per message, on
+the message's mapping, in the pass that message starts; a join where two
+chains meet waits only for the producers of the chain that runs.
 
 ## Where the code lives
 

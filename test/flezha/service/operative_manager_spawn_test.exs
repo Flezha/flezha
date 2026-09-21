@@ -51,7 +51,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
     assert [operative] = FakeStartRegistry.started()
     assert operative.kind == :workflow
     assert operative.factory_id == @factory
-    assert Keyword.get(operative.opts, :seed_input) == "p1"
+    assert Keyword.get(operative.opts, :seed_input) == {"p1", %{}}
   end
 
   test "a taken id receives the payload as one more input", %{registry: registry} do
@@ -155,8 +155,8 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
       refute first == second
 
       assert [%{id: ^first} = a, %{id: ^second} = b] = FakeStartRegistry.started()
-      assert Keyword.get(a.opts, :seed_input) == "p1"
-      assert Keyword.get(b.opts, :seed_input) == "p2"
+      assert Keyword.get(a.opts, :seed_input) == {"p1", %{}}
+      assert Keyword.get(b.opts, :seed_input) == {"p2", %{}}
       assert Instance.ingested(instance_pid(registry, first)) == []
     end
 

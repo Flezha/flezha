@@ -74,8 +74,8 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
       id: operative_id,
       factory_id: "sync_durable_workflow",
       kind: :workflow,
-      init_values: %{"seed" => "go"},
-      opts: []
+      init_values: %{},
+      opts: [seed_input: {~s({"seed":"go"}), %{}}]
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
