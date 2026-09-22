@@ -2,7 +2,7 @@
 
 For SDK implementers and for anyone reading the kernel. `flz_core` is the
 language-agnostic runner kernel: transport, ordering, durability, retries,
-timers, credit, routing and the workflow driver live in one Rust crate. A host
+timers, credit, routing and a workflow's pass live in one Rust crate. A host
 language SDK drives it through exactly one invocation surface:
 
 ```text
@@ -30,13 +30,13 @@ the C ABI and where the code lives; the system-level picture is
 | -------------------------------------- | ------- |
 | `flz_core/src/poll_core/`              | The activation engine (`mod.rs`, `assembly.rs`, `starvation.rs`, `wake.rs`): per-cell handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the in-flight cap, the deferred-wake list, starvation, `poll` / `complete` |
 | `flz_core/src/schema.rs`               | The versioned Activation / ActivationResult boundary contract (postcard; `SCHEMA_VERSION`; hex-pinned `fixture_tests`) |
-| `flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `cell.rs`, `workflow.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
+| `flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `cell.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
 | `flz_core/src/cell.rs`, `mailbox.rs` | `CellSlot`, bounded mailbox + inflight CAS, shared slot assembly |
 | `flz_core/src/routing.rs`              | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
 | `flz_core/src/retry.rs`, `park.rs`     | The retry→park ladder: backoff computation, `RETRIES_TOTAL`, DLQ parks |
 | `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, late-input machinery, timers, restore payloads, record headers |
 | `flz_core/src/coordinator.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, one handler module per controller command |
-| `flz_core/src/workflow/`               | The workflow driver (`driver.rs`, `instance.rs`, `compensation.rs`, `registry.rs`), `step.rs` (a stage's step activations + its retry barrier), `spec.rs` (the spec/DAG kernel) |
+| `flz_core/src/workflow/`               | A workflow instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
 | `flz_core_ffi/src/lib.rs`              | The `flz_core_*` C entry points (crate types `cdylib`, `staticlib`, `rlib`) |
 | `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
@@ -55,11 +55,13 @@ durability, and caps how many work activations may be underway at once —
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
 cap `poll` blocks as if nothing were ready, and the completion that drops the
 count below it releases the next one. Direct activations (restore folds,
-snapshot requests, workflow steps) are exempt — they are barrier-bounded by the
-drivers that enqueue them and answer a caller blocked on a rendezvous or a
-stage barrier, so holding one behind capped cell work would deadlock that
-caller. They are also what a queued direct activation with no thread inside
-`poll` reports as starvation: a blocked driver must be able to buy a thread.
+snapshot requests, the other command crossings, a workflow's undo) are exempt —
+a command crossing answers a caller blocked on a rendezvous, so holding one
+behind capped cell work would deadlock that caller, and an undo holds its
+cell's gate until it is answered. They are also what a queued direct
+activation with no thread inside `poll` reports as starvation: a blocked caller
+must be able to buy a thread. A workflow stage's items are ordinary cell work
+and take the cap like a stream's.
 
 **The SDK brings the threads**, with whatever its runtime does best. The count
 is a servicing detail, not a limit on concurrency — that limit is the core's
@@ -431,14 +433,15 @@ At runtime the full contract crosses the boundary:
 - **Inter-tasklet edges route on `(edge, key)`**: outputs name their
   consumer; keys and event times are producer-evaluated (the host holds the
   typed value and the extractor; the core holds neither).
-- **Workflow lifecycles run under poll**: a workflow chain hands out one
-  **step activation** per cell of the stage — a `Work` batch, or
-  `CompensateRun` for an undo — and collects the answers at its stage
-  barrier. Both language
-  paths take that route, so a step costs exactly one thread (the SDK's) and no
-  core thread waits on a host: the driver is the only waiter, and its retry
-  timing lives there too. Barriers, task-journal, loop modes, suspension and
-  rewind are driver machinery
+- **Workflow lifecycles run under poll**: a workflow stage's items are routed
+  into its cells' mailboxes and handed out as ordinary `Work` batches, and an
+  undo crosses as a `CompensateRun` on the direct queue. Nothing waits for
+  them: a settled item, a commit ack, a deadline and an undo's answer are
+  events that advance a pass sheet on the instance, on the thread that brings
+  each one. Both language paths take that route, so a stage costs exactly the
+  SDK threads that run its items and no core thread belongs to an instance.
+  The retry ladder is the stream's; barriers, the task journal, loop modes,
+  suspension and rewind are the sheet's
   ([`../architecture/workflow_profile.md`](../architecture/workflow_profile.md)).
 
 ### In-process residuals
@@ -458,7 +461,7 @@ class — `schemaVersion()`, `contextNew(shimSchemaVersion)`,
 `complete(ctx, result)`, `spawnRequest` / `spawnResult`, `monotonicNanos()`,
 `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
 `poll → decode Activation → hand off → poll`; the kernel (transport, ordering,
-durability, retries, timers, credit, routing, the workflow driver, reconnect)
+durability, retries, timers, credit, routing, a workflow's pass, reconnect)
 lives entirely in the core.
 
 **The shipped binary.** One `libflz_core_ffi.{so,dylib,dll}` per platform

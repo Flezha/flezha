@@ -10,6 +10,7 @@ use prost::Message;
 
 use super::{CommandAction, Reply};
 use crate::cell::CellSlot;
+use crate::operative::instance::OperativeInstance;
 use crate::pb::{RestoreInitState, RestoreInitStateResponse};
 use crate::restore::{iter_change_log_records, RestoreOutcome};
 use crate::runner::RunnerNode;
@@ -17,24 +18,19 @@ use crate::util::LockRecover;
 
 impl CommandAction for RestoreInitState {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
-        let outcome = if let Some(slot) = find_cell_slot(runner, &self.cell_id) {
-            restore_into_slot(&slot, self, errors)
-        } else if let Some((instance, slot)) = runner.find_workflow_cell(&self.cell_id) {
-            // Durable workflow Cell: rebuild its committed state in place and
-            // release one count on the driver's crash-resume gate. The frame
-            // landed regardless of apply success, so the gate never stalls on a
-            // corrupt record.
-            let t = restore_into_slot(&slot, self, errors);
-            // Saga crash-resume (§4.3): carry the per-Cell compensation markers
-            // the controller persisted so the driver finishes an in-flight undo
-            // (intent) and skips cells already undone (done).
-            instance.note_compensation_markers(
+        let outcome = if let Some((instance, slot)) = find_cell_slot(runner, &self.cell_id) {
+            let outcome = restore_into_slot(&slot, self, errors);
+            // A workflow Cell's restore counts toward the run's gate whether or
+            // not it applied, so the gate never stalls on a corrupt record, and
+            // carries the saga markers the controller persisted: an undo in
+            // flight finishes (intent), a Cell already undone is skipped (done).
+            crate::workflow::restore_landed(
+                &instance,
                 &self.cell_id,
                 self.has_compensation_intent,
                 self.has_compensation_done,
             );
-            instance.note_restored();
-            t
+            outcome
         } else {
             match self.ack_without_slot(errors) {
                 Some(outcome) => outcome,
@@ -215,35 +211,35 @@ fn restore_cursors(change_log_bytes: &[u8]) -> RestoreCursors {
 
 /// The live slot whose wire identity equals `cell_id`, cloned out so the
 /// registry locks are released before the rebuild.
-pub fn find_cell_slot(runner: &RunnerNode, cell_id: &[u8]) -> Option<Arc<CellSlot>> {
-    for instance in runner.get_operatives().values() {
-        for tasklet_cells in instance.cells.iter() {
-            for slot in tasklet_cells.iter() {
-                if slot.cell_identity.as_slice() == cell_id {
-                    return Some(Arc::clone(slot));
-                }
-            }
-        }
-    }
-
-    find_dynamic_cell_slot(runner, cell_id)
+/// A live Cell of either kind by wire identity, with its instance.
+pub fn find_cell_slot(
+    runner: &RunnerNode,
+    cell_id: &[u8],
+) -> Option<(Arc<OperativeInstance>, Arc<CellSlot>)> {
+    runner
+        .find_cell(cell_id)
+        .or_else(|| find_dynamic_cell_slot(runner, cell_id))
 }
 
 /// A dynamic Cell has no slot until its first input; a restore names one
 /// the controller has state for, so it is materialized here rather than
 /// cold-started on top of its own WAL. An evicted Cell never gets one.
-fn find_dynamic_cell_slot(runner: &RunnerNode, cell_id: &[u8]) -> Option<Arc<CellSlot>> {
+fn find_dynamic_cell_slot(
+    runner: &RunnerNode,
+    cell_id: &[u8],
+) -> Option<(Arc<OperativeInstance>, Arc<CellSlot>)> {
     let (instance_id, tasklet_name, cell_key) = crate::flusher::decode_cell_identity(cell_id)?;
-    let instance = runner.get_operatives().get(&instance_id).cloned()?;
+    let instance = runner.get_operative(&instance_id)?;
     let tasklet_id = *instance
         .topology
         .tasklet_name_to_id
         .get(tasklet_name.as_str())?;
 
-    instance
+    let slot = instance
         .dynamic_registries
         .get(tasklet_id as usize)?
         .as_ref()?
         .get_or_create(&cell_key)
-        .ok()
+        .ok()?;
+    Some((instance, slot))
 }

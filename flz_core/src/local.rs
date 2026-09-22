@@ -1,6 +1,6 @@
 //! Running a declared operative graph in this process, with no controller.
 //!
-//! A [`LocalRun`] adds no engine. It builds the `StreamInstance` a deployed
+//! A [`LocalRun`] adds no engine. It builds the `OperativeInstance` a deployed
 //! runner builds, feeds it through the [`OperativeDispatchHandle::dispatch`]
 //! a stream reader uses, and takes sink output where production frames it —
 //! a [`FlezhaStream::Local`] whose writes are parsed in process instead of
@@ -31,7 +31,7 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::channel::ChannelKind;
 use crate::error::Error;
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 use crate::operative::registry::OperativeRegistry;
 use crate::operative::topology::ChannelLookup;
 use crate::poll_core::PollCore;
@@ -121,7 +121,7 @@ impl SinkTable {
 
 /// One operative graph running in this process.
 pub struct LocalRun {
-    instance: Arc<StreamInstance>,
+    instance: Arc<OperativeInstance>,
     dispatch: OperativeDispatchHandle,
     stream: Arc<FlezhaStream>,
     sinks: Arc<SinkTable>,
@@ -133,7 +133,7 @@ impl LocalRun {
     /// controller can answer.
     pub fn start(factory_id: &str, operative_id: &str) -> Result<Self, Error> {
         refuse_controller_only(factory_id)?;
-        let instance = StreamInstance::of_class(factory_id, operative_id)?;
+        let instance = OperativeInstance::of_class(factory_id, operative_id)?;
         let sinks = Arc::new(SinkTable::default());
         let frames = Arc::clone(&sinks);
         let stream = Arc::new(FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
@@ -144,7 +144,7 @@ impl LocalRun {
         // run, and their frames are discarded at the outbound edge.
         crate::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
         let registry = Arc::new(OperativeRegistry::new());
-        registry.register_stream(Arc::clone(&instance));
+        registry.register(Arc::clone(&instance));
         NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);
         eprintln!("{NON_DURABILITY_NOTICE}");
         Ok(LocalRun {
@@ -200,7 +200,7 @@ impl LocalRun {
     }
 
     /// The live instance, for a caller that wants to read its Cells.
-    pub fn instance(&self) -> &Arc<StreamInstance> {
+    pub fn instance(&self) -> &Arc<OperativeInstance> {
         &self.instance
     }
 
@@ -257,13 +257,15 @@ impl Drop for LocalRun {
 /// declaration: a member's key-group range arrives with `AddOperative`, so a
 /// local run is unpartitioned by construction.
 fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
-    let workflow = crate::workflow::registry::get_class(factory_id).is_some();
-    let tier = crate::operative::registry::get_class(factory_id)
-        .is_some_and(|topology| topology.effectively_once);
+    let class = crate::operative::registry::get_class(factory_id);
+    let workflow = class
+        .as_ref()
+        .is_some_and(|topology| topology.workflow.is_some());
+    let tier = class.is_some_and(|topology| topology.effectively_once);
     let (capability, why) = if workflow {
         (
             "a workflow",
-            "a workflow's steps are driven from the controller's inbox, and its \
+            "a workflow's messages come from the controller's input log, and its \
           commit barriers are durable",
         )
     } else if tier {
@@ -274,7 +276,7 @@ fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
          store to release from",
         )
     } else {
-        // Neither registry has it, or it asks for nothing a controller owns;
+        // The registry does not have it, or it asks for nothing a controller owns;
         // `of_class` reports an unregistered class by name.
         return Ok(());
     };

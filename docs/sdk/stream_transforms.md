@@ -86,11 +86,11 @@ A closure that panics or throws does not take the routing thread with it.
   served and later inputs keep routing. On Java the closure runs inside an
   activation, so a throw is that activation's failure and rides its ladder.
 - **Workflow operative.** There is no DLQ. An in-process closure runs on the
-  driver thread in `extend_mapped`, is contained there and becomes a terminal
-  chain error the saga compensates — the instance still reports
-  `WorkflowCompleted` with status `error`, with no retry. Undo scope:
+  worker that produced the value, inside the routing seam, is contained there
+  and fails the producing stage with no retry; the saga compensates and the
+  instance still reports `WorkflowCompleted` with status `error`. Undo scope:
   [`multi_input_tasklets.md`](multi_input_tasklets.md). An edge **key**
-  never reaches the driver: a keyed edge makes its consumer dynamic, which a
+  never reaches a workflow: a keyed edge makes its consumer dynamic, which a
   workflow operative refuses.
 
 ## Refusals

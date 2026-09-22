@@ -163,8 +163,8 @@ pub(crate) fn routes_two_entry_payloads(
     ctx: *mut FlzContext,
     stream: &Arc<FlezhaStream>,
 ) -> schema::Activation {
-    let instance = flz_core::runner::live_stream_instance("abi_probe")
-        .expect("AddOperative built the instance");
+    let instance =
+        flz_core::runner::live_instance("abi_probe").expect("AddOperative built the instance");
     let entry = instance.topology.channel(0).expect("entry channel");
     for payload in [b"alpha".to_vec(), b"beta".to_vec()] {
         // The channel's own entry wrapper — the same one the wire path runs.
@@ -453,7 +453,7 @@ fn assert_restored_bodies(fold: &schema::RestoreFold) {
 /// The fold's effect record consumed offset 7: a re-forwarded input at or
 /// below the floor is skipped, one above it dispatches.
 fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<FlezhaStream>) {
-    let instance = flz_core::runner::live_stream_instance("eff-1").expect("eff instance");
+    let instance = flz_core::runner::live_instance("eff-1").expect("eff instance");
     let entry = instance.topology.channel(0).expect("entry channel");
     let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
 
@@ -531,7 +531,7 @@ fn a_keyed_dynamic_route_crosses_for_its_key(
     stream: &Arc<FlezhaStream>,
 ) {
     declares_the_dynamic_class(ctx, controller);
-    let instance = flz_core::runner::live_stream_instance("dyn-1").expect("dyn instance");
+    let instance = flz_core::runner::live_instance("dyn-1").expect("dyn instance");
     let entry = instance.topology.channel(0).expect("entry channel");
     // The wire-dispatch staging seam (the same call `OperativeDispatchHandle::
     // dispatch` makes): a keyed consumer holds the payload for the crossing.
@@ -615,13 +615,18 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
 fn a_workflow_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
     declares_the_workflow_class(ctx, controller);
     // A workflow's input is a message on its entry channel, as a stream's is.
-    let instance = flz_core::coordinator::LIVE_REGISTRY
+    let registry = flz_core::coordinator::LIVE_REGISTRY
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .as_ref()
-        .and_then(|registry| registry.get_workflow("wf-1"))
-        .expect("AddOperative built the workflow");
-    flz_core::routing::feed_workflow_frame(&instance, b"seed".to_vec(), &Default::default());
+        .clone()
+        .expect("a runner registry is live");
+    assert!(registry.contains("wf-1"), "AddOperative built the workflow");
+    flz_core::runner::OperativeDispatchHandle { registry }.dispatch(
+        "wf-1",
+        b"seed".to_vec(),
+        &Default::default(),
+        flz_core::workflow::unwired_stream(),
+    );
     let (status, act) = abi_poll(ctx, 5_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "the workflow's step hands out");
     let act = act.unwrap();

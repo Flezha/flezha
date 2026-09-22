@@ -200,9 +200,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (`<state_root>/<namespace>/<instance_id>/<instance_id>/task.journal`, `Flezha.State.TaskJournal`)
   on the WAL substrate under a reserved cell key. Its entries (`task_committed`, `outbox_flushed`,
   `iter_committed`, `parked`, `compensated`, `rewound`) are folded, never truncated.
-- **Level barrier / `TaskCommit`** — every cell of every tasklet in a level joins before the
-  SDK ships one `TaskCommit` per tasklet `{cells_ran, handoff, staged outbox}`; the controller
-  journals it and acks, and only then are the children runnable. A committed tasklet is never re-run.
+- **Stage barrier / `TaskCommit`** — when a tasklet's last item settles, the runner ships one
+  `TaskCommit` for it `{cells_ran, handoff, staged outbox}`; the controller journals it and acks,
+  and only then do its outputs reach its children. Siblings commit independently. A committed
+  tasklet is never re-run.
+- **Pass sheet** — a workflow instance's run state in the runner core (iteration, tasklets in
+  flight and done, outputs held for their commit, completion), advanced by events on the thread
+  that brings each one; the in-memory form of what the task journal describes.
 - **Transactional outbox** — inside a structured tasklet `ctx.emit` stages rather than sends; the
   staged outbox rides the `TaskCommit` and is flushed after the journal fsync, stamped
   `flz.seq = <task_idx>.<seq_in_task>`. The journal, not memory, decides what is owed.
@@ -231,7 +235,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 - **Poll core (`flz_core`)** — the one Rust kernel every host SDK drives through
   `poll() → Activation` / `complete(ActivationResult)`: transport, per-cell ordering, effect
-  records, the retry→park ladder, timers, credit, routing and the workflow driver. Rust consumes
+  records, the retry→park ladder, timers, credit, routing and workflow runs. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
   (`flz_core_ffi`); PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
   its own core and inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).

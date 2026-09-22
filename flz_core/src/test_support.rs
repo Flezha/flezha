@@ -87,7 +87,7 @@ fn decode_park(frame: &[u8]) -> CapturedPark {
 pub(crate) mod host_class {
     use std::sync::Arc;
 
-    use crate::operative::instance::StreamInstance;
+    use crate::operative::instance::OperativeInstance;
 
     /// One entry-channel declaration per name, each chaining into `p0`.
     /// An entry channel per name, each into tasklet 0; `facts` are extra
@@ -113,7 +113,7 @@ pub(crate) mod host_class {
         entries: &[&str],
         keys: &[&str],
         consumers: &[u32],
-    ) -> Arc<StreamInstance> {
+    ) -> Arc<OperativeInstance> {
         let chain_list = consumers
             .iter()
             .map(|c| format!(r#"[{{"link":"into","tasklet":{c}}}]"#))
@@ -150,7 +150,7 @@ pub(crate) mod host_class {
                  "tasklets":[{tasks}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-        StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+        OperativeInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 
     /// A host `once` workflow class: an entry channel per name in `entries`,
@@ -171,20 +171,33 @@ pub(crate) mod host_class {
         )
     }
 
-    /// A host workflow instance built as the bind builds it, without its
-    /// driver, so a test reads the inbox the entrance fills.
-    pub(crate) fn workflow(
+    /// Bind `id` of `factory` as the controller does, through `AddOperative`;
+    /// the refusals it answered.
+    pub(crate) fn bind(
+        node: &mut crate::runner::RunnerNode,
+        factory: &str,
         id: &str,
-        entries: &[&str],
-    ) -> (
-        Arc<crate::workflow::instance::WorkflowInstance>,
-        crossbeam::channel::Receiver<crate::workflow::instance::Inbound>,
-    ) {
+        init: &str,
+        owed: u32,
+    ) -> Vec<String> {
+        use crate::command::CommandAction;
+        let mut errors = Vec::new();
+        crate::pb::AddOperative {
+            operative_id: id.to_string(),
+            factory_id: factory.to_string(),
+            init_values: init.to_string(),
+            inbox_tail_count: owed,
+            ..Default::default()
+        }
+        .handle(node, "", &mut errors);
+        errors
+    }
+
+    /// A host workflow instance built as the bind builds it and not yet
+    /// opened, so a test reads the messages its run queues.
+    pub(crate) fn workflow(id: &str, entries: &[&str]) -> Arc<OperativeInstance> {
         crate::host::register_host_class_json(workflow_json(id, entries, 1).as_bytes())
             .expect("class registers");
-        let spec = crate::workflow::registry::get_class(id).expect("class registered");
-        let instance_id: Arc<str> = Arc::from(format!("{id}_inst").as_str());
-        let stage_cells = crate::workflow::driver::build_all_stage_cells(&spec, &instance_id);
-        crate::workflow::instance::WorkflowInstance::new(instance_id, spec, stage_cells, 0, 0, None)
+        OperativeInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 }

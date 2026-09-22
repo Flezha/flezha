@@ -1,21 +1,14 @@
 //! The class registry (process-global, by `factory_id`) and the per-runner
-//! instance registry (by `instance_id`), whose values are a sealed
-//! [`Operative`] — stream or workflow — so the dispatch boundary resolves the
-//! kind once per frame.
+//! instance registry (by `instance_id`). One of each serves both kinds: a
+//! class's kind is its topology's `workflow` field, and a workflow instance is
+//! an [`OperativeInstance`] that also carries a run.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
 use crate::cell::CellSlot;
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 use crate::operative::topology::OperativeTopology;
-use crate::workflow::instance::WorkflowInstance;
-
-/// A bound instance of either kind, carrying its own runtime state.
-pub enum Operative {
-    Stream(Arc<StreamInstance>),
-    Workflow(Arc<WorkflowInstance>),
-}
 
 static CLASS_REGISTRY: LazyLock<RwLock<HashMap<&'static str, Arc<OperativeTopology>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -39,22 +32,25 @@ pub fn class_factory_ids() -> Vec<&'static str> {
 }
 
 /// What a runner advertises for `factory_id`: the class's SDK language and
-/// its kind, read from the registry the class landed in — the one lookup both
-/// advertisements read. An undeclared factory answers
+/// its kind. An undeclared factory answers
 /// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty kind, which the
 /// controller refuses to place.
 pub fn advertised_for_factory(factory_id: &str) -> (u8, &'static str) {
     get_class(factory_id)
-        .map(|topology| (topology.sdk_lang, "stream"))
-        .or_else(|| {
-            crate::workflow::registry::get_class(factory_id)
-                .map(|spec| (spec.topology.sdk_lang, "workflow"))
-        })
+        .map(|topology| (topology.sdk_lang, kind_of(&topology)))
         .unwrap_or((crate::header::SDK_LANG_UNSPECIFIED, ""))
 }
 
+/// The kind a class declares, as the wire names it.
+pub fn kind_of(topology: &OperativeTopology) -> &'static str {
+    match topology.workflow {
+        Some(_) => "workflow",
+        None => "stream",
+    }
+}
+
 pub struct OperativeRegistry {
-    inner: dashmap::DashMap<String, Arc<Operative>>,
+    inner: dashmap::DashMap<String, Arc<OperativeInstance>>,
 }
 
 impl OperativeRegistry {
@@ -64,58 +60,29 @@ impl OperativeRegistry {
         }
     }
 
-    pub fn register_stream(&self, instance: Arc<StreamInstance>) -> Arc<StreamInstance> {
-        let id = instance.instance_id.to_string();
+    pub fn register(&self, instance: Arc<OperativeInstance>) -> Arc<OperativeInstance> {
         self.inner
-            .insert(id, Arc::new(Operative::Stream(Arc::clone(&instance))));
+            .insert(instance.instance_id.to_string(), Arc::clone(&instance));
         instance
     }
 
-    pub fn register_workflow(&self, instance: Arc<WorkflowInstance>) {
-        self.inner.insert(
-            instance.instance_id.to_string(),
-            Arc::new(Operative::Workflow(instance)),
-        );
-    }
-
-    pub fn get_operative(&self, instance_id: &str) -> Option<Arc<Operative>> {
+    pub fn get(&self, instance_id: &str) -> Option<Arc<OperativeInstance>> {
         self.inner.get(instance_id).map(|r| Arc::clone(r.value()))
     }
 
-    /// `None` for a workflow or an absent id.
-    pub fn get_stream(&self, instance_id: &str) -> Option<Arc<StreamInstance>> {
-        self.inner
-            .get(instance_id)
-            .and_then(|r| match &**r.value() {
-                Operative::Stream(ri) => Some(Arc::clone(ri)),
-                Operative::Workflow(_) => None,
-            })
-    }
-
-    /// `None` for a stream or an absent id.
-    pub fn get_workflow(&self, instance_id: &str) -> Option<Arc<WorkflowInstance>> {
-        self.inner
-            .get(instance_id)
-            .and_then(|r| match &**r.value() {
-                Operative::Workflow(bi) => Some(Arc::clone(bi)),
-                Operative::Stream(_) => None,
-            })
-    }
-
-    /// A live workflow Cell slot by wire identity, with its owning instance.
-    pub fn find_workflow_cell(
-        &self,
-        cell_id: &[u8],
-    ) -> Option<(Arc<WorkflowInstance>, Arc<CellSlot>)> {
-        self.inner.iter().find_map(|r| match &**r.value() {
-            Operative::Workflow(bi) => bi
-                .cell_by_identity(cell_id)
-                .map(|slot| (Arc::clone(bi), slot)),
-            Operative::Stream(_) => None,
+    /// A live static or single Cell by wire identity, with its instance.
+    pub fn find_cell(&self, cell_id: &[u8]) -> Option<(Arc<OperativeInstance>, Arc<CellSlot>)> {
+        self.inner.iter().find_map(|r| {
+            r.value()
+                .cells
+                .iter()
+                .flatten()
+                .find(|slot| slot.cell_identity.as_slice() == cell_id)
+                .map(|slot| (Arc::clone(r.value()), Arc::clone(slot)))
         })
     }
 
-    pub fn remove(&self, instance_id: &str) -> Option<Arc<Operative>> {
+    pub fn remove(&self, instance_id: &str) -> Option<Arc<OperativeInstance>> {
         self.inner.remove(instance_id).map(|(_, v)| v)
     }
 
@@ -123,10 +90,7 @@ impl OperativeRegistry {
     pub fn count_by_factory(&self, factory_id: &str) -> usize {
         self.inner
             .iter()
-            .filter(|r| match &**r.value() {
-                Operative::Stream(ri) => ri.topology.factory_id == factory_id,
-                Operative::Workflow(bi) => &*bi.factory_id == factory_id,
-            })
+            .filter(|r| r.value().topology.factory_id == factory_id)
             .count()
     }
 
@@ -134,14 +98,14 @@ impl OperativeRegistry {
         self.inner.contains_key(instance_id)
     }
 
-    /// The stream instances; a workflow carries no serializable state.
-    pub fn snapshot_stream(&self) -> HashMap<String, Arc<StreamInstance>> {
+    /// The stream instances. A durable workflow is suspended through its
+    /// journal and resumed at its stage, never re-seeded from a shipped state
+    /// document, so the graceful-shutdown walk leaves it out.
+    pub fn snapshot_stream(&self) -> HashMap<String, Arc<OperativeInstance>> {
         self.inner
             .iter()
-            .filter_map(|r| match &**r.value() {
-                Operative::Stream(ri) => Some((r.key().clone(), Arc::clone(ri))),
-                Operative::Workflow(_) => None,
-            })
+            .filter(|r| r.value().workflow.is_none())
+            .map(|r| (r.key().clone(), Arc::clone(r.value())))
             .collect()
     }
 

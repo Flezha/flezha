@@ -15,7 +15,7 @@ use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::noise::{noise, xorshift64};
 
 use crate::channel::{ChannelDescriptor, RetryPolicy};
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 use crate::park::RETRIES_TOTAL;
 use crate::routing::{deliver_edge, EntryView};
 
@@ -259,7 +259,7 @@ pub(crate) fn park_exhausted(
 /// parked and observable rather than a dead thread.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_edge_ladder(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     channel: &crate::channel::ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -324,7 +324,7 @@ impl<V: EntryView> Drop for LadderRunning<V> {
 }
 
 struct EdgeLadder {
-    instance: Arc<StreamInstance>,
+    instance: Arc<OperativeInstance>,
     channel_id: u32,
     edge: crate::channel::ConsumerEdge,
     value: Arc<dyn Any + Send + Sync>,
@@ -365,7 +365,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
                 &ladder.stream,
                 ladder.consumed_offset,
                 ladder.replay,
-                None,
+                &mut crate::routing::Destination::Mailbox(None),
             )
             .map(|_| ())
             .map_err(|e| e.to_string())

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::cell::HostPayload;
 use super::decl::HostClock;
 use crate::channel::{ChannelDescriptor, ChannelKind};
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 use crate::operative::topology::{CellMode, OperativeTopology};
 use crate::poll_core::EnginePayload;
 use crate::schema;
@@ -55,7 +55,7 @@ pub struct StagedEntry {
 /// A batched prepare crossing, handed to the host as a
 /// [`schema::ActivationKind::KeyRequest`].
 pub struct PrepareCrossing {
-    pub instance: Arc<StreamInstance>,
+    pub instance: Arc<OperativeInstance>,
     pub channel: crate::channel::ChannelId,
     pub want_keys: bool,
     pub want_event_time: bool,
@@ -94,7 +94,7 @@ pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) 
 /// Stage an entry payload for the crossing, or hand it back when none is
 /// needed.
 pub fn maybe_stage_prepare(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     channel_id: crate::channel::ChannelId,
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
@@ -132,7 +132,7 @@ pub fn maybe_stage_prepare(
 
 /// The end-of-slice broadcast, deferred behind slice members still in the
 /// crossing.
-pub fn deferred_end_replay_slice(instance: &Arc<StreamInstance>) {
+pub fn deferred_end_replay_slice(instance: &Arc<OperativeInstance>) {
     {
         let mut state = instance.host_prepare.lock_recover();
         if state.replay_staged > 0 {
@@ -145,7 +145,7 @@ pub fn deferred_end_replay_slice(instance: &Arc<StreamInstance>) {
 
 /// Submit the channel's next crossing unless one is in flight.
 fn submit_next_crossing(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -256,7 +256,7 @@ fn answers_for(
 }
 
 fn deliver_prepared(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     entry: StagedEntry,
@@ -283,7 +283,7 @@ fn deliver_prepared(
 /// A failed prepare climbs the entry channel's ladder, one blocking
 /// re-crossing per attempt.
 fn spawn_prepare_ladder(
-    instance: Arc<StreamInstance>,
+    instance: Arc<OperativeInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -332,7 +332,7 @@ fn spawn_prepare_ladder(
 /// Release the inflight gate, re-arm the next batch, fire a deferred
 /// broadcast once the last slice member resolved.
 fn finish_crossing(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,

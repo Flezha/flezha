@@ -220,8 +220,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  describe "opted-out class (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_optout, reference_runtime: true
+  describe "opted-out class (uds)" do
+    @describetag transport: :uds, scenario: :uds_optout
 
     # workflow-task-journal: a `PERSISTENCE_ENABLED = false` class skips the
     # task-commit handshake entirely — no journal, no WAL — and a crash-resume
@@ -266,8 +266,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  describe "a mid-iteration resume of a message-fed pass (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_message_resume, reference_runtime: true
+  describe "a mid-iteration resume of a message-fed pass (uds)" do
+    @describetag transport: :uds, scenario: :uds_message_resume
 
     # `workflow-durable-loop`: the runner dies after the root's `task_committed`
     # and before the pass's `iter_committed`. The controller re-forwards the
@@ -341,8 +341,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  describe "transactional outbox (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_outbox, reference_runtime: true
+  describe "transactional outbox (uds)" do
+    @describetag transport: :uds, scenario: :uds_outbox
 
     # The chain's args are the serialized `init_values` the harness starts with.
     @a_out ~s(a-out:{"seed":"go"})

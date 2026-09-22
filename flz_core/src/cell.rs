@@ -131,7 +131,7 @@ pub struct CellSlot {
     pub cell_key: Option<Arc<str>>,
     /// The operative INSTANCE id — what a schema address names.
     pub instance_id: Arc<str>,
-    pub instance: Weak<crate::operative::instance::StreamInstance>,
+    pub instance: Weak<crate::operative::instance::OperativeInstance>,
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
     /// Whoever is owed this mailbox's next free slot under `DropNothing`,
     /// served one per successful pop.
@@ -343,7 +343,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
         state: &mut Box<dyn Any + Send>,
         flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
         timers: &mut crate::timer::PendingTimers,
-        instance: &Weak<crate::operative::instance::StreamInstance>,
+        instance: &Weak<crate::operative::instance::OperativeInstance>,
     ) -> ItemDisposition;
 
     fn tasklet_id(&self) -> TaskletId;
@@ -364,26 +364,12 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     /// extractor can produce.
     fn event_time_of(&self, payload: &CellPayload) -> Option<u64>;
 
-    /// Workflow-driver entry: one `run` on `input`, inter-tasklet output
-    /// collected and plugin-bound output staged through `sink` instead of the
-    /// mailbox path.
-    fn run_collecting(
-        &self,
-        input: Arc<dyn Any + Send + Sync>,
-        state: &mut Box<dyn Any + Send>,
-        topology: &crate::operative::topology::OperativeTopology,
-        sink: &mut dyn crate::workflow::WorkflowCollectSink,
-    ) -> Result<(), crate::workflow::WorkflowError>;
-
-    /// Workflow rollback entry: one `compensate` over the `outputs` this
-    /// cell collected forward, any emit through `sink`.
-    fn compensate_collecting(
-        &self,
-        outputs: Vec<Arc<dyn Any + Send + Sync>>,
-        state: &mut Box<dyn Any + Send>,
-        topology: &crate::operative::topology::OperativeTopology,
-        sink: &mut dyn crate::workflow::WorkflowCollectSink,
-    ) -> Result<(), crate::workflow::WorkflowError>;
+    /// A workflow undo served in process: `compensate` over the outputs this
+    /// Cell recorded forward, its emits through the Cell's own sink. A host
+    /// serves the `CompensateRun` activation itself and never reaches this.
+    fn compensate(&self, slot: &Arc<CellSlot>, outputs: Vec<Arc<dyn Any + Send + Sync>>) {
+        let _ = (slot, outputs);
+    }
 
     /// Rebuild `state` and `timers` in place from a snapshot (with its stored
     /// header) plus change log; answers the terminal seq and whether any

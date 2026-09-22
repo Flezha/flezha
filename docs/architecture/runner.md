@@ -4,7 +4,7 @@ The controller's view of a runner is one box: a process that dials in, accepts o
 ships back state changes and outputs. This page opens that box.
 
 A runner is **two layers, not one**. Transport, ordering, durability, retries, timers, credit,
-routing and the workflow driver live in a single Rust kernel, `flz_core`. The host language SDK
+routing and a workflow's pass live in a single Rust kernel, `flz_core`. The host language SDK
 — Rust, Java, and whatever comes next — brings the authoring surface a user writes against and
 the threads that run their code. The seam between them is one poll loop.
 
@@ -34,7 +34,7 @@ flowchart TB
         C2["per-cell ordering + exclusivity · mailboxes"]:::ctrl
         C3["durability: effect records · flusher · restore · compaction"]:::ctrl
         C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
-        C5["routing · edge keys · the key-group guard · the workflow driver"]:::ctrl
+        C5["routing · edge keys · the key-group guard · the workflow pass sheet"]:::ctrl
     end
 
     CTRL["🧠 Controller"]:::ctrl
@@ -188,11 +188,12 @@ contention to a runner that is merely working.
 Starvation is exposed as a blocking wait a host thread may park in, never as a callback: the
 core calls no host code, and a host that cannot starve simply never calls it.
 
-**Direct activations are exempt from the cap** — restore folds, snapshot requests and workflow
-steps answer a caller already blocked on a rendezvous or a stage barrier, so holding one behind
-capped cell work would deadlock that caller. They are also what a queued direct activation
-with no thread inside `poll` reports as starvation: a blocked driver must be able to buy a
-thread.
+**Direct activations are exempt from the cap** — restore folds, snapshot requests and the other
+command crossings answer a caller already blocked on a rendezvous, so holding one behind capped
+cell work would deadlock that caller; a workflow's undo rides the same queue and holds its
+cell's gate until it is answered. They are also what a queued direct activation with no thread
+inside `poll` reports as starvation: a blocked caller must be able to buy a thread. A
+workflow's stage work is not among them: it is ordinary cell work, capped like a stream's.
 
 ## Per-cell exclusivity
 
@@ -268,40 +269,38 @@ Promotion needs a thread in `poll`, so a due entry with every worker inside user
 starvation and reads as such: the starvation wait's deadline considers the nearest due entry,
 which is how a host that grows threads gets one there in time to promote the firing.
 
-## A workflow step
+## A workflow stage
 
-The workflow driver is the core's. What the host contributes is the thread that runs one stage
-of one cell.
+A workflow stage runs the way a stream cell does: its items are routed into its cells'
+mailboxes and the poll core hands them out as ordinary work, under the cap and the fairness
+rules above. What is the workflow's own is a small pass sheet on the instance, advanced by
+events on the threads that bring them; no core thread belongs to an instance.
 
 ```mermaid
 sequenceDiagram
-    participant DRV as 🧠 Workflow driver (in the core)
+    participant R as 🧠 Routing + pass sheet (in the core)
     participant CORE as 🧠 poll queue
     participant W as ⚙️ Host thread
     participant CTRL as 🧠 Controller
 
-    Note over DRV: level N — enqueue one step activation per cell of the stage
-    DRV->>CORE: step activations (direct — exempt from the cap)
+    Note over R: a message, or a committed producer's outputs
+    R->>CORE: items into the stage's cell mailboxes
     W->>CORE: poll()
-    CORE-->>W: Work batch for this partition
+    CORE-->>W: Work batch for one cell
     W->>W: run the tasklet body
-    W->>CORE: complete — changes, staged outputs, verdict
-    CORE-->>DRV: the answer, at the stage barrier
-    Note over DRV: BARRIER — the whole level joins
-    DRV->>CTRL: TaskCommit {cells_ran, handoff, staged outbox}
-    CTRL-->>DRV: ack — durable
-    Note over DRV: only now are the level's children runnable
+    W->>CORE: complete — changes, outputs, verdict
+    Note over W: outputs held on the sheet; at the stage's last item
+    W->>CTRL: TaskCommit {cells_ran, handoff, staged outbox}
+    CTRL-->>R: ack, on the control-channel reader
+    Note over R: the held outputs enter the children's mailboxes
 ```
 
-A step therefore costs exactly **one** thread — the SDK's — and no core thread waits on a host.
-The driver is the only waiter, and its retry timing lives there too. Barriers, the task
-journal, loop modes, suspension and rewind are unchanged driver machinery; see
-[`workflow_profile.md`](workflow_profile.md).
-
-One OS driver thread per actively-running workflow instance is a deliberate, measured choice:
-it is ~1.4 KiB of an instance's ~73 KiB, and 10 000 blocked instances cost about 0.5% of one
-core. The rationale and the measurement are in
-[`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
+A stage therefore costs exactly the SDK threads that run its items, and nothing waits: the
+commit ack, a retry's backoff, `max_duration` and the park are events or entries on the
+deferred-wake list. Barriers, the task journal, loop modes, suspension and rewind are
+described in [`workflow_profile.md`](workflow_profile.md); what an instance costs at population
+is measured in
+[`../resilience/workflow_operative.md`](../resilience/workflow_operative.md#how-many-instances-a-runner-holds).
 
 ## The C ABI
 
@@ -353,7 +352,7 @@ edge transforms and keying, one Cell per resolved key with its mailbox and
 overflow policy, the retry ladder, and the inter-tasklet hop —
 `route_to_consumers` is a mailbox push, and nothing about it crosses the wire.
 
-**Local mode** is that fact made reachable. It builds the same `StreamInstance`
+**Local mode** is that fact made reachable. It builds the same `OperativeInstance`
 a deployed runner builds, feeds it through the same dispatch entry a stream
 reader uses, and differs in exactly one thing: the outbound sink. A
 `FlezhaStream::Local` takes what production writes and hands it to a callback in

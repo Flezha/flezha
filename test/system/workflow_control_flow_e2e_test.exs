@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   @moduledoc """
   The durable control flow a structured workflow operative runs, end to end
-  against a live reference runner over UDS: a loop that commits per iteration,
+  against a live runner of the selected SDK runtime over UDS: a loop that commits per iteration,
   parks when its inbox is empty and rehydrates on the next input; a rewind that
   compensates back to an earlier iteration and bumps the epoch; the cell
   retry ladder and what it does when it exhausts; a branching tree, whose
@@ -9,10 +9,10 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   loop a tasklet ends with `complete`; and an unreadable message a waiting
   instance dead-letters without waking up for it again.
 
-  All but the last two prove controller mechanics rather than a runner, so those
-  scenarios pin the reference SDK; the completion and the entry decoder are each
-  SDK's own, so their scenarios run on the selected runtime. Tagged `:system`
-  (boots real subprocesses) — excluded from the default `mix test`; run with:
+  Every scenario runs on the selected runtime: a workflow's stages run through
+  the core's routing, mailboxes and poll core in every SDK, and each test app
+  carries the same fixtures. Tagged `:system` (boots real subprocesses) —
+  excluded from the default `mix test`; run with:
 
       mix test --only workflow_crash_resume
       mix test test/system/workflow_control_flow_e2e_test.exs --include system
@@ -42,8 +42,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   # A loop, a rewind or a retry ladder runs many turns through a live runner.
   @moduletag timeout: 180_000
 
-  describe "durable loop + suspension (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_loop, reference_runtime: true
+  describe "durable loop + suspension (uds)" do
+    @describetag transport: :uds, scenario: :uds_loop
 
     # `workflow-durable-loop-and-suspension`, end to end on a real runner:
     #
@@ -304,10 +304,9 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   end
 
   describe "a tasklet ends the loop (uds)" do
-    # Not pinned to the reference SDK: the completion is each runtime's own
-    # `ctx.complete`, and every test app's `chat_loop_workflow` ends itself on
-    # the turn `bye`, completing with the number of turns its first tasklet
-    # recorded.
+    # The completion is each runtime's own `ctx.complete`: every test app's
+    # `chat_loop_workflow` ends itself on the turn `bye`, completing with the
+    # number of turns its first tasklet recorded.
     @describetag transport: :uds, scenario: :uds_complete
 
     test "turns then bye end the instance ok with the turn count, and it does not park after",
@@ -358,9 +357,9 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   end
 
   describe "an unreadable message (uds)" do
-    # Not pinned to the reference SDK: whether the entry reads a message is
-    # each runtime's own decoder. Every test app's `typed_once_workflow` decodes
-    # its `order` entry as a JSON ticket and completes with the ticket's text.
+    # Whether the entry reads a message is each runtime's own decoder: every
+    # test app's `typed_once_workflow` decodes its `order` entry as a JSON
+    # ticket and completes with the ticket's text.
     @describetag transport: :uds, scenario: :uds_unreadable
 
     test "is dead-lettered and consumed, so the waiting instance stays suspended until a readable one",
@@ -413,8 +412,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
-  describe "loop rewind (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_rewind, reference_runtime: true
+  describe "loop rewind (uds)" do
+    @describetag transport: :uds, scenario: :uds_rewind
 
     # `workflow-loop-rewind`, end to end on a real runner: three chat turns
     # commit, the operator rewinds to iteration 0, and
@@ -509,8 +508,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
-  describe "cell retry (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_retry, reference_runtime: true
+  describe "cell retry (uds)" do
+    @describetag transport: :uds, scenario: :uds_retry
 
     # `workflow-cell-retry` on a live runner: `retry_flaky` fails its first
     # attempt, the per-cell ladder re-runs it in place, and the tasklet
@@ -556,8 +555,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
   end
 
-  describe "branching tree (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_branch, reference_runtime: true
+  describe "branching tree (uds)" do
+    @describetag transport: :uds, scenario: :uds_branch
 
     # The chain's args are the serialized `init_values` the harness starts with.
     @seed ~s({"seed":"go"})
@@ -593,7 +592,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {:ok, entries} = TaskJournal.read(operative_id)
       committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
 
-      assert committed == [0, 1, 2, 3],
+      # The branches commit on their own, in whichever order they finish.
+      assert hd(committed) == 0 and Enum.sort(committed) == [0, 1, 2, 3],
              "each tasklet commits exactly once across the crash: #{inspect(committed)}"
 
       # The SDK declares the leaf set, so the controller derives DONE from the
@@ -635,15 +635,18 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       await_status(operative_id, "error", 30_000)
 
       # Forward output of the three completed tasklets, then their undo — the
-      # deepest first, the shared root last.
+      # branches in reverse of whichever committed first, the shared root last.
       delivered = collector |> await_outputs(6, operative_id) |> Enum.map(&elem(&1, 0))
+      {branches, [root]} = delivered |> Enum.drop(3) |> Enum.split(2)
 
-      assert Enum.drop(delivered, 3) == ["undo-c", "b:undo-b", "a:undo-a"],
+      assert Enum.sort(branches) == ["b:undo-b", "undo-c"] and root == "a:undo-a",
              "descendants before ancestors: #{inspect(delivered)}"
 
       {:ok, entries} = TaskJournal.read(operative_id)
       committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
-      assert committed == [0, 1, 2], "the failing leaf never commits"
+
+      assert hd(committed) == 0 and Enum.sort(committed) == [0, 1, 2],
+             "the failing leaf never commits: #{inspect(committed)}"
 
       compensated = for %{type: :compensated, task_idx: idx} <- entries, do: idx
       assert Enum.sort(compensated) == [0, 1, 2]

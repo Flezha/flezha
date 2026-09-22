@@ -155,8 +155,14 @@ mod sync_durability_decl_tests {
         ))
         .expect("a durable workflow class declares sync durability");
 
-        let spec = crate::workflow::registry::get_class(&id).expect("class registered");
-        assert!(spec.sync_durability);
+        let class = crate::operative::registry::get_class(&id).expect("class registered");
+        assert!(
+            class
+                .workflow
+                .as_ref()
+                .expect("a workflow class")
+                .sync_durability
+        );
     }
 
     #[test]
@@ -169,8 +175,14 @@ mod sync_durability_decl_tests {
         ))
         .expect("a workflow class declaring nothing registers");
 
-        let spec = crate::workflow::registry::get_class(&id).expect("class registered");
-        assert!(!spec.sync_durability);
+        let class = crate::operative::registry::get_class(&id).expect("class registered");
+        assert!(
+            !class
+                .workflow
+                .as_ref()
+                .expect("a workflow class")
+                .sync_durability
+        );
     }
 }
 

@@ -31,7 +31,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 - **Runner** — the SDK process (any of the seven host languages) where user code runs. Runners **dial the
   controller**, never the reverse. They are disposable: state lives in memory, and the
   controller replicates it durably. Inside a runner there is one more split: transport,
-  ordering, durability, retries, timers and the workflow driver live in a shared Rust kernel
+  ordering, durability, retries, timers and workflow runs live in a shared Rust kernel
   (`flz_core`), and the host SDK brings the authoring surface and the threads that run user
   code. See [`runner.md`](runner.md).
 - **Source adapter** — where input comes from (a websocket, a feed, an HTTP endpoint). A
@@ -236,7 +236,7 @@ the workflow operative's step position (R).
 flowchart TB
     subgraph PROF["PROFILES — two ways to use it"]
         UNB["STREAM<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
-        BND["WORKFLOW<br/>tasklet tree with a level barrier<br/>task-boundary journal + staged outbox<br/>saga compensation<br/>durable loop and suspension"]:::exec
+        BND["WORKFLOW<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal + staged outbox<br/>saga compensation<br/>durable loop and suspension"]:::exec
     end
     subgraph KERN["SHARED KERNEL — durable compute"]
         K1[("Durable input log<br/>offset-addressable, adapter-independent")]:::store

@@ -3,7 +3,6 @@
 //! channel, no dynamic cells) with one chain per entry channel, plus the
 //! class's loop, rollback and durability facts.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use super::{LoopMode, RollbackMode};
@@ -134,6 +133,11 @@ impl TaskDag {
     /// The chain the entry channel `channel_id` roots.
     pub fn chain(&self, channel_id: ChannelId) -> Option<&EntryChain> {
         self.chains.iter().find(|c| c.channel_id == channel_id)
+    }
+
+    /// The position tasklet `tasklet_id` holds, its `stage_idx`.
+    pub fn node_of(&self, tasklet_id: TaskletId) -> Option<usize> {
+        self.order.iter().position(|&id| id == tasklet_id)
     }
 
     /// Whether `node` is fed by an entry channel.
@@ -282,33 +286,19 @@ pub fn graph_order(
     }
 }
 
-/// A workflow class as the registry holds it.
+/// What a workflow class declares beyond its topology, carried on it as
+/// [`OperativeTopology::workflow`]: the one fact a class registry reads the
+/// kind from.
+#[derive(Debug)]
 pub struct WorkflowSpec {
-    pub topology: Arc<OperativeTopology>,
     pub dag: TaskDag,
     pub max_duration: Option<Duration>,
     pub rollback_mode: RollbackMode,
     pub loop_mode: LoopMode,
     pub wake_after: Option<Duration>,
-    pub persistence_enabled: bool,
     /// The controller ships a barrier to its durability backend before acking
     /// it; inert without a backend.
     pub sync_durability: bool,
-}
-
-// Manual: `OperativeTopology` holds closures and is not `Debug`. A summary is
-// enough for test assertions (`expect`/`expect_err`) and diagnostics.
-impl std::fmt::Debug for WorkflowSpec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WorkflowSpec")
-            .field("dag_len", &self.dag.len())
-            .field("max_duration", &self.max_duration)
-            .field("rollback_mode", &self.rollback_mode)
-            .field("loop_mode", &self.loop_mode)
-            .field("persistence_enabled", &self.persistence_enabled)
-            .field("sync_durability", &self.sync_durability)
-            .finish()
-    }
 }
 
 /// Why a workflow class is refused at registration.

@@ -10,7 +10,7 @@ use crate::runner::RunnerNode;
 
 impl CommandAction for MigrationSerialization {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
-        let serialized_state = match runner.get_stream(&self.operative_id) {
+        let serialized_state = match runner.get_operative(&self.operative_id) {
             Some(instance) => serialize_operative_state(&instance),
             None => Vec::new(),
         };

@@ -1,37 +1,45 @@
-//! Saga compensation: the pure planner that turns the completed-stage records
-//! into the rollback order (completed tasklets in reverse, each cell that
-//! ran once), and the executors the driver calls with the plan — the
-//! crash-resume pass, the rewind undo and the journaled undo record.
+//! Saga compensation, planned: the completed-stage records turned into the
+//! rollback order (completed tasklets in reverse, each Cell that ran once),
+//! and the undo steps a run takes, one event at a time, to carry it out.
 
-use std::any::Any;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
-use super::commit::{outbox_items, ship_and_await};
-use super::driver::ChainCtx;
-use super::instance::CommittedTask;
+use super::instance::{CommittedTask, UndoStep, Value};
 use super::resume::stages_by_iter;
+use super::run::Run;
 use super::RollbackMode;
-use crate::state_sink::COMPENSATION_DONE_PAYLOAD_ID;
-
-/// A value a cell collected forward, retained for compensation.
-pub type Value = Arc<dyn Any + Send + Sync>;
 
 /// One staged plugin-bound output: `(plugin channel, payload)`.
 pub type StagedOutput = (String, Vec<u8>);
 
-/// One cell's contribution to a completed stage; an empty-partition cell
-/// never ran and is not recorded.
+/// One Cell's contribution to a completed stage; a Cell that received no
+/// item never ran and is not recorded.
+#[derive(Clone)]
 pub struct CellRun {
     pub cell_index: usize,
     pub outputs: Vec<Value>,
     pub staged: Vec<StagedOutput>,
-    /// The result this cell's `complete` asked the instance to end with.
+    /// The result this Cell's `complete` asked the instance to end with.
     pub completion: Option<Vec<u8>>,
+}
+
+impl CellRun {
+    /// A Cell that ran and recorded nothing yet.
+    pub fn new(cell_index: usize) -> Self {
+        Self {
+            cell_index,
+            outputs: Vec::new(),
+            staged: Vec::new(),
+            completion: None,
+        }
+    }
 }
 
 /// A completed tasklet, recorded so it can be rolled back; `iter` keys its
 /// `compensated` journal entry (0 for a non-looping chain and for a record
 /// rebuilt from intent markers).
+#[derive(Clone)]
 pub struct StageRecord {
     pub stage_idx: usize,
     pub iter: u32,
@@ -56,131 +64,83 @@ pub fn plan_compensation<'a>(
     plan
 }
 
-/// Roll back an abnormally-terminated chain per [`plan_compensation`], once
-/// per cell that ran; hookless tasklets are skipped. Best-effort: a
-/// failing hook is logged and the rest still runs.
-pub(super) fn run_compensation(
-    ctx: &ChainCtx,
+/// The saga's undo per [`plan_compensation`], once per Cell that ran;
+/// hookless tasklets take no part, and a Cell whose compensation-done marker
+/// was shipped back already ran its undo before the crash.
+pub(super) fn saga_steps(
+    r: &Run<'_>,
     committed: &[Vec<StageRecord>],
     in_flight: &[StageRecord],
-) {
-    let plan = plan_compensation(ctx.rollback_mode, committed, in_flight);
-    if plan.is_empty() {
-        return;
-    }
-    for record in plan {
-        let task = ctx.task(record.stage_idx);
-        // Hookless tasklets take no part in rollback.
-        if !task.compensate_overridden {
+    undone: &HashSet<Vec<u8>>,
+) -> VecDeque<UndoStep> {
+    let mut steps = VecDeque::new();
+    for record in plan_compensation(r.spec.rollback_mode, committed, in_flight) {
+        if !r.task(record.stage_idx).compensate_overridden {
             continue;
         }
-        let slots = &ctx.stage_cells[record.stage_idx];
-        for seg_run in &record.cells {
-            let slot = &slots[seg_run.cell_index];
-            // Crash-resume: a cell whose compensation-done marker was shipped
-            // back already ran its undo — skip it (idempotent by author
-            // contract, but re-running wastes work / double-emits records).
-            if ctx.instance.has_compensation_done(&slot.cell_identity) {
+        let slots = r.cells(record.stage_idx);
+        for run in &record.cells {
+            if undone.contains(slots[run.cell_index].cell_identity.as_slice()) {
                 continue;
             }
-            let staged = super::step::run_compensation_step(ctx, record.stage_idx, seg_run);
-            // Journal this cell's undo output BEFORE the done marker: the
-            // marker is what stops the hook re-running on resume, so a crash
-            // between the two must fall on the side that re-runs the (idempotent)
-            // hook rather than the side that loses its undo output. A hook that
-            // emitted nothing needs no entry.
-            if !staged.is_empty() {
-                journal_undo(
-                    ctx,
-                    record,
-                    "compensation",
-                    vec![slot.cell_identity.as_ref().clone()],
-                    outbox_items(slot, &staged),
-                );
-            }
-            // Durable saga (§4.3): record this compensation's completion so a
-            // later crash resumes the remainder and skips this cell.
-            emit_compensation_record(
-                COMPENSATION_DONE_PAYLOAD_ID,
-                &slot.cell_identity,
-                ctx.persistence_enabled,
-            );
+            steps.push_back(UndoStep::Cell {
+                node: record.stage_idx,
+                iter: record.iter,
+                cell_index: run.cell_index,
+                outputs: run.outputs.iter().map(Arc::clone).collect(),
+                marks: true,
+            });
         }
     }
+    steps
 }
 
-/// Undo the tasklets a rewind unwound, in reverse iteration and chain
-/// order — always all-or-nothing. It ignores the per-cell done markers (an
-/// cell in two rewound iterations is undone twice) and journals one
-/// `compensated` entry per tasklet, even an empty one, so the journal alone
-/// says what is still outstanding.
-pub(super) fn run_rewind_undo(ctx: &ChainCtx, unwound: &[CommittedTask]) {
-    let by_iter: Vec<Vec<StageRecord>> = stages_by_iter(ctx, unwound).into_values().collect();
-
+/// Undo the tasklets a rewind unwound, in reverse iteration and chain order —
+/// always all-or-nothing. It ignores the per-Cell done markers (a Cell in two
+/// rewound iterations is undone twice) and journals one `compensated` entry
+/// per tasklet, even an empty one, so the journal alone says what is still
+/// outstanding.
+pub(super) fn rewind_steps(r: &Run<'_>, unwound: &[CommittedTask]) -> VecDeque<UndoStep> {
+    let by_iter: Vec<Vec<StageRecord>> = stages_by_iter(r, unwound).into_values().collect();
+    let mut steps = VecDeque::new();
     for record in plan_compensation(RollbackMode::AllOrNothing, &by_iter, &[]) {
-        let task = ctx.task(record.stage_idx);
-        let slots = &ctx.stage_cells[record.stage_idx];
-
-        let mut cells_ran = Vec::new();
-        let mut outbox = Vec::new();
-        for seg_run in &record.cells {
-            let slot = &slots[seg_run.cell_index];
-            cells_ran.push(slot.cell_identity.as_ref().clone());
-            if task.compensate_overridden {
-                let staged = super::step::run_compensation_step(ctx, record.stage_idx, seg_run);
-                outbox.extend(outbox_items(slot, &staged));
+        let slots = r.cells(record.stage_idx);
+        if r.task(record.stage_idx).compensate_overridden {
+            for run in &record.cells {
+                steps.push_back(UndoStep::Cell {
+                    node: record.stage_idx,
+                    iter: record.iter,
+                    cell_index: run.cell_index,
+                    outputs: Vec::new(),
+                    marks: false,
+                });
             }
         }
-
-        journal_undo(ctx, record, "rewind-undo", cells_ran, outbox);
+        steps.push_back(UndoStep::Record {
+            node: record.stage_idx,
+            iter: record.iter,
+            cells_ran: record
+                .cells
+                .iter()
+                .map(|run| slots[run.cell_index].cell_identity.as_ref().clone())
+                .collect(),
+        });
     }
-}
-
-/// Journal one tasklet's undo, carrying what its hook staged. The cancel
-/// token is ignored: rollback IS the response to that cancel.
-fn journal_undo(
-    ctx: &ChainCtx,
-    record: &StageRecord,
-    what: &str,
-    cells_ran: Vec<Vec<u8>>,
-    outbox: Vec<crate::pb::TaskOutboxItem>,
-) {
-    let commit = crate::pb::command_request::Command::TaskCommit(crate::pb::TaskCommit {
-        operative_id: ctx.instance_id.to_string(),
-        task_idx: record.stage_idx as u32,
-        iter: record.iter,
-        cells_ran,
-        handoff: Vec::new(),
-        outbox,
-        compensating: true,
-        completes: false,
-        result: Vec::new(),
-    });
-
-    if let Err(e) = ship_and_await(ctx, record.stage_idx, what, false, commit) {
-        eprintln!(
-            "[flezha] workflow {} {what} journaling failed: {e}",
-            ctx.instance_id
-        );
-    }
+    steps
 }
 
 /// The completed-stage records a crash-resume compensates, from the
 /// shipped-back intent markers. Outputs are empty — they were never durable,
 /// so a compensable tasklet persists its undo handle in State.
-pub(super) fn stages_from_intents(ctx: &ChainCtx) -> Vec<StageRecord> {
+pub(super) fn stages_from_intents(r: &Run<'_>, intents: &HashSet<Vec<u8>>) -> Vec<StageRecord> {
     let mut completed: Vec<StageRecord> = Vec::new();
-    for (stage_idx, slots) in ctx.stage_cells.iter().enumerate() {
-        let cells: Vec<CellRun> = slots
+    for stage_idx in 0..r.spec.dag.len() {
+        let cells: Vec<CellRun> = r
+            .cells(stage_idx)
             .iter()
             .enumerate()
-            .filter(|(_, slot)| ctx.instance.has_compensation_intent(&slot.cell_identity))
-            .map(|(cell_index, _)| CellRun {
-                cell_index,
-                outputs: Vec::new(),
-                staged: Vec::new(),
-                completion: None,
-            })
+            .filter(|(_, slot)| intents.contains(slot.cell_identity.as_slice()))
+            .map(|(cell_index, _)| CellRun::new(cell_index))
             .collect();
         if !cells.is_empty() {
             // Intent markers carry no iteration; a pre-journal saga resume has
@@ -193,17 +153,6 @@ pub(super) fn stages_from_intents(ctx: &ChainCtx) -> Vec<StageRecord> {
         }
     }
     completed
-}
-
-/// Ship one saga marker for a Cell; a no-op for a non-durable class.
-pub(super) fn emit_compensation_record(
-    payload_id: &str,
-    cell_identity: &[u8],
-    persistence_enabled: bool,
-) {
-    if persistence_enabled {
-        crate::state_sink::send_compensation_record(payload_id, cell_identity);
-    }
 }
 
 #[cfg(test)]

@@ -10,10 +10,9 @@ use std::time::Duration;
 
 use super::*;
 use crate::flusher::SendFrameFn;
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 use crate::state_sink;
 use crate::test_support::{capture_parks, host_class};
-use crate::workflow::instance::{Inbound, InboxItem, WorkflowInstance};
 
 const OPERATIVE: &str = "op-plugin-emit";
 const BODY: &[u8] = b"the operative's only output";
@@ -31,30 +30,26 @@ fn sink_metadata() -> HashMap<String, String> {
 }
 
 /// The dispatch handle a stream reader holds over one registered instance.
-fn handle_over(instance: &Arc<StreamInstance>) -> OperativeDispatchHandle {
+fn handle_over(instance: &Arc<OperativeInstance>) -> OperativeDispatchHandle {
     let registry = Arc::new(crate::operative::registry::OperativeRegistry::new());
-    registry.register_stream(Arc::clone(instance));
+    registry.register(Arc::clone(instance));
     OperativeDispatchHandle { registry }
 }
 
 /// One frame off the wire into `instance`, naming `channel` when it is
 /// `Some` — a `None` is the metadata a source plugin sends by default.
-fn feed(instance: &Arc<StreamInstance>, channel: Option<&str>, payload: &[u8]) {
-    let metadata = channel
-        .map(|name| HashMap::from([("channel".to_string(), name.to_string())]))
-        .unwrap_or_default();
-    handle_over(instance).dispatch(
-        &instance.instance_id,
-        payload.to_vec(),
-        &metadata,
-        dead_stream(),
+fn feed(instance: &Arc<OperativeInstance>, channel: Option<&str>, payload: &[u8]) {
+    feed_with(
+        instance,
+        &channel.map(channel_metadata).unwrap_or_default(),
+        payload,
     );
 }
 
 /// A topology with no entry channel. No declaration this core accepts builds
 /// one, so the test builds the topology itself — the shape `dispatch` would
 /// be handed.
-fn entry_less_instance(id: &'static str) -> Arc<StreamInstance> {
+fn entry_less_instance(id: &'static str) -> Arc<OperativeInstance> {
     let topology = crate::operative::topology::OperativeTopology {
         sdk_lang: 1,
         channels: Vec::new(),
@@ -66,20 +61,19 @@ fn entry_less_instance(id: &'static str) -> Arc<StreamInstance> {
         effectively_once: false,
         correction: None,
         ack_granularity: Default::default(),
+        workflow: None,
     };
-    StreamInstance::new(Arc::new(topology), Arc::from(id))
+    OperativeInstance::new(Arc::new(topology), Arc::from(id))
 }
 
-/// One frame into a workflow instance, through the dispatch a stream reader
-/// makes; a `None` channel is the metadata a spawn payload carries.
-fn feed_workflow(
-    instance: &Arc<WorkflowInstance>,
+/// One frame carrying `metadata`, through the dispatch a stream reader makes;
+/// no `channel` key is the metadata a spawn payload carries.
+fn feed_with(
+    instance: &Arc<OperativeInstance>,
     metadata: &HashMap<String, String>,
     payload: &[u8],
 ) {
-    let registry = Arc::new(crate::operative::registry::OperativeRegistry::new());
-    registry.register_workflow(Arc::clone(instance));
-    OperativeDispatchHandle { registry }.dispatch(
+    handle_over(instance).dispatch(
         &instance.instance_id,
         payload.to_vec(),
         metadata,
@@ -99,33 +93,49 @@ fn journaled_metadata(channel: &str, offset: u64) -> HashMap<String, String> {
     ])
 }
 
-/// What the entrance handed the driver next, waiting out an off-thread park.
-fn next_inbound(inbox: &crossbeam::channel::Receiver<Inbound>) -> Inbound {
-    inbox
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the entrance handed the driver nothing")
+/// The messages a run not yet opened holds for its first pass: each one's
+/// entry channel, input-log offset and the items addressed to its roots.
+/// A queued message: its entry channel, input-log offset and root values.
+type Queued = (u32, Option<u64>, Vec<Arc<dyn Any + Send + Sync>>);
+
+fn queued_messages(instance: &OperativeInstance) -> Vec<Queued> {
+    let run = instance.workflow.as_ref().expect("a workflow instance");
+    run.sheet()
+        .queue
+        .iter()
+        .map(|message| {
+            let values = message
+                .roots
+                .iter()
+                .filter_map(|root| match &root.item {
+                    crate::cell::CellItem::Input(payload) => Some(Arc::clone(&payload.value)),
+                    _ => None,
+                })
+                .collect();
+            (message.channel, message.offset, values)
+        })
+        .collect()
 }
 
-fn next_message(inbox: &crossbeam::channel::Receiver<Inbound>) -> InboxItem {
-    match next_inbound(inbox) {
-        Inbound::Message(item) => item,
-        Inbound::Parked(offset) => panic!("parked at offset {offset:?}, not delivered"),
-    }
-}
-
-fn next_parked(inbox: &crossbeam::channel::Receiver<Inbound>) -> Option<u64> {
-    match next_inbound(inbox) {
-        Inbound::Parked(offset) => offset,
-        Inbound::Message(_) => panic!("delivered, not parked"),
+/// The offset a park released, once the off-thread park has landed.
+fn parked_offset(instance: &OperativeInstance) -> Option<u64> {
+    let run = instance.workflow.as_ref().expect("a workflow instance");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(offset) = run.sheet().parked_offset {
+            return Some(offset);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
 /// A workflow whose one entry channel parses: `poison` is refused, anything
 /// else becomes its text, on a ladder of two. No host declaration builds a
 /// parsed entry, so the topology is hand-built as a typed SDK builds one.
-fn parsing_workflow(
-    id: &'static str,
-) -> (Arc<WorkflowInstance>, crossbeam::channel::Receiver<Inbound>) {
+fn parsing_workflow(id: &'static str) -> Arc<OperativeInstance> {
     use crate::channel::{ChannelDescriptor, ConsumerEdge, OverflowPolicy, RetryPolicy};
     let wrap: crate::channel::EntryWrapFn = Arc::new(|bytes: Vec<u8>| {
         if bytes == b"poison" {
@@ -163,23 +173,21 @@ fn parsing_workflow(
         effectively_once: false,
         correction: None,
         ack_granularity: Default::default(),
+        workflow: Some(crate::workflow::spec::WorkflowSpec {
+            dag: crate::workflow::spec::TaskDag::new(
+                vec![0],
+                vec![vec![]],
+                vec![vec![]],
+                [(0, vec![0])],
+            ),
+            max_duration: None,
+            rollback_mode: crate::workflow::RollbackMode::AllOrNothing,
+            loop_mode: crate::workflow::LoopMode::Once,
+            wake_after: None,
+            sync_durability: false,
+        }),
     };
-    let spec = crate::workflow::spec::WorkflowSpec {
-        topology: Arc::new(topology),
-        dag: crate::workflow::spec::TaskDag::new(
-            vec![0],
-            vec![vec![]],
-            vec![vec![]],
-            [(0, vec![0])],
-        ),
-        max_duration: None,
-        rollback_mode: crate::workflow::RollbackMode::AllOrNothing,
-        loop_mode: crate::workflow::LoopMode::Once,
-        wake_after: None,
-        persistence_enabled: false,
-        sync_durability: false,
-    };
-    WorkflowInstance::new(Arc::from(id), Arc::new(spec), Vec::new(), 0, 0, None)
+    OperativeInstance::new(Arc::new(topology), Arc::from(id))
 }
 
 #[test]
@@ -187,18 +195,18 @@ fn a_workflow_frame_naming_an_undeclared_channel_parks_under_that_name() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let parks = capture_parks();
-    let (instance, inbox) = host_class::workflow("wf_undeclared", &["orders"]);
+    let instance = host_class::workflow("wf_undeclared", &["orders"]);
 
-    feed_workflow(
+    feed_with(
         &instance,
         &journaled_metadata("refunds", 4),
         b"payload-bytes",
     );
 
     assert_eq!(
-        next_parked(&inbox),
+        parked_offset(&instance),
         Some(4),
-        "the driver counts the parked message consumed"
+        "the run counts the parked message consumed"
     );
     let park = parks.lock().expect("park capture poisoned").remove(0);
     assert_eq!(
@@ -217,7 +225,7 @@ fn a_workflow_frame_naming_an_undeclared_channel_parks_under_that_name() {
         Some(&b"payload-bytes"[..])
     );
     assert_eq!(park.identity.1, "_unresolved");
-    assert!(inbox.try_recv().is_err(), "no message entered the inbox");
+    assert!(queued_messages(&instance).is_empty(), "no pass was queued");
     state_sink::reset_for_test();
 }
 
@@ -226,20 +234,18 @@ fn a_workflow_frame_naming_no_channel_enters_the_first_entry_channel() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let _parks = capture_parks();
-    let (instance, inbox) = host_class::workflow("wf_default", &["first", "second"]);
+    let instance = host_class::workflow("wf_default", &["first", "second"]);
 
-    feed_workflow(&instance, &HashMap::new(), b"payload-bytes");
+    feed_with(&instance, &HashMap::new(), b"payload-bytes");
 
-    let item = next_message(&inbox);
-    assert_eq!(
-        item.channel_id, 0,
-        "the first declared entry channel took it"
-    );
-    assert_eq!((item.offset, item.replay), (None, false));
-    let host = item
-        .value
-        .downcast_ref::<crate::host::HostPayload>()
-        .expect("the entry wrapper's value");
+    let [(channel, offset, values)] = <[_; 1]>::try_from(queued_messages(&instance))
+        .unwrap_or_else(|_| panic!("one message queued"));
+    assert_eq!(channel, 0, "the first declared entry channel took it");
+    assert_eq!(offset, None);
+    let host = values
+        .first()
+        .and_then(|value| value.downcast_ref::<crate::host::HostPayload>())
+        .expect("the entry wrapper's value, addressed to the root");
     assert_eq!(host.bytes, b"payload-bytes");
     assert_eq!(host.channel, 0);
     state_sink::reset_for_test();
@@ -250,22 +256,18 @@ fn a_workflow_frame_on_the_second_entry_channel_carries_that_channel_and_its_fac
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let _parks = capture_parks();
-    let (instance, inbox) = host_class::workflow("wf_second", &["first", "second"]);
+    let instance = host_class::workflow("wf_second", &["first", "second"]);
     let metadata = HashMap::from([
         ("channel".to_string(), "second".to_string()),
         ("flz.offset".to_string(), "7".to_string()),
-        ("flz.replay".to_string(), "1".to_string()),
     ]);
 
-    feed_workflow(&instance, &metadata, b"payload-bytes");
+    feed_with(&instance, &metadata, b"payload-bytes");
 
-    let item = next_message(&inbox);
-    assert_eq!(
-        item.channel_id, 1,
-        "the named channel took it, not the first"
-    );
-    assert_eq!(item.offset, Some(7), "the input-log offset rides the item");
-    assert!(item.replay, "a re-forwarded message says so");
+    let [(channel, offset, _)] = <[_; 1]>::try_from(queued_messages(&instance))
+        .unwrap_or_else(|_| panic!("one message queued"));
+    assert_eq!(channel, 1, "the named channel took it, not the first");
+    assert_eq!(offset, Some(7), "the input-log offset rides the message");
     state_sink::reset_for_test();
 }
 
@@ -274,14 +276,14 @@ fn a_workflow_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let parks = capture_parks();
-    let (instance, inbox) = parsing_workflow("wf_parsed");
+    let instance = parsing_workflow("wf_parsed");
 
-    feed_workflow(&instance, &journaled_metadata("in", 5), b"poison");
+    feed_with(&instance, &journaled_metadata("in", 5), b"poison");
 
     assert_eq!(
-        next_parked(&inbox),
+        parked_offset(&instance),
         Some(5),
-        "the driver counts the parked message consumed"
+        "the run counts the parked message consumed"
     );
     let park = parks.lock().expect("park capture poisoned").remove(0);
     assert_eq!(park.body.origin_offset, Some(5));
@@ -295,26 +297,22 @@ fn a_workflow_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_
     );
     assert_eq!(park.body.entry.payload.as_deref(), Some(&b"poison"[..]));
     assert_eq!(park.identity.1, "in");
-    assert!(inbox.try_recv().is_err(), "no message entered the inbox");
+    assert!(queued_messages(&instance).is_empty(), "no pass was queued");
 
-    // The next message enters as the parsed value.
-    feed_workflow(&instance, &channel_metadata("in"), b"fine");
-    let item = next_message(&inbox);
-    assert_eq!(
-        item.value.downcast_ref::<String>().map(String::as_str),
-        Some("fine")
-    );
+    // The next message enters its chain.
+    feed_with(&instance, &channel_metadata("in"), b"fine");
+    assert_eq!(queued_messages(&instance).len(), 1);
     state_sink::reset_for_test();
 }
 
-fn queued(instance: &Arc<StreamInstance>) -> usize {
+fn queued(instance: &Arc<OperativeInstance>) -> usize {
     instance.cells[0][0].mailbox.len()
 }
 
 /// The entry channel the one queued frame resolved to: the host wrapper
 /// records the channel it was parsed for, so the mailbox itself says which
 /// entry channel took the frame.
-fn queued_channel(instance: &Arc<StreamInstance>) -> Option<u32> {
+fn queued_channel(instance: &Arc<OperativeInstance>) -> Option<u32> {
     match instance.cells[0][0].mailbox.pop()? {
         crate::cell::CellItem::Input(payload) => payload
             .value
@@ -584,7 +582,7 @@ fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
 
 /// A host class whose one entry is keyed into a dynamic tasklet, the shape a
 /// `key_by` behind a fanning `flat_map` declares.
-fn keyed_dynamic_instance(id: &str) -> Arc<StreamInstance> {
+fn keyed_dynamic_instance(id: &str) -> Arc<OperativeInstance> {
     let json = format!(
         r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
              "channels":[{{"name":"in","kind":"entry",
@@ -592,7 +590,7 @@ fn keyed_dynamic_instance(id: &str) -> Arc<StreamInstance> {
              "tasklets":[{{"name":"p0","cell_mode":"dynamic"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+    OperativeInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
 }
 
 #[test]
@@ -627,4 +625,72 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
             .unwrap_or_else(|| panic!("the fan answered key {key}, and no Cell was minted for it"));
         assert_eq!(slot.mailbox.len(), 1, "key {key} receives the payload once");
     }
+}
+
+/// The inter-tasklet channel of a tier class, `p0` into a one-slot `p1`, with
+/// both Cells.
+fn tier_edge(id: &str) -> (Arc<OperativeInstance>, Arc<CellSlot>, Arc<CellSlot>) {
+    let instance = crate::test_support::host_class::instance(id, &["in"], &[], &[1]);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let consumer = Arc::clone(&instance.cells[1][0]);
+    (instance, producer, consumer)
+}
+
+fn host_value(bytes: &[u8]) -> Arc<dyn Any + Send + Sync> {
+    Arc::new(crate::host::HostPayload {
+        bytes: bytes.to_vec(),
+        channel: 1,
+        keys: Vec::new(),
+        event_time: None,
+        metadata: Vec::new(),
+    })
+}
+
+#[test]
+fn a_held_destination_collects_the_addressed_item_instead_of_admitting_it() {
+    let (instance, _producer, consumer) = tier_edge("held_destination");
+    let channel = instance
+        .topology
+        .channel(1)
+        .expect("the inter-tasklet channel");
+    let mut held = Vec::new();
+
+    let deferred = deliver_edge(
+        &instance,
+        channel,
+        &channel.consumers[0],
+        &host_value(b"staged"),
+        &dead_stream(),
+        None,
+        false,
+        &mut Destination::Held(&mut held),
+    )
+    .expect("the edge delivers");
+
+    assert!(!deferred);
+    assert_eq!(held.len(), 1, "the item is addressed and held");
+    assert!(Arc::ptr_eq(&held[0].0, &consumer), "to the consumer's Cell");
+    assert!(consumer.mailbox.is_empty(), "nothing reached the mailbox");
+}
+
+#[test]
+fn a_non_parking_admission_into_a_full_mailbox_defers_whatever_the_switch_says() {
+    crate::admission::set_nonparking_for_tests(false);
+    let (_instance, producer, consumer) = tier_edge("non_parking_admission");
+    let stream = dead_stream();
+    let item =
+        |bytes: &[u8]| CellItem::Input(make_cell_payload(&host_value(bytes), &stream, None, false));
+    crate::test_support::saturate(&consumer.mailbox, item(b"first"));
+
+    let deferred = crate::admission::admit_from_cell(
+        &producer,
+        &consumer,
+        item(b"second"),
+        crate::channel::OverflowPolicy::DropNothing,
+        true,
+    );
+
+    assert!(deferred, "the caller's non-parking form returns at once");
+    assert_eq!(producer.push_holdback.lock().unwrap().len(), 1);
+    assert_eq!(consumer.mailbox.len(), 1, "the full mailbox took nothing");
 }

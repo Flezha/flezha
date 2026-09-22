@@ -625,7 +625,7 @@ message AddOperative {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance scheduled on its driver thread, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable driver holds its first tasklet until `resume_cell_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
+| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed, and while any of its `inbox_tail_count` owed inbox items has not arrived its park deadline is 60 s instead of the park idle |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedTasklet: ...` |
@@ -898,11 +898,10 @@ Cell mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
 the same entrance: the channel is resolved the same way (an undeclared name
 parks under that name), the payload is wrapped through the channel's declared
 type or parser, a parse failure rides the entry channel's retry ladder to the
-dead-letter queue, and the typed value is pushed into the running driver's
-inbox with the channel it entered on and the `flz.offset` it carries;
-the entry edge's transforms run when the driver seeds the pass on that
-channel's chain (an instance that is not running or has no inbox drops the
-value with a log line). Dispatch onto host threads, per-Cell ordering and exclusivity are
+dead-letter queue, and the entry edge's transforms address the typed value to
+the roots of that channel's chain on the reader. The message, with the channel
+it entered on and the `flz.offset` it carries, starts a pass when the instance
+is waiting and otherwise waits in the instance's queue for the next one. Dispatch onto host threads, per-Cell ordering and exclusivity are
 the poll core's job ([`poll_core.md`](poll_core.md)).
 
 **Output (secondary streams).** Every plugin-bound emit becomes one frame with
@@ -1408,16 +1407,16 @@ message TaskJournalState {
 }
 ```
 
-Present only when the instance has a non-empty task-journal. A resumed driver
+Present only when the instance has a non-empty task-journal. A resumed instance
 skips `committed_task_idxs`, re-seeds each uncommitted child branch from its
 own parent's edge in `task_handoffs` (filtered to the channel the child
 consumes — the latest commit's handoff alone would strand a sibling), re-seeds
 iteration N+1 of a handoff-chained loop from `handoff`, and rebuilds the
 compensation planner's input from `committed_tasks`. When `completed` is set
-the driver ends the run at once with `result`, and a skipped tasklet of the
+the instance ends the run at once with `result`, and a skipped tasklet of the
 in-flight iteration whose `completes` is set supplies that iteration's
 completion, since it never runs again to ask. `rewind_undo` lists the
-tasklets a rewind unwound that nothing has compensated yet: the driver runs
+tasklets a rewind unwound that nothing has compensated yet: the instance runs
 them through the ordinary compensation planner (reverse iteration, reverse
 chain position) before resuming forward at `iter`, each undo journaling a
 `compensated` entry so the list shrinks across a crash. The rewind itself
@@ -1452,8 +1451,9 @@ message TaskCommitResponse { string operative_id = 1; uint32 task_idx = 2; strin
 Emitted at each tasklet barrier of a **durable structured** workflow
 instance: tasklet `task_idx` completed forward on `cells_ran` and released
 the inter-task handoff batch, serialized through the producing channel's byte
-codec, which the runtime derives and no SDK declares. The driver **blocks** until `TaskCommitResponse` — the
-next tasklet must not race ahead of the committed record. Opted-out classes
+codec, which the runtime derives and no SDK declares. The tasklet's outputs reach its children
+only on `TaskCommitResponse` — the next tasklet must not race ahead of the committed record —
+and nothing waits for it: the ack is an event that releases them. Opted-out classes
 (`PERSISTENCE_ENABLED = false`) skip the barrier and keep the direct
 at-least-once wire path.
 
@@ -1482,10 +1482,9 @@ a commit storm never queues a ping, stop, park or compaction behind disk I/O.
 A non-empty `error` (journal write failure, oversized payload) terminates the
 run abnormally through the terminal-error path, including saga compensation.
 
-**Idempotent re-send.** An ack that does not arrive within the driver's wait
-(`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`, default 30 s) is re-sent: the same frame
-goes out under the **same `reference_id`**, after the shared default backoff
-(50 ms base), up to three sends in all, a constant of the connection that no
+**Idempotent re-send.** An ack that does not arrive within
+`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 s) of a send is re-sent: the same
+frame goes out under the **same `reference_id`**, up to three sends in all, a constant of the connection that no
 class sets. The
 controller journals a barrier once by its identity `{task_idx, iter, epoch}` —
 the journal writer refuses an append whose 16-byte record header
@@ -1554,7 +1553,7 @@ of the task-journal below the oldest entry its
 fold still needs (the latest `iter_committed`, entries whose outbox is still
 owed, the latest `rewound` marker with its pending undos), deferred until the
 settled prefix exceeds `:record_log_cut_after_bytes` (64 KiB) and skipped for
-a class whose tasklets declare `compensate`. The driver enters iteration
+a class whose tasklets declare `compensate`. The instance enters iteration
 `iter + 1` only on success, so a crash re-runs at most the in-flight
 iteration.
 

@@ -34,8 +34,9 @@ thing is over.
 per cell. `echo` is one, and everything below uses this kind. It runs until
 you stop it.
 
-**Workflow operatives terminate.** A graph of tasklets run level by level
-behind a commit barrier, ending by itself on chain completion, when a
+**Workflow operatives terminate.** A graph of tasklets, each committing
+behind its own barrier before the tasklets it feeds run, ending by itself on
+chain completion, when a
 tasklet calls `ctx.complete`, or at `max_duration`.
 Stopping one by hand ends it early; it is not how one is meant to finish.
 [`workflow_basics.md`](tradedesk/workflow_basics.md) is the kind's own guide.

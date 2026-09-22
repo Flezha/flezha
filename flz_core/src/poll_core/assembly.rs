@@ -39,6 +39,11 @@ pub(super) fn event_time_due_pending(slot: &Arc<CellSlot>) -> bool {
 /// One batch: the re-handed head of line, then what an earlier round left,
 /// then the mailbox.
 pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
+    // A stream pays one field read here; only a workflow Cell looks further.
+    if slot.topology.workflow.is_some() && crate::workflow::pass_dead(slot) {
+        consume_dead_pass(slot);
+        return Vec::new();
+    }
     let policy = slot.dispatcher.retry_policy();
     let event_time_class = slot.dispatcher.is_event_time();
     let mut items: Vec<ItemAttempt> = Vec::new();
@@ -86,6 +91,18 @@ pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
         flush_closed_slice(slot, &mut items, &mut fired, policy, event_time_class);
     }
     items
+}
+
+/// A failed or cancelled workflow pass: what its Cell still has queued would
+/// only be undone, so it is consumed unrun and the stage owes it no longer.
+fn consume_dead_pass(slot: &Arc<CellSlot>) {
+    let mut dropped = slot.pending_retry.lock_recover().drain(..).count()
+        + slot.deferred_live.lock_recover().drain(..).count();
+    while slot.mailbox.pop().is_some() {
+        slot.waiters.serve_one();
+        dropped += 1;
+    }
+    crate::workflow::items_dropped(slot, dropped);
 }
 
 /// Live items an earlier round deferred behind a draining slice: older than

@@ -13,107 +13,72 @@ impl CommandAction for AddOperative {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         let instance_id = self.operative_id.clone();
         let factory_id = self.factory_id.clone();
-
-        // Empty kind ⇒ `stream`, the wire default.
-        let kind = if self.kind.is_empty() {
-            "stream"
-        } else {
-            self.kind.as_str()
-        };
+        // The class says what kind it is; the wire's kind string is not asked.
+        let class = crate::operative::registry::get_class(&factory_id);
 
         // Idempotent on reconnect: the controller re-issues AddOperative for
-        // every StreamOperative instance ProcessHub still has tagged to this
-        // runner's profile after a restart. If the instance is already
-        // in the local registry, skip without re-registering — keeps
-        // the existing per-Cell state intact and prevents
-        // duplicate-init crashes.
-        if runner.has_operative(&instance_id) {
-            return Reply {
-                payload_id: "start_operative",
-                bytes: metadata_response(kind, &factory_id),
-            };
-        }
-
-        match kind {
-            "workflow" => self.start_workflow(runner, &factory_id, &instance_id, errors),
-            "stream" => self.start_stream(runner, &factory_id, &instance_id, errors),
-            other => {
-                errors.push(format!(
-                    "unknown compute-unit kind '{}' for unit {}",
-                    other, instance_id
-                ));
+        // every instance ProcessHub still has tagged to this runner's profile
+        // after a restart. An instance already in the local registry keeps
+        // its per-Cell state, and a duplicate never initializes twice.
+        if !runner.has_operative(&instance_id) {
+            match &class {
+                Some(topology) => self.start(runner, topology, &factory_id, &instance_id, errors),
+                None => errors.push(format!(
+                    "Operative class with factory_id {factory_id} is not registered"
+                )),
             }
         }
 
         Reply {
             payload_id: "start_operative",
-            bytes: metadata_response(kind, &factory_id),
+            bytes: metadata_response(class.as_deref()),
         }
     }
 }
 
 impl AddOperative {
-    /// Bind a workflow operative and seed its tasklets' state from
-    /// `init_values`, as a stream's are seeded.
-    fn start_workflow(
+    /// Bind an instance of either kind and seed it from `init_values`. A
+    /// keyless stream class cannot be partitioned, and only the SDK can tell
+    /// — key closures are compiled code — so the refusal is here. A workflow
+    /// takes the bind's resume facts and opens once its state is in place.
+    fn start(
         &self,
         runner: &mut RunnerNode,
+        topology: &OperativeTopology,
         factory_id: &str,
         instance_id: &str,
         errors: &mut Vec<String>,
     ) {
-        match runner.start_workflow_resumable(
-            factory_id.to_string(),
-            instance_id.to_string(),
-            &self.init_values,
-            self.resume_cell_count,
-            self.inbox_tail_count,
-            self.task_journal.as_ref().map(Into::into),
-        ) {
-            Ok(true) => {}
-            Ok(false) => errors.push(format!(
-                "WorkflowOperative class with factory_id {} is not registered",
-                factory_id
-            )),
-            Err(e) => errors.push(e.to_string()),
+        let workflow = topology.workflow.is_some();
+        if !workflow {
+            if let Some(refusal) = partition_refusal(self, topology, factory_id) {
+                errors.push(refusal);
+                return;
+            }
         }
-    }
-
-    /// Bind a stream operative and seed it from `init_values`. A keyless
-    /// class cannot be partitioned, and only the SDK can tell — key closures
-    /// are compiled code — so the refusal is here.
-    fn start_stream(
-        &self,
-        runner: &mut RunnerNode,
-        factory_id: &str,
-        instance_id: &str,
-        errors: &mut Vec<String>,
-    ) {
-        if let Some(refusal) = partition_refusal(self, factory_id) {
-            errors.push(refusal);
-            return;
-        }
-        match runner.start_operative(
+        let resume = crate::workflow::Resume {
+            expected: self.resume_cell_count as usize,
+            owed_inbox: self.inbox_tail_count,
+            journal: self.task_journal.as_ref().map(Into::into),
+        };
+        let Some(instance) = runner.start_operative(
             factory_id.to_string(),
             instance_id.to_string(),
             self.key_group_range(),
-        ) {
-            Some(instance) => {
-                if !self.init_values.is_empty() {
-                    if let Err(e) =
-                        crate::command::cell_state::apply_init_values(&*instance, &self.init_values)
-                    {
-                        errors.push(e.to_string());
-                    }
-                }
+            resume,
+        ) else {
+            return;
+        };
+        if let Err(e) = crate::command::cell_state::apply_init_values(&instance, &self.init_values)
+        {
+            errors.push(e.to_string());
+            // A workflow refused before it ran leaves nothing behind.
+            if workflow {
+                runner.stop_operative(instance_id);
             }
-            None => {
-                errors.push(format!(
-                    "StreamOperative class with factory_id {} is not registered",
-                    factory_id
-                ));
-            }
+            return;
         }
+        crate::workflow::open(&instance);
     }
 
     /// The member's range; `partition_count < 2` is the whole space, guard
@@ -146,12 +111,15 @@ fn has_keyed_entry_tasklet(topology: &crate::operative::topology::OperativeTopol
         .any(|tasklet| matches!(tasklet.mode, CellMode::Dynamic | CellMode::Static))
 }
 
-fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String> {
+fn partition_refusal(
+    command: &AddOperative,
+    topology: &OperativeTopology,
+    factory_id: &str,
+) -> Option<String> {
     if command.partition_count < 2 {
         return None;
     }
-    let topology = crate::operative::registry::get_class(factory_id)?;
-    if has_keyed_entry_tasklet(&topology) {
+    if has_keyed_entry_tasklet(topology) {
         None
     } else {
         Some(format!(
@@ -165,16 +133,13 @@ fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String>
 }
 
 /// The class's declarations as `AddOperativeResponse` metadata; empty bytes
-/// when nothing is declared.
-fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
+/// when nothing is declared, and for a class that never registered.
+fn metadata_response(class: Option<&OperativeTopology>) -> Vec<u8> {
     let mut metadata = std::collections::HashMap::new();
-    match kind {
-        "workflow" => workflow_metadata(factory_id, &mut metadata),
-        // A stream class that never registered declares nothing.
-        _ => {
-            if let Some(topology) = crate::operative::registry::get_class(factory_id) {
-                stream_metadata(&topology, &mut metadata);
-            }
+    if let Some(topology) = class {
+        match &topology.workflow {
+            Some(spec) => workflow_metadata(topology, spec, &mut metadata),
+            None => stream_metadata(topology, &mut metadata),
         }
     }
     if metadata.is_empty() {
@@ -186,23 +151,26 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
 /// What a workflow class declares: synchronous durability, the compensable
 /// positions (a rewind may only unwind those) and the leaves (the operative
 /// is done when all committed).
-fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
-    let spec = crate::workflow::registry::get_class(factory_id);
-    if spec.as_ref().is_some_and(|spec| spec.sync_durability) {
+fn workflow_metadata(
+    topology: &OperativeTopology,
+    spec: &WorkflowSpec,
+    metadata: &mut HashMap<String, String>,
+) {
+    if spec.sync_durability {
         metadata.insert("durability".to_string(), "sync_remote".to_string());
     }
-    if let Some(tasks) = declared_tasks("workflow", factory_id, |spec, node| {
-        spec.topology
-            .tasklet(spec.dag.order[node])
-            .is_some_and(|task| task.compensate_overridden)
-    }) {
-        metadata.insert("compensable_tasks".to_string(), tasks);
-    }
-    if let Some(tasks) = declared_tasks("workflow", factory_id, |spec, node| {
-        spec.dag.children[node].is_empty()
-    }) {
-        metadata.insert("leaf_tasks".to_string(), tasks);
-    }
+    metadata.insert(
+        "compensable_tasks".to_string(),
+        declared_tasks(spec, |node| {
+            topology
+                .tasklet(spec.dag.order[node])
+                .is_some_and(|task| task.compensate_overridden)
+        }),
+    );
+    metadata.insert(
+        "leaf_tasks".to_string(),
+        declared_tasks(spec, |node| spec.dag.children[node].is_empty()),
+    );
 }
 
 /// What a stream class declares: the tier; partitionability only when
@@ -248,24 +216,14 @@ fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, 
     }
 }
 
-/// The positions `select` picks out, comma-separated; `None` without a
-/// tree, and an empty string is "a tree, none selected".
-fn declared_tasks(
-    kind: &str,
-    factory_id: &str,
-    select: impl Fn(&WorkflowSpec, usize) -> bool,
-) -> Option<String> {
-    if kind != "workflow" {
-        return None;
-    }
-    let spec = crate::workflow::registry::get_class(factory_id)?;
-    Some(
-        (0..spec.dag.len())
-            .filter(|&node| select(&spec, node))
-            .map(|node| node.to_string())
-            .collect::<Vec<_>>()
-            .join(","),
-    )
+/// The positions `select` picks out, comma-separated; an empty string is "a
+/// tree, none selected".
+fn declared_tasks(spec: &WorkflowSpec, select: impl Fn(usize) -> bool) -> String {
+    (0..spec.dag.len())
+        .filter(|&node| select(node))
+        .map(|node| node.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[cfg(test)]
@@ -290,7 +248,7 @@ mod metadata_tests {
         let id = format!("meta_sync_{}", std::process::id());
         register_workflow(&id, true);
 
-        let encoded = metadata_response("workflow", &id);
+        let encoded = metadata_response(crate::operative::registry::get_class(&id).as_deref());
         assert!(!encoded.is_empty());
 
         let decoded = AddOperativeResponse::decode(encoded.as_slice()).expect("response decodes");
@@ -306,7 +264,7 @@ mod metadata_tests {
         let id = format!("meta_plain_{}", std::process::id());
         register_workflow(&id, false);
 
-        let encoded = metadata_response("workflow", &id);
+        let encoded = metadata_response(crate::operative::registry::get_class(&id).as_deref());
         let decoded = AddOperativeResponse::decode(encoded.as_slice()).expect("response decodes");
         let keys: std::collections::BTreeMap<_, _> = decoded.metadata.into_iter().collect();
         assert_eq!(
@@ -316,7 +274,10 @@ mod metadata_tests {
                 ("leaf_tasks".to_string(), "0".to_string())
             ]
         );
-        assert!(metadata_response("stream", "meta_never_registered").is_empty());
+        assert!(metadata_response(
+            crate::operative::registry::get_class("meta_never_registered").as_deref()
+        )
+        .is_empty());
     }
 }
 
@@ -337,6 +298,10 @@ mod partition_tests {
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
 
+    fn class_of(factory_id: &str) -> std::sync::Arc<crate::operative::topology::OperativeTopology> {
+        crate::operative::registry::get_class(factory_id).expect("class registered")
+    }
+
     fn partitioned(factory_id: &str, count: u32) -> AddOperative {
         AddOperative {
             operative_id: "inst".into(),
@@ -354,7 +319,8 @@ mod partition_tests {
         let id = format!("part_keyless_{}", std::process::id());
         register(&id, "single", "");
 
-        let refusal = partition_refusal(&partitioned(&id, 3), &id).expect("refused");
+        let refusal =
+            partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).expect("refused");
         assert!(
             refusal.contains("PartitionsWithoutKeyedTasklet"),
             "{refusal}"
@@ -367,7 +333,8 @@ mod partition_tests {
         let id = format!("part_declare_{}", std::process::id());
         register(&id, "single", "");
 
-        let encoded = super::metadata_response("stream", &id);
+        let encoded =
+            super::metadata_response(crate::operative::registry::get_class(&id).as_deref());
         let decoded = AddOperativeResponse::decode(encoded.as_slice()).expect("decodes");
         assert_eq!(
             decoded.metadata.get("keyed").map(String::as_str),
@@ -380,9 +347,12 @@ mod partition_tests {
         let id = format!("part_dynamic_{}", std::process::id());
         register(&id, "dynamic", "");
 
-        assert!(partition_refusal(&partitioned(&id, 3), &id).is_none());
+        assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
         // Declaring nothing keeps a keyed class's response byte-identical.
-        assert!(super::metadata_response("stream", &id).is_empty());
+        assert!(
+            super::metadata_response(crate::operative::registry::get_class(&id).as_deref())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -390,7 +360,7 @@ mod partition_tests {
         let id = format!("part_static_{}", std::process::id());
         register(&id, "static", r#""BTC-USD","ETH-USD""#);
 
-        assert!(partition_refusal(&partitioned(&id, 3), &id).is_none());
+        assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
     }
 
     #[test]
@@ -401,7 +371,7 @@ mod partition_tests {
         let mut command = partitioned(&id, 3);
         command.partition_count = 0;
 
-        assert!(partition_refusal(&command, &id).is_none());
+        assert!(partition_refusal(&command, &class_of(&id), &id).is_none());
         assert_eq!(command.key_group_range(), KeyGroupRange::UNPARTITIONED);
         assert!(!command.key_group_range().partitioned());
     }
@@ -414,7 +384,7 @@ mod partition_tests {
         let mut command = partitioned(&id, 1);
         command.partition_count = 1;
 
-        assert!(partition_refusal(&command, &id).is_none());
+        assert!(partition_refusal(&command, &class_of(&id), &id).is_none());
         assert_eq!(command.key_group_range(), KeyGroupRange::UNPARTITIONED);
     }
 

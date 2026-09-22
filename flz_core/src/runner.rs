@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crossbeam::channel::Sender;
 
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 
 /// The coordinator's message channel, installed once by `coordinator::start`.
 static RECONNECT_TRIGGER: OnceLock<Mutex<Sender<RunnerMessage>>> = OnceLock::new();
@@ -124,7 +124,6 @@ pub enum RunnerMessage {
     /// [`ClientResponseMessage::RemoveFactoryResult`].
     RemoveFactory {
         factory_id: String,
-        workflow: bool,
     },
 }
 
@@ -150,10 +149,10 @@ pub enum RunnerStatus {
 
 pub enum ClientResponseMessage {
     RunnerIdConfirmation,
-    ReturnOperatives(HashMap<String, Arc<StreamInstance>>),
+    ReturnOperatives(HashMap<String, Arc<OperativeInstance>>),
     /// `Err(n)`: `n` live instances exist and the class stays defined.
     RemoveFactoryResult(Result<(), usize>),
 }
 
-pub use crate::coordinator::{live_stream_instance, start, RunnerNode};
+pub use crate::coordinator::{live_instance, start, RunnerNode};
 pub use crate::routing::OperativeDispatchHandle;

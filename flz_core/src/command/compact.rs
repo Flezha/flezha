@@ -66,13 +66,9 @@ impl CommandAction for CompactCell {
         let mut snapshot_seq = 0u64;
         let mut snapshot_bytes_size = 0u64;
 
-        // A stream Cell lives in the stream registry; a workflow Cell in
-        // its instance's stage slots — the same two places a restore looks.
-        let slot = crate::command::restore::find_cell_slot(runner, &self.cell_id).or_else(|| {
-            runner
-                .find_workflow_cell(&self.cell_id)
-                .map(|(_, slot)| slot)
-        });
+        // The same lookup a restore takes, for a Cell of either kind.
+        let slot =
+            crate::command::restore::find_cell_slot(runner, &self.cell_id).map(|(_, slot)| slot);
 
         match slot {
             Some(slot) => {

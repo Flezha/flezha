@@ -60,7 +60,7 @@ their place, carrying the outputs rather than preceding them.
 | Surface | Rust | Java | Elixir |
 |---|---|---|---|
 | Stream class toggle | `StreamOperative::PERSISTENCE_ENABLED` const, default `true`; frozen on the instance at start, a change applies on the next stop + start | `StreamOperative.persistenceEnabled()` default-method exists but the runtime does not read it; the host declaration ships `persistent = true` iff some Tasklet declares a Change other than `NoChange`, so the Java opt-out is per-Tasklet via `NoChange` | `StreamOperative.persistence_enabled/0`, default `true`, read when a Cell starts; a Tasklet without `apply_change/2` is `NoChange` |
-| Runner override | `StreamInstance::new` (`flz_core/src/operative/instance.rs`, `operator_override.unwrap_or(class_const)`) accepts an `operative_persistence.<OperativeClass>` override, but the runner's `start_operative` passes none — the class const decides | same core seam, same unfed override | none — the class callback decides |
+| Runner override | `OperativeInstance::with_options` (`flz_core/src/operative/instance.rs`, `operator_override.unwrap_or(class_const)`) accepts an `operative_persistence.<OperativeClass>` override, but the runner's `start_operative` passes none — the class const decides | same core seam, same unfed override | none — the class callback decides |
 | Workflow class toggle | `WorkflowOperative::PERSISTENCE_ENABLED`, default `true` | `WorkflowOperative.persistenceEnabled()`, default `true` | `WorkflowOperative.persistence_enabled/0`, default `true` |
 | Controller side | `:operative_persistence` (`%{class => bool}`) resolves `persistent_state?` for workflow classes; a stream class is always durable on the controller side | same | same |
 

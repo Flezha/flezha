@@ -8,7 +8,7 @@ nothing.
 
 - [Structure: a graph of tasklets](#structure-a-graph-of-tasklets)
 - [The task journal](#the-task-journal)
-- [Happy path: the level barrier](#happy-path-the-level-barrier)
+- [Happy path: the stage barrier](#happy-path-the-stage-barrier)
 - [The transactional outbox](#the-transactional-outbox)
 - [Retry, then abort](#retry-then-abort)
 - [Saga compensation](#saga-compensation)
@@ -104,7 +104,7 @@ The journal is **append-only**. `rewound` does not truncate it — one fold appl
 and every reader (what is committed, what is owed, what is compensated, where the loop is) runs
 over that fold. The epoch lives in the record header and stays `0` until a rewind bumps it.
 
-## Happy path: the level barrier
+## Happy path: the stage barrier
 
 ```mermaid
 sequenceDiagram
@@ -113,45 +113,46 @@ sequenceDiagram
     participant SINK as 📤 Sink
 
     CTRL->>EX: start, then the first message enters the root tasklet's chain
-    Note over EX: --- level 0 — the root ---
-    EX->>EX: root's cells run in parallel
-    Note over EX: BARRIER — every cell of every node in the level joins
+    EX->>EX: the root's cells run in parallel
+    Note over EX: BARRIER — the root's last item settled
     EX->>CTRL: TaskCommit {task_idx, cells_ran, handoff, staged outbox}
     CTRL->>CTRL: 💾 journal task_committed — append + fsync
     CTRL-->>EX: TaskCommitResponse (durable)
     CTRL->>SINK: flush THIS task's outbox — deduped, stamped (cell, task.seq, epoch)
-    Note over EX: only NOW are the root's children runnable
+    Note over EX: only NOW do the root's outputs reach B and C
 
-    Note over EX: --- level 1 — siblings B and C, independent branches ---
     EX->>EX: B's cells and C's cells run TOGETHER on the pool
-    Note over EX: BARRIER — the whole level joins
-    EX->>CTRL: TaskCommit B
-    CTRL-->>EX: ack + flush B's outbox
+    Note over EX: C finishes first — its own barrier
     EX->>CTRL: TaskCommit C
     CTRL-->>EX: ack + flush C's outbox
+    Note over EX: B finishes — its own barrier
+    EX->>CTRL: TaskCommit B
+    CTRL-->>EX: ack + flush B's outbox
     Note over CTRL: every LEAF tasklet committed → the operative is done.<br/>The controller derives the same fact from the journal —<br/>the SDK declared its leaf set at bind.
 ```
 
-Two properties of that barrier are worth being explicit about:
+Each tasklet is its own unit: it commits when its own last item settles, whether or not a
+sibling is still running, and its outputs reach its children only once that commit is
+acknowledged. A child with several producers (a join) runs once every one of them has
+committed. Siblings are therefore never committed *atomically*, and in no fixed order. A
+sibling that fails after the one beside it committed compensates the committed one exactly as a
+deeper failure would; a tasklet still running when the pass fails is recorded as having run,
+so it is compensated, but it is **not committed**, because committing would flush an outbox that
+must immediately be undone.
 
-- **Siblings commit before any child runs**, but they are not committed *atomically* — each is
-  its own journal-then-ack round trip, in ascending node order. A deep branch can never race
-  ahead of a shallow sibling.
-- **A failing node poisons its level.** If any node in the level failed, the other completed
-  nodes of that level are recorded as having run — so they will be compensated — but they are
-  **not committed**, because committing would flush an outbox that must immediately be undone.
-
-The driver blocks on each `TaskCommit` ack for up to 30 s. A refusal or a timeout is terminal and
-drives compensation — a step whose durability the controller will not confirm has not happened.
+Nothing waits for an ack: it is an event that releases the tasklet's outputs. One not received
+within 30 s is re-sent under the same identity, up to three sends; a refusal or the last
+timeout is terminal and drives compensation — a step whose durability the controller will not
+confirm has not happened.
 
 A class declaring `durability: :sync_remote` raises that bar one notch: the controller ships the
 journal suffix to the [remote durability tier](kernel.md#the-remote-durability-tier) and awaits
 the backend ack *before* replying — so the commit survives losing the controller's disk (RPO 0),
-at the cost of one remote round-trip per barrier. The SDK already blocks there; nothing else
-changes.
+at the cost of one remote round-trip per barrier. The runner already waits for that ack before
+the tasklet's children run; nothing else changes.
 
 **On a crash, a committed tasklet is not re-run.** The journal carries its handoff, so the
-resumed driver skips it and seeds the next level from the durable batch. Without the journal —
+resumed instance skips it and seeds its children from the durable batch. Without the journal —
 an opted-out class — the chain re-runs from the top over the restored cell state, which is
 why a tasklet body is required to be idempotent.
 
@@ -167,7 +168,7 @@ sequenceDiagram
 
     Note over EX: B's cells run — every emit is STAGED per cell, never sent
     Note over EX: a failing stage drops its staged bytes with the error — nothing leaks
-    Note over EX: BARRIER
+    Note over EX: BARRIER — B's last item settled
     EX->>CTRL: TaskCommit — the cells that ran, the handoff, AND the staged outbox
     CTRL->>CTRL: 💾 ONE journal record, ONE fsync
     Note over CTRL: DURABLE POINT — only now may anything be flushed
@@ -189,17 +190,17 @@ the *only* undo the engine can guarantee for a workflow tasklet is the tasklet's
 
 ## Retry, then abort
 
-A failing cell gets a ladder before it takes the whole tasklet down with it.
+A failing item gets a ladder before it takes the whole tasklet down with it.
 
 ```mermaid
 flowchart TB
     B["Tasklet B"]:::exec
-    K1["Cell k1 — ok, buffered at the barrier"]:::exec
-    K2["Cell k2 — FAILS"]:::exec
-    K3["Cell k3 — ok, buffered at the barrier"]:::exec
+    K1["Cell k1 — ok, its outputs held for the commit"]:::exec
+    K2["Cell k2 — an item FAILS"]:::exec
+    K3["Cell k3 — ok, its outputs held for the commit"]:::exec
     RT{"attempts left?<br/>3 total, exponential backoff<br/>+ jitter, capped at 5 s"}:::ctrl
     NR{"classified<br/>non-retryable?"}:::ctrl
-    OK["k2 succeeds → the level joins → COMMIT + flush"]:::exec
+    OK["k2 succeeds → B's last item settles → COMMIT + flush"]:::exec
     FAIL["the tasklet does NOT commit<br/>nothing was staged out — nothing leaked"]:::ctrl
     ABORT["ABORT → compensate the previously committed tasklets<br/>(B itself needs no undo — it never committed)"]:::sink
 
@@ -209,7 +210,7 @@ flowchart TB
     K2 --> NR
     NR -->|"yes — skip the ladder"| FAIL
     NR -->|"no"| RT
-    RT -->|"retry — only the FAILING cell re-runs its batch"| K2
+    RT -->|"retry — the failed item and the ones behind it"| K2
     RT -->|"succeeded"| OK
     RT -->|"exhausted"| FAIL
     FAIL --> ABORT
@@ -219,10 +220,11 @@ flowchart TB
     classDef sink fill:#fed7aa,stroke:#9a3412,color:#111
 ```
 
-Only the failing cell re-runs; its siblings stay buffered at the barrier and are never
-re-executed. Each attempt gets a **fresh sink**, so a failed attempt's staged output is dropped
-rather than double-emitted. The backoff is cancellation-aware — a stop or a `max_duration` ends
-it at once rather than after the sleep.
+Only the failed item and the items queued behind it on its cell re-run; an item that already
+settled, and every sibling cell, is never re-executed. A failed attempt's outputs are dropped
+rather than double-emitted. The ladder is the one every stream cell climbs, and its backoff is
+an entry on the deferred-wake list rather than a sleep, so a stop, a `max_duration` or a
+sibling's failure disarms it at once.
 
 The retry ladder is strictly **pre-commit**. A journaled tasklet is never retried; a crash mid-
 ladder resumes as an ordinary uncommitted-tasklet re-run with the attempt counter reset. A
@@ -440,12 +442,15 @@ flz operative rewind <instance> --to-iteration N
 
 ## Host languages
 
-Everything on this page is host-language-neutral. The chain is driven by the shared runner
-core, which owns the level barrier, the task journal handshake, the staged outbox, the
-compensation plan, the loop, suspension and rewind. A host SDK supplies the tasklet bodies
-and the threads that run them — one **step activation** per cell of the stage, handed out under
-poll and answered at the barrier the core already owns. Rust runs a step on a pool worker,
-Java on a virtual thread; neither owns the chain's position, so there is no per-host resume or
+Everything on this page is host-language-neutral. The shared runner core owns the pass: a small
+sheet on each instance (the iteration, the tasklets in flight and done, the outputs held for
+their commit, the completion) advanced by events on the thread that brings each one — a worker
+settling a tasklet's last item, the control-channel reader bringing a commit ack or a stop, the
+data-channel reader bringing a message, a poller promoting a deadline. It owns the task journal
+handshake, the staged outbox, the compensation plan, the loop, suspension and rewind. A host
+SDK supplies the tasklet bodies and the threads that run them: a stage's items are ordinary cell
+work, handed out under poll exactly as a stream's are. Rust runs an item on a pool worker, Java
+on a virtual thread; neither owns the chain's position, so there is no per-host resume or
 compensation semantics to compare.
 
 Details of that split: [`poll_core.md`](../sdk/poll_core.md).

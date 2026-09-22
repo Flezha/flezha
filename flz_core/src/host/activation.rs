@@ -27,17 +27,16 @@ use crate::util::LockRecover;
 pub fn to_schema(act: &EngineActivation) -> schema::Activation {
     match &act.payload {
         EnginePayload::Command {
-            target,
+            slot,
             change_seq,
-            factory,
             kind,
             ..
         } => schema::Activation {
             token: act.token,
-            target: target.clone(),
+            target: cell_ref_of(slot),
             kind: kind.clone(),
             change_seq: *change_seq,
-            factory: factory.clone(),
+            factory: slot.topology.factory_id.to_string(),
         },
         EnginePayload::Prepare(crossing) => schema::Activation {
             token: act.token,
@@ -50,13 +49,6 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             }),
             change_seq: 0,
             factory: crossing.instance.topology.factory_id.to_string(),
-        },
-        EnginePayload::WorkflowStep(step) => schema::Activation {
-            token: act.token,
-            target: cell_ref_of(&step.slot),
-            kind: workflow_step_kind(step),
-            change_seq: step.slot.change_seq.load(Ordering::Acquire),
-            factory: step.slot.topology.factory_id.to_string(),
         },
         EnginePayload::Work { slot, items } => schema::Activation {
             token: act.token,
@@ -117,41 +109,6 @@ fn work_items_to_schema(slot: &CellSlot, items: &[ItemAttempt]) -> Vec<schema::W
         .collect()
 }
 
-/// A stage batch is an ordinary `Work` activation (one attempt; the ladder
-/// stays driver-side), an undo a `CompensateRun`.
-fn workflow_step_kind(step: &crate::workflow::step::WorkflowStep) -> schema::ActivationKind {
-    use crate::workflow::step::StepWork;
-    match &step.work {
-        StepWork::Items(items) => {
-            let now = host_clock_now(&step.slot);
-            schema::ActivationKind::Work(
-                items
-                    .iter()
-                    .map(|value| {
-                        let (channel, bytes, metadata) =
-                            host_input_parts(value.downcast_ref::<HostPayload>(), &step.slot);
-                        schema::WorkItem::Input(schema::InputItem {
-                            channel,
-                            payload: bytes,
-                            metadata,
-                            consumed_offset: None,
-                            replay: false,
-                            now,
-                        })
-                    })
-                    .collect(),
-            )
-        }
-        StepWork::Compensate(outputs) => schema::ActivationKind::CompensateRun {
-            outputs: outputs
-                .iter()
-                .filter_map(|value| value.downcast_ref::<HostPayload>())
-                .map(|payload| payload.bytes.clone())
-                .collect(),
-        },
-    }
-}
-
 /// The declared clock's value, once per handout; the engine stamps event-time
 /// items, wall and logical clocks evaluate here.
 fn host_clock_now(slot: &CellSlot) -> u64 {
@@ -196,17 +153,9 @@ pub fn apply_result(
     let EngineActivation { token, payload } = act;
     let (slot, items) = match payload {
         EnginePayload::Command { reply, .. } => {
-            // A command interaction: the blocked command thread owns the
-            // cell gate and validates the outcome; this side only
-            // rendezvous-routes.
-            let _ = reply.send(result.outcome);
-            return Ok(());
-        }
-        EnginePayload::WorkflowStep(step) => {
-            // A workflow stage step: its driver is parked at the barrier this
-            // answer feeds, so the fold happens here rather than on a thread
-            // waiting between the two.
-            crate::workflow::step::complete_workflow_step(step, result.outcome);
+            // A command interaction: whoever enqueued it owns the cell gate
+            // and validates the outcome; this side only answers it.
+            reply.answer(result.outcome);
             return Ok(());
         }
         EnginePayload::Prepare(crossing) => {
@@ -272,15 +221,26 @@ fn settle_items(
     effects: Vec<schema::ItemEffect>,
 ) -> Result<(), Error> {
     let mut queue: std::collections::VecDeque<ItemAttempt> = items.into();
+    let workflow = slot.topology.workflow.is_some();
     for mut effect in effects {
-        refuse_completion(&mut effect);
+        if !workflow {
+            refuse_completion(&mut effect);
+        }
         let Some(work) = queue.pop_front() else {
             core.abandon(token, Vec::new());
             return Err(Error::Answer(
                 "completion carries more effects than items".to_string(),
             ));
         };
-        match effect.verdict.clone() {
+        // A workflow's unreadable message rides its ladder before it parks;
+        // a stream's parks at once.
+        let verdict = match effect.verdict.clone() {
+            schema::Verdict::Unreadable { message } if workflow => {
+                schema::Verdict::RetryableError { message }
+            }
+            verdict => verdict,
+        };
+        match verdict {
             schema::Verdict::Ok => {
                 settle_item(slot, &work, effect, None);
                 crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
@@ -408,6 +368,9 @@ pub(super) fn settle_item(
     let Some(stream) = stream_of(&work.item) else {
         return;
     };
+    if slot.topology.workflow.is_some() {
+        return settle_workflow_item(slot, facts, work, &stream, effect, park);
+    }
     let parked = park.is_some();
     let timers = committed_timers(&work.item, effect.timers, parked);
     // A failed attempt's captured outputs must not ship — the invocation did
@@ -440,6 +403,134 @@ pub(super) fn settle_item(
             consumed_offset,
             entry,
         );
+    }
+}
+
+/// A workflow Cell's item: its changes folded as a stream's are, its edge
+/// outputs held for the stage's commit, its plugin outputs staged and its
+/// completion noted — or, where a stream would park it, its stage failed with
+/// no dead letter. Either way the stage owes it no longer.
+/// A host's answer to a workflow undo: its changes folded as an item's are,
+/// its plugin outputs staged for the undo's record, a failed hook reported.
+pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
+    match outcome {
+        schema::ActivationOutcome::Work(effects) => {
+            let Some(facts) = slot.dispatcher.host_facts() else {
+                return;
+            };
+            for effect in effects {
+                fold_workflow_changes(slot, facts, effect.changes, effect.event_time);
+                for output in effect.outputs {
+                    if let schema::OutputTarget::Plugin { channel } = output.target {
+                        crate::workflow::plugin_output(slot, &channel, output.payload);
+                    }
+                }
+            }
+        }
+        schema::ActivationOutcome::Failed(error) => crate::workflow::note_failure(
+            slot,
+            crate::workflow::WorkflowError::from(error.message),
+            None,
+            1,
+        ),
+        _ => {}
+    }
+}
+
+/// A workflow Cell's changes into its buffer; its outputs, timers and park
+/// are the workflow's to settle.
+fn fold_workflow_changes(
+    slot: &Arc<CellSlot>,
+    facts: &HostTaskletFacts,
+    changes: Vec<Vec<u8>>,
+    event_time: u64,
+) {
+    let effects = InvocationEffects {
+        changes,
+        timers: Vec::new(),
+        outputs: Vec::new(),
+        offset: None,
+        event_time,
+        checkpointed: false,
+        parked: false,
+    };
+    settle_into_buffer(slot, facts, effects, Vec::new(), None);
+}
+
+fn settle_workflow_item(
+    slot: &Arc<CellSlot>,
+    facts: &HostTaskletFacts,
+    work: &ItemAttempt,
+    stream: &Arc<FlezhaStream>,
+    effect: schema::ItemEffect,
+    park: Option<(String, u32)>,
+) {
+    let unreadable = matches!(effect.verdict, schema::Verdict::Unreadable { .. });
+    fold_workflow_changes(slot, facts, effect.changes, effect.event_time);
+    match park {
+        Some((error, attempts)) => {
+            let error = if unreadable {
+                crate::workflow::WorkflowError::unreadable(error)
+            } else {
+                crate::workflow::WorkflowError::non_retryable(error)
+            };
+            let payload = match &work.item {
+                CellItem::Input(p) => p
+                    .value
+                    .downcast_ref::<HostPayload>()
+                    .map(|hp| hp.bytes.clone()),
+                CellItem::Timer(_) | CellItem::CloseInterval => None,
+            };
+            crate::workflow::note_failure(slot, error, payload, attempts);
+        }
+        // Timers do not fire inside a workflow yet; a host whose ctx let one
+        // through fails the item rather than dropping the timer.
+        None if !effect.timers.is_empty() => crate::workflow::note_failure(
+            slot,
+            crate::workflow::WorkflowError::non_retryable(
+                "TimersUnavailable: a workflow tasklet cannot register a timer",
+            ),
+            None,
+            work.attempt,
+        ),
+        None => hold_workflow_outputs(slot, stream, effect.outputs, effect.complete),
+    }
+    crate::workflow::item_settled(slot);
+}
+
+/// A host workflow stage emits one untransformed output per released value,
+/// naming its producing channel; the consumer applies the edge on delivery.
+fn hold_workflow_outputs(
+    slot: &Arc<CellSlot>,
+    stream: &Arc<FlezhaStream>,
+    outputs: Vec<schema::Output>,
+    complete: Option<Vec<u8>>,
+) {
+    let Some(instance) = slot.instance.upgrade() else {
+        return;
+    };
+    for output in outputs {
+        match output.target {
+            schema::OutputTarget::Edge { channel, .. } => {
+                let Some(descriptor) = instance.topology.channel(channel) else {
+                    continue;
+                };
+                let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
+                    bytes: output.payload,
+                    channel,
+                    keys: output.key.into_iter().collect(),
+                    event_time: output.event_time,
+                    metadata: output.metadata,
+                });
+                crate::workflow::hold_emit(&instance, Some(descriptor), &value, stream, slot);
+            }
+            schema::OutputTarget::Plugin { channel } => {
+                crate::workflow::plugin_output(slot, &channel, output.payload);
+            }
+        }
+    }
+    if let Some(result) = complete {
+        crate::workflow::complete(slot, result);
     }
 }
 

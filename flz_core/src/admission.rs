@@ -173,13 +173,16 @@ pub fn set_holdback_max_for_tests(max: usize) {
 /// Admit one item produced BY a Cell, withholding work from it instead of
 /// holding its thread. Two rules keep emit order total: a push made while the
 /// producer already owes one appends behind it, and a Cell owing a push is
-/// handed no further activation. `true` when the push was deferred, which
-/// tells a typed batch to hand its tail back.
+/// handed no further activation. `nonparking` is the caller's: a live emit
+/// passes [`nonparking_enabled`], a thread that must never park passes
+/// `true`. `true` when the push was deferred, which tells a typed batch to
+/// hand its tail back.
 pub(crate) fn admit_from_cell(
     producer: &Arc<CellSlot>,
     consumer: &Arc<CellSlot>,
     item: CellItem,
     policy: OverflowPolicy,
+    nonparking: bool,
 ) -> bool {
     // A shedding policy has nothing to hold — it admits or discards on the
     // first pass, holding no thread either way. A self-emit into a Cell's
@@ -188,7 +191,7 @@ pub(crate) fn admit_from_cell(
     // behaviour (which wedges the same way the park did, and is why a topology
     // should not do it).
     if !matches!(policy, OverflowPolicy::DropNothing)
-        || !nonparking_enabled()
+        || !nonparking
         || Arc::ptr_eq(producer, consumer)
     {
         admit_from_reader(consumer, item, policy);

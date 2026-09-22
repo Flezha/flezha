@@ -18,6 +18,7 @@ impl CommandAction for MigrationDeserialization {
             self.factory_id.clone(),
             self.operative_id.clone(),
             crate::operative::instance::KeyGroupRange::UNPARTITIONED,
+            crate::workflow::Resume::default(),
         ) {
             Some(instance) => {
                 if !self.serialized_state.is_empty() {
@@ -34,7 +35,7 @@ impl CommandAction for MigrationDeserialization {
                             };
                         }
                     };
-                    if let Err(e) = apply_init_values(&*instance, json_str) {
+                    if let Err(e) = apply_init_values(&instance, json_str) {
                         errors.push(e.to_string());
                     }
                 }

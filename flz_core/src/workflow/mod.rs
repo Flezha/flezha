@@ -1,27 +1,30 @@
 //! The **workflow** operative kind: spawned with `init_values` as initial
 //! state per tasklet, exactly as a stream is, fed by messages on its entry
 //! channels through the stream's entrance, run to an exit trigger, torn
-//! down. It drives the stream building blocks (tasklets, channels, cells,
-//! `ctx.emit`) under a lifecycle: a tasklet DAG with one chain per entry
-//! channel, an inbox the entrance fills, and exit triggers (the chain
-//! finishing, a tasklet's `complete`, a loop running out of work,
-//! `max_duration`, an external stop) that all converge on one
-//! `WorkflowCompleted`.
+//! down. Its stages are stream Cells fed through the stream's routing and
+//! mailboxes; what is its own is a pass sheet on the instance, advanced by
+//! events: a tasklet DAG with one chain per entry channel, a commit per
+//! stage, and exit triggers (the chain finishing, a tasklet's `complete`, a
+//! loop running out of work, `max_duration`, an external stop) that all
+//! converge on one `WorkflowCompleted`.
 
 mod commit;
 pub mod compensation;
-pub mod driver;
 #[cfg(all(test, unix))]
 mod driver_tests;
 pub mod instance;
-pub mod registry;
 mod resume;
+mod run;
 pub mod spec;
-pub mod step;
 
-use std::any::Any;
 use std::fmt;
-use std::sync::Arc;
+
+pub use instance::{Deadline, Resume, WorkflowRun};
+pub use run::{
+    attempt_failed, complete, entry_parked, hold_emit, item_settled, message, note_failure, open,
+    plugin_output, removed, restore_landed, stop, unwired_stream,
+};
+pub(crate) use run::{deadline_due, items_dropped, pass_dead};
 
 /// How a structured chain repeats. Every message-fed pass waits for its
 /// message the same way: a durable instance idle past the threshold at a
@@ -104,19 +107,4 @@ impl From<&str> for WorkflowError {
     fn from(s: &str) -> Self {
         WorkflowError::new(s, false)
     }
-}
-
-/// The sink [`crate::cell::TaskletDispatcher::run_collecting`] drives:
-/// inter-tasklet output is collected for the next stage, plugin-bound
-/// output staged for the tasklet's outbox.
-pub trait WorkflowCollectSink {
-    fn collect(&mut self, value: Arc<dyn Any + Send + Sync>);
-
-    /// A serialized plugin-bound output on `channel`: staged until the
-    /// barrier for a journaling run, straight to the wire otherwise.
-    fn emit_plugin_bytes(&mut self, channel: &str, bytes: Vec<u8>);
-
-    /// The tasklet asked to end its instance with `result` once the
-    /// iteration commits; a later call in the same step replaces it.
-    fn complete(&mut self, result: Vec<u8>);
 }

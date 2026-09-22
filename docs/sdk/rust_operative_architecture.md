@@ -22,7 +22,7 @@ underneath in [`poll_core.md`](poll_core.md) and
                                 │
                                 ▼
             ┌─────────────────────────────────────────┐
-            │  StreamInstance (one per start;         │
+            │  OperativeInstance (one per start;      │
             │  `--partitions N` starts N of these)    │
             │   ┌────────────┐   ┌──────────────┐     │
             │   │ Tasklet A│ ->│ Tasklet B  │ -> ... -> plugin
@@ -37,7 +37,7 @@ underneath in [`poll_core.md`](poll_core.md) and
   runner via `FlezhaRunner::register_factory(R)`; `unregister_factory(R)` is
   its inverse. The topology is built and validated at the declaring call site
   and shared (`Arc<OperativeTopology>`) by every instance of the class.
-- **Operative instance** (`StreamInstance`) — the live object spawned on
+- **Operative instance** (`OperativeInstance`) — the live object spawned on
   `AddOperative`. Each instance owns its per-Cell state and mailboxes;
   instances are independent and routed by `operative_id` (the SDK calls it
   `instance_id`).
@@ -71,10 +71,11 @@ of probing the compute unit — `flz state get` on a workflow operative answers
 
 A workflow operative is a job that ends itself: `flz operative start <factory>
 [--id <id>]` names only the factory, and the controller puts the kind the
-runner announced on `AddOperative`. The SDK keeps one sealed registry of live
-units (`Operative::Stream` | `Operative::Workflow`) resolved once per frame at
-the dispatch boundary. A workflow class declares its graph in `channels`, on
-the same builder a stream uses:
+runner announced on `AddOperative`. Both kinds are one instance type in one
+registry, resolved once per frame at the dispatch boundary; a workflow instance
+is an `OperativeInstance` that also carries its pass sheet, and its class is
+told apart by the `workflow` field on its topology. A workflow class declares
+its graph in `channels`, on the same builder a stream uses:
 
 ```rust
 struct Greet;
@@ -424,7 +425,7 @@ Per-Tasklet counters (`DynamicCellCounters`, Relaxed):
 An instance binds to one runner, so the machine is the ceiling for one
 Operative. `--partitions N` starts N ordinary instances (`<id>#p0` …
 `<id>#p{N-1}`), each owning a contiguous range of the 256 key groups a
-routing key hashes into (`KeyGroupRange` on the `StreamInstance`). Nothing in
+routing key hashes into (`KeyGroupRange` on the `OperativeInstance`). Nothing in
 this doc changes for a member; the one dispatch addition is a range check on
 each computed cell key that parks a mis-route before any state for that key
 exists. A class with no keyed entry-fed tasklet refuses to be partitioned.
@@ -653,7 +654,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | Authoring macros | `sdk/rust/macros/src/{tasklet,state,operative}.rs` |
 | Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/operative/dispatcher.rs`, `poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
-| `StreamInstance`, `KeyGroupRange`; `OperativeTopology`, `CellMode`; registries | `flz_core/src/operative/{instance,topology,registry}.rs` |
+| `OperativeInstance`, `KeyGroupRange`; `OperativeTopology`, `CellMode`; registries | `flz_core/src/operative/{instance,topology,registry}.rs` |
 | `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |
 | Wire dispatch (`OperativeDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |

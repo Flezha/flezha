@@ -119,7 +119,7 @@ fn ship_notification(
     let encoded = request.encode_to_vec();
     let payload = payloader::build_without_metadata(SHUTDOWN_PAYLOAD_ID, &encoded);
 
-    let rx = register_pending_ack(reference_id.clone());
+    let rx = pending_ack_channel(reference_id.clone());
 
     // The operative's final state is what makes a reconnect-resume loss-free,
     // so a refused write is held for the next bound stream rather than printed
@@ -162,16 +162,32 @@ fn ship_notification(
 /// "it worked" (empty for a bare ack), or the failure it names.
 pub type AckResult = Result<String, String>;
 
-fn pending_acks_map() -> &'static Mutex<HashMap<String, mpsc::SyncSender<AckResult>>> {
-    static PENDING_ACKS: OnceLock<Mutex<HashMap<String, mpsc::SyncSender<AckResult>>>> =
-        OnceLock::new();
+/// What a reply to one request does, run once on the thread that brings it.
+pub type OnReply = Box<dyn FnOnce(AckResult) + Send>;
+
+fn pending_acks_map() -> &'static Mutex<HashMap<String, OnReply>> {
+    static PENDING_ACKS: OnceLock<Mutex<HashMap<String, OnReply>>> = OnceLock::new();
     PENDING_ACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Register a waiter for the reply to `reference_id`.
-pub fn register_pending_ack(reference_id: String) -> mpsc::Receiver<AckResult> {
+/// Register what the reply to `reference_id` does when it arrives.
+pub fn register_pending_ack(reference_id: String, on_reply: OnReply) {
+    pending_acks_map()
+        .lock()
+        .unwrap()
+        .insert(reference_id, on_reply);
+}
+
+/// Register a waiter for the reply to `reference_id`: the channel form, for
+/// a caller that blocks on it.
+pub fn pending_ack_channel(reference_id: String) -> mpsc::Receiver<AckResult> {
     let (tx, rx) = mpsc::sync_channel(1);
-    pending_acks_map().lock().unwrap().insert(reference_id, tx);
+    register_pending_ack(
+        reference_id,
+        Box::new(move |result| {
+            let _ = tx.send(result);
+        }),
+    );
     rx
 }
 
@@ -202,7 +218,7 @@ pub fn ask(
     reference_id: String,
     command: crate::pb::command_request::Command,
 ) -> Result<mpsc::Receiver<AckResult>, NoControlPlane> {
-    let rx = register_pending_ack(reference_id.clone());
+    let rx = pending_ack_channel(reference_id.clone());
 
     let sent = crate::runner::coordinator_try_send(crate::runner::RunnerMessage::control_request(
         reference_id.clone(),
@@ -222,13 +238,12 @@ pub fn ask(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoControlPlane;
 
-/// Wake the waiter under `reference_id`; a missing entry already timed out.
+/// Answer the waiter under `reference_id`, outside the registry's lock; a
+/// missing entry already timed out.
 pub fn signal_result(reference_id: &str, result: AckResult) {
     let entry = pending_acks_map().lock().unwrap().remove(reference_id);
     match entry {
-        Some(tx) => {
-            let _ = tx.send(result);
-        }
+        Some(on_reply) => on_reply(result),
         None => {
             eprintln!(
                 "[flezha] controller reply for unknown reference_id {} — \

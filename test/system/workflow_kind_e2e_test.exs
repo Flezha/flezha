@@ -14,6 +14,9 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
+  import FlezhaTest.Helper.WorkflowResumeHarness,
+    only: [collect_loop: 1, forward_sink: 2, await_outputs: 3, send_turn: 3]
+
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -74,6 +77,25 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     # durable registry with no explicit stop — proof the full loop ran.
     assert wait_until(fn -> not registered?(operative_id) end, 5_000),
            "task was never deregistered after completion"
+  end
+
+  # A workflow tasklet declaring static cells is offered every message, and the
+  # cells `cells_for` names run it: two of the three here, each emitting its key.
+  test "a static-cell workflow tasklet runs on each cell its cells_for names" do
+    operative_id = "static_cell_wf_#{System.unique_integer([:positive])}"
+    collector = spawn_link(fn -> collect_loop([]) end)
+
+    assert {:ok, _} =
+             OperativeManager.start_operative(@namespace, %Builder{
+               id: operative_id,
+               factory_id: "static_cell_workflow",
+               opts: [plugins: [forward_sink("static_cell_sink", collector)]]
+             })
+
+    send_turn(@namespace, operative_id, "go")
+
+    delivered = collector |> await_outputs(2, operative_id) |> Enum.map(&elem(&1, 0))
+    assert Enum.sort(delivered) == ["a:go", "b:go"]
   end
 
   # Timers do not fire inside a workflow yet, so a tasklet that registers one

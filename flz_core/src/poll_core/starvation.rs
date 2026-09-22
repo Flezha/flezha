@@ -23,7 +23,7 @@ impl PollCore {
     /// left to run it — or `timeout` elapses.
     ///
     /// Starvation is *stuck*, not *busy*. Queued work — a cell round, or a
-    /// direct activation a driver is blocked on — counts only once it has sat
+    /// direct activation a caller is blocked on — counts only once it has sat
     /// for [`STARVATION_DWELL`] with **no thread entering `poll` at all**: a
     /// saturated runner enters `poll` once per batch, i.e. orders of magnitude
     /// more often, and answering that with more threads would add contention
@@ -78,8 +78,8 @@ impl PollCore {
         if self.wakes.any_due(crate::util::wall_now_ms()) {
             return true;
         }
-        // A direct activation — a workflow step, a host crossing — is runnable
-        // whatever the cap says, and a driver is blocked on it; queued cell
+        // A direct activation — a host crossing, a workflow undo — is runnable
+        // whatever the cap says, and something waits on its answer; queued cell
         // work at the cap is not runnable and is owed no thread.
         let runnable = !self.direct.lock_recover().is_empty()
             || (!ready_empty && self.outstanding_count.load(Ordering::Acquire) < self.max_inflight);

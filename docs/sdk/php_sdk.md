@@ -2,7 +2,7 @@
 
 A poll host over `flz_core`, through `ext-ffi`. The SDK contains no kernel
 code: transport, framing, ordering, per-cell exclusivity, durability,
-retries, the retry→park ladder, timers, credit, routing, the workflow driver
+retries, the retry→park ladder, timers, credit, routing, workflow runs
 and reconnect all live in the core. This package brings the authoring surface,
 the codec for user types, the concurrency host and idiomatic errors.
 

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 
 use super::build::{
-    build_channels, build_host_dag, build_tasklets, register_workflow_class, resolve_class_facts,
+    build_channels, build_host_dag, build_tasklets, resolve_class_facts, workflow_spec,
 };
 use super::chains::derive_channels;
 use super::decl::{
@@ -366,7 +366,7 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
 /// inter_task channel with no consumer is NOT one of them: it is a leaf's
 /// retained output — what the typed SDK's `sealed()` declares, what a saga
 /// archive leaf's undo reverses, what a handoff-chained loop feeds back — and
-/// the driver, not another tasklet, is what reads it.
+/// the workflow run, not another tasklet, is what reads it.
 fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>) {
     let text = match channel.kind {
         HostChannelKind::Entry if channel.producer.is_some() => {
@@ -518,7 +518,7 @@ fn register(derived: Derived) -> Result<(), Error> {
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (tasklets, tasklet_name_to_id) =
         build_tasklets(&decl, &class, &channels, &derived_channels);
-    let topology = Arc::new(OperativeTopology {
+    let mut topology = OperativeTopology {
         sdk_lang: decl.sdk_lang,
         channels,
         name_to_id,
@@ -529,14 +529,13 @@ fn register(derived: Derived) -> Result<(), Error> {
         effectively_once: decl.effectively_once,
         correction: class.correction,
         ack_granularity: class.ack_granularity,
-    });
-    match &decl.workflow {
-        Some(workflow) => register_structured_workflow(&decl, workflow, topology),
-        None => {
-            crate::operative::registry::register_class(class.factory_id, topology);
-            Ok(())
-        }
+        workflow: None,
+    };
+    if let Some(workflow) = &decl.workflow {
+        topology.workflow = Some(structured_workflow(&decl, workflow, &topology)?);
     }
+    crate::operative::registry::register_class(class.factory_id, Arc::new(topology));
+    Ok(())
 }
 
 /// A durable handoff-chained loop seeds iteration N+1 from iteration N's
@@ -575,12 +574,12 @@ fn refuse_loop_terminal_without_handoff(
 
 /// A structured chain: its DAG from the topology, a chained loop decided
 /// against it.
-fn register_structured_workflow(
+fn structured_workflow(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
-    topology: Arc<OperativeTopology>,
-) -> Result<(), Error> {
-    let dag = build_host_dag(&topology)?;
+    topology: &OperativeTopology,
+) -> Result<crate::workflow::spec::WorkflowSpec, Error> {
+    let dag = build_host_dag(topology)?;
     if workflow.loop_mode == HostLoopMode::Chained {
         if let Some(branching) = dag.branching_chain() {
             return Err(Error::Declaration(format!(
@@ -594,12 +593,11 @@ fn register_structured_workflow(
             )));
         }
     }
-    refuse_loop_terminal_without_handoff(decl, workflow, &topology, &dag)?;
+    refuse_loop_terminal_without_handoff(decl, workflow, topology, &dag)?;
     let loop_mode = match workflow.loop_mode {
         HostLoopMode::Once => LoopMode::Once,
         HostLoopMode::PerInput => LoopMode::PerInput,
         HostLoopMode::Chained => LoopMode::Chained,
     };
-    register_workflow_class(decl, workflow, topology, dag, loop_mode);
-    Ok(())
+    Ok(workflow_spec(decl, workflow, dag, loop_mode))
 }

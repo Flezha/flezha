@@ -476,10 +476,9 @@ Every SDK test app SHALL:
   whatever its own template renders);
 - park until `FLEZHA_WORKFLOW_E2E_RELEASE` appears, in every workflow fixture a
   crash-resume scenario drives, so the runner keeps answering control pings and
-  a sibling tasklet the driver has not reached stays dispatchable. The
-  obligation is one; its spelling follows the dispatch model the manifest
-  declares. A worker-pool host parks a **pool worker** and never the driver
-  thread. An event-loop host **suspends the activation and yields the loop** —
+  a sibling tasklet stays dispatchable. The obligation is one; its spelling
+  follows the dispatch model the manifest declares. A worker-pool host parks a
+  **pool worker** and never a thread of the core. An event-loop host **suspends the activation and yields the loop** —
   a synchronous hold there fails this contract rather than implementing it,
   because it freezes every other activation the loop owns, which is the wedge
   signature `pool_wedge`'s fixtures exist to produce;

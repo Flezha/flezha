@@ -25,22 +25,45 @@ The SDK SHALL expose a `WorkflowOperative` authoring surface distinct from the s
 
 ### Requirement: Starting an operative with the workflow kind spawns a workflow instance
 
-When the Controller issues `AddOperative` with `kind` resolving to `:workflow`, the SDK SHALL spawn a **workflow** instance for the named `factory_id`; when `kind` resolves to `:stream` (the default), it SHALL spawn a stream instance. The two variants SHALL be held in one sealed per-runner operative registry whose entry is resolved once per inbound frame at the routing boundary. Spawning SHALL be idempotent on a duplicate instance id.
+The SDK SHALL spawn a **workflow** instance when the Controller issues `AddOperative` for a
+factory the runner registered as a workflow class, and a stream instance for a stream class,
+under the named `factory_id`. There SHALL be one instance type for both kinds: a
+workflow instance is the operative instance a stream is (its cells built by the same builder,
+registered with the flusher the same way, reachable by the same live-state, restore, compaction
+and migration commands) plus a pass sheet carrying the run. There SHALL be one class registry
+carrying each class's kind, and one sealed per-runner operative registry whose entry is
+resolved once per inbound frame at the routing boundary. Spawning SHALL be idempotent on a
+duplicate instance id. A workflow instance's bind SHALL create no thread: the sheet is built
+from the bind's resume state (empty for a fresh instance) and the first pass starts on the
+event that seeds it.
 
-#### Scenario: Workflow kind spawns a workflow instance
+#### Scenario: A workflow class spawns a workflow instance
 
-- **WHEN** the SDK handles `AddOperative` whose `kind` resolves to `:workflow` for a registered workflow `factory_id`
-- **THEN** a workflow instance SHALL be created and registered under the instance id
+- **WHEN** the SDK handles `AddOperative` for a registered workflow `factory_id`
+- **THEN** a workflow instance SHALL be created and registered under the instance id, with no thread spawned for it
 
-#### Scenario: Default kind still spawns a stream instance
+#### Scenario: A stream class still spawns a stream instance
 
-- **WHEN** the SDK handles `AddOperative` whose `kind` is empty or `:stream`
+- **WHEN** the SDK handles `AddOperative` for a registered stream `factory_id`
 - **THEN** a stream instance SHALL be created
 
 #### Scenario: Unknown workflow factory is reported
 
-- **WHEN** `AddOperative` names a `factory_id` with workflow kind that is not registered as workflow
+- **WHEN** `AddOperative` names a `factory_id` no registered class carries
 - **THEN** the SDK SHALL report an error and SHALL NOT create an instance
+
+#### Scenario: A durable workflow's cells answer a live state read
+
+- **WHEN** `flz cell state <instance>` names a running durable workflow instance
+- **THEN** the SDK's `CellState` handler SHALL find its cells through the same lookup a stream's
+  are found by and answer their state in the per-tasklet / per-cell JSON shape, with no
+  "StreamOperative instance not found" refusal
+
+#### Scenario: One registry serves both kinds
+
+- **WHEN** a runner registers a stream class and a workflow class
+- **THEN** both SHALL be held in one class registry, each with its kind, and the factory ids
+  advertised on connect SHALL come from that one registry
 
 ### Requirement: A workflow operative runs to an exit trigger and deregisters terminally
 

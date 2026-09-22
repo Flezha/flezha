@@ -26,7 +26,7 @@ pub struct TaskletDescriptor {
     pub name: Arc<str>,
     pub cell_keys: Vec<&'static str>,
     pub cells_for_overridden: bool,
-    /// The workflow driver compensates only a tasklet with this set.
+    /// A workflow run compensates only a tasklet with this set.
     pub compensate_overridden: bool,
     pub mode: CellMode,
     /// Dynamic-mode idle eviction window; `None` never evicts.
@@ -82,6 +82,23 @@ pub struct OperativeTopology {
 
     /// Where the effectively-once tier acknowledges its inputs.
     pub ack_granularity: AckGranularity,
+
+    /// `Some` for a workflow class: its DAG and lifecycle facts. The kind of
+    /// a class is this field and nothing else.
+    pub workflow: Option<crate::workflow::spec::WorkflowSpec>,
+}
+
+// Manual: channels and tasklets hold closures. A summary is enough for test
+// assertions (`expect`/`expect_err`) and diagnostics.
+impl std::fmt::Debug for OperativeTopology {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperativeTopology")
+            .field("factory_id", &self.factory_id)
+            .field("channels", &self.channels.len())
+            .field("tasklets", &self.tasklets.len())
+            .field("workflow", &self.workflow)
+            .finish()
+    }
 }
 
 /// Where a tier-enabled operative's durable consumed-offset advances.

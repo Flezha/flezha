@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use crate::cell::CellSlot;
 use crate::channel::{BuildCellArgs, TaskletId};
 use crate::flusher::CellFlusher;
-use crate::operative::instance::StreamInstance;
+use crate::operative::instance::OperativeInstance;
 use crate::operative::topology::OperativeTopology;
 use crate::state_sink;
 
@@ -40,7 +40,7 @@ pub struct DynamicCellRegistry {
     tasklet_id: TaskletId,
     max_cells: usize,
     topology: Arc<OperativeTopology>,
-    instance: Weak<StreamInstance>,
+    instance: Weak<OperativeInstance>,
     instance_id: Arc<str>,
     persistence_enabled: bool,
 }
@@ -51,7 +51,7 @@ impl DynamicCellRegistry {
         tasklet_id: TaskletId,
         max_cells: usize,
         topology: Arc<OperativeTopology>,
-        instance: Weak<StreamInstance>,
+        instance: Weak<OperativeInstance>,
         instance_id: Arc<str>,
         persistence_enabled: bool,
     ) -> Self {

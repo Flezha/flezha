@@ -6,35 +6,42 @@ The workflow-cell-retry capability is the retry rung between a cell failure and 
 ## Requirements
 ### Requirement: A failing cell is retried with backoff before the tasklet fails
 
-A cell whose work errors inside a structured workflow tasklet SHALL be
-retried in place, under the retry policy of the edge that feeds the tasklet, the same
-`retry_max` / `retry_backoff_ms` a stream's edge declares: default 3 attempts (the first run
-plus its retries), with the platform's shared jittered exponential backoff
-(`base × 2^(n-1)` ±50%, capped at `RETRY_BACKOFF_MAX_MS` = 5 s; default base 50 ms, the edge's
-default, computed by the same helper the stream retry-then-park ladder uses) — while sibling
-cells' completed results stay buffered at the barrier and are not re-run. There SHALL be no
-class-level retry policy on a workflow: the policy the step ladder reads SHALL be the one the
-shared core already derives for the tasklet from its input channel, and a workflow SHALL carry no
-`retry_attempts`, `retry_backoff` or `barrier_retry_attempts` declaration in any SDK or on the
-wire. A retry that succeeds SHALL let the stage quiesce and commit
-normally. The backoff wait SHALL observe cancellation (external stop /
-`max_duration`) at the existing wake granularity. The retried cell body
-re-runs under the same at-least-once idempotency contract crash-resume imposes.
+A cell whose work errors inside a structured workflow tasklet SHALL be retried in place on the
+core's per-item retry ladder, the one a stream cell climbs, under the retry policy of the edge
+that feeds the tasklet, the same `retry_max` / `retry_backoff_ms` a stream's edge declares:
+default 3 attempts (the first run plus its retries), with the platform's shared jittered
+exponential backoff (`base × 2^(n-1)` ±50%, capped at `RETRY_BACKOFF_MAX_MS` = 5 s; default base
+50 ms, the edge's default, computed by the same helper the stream retry-then-park ladder uses).
+The failed item and the untouched tail of its batch are held at the head of the cell's line and
+re-handed after the backoff; sibling cells' settled results stay held on the instance's pass
+sheet and are not re-run. There SHALL be no class-level retry policy on a workflow: the policy
+the ladder reads SHALL be the one the shared core already derives for the tasklet from its
+input channel, and a workflow SHALL carry no `retry_attempts`, `retry_backoff` or
+`barrier_retry_attempts` declaration in any SDK or on the wire. A retry that succeeds SHALL let
+the stage reach its count and commit normally. A cancellation (external stop / `max_duration`)
+SHALL end a pending backoff at once by disarming its deferred wake and releasing the cell's
+gates. The retried item re-runs under the same at-least-once idempotency contract crash-resume
+imposes.
 
 #### Scenario: Transient failure recovers without failing the task
 
-- **WHEN** cell k2 of a parallel stage errors once with a retryable error and succeeds on retry, while k1 and k3 completed
-- **THEN** the stage SHALL quiesce and commit normally, k1/k3 SHALL NOT re-run, and no compensation SHALL fire
+- **WHEN** cell k2 of a parallel stage errors once with a retryable error and succeeds on retry, while k1 and k3 settled
+- **THEN** the stage SHALL reach its count and commit normally, k1/k3 SHALL NOT re-run, and no compensation SHALL fire
 
 #### Scenario: The edge's budget is the ladder's
 
 - **WHEN** a workflow wires `c.input("order").retry_max(5).retry_backoff_ms(20).into(Reserve)` and `Reserve`'s cell errors retryably on every attempt
 - **THEN** the cell SHALL run five times, each wait SHALL grow from a 20 ms base, and the tasklet SHALL fail after the fifth attempt
 
+#### Scenario: Only the failed item and its tail re-run
+
+- **WHEN** a cell's stage share is three items and the second fails retryably
+- **THEN** the first item SHALL NOT run again, and the retry SHALL re-hand the second item and then the third, in that order
+
 #### Scenario: Stop interrupts a waiting retry
 
 - **WHEN** an external stop arrives while a cell is in a backoff wait
-- **THEN** the wait SHALL end promptly and the operative SHALL take the normal abnormal-exit path (compensation of completed tasklets)
+- **THEN** the wait SHALL end at once, the cell's held items SHALL be dropped, and the operative SHALL take the normal abnormal-exit path (compensation of completed tasklets)
 
 ### Requirement: Retry exhaustion fails the tasklet exactly as today
 
@@ -85,28 +92,33 @@ never retried).
 
 ### Requirement: A backoff wait holds no worker thread
 
-A retrying cell's backoff SHALL NOT occupy a worker thread: the step
-attempt runs to completion on an SDK worker, the worker is released, and the
-driver SHALL own the re-submission timing at its stage barrier. The retry
-policy (attempts, shared jittered exponential backoff), error classification,
-exhaustion behavior, per-attempt telemetry, and cancellation responsiveness
-(external stop / `max_duration` observed at the existing wake granularity)
-SHALL be unchanged.
+A retrying cell's backoff SHALL NOT occupy any thread: the attempt runs to completion on an SDK
+worker, the worker is released, and the re-hand is timed by the core's deferred-wake list, the
+same entry a stream cell's backoff is. There SHALL be no workflow-owned ladder and no barrier
+that times it. The retry policy (attempts, shared jittered exponential backoff), error
+classification, exhaustion behaviour (the stage fails into compensation, never into the
+dead-letter queue) and per-attempt telemetry SHALL be the stream ladder's, with the terminal
+action the only difference.
 
 #### Scenario: Sibling stages proceed while a cell backs off
 
 - **WHEN** cell k2 of a parallel stage is waiting out a retry backoff while
   unrelated activations are queued
-- **THEN** no worker thread SHALL be sleeping on k2's behalf, and the queued
+- **THEN** no thread SHALL be sleeping on k2's behalf, and the queued
   activations SHALL be served by the workers that ran k2's failed attempt
 
-#### Scenario: Stop interrupts a driver-timed backoff
+#### Scenario: Exhaustion compensates rather than parks
 
-- **WHEN** an external stop arrives while the driver is timing a cell's
-  backoff at its barrier
-- **THEN** the wait SHALL end promptly and the operative SHALL take the normal
-  abnormal-exit path, exactly as the pre-existing stop-interrupts-backoff
-  scenario pins
+- **WHEN** a workflow cell's item fails on its final attempt, or with a non-retryable error
+- **THEN** no dead-letter entry SHALL be minted; the cell's stage SHALL be marked failed on the
+  instance's pass sheet, and once no stage of the pass owes an item the operative SHALL
+  compensate and end with status `error`
+
+#### Scenario: Stop disarms a pending backoff
+
+- **WHEN** an external stop arrives while the deferred-wake list holds a cell's retry entry
+- **THEN** the entry SHALL be removed, the cell's gates released and its held items dropped on
+  the thread that brings the stop, and the operative SHALL take the normal abnormal-exit path
 
 ### Requirement: A commit barrier is re-sent a fixed number of times
 

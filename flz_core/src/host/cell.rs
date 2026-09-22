@@ -12,7 +12,7 @@ use crate::cell::{CellSlot, ItemDisposition, TaskletDispatcher};
 use crate::channel::{BuildCellArgs, RetryPolicy};
 use crate::flusher::{CellFlusher, FlushableBuffer};
 use crate::header::HeaderTemplate;
-use crate::operative::topology::{CorrectionPolicy, OperativeTopology};
+use crate::operative::topology::CorrectionPolicy;
 use crate::poll_core::ItemAttempt;
 use crate::schema;
 use crate::timer::PendingTimers;
@@ -115,15 +115,6 @@ struct HostDispatcher {
     facts: Arc<HostTaskletFacts>,
 }
 
-/// The in-process workflow seams are unreachable for a host class: its steps
-/// cross as activations and fold through [`super::fold_workflow_outcome`].
-fn host_workflow_unreachable(what: &str) -> crate::workflow::WorkflowError {
-    crate::workflow::WorkflowError::non_retryable(format!(
-        "host-run tasklet: {what} reaches the host as a workflow step activation, \
-         never this in-process seam"
-    ))
-}
-
 impl TaskletDispatcher for HostDispatcher {
     fn dispatch_item(
         &self,
@@ -132,7 +123,7 @@ impl TaskletDispatcher for HostDispatcher {
         _state: &mut Box<dyn Any + Send>,
         _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &mut PendingTimers,
-        _instance: &Weak<crate::operative::instance::StreamInstance>,
+        _instance: &Weak<crate::operative::instance::OperativeInstance>,
     ) -> ItemDisposition {
         tracing::error!(
             target: "flezha::host",
@@ -195,26 +186,6 @@ impl TaskletDispatcher for HostDispatcher {
             .value
             .downcast_ref::<HostPayload>()
             .and_then(|p| p.event_time)
-    }
-
-    fn run_collecting(
-        &self,
-        _input: Arc<dyn Any + Send + Sync>,
-        _state: &mut Box<dyn Any + Send>,
-        _topology: &OperativeTopology,
-        _sink: &mut dyn crate::workflow::WorkflowCollectSink,
-    ) -> Result<(), crate::workflow::WorkflowError> {
-        Err(host_workflow_unreachable("a stage batch"))
-    }
-
-    fn compensate_collecting(
-        &self,
-        _outputs: Vec<Arc<dyn Any + Send + Sync>>,
-        _state: &mut Box<dyn Any + Send>,
-        _topology: &OperativeTopology,
-        _sink: &mut dyn crate::workflow::WorkflowCollectSink,
-    ) -> Result<(), crate::workflow::WorkflowError> {
-        Err(host_workflow_unreachable("a saga undo"))
     }
 
     fn restore_state(

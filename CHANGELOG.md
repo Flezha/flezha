@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed: a workflow instance holds no thread
+
+A workflow instance no longer owns a driver thread: its run is a small pass sheet advanced by
+events on the thread that brings each one, and its stages reach their cells through the stream's
+routing, mailboxes and poll core, under the in-flight cap (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`).
+Ten thousand waiting instances now cost no CPU and about 61 KiB each. A stage commits when its own
+last item settles, so siblings commit independently and a sibling that fails later compensates
+the one already committed. A cell's retry is the stream's per-item ladder: the failed item and
+those queued behind it re-run, not the whole batch, and a stop disarms a pending backoff at once.
+`FLEZHA_WORKFLOW_DRIVER_STACK_KIB` is gone. A Java, Node, Python, Ruby or PHP workflow tasklet that
+declares static `cell_keys` now runs the cells its `cells_for` names, and `flz operative state` /
+`flz state get` answer for a durable workflow's cells. The journal, the wire frames and the
+authoring surface are unchanged.
+
 ### Changed: a workflow is declared like a stream
 
 A workflow class writes its graph in `channels`, as a stream class does, in all seven SDKs; the

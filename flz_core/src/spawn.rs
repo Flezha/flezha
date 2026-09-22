@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn a_read_waits_only_until_the_request_deadline_and_drops_the_waiter() {
         let reference_id = format!("spawn-deadline-{}", crate::util::nonce_suffix());
-        let rx = crate::shutdown::register_pending_ack(reference_id.clone());
+        let rx = crate::shutdown::pending_ack_channel(reference_id.clone());
         let mut handle = SpawnHandle::pending(
             "w1".to_string(),
             "worker".to_string(),

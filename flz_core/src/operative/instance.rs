@@ -1,6 +1,7 @@
-//! `StreamInstance`: one bound stream operative — its Cells by tasklet
-//! and mode, its partition range, its reapers — and the partition hash the
-//! controller's placement mirrors bit for bit.
+//! `OperativeInstance`: one bound operative of either kind — its Cells by
+//! tasklet and mode, its partition range, its reapers, and for a workflow its
+//! run — and the partition hash the controller's placement mirrors bit for
+//! bit.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -82,7 +83,7 @@ impl KeyGroupRange {
     }
 }
 
-pub struct StreamInstance {
+pub struct OperativeInstance {
     pub topology: Arc<OperativeTopology>,
     pub instance_id: Arc<str>,
     /// This member's range, from `AddOperative`; a rebind re-ships it.
@@ -104,9 +105,11 @@ pub struct StreamInstance {
     pub(crate) ladders: AtomicUsize,
     /// Resolved once at start from the class const and the runner override.
     persistence_enabled: bool,
+    /// `Some` for a workflow class: the pass sheet its events advance.
+    pub workflow: Option<crate::workflow::WorkflowRun>,
 }
 
-impl StreamInstance {
+impl OperativeInstance {
     /// Whether a retry ladder still holds a payload of this instance.
     pub fn ladders_running(&self) -> bool {
         self.ladders.load(Ordering::Acquire) > 0
@@ -127,7 +130,8 @@ impl StreamInstance {
     ) -> Arc<Self> {
         // The runner override wins over the class const when present.
         let persistence_enabled = operator_override.unwrap_or(topology.persistence_enabled_const);
-        Arc::new_cyclic(|weak: &Weak<StreamInstance>| {
+        Arc::new_cyclic(|weak: &Weak<OperativeInstance>| {
+            let topology_is_workflow = topology.workflow.is_some();
             let tasklet_count = topology.tasklets.len();
             let mut cells: Vec<Vec<Arc<CellSlot>>> = Vec::with_capacity(tasklet_count);
             let mut cell_key_to_idx: Vec<HashMap<&'static str, usize>> =
@@ -153,7 +157,7 @@ impl StreamInstance {
             let background_handles =
                 spawn_reapers(&topology, &dynamic_registries, &background_stop);
 
-            StreamInstance {
+            OperativeInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
                 ladders: AtomicUsize::new(0),
                 topology,
@@ -165,6 +169,8 @@ impl StreamInstance {
                 background_stop,
                 background_handles: Mutex::new(background_handles),
                 persistence_enabled,
+                workflow: topology_is_workflow
+                    .then(|| crate::workflow::WorkflowRun::new(Weak::clone(weak))),
             }
         })
     }
@@ -246,7 +252,7 @@ type TaskletCells = (
 /// One tasklet's Cells by mode: `(slots, key → index, dynamic registry)`.
 fn build_tasklet_cells(
     topology: &Arc<OperativeTopology>,
-    weak: &Weak<StreamInstance>,
+    weak: &Weak<OperativeInstance>,
     instance_id: &Arc<str>,
     tasklet_id: u32,
     tasklet_desc: &crate::operative::topology::TaskletDescriptor,
@@ -286,7 +292,7 @@ fn build_tasklet_cells(
     (slots, key_map, None)
 }
 
-impl Drop for StreamInstance {
+impl Drop for OperativeInstance {
     fn drop(&mut self) {
         // Safety net for an instance dropped without `stop_operative`: signal the
         // background threads (don't join — Drop must not block on a sweep

@@ -52,19 +52,18 @@ pub enum EnginePayload {
         slot: Arc<CellSlot>,
         items: Vec<ItemAttempt>,
     },
-    /// A command interaction crossed to a C-ABI host. Its exclusivity is the
-    /// enqueuer's gate ([`PollCore::with_cell_exclusive`]); its completion
-    /// answers that rendezvous, never releases a slot.
+    /// A command interaction on one Cell. Its exclusivity is the enqueuer's
+    /// gate ([`PollCore::with_cell_exclusive`], or a workflow undo's held
+    /// gate); its completion answers `reply`, never releases a slot.
     Command {
-        target: crate::schema::CellRef,
+        slot: Arc<CellSlot>,
         change_seq: u64,
-        factory: String,
         kind: crate::schema::ActivationKind,
-        reply: crossbeam::channel::Sender<crate::schema::ActivationOutcome>,
+        /// The recorded outputs a typed worker's in-process `CompensateRun`
+        /// reads; a host reads their bytes in `kind`. Empty otherwise.
+        values: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+        reply: CommandReply,
     },
-    /// One cell's share of a workflow stage or undo; its exclusivity is the
-    /// driver's stage serialization, its completion answers the barrier.
-    WorkflowStep(crate::workflow::step::WorkflowStep),
     /// A batched prepare crossing for one entry channel, bound to no cell.
     Prepare(crate::host::PrepareCrossing),
 }
@@ -89,6 +88,36 @@ impl EngineActivation {
         match self.payload {
             EnginePayload::Work { slot, items } => Some((self.token, slot, items)),
             _ => None,
+        }
+    }
+}
+
+/// What a command activation owes whoever enqueued it, given exactly once:
+/// the host's outcome, or a failure when the activation is dropped
+/// unanswered.
+pub struct CommandReply(Option<Box<dyn FnOnce(crate::schema::ActivationOutcome) + Send>>);
+
+impl CommandReply {
+    pub fn new(answer: impl FnOnce(crate::schema::ActivationOutcome) + Send + 'static) -> Self {
+        Self(Some(Box::new(answer)))
+    }
+
+    pub fn answer(mut self, outcome: crate::schema::ActivationOutcome) {
+        if let Some(answer) = self.0.take() {
+            answer(outcome);
+        }
+    }
+}
+
+impl Drop for CommandReply {
+    fn drop(&mut self) {
+        if let Some(answer) = self.0.take() {
+            answer(crate::schema::ActivationOutcome::Failed(
+                crate::schema::WorkError {
+                    message: "command activation dropped unanswered".to_string(),
+                    non_retryable: false,
+                },
+            ));
         }
     }
 }
@@ -126,8 +155,8 @@ struct PendingPushes {
 
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<CellSlot>>>,
-    /// Command and workflow-step activations, ahead of `ready`; the enqueuer
-    /// holds their cell gate, so they never race a work assembly.
+    /// Command activations, ahead of `ready`; the enqueuer holds their cell
+    /// gate, so they never race a work assembly.
     direct: Mutex<VecDeque<EngineActivation>>,
     cv: Condvar,
     shutting_down: AtomicBool,
@@ -238,9 +267,9 @@ impl PollCore {
             }
             // At the cap, cell work stays queued and pollers wait as if
             // `ready` were empty; the completion that drops the count below it
-            // notifies. Direct activations were already served above — they
-            // are barrier-bounded by their own drivers, and holding one behind
-            // blocked cell work would deadlock the driver waiting for it.
+            // notifies. Direct activations were already served above: each
+            // answers a waiting command or an undo, and holding one behind
+            // blocked cell work could deadlock the thread that waits for it.
             while self.outstanding_count.load(Ordering::Acquire) < self.max_inflight {
                 let Some(slot) = ready.pop_front() else { break };
                 drop(ready);
@@ -395,9 +424,14 @@ impl PollCore {
                 due_at_ms: crate::util::wall_now_ms().saturating_add(delay.as_millis() as u64),
                 tiebreak: WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed)),
             },
-            Wake::Retry(slot),
+            Wake::Retry(Arc::clone(&slot)),
         );
         self.notify_waiters();
+        // A workflow pass that failed or stopped never runs this retry: the
+        // stop may have looked for the wake before this attempt recorded it.
+        if slot.topology.workflow.is_some() && crate::workflow::pass_dead(&slot) {
+            crate::workflow::items_dropped(&slot, self.cancel_retry(&slot));
+        }
         Answered::Released
     }
 
@@ -425,7 +459,7 @@ impl PollCore {
     /// Release the gates and claim the round anything left owes.
     /// `drain_active` drops BEFORE inflight so a producer observing
     /// inflight=false can become the next drainer at once.
-    fn release_and_rearm(&self, slot: &Arc<CellSlot>) {
+    pub(crate) fn release_and_rearm(&self, slot: &Arc<CellSlot>) {
         // A Cell owing an undelivered push is handed no new activation: the
         // gates it already holds stay held, exactly as they do across a retry
         // backoff, and nothing else could have drained it then either. The
@@ -556,13 +590,15 @@ impl PollCore {
                 "{describe}: runner is shutting down"
             )));
         }
-        let (reply, rx) = crossbeam::channel::bounded(1);
+        let (tx, rx) = crossbeam::channel::bounded(1);
         self.submit_direct(EnginePayload::Command {
-            target: crate::host::cell_ref_of(slot),
+            slot: Arc::clone(slot),
             change_seq: slot.change_seq.load(Ordering::Acquire),
-            factory: slot.topology.factory_id.to_string(),
             kind,
-            reply,
+            values: Vec::new(),
+            reply: CommandReply::new(move |outcome| {
+                let _ = tx.send(outcome);
+            }),
         });
         match rx.recv_timeout(wait) {
             Ok(outcome) => Ok(outcome),
@@ -576,6 +612,45 @@ impl PollCore {
                 format!("{describe}: host context dropped the activation"),
             )),
         }
+    }
+
+    /// A workflow Cell's undo as a `CompensateRun` over its recorded outputs;
+    /// the caller holds the Cell's gate until `reply` is answered.
+    pub fn submit_undo(
+        &self,
+        slot: &Arc<CellSlot>,
+        values: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+        reply: CommandReply,
+    ) {
+        let outputs = values
+            .iter()
+            .filter_map(|value| value.downcast_ref::<crate::host::HostPayload>())
+            .map(|payload| payload.bytes.clone())
+            .collect();
+        self.submit_direct(EnginePayload::Command {
+            slot: Arc::clone(slot),
+            change_seq: slot.change_seq.load(Ordering::Acquire),
+            kind: crate::schema::ActivationKind::CompensateRun { outputs },
+            values,
+            reply,
+        });
+    }
+
+    /// Disarm a Cell's pending retry: the wake goes, the re-handed items are
+    /// dropped, and the gates are released as the promotion would have.
+    /// Answers how many items were dropped; zero when none was pending.
+    pub fn cancel_retry(&self, slot: &Arc<CellSlot>) -> usize {
+        if !self.wakes.take_retry(slot) {
+            return 0;
+        }
+        let dropped = {
+            let mut held = slot.pending_retry.lock_recover();
+            let count = held.len();
+            held.clear();
+            count
+        };
+        self.release_and_rearm(slot);
+        dropped
     }
 
     /// Run `f` under the cell's handout exclusivity: it waits out any

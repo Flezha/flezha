@@ -16,7 +16,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use flz_core::bench_support::{
     allocations, fan_in, measurement_secs, ok_effect, report, stream_pair, Counting, Settle,
 };
-use flz_core::operative::instance::StreamInstance;
+use flz_core::operative::instance::OperativeInstance;
 use flz_core::operative::registry::{get_class, OperativeRegistry};
 use flz_core::runner::OperativeDispatchHandle;
 use flz_core::schema;
@@ -100,7 +100,7 @@ fn host_loop_bench(c: &mut Criterion) {
     let registry = Arc::new(OperativeRegistry::new());
     let instance_ids: Vec<String> = (0..n_instances).map(|i| format!("host-loop-{i}")).collect();
     for id in &instance_ids {
-        registry.register_stream(StreamInstance::new(
+        registry.register(OperativeInstance::new(
             Arc::clone(&topology),
             Arc::from(id.as_str()),
         ));

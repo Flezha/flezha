@@ -1,10 +1,9 @@
-//! The driver's host path, served the way a C-ABI host serves it: the
+//! A workflow's host path, served the way a C-ABI host serves it: the
 //! `init_values` a bind carries land as state through the apply-state
-//! command before the first message, and a message the host's entry decoder
-//! rejects parks under the entry channel while the run waits for the next
-//! one instead of ending, and a durable run's park releases it. A stream
-//! given the same verdict parks the item as it parks any non-retryable
-//! failure.
+//! command before the first message, a message the host's entry decoder
+//! rejects rides the ladder and parks under the entry channel while the run
+//! waits for the next one instead of ending, and a durable run's park
+//! releases it. A stream given the same verdict parks the item at once.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -17,12 +16,11 @@ use crate::host::{apply_result, HostPayload};
 use crate::poll_core::{EnginePayload, Polled};
 use crate::runner::{RunnerMessage, RunnerNode};
 use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
-use crate::workflow::step::StepWork;
 use crate::{schema, state_sink};
 
 /// Answers every activation the poll core hands out while it lives: an
-/// apply-state command is recorded and answered applied; each item of a step
-/// is answered with `verdict` over the host payload's bytes, an `Ok` item
+/// apply-state command is recorded and answered applied; each work item is
+/// answered with `verdict` over the host payload's bytes, an `Ok` item
 /// echoing its bytes to the plugin channel `out`.
 struct FakeHost {
     stop: Arc<AtomicBool>,
@@ -90,18 +88,6 @@ fn answer(
                 .push(String::from_utf8_lossy(state_json).to_string());
             schema::ActivationOutcome::StateApplied
         }
-        EnginePayload::WorkflowStep(step) => {
-            let bytes: Vec<Vec<u8>> = match &step.work {
-                StepWork::Items(values) => values.iter().map(host_bytes).collect(),
-                StepWork::Compensate(_) => Vec::new(),
-            };
-            schema::ActivationOutcome::Work(
-                bytes
-                    .iter()
-                    .map(|bytes| effect(verdict(bytes), bytes))
-                    .collect(),
-            )
-        }
         EnginePayload::Work { items, .. } => schema::ActivationOutcome::Work(
             items
                 .iter()
@@ -154,20 +140,26 @@ fn effect(verdict: schema::Verdict, bytes: &[u8]) -> schema::ItemEffect {
     }
 }
 
+use crate::test_support::host_class::bind as start;
+
 /// One message into workflow `id` on its first entry channel.
 fn feed(node: &RunnerNode, id: &str, message: &[u8]) {
-    let instance = node.get_workflow(id).expect("the workflow is registered");
-    crate::routing::feed_workflow_frame(&instance, message.to_vec(), &Default::default());
+    node.operative_dispatch_handle().dispatch(
+        id,
+        message.to_vec(),
+        &Default::default(),
+        stream_pair().0,
+    );
 }
 
 /// One message into workflow `id` naming `channel`, at input-log `offset`.
 fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
-    let instance = node.get_workflow(id).expect("the workflow is registered");
     let metadata = std::collections::HashMap::from([
         ("channel".to_string(), channel.to_string()),
         ("flz.offset".to_string(), offset.to_string()),
     ]);
-    crate::routing::feed_workflow_frame(&instance, message.to_vec(), &metadata);
+    node.operative_dispatch_handle()
+        .dispatch(id, message.to_vec(), &metadata, stream_pair().0);
 }
 
 /// The `IterPark` workflow `id`'s run shipped when it suspended.
@@ -246,11 +238,9 @@ fn a_host_workflow_takes_init_values_as_state_before_its_first_message() {
     crate::host::register_host_class_json(host_class::workflow_json(&id, &["in"], 1).as_bytes())
         .expect("class registers");
     let host = FakeHost::serve(|_| schema::Verdict::Ok);
-    let node = RunnerNode::new("test-ns".to_string());
+    let mut node = RunnerNode::new("test-ns".to_string());
 
-    assert!(node
-        .start_workflow(id.clone(), "host-init-1".into(), r#"{"p0":{"budget":100}}"#)
-        .expect("init_values is a JSON object"));
+    assert!(start(&mut node, &id, "host-init-1", r#"{"p0":{"budget":100}}"#, 0).is_empty());
     // The state crossed before the bind was answered, and nothing else did.
     assert_eq!(host.applied(), vec![r#"{"budget":100}"#.to_string()]);
 
@@ -263,11 +253,9 @@ fn a_host_workflow_takes_init_values_as_state_before_its_first_message() {
     );
     assert_eq!(done.0, "ok");
 
-    let refused = node
-        .start_workflow(id, "host-init-2".into(), "not json")
-        .expect_err("a document that is not a JSON object is refused");
-    assert!(refused.to_string().contains("init_values"), "{refused}");
-    assert!(node.get_workflow("host-init-2").is_none());
+    let refused = start(&mut node, &id, "host-init-2", "not json", 0);
+    assert!(refused[0].contains("init_values"), "{refused:?}");
+    assert!(!node.has_operative("host-init-2"));
 }
 
 #[test]
@@ -277,11 +265,9 @@ fn a_durable_start_refused_for_its_init_values_leaves_no_cell_registered() {
     let durable = host_class::workflow_json(&id, &["in"], 1)
         .replace(r#""persistent":false"#, r#""persistent":true"#);
     crate::host::register_host_class_json(durable.as_bytes()).expect("class registers");
-    let node = RunnerNode::new("test-ns".to_string());
+    let mut node = RunnerNode::new("test-ns".to_string());
 
-    assert!(node
-        .start_workflow(id, "host-refused-1".into(), "not json")
-        .is_err());
+    assert!(!start(&mut node, &id, "host-refused-1", "not json", 0).is_empty());
     assert!(!crate::flusher::CellFlusher::instance().holds_class("host-refused-1"));
 }
 
@@ -305,10 +291,8 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
             schema::Verdict::Ok
         }
     });
-    let node = RunnerNode::new("test-ns".to_string());
-    assert!(node
-        .start_workflow(id, "host-unread-1".into(), "")
-        .expect("init_values is a JSON object"));
+    let mut node = RunnerNode::new("test-ns".to_string());
+    assert!(start(&mut node, &id, "host-unread-1", "", 0).is_empty());
 
     feed(&node, "host-unread-1", b"bad");
     spin_until("the unreadable message to be parked", || {
@@ -352,12 +336,10 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
     let _host = FakeHost::serve(|_| schema::Verdict::Unreadable {
         message: "not json".to_string(),
     });
-    let node = RunnerNode::new("test-ns".to_string());
+    let mut node = RunnerNode::new("test-ns".to_string());
 
     // The host's decoder refuses the message, so the stage parks it.
-    assert!(node
-        .start_workflow(id.clone(), "host-release-1".into(), "")
-        .expect("init_values is a JSON object"));
+    assert!(start(&mut node, &id, "host-release-1", "", 0).is_empty());
     feed_at(&node, "host-release-1", "in", 3, b"bad");
     let park = await_park(&rx, "host-release-1");
     assert_eq!((park.iter, park.consumed_offset), (0, Some(3)));
@@ -365,9 +347,7 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
     // The entrance parks a name the class does not declare. The rebound run
     // owed that message, and still suspends on the idle window rather than
     // holding out for a message that will never reach it.
-    assert!(node
-        .start_workflow_resumable(id, "host-release-2".into(), "", 0, 1, None)
-        .expect("init_values is a JSON object"));
+    assert!(start(&mut node, &id, "host-release-2", "", 1).is_empty());
     feed_at(&node, "host-release-2", "refunds", 4, b"bad");
     let park = await_park(&rx, "host-release-2");
     assert_eq!(park.consumed_offset, Some(4));
@@ -391,13 +371,14 @@ fn a_stream_given_the_unreadable_verdict_parks_the_item() {
              "tasklets":[{{"name":"p0"}}]}}"#
     );
     crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-    let instance = crate::operative::instance::StreamInstance::of_class(&id, &format!("{id}_inst"))
-        .expect("class registered");
+    let instance =
+        crate::operative::instance::OperativeInstance::of_class(&id, &format!("{id}_inst"))
+            .expect("class registered");
     let _host = FakeHost::serve(|_| schema::Verdict::Unreadable {
         message: "not json".to_string(),
     });
     let registry = Arc::new(crate::operative::registry::OperativeRegistry::new());
-    registry.register_stream(Arc::clone(&instance));
+    registry.register(Arc::clone(&instance));
 
     crate::routing::OperativeDispatchHandle { registry }.dispatch(
         &instance.instance_id,

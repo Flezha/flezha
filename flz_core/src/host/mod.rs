@@ -15,7 +15,6 @@ mod decl;
 mod issue;
 mod prepare;
 mod register;
-mod workflow;
 
 #[cfg(test)]
 mod activation_tests;
@@ -24,9 +23,10 @@ mod check_tests;
 #[cfg(test)]
 mod decl_tests;
 
+pub use activation::{abandon_activation, apply_result, to_schema};
 #[cfg(feature = "bench-internals")]
 pub(crate) use activation::empty_effect;
-pub use activation::{abandon_activation, apply_result, to_schema};
+pub(crate) use activation::settle_workflow_undo;
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
     apply_state_locked, restore_fold_exclusive, snapshot_frame_crossing, state_json_locked,
@@ -45,4 +45,3 @@ pub use register::{
     check, check_class_json, register_host_class, register_host_class_json, Derived,
     DerivedChannel, DerivedEdge, MAX_MAILBOX_CAPACITY,
 };
-pub use workflow::fold_workflow_outcome;

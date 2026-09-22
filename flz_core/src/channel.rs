@@ -212,7 +212,7 @@ pub type CellBuilder =
 
 pub struct BuildCellArgs<'a> {
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
-    pub instance: std::sync::Weak<crate::operative::instance::StreamInstance>,
+    pub instance: std::sync::Weak<crate::operative::instance::OperativeInstance>,
     /// The operative INSTANCE id, which keys the WAL.
     pub instance_id: Arc<str>,
     pub tasklet_id: TaskletId,

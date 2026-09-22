@@ -128,16 +128,19 @@ is the wire, or a **workflow stage's** released value. A `KeyRequest` carries
 entry payloads only, so the prepare crossing SHALL always apply the chain.
 
 For a **workflow stage** activation the shape is different, because the core does
-not route a workflow stage's output on `(edge, key)`: the driver holds the
-released batch, hands it to every child of the node, and journals it per
-producing channel. A host completing a workflow stage SHALL therefore emit
-**exactly one edge output per released value**, naming the **producing channel**,
+not route a workflow stage's output on `(edge, key)` at emit time: it holds the released
+value on the instance's pass sheet, journals it per producing channel, and on the stage's
+commit ack delivers it to every child's cells (a static consumer's declared cells all receive
+it, and the host keeps the ones `cells_for` names). A host completing a workflow stage SHALL
+therefore emit **exactly one edge output per released value**, naming the **producing channel**,
 carrying the value **untransformed and unkeyed** — one emit SHALL NOT become one
 output per consumer, whatever the channel's consumer count. Each consumer edge's
 transform chain and key SHALL be evaluated **at the consumer**, when the host
 receives the stage input carrying that value, so that a live run and a journal
 re-seed apply the edge at the same seam exactly once. The core SHALL NOT consult
-an edge output's consumer field on this path.
+an edge output's consumer field on this path. For a typed class the core runs the edge chain
+and `cells_for` on the producing worker before the output is held, and journals the value
+before the chain.
 
 #### Scenario: Replay re-keys identically
 - **WHEN** a journaled slice is re-forwarded by the controller through a keyed edge
@@ -149,11 +152,15 @@ an edge output's consumer field on this path.
 
 #### Scenario: A workflow stage emits once per released value
 - **WHEN** a host workflow tasklet emits one value on a producing channel that declares two consumers
-- **THEN** the completion SHALL carry exactly one edge output for that value, and the stage's released batch SHALL hold one value — not one per consumer — so the journaled handoff, every downstream node's input batch and every downstream plugin output SHALL be identical to the single-consumer case
+- **THEN** the completion SHALL carry exactly one edge output for that value, and the stage's held batch SHALL hold one value — not one per consumer — so the journaled handoff, every downstream node's input batch and every downstream plugin output SHALL be identical to the single-consumer case
 
 #### Scenario: A stream inter-tasklet transform applies exactly once
 - **WHEN** a `map` declared on an inter-tasklet edge between two stream tasklets carries a value from the producing activation to the consuming one
 - **THEN** the consuming tasklet SHALL receive the value with the map applied exactly once, and no host SHALL compose the chain with itself at delivery
+
+#### Scenario: A typed workflow edge applies on the worker, before the hold
+- **WHEN** a Rust workflow tasklet emits a value on a channel whose consumer edge declares a `map` and whose consumer declares static `cell_keys`
+- **THEN** the map and `cells_for` SHALL run on the worker completing that item, the held output SHALL name the consumer cells, and the thread that later releases it on the commit ack SHALL run neither
 
 ### Requirement: Host classes reach full capability
 
@@ -201,53 +208,75 @@ core-side; a prepare failure enters the input channel's retry→park ladder.
 
 ### Requirement: Workflow lifecycles run under poll
 
-Workflow classes of BOTH language paths SHALL be driven by the core's workflow
-driver with stage execution handed out as activations through the poll seam:
-the driver accumulates a stage's per-cell batch, submits one step activation
-per cell partition, and its barriers await step completions AND controller
-acks in the same order the driver scenarios pin per loop mode
-(`Once | PerInput | Chained`). No core-owned thread SHALL execute user code
-and no core thread SHALL block awaiting a host completion — the driver's
-count-based barrier is the only wait, and the work-stealing pool SHALL NOT
-exist. Saga compensation crosses as a dedicated activation flavor carrying the
-recorded outputs; the task-journal, staged outbox, durable loop, suspension,
-cell-retry, and rewind semantics are unchanged. Every workflow class
-declares tasklets, so every workflow host class runs through step
-activations; a step completion MAY carry a tasklet's completion request,
-which the driver folds at the iteration barrier.
+Workflow classes of BOTH language paths SHALL run their stages through the poll seam as
+ordinary cell work: a stage's items are admitted to its cells' mailboxes through the stream's
+routing (`deliver_to_consumer`: single, static and dynamic delivery, the static form's host
+branch included), handed out as `Work` activations under per-cell exclusivity, fairness and the
+in-flight cap, and retried on the core's per-item ladder. A cell's inter-tasklet output SHALL
+be held on the instance's pass sheet at the routing seam, post-transform and addressed to its
+consumer cells, and SHALL be released into those mailboxes only on the producer stage's commit
+ack. A stage SHALL be done when every item admitted for it has settled, counted, and SHALL
+commit then, whether or not a sibling stage is still running. No core-owned thread SHALL
+execute user code, no core thread SHALL block awaiting a host completion, and no thread SHALL
+exist per instance. Saga compensation crosses as the `CompensateRun` activation, carrying the
+recorded outputs, for both language paths, with its completion an event on the sheet; the
+task-journal, staged outbox, durable loop, suspension and rewind semantics are unchanged. Every
+workflow class declares tasklets, so every workflow host class runs through work activations; a
+completion MAY carry a tasklet's completion request, which the sheet folds at the iteration
+seal.
 
 #### Scenario: A host step completion ends its workflow
-- **WHEN** a workflow host class's tasklet answers its step activation with a completion request and a result
-- **THEN** the driver SHALL commit the iteration and drive the same `WorkflowCompleted` teardown the typed path produces, carrying that result
 
-#### Scenario: A structured chain's barrier waits for the host and the ack
-- **WHEN** a durable structured workflow class finishes a stage's activations
-- **THEN** the driver SHALL commit the task boundary only after every cell's completion arrived AND the controller acked `TaskCommit`, and a crash-resume SHALL skip journaled tasks exactly as the driver suites pin
+- **WHEN** a workflow host class's tasklet answers its activation with a completion request and a result
+- **THEN** the sheet SHALL seal the iteration on the pass's last ack and drive the same `WorkflowCompleted` teardown the typed path produces, carrying that result
 
-#### Scenario: A Java workflow step costs one thread, not two
-- **WHEN** a Java workflow class runs a stage step
-- **THEN** exactly one thread SHALL be occupied by that step (the SDK thread
-  running the code); no core thread SHALL be parked awaiting its reply — the
-  reply SHALL be collected by the driver at its stage barrier
+#### Scenario: A stage commits on its last item and releases on the ack
 
-#### Scenario: Typed Rust steps run on the SDK's poll workers
-- **WHEN** a typed Rust workflow class runs a parallel stage
-- **THEN** its per-cell step activations SHALL be picked up and executed by
-  the same worker threads that serve stream activations, sibling cells
-  MAY genuinely interleave, and a step that panics SHALL report failure
-  through the barrier without killing the worker that ran it
+- **WHEN** a durable structured workflow class's stage has every admitted item settled
+- **THEN** the worker that settled the last one SHALL send `TaskCommit` for that stage, the stage's children SHALL receive their input only once the controller acks it, and a crash-resume SHALL skip journaled tasks exactly as the driver suites pin
+
+#### Scenario: A workflow step costs no thread beyond the one running it
+
+- **WHEN** a Java or a Rust workflow class runs a stage
+- **THEN** the only thread occupied by that stage SHALL be the SDK thread running the code; no
+  core thread SHALL wait for its reply, and its answer SHALL advance the sheet on the thread
+  that completes it
+
+#### Scenario: Stage work takes its fair turn under the cap
+
+- **WHEN** a workflow stage's items are admitted while stream cells on the same runner have work
+  queued and the in-flight cap is reached
+- **THEN** the stage's cells SHALL be handed out in the ready queue's order like any cell, and
+  SHALL NOT be served ahead of queued cell work or outside the cap
+
+#### Scenario: A host workflow's static cells receive their items
+
+- **WHEN** a Java, Node, Python, Ruby or PHP workflow tasklet declares static `cell_keys` and a
+  stage releases a value to it
+- **THEN** every declared cell SHALL be offered the value and each host cell SHALL run the ones
+  `cells_for` names, exactly as a stream tasklet of that host with the same keys does
+
+#### Scenario: A sibling failure compensates a committed sibling
+
+- **WHEN** in an A→(B,C) tree B commits and C then fails after exhausting its ladder
+- **THEN** B's commit SHALL stand until compensation, and compensation SHALL undo C's cells that
+  ran, then B, then A, in reverse completion order
 
 ### Requirement: Deferred wakes never hold a thread
 
 The core SHALL maintain one deferred-wake list — "this cell becomes eligible
-at time T" — serviced by threads already waiting in `poll` and checked on every
-`poll` entry. Recording a deferred wake SHALL return the calling thread
-immediately. A retryable failure's backoff SHALL be expressed as a deferred
+at time T", or "this workflow instance's deadline is due at T" — serviced by threads already
+waiting in `poll` and checked on every `poll` entry. Recording a deferred wake SHALL return the
+calling thread immediately. A retryable failure's backoff SHALL be expressed as a deferred
 wake: the failed head and unprocessed tail ride the existing per-cell
 holdback, the cell's exclusivity gates stay held across the window exactly as
 they are across an in-line backoff, and the release-then-reclaim runs when the
-entry comes due. No thread SHALL sleep out a backoff delay, and no dedicated
-thread SHALL exist to service the list.
+entry comes due. A workflow instance's deadlines (park idle, `max_duration`, the commit-ack
+re-send and the restore-gate cap) SHALL be entries on the same list, keyed by instance and
+deadline kind so re-arming replaces, and a promoted deadline SHALL decide under the instance's
+lock and act without waiting; a deadline that no longer applies SHALL be a no-op. No thread
+SHALL sleep out a backoff delay or a workflow deadline, and no dedicated thread SHALL exist to
+service the list.
 
 #### Scenario: Correlated failure does not stall the runner
 
@@ -272,6 +301,20 @@ thread SHALL exist to service the list.
 - **THEN** pollers SHALL observe shutdown immediately, with no backoff sleep
   left to run out
 
+#### Scenario: A workflow deadline that no longer applies does nothing
+
+- **WHEN** a `PerInput` instance's park-idle deadline comes due after a message already started
+  its next pass, or a commit-ack deadline comes due after the ack arrived
+- **THEN** the promoting poller SHALL find the deadline stale under the instance's lock and
+  SHALL neither park the instance nor re-send the barrier
+
+#### Scenario: A due park-idle parks without a thread
+
+- **WHEN** a journaling `PerInput` instance has waited past `FLEZHA_WORKFLOW_PARK_IDLE_MS` at a
+  committed boundary with nothing queued and no inbox tail owed
+- **THEN** the poller promoting the deadline SHALL send `IterPark` and mark the instance parked,
+  and no thread SHALL have waited out the idle window
+
 ### Requirement: The core caps jobs underway and signals starvation
 
 The core SHALL own one process-wide limit on concurrently outstanding work
@@ -279,8 +322,10 @@ activations (default 1024, env `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), enforced at
 work handout: when the limit is reached, `poll` SHALL NOT hand out cell work,
 and a completion that drops the count below the limit SHALL resume handout.
 The limit SHALL NOT gate direct command activations (restore folds, snapshot
-requests, workflow step crossings — these are barrier-bounded by their drivers)
-nor the inline-serve deadlock-avoidance path.
+requests, live state reads, the workflow undo's `CompensateRun`, prepare crossings: these
+answer a rendezvous or an event, never a queued work item) nor the inline-serve
+deadlock-avoidance path. A workflow stage's cell work is cell work and SHALL be counted and
+capped like any other.
 
 The core SHALL expose starvation — runnable work exists, no thread is inside
 `poll`, and the limit is not reached — as a blocking wait a host thread may
@@ -313,41 +358,11 @@ every `poll` pass promotes what has come due.
   waiting in `poll`) and the limit is not reached
 - **THEN** a host thread parked in the starvation wait SHALL be woken
 
-### Requirement: A running workflow instance holds one driver thread
+#### Scenario: A workflow stage is counted against the cap
 
-The core SHALL drive each actively-running workflow instance from one dedicated
-thread, which holds the chain's position as a call stack and SHALL NOT run
-user code. This is a stated design position, not an incidental one: the
-per-instance resident cost SHALL be dominated by the instance's heap rather
-than by that thread, and the thread SHALL NOT poll while waiting at a stage
-barrier. Its stack size SHALL be configurable
-(`FLEZHA_WORKFLOW_DRIVER_STACK_KIB`) and SHALL default to the platform default.
-
-A change that would make a workflow instance's concurrency bounded by work in
-flight rather than by instance count SHALL be justified against a measurement,
-not a prediction; `sdk/rust/benches/workflow_scaling.rs` is that measurement, and
-`docs/resilience/workflow_operative.md` records the envelope it produced.
-
-#### Scenario: A blocked population's cost is its heap, not its threads
-
-- **WHEN** thousands of workflow instances are simultaneously blocked
-- **THEN** the resident cost per instance SHALL be dominated by per-instance
-  heap, and SHALL NOT change materially with the configured driver stack size —
-  a blocked driver's stack is not resident
-
-#### Scenario: A driver waiting at a stage barrier consumes no CPU
-
-- **WHEN** a workflow instance is blocked mid-step, waiting on its stage barrier
-- **THEN** its driver SHALL wait without polling, so a population blocked in
-  that state SHALL consume no measurable CPU
-
-#### Scenario: The scaling probe answers the question on demand
-
-- **WHEN** the per-instance cost of the driver thread is re-opened
-- **THEN** the probe SHALL report resident and virtual cost per instance,
-  thread count per instance, CPU while blocked, start and teardown latency, and
-  an unrelated instance's latency beside the population — for a population
-  blocked mid-step and for one blocked in the inbox wait
+- **WHEN** the outstanding work count is at the limit and a workflow stage's items are admitted
+- **THEN** the stage's cells SHALL wait in the ready queue like any cell, and SHALL be handed
+  out only as completions bring the count below the limit
 
 ### Requirement: Handout liveness is observable without a new frame
 
@@ -545,4 +560,55 @@ requirement.
   encoders in the Python and PHP SDKs do
 - **THEN** that host SHALL hand those bytes over unchanged and SHALL NOT introduce a buffer, a
   copy or a conversion to satisfy this requirement
+
+### Requirement: A running workflow instance holds no thread of its own
+
+A workflow instance SHALL own no thread and SHALL wait on no thread. Its position in the pass
+SHALL be data on the instance (the pass sheet: iteration, stages in flight and done, held
+outputs, completion, phase) guarded by one per-instance lock, and every transition SHALL be made
+by the thread that brings the event: the worker that settles a stage's last item marks the stage
+done and sends its journal barrier; the control-channel reader that brings the barrier's ack
+releases the held outputs into the next stage's cell mailboxes; the data-channel reader that
+brings a message starts a pass or queues the message; the reader that brings a stop marks
+cancel; the reader that brings the last restore record opens the restore gate; park-idle,
+`max_duration`, the commit-ack re-send and the restore-gate cap are entries on the deferred-wake
+list. Bookkeeping SHALL NOT block and SHALL NOT run author code; edge transforms and `cells_for`
+run on the producing worker before an output is held, a journal write is a frame and its ack an
+event. There SHALL be no bookkeeping thread pool. A live instance and a resumed one SHALL share
+one representation: the sheet is what the journal's resume state describes.
+
+The reason is one mechanism: after a proper sleep the only duty a per-instance thread would
+have is to hold a stage number, and a mechanism whose sole purpose is to hold one number beside
+the mechanism every stream runs on is a parallel implementation. `sdk/rust/benches/workflow_scaling.rs`
+stays as the regression gate: after this change ten thousand awake instances SHALL NOT cost more
+resident memory than the envelope recorded in `docs/resilience/workflow_operative.md`, and a
+population waiting in any state SHALL consume no measurable CPU, because no wait polls.
+
+#### Scenario: A waiting population costs no CPU
+
+- **WHEN** ten thousand `PerInput` instances wait for their next message, or ten thousand
+  instances wait for a commit ack
+- **THEN** no thread SHALL exist on their behalf and the process SHALL consume no measurable CPU
+  for them, where the polling waits cost about 1.6 of 8 cores before
+
+#### Scenario: A blocked population's cost is its heap alone
+
+- **WHEN** ten thousand instances are blocked mid-stage in author code
+- **THEN** the threads in use SHALL be the SDK workers running that code and nothing else, and
+  the resident cost per instance SHALL NOT exceed the recorded envelope
+
+#### Scenario: The probe answers the question on demand
+
+- **WHEN** the per-instance cost of a workflow is re-opened
+- **THEN** the probe SHALL report resident and virtual cost per instance, thread count per
+  instance, CPU while waiting, start and teardown latency, and an unrelated instance's latency
+  beside the population, for a population blocked mid-stage and for one waiting for input
+
+#### Scenario: A stop reaches an instance with no thread to interrupt
+
+- **WHEN** `WorkflowStop` arrives while an instance waits for a message, waits for an ack, or
+  has a cell in a retry backoff
+- **THEN** the reader that brings it SHALL end the wait at once: a waiting instance ends
+  `cancelled`, an owed ack is dropped and compensation starts, a pending backoff is disarmed and
+  the cell's gates released, with no tick to wait for
 

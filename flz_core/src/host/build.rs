@@ -273,28 +273,22 @@ fn host_facts(
 }
 
 /// The workflow half: the chain's spec over the topology the stream half built.
-pub(super) fn register_workflow_class(
+pub(super) fn workflow_spec(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
-    topology: Arc<OperativeTopology>,
     dag: TaskDag,
     loop_mode: LoopMode,
-) {
-    crate::workflow::registry::register_class(
-        topology.factory_id,
-        WorkflowSpec {
-            topology,
-            dag,
-            max_duration: workflow
-                .max_duration_ms
-                .map(std::time::Duration::from_millis),
-            rollback_mode: rollback_of(workflow.rollback_mode),
-            loop_mode,
-            wake_after: workflow.wake_after_ms.map(std::time::Duration::from_millis),
-            persistence_enabled: decl.persistent,
-            sync_durability: decl.sync_durability,
-        },
-    );
+) -> WorkflowSpec {
+    WorkflowSpec {
+        dag,
+        max_duration: workflow
+            .max_duration_ms
+            .map(std::time::Duration::from_millis),
+        rollback_mode: rollback_of(workflow.rollback_mode),
+        loop_mode,
+        wake_after: workflow.wake_after_ms.map(std::time::Duration::from_millis),
+        sync_durability: decl.sync_durability,
+    }
 }
 
 fn rollback_of(mode: HostRollbackMode) -> RollbackMode {

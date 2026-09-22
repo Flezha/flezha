@@ -547,8 +547,6 @@ defmodule Flezha.Config.Keys do
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_REQUEST_RETRY_MS"},
     {:credit_park_interval_ms, :ms, 50, runtimes: [:rust], env: "FLEZHA_CREDIT_PARK_INTERVAL_MS"},
     {:recovery_window_ms, :ms, nil, runtimes: [:rust], env: "FLEZHA_RECOVERY_WINDOW_MS"},
-    {:workflow_driver_stack_kib, :int, nil,
-     runtimes: [:rust], env: "FLEZHA_WORKFLOW_DRIVER_STACK_KIB"},
     {:workflow_park_idle_ms, :ms, 5_000,
      runtimes: [:rust, :elixir_sdk], env: "FLEZHA_WORKFLOW_PARK_IDLE_MS"},
     {:control_ack_timeout_ms, :ms, 10_000,

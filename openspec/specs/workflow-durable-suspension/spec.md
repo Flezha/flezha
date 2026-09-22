@@ -39,17 +39,17 @@ Message payloads SHALL live only in the input log, never in `task.journal`.
 
 ### Requirement: A waiting loop parks durably and is evicted from memory
 
-The SDK SHALL, when a durable workflow instance of any loop mode blocks on an empty
-inbox at a committed iteration boundary — the boundary before its first pass included —
-send a park notification (iteration N, optional wake deadline, and the highest inbox
-offset the run parked to the dead-letter queue unread) and the controller SHALL journal
-`parked(N[, deadline], offset)`, release the inbox up to that offset as it releases an
-iteration's consumed input, then tear the instance down without a terminal completion:
-registry state `suspended`, zero live runner resources. An iteration boundary
-SHALL be the only place an instance waits for a message: no tasklet SHALL block
-on its inbox mid-iteration, so parking SHALL only occur at a committed
-iteration boundary. An eviction-hysteresis knob SHALL avoid park/rehydrate
-thrash under trickling input.
+The SDK SHALL, when a durable workflow instance of any loop mode has nothing queued at a
+committed iteration boundary past the idle threshold, the boundary before its first pass
+included, send a park notification (iteration N, optional wake deadline) and the controller
+SHALL journal `parked(N[, deadline])`, then tear the instance down without a terminal
+completion: registry state `suspended`, zero live runner resources. The idle threshold SHALL be
+timed as a deadline on the core's deferred-wake list, promoted by a thread already waiting in
+`poll`, and SHALL hold no thread; a message that arrives before it comes due SHALL make the
+deadline a no-op. An iteration boundary SHALL be the only place an instance waits for a
+message: no tasklet SHALL block on its inbox mid-iteration, so parking SHALL only occur at a
+committed iteration boundary. An eviction-hysteresis knob SHALL avoid park/rehydrate thrash
+under trickling input.
 
 The suspended Overwatch SHALL hibernate: a sleeper holds nothing of its bind on
 its heap (the restore frames and plugin setup are garbage once it parks).
@@ -61,7 +61,7 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 
 #### Scenario: Idle chat operative frees the runner
 
-- **WHEN** a looping instance commits iteration N and its inbox stays empty past the idle threshold
+- **WHEN** a looping instance commits iteration N and nothing arrives past the idle threshold
 - **THEN** `parked(N)` SHALL be journaled, the instance SHALL be removed from runner memory, and the registry SHALL report it `suspended`
 
 #### Scenario: A once instance waiting for its first message parks
@@ -69,15 +69,21 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 - **WHEN** a durable `once` instance is started without a message and none arrives within the idle threshold
 - **THEN** `parked(0)` SHALL be journaled, the instance SHALL be removed from runner memory, the registry SHALL report it `suspended`, and the next message SHALL rehydrate it into pass 0
 
-#### Scenario: A message parked unread does not wake the instance again
-
-- **WHEN** a durable instance waiting for a message receives one it cannot read, parks it to the dead-letter queue, and then waits past the idle threshold
-- **THEN** its park notification SHALL carry that message's inbox offset, the message SHALL no longer be undelivered, and the instance SHALL stay `suspended` rather than be rehydrated to receive it again; a rehydrated instance that was owed the message SHALL count it as received and park on the idle threshold
-
 #### Scenario: A message arriving mid-iteration waits for the boundary
 
 - **WHEN** a message reaches a `PerInput` instance while an iteration is still running
-- **THEN** it SHALL be journaled to the inbox and SHALL seed the next iteration after the current one commits, and no tasklet SHALL receive it mid-iteration
+- **THEN** it SHALL be journaled to the inbox, the runner SHALL hold it in the instance's queue, it SHALL seed the next iteration after the current one commits, and no tasklet SHALL receive it mid-iteration
+
+#### Scenario: A waiting population holds no thread
+
+- **WHEN** ten thousand instances wait at a committed boundary inside the idle threshold
+- **THEN** no thread SHALL exist on their behalf and the runner SHALL consume no measurable CPU
+  for the wait
+
+#### Scenario: A message parked unread does not wake the instance again
+
+- **WHEN** a durable instance waiting for a message receives one it cannot read, parks it to the dead-letter queue, and then waits past the idle threshold
+- **THEN** its park SHALL carry that message's offset, the message SHALL no longer be owed, and the instance SHALL stay `suspended` rather than be rehydrated to receive it again; a rehydrated instance that was owed the message SHALL count it as received and park on the idle threshold
 
 ### Requirement: A suspended instance rehydrates on new input or its durable timer
 

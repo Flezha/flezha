@@ -59,7 +59,7 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** | At-least-once | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
 | **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
 | **Controller redeploy while a workflow instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
-| **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and its driver's in-memory inbox is lost. Idempotent by author contract, or don't opt out. |
+| **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
 | **Workflow operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Poison payload** (fails every retry) | **No loss** | Cell continues | Retry-then-park: after `retry_max` attempts the payload is parked durably to the DLQ *before* the Cell advances. Only retention (30 d / 4 GiB, loud) ever discards it. |
 
@@ -337,7 +337,7 @@ commits an iteration, instead of growing the log without bound.
 
 **Guarantee.** Input sent to a suspended, crashed or migrating durable instance is **never
 lost**. Inspect with `flz state inbox <operative/instance>`, which renders the log of either
-kind. An opted-out class keeps only its driver's in-memory inbox. Mechanics:
+kind. An opted-out class keeps its waiting messages in memory only. Mechanics:
 [`workflow_operative.md`](workflow_operative.md) "Durable loop and suspension".
 
 ## Operative to operative: the cross-hop delivery guarantee

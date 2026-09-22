@@ -12,15 +12,13 @@ use serde_json::{Map, Value};
 
 use super::{CommandAction, Reply};
 use crate::cell::CellSlot;
-use crate::channel::TaskletId;
 use crate::dynamic::DynamicCellRegistry;
 use crate::error::Error;
-use crate::operative::instance::StreamInstance;
-use crate::operative::topology::{OperativeTopology, TaskletDescriptor};
+use crate::operative::instance::OperativeInstance;
+use crate::operative::topology::TaskletDescriptor;
 use crate::pb::CellState;
 use crate::runner::RunnerNode;
 use crate::util::LockRecover;
-use crate::workflow::instance::WorkflowInstance;
 
 /// The `change_seq` a single selected Cell was serialized at.
 pub const CHANGE_SEQ_META_KEY: &str = "flz.change_seq";
@@ -59,7 +57,7 @@ impl CommandAction for CellState {
             bytes,
         };
 
-        let instance = match runner.get_stream(&self.operative_id) {
+        let instance = match runner.get_operative(&self.operative_id) {
             Some(i) => i,
             None => {
                 errors.push(format!(
@@ -109,7 +107,7 @@ pub enum StatePurpose {
 }
 
 /// The whole-operative walk, which cannot be refused.
-pub fn serialize_operative_state(instance: &Arc<StreamInstance>) -> Vec<u8> {
+pub fn serialize_operative_state(instance: &Arc<OperativeInstance>) -> Vec<u8> {
     serialize_selected_state(instance, StateSelector::default(), StatePurpose::Migration)
         .map(|(payload, _seq)| payload)
         .unwrap_or_default()
@@ -120,7 +118,7 @@ pub fn serialize_operative_state(instance: &Arc<StreamInstance>) -> Vec<u8> {
 /// exactly one Cell. In a walk a failing Cell is logged and omitted; a
 /// read that names one Cell answers its failure, never an empty object.
 pub fn serialize_selected_state(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     selector: StateSelector<'_>,
     purpose: StatePurpose,
 ) -> Result<(Vec<u8>, Option<u64>), Error> {
@@ -166,7 +164,7 @@ pub fn serialize_selected_state(
 
 /// One tasklet's state into `top`: a lookup for one key, a walk for all.
 fn collect_tasklet(
-    instance: &Arc<StreamInstance>,
+    instance: &Arc<OperativeInstance>,
     tasklet_id: usize,
     selector: StateSelector<'_>,
     purpose: StatePurpose,
@@ -223,7 +221,7 @@ enum Keyset<'a> {
 }
 
 impl<'a> Keyset<'a> {
-    fn of(instance: &'a Arc<StreamInstance>, tasklet_id: usize) -> Option<Self> {
+    fn of(instance: &'a Arc<OperativeInstance>, tasklet_id: usize) -> Option<Self> {
         if let Some(Some(registry)) = instance.dynamic_registries.get(tasklet_id) {
             return Some(Keyset::Dynamic(registry));
         }
@@ -346,57 +344,9 @@ fn missing_cell_refusal(evicted: bool, tasklet_name: &str, key: &str) -> Error {
     })
 }
 
-/// What `apply_init_values` reads off an instance of either kind: the
-/// topology the names resolve against, and each tasklet's Cell slots with
-/// their static keys.
-pub trait CellView {
-    fn topology(&self) -> &Arc<OperativeTopology>;
-    /// The slots of `tasklet_id`: one for a single-mode tasklet, one per
-    /// declared key for a static one.
-    fn cells_of(&self, tasklet_id: TaskletId) -> Option<&[Arc<CellSlot>]>;
-    /// The slot index of a static tasklet's key.
-    fn key_to_idx(&self, tasklet_id: TaskletId, key: &str) -> Option<usize>;
-}
-
-impl CellView for StreamInstance {
-    fn topology(&self) -> &Arc<OperativeTopology> {
-        &self.topology
-    }
-
-    fn cells_of(&self, tasklet_id: TaskletId) -> Option<&[Arc<CellSlot>]> {
-        self.cells.get(tasklet_id as usize).map(Vec::as_slice)
-    }
-
-    fn key_to_idx(&self, tasklet_id: TaskletId, key: &str) -> Option<usize> {
-        self.cell_key_to_idx
-            .get(tasklet_id as usize)
-            .and_then(|m| m.get(key))
-            .copied()
-    }
-}
-
-impl CellView for WorkflowInstance {
-    fn topology(&self) -> &Arc<OperativeTopology> {
-        self.topology()
-    }
-
-    fn cells_of(&self, tasklet_id: TaskletId) -> Option<&[Arc<CellSlot>]> {
-        self.cells_of(tasklet_id)
-    }
-
-    // A static stage's slots are built in `cell_keys` order.
-    fn key_to_idx(&self, tasklet_id: TaskletId, key: &str) -> Option<usize> {
-        self.topology()
-            .tasklet(tasklet_id)?
-            .cell_keys
-            .iter()
-            .position(|k| *k == key)
-    }
-}
-
-/// Apply an `init_values` JSON blob onto a fresh instance of either kind;
+/// Apply an `init_values` JSON blob onto a fresh instance;
 /// empty is a no-op, an unknown tasklet or key is logged and skipped.
-pub fn apply_init_values(instance: &impl CellView, init_values: &str) -> Result<(), Error> {
+pub fn apply_init_values(instance: &OperativeInstance, init_values: &str) -> Result<(), Error> {
     if init_values.is_empty() {
         return Ok(());
     }
@@ -420,18 +370,18 @@ pub fn apply_init_values(instance: &impl CellView, init_values: &str) -> Result<
 }
 
 /// One `init_values` entry onto its tasklet's Cells.
-fn apply_tasklet(instance: &impl CellView, tasklet_name: &str, tasklet_value: Value) {
-    let Some(&tasklet_id) = instance.topology().tasklet_name_to_id.get(tasklet_name) else {
+fn apply_tasklet(instance: &OperativeInstance, tasklet_name: &str, tasklet_value: Value) {
+    let Some(&tasklet_id) = instance.topology.tasklet_name_to_id.get(tasklet_name) else {
         eprintln!(
             "[flezha] apply_init_values: ignoring unknown tasklet `{}`",
             tasklet_name
         );
         return;
     };
-    let Some(tasklet_desc) = instance.topology().tasklet(tasklet_id) else {
+    let Some(tasklet_desc) = instance.topology.tasklet(tasklet_id) else {
         return;
     };
-    let Some(tasklet_cells) = instance.cells_of(tasklet_id) else {
+    let Some(tasklet_cells) = instance.cells.get(tasklet_id as usize) else {
         return;
     };
 
@@ -453,7 +403,7 @@ fn apply_tasklet(instance: &impl CellView, tasklet_name: &str, tasklet_value: Va
 
 /// Static mode: `{cell_key: state, ...}`.
 fn apply_static(
-    instance: &impl CellView,
+    instance: &OperativeInstance,
     tasklet_id: u32,
     tasklet_desc: &TaskletDescriptor,
     tasklet_cells: &[Arc<CellSlot>],
@@ -473,8 +423,12 @@ fn apply_static(
         }
     };
     for (key, value) in inner {
-        let idx = match instance.key_to_idx(tasklet_id, key.as_str()) {
-            Some(i) => i,
+        let idx = match instance
+            .cell_key_to_idx
+            .get(tasklet_id as usize)
+            .and_then(|keys| keys.get(key.as_str()))
+        {
+            Some(&i) => i,
             None => {
                 eprintln!(
                     "[flezha] apply_init_values: ignoring unknown cell_key \

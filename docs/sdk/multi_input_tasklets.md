@@ -61,7 +61,7 @@ A panicking mapping is contained:
 | Where the mapping sits | What a panic does |
 | --- | --- |
 | stream, either source kind | Caught at the routing seam (`ConsumerEdge::transform_value`); the value climbs the source Channel's retry→DLQ ladder, the one a failing entry parse rides. On Java the mapping runs inside an activation, so a throw is that activation's failure and rides its ladder. |
-| workflow, forward accumulate | Runs on the driver thread in `extend_mapped`, outside any cell invocation; contained there and turned into a terminal chain error. The saga unwinds the stages **recorded as completed** and the instance still reports `WorkflowCompleted` with status `error`. Not retried — a pure mapping would panic identically. |
+| workflow, forward accumulate | Runs on the worker that produced the value, at the end of the producing item, inside the routing seam (`deliver_edge`); contained there and turned into a non-retryable failure of the producing stage. The producing Cell is recorded as having run, the saga unwinds the stages **recorded as completed**, and the instance still reports `WorkflowCompleted` with status `error`. Not retried — a pure mapping would panic identically. |
 | workflow, crash-resume re-seed | Contained the same way. The resumed iteration seeds its completed list from the journal (`journaled_stages`), so a producer the journal already committed is unwound even though this pass never re-ran it. |
 
 On the forward site the mapping runs after its producer's intent markers,
@@ -125,4 +125,4 @@ so both mapping sites are exercised; Java `E09_MergedInputTest`.
 
 - [`stream_transforms.md`](stream_transforms.md) — the edge closure a merge mapping is one link of.
 - [`rust_operative_architecture.md`](rust_operative_architecture.md) — the dispatch path and cell modes a merged Tasklet runs under.
-- [`../architecture/workflow_profile.md`](../architecture/workflow_profile.md) — the level barrier, abort and saga compensation a workflow merge rides.
+- [`../architecture/workflow_profile.md`](../architecture/workflow_profile.md) — the stage barrier, abort and saga compensation a workflow merge rides.

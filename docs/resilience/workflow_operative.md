@@ -13,11 +13,14 @@ repeated here; [`data_durability.md`](data_durability.md) says what is lost when
 - **Numbering.** Validation orders the tasklets in Kahn topological order from the entry; the
   position is the wire `task_idx`. A producer's index is always below its consumers', so
   completion order is topological and compensation simply reverses it.
-- **Scheduling.** A node is runnable once every producer feeding it has its commit acknowledged.
-  Every runnable node is submitted together — one step activation per cell, on the poll core's
-  direct queue, exempt from the in-flight cap — and joined on one barrier before the level
-  commits. A join is dispatched once, with every producer's batch appended to its input. Where a
-  step runs: [`../architecture/runner.md`](../architecture/runner.md#a-workflow-step).
+- **Scheduling.** A stage's items reach its cells the way a stream's do: through the routing
+  seam into each cell's mailbox, handed out by the poll core under per-cell exclusivity,
+  fairness and the in-flight cap (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), with no queue of their
+  own. A stage commits when its own last item settles, and what it emitted waits on the
+  instance until that commit is acknowledged, then enters its children's mailboxes. A node runs
+  once every producer feeding it in this pass has committed, a join with every producer's
+  items. Sibling stages run and commit independently. Where a stage runs:
+  [`../architecture/runner.md`](../architecture/runner.md#a-workflow-stage).
 - **Done.** The operative is `ok` when every leaf tasklet has committed. The SDK declares its
   leaf set (`leaf_tasks`) and compensable set (`compensable_tasks`) in the `AddOperative` response
   metadata, so the controller derives the same fact from the journal. A join with one committed
@@ -51,10 +54,11 @@ arrival, and even when an output of that run was lost rather than delivered. The
 `TaskJournal.pending_entries/1` is empty. A deadline hit is logged (`... still owed`) and the
 retained journal keeps the debt. `status = "error"` tears down identically — there is no
 platform retry of a failed tasklet. A frame addressed to a running instance takes the
-stream's entrance (channel resolved, parsed, transformed, parked when it cannot enter) into the
-instance's inbox, never dropped; every loop mode reads it: `Once` its one message, `PerInput`
-one per iteration, `Chained` the first and then its own carry. An instance with no message
-waits, and a second message to a `Once` instance is accepted and never read.
+stream's entrance (channel resolved, parsed, transformed, parked when it cannot enter), never
+dropped: it starts a pass when the instance is waiting at a committed boundary, and otherwise
+waits in the instance's queue for the next one. Every loop mode reads it: `Once` its one
+message, `PerInput` one per iteration, `Chained` the first and then its own carry. An instance
+with no message waits, and a second message to a `Once` instance is accepted and never read.
 
 ## Durable loop and suspension
 
@@ -116,9 +120,9 @@ through `Lifecycle.complete_init/4`: respawn on any live runner, `AddOperative.t
 with the folded journal, `resume_cell_count` Cell restores, and the one re-forward every bind
 of either kind runs (`Replay.reforward_undelivered_tail/1`): the log's records above the floor,
 each with its original `flz.offset`, before the plugins come up.
-`AddOperative.inbox_tail_count` (the log's last offset minus the floor) tells the driver how
-many items it is owed; it waits up to 60 s for them before its park-idle clock starts, so a
-tail forwarded under load never hits a driver that already parked. An instance with
+`AddOperative.inbox_tail_count` (the log's last offset minus the floor) tells the instance how
+many items it is owed; while any is still owed its park deadline is 60 s instead of the park
+idle, so a tail forwarded under load never meets an instance that already parked. An instance with
 undelivered input is never left suspended (`rehydrate_if_pending/1` runs at every park and at
 boot, and asks the log's tail rather than reading its records), and a park that lands while an
 un-park is still binding wins (`parked_in_flight` discards the task's stale bound state; the
@@ -139,14 +143,15 @@ rewind` is a loop's way back.
 
 The wake timer is the one timer a workflow has. Cell timers do not fire inside a workflow yet,
 so a timer a workflow tasklet registers is refused rather than dropped: every SDK's ctx answers
-`TimersUnavailable`, and the shared core fails a step whose effect still carries a timer op
+`TimersUnavailable`, and the shared core fails an item whose effect still carries a timer op
 with a non-retryable error of that name, so the run compensates and ends in `error`.
 
 ## Cell retry: the rung before the abort
 
-A failing cell inside a **structured** tasklet is retried in place while its finished
-siblings stay buffered at the barrier. The ladder is the one the tasklet's input edge
-declares, as on a stream; a workflow class declares none of its own.
+A failing item inside a **structured** tasklet is retried in place on the poll core's
+per-item ladder, the one every stream cell climbs, while what its finished siblings emitted
+waits on the instance for the stage's commit. The policy is the tasklet's input edge's, as on
+a stream; a workflow class declares none of its own.
 
 | Knob | On the edge | Default |
 | --- | --- | --- |
@@ -156,20 +161,20 @@ declares, as on a stream; a workflow class declares none of its own.
 - `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,
   which the author never got to classify — is retryable. Where a stream parks an exhausted
   input to the dead-letter queue, a workflow fails the tasklet and compensates.
-- A retried cell re-runs its whole batch over the state its failed attempt already applied —
-  the at-least-once contract crash-resume imposes. Each attempt collects into a fresh sink, so a
-  failed attempt's staged output is dropped, never double-emitted. The ladder is strictly
-  pre-commit: a journaled tasklet is never retried, and a crash mid-ladder resumes as an
-  ordinary uncommitted-tasklet re-run with the counter reset.
-- The backoff holds no worker: an activation runs one attempt and releases its thread; the
-  ladder (attempt, due time, last error) lives on the driver, which re-submits at the barrier it
-  is blocked on and re-checks cancellation every 200 ms, so a stop or `max_duration` cuts the
-  wait short. A stage error while the cancel token is set reports `cancelled`. Each retry is
-  logged (`instance / tasklet / cell / attempt / delay`) and counted in the retry counter the
-  stream ladder feeds, shipped in `data_heartbeat` metadata.
+- A retry re-hands the failed item and the items queued behind it, never one that already
+  settled, over the state its failed attempt already applied — the at-least-once contract
+  crash-resume imposes. A failed attempt's outputs are dropped, never double-emitted. The
+  ladder is strictly pre-commit: a journaled tasklet is never retried, and a crash mid-ladder
+  resumes as an ordinary uncommitted-tasklet re-run with the counter reset.
+- The backoff holds no worker and no thread: it is an entry on the poll core's deferred-wake
+  list, and the cell's gates stay held until it comes due. A stop, `max_duration` or a sibling's
+  failure disarms every pending backoff of the pass at once, and whatever the pass's cells still
+  have queued is consumed without running. A failure while the cancel token is set reports
+  `cancelled`. Each retry is logged (`instance / tasklet / cell / attempt / delay`) and counted in
+  the retry counter the stream ladder feeds, shipped in `data_heartbeat` metadata.
 
-An exhausted ladder fails the tasklet: no commit, nothing leaked, compensation, status
-`error`. Nothing workflow is ever written to the DLQ store — abort-and-compensate is the escape
+An exhausted ladder fails the stage where a stream would park the item: no commit, nothing
+leaked, compensation, status `error`. Nothing workflow is ever written to the DLQ store — abort-and-compensate is the escape
 where a stream operative would [park the payload](data_durability.md#dead-letter-queue-poison-payloads-park-never-drop).
 
 ## Rewind: taking a loop back to a committed iteration
@@ -194,7 +199,7 @@ flz operative rewind <instance> --to-iteration N
 
 The undo list rides `TaskJournalState.rewind_undo`: the tasklets committed before the marker at
 an iteration above `N`, minus those with a `compensated` entry appended after their own commit.
-The driver runs them through the ordinary planner under a **forced** `AllOrNothing` (reverse
+The instance runs them through the ordinary planner under a **forced** `AllOrNothing` (reverse
 iteration, reverse position) and journals one `compensated` entry per tasklet — an empty one
 for a hookless tasklet, which is what drains the list. It does not consult the per-cell done
 markers: a cell that ran in two rewound iterations is undone once per iteration. A crash
@@ -219,15 +224,16 @@ single-pass chain the two coincide.
   independent subtrees in unspecified relative order. Hooks run once per cell that had an
   effect, inside the single teardown. A hookless tasklet is skipped; a failing hook is logged
   and the rest of the plan still runs. A clean `ok` never compensates.
-- A failing node poisons its level: sibling nodes that completed are recorded as having run (so
-  they are compensated) but not committed, since a commit would flush an outbox to be undone. A
-  cooperative stop after a completed stage takes the same path; the undo record's commit wait
-  ignores the cancel token, because rollback is the response to that cancel.
+- Each stage commits on its own, so a sibling can be committed, its outbox flushed, before the
+  stage beside it fails; it is then undone like any committed stage, in reverse completion
+  order. A stage still running when the pass fails is recorded as having run, so it is
+  compensated, and is not committed. A cooperative stop takes the same path, and the undo is
+  never interrupted by the cancel token, because rollback is the response to that cancel.
 
 **Crash-safe compensation** uses per-Cell markers on the state substrate: `compensation_intent`
 (`<cell>.comp_intent`) when a compensable tasklet completes forward, `compensation_done`
 (`<cell>.comp_done`) when its undo finishes. They ride `RestoreInitState.has_compensation_intent`
-/ `has_compensation_done` on the rebind, and the driver skips every cell whose done marker
+/ `has_compensation_done` on the rebind, and the instance skips every cell whose done marker
 landed. A shipped **done** marker proves an undo pass was in flight and wins over journal-gated
 forward resume; intent markers alone do not, because they also accumulate during forward
 progress. Tasklets the journal skipped still roll back on a later abnormal exit, folded into
@@ -245,8 +251,10 @@ A class is durable by default and opts out with `PERSISTENCE_ENABLED = false` /
 (operator override available). Opted out, the per-Cell flush drains and discards — no WAL,
 snapshot, journal or handshake — and a crash re-runs from the top.
 
-**The commit path.** At every barrier the driver ships `TaskCommit` (`task_idx`, `iter`,
-`cells_ran`, the handoff through the channel's codec, the staged `outbox`) and blocks.
+**The commit path.** When a stage's last item settles, the worker that settled it ships
+`TaskCommit` (`task_idx`, `iter`, `cells_ran`, the handoff through the channel's codec, the
+staged `outbox`); nothing waits for the ack, which is an event on the control-channel reader
+that releases the stage's outputs into its children.
 
 | Step | Where | Detail |
 | --- | --- | --- |
@@ -257,11 +265,11 @@ snapshot, journal or handshake — and a crash re-runs from the top.
 | sync remote | a task, before the ack | `SYNC_DURABILITY = true` / `syncDurability()` (`durability: sync_remote` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](../operations/remote_durability_tier.md) first — RPO 0, workflow classes only |
 | flush | after the ack, on the worker | `TaskJournal.flush_pending/1` delivers in journal order and writes `outbox_flushed`; an unbound operative retries every 1 s |
 
-The driver's wait is `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 000). An expired wait re-sends
-the same frame under the same `reference_id`, after the shared default backoff (50 ms base), up
-to three sends in all, a constant of the runner's controller connection rather than a class
-setting; the waiter stays registered across the ladder, so a late ack continues the chain, and
-only the exhausted ladder is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
+Each send arms a deadline of `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 000) on the poll core's
+deferred-wake list. One that comes due with the ack still owed re-sends the same frame under the
+same `reference_id`, up to three sends in all, a constant of the runner's controller connection
+rather than a class setting; the ack stays registered across the re-sends, so a late one
+continues the chain, and only the third expiry is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
 journal codec, in Rust from the producing tasklet's declared `Output` type — and a journal entry
 is bounded by `:wal_high_watermark_bytes` (16 MiB): keep bulk data in Cell state and hand off
 references. Every flushed item is stamped
@@ -274,16 +282,19 @@ restore, because a class whose tasklets hold no per-Cell state receives no
 `RestoreInitState` at all. Committed tasklets are skipped, the first uncommitted one is seeded
 from the journaled handoff, and only the tasklet mid-flight at the crash re-runs. A
 restore-before-run gate (`AddOperative.resume_cell_count`) holds the first tasklet until
-that many `RestoreInitState` frames land, with a 30 s safety cap that degrades to a best-effort
-re-run. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
+that many `RestoreInitState` frames land; the last one opens it on the reader that brings it,
+and a 30 s deadline on the deferred-wake list degrades a restore that never lands to a
+best-effort re-run. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
 post-resume appends are contiguous and the stream-only seq-gap resync never applies. Execution
 is at-least-once: steps and hooks are idempotent by author contract. A crashed instance reaches
 a new runner when a replacement presenting the same stable identity (`FLEZHA_RUNNER_ID_PATH`)
 has the dead session's bindings swapped onto it — promptly on UDS (socket EOF), after the 45 s
 control idle timeout on QUIC; the Overwatch re-binds with `Lifecycle.complete_init/4`, which
 stamps `resume_cell_count` from the on-disk WAL and ships the persisted Cells with their
-compensation markers (in production the convergence loop drives this), and the driver resumes
+compensation markers (in production the convergence loop drives this), and the instance resumes
 past the journaled tasklets — or resumes the compensation — to a terminal `WorkflowCompleted`.
+A live instance and a resumed one are the same data: the pass the journal describes is the
+pass the instance runs.
 
 Telemetry: `[:flezha, :state, :task_commit | :iter_commit | :task_outbox_flush]`,
 `[:flezha, :workflow, :completed | :failed | :parked | :suspended | :rehydrating]`.
@@ -318,35 +329,34 @@ unknown class defaults to `:stream`, so every gate is subtractive.
 
 ## How many instances a runner holds
 
-Every actively-running instance owns one OS driver thread (`flezha-workflow-<id>`) that holds
-the chain's position as a call stack and never runs user code. Measured on 8 cores / 32 GiB,
-release build, with the standing probe:
+An instance holds no thread. Its run is a small pass sheet on the instance (iteration, stages
+in flight and done, held outputs, completion, phase) under one lock, advanced by whichever
+thread brings the next event: a worker settling a stage's last item, the control-channel reader
+bringing a commit ack or a stop, the data-channel reader bringing a message, a poller promoting a
+deadline. None of them waits and none runs author code while it holds the lock. Measured on
+8 cores / 32 GiB, release build, with the standing probe:
 
 ```text
 FLEZHA_SCALE_SHAPE=step FLEZHA_SCALE_N=10000 \
-  cargo test -p flezha_runner --features bench-internals --release \
-    --test workflow_scaling -- --ignored --nocapture
+  cargo bench -p flezha_runner --features bench-internals,testing \
+    --bench workflow_scaling
 ```
 
-| | measured |
-| --- | --- |
-| resident per blocked instance | ~73 KiB, flat from 1 000 to 10 000 instances |
-| …of which the driver thread | ~1.4 KiB — the rest is per-instance heap |
-| 10 000 blocked instances | ~734–884 MiB resident, start 0.65 s, teardown 0.44 s |
-| CPU, 10 000 blocked mid-step | 0.5 % of one core |
-| CPU, 10 000 parked in the inbox wait | ~1.6 of 8 cores |
+| 10 000 instances | blocked mid-step (`step`) | waiting for a message (`idle`) |
+| --- | --- | --- |
+| resident per instance | ~61 KiB | ~61 KiB |
+| threads per instance | 0 (the workers running the steps are the pool's) | 0 |
+| CPU while blocked | 0 % | 0 % |
+| start / teardown | 0.35 s / 0.06 s | 0.35 s / 0.03 s |
+| an unrelated instance's p99 beside them | 0.8x its unloaded latency | 0.9x |
 
-**Size a runner by threads, not instances.** A turn blocked on a slow call holds two OS threads
-in Rust (driver + pool worker) and one in Java (the worker is a virtual thread); a class with
-`max_duration()` pays a third for its watcher. At ~10 000 threads an unrelated instance's
-start-to-completion roughly doubles at the median; at ~20 000 throughput drops to a quarter.
-**A driver blocked at a barrier is free; a driver polling is not.** The inbox wait, the
-commit-ack wait and the `max_duration` watcher re-check every 200 ms, so a population in any of
-them costs CPU. A durable `PerInput` loop parks after `FLEZHA_WORKFLOW_PARK_IDLE_MS`; an
-opted-out one has no park to take and polls for as long as it lives.
-`FLEZHA_WORKFLOW_DRIVER_STACK_KIB` sets the driver stack (unset = platform default) — an
-address-space lever only, since a blocked driver's stack is not resident; an edge transform
-(`map`/`filter`/`flat_map`/merge mapping) runs on this thread and a stack overflow there aborts.
+**Size a runner by what its turns hold, not by instances.** A waiting instance costs its heap
+and nothing else. A turn blocked on a slow call holds the SDK worker running it — a pool thread
+in Rust, a virtual thread in Java — and one in-flight slot: `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`
+(default 1 024) bounds how many cells are handed out at once, for both kinds, so a runner meant
+to hold more blocked turns than that raises it with its worker pool. `max_duration()` is an entry
+on the deferred-wake list, not a thread. Edge transforms (`map`/`filter`/`flat_map`/merge
+mapping) run on the worker that produced the value, as on a stream.
 
 ## Operator notes
 
@@ -356,9 +366,10 @@ address-space lever only, since a blocked driver's stack is not resident; an edg
   a graceful stop lets a running instance migrate; a SIGKILL forces crash-resume.
 - **Retention grows disk for many small jobs.** Opt out for fire-and-forget, or lower
   `FLEZHA_WORKFLOW_RETENTION_HOURS`. Workflow is not the high-throughput path.
-- **Proof:** `test/system/workflow_crash_resume_e2e_test.exs` — SIGKILL mid-run and
-  mid-compensation, the fan-in diamond, the outbox re-drive, cell retry, park and rehydrate,
-  rewind; Rust and Java, UDS and QUIC.
+- **Proof:** `test/system/workflow_crash_resume_e2e_test.exs` and
+  `test/system/workflow_control_flow_e2e_test.exs` — SIGKILL mid-run and mid-compensation, the
+  fan-in diamond, the outbox re-drive, cell retry, park and rehydrate, rewind; on Rust and
+  Java, UDS and QUIC.
 
 ## See also
 

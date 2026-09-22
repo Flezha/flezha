@@ -9,9 +9,9 @@ defmodule Flezha.Operative.Replay do
   correction — they differ only in how the baseline was chosen.
 
   Everything here runs in the `Overwatch` process and reads its state without
-  changing it. Invariant: the one exception is `arm_bind_reforward/1`, because
-  the un-park path drives `Lifecycle.complete_init/4` inside a task where
-  `self()` is not the Overwatch.
+  changing it. Invariant: the exceptions are `arm_bind_reforward/1` and
+  `dispatch_restore/3`, because the un-park path drives
+  `Lifecycle.complete_init/4` inside a task where `self()` is not the Overwatch.
   """
 
   alias Flezha.Config
@@ -138,7 +138,7 @@ defmodule Flezha.Operative.Replay do
     # The SDK keys per-Cell state by the operative INSTANCE id (== `state.id`),
     # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
     operative_class = Keyword.get(operative_opts, :operative_class, state.id)
-    overwatch = self()
+    overwatch = owner_pid(state)
     source_node = foreign_state_source(operative_opts)
 
     spawn(fn ->

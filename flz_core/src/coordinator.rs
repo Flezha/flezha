@@ -16,9 +16,8 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 use tracing::warn;
 
-use crate::error::Error;
-use crate::operative::instance::StreamInstance;
-use crate::operative::registry::{get_class as get_operative_class, Operative, OperativeRegistry};
+use crate::operative::instance::OperativeInstance;
+use crate::operative::registry::{get_class as get_operative_class, OperativeRegistry};
 use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, WorkflowCompleted as PbWorkflowCompleted};
 use crate::routing::OperativeDispatchHandle;
@@ -42,16 +41,14 @@ pub struct RunnerNode {
 pub static LIVE_REGISTRY: std::sync::Mutex<Option<Arc<OperativeRegistry>>> =
     std::sync::Mutex::new(None);
 
-/// A live stream instance by id on the newest runner, for harnesses.
+/// A live instance by id on the newest runner, for harnesses.
 #[doc(hidden)]
-pub fn live_stream_instance(
-    instance_id: &str,
-) -> Option<Arc<crate::operative::instance::StreamInstance>> {
+pub fn live_instance(instance_id: &str) -> Option<Arc<OperativeInstance>> {
     LIVE_REGISTRY
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .as_ref()
-        .and_then(|r| r.get_stream(instance_id))
+        .and_then(|r| r.get(instance_id))
 }
 
 impl RunnerNode {
@@ -72,112 +69,50 @@ impl RunnerNode {
         }
     }
 
-    /// Spawn a stream instance of a registered class; `instance_id` is the
-    /// wire's `operative_id`. Idempotent: a duplicate id answers the existing
-    /// instance.
+    /// Spawn an instance of a registered class of either kind; `instance_id`
+    /// is the wire's `operative_id`. Idempotent: a duplicate id answers the
+    /// existing instance. A workflow instance takes the bind's resume facts
+    /// and waits for [`crate::workflow::open`] before its first pass, so its
+    /// `init_values` land first.
     pub fn start_operative(
         &self,
         factory_id: String,
         instance_id: String,
         partition: crate::operative::instance::KeyGroupRange,
-    ) -> Option<Arc<StreamInstance>> {
-        if let Some(existing) = self.operative_registry.get_stream(&instance_id) {
+        resume: crate::workflow::instance::Resume,
+    ) -> Option<Arc<OperativeInstance>> {
+        if let Some(existing) = self.operative_registry.get(&instance_id) {
             return Some(existing);
         }
         let topology = get_operative_class(&factory_id)?;
-        let instance = StreamInstance::with_options(
+        let instance = OperativeInstance::with_options(
             topology,
             Arc::from(instance_id.as_str()),
             None,
             partition,
         );
-        Some(self.operative_registry.register_stream(instance))
-    }
-
-    /// Spawn a workflow instance and its driver, with `init_values` as its
-    /// tasklets' initial state; `false` when no such class is registered.
-    pub fn start_workflow(
-        &self,
-        factory_id: String,
-        instance_id: String,
-        init_values: &str,
-    ) -> Result<bool, Error> {
-        self.start_workflow_resumable(factory_id, instance_id, init_values, 0, 0, None)
-    }
-
-    /// Spawn a workflow instance that may be resuming: the driver holds its
-    /// first tasklet until `resume_cell_count` restores have landed (`0`
-    /// runs at once). `task_journal` rides the bind: a durable class with no
-    /// per-Cell state ships no restore at all. `init_values` is applied as
-    /// per-Cell state before the driver starts, so it is in place before the
-    /// `AddOperative` ack and any message; `Ok(false)` names an unregistered
-    /// class, `Err` a document that is not a JSON object.
-    pub fn start_workflow_resumable(
-        &self,
-        factory_id: String,
-        instance_id: String,
-        init_values: &str,
-        resume_cell_count: u32,
-        inbox_tail_count: u32,
-        task_journal: Option<crate::workflow::instance::JournalResume>,
-    ) -> Result<bool, Error> {
-        if self.operative_registry.contains(&instance_id) {
-            return Ok(true);
+        if let Some(run) = &instance.workflow {
+            run.bind(resume);
         }
-        let spec = match crate::workflow::registry::get_class(&factory_id) {
-            Some(spec) => spec,
-            None => return Ok(false),
-        };
-
-        // Build the Cells + the instance now, synchronously, before the
-        // AddOperative frame is ACKed, and register it so the Controller's
-        // RestoreInitState frames reach live slots and the driver holds its
-        // first Tasklet until the restores land.
-        let id: Arc<str> = Arc::from(instance_id.as_str());
-        let stage_cells = crate::workflow::driver::build_all_stage_cells(&spec, &id);
-        let (instance, inbox_rx) = crate::workflow::instance::WorkflowInstance::new(
-            Arc::clone(&id),
-            spec,
-            stage_cells,
-            resume_cell_count as usize,
-            inbox_tail_count,
-            task_journal,
-        );
-        if let Err(e) = crate::command::cell_state::apply_init_values(&*instance, init_values) {
-            // Refused before it ran: the Cells' flusher entries go with it.
-            crate::workflow::driver::deregister_flushers(&instance.stage_cells);
-            return Err(e);
-        }
-        self.operative_registry
-            .register_workflow(Arc::clone(&instance));
-        crate::workflow::driver::spawn(instance, inbox_rx);
-        Ok(true)
+        Some(self.operative_registry.register(instance))
     }
 
     /// Unregister a class with no live instance; `Err(n)` names how many
     /// exist. MUST run on the coordinator loop, serialized with `AddOperative`.
-    pub fn remove_factory(&self, factory_id: &str, workflow: bool) -> Result<(), usize> {
+    pub fn remove_factory(&self, factory_id: &str) -> Result<(), usize> {
         let live = self.operative_registry.count_by_factory(factory_id);
         if live > 0 {
             return Err(live);
         }
-        if workflow {
-            crate::workflow::registry::unregister_class(factory_id);
-        } else {
-            crate::operative::registry::unregister_class(factory_id);
-        }
+        crate::operative::registry::unregister_class(factory_id);
         Ok(())
     }
 
     pub fn stop_operative(&self, instance_id: &str) -> bool {
         match self.operative_registry.remove(instance_id) {
-            Some(unit) => {
-                match &*unit {
-                    Operative::Stream(instance) => instance.shutdown_background_threads(),
-                    // Hard removal of a workflow: trip its cancellation token so
-                    // the driver thread unwinds and exits promptly.
-                    Operative::Workflow(instance) => instance.request_cancel(),
-                }
+            Some(instance) => {
+                instance.shutdown_background_threads();
+                crate::workflow::removed(&instance);
                 true
             }
             None => false,
@@ -188,26 +123,16 @@ impl RunnerNode {
         self.operative_registry.contains(instance_id)
     }
 
-    pub fn get_stream(&self, instance_id: &str) -> Option<Arc<StreamInstance>> {
-        self.operative_registry.get_stream(instance_id)
+    pub fn get_operative(&self, instance_id: &str) -> Option<Arc<OperativeInstance>> {
+        self.operative_registry.get(instance_id)
     }
 
-    pub fn get_workflow(
-        &self,
-        instance_id: &str,
-    ) -> Option<Arc<crate::workflow::instance::WorkflowInstance>> {
-        self.operative_registry.get_workflow(instance_id)
-    }
-
-    /// A live workflow Cell slot by wire identity.
-    pub fn find_workflow_cell(
+    /// A live static or single Cell by wire identity, with its instance.
+    pub fn find_cell(
         &self,
         cell_id: &[u8],
-    ) -> Option<(
-        Arc<crate::workflow::instance::WorkflowInstance>,
-        Arc<crate::cell::CellSlot>,
-    )> {
-        self.operative_registry.find_workflow_cell(cell_id)
+    ) -> Option<(Arc<OperativeInstance>, Arc<crate::cell::CellSlot>)> {
+        self.operative_registry.find_cell(cell_id)
     }
 
     pub fn operative_dispatch_handle(&self) -> OperativeDispatchHandle {
@@ -220,7 +145,7 @@ impl RunnerNode {
         self._namespace.clone()
     }
 
-    pub fn get_operatives(&self) -> HashMap<String, Arc<StreamInstance>> {
+    pub fn get_operatives(&self) -> HashMap<String, Arc<OperativeInstance>> {
         self.operative_registry.snapshot_stream()
     }
 
@@ -389,15 +314,12 @@ impl Coordinator {
                 reference_id,
                 command,
             } => self.write_control_request(reference_id, *command),
-            RunnerMessage::RemoveFactory {
-                factory_id,
-                workflow,
-            } => self.remove_factory(&factory_id, workflow),
+            RunnerMessage::RemoveFactory { factory_id } => self.remove_factory(&factory_id),
         }
     }
 
-    fn remove_factory(&self, factory_id: &str, workflow: bool) {
-        let result = self.runner.remove_factory(factory_id, workflow);
+    fn remove_factory(&self, factory_id: &str) {
+        let result = self.runner.remove_factory(factory_id);
         let _ = self
             .ctx_arc
             .lock()
