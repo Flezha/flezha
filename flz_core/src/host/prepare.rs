@@ -1,6 +1,7 @@
-//! The prepare crossing: an entry payload whose consumers need keys or an
-//! event time the core cannot derive from bytes is staged and crossed to the
-//! host as a [`schema::ActivationKind::KeyRequest`] before it is enqueued.
+//! The prepare crossing: a payload whose consumers need keys or an event time
+//! the core cannot derive from bytes is staged and crossed to the host as a
+//! [`schema::ActivationKind::KeyRequest`] before it is enqueued — an entry
+//! payload, or a workflow's released value on its way into a keyed tasklet.
 //! The invariant: an end-of-slice broadcast never overtakes a slice member
 //! still waiting on its answer.
 
@@ -10,7 +11,7 @@ use std::sync::Arc;
 
 use super::cell::HostPayload;
 use super::decl::HostClock;
-use crate::channel::{ChannelDescriptor, ChannelKind};
+use crate::channel::ChannelDescriptor;
 use crate::operative::instance::OperativeInstance;
 use crate::operative::topology::{CellMode, OperativeTopology};
 use crate::poll_core::EnginePayload;
@@ -50,6 +51,9 @@ pub struct StagedEntry {
     pub consumed_offset: Option<u64>,
     pub replay: bool,
     pub stream: Arc<flz_transport::transport::FlezhaStream>,
+    /// The workflow stage that owes this value until its answer addresses
+    /// it; `None` for an entry payload.
+    pub stage: Option<usize>,
 }
 
 /// A batched prepare crossing, handed to the host as a
@@ -91,43 +95,30 @@ pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) 
     (want_keys, want_event_time)
 }
 
-/// Stage an entry payload for the crossing, or hand it back when none is
-/// needed.
-pub fn maybe_stage_prepare(
+/// Stage payloads for one crossing on `channel`, or hand them all back when
+/// none of its consumers needs one.
+pub fn stage_prepare(
     instance: &Arc<OperativeInstance>,
     channel_id: crate::channel::ChannelId,
     channel: &ChannelDescriptor,
-    payload: Vec<u8>,
-    consumed_offset: Option<u64>,
-    replay: bool,
-    stream: &Arc<flz_transport::transport::FlezhaStream>,
-) -> Option<Vec<u8>> {
-    if channel.kind != ChannelKind::Entry {
-        return Some(payload);
-    }
+    entries: Vec<StagedEntry>,
+) -> Vec<StagedEntry> {
     let (want_keys, want_event_time) = prepare_wants(&instance.topology, channel);
     if !want_keys && !want_event_time {
-        return Some(payload);
+        return entries;
     }
     {
         let mut state = instance.host_prepare.lock_recover();
-        if replay {
-            state.replay_staged += 1;
-        }
+        state.replay_staged += entries.iter().filter(|entry| entry.replay).count();
         state
             .queues
             .entry(channel_id)
             .or_default()
             .queued
-            .push_back(StagedEntry {
-                bytes: payload,
-                consumed_offset,
-                replay,
-                stream: Arc::clone(stream),
-            });
+            .extend(entries);
     }
     submit_next_crossing(instance, channel_id, want_keys, want_event_time);
-    None
+    Vec::new()
 }
 
 /// The end-of-slice broadcast, deferred behind slice members still in the
@@ -269,6 +260,9 @@ fn deliver_prepared(
         event_time: answer.event_time,
         metadata: Vec::new(),
     });
+    if let Some(node) = entry.stage {
+        return crate::workflow::crossed(instance, node, Ok((value, entry.stream)));
+    }
     crate::routing::route_to_consumers(
         instance,
         channel,
@@ -280,8 +274,9 @@ fn deliver_prepared(
     );
 }
 
-/// A failed prepare climbs the entry channel's ladder, one blocking
-/// re-crossing per attempt.
+/// A failed prepare climbs its channel's ladder, one blocking re-crossing
+/// per attempt. Where the ladder would park an entry payload, a workflow
+/// stage's value fails its stage instead: nothing is parked.
 fn spawn_prepare_ladder(
     instance: Arc<OperativeInstance>,
     channel_id: u32,
@@ -296,36 +291,47 @@ fn spawn_prepare_ladder(
             .topology
             .channel(channel_id)
             .expect("prepare channel present in topology");
-        crate::retry::run_entrance_ladder(
-            &*instance,
-            &format!("prepare for entry channel `{}`", channel.name),
-            crate::retry::ParkTarget::entry(channel),
-            entry.consumed_offset,
-            Some(entry.bytes.clone()),
-            first_error.message,
-            || {
-                let (tx, rx) = crossbeam::channel::bounded(1);
-                crate::poll_core::global().submit_direct(EnginePayload::Prepare(PrepareCrossing {
-                    instance: Arc::clone(&instance),
-                    channel: channel_id,
-                    want_keys,
-                    want_event_time,
-                    entries: vec![entry.clone()],
-                    reply: Some(tx),
-                }));
-                let mut answers = rx
-                    .recv_timeout(std::time::Duration::from_secs(30))
-                    .map_err(|_| "prepare re-attempt not answered".to_string())?;
-                match answers.pop() {
-                    Some(Ok(ans)) => {
-                        deliver_prepared(&instance, channel_id, channel, entry.clone(), ans);
-                        Ok(())
-                    }
-                    Some(Err(e)) => Err(e.message),
-                    None => Err("prepare re-attempt answered nothing".to_string()),
+        let label = format!("prepare for channel `{}`", channel.name);
+        let attempt = || {
+            let (tx, rx) = crossbeam::channel::bounded(1);
+            crate::poll_core::global().submit_direct(EnginePayload::Prepare(PrepareCrossing {
+                instance: Arc::clone(&instance),
+                channel: channel_id,
+                want_keys,
+                want_event_time,
+                entries: vec![entry.clone()],
+                reply: Some(tx),
+            }));
+            let mut answers = rx
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .map_err(|_| "prepare re-attempt not answered".to_string())?;
+            match answers.pop() {
+                Some(Ok(ans)) => {
+                    deliver_prepared(&instance, channel_id, channel, entry.clone(), ans);
+                    Ok(())
                 }
-            },
-        );
+                Some(Err(e)) => Err(e.message),
+                None => Err("prepare re-attempt answered nothing".to_string()),
+            }
+        };
+        match entry.stage {
+            Some(node) => {
+                if let Err((error, _attempts)) =
+                    crate::retry::climb_ladder(&label, channel.retry, first_error.message, attempt)
+                {
+                    crate::workflow::crossed(&instance, node, Err(error));
+                }
+            }
+            None => crate::retry::run_entrance_ladder(
+                &*instance,
+                &label,
+                crate::retry::ParkTarget::entry(channel),
+                entry.consumed_offset,
+                Some(entry.bytes.clone()),
+                first_error.message,
+                attempt,
+            ),
+        }
     });
 }
 

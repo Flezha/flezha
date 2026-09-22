@@ -535,16 +535,19 @@ fn a_keyed_dynamic_route_crosses_for_its_key(
     let entry = instance.topology.channel(0).expect("entry channel");
     // The wire-dispatch staging seam (the same call `OperativeDispatchHandle::
     // dispatch` makes): a keyed consumer holds the payload for the crossing.
-    let staged = flz_core::host::maybe_stage_prepare(
+    let staged = flz_core::host::stage_prepare(
         &instance,
         0,
         entry,
-        b"k1:v".to_vec(),
-        None,
-        false,
-        stream,
+        vec![flz_core::host::StagedEntry {
+            bytes: b"k1:v".to_vec(),
+            consumed_offset: None,
+            replay: false,
+            stream: Arc::clone(stream),
+            stage: None,
+        }],
     );
-    assert!(staged.is_none(), "keyed consumer stages for the crossing");
+    assert!(staged.is_empty(), "keyed consumer stages for the crossing");
     answers_the_prepare_crossing(ctx);
     the_keyed_input_reaches_its_own_cell(ctx);
 }

@@ -56,7 +56,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   unkeyed cell.
 - **Cell mode** — **single** (one unkeyed cell, the default), **static** (a fixed keyset from
   `cell_keys()`, one input fanning out via `cells_for`) or **dynamic** (one cell per key on
-  a keyed edge, created lazily, evicted after `cell_idle_ttl()`). Workflows refuse dynamic.
+  a keyed edge, created lazily, evicted after `cell_idle_ttl()`).
 - **Channel** — the typed edge between stages: **entry** (input from outside), **inter-tasklet**,
   or **plugin-bound** (output to a sink, declared with `.sink(name)`). Terminality is derived from
   the wiring, never declared.

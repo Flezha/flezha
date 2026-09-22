@@ -70,16 +70,19 @@ impl OperativeRegistry {
         self.inner.get(instance_id).map(|r| Arc::clone(r.value()))
     }
 
-    /// A live static or single Cell by wire identity, with its instance.
+    /// The Cell a wire identity names, with its instance: a keyed one is
+    /// minted as [`OperativeInstance::slot_by_identity`] mints it.
     pub fn find_cell(&self, cell_id: &[u8]) -> Option<(Arc<OperativeInstance>, Arc<CellSlot>)> {
-        self.inner.iter().find_map(|r| {
-            r.value()
-                .cells
-                .iter()
-                .flatten()
-                .find(|slot| slot.cell_identity.as_slice() == cell_id)
-                .map(|slot| (Arc::clone(r.value()), Arc::clone(slot)))
-        })
+        let instance = self.instance_of_cell(cell_id)?;
+        let slot = instance.slot_by_identity(cell_id)?;
+        Some((instance, slot))
+    }
+
+    /// The live instance a wire identity names, whether or not it holds the
+    /// Cell.
+    pub fn instance_of_cell(&self, cell_id: &[u8]) -> Option<Arc<OperativeInstance>> {
+        let (instance_id, _, _) = crate::flusher::decode_cell_identity(cell_id)?;
+        self.get(&instance_id)
     }
 
     pub fn remove(&self, instance_id: &str) -> Option<Arc<OperativeInstance>> {

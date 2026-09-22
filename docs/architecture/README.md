@@ -136,7 +136,7 @@ flowchart TB
 - **Dynamic** — a stream keyset. The consumer edge's `key_by(input)` routes each input to
   exactly one cell, created lazily on first sight. Eviction is off unless `cell_idle_ttl()` is
   declared; when it is, an idle cell is dropped destructively and a later key of the same
-  name cold-starts fresh. Workflow operatives refuse dynamic mode.
+  name cold-starts fresh.
 
 Full vocabulary: [`../glossary.md`](../glossary.md). The SDK authoring surface:
 [`rust_operative_architecture.md`](../sdk/rust_operative_architecture.md).

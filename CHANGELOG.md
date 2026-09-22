@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed: a workflow tasklet may be keyed
+
+A `key_by` edge into a workflow tasklet is accepted in all seven SDKs; the `DynamicCells` refusal
+is gone. The tasklet runs one cell per key, minted when a stage's item is addressed to it and
+capped by `max_cells` as a stream's is. A stage commits the cells it addressed, a crash-resume
+restores the keyed cells the instance persisted, and a rollback compensates each keyed cell that
+ran, once. An idle keyed cell is evicted by `cell_idle_ttl` only between passes, and never while a
+rollback of the declared `rollback_mode` could still reach it: under all-or-nothing a cell that ran
+a compensable tasklet is kept until the instance ends. One pass of one tasklet runs at most
+65 535 cells, the width of a stage commit's cell count; a class that keys more per pass declares a
+smaller `max_cells`.
+
+### Fixed: an Elixir workflow rewinds, and delivers its output when it journals nothing
+
+`flz operative rewind` on an Elixir workflow instance now compensates the unwound iterations,
+latest first, before the loop goes on from the rewound-to iteration; it used to resume without
+undoing anything. An Elixir workflow class with persistence off now delivers its plugin-bound
+output during the pass, as a stream does; it used to drop it.
+
 ### Changed: a workflow instance holds no thread
 
 A workflow instance no longer owns a driver thread: its run is a small pass sheet advanced by

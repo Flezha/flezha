@@ -2,13 +2,14 @@
 //! rollback order (completed tasklets in reverse, each Cell that ran once),
 //! and the undo steps a run takes, one event at a time, to carry it out.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use super::instance::{CommittedTask, UndoStep, Value};
+use super::instance::{CellPos, CommittedTask, UndoStep, Value};
 use super::resume::stages_by_iter;
 use super::run::Run;
 use super::RollbackMode;
+use crate::cell::CellSlot;
 
 /// One staged plugin-bound output: `(plugin channel, payload)`.
 pub type StagedOutput = (String, Vec<u8>);
@@ -17,7 +18,7 @@ pub type StagedOutput = (String, Vec<u8>);
 /// item never ran and is not recorded.
 #[derive(Clone)]
 pub struct CellRun {
-    pub cell_index: usize,
+    pub cell: Arc<CellSlot>,
     pub outputs: Vec<Value>,
     pub staged: Vec<StagedOutput>,
     /// The result this Cell's `complete` asked the instance to end with.
@@ -26,9 +27,9 @@ pub struct CellRun {
 
 impl CellRun {
     /// A Cell that ran and recorded nothing yet.
-    pub fn new(cell_index: usize) -> Self {
+    pub fn new(cell: Arc<CellSlot>) -> Self {
         Self {
-            cell_index,
+            cell,
             outputs: Vec::new(),
             staged: Vec::new(),
             completion: None,
@@ -78,15 +79,13 @@ pub(super) fn saga_steps(
         if !r.task(record.stage_idx).compensate_overridden {
             continue;
         }
-        let slots = r.cells(record.stage_idx);
         for run in &record.cells {
-            if undone.contains(slots[run.cell_index].cell_identity.as_slice()) {
+            if undone.contains(run.cell.cell_identity.as_slice()) {
                 continue;
             }
             steps.push_back(UndoStep::Cell {
-                node: record.stage_idx,
                 iter: record.iter,
-                cell_index: run.cell_index,
+                cell: Arc::clone(&run.cell),
                 outputs: run.outputs.iter().map(Arc::clone).collect(),
                 marks: true,
             });
@@ -104,13 +103,11 @@ pub(super) fn rewind_steps(r: &Run<'_>, unwound: &[CommittedTask]) -> VecDeque<U
     let by_iter: Vec<Vec<StageRecord>> = stages_by_iter(r, unwound).into_values().collect();
     let mut steps = VecDeque::new();
     for record in plan_compensation(RollbackMode::AllOrNothing, &by_iter, &[]) {
-        let slots = r.cells(record.stage_idx);
         if r.task(record.stage_idx).compensate_overridden {
             for run in &record.cells {
                 steps.push_back(UndoStep::Cell {
-                    node: record.stage_idx,
                     iter: record.iter,
-                    cell_index: run.cell_index,
+                    cell: Arc::clone(&run.cell),
                     outputs: Vec::new(),
                     marks: false,
                 });
@@ -122,7 +119,7 @@ pub(super) fn rewind_steps(r: &Run<'_>, unwound: &[CommittedTask]) -> VecDeque<U
             cells_ran: record
                 .cells
                 .iter()
-                .map(|run| slots[run.cell_index].cell_identity.as_ref().clone())
+                .map(|run| run.cell.cell_identity.as_ref().clone())
                 .collect(),
         });
     }
@@ -130,29 +127,32 @@ pub(super) fn rewind_steps(r: &Run<'_>, unwound: &[CommittedTask]) -> VecDeque<U
 }
 
 /// The completed-stage records a crash-resume compensates, from the
-/// shipped-back intent markers. Outputs are empty — they were never durable,
-/// so a compensable tasklet persists its undo handle in State.
+/// shipped-back intent markers, each looked up on the instance as a restore
+/// looks it up. Outputs are empty — they were never durable, so a
+/// compensable tasklet persists its undo handle in State.
 pub(super) fn stages_from_intents(r: &Run<'_>, intents: &HashSet<Vec<u8>>) -> Vec<StageRecord> {
-    let mut completed: Vec<StageRecord> = Vec::new();
-    for stage_idx in 0..r.spec.dag.len() {
-        let cells: Vec<CellRun> = r
-            .cells(stage_idx)
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| intents.contains(slot.cell_identity.as_slice()))
-            .map(|(cell_index, _)| CellRun::new(cell_index))
-            .collect();
-        if !cells.is_empty() {
-            // Intent markers carry no iteration; a pre-journal saga resume has
-            // only one pass to undo anyway.
-            completed.push(StageRecord {
-                stage_idx,
-                iter: 0,
-                cells,
-            });
+    let mut by_node: BTreeMap<usize, BTreeMap<CellPos, CellRun>> = BTreeMap::new();
+    for identity in intents {
+        let Some(cell) = r.inst.slot_by_identity(identity) else {
+            continue;
+        };
+        if let Some((node, pos)) = r.locate(&cell) {
+            by_node
+                .entry(node)
+                .or_default()
+                .insert(pos, CellRun::new(cell));
         }
     }
-    completed
+    // Intent markers carry no iteration; a pre-journal saga resume has only
+    // one pass to undo anyway.
+    by_node
+        .into_iter()
+        .map(|(stage_idx, cells)| StageRecord {
+            stage_idx,
+            iter: 0,
+            cells: cells.into_values().collect(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

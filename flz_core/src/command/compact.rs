@@ -67,8 +67,7 @@ impl CommandAction for CompactCell {
         let mut snapshot_bytes_size = 0u64;
 
         // The same lookup a restore takes, for a Cell of either kind.
-        let slot =
-            crate::command::restore::find_cell_slot(runner, &self.cell_id).map(|(_, slot)| slot);
+        let slot = runner.find_cell(&self.cell_id).map(|(_, slot)| slot);
 
         match slot {
             Some(slot) => {

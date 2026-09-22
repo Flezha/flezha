@@ -17,6 +17,10 @@ use crate::operative::instance::OperativeInstance;
 
 pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 
+/// A Cell's place among its stage's Cells, so they order the same whichever
+/// settled first: its declared index, and for a keyed Cell (index 0) its key.
+pub(crate) type CellPos = (usize, Option<Arc<str>>);
+
 /// What a bind carries into a workflow instance: the Cell restores to wait
 /// for, the input the controller still owes it and the committed journal.
 #[derive(Default)]
@@ -137,8 +141,8 @@ pub(crate) struct PassSheet {
     pub(crate) parked_offset: Option<u64>,
     /// Unread messages still on their way to the dead-letter queue.
     pub(crate) parks_in_flight: usize,
-    /// One attempt's outputs per `(node, cell index)`, until the item settles.
-    pub(crate) attempts: HashMap<(usize, usize), Attempt>,
+    /// One attempt's outputs per `(node, Cell)`, until the item settles.
+    pub(crate) attempts: HashMap<(usize, CellPos), Attempt>,
     pub(crate) barriers: HashMap<u64, Barrier>,
     pub(crate) next_barrier: u64,
     /// The due time of each armed deadline, so a stale one is recognised.
@@ -150,10 +154,11 @@ pub(crate) struct PassSheet {
 
 /// One item on its way into a Cell: the stage it belongs to, the Cell, and
 /// the producing Cell whose holdback takes it when the mailbox is full
-/// (`None` for a message's item and a journal re-seed).
+/// (`None` for a message's item and a journal re-seed). A host value bound
+/// for a keyed tasklet has no Cell until the host answers its keys.
 pub(crate) struct Release {
     pub(crate) node: usize,
-    pub(crate) cell: Arc<CellSlot>,
+    pub(crate) cell: Option<Arc<CellSlot>>,
     pub(crate) item: CellItem,
     pub(crate) producer: Option<Arc<CellSlot>>,
 }
@@ -211,10 +216,10 @@ pub(crate) struct Stage {
     /// Items admitted for the stage and not yet settled.
     pub(crate) owed: usize,
     pub(crate) state: StageState,
-    pub(crate) cells: BTreeMap<usize, CellRun>,
+    pub(crate) cells: BTreeMap<CellPos, CellRun>,
     /// Settled outputs addressed to the children's Cells, per producing Cell,
     /// released on commit in Cell order whichever settled first.
-    pub(crate) held: BTreeMap<usize, Vec<Release>>,
+    pub(crate) held: BTreeMap<CellPos, Vec<Release>>,
 }
 
 impl Stage {
@@ -291,9 +296,8 @@ pub(crate) enum UndoStep {
     /// whether it earns a compensation-done marker (a saga does, a rewind
     /// does not).
     Cell {
-        node: usize,
         iter: u32,
-        cell_index: usize,
+        cell: Arc<CellSlot>,
         outputs: Vec<Value>,
         marks: bool,
     },

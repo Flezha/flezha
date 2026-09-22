@@ -588,15 +588,16 @@ fn enter_channel(
     consumed_offset: Option<u64>,
     replay: bool,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
-    let payload = crate::host::maybe_stage_prepare(
-        instance,
-        channel_id,
-        channel,
-        payload,
+    let entry = crate::host::StagedEntry {
+        bytes: payload,
         consumed_offset,
         replay,
-        stream,
-    )?;
+        stream: Arc::clone(stream),
+        stage: None,
+    };
+    let payload = crate::host::stage_prepare(instance, channel_id, channel, vec![entry])
+        .pop()?
+        .bytes;
     // The ladder's re-attempt runs off the reader thread with no producing
     // Cell in hand, so it takes the entry form of delivery.
     let deliver = || {

@@ -5,7 +5,7 @@
 //! acts after it: no frame is sent, no item admitted and no author code run
 //! while the lock is held, and nothing waits.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -13,21 +13,24 @@ use std::time::Duration;
 use flz_transport::transport::FlezhaStream;
 
 use super::commit::{ack_timeout, iteration_frame, task_frame, undo_frame, BARRIER_SENDS};
-use super::compensation::{rewind_steps, saga_steps, stages_from_intents, CellRun};
+use super::compensation::{
+    plan_compensation, rewind_steps, saga_steps, stages_from_intents, CellRun,
+};
 use super::instance::{
-    AfterUndo, Attempt, Barrier, BarrierFor, Carry, Deadline, Failure, Message, MidResume, Pass,
-    PassSheet, Phase, Release, Stage, StageState, Undo, UndoStep, Value, WorkflowRun,
+    AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Message, MidResume,
+    Pass, PassSheet, Phase, Release, Stage, StageState, Undo, UndoStep, Value, WorkflowRun,
 };
 use super::resume::{
     carried_channel, iter_park, journaled_stages, park_idle, resumed_seed, seed_from_journal, Seed,
     OWED_INBOX_WAIT,
 };
 use super::spec::{EntryChain, WorkflowSpec};
-use super::{LoopMode, WorkflowError};
+use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge, OverflowPolicy};
 use crate::operative::instance::OperativeInstance;
-use crate::operative::topology::TaskletDescriptor;
+use crate::host::HostPayload;
+use crate::operative::topology::{CellMode, TaskletDescriptor};
 use crate::pb::command_request::Command;
 use crate::routing::Destination;
 use crate::state_sink::{COMPENSATION_DONE_PAYLOAD_ID, COMPENSATION_INTENT_PAYLOAD_ID};
@@ -70,18 +73,16 @@ impl<'a> Run<'a> {
             .expect("dag tasklet present in topology")
     }
 
-    pub(crate) fn cells(&self, node: usize) -> &[Arc<CellSlot>] {
-        &self.inst.cells[self.spec.dag.order[node] as usize]
-    }
-
-    /// The stage a Cell runs and its index among the stage's Cells.
-    fn locate(&self, slot: &CellSlot) -> Option<(usize, usize)> {
+    /// The stage a Cell runs and its place among the stage's Cells.
+    pub(super) fn locate(&self, slot: &CellSlot) -> Option<(usize, CellPos)> {
         let node = self.spec.dag.node_of(slot.tasklet_id)?;
-        let cell = self
-            .cells(node)
-            .iter()
-            .position(|s| std::ptr::eq(&**s, slot))?;
-        Some((node, cell))
+        let index = slot.cell_key.as_deref().map_or(0, |key| {
+            self.inst.cell_key_to_idx[slot.tasklet_id as usize]
+                .get(key)
+                .copied()
+                .unwrap_or(0)
+        });
+        Some((node, (index, slot.cell_key.clone())))
     }
 
     pub(crate) fn chain(&self, channel: ChannelId) -> Option<&EntryChain> {
@@ -162,7 +163,7 @@ pub fn removed(inst: &OperativeInstance) {
         d.r.run.pass_dead.store(true, Ordering::Release);
         d.clear_waits();
     });
-    for slot in inst.cells.iter().flatten() {
+    for slot in inst.all_slots() {
         if let Some(id) = slot.flusher_entry_id {
             crate::flusher::CellFlusher::instance().deregister(id);
         }
@@ -306,7 +307,7 @@ pub fn attempt_failed(slot: &Arc<CellSlot>) {
 
 /// One of a stage's items settled, its outputs already held.
 pub fn item_settled(slot: &Arc<CellSlot>) {
-    with_cell(slot, |r, node, cell| r.decide(|d| d.settled(node, cell)));
+    with_cell(slot, |r, node, cell| r.decide(|d| d.settled(node, cell, slot)));
 }
 
 /// Items consumed without running: a dead pass's queue, a disarmed retry.
@@ -320,6 +321,42 @@ pub(crate) fn items_dropped(slot: &Arc<CellSlot>, count: usize) {
             d.owe_less(node, count);
         })
     });
+}
+
+/// The Cells an idle sweep of `inst` must keep: `None` — every one — unless
+/// the run waits between passes, else those a rollback of the declared mode
+/// could still reach through a compensation hook. A stream keeps none.
+pub(crate) fn reap_holds(inst: &OperativeInstance) -> Option<HashSet<Arc<Vec<u8>>>> {
+    let Some(r) = Run::of(inst) else {
+        return Some(HashSet::new());
+    };
+    let sheet = r.run.sheet();
+    if sheet.phase != Phase::Waiting {
+        return None;
+    }
+    let reach = plan_compensation(r.spec.rollback_mode, &sheet.committed, &sheet.done);
+    Some(
+        reach
+            .into_iter()
+            .filter(|record| r.task(record.stage_idx).compensate_overridden)
+            .flat_map(|record| &record.cells)
+            .map(|run| Arc::clone(&run.cell.cell_identity))
+            .collect(),
+    )
+}
+
+/// A stage's keyless host value back from the prepare crossing: addressed
+/// to the keyed Cells its answer names, which the stage then owes in its
+/// place — or, when the crossing's ladder gave up, the stage fails where a
+/// stream would park the value.
+pub(crate) fn crossed(
+    inst: &OperativeInstance,
+    node: usize,
+    answer: Result<(Value, Arc<FlezhaStream>), String>,
+) {
+    let Some(r) = Run::of(inst) else { return };
+    let items = answer.and_then(|(value, stream)| r.address_crossed(node, &value, &stream));
+    r.decide(|d| d.crossed(node, items));
 }
 
 /// Whether `slot` belongs to a workflow pass that failed or was cancelled.
@@ -348,7 +385,7 @@ pub(crate) fn deadline_due(inst: &OperativeInstance, deadline: Deadline, due: u6
     }
 }
 
-fn with_cell(slot: &Arc<CellSlot>, f: impl FnOnce(&Run<'_>, usize, usize)) {
+fn with_cell(slot: &Arc<CellSlot>, f: impl FnOnce(&Run<'_>, usize, CellPos)) {
     let Some(inst) = slot.instance.upgrade() else {
         return;
     };
@@ -384,7 +421,7 @@ fn undo_answered(
     let Some((node, cell)) = r.locate(slot) else {
         return;
     };
-    r.decide(|d| d.undone(node, cell));
+    r.decide(|d| d.undone(node, cell, slot));
 }
 
 /// A message whose entry edge unwound, re-attempted off the reader as a
@@ -446,7 +483,19 @@ impl Run<'_> {
         producer: Option<&Arc<CellSlot>>,
     ) -> Result<Vec<Release>, String> {
         let mut items = Vec::new();
+        let mut keyless = Vec::new();
         for edge in edges {
+            if self.asks_host_for_keys(channel, edge, value) {
+                if let Some(node) = self.spec.dag.node_of(edge.tasklet) {
+                    keyless.push(Release {
+                        node,
+                        cell: None,
+                        item: workflow_item(value, stream),
+                        producer: producer.map(Arc::clone),
+                    });
+                }
+                continue;
+            }
             crate::routing::deliver_edge(
                 self.inst,
                 channel,
@@ -459,7 +508,53 @@ impl Run<'_> {
             )
             .map_err(|e| e.to_string())?;
         }
-        Ok(self.releases(items, producer))
+        let mut releases = self.releases(items, producer);
+        releases.extend(keyless);
+        Ok(releases)
+    }
+
+    /// Whether `value` needs its host to key it for `edge`: a host releases a
+    /// workflow value untransformed and unkeyed, and a keyed consumer has no
+    /// Cell until the edge's transforms and key have run. An entry value
+    /// crossed on its way in.
+    fn asks_host_for_keys(
+        &self,
+        channel: &ChannelDescriptor,
+        edge: &ConsumerEdge,
+        value: &Value,
+    ) -> bool {
+        channel.kind != ChannelKind::Entry
+            && edge.key.is_none()
+            && self
+                .inst
+                .topology
+                .tasklet(edge.tasklet)
+                .is_some_and(|t| t.mode == CellMode::Dynamic)
+            && value
+                .downcast_ref::<HostPayload>()
+                .is_some_and(|p| p.keys.is_empty())
+    }
+
+    /// An answered host value through the edge into `node`'s tasklet, to the
+    /// Cells its keys name; none when the host named none.
+    fn address_crossed(
+        &self,
+        node: usize,
+        value: &Value,
+        stream: &Arc<FlezhaStream>,
+    ) -> Result<Vec<Release>, String> {
+        let Some(payload) = value.downcast_ref::<HostPayload>() else {
+            return Ok(Vec::new());
+        };
+        let tasklet = self.spec.dag.order[node];
+        let channel = self.inst.topology.channel(payload.channel);
+        let edge = channel.and_then(|c| c.consumers.iter().find(|e| e.tasklet == tasklet));
+        match (channel, edge) {
+            (Some(channel), Some(edge)) if !payload.keys.is_empty() => {
+                self.address(channel, [edge], value, stream, None)
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 
     /// A chained loop's leaf value addressed to the roots of the chain the
@@ -512,7 +607,7 @@ impl Run<'_> {
             .filter_map(|(cell, item)| {
                 Some(Release {
                     node: self.spec.dag.node_of(cell.tasklet_id)?,
-                    cell,
+                    cell: Some(cell),
                     item,
                     producer: producer.map(Arc::clone),
                 })
@@ -892,8 +987,12 @@ impl Decide<'_, '_, '_> {
 
     // -- items -------------------------------------------------------------------
 
-    fn settled(&mut self, node: usize, cell: usize) {
-        let attempt = self.s.attempts.remove(&(node, cell)).unwrap_or_default();
+    fn settled(&mut self, node: usize, cell: CellPos, slot: &Arc<CellSlot>) {
+        let attempt = self
+            .s
+            .attempts
+            .remove(&(node, cell.clone()))
+            .unwrap_or_default();
         let Attempt {
             outputs,
             held,
@@ -915,8 +1014,8 @@ impl Decide<'_, '_, '_> {
         if failure.as_ref().is_none_or(|f| f.ran) {
             let run = stage
                 .cells
-                .entry(cell)
-                .or_insert_with(|| CellRun::new(cell));
+                .entry(cell.clone())
+                .or_insert_with(|| CellRun::new(Arc::clone(slot)));
             run.outputs.extend(outputs);
             run.staged.extend(staged);
             if completion.is_some() {
@@ -926,6 +1025,32 @@ impl Decide<'_, '_, '_> {
         }
         if let Some(failure) = failure {
             self.fail(failure);
+        }
+        self.owe_less(node, 1);
+    }
+
+    fn crossed(&mut self, node: usize, items: Result<Vec<Release>, String>) {
+        let Some(stage) = self
+            .s
+            .pass
+            .as_mut()
+            .and_then(|pass| pass.stages.get_mut(&node))
+            .filter(|stage| stage.state == StageState::Running)
+        else {
+            return;
+        };
+        match items {
+            Ok(items) => {
+                stage.owed += items.len();
+                self.fx.admit.extend(items);
+            }
+            Err(error) => self.fail(Failure {
+                node,
+                error: WorkflowError::non_retryable(error),
+                payload: None,
+                attempts: 1,
+                ran: false,
+            }),
         }
         self.owe_less(node, 1);
     }
@@ -991,7 +1116,7 @@ impl Decide<'_, '_, '_> {
         for node in running {
             self.fx
                 .cancel_retries
-                .extend(self.r.cells(node).iter().map(Arc::clone));
+                .extend(self.r.inst.slots_of(self.r.spec.dag.order[node]));
         }
     }
 
@@ -1015,7 +1140,7 @@ impl Decide<'_, '_, '_> {
             return;
         };
         let cells: Vec<CellRun> = stage.cells.values().cloned().collect();
-        let asked = node_completion(self.r, node, &cells);
+        let asked = node_completion(&cells);
         if dead {
             stage.state = StageState::Done;
         } else {
@@ -1035,7 +1160,7 @@ impl Decide<'_, '_, '_> {
             for run in &cells {
                 self.fx.markers.push((
                     COMPENSATION_INTENT_PAYLOAD_ID,
-                    Arc::clone(&self.r.cells(node)[run.cell_index].cell_identity),
+                    Arc::clone(&run.cell.cell_identity),
                 ));
             }
         }
@@ -1218,7 +1343,11 @@ impl Decide<'_, '_, '_> {
             return;
         };
         let done = std::mem::take(&mut self.s.done);
-        self.s.committed.push(done);
+        // Keep-progress never undoes a committed iteration, so it keeps no
+        // record of one: nothing then holds its Cells past their eviction.
+        if self.r.spec.rollback_mode == RollbackMode::AllOrNothing {
+            self.s.committed.push(done);
+        }
         self.s.iter += 1;
         if let Some(result) = pass.completion.result() {
             return self.terminal("ok", String::new(), result);
@@ -1424,14 +1553,8 @@ impl Decide<'_, '_, '_> {
             };
             let next = match undo.steps.front() {
                 None => None,
-                Some(UndoStep::Cell {
-                    node,
-                    cell_index,
-                    outputs,
-                    ..
-                }) => {
-                    let slot = Arc::clone(&r.cells(*node)[*cell_index]);
-                    self.fx.run_undo = Some((slot, outputs.clone()));
+                Some(UndoStep::Cell { cell, outputs, .. }) => {
+                    self.fx.run_undo = Some((Arc::clone(cell), outputs.clone()));
                     return;
                 }
                 Some(UndoStep::Record {
@@ -1472,7 +1595,7 @@ impl Decide<'_, '_, '_> {
     /// the done marker — the marker stops the hook re-running on resume, so a
     /// crash between the two must fall on the side that re-runs the
     /// (idempotent) hook. A rewind collects it into its tasklet's record.
-    fn undone(&mut self, node: usize, cell: usize) {
+    fn undone(&mut self, node: usize, cell: CellPos, slot: &Arc<CellSlot>) {
         let attempt = self.s.attempts.remove(&(node, cell)).unwrap_or_default();
         if let Some(failure) = attempt.failure {
             eprintln!(
@@ -1480,14 +1603,13 @@ impl Decide<'_, '_, '_> {
                 self.r.inst.instance_id, failure.error
             );
         }
-        let slot = Arc::clone(&self.r.cells(node)[cell]);
         let Some(undo) = self.s.undo.as_mut() else {
             return;
         };
         let Some(UndoStep::Cell { iter, marks, .. }) = undo.steps.pop_front() else {
             return;
         };
-        let outbox = super::commit::outbox_items(&slot, &attempt.staged);
+        let outbox = super::commit::outbox_items(slot, &attempt.staged);
         if !marks {
             undo.outbox.extend(outbox);
             return self.undo_step();
@@ -1509,10 +1631,9 @@ impl Decide<'_, '_, '_> {
 }
 
 /// The completion one tasklet asked for: its greatest cell key's.
-fn node_completion(r: &Run<'_>, node: usize, runs: &[CellRun]) -> Option<Vec<u8>> {
-    let slots = r.cells(node);
+fn node_completion(runs: &[CellRun]) -> Option<Vec<u8>> {
     runs.iter()
-        .filter_map(|run| Some((&slots[run.cell_index].cell_key, run.completion.as_ref()?)))
+        .filter_map(|run| Some((&run.cell.cell_key, run.completion.as_ref()?)))
         .max_by(|a, b| a.0.cmp(b.0))
         .map(|(_, result)| result.clone())
 }
@@ -1666,13 +1787,15 @@ impl Run<'_> {
 
     /// Items into their Cells without waiting: a producing Cell's holdback
     /// takes what a full mailbox refuses; a message's item, which has no
-    /// producer, waits on the sheet for a short retry.
+    /// producer, waits on the sheet for a short retry. An item with no Cell
+    /// yet crosses to its host for its keys.
     fn admit(&self, releases: Vec<Release>) {
         if releases.is_empty() {
             return;
         }
         let mut backlog = !self.run.sheet().unadmitted.is_empty();
         let mut refused = Vec::new();
+        let mut keyless = Vec::new();
         for release in releases {
             let Release {
                 node,
@@ -1680,6 +1803,10 @@ impl Run<'_> {
                 item,
                 producer,
             } = release;
+            let Some(cell) = cell else {
+                keyless.push((node, item));
+                continue;
+            };
             match producer {
                 Some(producer) => {
                     crate::admission::admit_from_cell(
@@ -1692,7 +1819,7 @@ impl Run<'_> {
                 }
                 None if backlog => refused.push(Release {
                     node,
-                    cell,
+                    cell: Some(cell),
                     item,
                     producer: None,
                 }),
@@ -1701,7 +1828,7 @@ impl Run<'_> {
                         backlog = true;
                         refused.push(Release {
                             node,
-                            cell,
+                            cell: Some(cell),
                             item,
                             producer: None,
                         });
@@ -1714,6 +1841,55 @@ impl Run<'_> {
                 d.s.unadmitted.extend(refused);
                 d.arm(Deadline::Admit, ADMIT_RETRY);
             });
+        }
+        self.cross(keyless);
+    }
+
+    /// Keyless host values into one prepare crossing per channel they were
+    /// released on; each stage owes its values until the answer addresses
+    /// them.
+    fn cross(&self, keyless: Vec<(usize, CellItem)>) {
+        if keyless.is_empty() {
+            return;
+        }
+        let Some(owner) = self.run.me.upgrade() else {
+            return;
+        };
+        let mut by_channel: BTreeMap<ChannelId, Vec<crate::host::StagedEntry>> = BTreeMap::new();
+        for (node, item) in keyless {
+            let payload = match item {
+                CellItem::Input(payload) => payload,
+                CellItem::Timer(_) | CellItem::CloseInterval => continue,
+            };
+            let Some(value) = payload.value.downcast_ref::<HostPayload>() else {
+                continue;
+            };
+            by_channel
+                .entry(value.channel)
+                .or_default()
+                .push(crate::host::StagedEntry {
+                    bytes: value.bytes.clone(),
+                    consumed_offset: None,
+                    replay: false,
+                    stream: Arc::clone(&payload.stream),
+                    stage: Some(node),
+                });
+        }
+        for (channel_id, entries) in by_channel {
+            let Some(channel) = self.inst.topology.channel(channel_id) else {
+                continue;
+            };
+            for unasked in crate::host::stage_prepare(&owner, channel_id, channel, entries) {
+                let node = unasked.stage.expect("staged for a stage");
+                crossed(
+                    self.inst,
+                    node,
+                    Err(format!(
+                        "no consumer of channel `{}` asks its host for keys",
+                        channel.name
+                    )),
+                );
+            }
         }
     }
 

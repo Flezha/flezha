@@ -69,9 +69,18 @@ each roots its own chain, the tasklets reachable from its consumers, and a messa
 the chain of the channel it arrived on. A join where two chains meet waits only for the
 producers of the chain that runs, live and on a crash-resume.
 
-Within one tasklet, cells run in parallel exactly as in stream — single or static
-cell mode, per-cell state, per-cell WAL. Dynamic cell mode is refused: a workflow chain
-needs a known cell set to know when a tasklet is *done*. `--partitions` is refused too —
+Within one tasklet, cells run in parallel exactly as in stream: single, static or dynamic
+cell mode, per-cell state, per-cell WAL. A tasklet reached by a `key_by` edge gets one cell
+per key, minted by routing the moment a stage's item is addressed to it and capped by
+`max_cells` as a stream's is (a new key past the cap is dropped and counted in
+`inputs_dropped_capped_total`). A stage is done when every cell it addressed has drained,
+and its commit names each of those cells once. An idle keyed cell is evicted by its
+`cell_idle_ttl()` only between passes, and never while a rollback of the declared
+`rollback_mode` could still reach it: under all-or-nothing every cell that ran a compensable
+tasklet is held until the instance ends, under keep-progress only the running pass's cells
+are. A `task_committed` entry counts its cells in 16 bits, so one pass of one tasklet runs at
+most 65 535 cells, below the `max_cells` default of 100 000; a class that keys more than that
+per pass declares a smaller cap. `--partitions` is refused —
 [partitioning](stream_profile.md#partitioned-operatives) is a stream concern; a workflow scales
 by spawning instances.
 

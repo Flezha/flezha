@@ -1,6 +1,6 @@
 //! The frozen registration-time result of authoring a workflow class: a
 //! validated tasklet DAG (acyclic, every node reachable from an entry
-//! channel, no dynamic cells) with one chain per entry channel, plus the
+//! channel) with one chain per entry channel, plus the
 //! class's loop, rollback and durability facts.
 
 use std::time::Duration;
@@ -345,15 +345,6 @@ pub enum BuildWorkflowError {
     BranchingChainedLoop {
         factory_id: &'static str,
         leaves: usize,
-    },
-
-    #[error(
-        "workflow operative `{factory_id}` declares a dynamic-cell tasklet `{tasklet}`; \
-         workflow operatives do not support dynamic cell mode"
-    )]
-    DynamicCells {
-        factory_id: &'static str,
-        tasklet: String,
     },
 
     #[error(

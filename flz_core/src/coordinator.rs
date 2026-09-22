@@ -127,12 +127,18 @@ impl RunnerNode {
         self.operative_registry.get(instance_id)
     }
 
-    /// A live static or single Cell by wire identity, with its instance.
+    /// The Cell a wire identity names, with its instance; a keyed one is
+    /// minted on first sight.
     pub fn find_cell(
         &self,
         cell_id: &[u8],
     ) -> Option<(Arc<OperativeInstance>, Arc<crate::cell::CellSlot>)> {
         self.operative_registry.find_cell(cell_id)
+    }
+
+    /// The live instance a wire identity names.
+    pub fn instance_of_cell(&self, cell_id: &[u8]) -> Option<Arc<OperativeInstance>> {
+        self.operative_registry.instance_of_cell(cell_id)
     }
 
     pub fn operative_dispatch_handle(&self) -> OperativeDispatchHandle {

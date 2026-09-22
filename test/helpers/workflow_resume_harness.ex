@@ -20,6 +20,7 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
+  alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias Flezha.SDK.RecordFrame
   alias FlezhaTest.Helper.NodeTestHelper
@@ -79,6 +80,20 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   def committed_iters(operative_id) do
     {:ok, entries} = TaskJournal.read(operative_id)
     for %{type: :iter_committed, iter: iter} <- entries, do: iter
+  end
+
+  def committed_tasks(operative_id) do
+    {:ok, entries} = TaskJournal.read(operative_id)
+    for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+  end
+
+  # Compensation-done markers the controller wrote, one per compensated Cell,
+  # across the operative or under one tasklet.
+  def comp_done_count(operative_id, tasklet \\ "**") do
+    [Paths.class_dir(operative_id), tasklet, "*.comp_done"]
+    |> Path.join()
+    |> Path.wildcard()
+    |> length()
   end
 
   def consumed_offsets(operative_id) do

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
 use crate::cell::CellSlot;
-use crate::channel::BuildCellArgs;
+use crate::channel::{BuildCellArgs, TaskletId};
 use crate::dynamic::{spawn_reaper, DynamicCellRegistry};
 use crate::operative::topology::{CellMode, OperativeTopology};
 
@@ -189,14 +189,47 @@ impl OperativeInstance {
 
     /// Every Cell this instance holds right now, static and dynamic alike.
     pub fn all_slots(&self) -> Vec<Arc<CellSlot>> {
-        let statics = self.cells.iter().flatten().cloned();
-        let dynamics = self.dynamic_registries.iter().flatten().flat_map(|r| {
-            r.cells
+        (0..self.cells.len() as TaskletId)
+            .flat_map(|tasklet_id| self.slots_of(tasklet_id))
+            .collect()
+    }
+
+    /// Every Cell one tasklet holds right now: its declared ones, or the
+    /// keyed ones its registry minted.
+    pub fn slots_of(&self, tasklet_id: TaskletId) -> Vec<Arc<CellSlot>> {
+        match self.dynamic_registries.get(tasklet_id as usize) {
+            Some(Some(registry)) => registry
+                .cells
                 .iter()
                 .map(|e| Arc::clone(e.value()))
-                .collect::<Vec<_>>()
-        });
-        statics.chain(dynamics).collect()
+                .collect(),
+            _ => self
+                .cells
+                .get(tasklet_id as usize)
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The Cell a wire identity names on this instance: a declared one, or a
+    /// keyed one minted on first sight exactly as routing mints it — `None`
+    /// past the tasklet's cap, and for an identity of another instance or of
+    /// a tasklet the class does not declare.
+    pub fn slot_by_identity(&self, cell_id: &[u8]) -> Option<Arc<CellSlot>> {
+        let (instance_id, tasklet, key) = crate::flusher::decode_cell_identity(cell_id)?;
+        if *instance_id != *self.instance_id {
+            return None;
+        }
+        let tasklet_id = *self.topology.tasklet_name_to_id.get(tasklet.as_str())? as usize;
+        match self.dynamic_registries.get(tasklet_id)? {
+            Some(registry) => registry.get_or_create(&key).ok(),
+            None => self
+                .cells
+                .get(tasklet_id)?
+                .iter()
+                .find(|slot| slot.cell_identity.as_slice() == cell_id)
+                .cloned(),
+        }
     }
 
     pub fn persistence_enabled(&self) -> bool {

@@ -41,7 +41,6 @@ pub(super) fn task_frame(
     cells: &[CellRun],
     completion: Option<Vec<u8>>,
 ) -> Result<Command, WorkflowError> {
-    let slots = r.cells(node);
     let values: Vec<Value> = cells
         .iter()
         .flat_map(|run| run.outputs.iter().map(Arc::clone))
@@ -54,12 +53,12 @@ pub(super) fn task_frame(
         iter,
         cells_ran: cells
             .iter()
-            .map(|run| slots[run.cell_index].cell_identity.as_ref().clone())
+            .map(|run| run.cell.cell_identity.as_ref().clone())
             .collect(),
         handoff,
         outbox: cells
             .iter()
-            .flat_map(|run| outbox_items(&slots[run.cell_index], &run.staged))
+            .flat_map(|run| outbox_items(&run.cell, &run.staged))
             .collect(),
         compensating: false,
         completes: completion.is_some(),

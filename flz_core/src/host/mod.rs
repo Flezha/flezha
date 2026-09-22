@@ -38,8 +38,8 @@ pub use decl::{
 };
 pub use issue::{render_issues, TopologyIssue};
 pub use prepare::{
-    deferred_end_replay_slice, maybe_stage_prepare, prepare_wants, HostPrepareState,
-    PrepareCrossing, StagedEntry,
+    deferred_end_replay_slice, prepare_wants, stage_prepare, HostPrepareState, PrepareCrossing,
+    StagedEntry,
 };
 pub use register::{
     check, check_class_json, register_host_class, register_host_class_json, Derived,

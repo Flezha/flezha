@@ -30,6 +30,15 @@ struct FakeHost {
 
 impl FakeHost {
     fn serve(verdict: impl Fn(&[u8]) -> schema::Verdict + Send + 'static) -> Self {
+        Self::answering(move |payload, applied| answer(payload, applied, &verdict))
+    }
+
+    /// Answers every activation with `respond`.
+    fn answering(
+        respond: impl Fn(&EnginePayload, &Mutex<Vec<String>>) -> schema::ActivationOutcome
+            + Send
+            + 'static,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let applied = Arc::new(Mutex::new(Vec::new()));
         let thread = {
@@ -40,7 +49,7 @@ impl FakeHost {
                 while !stop.load(Ordering::Acquire) {
                     match core.poll(Duration::from_millis(20)) {
                         Polled::Activation(act) => {
-                            let outcome = answer(&act.payload, &applied, &verdict);
+                            let outcome = respond(&act.payload, &applied);
                             let token = act.token;
                             apply_result(core, act, schema::ActivationResult { token, outcome })
                                 .expect("the poll core takes the answer");
@@ -394,4 +403,268 @@ fn a_stream_given_the_unreadable_verdict_parks_the_item() {
     assert_eq!(park.body.entry.error, "not json");
     assert_eq!(park.body.entry.payload.as_deref(), Some(&b"bad"[..]));
     state_sink::reset_for_test();
+}
+
+// ---- a keyed tasklet on the host path -------------------------------------
+
+/// `p0` splits a message on `,` into one released value per part; `k1` is
+/// reached by a keyed edge and echoes `k:<cell key>:<item>` to `out`.
+fn keyed_json(id: &str, mid_retry_max: u32) -> String {
+    format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"mid","kind":"inter_task","producer":0,
+                           "retry_max":{mid_retry_max},"retry_backoff_ms":1,
+                           "chains":[[{{"link":"key"}},{{"link":"into","tasklet":1}}]]}},
+                         {{"name":"out","kind":"plugin","producer":1,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"p0"}},{{"name":"k1","cell_mode":"dynamic"}}],
+             "workflow":{{}}}}"#
+    )
+}
+
+/// What the keyed host did: the crossings it answered, by entry count.
+#[derive(Default)]
+struct Crossings(Mutex<Vec<usize>>);
+
+/// A host for [`keyed_json`]: every prepare answers each payload's own bytes
+/// as its key, or `refuse` for every one.
+fn keyed_host(mid: u32, crossings: Arc<Crossings>, refuse: bool) -> FakeHost {
+    FakeHost::answering(move |payload, _| match payload {
+        EnginePayload::Prepare(crossing) => {
+            crossings.0.lock().unwrap().push(crossing.entries.len());
+            schema::ActivationOutcome::Prepared(
+                crossing
+                    .entries
+                    .iter()
+                    .map(|entry| match refuse {
+                        true => Err(schema::WorkError {
+                            message: "no key for that".to_string(),
+                            non_retryable: true,
+                        }),
+                        false => Ok(schema::PrepareAnswer {
+                            keys: vec![String::from_utf8_lossy(&entry.bytes).to_string()],
+                            event_time: None,
+                        }),
+                    })
+                    .collect(),
+            )
+        }
+        EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| {
+                    let bytes = match &item.item {
+                        crate::cell::CellItem::Input(payload) => host_bytes(&payload.value),
+                        _ => Vec::new(),
+                    };
+                    keyed_effect(slot, mid, &bytes)
+                })
+                .collect(),
+        ),
+        _ => schema::ActivationOutcome::Failed(schema::WorkError {
+            message: "unexpected activation".to_string(),
+            non_retryable: true,
+        }),
+    })
+}
+
+fn keyed_effect(slot: &crate::cell::CellSlot, mid: u32, bytes: &[u8]) -> schema::ItemEffect {
+    let output = |target, payload: Vec<u8>| schema::Output {
+        target,
+        key: None,
+        event_time: None,
+        metadata: Vec::new(),
+        payload,
+    };
+    let outputs = match slot.cell_key.as_deref() {
+        None => bytes
+            .split(|b| *b == b',')
+            .map(|part| {
+                output(
+                    schema::OutputTarget::Edge {
+                        channel: mid,
+                        consumer: 1,
+                    },
+                    part.to_vec(),
+                )
+            })
+            .collect(),
+        Some(key) => vec![output(
+            schema::OutputTarget::Plugin {
+                channel: "out".to_string(),
+            },
+            format!("k:{key}:{}", String::from_utf8_lossy(bytes)).into_bytes(),
+        )],
+    };
+    schema::ItemEffect {
+        outputs,
+        ..effect(schema::Verdict::Ok, &[])
+    }
+}
+
+fn keyed_class(id: &str, mid_retry_max: u32) -> u32 {
+    crate::host::register_host_class_json(keyed_json(id, mid_retry_max).as_bytes())
+        .expect("class registers");
+    crate::operative::registry::get_class(id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the keyed class declares `mid`")
+}
+
+fn live_keys(node: &RunnerNode, id: &str) -> Vec<String> {
+    let instance = node.get_operative(id).expect("a live instance");
+    let mut keys: Vec<String> = instance.dynamic_registries[1]
+        .as_ref()
+        .expect("k1 is keyed")
+        .cells
+        .iter()
+        .map(|e| e.key().clone())
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn a_host_workflows_released_values_cross_once_for_their_keys() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_wf_keyed_{}", std::process::id());
+    let mid = keyed_class(&id, 1);
+    let crossings = Arc::new(Crossings::default());
+    let _host = keyed_host(mid, Arc::clone(&crossings), false);
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    assert!(start(&mut node, &id, "host-keyed-1", "", 0).is_empty());
+    feed(&node, "host-keyed-1", b"a,b,c");
+    let (mut outs, done) = drain(&rx, "host-keyed-1");
+    outs.sort();
+    assert_eq!(done.0, "ok");
+    assert_eq!(outs, [b"k:a:a".to_vec(), b"k:b:b".to_vec(), b"k:c:c".to_vec()]);
+    assert_eq!(live_keys(&node, "host-keyed-1"), ["a", "b", "c"]);
+    assert_eq!(
+        *crossings.0.lock().unwrap(),
+        [3],
+        "the three released values crossed together"
+    );
+}
+
+#[test]
+fn a_resumed_host_workflow_crosses_its_journaled_handoff() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_wf_keyed_resume_{}", std::process::id());
+    let mid = keyed_class(&id, 1);
+    let crossings = Arc::new(Crossings::default());
+    let _host = keyed_host(mid, Arc::clone(&crossings), false);
+    let codec = crate::operative::registry::get_class(&id)
+        .and_then(|topology| topology.channel(mid).and_then(|c| c.codec.clone()))
+        .expect("a host inter-tasklet channel journals through its codec");
+    let released = |bytes: &[u8]| crate::pb::TaskHandoffItem {
+        channel_id: mid,
+        payload: (codec.encode)(&HostPayload {
+            bytes: bytes.to_vec(),
+            channel: mid,
+            keys: Vec::new(),
+            event_time: None,
+            metadata: Vec::new(),
+        })
+        .expect("encodes"),
+    };
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let mut errors = Vec::new();
+    crate::command::CommandAction::handle(
+        &crate::pb::AddOperative {
+            operative_id: "host-keyed-resume".to_string(),
+            factory_id: id.clone(),
+            task_journal: Some(crate::pb::TaskJournalState {
+                committed_task_idxs: vec![0],
+                task_handoffs: vec![crate::pb::TaskEdgeHandoff {
+                    task_idx: 0,
+                    handoff: vec![released(b"x"), released(b"y")],
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        &mut node,
+        "",
+        &mut errors,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+
+    // The committed root is skipped; the re-forwarded message resumes the pass.
+    feed(&node, "host-keyed-resume", b"ignored");
+    let (mut outs, done) = drain(&rx, "host-keyed-resume");
+    outs.sort();
+    assert_eq!(done.0, "ok");
+    assert_eq!(outs, [b"k:x:x".to_vec(), b"k:y:y".to_vec()]);
+    assert_eq!(live_keys(&node, "host-keyed-resume"), ["x", "y"]);
+    assert_eq!(*crossings.0.lock().unwrap(), [2]);
+}
+
+#[test]
+fn a_crossing_the_host_refuses_fails_the_stage_and_parks_nothing() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let parks = capture_parks();
+    let id = format!("host_wf_keyed_refused_{}", std::process::id());
+    let mid = keyed_class(&id, 2);
+    let crossings = Arc::new(Crossings::default());
+    let _host = keyed_host(mid, Arc::clone(&crossings), true);
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    assert!(start(&mut node, &id, "host-keyed-refused", "", 0).is_empty());
+    feed(&node, "host-keyed-refused", b"a");
+    let (outs, done) = drain(&rx, "host-keyed-refused");
+    assert!(outs.is_empty());
+    assert_eq!(done.0, "error");
+    assert!(done.1.contains("no key for that"), "{}", done.1);
+    assert_eq!(
+        *crossings.0.lock().unwrap(),
+        [1, 1],
+        "the value climbed the channel's ladder: two attempts"
+    );
+    assert!(parks.lock().expect("park capture poisoned").is_empty());
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_host_streams_entry_crossing_mints_its_keyed_cells() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_stream_keyed_{}", std::process::id());
+    let crossings = Arc::new(Crossings::default());
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
+             "channels":[{{"name":"in","kind":"entry",
+                           "chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"out","kind":"plugin","producer":0,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"k0","cell_mode":"dynamic"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let instance =
+        crate::operative::instance::OperativeInstance::of_class(&id, &format!("{id}_inst"))
+            .expect("class registered");
+    let _host = keyed_host(u32::MAX, Arc::clone(&crossings), false);
+    let registry = Arc::new(crate::operative::registry::OperativeRegistry::new());
+    registry.register(Arc::clone(&instance));
+
+    crate::routing::OperativeDispatchHandle { registry }.dispatch(
+        &instance.instance_id,
+        b"q".to_vec(),
+        &Default::default(),
+        stream_pair().0,
+    );
+    let keyed = instance.dynamic_registries[0]
+        .as_ref()
+        .expect("k0 is keyed");
+    spin_until("the entry crossing to mint the key's Cell", || {
+        keyed.cells.contains_key("q")
+    });
+    assert_eq!(*crossings.0.lock().unwrap(), [1]);
 }

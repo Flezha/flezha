@@ -14,7 +14,7 @@ A tasklet in a workflow operative MAY declare a compensation hook (`compensate(c
 
 ### Requirement: Compensation fires in reverse order, per cell
 
-When a workflow operative terminates abnormally — a tasklet returns an error, or it is force-stopped after partial progress — the SDK SHALL fire the compensation hooks of already-**completed** tasklets in **reverse order**, back to the last commit point (see modes below). For a tasklet that ran across multiple cells, its hook SHALL fire **once per cell** that accumulated an effect; the order among those cells is unspecified (they are independent keys). Undo SHALL be strictly top-down: an earlier step SHALL NOT be undone while a later step that depended on it is kept. Tasklets that had not completed SHALL NOT be compensated, and a clean termination (`ok`) SHALL NOT trigger compensation.
+When a workflow operative terminates abnormally — a tasklet returns an error, or it is force-stopped after partial progress — the SDK SHALL fire the compensation hooks of already-**completed** tasklets in **reverse order**, back to the last commit point (see modes below). For a tasklet that ran across multiple cells, its hook SHALL fire **once per cell** that ran, the cells being the ones the stage's record names by identity — a declared cell, or one a keyed edge created during the pass — and never a declared cell the stage handed nothing to; the order among those cells is unspecified (they are independent keys). A cell that ran a compensable tasklet in a stage the declared rollback mode would still undo SHALL stay live until the instance ends or that stage falls outside the rollback scope, so its hook runs over the state it accumulated; idle-TTL eviction SHALL NOT reach it. Undo SHALL be strictly top-down: an earlier step SHALL NOT be undone while a later step that depended on it is kept. Tasklets that had not completed SHALL NOT be compensated, and a clean termination (`ok`) SHALL NOT trigger compensation.
 
 #### Scenario: Reverse-order compensation on a failed step
 
@@ -24,7 +24,17 @@ When a workflow operative terminates abnormally — a tasklet returns an error, 
 #### Scenario: Per-cell compensation for a parallel tasklet
 
 - **WHEN** a completed tasklet that ran across multiple cells is compensated
-- **THEN** its `compensate` hook SHALL fire once per cell that has an effect, each receiving that cell's own output and state
+- **THEN** its `compensate` hook SHALL fire once per cell that ran, each receiving that cell's own output and state
+
+#### Scenario: A keyed tasklet is compensated once per key
+
+- **WHEN** a keyed compensable tasklet ran for keys `a`, `b` and `c` in a pass and a later tasklet then fails
+- **THEN** its hook SHALL fire exactly three times, once in each of `a`'s, `b`'s and `c`'s cells, a compensation-done marker SHALL be written for each of those three identities, and a static cell of the same stage that received nothing SHALL NOT be compensated
+
+#### Scenario: An idle keyed cell a rollback could reach is kept for its undo
+
+- **WHEN** an all-or-nothing `per_input` workflow committed an iteration in which a keyed compensable tasklet ran for `a`, the instance then idles past the tasklet's TTL, and a later iteration fails
+- **THEN** `a`'s cell is still live when the rollback reaches that iteration, and its hook runs over the state it committed
 
 #### Scenario: Clean completion does not compensate
 

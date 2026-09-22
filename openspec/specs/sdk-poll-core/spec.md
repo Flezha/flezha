@@ -194,9 +194,23 @@ The core SHALL batch, for host classes whose edges are keyed or whose
 clock is an event time, the questions it cannot answer from bytes into one
 prepare crossing (the widened `KeyRequest`): per payload the host SHALL
 return the key and/or the extracted event time, and the core SHALL resolve
-the crossing before any mailbox enqueue.
+the crossing before any mailbox enqueue. The question SHALL be asked
+wherever a keyless payload meets a consumer that needs keys, on an entry
+channel as today and on an inter-tasklet channel of a workflow instance,
+whose host releases a value untransformed and unkeyed for the consumer to
+apply the edge on delivery: the core SHALL stage such a value for the
+crossing on its channel, live or re-seeded from the journal, and SHALL
+address it to the keyed consumer's Cells from the answer, minting them as
+a stream's are minted. A payload that already carries its keys SHALL
+cross nothing. A staged value SHALL count as an item the RECEIVING stage
+still owes, so that stage cannot settle ahead of it; the live release and
+the journal re-seed are then one mechanism, because both arrive at the
+receiving stage.
 Admission, classification, the high-water, and due-timer generation remain
-core-side; a prepare failure enters the input channel's retry→park ladder.
+core-side; a prepare failure enters the input channel's retry→park ladder,
+and where that ladder would park a workflow instance's value it SHALL
+fail the receiving stage instead, and nothing SHALL be parked, as the two
+other park sites do for a workflow.
 
 #### Scenario: Event time arrives before admission
 - **WHEN** an input for an event-time-clocked host class is received
@@ -205,6 +219,18 @@ core-side; a prepare failure enters the input channel's retry→park ladder.
 #### Scenario: A key failure parks instead of dropping keylessly
 - **WHEN** the host answers a prepare batch with a failure for one payload
 - **THEN** that payload SHALL climb the channel's retry→park ladder and no keyless-drop path SHALL exist
+
+#### Scenario: A host workflow's release is keyed by the crossing
+- **WHEN** a Java, Node, Python, Ruby or PHP workflow's first tasklet releases three values into a tasklet reached by `keyBy`
+- **THEN** the core stages the three payloads for one crossing on the inter-tasklet channel, the host answers each value's key by running the edge's chain, three Cells are minted from the answers, and the keyed stage settles only after the three are addressed and have run
+
+#### Scenario: A resumed host workflow re-seeds its keyed consumer the same way
+- **WHEN** a host workflow whose keyed tasklet is the first uncommitted stage is resumed from its journal
+- **THEN** the journaled handoff crosses for its keys as the live release did, and the pass resumes on the same Cells the crash left behind
+
+#### Scenario: A crossing that fails terminally fails the stage
+- **WHEN** a host answers every re-attempt for one released value with a non-retryable error
+- **THEN** the receiving stage of the workflow instance fails without committing, compensation starts from there, and nothing is parked to the dead-letter queue
 
 ### Requirement: Workflow lifecycles run under poll
 

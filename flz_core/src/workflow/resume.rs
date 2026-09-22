@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::compensation::{CellRun, StageRecord};
 use super::instance::{CommittedTask, Completion, JournalResume, MidResume, Release, Value};
 use super::run::{unwired_stream, Run};
-use super::WorkflowError;
+use super::{RollbackMode, WorkflowError};
 use crate::channel::{ChannelId, ChannelKind};
 use crate::operative::topology::OperativeTopology;
 
@@ -202,13 +202,22 @@ pub(super) fn resumed_seed(
 }
 
 /// The journal's committed work as stage records: the fully-committed
-/// iterations, and the in-flight iteration's stages (skipped on resume, still
-/// rolled back). Outputs are empty, as on any crash-resume.
+/// iterations an all-or-nothing rollback would undo, and the in-flight
+/// iteration's stages (skipped on resume, still rolled back). Outputs are
+/// empty, as on any crash-resume.
 pub(super) fn journaled_stages(
     r: &Run<'_>,
     resume: &JournalResume,
 ) -> (Vec<Vec<StageRecord>>, Vec<StageRecord>) {
-    let mut by_iter = stages_by_iter(r, &resume.committed_tasks);
+    let undoable: Vec<CommittedTask> = resume
+        .committed_tasks
+        .iter()
+        .filter(|task| {
+            r.spec.rollback_mode == RollbackMode::AllOrNothing || task.iter >= resume.iter
+        })
+        .cloned()
+        .collect();
+    let mut by_iter = stages_by_iter(r, &undoable);
     // The resume point splits the two: everything below it is committed progress.
     let in_flight = by_iter
         .split_off(&resume.iter)
@@ -236,8 +245,9 @@ pub(super) fn stages_by_iter(
     by_iter
 }
 
-/// One journaled commit as a `StageRecord`; `None` when the tasklet is not
-/// in this build's chain.
+/// One journaled commit as a `StageRecord`, each identity looked up on the
+/// instance as a restore looks it up, a keyed one minted; `None` when the
+/// tasklet is not in this build's chain.
 fn stage_record(
     r: &Run<'_>,
     task_idx: u32,
@@ -245,17 +255,11 @@ fn stage_record(
     cells_ran: &[Vec<u8>],
 ) -> Option<StageRecord> {
     let stage_idx = task_idx as usize;
-    if stage_idx >= r.spec.dag.len() {
-        return None;
-    }
-    let slots = r.cells(stage_idx);
+    let tasklet = *r.spec.dag.order.get(stage_idx)?;
     let cells = cells_ran
         .iter()
-        .filter_map(|id| {
-            slots
-                .iter()
-                .position(|slot| slot.cell_identity.as_slice() == id.as_slice())
-        })
+        .filter_map(|id| r.inst.slot_by_identity(id))
+        .filter(|slot| slot.tasklet_id == tasklet)
         .map(CellRun::new)
         .collect();
     Some(StageRecord {

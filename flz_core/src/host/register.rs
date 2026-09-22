@@ -248,15 +248,6 @@ fn refuse_workflow_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) 
                 .to_string(),
         ));
     }
-    for task_decl in &decl.tasklets {
-        if task_decl.cell_mode == HostCellModeDecl::Dynamic {
-            issues.push(TopologyIssue::Declaration(format!(
-                "workflow tasklet `{}` declares dynamic cell mode, which workflow \
-                 operatives do not support",
-                task_decl.name
-            )));
-        }
-    }
 }
 
 /// The tier, the checkpoint interval and the correction window each need

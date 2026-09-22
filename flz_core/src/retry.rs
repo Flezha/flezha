@@ -189,20 +189,12 @@ pub(crate) fn run_retry_park_ladder(
     consumed_offset: Option<u64>,
     payload: Option<Vec<u8>>,
     first_error: String,
-    mut attempt_step: impl FnMut() -> Result<(), String>,
+    attempt_step: impl FnMut() -> Result<(), String>,
 ) -> bool {
-    let retry = target.retry;
-    let mut attempt: u32 = 1; // the routing-thread run was attempt 1
-    let mut error = first_error;
-    while attempt < retry.max_attempts {
-        let delay = note_failed_attempt(label, attempt, retry, &error);
-        crate::util::sleep_interruptible(delay, None);
-        attempt += 1;
-        match attempt_step() {
-            Ok(()) => return false,
-            Err(e) => error = e,
-        }
-    }
+    let Err((error, attempts)) = climb_ladder(label, target.retry, first_error, attempt_step)
+    else {
+        return false;
+    };
     park_exhausted(
         label,
         target,
@@ -210,9 +202,32 @@ pub(crate) fn run_retry_park_ladder(
         consumed_offset,
         payload,
         error,
-        attempt,
+        attempts,
     );
     true
+}
+
+/// Re-attempt one step per `retry`'s budget; `Err` carries the last error
+/// and the attempts spent once the budget is gone, for the caller's own
+/// terminal: a park, or a workflow stage's failure.
+pub(crate) fn climb_ladder(
+    label: &str,
+    retry: RetryPolicy,
+    first_error: String,
+    mut attempt_step: impl FnMut() -> Result<(), String>,
+) -> Result<(), (String, u32)> {
+    let mut attempt: u32 = 1; // the routing-thread run was attempt 1
+    let mut error = first_error;
+    while attempt < retry.max_attempts {
+        let delay = note_failed_attempt(label, attempt, retry, &error);
+        crate::util::sleep_interruptible(delay, None);
+        attempt += 1;
+        match attempt_step() {
+            Ok(()) => return Ok(()),
+            Err(e) => error = e,
+        }
+    }
+    Err((error, attempt))
 }
 
 /// Park what a ladder could not deliver after `attempts`, under the

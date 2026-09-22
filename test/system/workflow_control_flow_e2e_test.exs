@@ -30,6 +30,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Replay
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.Wire
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
@@ -589,8 +590,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert Enum.count(delivered, &(&1 == "c:#{@seed}")) == 1,
              "the sibling branch had already committed: it must not re-run"
 
-      {:ok, entries} = TaskJournal.read(operative_id)
-      committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+      committed = committed_tasks(operative_id)
 
       # The branches commit on their own, in whichever order they finish.
       assert hd(committed) == 0 and Enum.sort(committed) == [0, 1, 2, 3],
@@ -655,6 +655,75 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
              "a leaf that never committed leaves the operative incomplete"
     end
   end
+
+  describe "a keyed workflow tasklet (uds)" do
+    @describetag transport: :uds, scenario: :uds_keyed
+
+    # A `key_by` into `keyed_commit` mints one Cell per key of the entry's list,
+    # read on the controller's durable view: the third tasklet blocks (no
+    # release), and a live read would wait behind it on a runner whose owner
+    # process serves reads and stage pushes in turn.
+    test "N keys run N Cells, and the keyed stage's commit names each once", ctx do
+      namespace = unique("workflow_keyed")
+      operative_id = unique("keyed_block_workflow")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      boot_runner(namespace, ctx, id_path, release?: false)
+      start_workflow(namespace, operative_id, "keyed_block_workflow", first_message: "a,b,c")
+
+      assert NodeTestHelper.wait_until(fn -> 1 in committed_tasks(operative_id) end, 30_000),
+             "the keyed stage never committed"
+
+      assert NodeTestHelper.wait_until(fn -> keyed_cells(operative_id) == ~w(a b c) end, 15_000),
+             "keyed Cells on disk: #{inspect(keyed_cells(operative_id))}"
+
+      {:ok, entries} = TaskJournal.read(operative_id)
+      [ran] = for %{type: :task_committed, task_idx: 1, payload: p} <- entries, do: p.cells_ran
+
+      assert Enum.sort(ran) == Enum.map(~w(a b c), &keyed_identity(operative_id, &1)),
+             "the keyed stage's commit must name each minted Cell once"
+    end
+
+    # `keyed_fail` fails after the keyed stage committed: the rollback runs the
+    # keyed hook once per key and leaves the hookless first tasklet alone.
+    test "a failure compensates the keyed stage once per key", ctx do
+      namespace = unique("workflow_keyed_saga")
+      operative_id = unique("keyed_saga_workflow")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      boot_runner(namespace, ctx, id_path, release?: true)
+      start_workflow(namespace, operative_id, "keyed_saga_workflow", first_message: "a,b,c")
+
+      await_status(operative_id, "error", 30_000)
+
+      for key <- ~w(a b c) do
+        assert File.exists?(
+                 Paths.compensation_marker_path({operative_id, "keyed_commit", key}, :done)
+               ),
+               "the keyed Cell #{key} was not compensated"
+      end
+
+      assert comp_done_count(operative_id, "keyed_commit") == 3
+      assert comp_done_count(operative_id, "key_split") == 0
+
+      assert committed_tasks(operative_id) == [0, 1], "the failing tasklet must never commit"
+
+      {:ok, entries} = TaskJournal.read(operative_id)
+
+      refute Enum.any?(entries, &match?(%{type: :compensated, task_idx: 0}, &1)),
+             "the hookless first tasklet was compensated"
+    end
+  end
+
+  defp keyed_cells(operative_id),
+    do: Enum.sort(for {_, "keyed_commit", key} <- Paths.cells_of(operative_id), do: key)
+
+  defp keyed_identity(operative_id, key),
+    do: Wire.encode_cell_id(operative_id, "keyed_commit", key)
 
   # The crash point of `branch_workflow`: the root and BOTH its branches have
   # committed, and only the blocked grandchild is outstanding.

@@ -90,10 +90,18 @@ impl DynamicCellRegistry {
     }
 
     /// Evict every Cell idle longer than `idle_ttl`, each under its drain
-    /// gate with an empty mailbox.
+    /// gate with an empty mailbox; a workflow's only between passes, and
+    /// never one a rollback could still reach.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();
         let ttl_ms = idle_ttl.as_millis() as i64;
+        let held = match self.instance.upgrade() {
+            Some(instance) => match crate::workflow::reap_holds(&instance) {
+                Some(held) => held,
+                None => return,
+            },
+            None => Default::default(),
+        };
 
         // Collect idle candidates, taking each one's drain gate. Removal is
         // deferred until the iterator drops (mutating mid-iteration would
@@ -101,7 +109,9 @@ impl DynamicCellRegistry {
         let mut candidates: Vec<(String, Arc<CellSlot>)> = Vec::new();
         for entry in self.cells.iter() {
             let slot = entry.value();
-            if now - slot.last_activity_ms.load(Ordering::Relaxed) <= ttl_ms {
+            if now - slot.last_activity_ms.load(Ordering::Relaxed) <= ttl_ms
+                || held.contains(&slot.cell_identity)
+            {
                 continue;
             }
             if !slot.mailbox.claim_inflight() {

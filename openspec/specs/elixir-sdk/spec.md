@@ -527,7 +527,7 @@ The Elixir SDK SHALL carry `keyed_channels` in its own core: every plugin frame 
 
 ### Requirement: The Elixir SDK evicts idle dynamic Cells and caps them
 
-The Elixir SDK SHALL carry `dynamic_cell` in its own core. A dynamic node whose Tasklet declares `cell_idle_ttl_ms/0` SHALL be swept by one `:reap` tick in its Operative process at `FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms; a node declaring none SHALL never be swept and no tick SHALL be scheduled. The sweep SHALL run under the Operative's own routing serialisation — the drain gate: no push can be routed while it runs — and SHALL evict a Cell only when it has been idle past the TTL with an empty queue, no dispatch in flight, no held park and no deferred push, skipping a busy one until the next sweep. Eviction SHALL be destructive: the Cell SHALL ship `delete_cell_state` on its own record stream when the class persists (behind its records by construction), SHALL clear its slot so a successor is a cold start from `init_state/1`, and SHALL stop; the Operative SHALL drop it from the live map and remember the key in a trace of at most 1 024 keys. `Operative.lookup/4` SHALL answer `:cell_evicted` for a traced key that is not live, and the live read SHALL spell the shared core's `cell_evicted:` wording for it, distinguishably from `cell_not_found`. `max_cells/0` SHALL bind at `ensure_cell/3` as the behaviours requirement states. Creation, eviction and capped drops SHALL be reported as one `[:flezha, :sdk, :dynamic]` telemetry event carrying the kind. `test/apps/elixir_runner`'s `dynamic_cell` SHALL journal its push and read its TTL from `DYN_TEST_TTL_MS`, and the manifest SHALL list `dynamic_cell` under `fixtures` with the reference's id.
+The Elixir SDK SHALL carry `dynamic_cell` in its own core, for both kinds through one module. A dynamic node whose Tasklet declares `cell_idle_ttl_ms/0` SHALL be swept by one `:reap` tick in the process that owns its Cells, the stream Operative's or the workflow Driver's, at `FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms; a node declaring none SHALL never be swept and no tick SHALL be scheduled. The sweep SHALL run under the owner's own routing serialisation — the drain gate: no push can be routed while it runs — and SHALL evict a Cell only when it has been idle past the TTL with an empty queue, no dispatch in flight, no held park and no deferred push, skipping a busy one until the next sweep. On a workflow instance the sweep SHALL additionally run only while the loop is waiting for its next message, and SHALL skip a Cell named by a completed stage the class's `rollback_mode` would still undo whose tasklet declares `compensate/3`, the same plan the unwind reads. Eviction SHALL be destructive: the Cell SHALL ship `delete_cell_state` on its own record stream when the class persists (behind its records by construction), SHALL clear its slot so a successor is a cold start from `init_state/1`, and SHALL stop; the owner SHALL drop it from the live map and remember the key in a trace of at most 1 024 keys. `Operative.lookup/4` SHALL answer `:cell_evicted` for a traced key that is not live, and the live read SHALL spell the shared core's `cell_evicted:` wording for it, distinguishably from `cell_not_found`. `max_cells/0` SHALL bind at `ensure_cell/3` as the behaviours requirement states, for a workflow's keyed tasklet as for a stream's. Creation, eviction and capped drops SHALL be reported as one `[:flezha, :sdk, :dynamic]` telemetry event carrying the kind. `test/apps/elixir_runner`'s `dynamic_cell` SHALL journal its push and read its TTL from `DYN_TEST_TTL_MS`, and the manifest SHALL list `dynamic_cell` under `fixtures` with the reference's id.
 
 #### Scenario: An idle Cell is evicted destructively on the sweep
 - **GIVEN** a persistent dynamic node with a TTL and a Cell that shipped a record at seq 0 and has been idle past the TTL
@@ -537,6 +537,10 @@ The Elixir SDK SHALL carry `dynamic_cell` in its own core. A dynamic node whose 
 #### Scenario: A busy or recently pushed Cell is kept
 - **WHEN** the sweep meets a Cell mid-dispatch, or one pushed within the TTL
 - **THEN** neither is evicted on that sweep and both are swept again on the next
+
+#### Scenario: A workflow's keyed Cell is swept only between passes and outside the rollback's reach
+- **WHEN** a `:per_input` workflow's keyed compensable tasklet ran for `"a"` in a committed iteration, the loop is waiting for a message, and `"a"`'s Cell is idle past its TTL
+- **THEN** under `:all_or_nothing` the sweep keeps it and under `:keep_progress` the sweep evicts it, and in either mode no sweep evicts anything while a pass is running
 
 #### Scenario: A live dynamic Cell is readable by name, and an evicted key is refused by name
 - **WHEN** `CellState` names a live key of a `dynamic_cell` operative on an Elixir runner, then names a key the reaper evicted, then names a key never seen
@@ -702,13 +706,15 @@ factory id, so the controller places by factory id and knows the kind before it 
 
 Registration SHALL accumulate refusals into `{:error, {:invalid_workflow, issues}}` (never a
 raise) using the reference's names: `NoWorkflowBody` (no `channels/1`), `ExternalStopOnly` (not
-self-terminating and no duration cap), `NoEntryChannel`, `DynamicCells`, `BranchingChainedLoop`,
-and the kind facts `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`.
-`EntryRoot` and `MergeFromEntryChannel` SHALL NOT exist: an entry channel
-may feed several tasklets, a class may declare several entry channels, each rooting its own chain,
-and an entry channel may be a merge source, because every message carries the channel it arrived on.
-`ZeroRetryBackoff` SHALL NOT exist, the knob it judged being gone; `RetryMaxZero` on an edge is the
-shared topology's refusal for both kinds. A refusal the shared
+self-terminating and no duration cap), `NoEntryChannel`, `BranchingChainedLoop`, and the kind facts
+`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`. `EntryRoot`
+and `MergeFromEntryChannel` SHALL NOT exist: an entry channel may feed several tasklets, a class
+may declare several entry channels, each rooting its own chain, and an entry channel may be a
+merge source, because every message carries the channel it arrived on. `DynamicCells` SHALL NOT
+exist: a keyed edge into a keyless workflow tasklet makes it dynamic exactly as it makes a stream
+tasklet dynamic, and its Cells are minted per key on dispatch. `ZeroRetryBackoff`
+SHALL NOT exist, the knob it judged being gone; `RetryMaxZero` on an edge is the shared topology's
+refusal for both kinds. A refusal the shared
 topology already raises SHALL be carried through as `{:Topology, issue}` rather than restated,
 and the reference's `Cycle`, `Disconnected` and `MultipleOutputChannels` SHALL NOT exist here:
 the first two are unreachable because the shared topology refuses a cycle first and a node
@@ -723,7 +729,19 @@ that chain has committed, so a fan-out interleaves independently, a fan-in is di
 once with the accumulated batch of this pass's producers, and a producer of another chain is
 never waited for. A message SHALL enter through the same `resolve_channel`, `parse` and park
 functions the stream operative's `{:input, ...}` handler uses, so an undeclared channel name and
-an unreadable payload park as a stream's do and start no pass. Each stage
+an unreadable payload park as a stream's do and start no pass. A stage's Cells SHALL be the
+stream operative's Cell set, held through the one module `Flezha.SDK.Operative` holds it
+through: single and static Cells prewarmed at start, a keyed Cell minted on the first value of
+a pass addressed to its key, every value reaching its Cells through the same per-mode target
+resolution the stream operative routes with, one barrier queued behind each Cell the stage
+handed a value to, and the stage done when those reply. A stage's record SHALL name the Cells
+it dispatched to, by identity, whether or not they emitted; its `TaskCommit.cells_ran`, its
+intent markers and its undo SHALL read that record, so the undo runs on exactly the Cells that
+ran and on no declared Cell that received nothing. A restore naming a keyed Cell SHALL
+materialise it through the same lookup a stream's restore uses, refusing past the cap, and the
+driver SHALL count every restore frame the bind owes as landed whether or not a Cell took it,
+after the frame's fold so the gate never opens over unapplied state, and a frame no Cell takes
+never leaves it waiting. Each stage
 SHALL be committed durably before the next begins, its plugin-bound output SHALL be staged into
 that commit rather than shipped, and the class's leaf and compensable positions SHALL be
 declared to the controller in the `AddOperative` response.
@@ -742,6 +760,22 @@ declared to the controller in the `AddOperative` response.
   edge's `retry_max` / `retry_backoff_ms` exactly as a stream Cell reads them, differing only in
   that an exhausted ladder fails the tasklet instead of parking the input to the dead-letter queue
   and that timers are unavailable until they work inside a workflow
+
+#### Scenario: A keyed workflow tasklet mints its Cells on dispatch
+
+- **WHEN** a workflow class declares `input("in") |> into(Split) |> key_by(&key/1) |> into(Keyed)`
+  and a pass releases values keyed `"a"` and `"b"` from `Split`
+- **THEN** registration accepted the class, two `Keyed` Cells exist only after the release,
+  `lookup/4` finds each by its key, the stage's `TaskCommit` names both identities, and a
+  third value keyed `"a"` in the same pass reaches the existing Cell
+
+#### Scenario: A Cell that emitted nothing is still recorded and undone
+
+- **WHEN** a compensable tasklet runs in two Cells of which one emits nothing, and a later
+  tasklet fails
+- **THEN** the stage's `TaskCommit.cells_ran` names both, and `compensate/3` runs in both,
+  while a third declared Cell of that tasklet that received no value is neither named nor
+  compensated
 
 #### Scenario: A stage's plugin output reaches nothing before its commit is durable
 

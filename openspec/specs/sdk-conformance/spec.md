@@ -850,3 +850,43 @@ A `test/system/` scenario tagged `capability: :workflow` SHALL drive a workflow 
 - **WHEN** the timer-in-workflow fixture is started under any runtime and one message reaches its entry channel
 - **THEN** the instance ends with status `error` and an error naming `TimersUnavailable`, and no timer fires
 
+### Requirement: A keyed workflow tasklet is a fixture every manifest carries
+
+Every SDK test app SHALL register `keyed_block_workflow` and `keyed_saga_workflow`, and every
+manifest SHALL list both under `workflow` in the reference's order. `keyed_block_workflow`
+SHALL be a durable workflow whose entry channel takes a comma-separated key list, whose first
+tasklet splits it into one value per key, whose second tasklet is reached by a `key_by` on
+that value, declares no static keys, commits one idempotent change per Cell and declares a
+compensation hook, and whose third tasklet blocks until `FLEZHA_WORKFLOW_E2E_RELEASE` is set.
+`keyed_saga_workflow` SHALL be the same chain with a third tasklet that fails. The scenarios
+that drive them SHALL live in `test/system/workflow_control_flow_e2e_test.exs` and
+`test/system/workflow_crash_resume_e2e_test.exs`, tagged `capability: :workflow` and pinned to
+no runtime, and SHALL assert through the controller: the keyed Cells the instance persisted
+(its durable Cell set, read while the pass blocks, so a blocking tasklet's runner is never
+asked a live question), `Replay.resume_cell_count/2` before the kill, each keyed Cell's WAL record count
+after the resume, the identities the keyed stage's `task_committed` entry names, and the
+compensation-done markers.
+
+#### Scenario: N keys run N Cells on every runtime
+
+- **WHEN** `keyed_block_workflow` is started under any of the seven runtimes without the
+  release and sent `a,b,c`, and its keyed stage has committed
+- **THEN** while the third tasklet blocks, the controller holds a durable Cell of the keyed
+  tasklet for each of `a`, `b` and `c` and no other, and the journal's `task_committed` entry
+  for the keyed stage names exactly those three identities
+
+#### Scenario: A crash restores the keyed Cells before the pass resumes
+
+- **WHEN** `keyed_block_workflow` is started without the release, the runner is killed once
+  `Replay.resume_cell_count/2` reports the three keyed Cells and the keyed stage is journaled,
+  and a runner with the release is bound
+- **THEN** the instance completes `ok`, each keyed Cell's WAL holds exactly one record, the
+  keyed stage was not re-run, and the same assertions hold under every runtime
+
+#### Scenario: A failure compensates once per key
+
+- **WHEN** `keyed_saga_workflow` is started under any runtime and sent `a,b,c`
+- **THEN** the instance completes `error`, a compensation-done marker exists for each of the
+  three keyed Cells and no other Cell of the keyed tasklet, and the first tasklet, which
+  declares no hook, is not compensated
+

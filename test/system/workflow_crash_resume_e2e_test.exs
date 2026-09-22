@@ -94,8 +94,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         assert wal_record_count(operative_id, "commit_a") == 1,
                "journaled task A was re-run on resume (redo-vs-skip broken)"
 
-        {:ok, entries} = TaskJournal.read(operative_id)
-        committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+        committed = committed_tasks(operative_id)
 
         assert 0 in committed, "task A's pre-crash commit is missing from the journal"
         assert 1 in committed, "resumed task B never committed its boundary"
@@ -123,6 +122,28 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         # the resume, joining B's pre-crash done marker.
         assert comp_done_count(operative_id) >= 2,
                "resume did not finish the outstanding compensation hook"
+      end
+
+      # The crash lands with the three keyed Cells persisted and the keyed stage
+      # journaled; the resume restores them before the pass goes on, and none
+      # re-runs: each keyed Cell's WAL keeps its one pre-crash record.
+      test "a crash restores the keyed Cells before the pass resumes", ctx do
+        operative_id =
+          drive_crash_resume(
+            ctx,
+            "keyed_block_workflow",
+            "ok",
+            fn oid ->
+              Replay.resume_cell_count(:workflow, oid) >= 3 and
+                match?(%{committed_task_idxs: [0, 1 | _]}, TaskJournal.restore_state(oid))
+            end,
+            first_message: "a,b,c"
+          )
+
+        for key <- ~w(a b c) do
+          path = Paths.wal_path({operative_id, "keyed_commit", key})
+          assert length(wal_seqs(File.read!(path), [])) == 1, "keyed Cell #{key} re-ran"
+        end
       end
 
       # `sdk-graph-authoring` fan-in on a live runner: the diamond
@@ -161,8 +182,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         assert Enum.count(delivered, &(&1 == "c:#{seed}")) == 1,
                "the committed producer must not re-run"
 
-        {:ok, entries} = TaskJournal.read(operative_id)
-        committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+        committed = committed_tasks(operative_id)
 
         assert Enum.sort(committed) == [0, 1, 2, 3, 4],
                "each node commits exactly once across the crash — the join never twice: " <>
@@ -211,8 +231,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
                  ]),
                "the fan-out multiplied the released batch: #{inspect(delivered)}"
 
-        {:ok, entries} = TaskJournal.read(operative_id)
-        committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx
+        committed = committed_tasks(operative_id)
 
         assert Enum.sort(committed) == [0, 1, 2, 3, 4],
                "each node commits exactly once on a clean run: " <> inspect(committed)
@@ -533,15 +552,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   # The identity a flushed outbox entry is keyed by.
   defp identity(md), do: Map.take(md, ["flz.cell", "flz.seq", "flz.epoch", "channel"])
-
-  # Number of per-Cell compensation-done markers the controller has written
-  # for this operative (one per compensated Cell).
-  defp comp_done_count(operative_id) do
-    [Paths.class_dir(operative_id), "**", "*.comp_done"]
-    |> Path.join()
-    |> Path.wildcard()
-    |> length()
-  end
 
   defp wal_record_count(operative_id, tasklet) do
     [Paths.class_dir(operative_id), tasklet, "*.wal"]

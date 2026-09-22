@@ -282,7 +282,10 @@ restore, because a class whose tasklets hold no per-Cell state receives no
 `RestoreInitState` at all. Committed tasklets are skipped, the first uncommitted one is seeded
 from the journaled handoff, and only the tasklet mid-flight at the crash re-runs. A
 restore-before-run gate (`AddOperative.resume_cell_count`) holds the first tasklet until
-that many `RestoreInitState` frames land; the last one opens it on the reader that brings it,
+that many `RestoreInitState` frames land. The persisted Cell set includes keyed Cells, and a
+frame naming one mints it before it folds; the gate counts frames, not Cells, so a frame the
+`max_cells` cap refuses, or one naming a tasklet the class no longer declares, still counts.
+The last frame opens the gate on the reader that brings it,
 and a 30 s deadline on the deferred-wake list degrades a restore that never lands to a
 best-effort re-run. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
 post-resume appends are contiguous and the stream-only seq-gap resync never applies. Execution
@@ -324,7 +327,7 @@ unknown class defaults to `:stream`, so every gate is subtractive.
 | --- | --- | --- | --- |
 | `persistent_state?` | per-Cell WAL + restore, state introspection | always | durable by default, per-class opt-out (`PersistenceResolver.persistent_state?/3`) |
 | `time_travel?` | point-in-time queries, retention beyond the latest snapshot (`flz state at`) | yes | no |
-| `dynamic_cells?` | lazy per-key Cells, destructive idle eviction | yes | no |
+| `dynamic_cells?` | lazy per-key Cells, destructive idle eviction | yes | runner side yes (evicted only between passes and never within a rollback's reach); the controller refuses the evicted Cell's state delete and keeps the state, a gate that goes with this table |
 | `output_stall_watch?` | per-Cell output-staleness watchdog → forced rebind | yes | no |
 
 ## How many instances a runner holds

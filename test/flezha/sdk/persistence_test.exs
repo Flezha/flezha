@@ -354,7 +354,7 @@ defmodule Flezha.SDK.PersistenceTest do
 
       identity = Park.identity("op-1", "timer", "")
 
-      assert [{^identity, held}] = :ets.lookup(:sys.get_state(op).slots, identity)
+      assert [{^identity, held}] = :ets.lookup(:sys.get_state(op).cells.slots, identity)
       assert %{state: %{value: 1}, seq: 3, floor: -1} = held
       assert Timers.all(held.timers, :processing_time) == [at]
     end
