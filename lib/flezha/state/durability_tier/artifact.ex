@@ -6,8 +6,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   **Seq-addressed** references are read as a range of WAL records —
   `{:cell, cell_id}` (a Cell's WAL and snapshots; a workflow instance's
-  task-journal and inbox are this shape too, under `Paths`'s reserved cell
-  keys) and `{:input_log, operative_class}`. **Whole-payload** ones are the
+  task-journal is this shape too, under `Paths`'s reserved cell key) and
+  `{:input_log, operative_class}`. **Whole-payload** ones are the
   files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
   {operative_class, tasklet_id}}` and `{:control, {store, writer}}`, each
   keyed by its writer or claim-fenced because their replicas are per-node.
@@ -47,8 +47,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @doc """
   Every Cell reference of `operative_class` that has local durable files —
-  Cells, and (for a workflow instance) its reserved task-journal and inbox
-  identities, which `Paths.all_cells/0` does not surface.
+  Cells, and (for a workflow instance) its reserved task-journal identity,
+  which `Paths.all_cells/0` does not surface.
   """
   @spec cell_refs(binary()) :: [ref()]
   def cell_refs(operative_class) do
@@ -189,7 +189,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   This is the existing local fencing epoch (`Flezha.State.Outbox`), read without
   a live writer so a ship never depends on one. References with no dedup file —
-  the reserved journal/inbox identities, the input log, the cspec — report `0`;
+  the reserved journal identity, the input log, the cspec — report `0`;
   their remote lineage is then ordered by write order rather than fenced, which
   is exactly the reach the local epoch machinery already has.
   """

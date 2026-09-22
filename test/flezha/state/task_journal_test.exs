@@ -158,7 +158,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     inst = instance_id()
     seg = seg_identity(inst, "TaskA", "s0")
 
-    assert TaskJournal.consumed_offset(inst) == 0
+    assert TaskJournal.consumed_offset(inst) == nil
 
     # Iteration 0: two tasks, then the boundary.
     :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [{1, "a"}])
@@ -215,7 +215,13 @@ defmodule FlezhaTest.State.TaskJournalTest do
         Codec.encode_outbox([])
       ])
 
-    old_iter = Codec.encode_entry(3, 0, 1, [<<5::64-big, 0::16-big>>, Codec.encode_handoff([])])
+    old_iter =
+      Codec.encode_entry(3, 0, 1, [
+        Codec.encode_offset(5),
+        <<0::16-big>>,
+        Codec.encode_handoff([])
+      ])
+
     File.write!(path, TestHelpers.build_wal_record(3, <<0::128>>, old_task), [:append])
     File.write!(path, TestHelpers.build_wal_record(4, <<0::128>>, old_iter), [:append])
 
@@ -227,6 +233,51 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert plain.payload.completion == nil
     assert {old_p.payload.completion, old_i.payload.completion} == {nil, nil}
     assert old_i.payload.consumed_offset == 5
+  end
+
+  test "offset 0 is an offset, and a pass that consumed nothing records none" do
+    inst = instance_id()
+    assert TaskJournal.released_offset(inst) == nil
+
+    :ok = TaskJournal.append_iter_committed(inst, 0, 0, [])
+    :ok = TaskJournal.append_iter_committed(inst, 1, nil, [{1, "carry"}])
+
+    assert {:ok, [first, second]} = TaskJournal.read(inst)
+    assert {first.payload.consumed_offset, second.payload.consumed_offset} == {0, nil}
+    assert TaskJournal.consumed_offset(inst) == nil
+    assert TaskJournal.released_offset(inst) == 0, "a carry-fed pass lowers no floor"
+
+    assert %RunnerCommands.TaskJournalState{iter: 2, consumed_offset: nil} =
+             Commands.task_journal_state(inst)
+
+    rendered = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    assert rendered =~ "consumed input-log offset: 0"
+    assert rendered =~ "consumed no journaled input"
+  end
+
+  test "a park records the offset it parked unread, or none" do
+    inst = instance_id()
+    :ok = TaskJournal.append_parked("default", inst, 0, nil)
+    assert {:ok, [%{payload: %{consumed_offset: nil}}]} = TaskJournal.read(inst)
+    assert TaskJournal.released_offset(inst) == nil
+
+    :ok = TaskJournal.append_parked("default", inst, 0, nil, 0)
+    assert TaskJournal.released_offset(inst) == 0
+  end
+
+  test "the journal reports what it released into the input log's watermark" do
+    inst = instance_id()
+    :ok = TaskJournal.release_input(inst)
+    assert Flezha.State.InputLog.watermark(inst) == nil
+
+    :ok = TaskJournal.append_iter_committed(inst, 0, 4, [])
+    :ok = TaskJournal.release_input(inst)
+    assert Flezha.State.InputLog.watermark(inst) == 4
+
+    # Only forward: a stale or empty report leaves the floor where it is.
+    :ok = TaskJournal.release_input(inst, 2)
+    :ok = TaskJournal.release_input(inst, nil)
+    assert Flezha.State.InputLog.watermark(inst) == 4
   end
 
   test "a completion carrying an empty result still completes" do
@@ -613,9 +664,10 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert Enum.map(resume.committed_tasks, & &1.iter) == [0, 1]
     assert [%{task_idx: 0, iter: 2}] = resume.rewind_undo
 
-    # The inbox floor moved back with it, which is what re-delivers the rewound
-    # turn's input.
+    # The fold moves back; the floor in the input log does not, so the rewound
+    # turn's input is not delivered again.
     assert TaskJournal.consumed_offset(inst) == 2
+    assert TaskJournal.released_offset(inst) == 3
     assert TaskJournal.committed_iterations(inst) == [0, 1]
   end
 

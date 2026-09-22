@@ -7,36 +7,38 @@ The workflow-durable-loop capability turns the structured workflow chain into a 
 ### Requirement: A structured workflow chain can loop with a durable per-iteration commit
 
 A structured workflow class SHALL be able to declare its chain as a loop: each
-iteration seeds from the next message in the inbox or from the previous iteration's
+iteration seeds from the next input-log record or from the previous iteration's
 handoff, runs the chain the pass's entry channel roots under the existing per-task
-commit gating, and ends with an iteration commit — the controller SHALL append
-`iter_committed(N, consumed_inbox_offset, entry_channel)` to the task-journal, naming
-the entry channel whose chain the iteration ran, trigger boundary snapshot compaction
-for the instance's cells (existing CompactCell machinery), and flush the
-iteration's staged outbox. The `iter_committed` append SHALL be made durable
-by the `FsyncBatcher` tick like a task commit, and its ack SHALL follow the
-sync. Once `iter_committed(N)` is durable the controller SHALL cut the
-task-journal below the oldest entry its fold still needs — the pending outbox
-entries, the latest `rewound` marker with the commits it has yet to undo, and
-the latest `iter_committed` that carries the resume point, the entry channel and the
-epoch — so the journal a loop keeps is bounded by one iteration plus a settled prefix
-below the cut threshold (64 KiB by default), never by its history. The cut
-SHALL be the journal writer's own work, off the process that acks, and a
-class whose tasklets declare compensation SHALL keep its history (the saga
-and a rewind replan from it). The durable inbox append that precedes a turn
-SHALL NOT re-read the inbox file or fold the journal: the inbox writer SHALL
-keep the dedup window in memory — the entries still in the file, rebuilt from
-the file when the writer opens and released at every truncate — and the
-inbox release at an iteration commit SHALL rewrite the file only once the
-released prefix exceeds the cut threshold. Per-task journal entries within
-iteration N SHALL carry `iter = N`. Loop termination semantics (terminal
-predicate, cancellation, `complete`) SHALL be preserved from the existing
-loop contract.
+commit gating, and ends with an iteration commit. The controller SHALL append
+`iter_committed(N, consumed_offset, entry_channel)` to the task-journal, where
+`consumed_offset` is the `flz.offset` of the input that seeded the iteration or is
+absent when nothing journaled seeded it, naming the entry channel whose chain the
+iteration ran, trigger boundary snapshot compaction for the instance's cells
+(existing CompactCell machinery), and flush the iteration's staged outbox. The
+`iter_committed` append SHALL be made durable by the `FsyncBatcher` tick like a
+task commit, and its ack SHALL follow the sync. Once `iter_committed(N)` is durable
+the controller SHALL cut the task-journal below the oldest entry its fold still
+needs, the pending outbox entries, the latest `rewound` marker with the commits it
+has yet to undo, and the latest `iter_committed` that carries the resume point, the
+entry channel and the epoch, so the journal a loop keeps is bounded by one
+iteration plus a settled prefix below the cut threshold (64 KiB by default), never
+by its history. The cut SHALL be the journal writer's own work, off the process
+that acks, and a class whose tasklets declare compensation SHALL keep its history
+(the saga and a rewind replan from it). The input-log append that precedes a turn
+SHALL NOT re-read the log file or fold the journal: the log SHALL keep its
+message-id index in memory, over the records it retains, rebuilt from the file once
+and trimmed at every truncation. Once `iter_committed(N)` is durable the controller
+SHALL report its consumed offset into the input log's watermark under the
+journal's identity; the release of the consumed prefix is then the log's
+retention, which SHALL rewrite the file only once the released prefix exceeds the
+cut threshold. Per-task journal entries within iteration N SHALL carry `iter = N`.
+Loop termination semantics (terminal predicate, cancellation, `complete`) SHALL be
+preserved from the existing loop contract.
 
 #### Scenario: Turn ends with journal + snapshot + flush
 
 - **WHEN** a looping workflow operative finishes iteration N
-- **THEN** the journal SHALL hold `iter_committed(N)` with the consumed inbox offset and the pass's entry channel, the cells SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
+- **THEN** the journal SHALL hold `iter_committed(N)` with the consumed input-log offset and the pass's entry channel, the cells SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
 
 #### Scenario: The journal does not grow with the turns
 
@@ -51,12 +53,17 @@ loop contract.
 #### Scenario: The inbox append costs the same at turn 1 and turn 10 000
 
 - **WHEN** a turn is ingested for a loop that has consumed 10 000 turns
-- **THEN** the append SHALL consult the writer's dedup window and SHALL NOT read the inbox file or fold the journal, and the ingest SHALL be answered only once the append's batch has synced
+- **THEN** the append SHALL consult the log's in-memory id index and SHALL NOT read the log file or fold the journal, and the ingest SHALL be answered only once the record is durable
 
 #### Scenario: A re-sent message is absorbed across a writer restart
 
-- **WHEN** the inbox writer is reopened and a message carrying an `flz.msg_id` already in the undelivered window is sent again
-- **THEN** the append SHALL answer the existing entry's offset from the window rebuilt off the file, and the operative SHALL receive the message once
+- **WHEN** the input log is reopened and a message whose `flz.msg_id` is still retained is sent again
+- **THEN** the append SHALL answer the existing record's offset from the index rebuilt off the file, and the operative SHALL receive the message once
+
+#### Scenario: The commit moves the watermark, the sweep cuts the file
+
+- **WHEN** iteration N commits with consumed offset 7 and fewer released bytes than the cut threshold lie below it
+- **THEN** the log's watermark for the instance SHALL be 7 at once, and the file SHALL be rewritten only by a later sweep once the released prefix exceeds the threshold
 
 #### Scenario: Snapshot failure does not lose the commit
 
@@ -66,24 +73,24 @@ loop contract.
 ### Requirement: Crash-resume enters the iteration after the last committed one
 
 On respawn of a looping durable workflow instance, the driver SHALL resume at
-iteration `N+1` where `N` is the highest journaled `iter_committed` — never at
-the loop start — with cell state restored from the iteration-boundary
-snapshots (or WAL replay) and input delivered from the recorded consumed
-offset. A message-fed iteration (`ONCE` pass 0, every `PER_INPUT` pass, `CHAINED`
-pass 0) that was in flight at the crash SHALL be resumed over the message the
-controller re-forwards for it: that message's channel is the pass's channel, its
-tasklets that the journal records committed SHALL be skipped and re-seed their
-children from the journaled handoff, its roots not yet committed SHALL re-run
-over the message, and the iteration SHALL commit that message's offset, so the
-message drives one iteration and never seeds a second. A carry-fed `CHAINED`
-iteration SHALL resume into the chain the journaled entry channel names. Work
-of an uncommitted in-flight iteration MAY re-run (at-least-once, existing
-author contract).
+iteration `N+1` where `N` is the highest journaled `iter_committed`, never at
+the loop start, with cell state restored from the iteration-boundary
+snapshots (or WAL replay) and input delivered from the input log's retained
+tail above the instance's floor. A message-fed iteration (`ONCE` pass 0, every
+`PER_INPUT` pass, `CHAINED` pass 0) that was in flight at the crash SHALL be
+resumed over the message the controller re-forwards for it: that message's
+channel is the pass's channel, its tasklets that the journal records committed
+SHALL be skipped and re-seed their children from the journaled handoff, its
+roots not yet committed SHALL re-run over the message, and the iteration SHALL
+commit that message's offset, so the message drives one iteration and never
+seeds a second. A carry-fed `CHAINED` iteration SHALL resume into the chain the
+journaled entry channel names. Work of an uncommitted in-flight iteration MAY
+re-run (at-least-once, existing author contract).
 
 #### Scenario: Resume from the last committed iteration
 
 - **WHEN** a looping instance crashes during iteration 3 after `iter_committed(2)` was journaled
-- **THEN** on respawn it SHALL resume iteration 3 (re-seeded from inbox offset recorded at iteration 2's commit), and iterations 1–2 SHALL NOT re-run
+- **THEN** on respawn it SHALL resume iteration 3 (re-seeded from the input-log offset recorded at iteration 2's commit), and iterations 1 and 2 SHALL NOT re-run
 
 #### Scenario: A mid-iteration resume consumes its message once
 

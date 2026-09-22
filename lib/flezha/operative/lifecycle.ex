@@ -6,7 +6,8 @@ defmodule Flezha.Operative.Lifecycle do
   reason, and the park is declared to the convergence loop, which drives the
   un-park on its own table. Bind and the SDK start are one module because they
   are one cycle: a bind cancels the wake timer a suspension left behind and
-  delivers its inbox tail, and the un-park task re-enters `complete_init/4`.
+  re-forwards its input log's tail, and the un-park task re-enters
+  `complete_init/4`.
 
   Everything that takes an operative OFF its runner — suspend, rehydrate,
   rewind, terminate, migrate — is `Flezha.Operative.Migration`, a sibling above
@@ -34,7 +35,6 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.TaskInbox
   alias Flezha.State.Restore
 
   require Logger
@@ -140,9 +140,9 @@ defmodule Flezha.Operative.Lifecycle do
 
   # Bring the operative up on `runner_id`: prepare plugins, resolve init state,
   # make the one SDK start attempt, apply the class's declarations, restore
-  # durable state, activate plugins, and deliver whatever the durable inbox
-  # still owes. Both ways in — a fresh bind and an un-park — funnel through
-  # here, which is what keeps them one path.
+  # durable state, re-forward whatever the input log still owes, and activate
+  # plugins. Both ways in — a fresh bind and an un-park — funnel through here,
+  # which is what keeps them one path.
   #
   # `owner` is the Overwatch process itself. It is passed explicitly because the
   # un-park path runs this inside a task (so a slow start never blocks the
@@ -182,10 +182,14 @@ defmodule Flezha.Operative.Lifecycle do
              operative.factory_id,
              Overwatch.operative_class(state)
            ),
-         # Tier: restore every persisted Cell (awaited) and re-forward the
-         # journaled input tail BEFORE sources activate, so replayed offsets
-         # reach the runner ahead of fresh ones (fold order at the SDK).
-         {:ok, state} <- tier_restore(state, effectively_once) do
+         # Tier: restore every persisted Cell (awaited) before the tail is
+         # re-forwarded onto them.
+         {:ok, state} <- tier_restore(state, effectively_once),
+         # Once per bind, for either kind, BEFORE sources activate: the log's
+         # tail above the floor reaches the runner ahead of fresh input (fold
+         # order at the SDK), whether this bind is a fresh start, a crash
+         # resume, a migration or a rehydrate.
+         state = Replay.reforward_undelivered_tail(state) do
       record_and_replay(state, operative, declarations, correction_window_ms)
     else
       {:error, reason, %Overwatch{} = parked} -> {:error, reason, parked}
@@ -193,9 +197,9 @@ defmodule Flezha.Operative.Lifecycle do
     end
   end
 
-  # Everything a started operative owes once its state is restored: the class
-  # facts the State subsystem reads, the retention floors the declaration
-  # raised, and the replay of whatever the durable inbox still owes.
+  # Everything a started operative owes once its state is restored and its tail
+  # re-forwarded: its plugins, the class facts the State subsystem reads and
+  # the retention floors the declaration raised.
   defp record_and_replay(state, operative, declarations, correction_window_ms) do
     # A plugin that fails to come up stays `:prepared`, which the convergence
     # loop diffs as missing and heals under backoff, so the bind does not fail
@@ -232,11 +236,7 @@ defmodule Flezha.Operative.Lifecycle do
 
     _ = Replay.restore_on_bind(state, operative)
 
-    # A bind is also a rehydrate: whatever the durable inbox still owes is
-    # re-forwarded from the recorded consumed offset, so input that arrived
-    # while the instance was suspended, crashed, or migrating is delivered
-    # exactly here — one path for every way an instance comes back.
-    {:ok, Replay.deliver_inbox_tail(cancel_wake_timer(%{state | suspended: false}))}
+    {:ok, cancel_wake_timer(%{state | suspended: false})}
   end
 
   # A refused restore is not a cold start: the durable state never reached the
@@ -246,7 +246,7 @@ defmodule Flezha.Operative.Lifecycle do
   defp tier_restore(state, false), do: {:ok, state}
 
   defp tier_restore(state, true) do
-    case Replay.restore_and_replay_journal(state) do
+    case Replay.restore_tier_cells(state) do
       {:ok, state} -> {:ok, state}
       {:error, reason} -> {:error, {:restore_refused, reason}, state}
     end
@@ -254,8 +254,8 @@ defmodule Flezha.Operative.Lifecycle do
 
   # An operative binds to a runner over the CONTROL channel; the data stream that
   # carries its input is a separate connection the SDK opens afterwards.
-  # Everything below this point forwards on that stream — the durable restore's
-  # re-forward, the inbox tail, the plugins' first input, and every ingest
+  # Everything below this point forwards on that stream — the input log's
+  # re-forwarded tail, the plugins' first input, and every ingest
   # waiting in this process's mailbox — so the bind waits for it rather than
   # issuing onto a stream that would drop what it is given.
   #
@@ -300,9 +300,10 @@ defmodule Flezha.Operative.Lifecycle do
 
   # Stamp everything a resuming bind carries onto the operative's opts so
   # `control_unit` can set the `AddOperative` fields: how many Cell restores
-  # to wait for, and the task-journal the driver resumes its iteration from. Only
-  # a workflow instance has a journal, and the kind check is what keeps an
-  # stream bind from reading for a file that cannot exist.
+  # to wait for, the task-journal the driver resumes its iteration from, and how
+  # many inputs the bind's re-forward owes it. Only a workflow instance has a
+  # journal and a driver that counts its tail, and the kind check is what keeps
+  # a stream bind from reading for a file that cannot exist.
   defp with_resume_state(operative, kind, operative_class) do
     opts =
       operative.opts
@@ -313,7 +314,7 @@ defmodule Flezha.Operative.Lifecycle do
       )
       |> Keyword.put(
         :inbox_tail_count,
-        if(kind == :workflow, do: length(TaskInbox.undelivered(operative_class)), else: 0)
+        if(kind == :workflow, do: Replay.owed_count(operative_class), else: 0)
       )
 
     %{operative | opts: opts}

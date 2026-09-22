@@ -203,11 +203,11 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
       # Re-forwarding the input tail onto a Cell whose baseline never landed
       # is the silent loss this guards, so it must not be reached.
-      stub(Flezha.State.InputLog, :last_offset, fn _class ->
-        flunk("the journal replay ran after a refused restore")
+      stub(Flezha.State.InputLog, :tail, fn _class ->
+        flunk("the input tail was read after a refused restore")
       end)
 
-      {result, log} = with_log(fn -> Replay.restore_and_replay_journal(tier_state(id)) end)
+      {result, log} = with_log(fn -> Replay.restore_tier_cells(tier_state(id)) end)
 
       assert result == {:error, @refusal}
       assert_refusal_logged(log, id)
@@ -256,13 +256,14 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, "there is a journal here")
 
-      stub(Flezha.State.InputLog, :last_offset, fn ^class -> {:error, {:crc_mismatch, 0, 36}} end)
+      stub(Flezha.State.InputLog, :tail, fn ^class -> {:error, {:crc_mismatch, 0, 36}} end)
 
       stub(Flezha.State.InputLog, :read_range, fn _class, _from, _to ->
         flunk("a refused input log was re-forwarded from its prefix")
       end)
 
-      assert Replay.replay_journaled_inputs(tier_state(id)) == :ok
+      state = tier_state(id)
+      assert Replay.reforward_undelivered_tail(state) == state
     end
 
     test "a correction refuses rather than replaying over a WAL that did not decode" do
@@ -323,6 +324,7 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.State.InputLog
+  alias Flezha.State.TaskJournal
   alias Flezha.State.TestHelpers
   alias Flezha.SDK.LocalStream
   alias FlezhaTest.Helper.NodeTestHelper
@@ -406,7 +408,7 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
 
       # This is the restore's own re-forward, issued while the fresh runner has
       # completed its control handshake but not bound its data stream.
-      assert :ok = Replay.replay_journaled_inputs(state)
+      assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
 
       bind_stream(ctx)
       assert drain_frames() == []
@@ -423,11 +425,27 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
       InputLog.record_consumed(ctx.class, {ctx.class, "task", "a"}, 2)
 
       state = overwatch(ctx, effectively_once: true)
-      assert :ok = Replay.replay_journaled_inputs(state)
+      assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
 
       bind_stream(ctx)
       settle_bind(state, ctx)
 
+      assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
+      assert drain_frames() == []
+    end
+  end
+
+  describe "a durable workflow's tail" do
+    test "is what lies above its journal's floor, each record stamped with its offset", ctx do
+      for i <- 0..3, do: {:ok, _} = InputLog.append(ctx.class, "m#{i}", %{})
+      # An iteration commit reported offset 1 under the journal's identity.
+      :ok = TaskJournal.release_input(ctx.class, 1)
+
+      state = overwatch(ctx, durable_workflow: true)
+      bind_stream(ctx)
+      assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
+
+      assert_receive {:flz_data, _, _, "m2", %{"flz.offset" => "2"}}
       assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
       assert drain_frames() == []
     end
@@ -440,7 +458,7 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
 
       delivered =
         Enum.flat_map(1..3, fn _ ->
-          assert :ok = Replay.replay_journaled_inputs(state)
+          assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
           bind_stream(ctx)
           settle_bind(state, ctx)
           frames = drain_frames()

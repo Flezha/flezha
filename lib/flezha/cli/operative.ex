@@ -257,8 +257,8 @@ defmodule Flezha.Service.Cli.Operative do
   Rewind a workflow loop to the committed boundary of iteration `to_iter`: the
   iterations above it are compensated in reverse, state and handoff return to
   that boundary, the epoch is bumped so re-run output supersedes the unwound
-  run's at a guarded sink, and the inbox items those iterations consumed are
-  re-delivered.
+  run's at a guarded sink, and the loop waits for its next input: the inputs
+  those iterations consumed stay released and are not re-delivered.
 
   Refused, changing nothing, when the target has not committed or when an unwound
   tasklet emitted plugin output it cannot compensate.

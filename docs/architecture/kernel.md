@@ -40,7 +40,7 @@ sequenceDiagram
     SRC->>OW: io_in (message, metadata)
     OW->>OW: on_input plugin chain
     OW->>IL: append — BEFORE forwarding
-    IL-->>OW: offset N
+    IL-->>OW: offset N, once synced
     Note over OW: journal_input is the ONE durable ingest seam.<br/>A failed append is never forwarded.
     OW->>EX: forward, stamped flz.offset = N
 
@@ -75,8 +75,8 @@ never heard of the tier — the default costs nothing.
 
 ## The WAL record
 
-Every durable file in Flezha — a cell WAL, the input log, the workflow task journal, the
-workflow inbox — is the same framed, CRC-protected, append-only log.
+Every durable file in Flezha — a cell WAL, the input log, the workflow task journal — is the
+same framed, CRC-protected, append-only log.
 
 ```
 ┌──────────┬─────────┬────────────┬────────────────┬──────────┐
@@ -335,7 +335,7 @@ flowchart LR
     subgraph LOCAL["🧠 Controller — local, authoritative"]
         direction TB
         WAL[("💾 cell WAL + snapshots")]:::store
-        JRN[("💾 task journal · inbox · input log")]:::store
+        JRN[("💾 task journal · input log")]:::store
         CSPEC[("💾 registry cspec")]:::store
         SH["Shipper<br/>at compaction · checkpoint close ·<br/>Iter/TaskCommit · ship_interval_ms backstop"]:::ctrl
         WAL --> SH
@@ -344,7 +344,7 @@ flowchart LR
     end
     subgraph REMOTE["remote backend — Postgres | S3"]
         direction TB
-        ART[("artifacts<br/>snapshots · seq-addressed record ranges<br/>journal + inbox suffixes · cspec · source offsets")]:::store
+        ART[("artifacts<br/>snapshots · seq-addressed record ranges<br/>journal suffixes · input log · cspec · source offsets")]:::store
         MAN[("per-cell manifest — written LAST<br/>conditional write = the epoch fence")]:::store
     end
     SH -->|"1 · artifacts first"| ART
@@ -644,9 +644,10 @@ protocol.
 
 ### The source→controller credit loop
 
-Under the tier, the input log holds its own credit ledger. An `append` debits it. When the
-ledger is exhausted the append is **parked** — the log defers its reply — and the
-minimum-watermark advance is what drains the ledger and unparks the waiters in arrival order.
+The input log holds its own credit ledger, for a tier stream and a durable workflow alike. An
+`append` debits it. When the ledger is exhausted the append is **parked** — the log defers its
+reply — and the minimum-watermark advance is what drains the ledger and unparks the waiters in
+arrival order.
 
 The Overwatch never waits on that reply. It hands the append to the log
 (`InputLog.append_async/5`), keeps the source's call owed, and forwards the input when the log

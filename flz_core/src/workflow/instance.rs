@@ -45,22 +45,22 @@ fn handoff_items(items: &[crate::pb::TaskHandoffItem]) -> Vec<(u32, Vec<u8>)> {
 }
 
 /// One message through the entrance: the entry channel it named, its value
-/// as that channel's `wrap_input` made it, its durable-inbox offset (`0`
+/// as that channel's `wrap_input` made it, its input-log offset (`None`
 /// when unjournaled) and whether the controller re-forwarded it.
 #[derive(Clone)]
 pub struct InboxItem {
     pub channel_id: ChannelId,
     pub value: Arc<dyn Any + Send + Sync>,
-    pub offset: u64,
+    pub offset: Option<u64>,
     pub replay: bool,
 }
 
 /// What the entrance hands the driver: a message to run a pass over, or the
-/// durable-inbox offset (`0` when unjournaled) of one it parked to the
+/// input-log offset (`None` when unjournaled) of one it parked to the
 /// dead-letter queue instead, which the run consumes without a pass.
 pub enum Inbound {
     Message(InboxItem),
-    Parked(u64),
+    Parked(Option<u64>),
 }
 
 pub struct WorkflowInstance {
@@ -108,8 +108,6 @@ pub struct JournalResume {
     pub handoff: Vec<(u32, Vec<u8>)>,
     pub task_handoffs: Vec<EdgeHandoff>,
     pub committed_tasks: Vec<CommittedTask>,
-    /// The offset the last committed iteration consumed.
-    pub consumed_offset: u64,
     /// Tasklets a rewind unwound that nothing has compensated yet.
     pub rewind_undo: Vec<CommittedTask>,
     /// The result the last committed iteration's `complete` asked for.
@@ -148,7 +146,6 @@ impl From<&crate::pb::TaskJournalState> for JournalResume {
                 })
                 .collect(),
             committed_tasks: journal.committed_tasks.iter().map(committed_task).collect(),
-            consumed_offset: journal.consumed_offset,
             rewind_undo: journal.rewind_undo.iter().map(committed_task).collect(),
             completion: journal.completed.then(|| journal.result.clone()),
         }

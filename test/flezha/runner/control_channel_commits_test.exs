@@ -21,7 +21,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.SDK.Wire
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{Outbox, Paths, TaskInbox, TaskJournal, TestHelpers}
+  alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal, TestHelpers}
+  alias Flezha.State.InputLog.Sweep
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -369,15 +370,15 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert {:ok, []} = TaskJournal.read(inst)
   end
 
-  test "IterCommit journals the boundary, acks, then releases the consumed inbox" do
+  test "IterCommit journals the boundary, acks, then releases the consumed input" do
     on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
     inst = "iter_inst_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("iter")
     own(inst, control_channel)
 
-    # Two turns are waiting in the durable inbox; iteration 0 consumed the first.
-    {:ok, 1} = TaskInbox.append(inst, "turn-1", %{})
-    {:ok, 2} = TaskInbox.append(inst, "turn-2", %{})
+    # Three turns are waiting in the input log; iteration 0 consumed the second.
+    for {turn, n} <- Enum.with_index(["turn-0", "turn-1", "turn-2"]),
+        do: {:ok, ^n} = InputLog.append(inst, turn, %{})
 
     payload = build_iter_commit_payload(inst, 0, 1, [{4, "carry"}], "ref-iter-0")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
@@ -396,11 +397,24 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert entry.payload.handoff == [{4, "carry"}]
     assert TaskJournal.consumed_offset(inst) == 1
 
-    # Post-ack cleanup runs on the commit worker after the ack.
-    assert wait_until(fn -> Enum.map(TaskInbox.read(inst), & &1.offset) == [2] end, 2_000),
-           "the consumed turn is released; the undelivered one is kept"
+    # Post-ack, the journal reports the offset into the log's watermark; the
+    # retention sweep reclaims below it, and only the turn above it is owed.
+    assert wait_until(fn -> InputLog.watermark(inst) == 1 end, 2_000)
+    assert [{2, "turn-2", _}] = InputLog.undelivered(inst)
 
-    assert Enum.map(TaskInbox.undelivered(inst), & &1.message) == ["turn-2"]
+    :ok = Sweep.run(inst)
+
+    assert wait_until(
+             fn -> InputLog.read_range(inst, 0, 2) |> Enum.map(&elem(&1, 0)) == [1, 2] end,
+             2_000
+           )
+
+    # A pass that consumed nothing commits no offset and leaves the floor alone.
+    payload = build_iter_commit_payload(inst, 1, nil, [{4, "carry"}], "ref-iter-1")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+    assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
+    assert {:ok, [_, %{iter: 1, payload: %{consumed_offset: nil}}]} = TaskJournal.read(inst)
+    assert InputLog.watermark(inst) == 1
   end
 
   test "the iteration boundary requests a snapshot for the instance's cells" do
@@ -445,7 +459,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     set_mimic_global_until_exit()
     Mimic.stub(Flezha.Service.HubManager, :get_pid, fn _ns, ^inst -> {:ok, test_pid} end)
 
-    payload = build_iter_park_payload(inst, 3, 1_800_000_000_000, "ref-park")
+    payload = build_iter_park_payload(inst, 3, 1_800_000_000_000, "ref-park", 0)
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:"$gen_cast", {:suspend, 3, 1_800_000_000_000}}, 1_000
@@ -453,6 +467,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # The park is durable BEFORE the eviction, so a controller crash in between
     # still rediscovers the suspension.
     assert %{parked: true, wake_deadline_ms: 1_800_000_000_000} = TaskJournal.restore_state(inst)
+
+    # The message the run parked unread (offset 0) is released before the
+    # suspension asks the log whether input is owed.
+    assert InputLog.watermark(inst) == 0
   end
 
   defp start_control_channel(suffix) do
@@ -549,13 +567,14 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     })
   end
 
-  defp build_iter_park_payload(operative_id, iter, wake_deadline_ms, reference_id) do
+  defp build_iter_park_payload(operative_id, iter, wake_deadline_ms, reference_id, consumed) do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_park,
       %RunnerCommands.IterPark{
         operative_id: operative_id,
         iter: iter,
-        wake_deadline_ms: wake_deadline_ms
+        wake_deadline_ms: wake_deadline_ms,
+        consumed_offset: consumed
       }
     })
   end

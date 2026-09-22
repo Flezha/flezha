@@ -173,14 +173,21 @@ defmodule Flezha.State.RecordFrame do
   end
 
   @doc """
-  `header => seq` for every record in the file — the set a keyed log dedups
-  against.
+  `key => seq` for every record in the file that `key_of` gives a key, `nil`
+  leaving a record out — the set a keyed log dedups against.
   """
-  @spec header_index(:file.io_device(), Path.t()) ::
-          {:ok, %{binary() => non_neg_integer()}} | {:error, Frame.refusal()}
-  def header_index(device, path) do
-    fold_records(device, path, %{}, fn {seq, header, _body}, acc ->
-      {:cont, Map.put(acc, header, seq)}
+  @spec index_by(
+          :file.io_device(),
+          Path.t(),
+          ({non_neg_integer(), binary(), binary()} -> term() | nil)
+        ) ::
+          {:ok, %{term() => non_neg_integer()}} | {:error, Frame.refusal()}
+  def index_by(device, path, key_of) do
+    fold_records(device, path, %{}, fn {seq, _header, _body} = record, acc ->
+      case key_of.(record) do
+        nil -> {:cont, acc}
+        key -> {:cont, Map.put(acc, key, seq)}
+      end
     end)
   end
 

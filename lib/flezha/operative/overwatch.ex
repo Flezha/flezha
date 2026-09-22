@@ -32,7 +32,6 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.TaskInbox
   alias Flezha.State.TaskJournal
   alias Flezha.Transport.LivenessCounters
 
@@ -87,17 +86,18 @@ defmodule Flezha.Operative.Overwatch do
     # when no migrate is in flight.
     migrate_task: nil,
     # Effectively-once tier, declared by the SDK in the AddOperative response
-    # metadata. Gates the input-log journal + `flz.offset` stamp on `:io_in`.
+    # metadata: one of the two ways an instance has durable input, which gates
+    # the input-log journal and the `flz.offset` stamp on `:io_in`.
     effectively_once: false,
     # Input-log appends in flight (`Ingest.journal_reply/2`): each request's
     # label carries the reply it owes and the payload to forward.
     journal_reqids: :gen_server.reqids_new(),
-    # Durable workflow class (kind + per-class persistence). Gates the durable
-    # inbox on `:io_in` and the suspension lifecycle
+    # Durable workflow class (kind + per-class persistence): the other way an
+    # instance has durable input, and the gate on the suspension lifecycle
     # (`workflow-durable-suspension`).
     durable_workflow: false,
     # Suspended at a committed iteration boundary: zero live runner resources,
-    # registry entry retained. A new inbox append — or the journaled wake
+    # registry entry retained. A new input-log append — or the journaled wake
     # deadline — rehydrates through the normal bind path.
     suspended: false,
     # Timer ref for the journaled wake deadline while suspended.
@@ -246,10 +246,10 @@ defmodule Flezha.Operative.Overwatch do
     # (journal probe, restore, WAL open) resolves: writes must land under
     # this operative's namespace, and a class owned by another namespace
     # must never be silently read or overwritten.
-    case Paths.claim_namespace(state.id, state.namespace) do
-      :ok ->
-        continue_bind(stale_runner_id, operative, state)
-
+    with :ok <- one_state_key(state),
+         :ok <- Paths.claim_namespace(state.id, state.namespace) do
+      continue_bind(stale_runner_id, operative, state)
+    else
       {:error, {:namespace_conflict, _class, owner}} ->
         Logger.error(
           "[overwatch] refusing to bind #{state.id} in namespace #{state.namespace}: " <>
@@ -257,16 +257,40 @@ defmodule Flezha.Operative.Overwatch do
         )
 
         {:stop, {:shutdown, {:namespace_conflict, state.id, owner}}, state}
+
+      {:error, {:split_state_key, class}} ->
+        Logger.error(
+          "[overwatch] refusing to bind workflow #{state.id}: its state key is its " <>
+            "instance id, not #{inspect(class)}"
+        )
+
+        {:stop, {:shutdown, {:split_state_key, state.id, class}}, state}
     end
   end
+
+  # A workflow's journal, Cells and input log are all keyed by its instance id,
+  # so an `:operative_class` naming anything else would split them: it is
+  # refused, not ignored.
+  defp one_state_key(%__MODULE__{builder: %{kind: :workflow}} = state) do
+    case operative_class(state) do
+      id when id == state.id -> :ok
+      class -> {:error, {:split_state_key, class}}
+    end
+  end
+
+  defp one_state_key(%__MODULE__{}), do: :ok
 
   defp continue_bind(stale_runner_id, operative, %__MODULE__{} = state) do
     state = %__MODULE__{state | durable_workflow: Migration.durable_workflow?(state, operative)}
 
     # Suspended instances are rediscovered from durable state alone (journal +
-    # inbox), so a controller redeploy neither binds them to a runner nor
+    # input log), so a controller redeploy neither binds them to a runner nor
     # loses their suspension (`workflow-durable-suspension`). An instance with
     # undelivered input is not suspended any more — it binds and consumes it.
+    # The journal's floor is seeded first, since the log answers that question
+    # against it.
+    if state.durable_workflow, do: TaskJournal.release_input(operative.id)
+
     if state.durable_workflow and Migration.suspended_on_disk?(operative.id) do
       {:noreply, Migration.enter_suspended(state, TaskJournal.restore_state(operative.id)),
        :hibernate}
@@ -287,7 +311,7 @@ defmodule Flezha.Operative.Overwatch do
     case Keyword.get(operative.opts, :seed_input) do
       {message, metadata}
       when is_binary(message) and is_map(metadata) and is_nil(state.init_error) ->
-        if fresh_inbox?(state) do
+        if Ingest.first_input?(state) do
           {_verdict, state} = Ingest.confirming_ingest(state, message, metadata, :cast)
           {:noreply, state}
         else
@@ -300,11 +324,6 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   defp seed_input(result, _operative), do: result
-
-  defp fresh_inbox?(%__MODULE__{durable_workflow: true, id: id}),
-    do: TaskInbox.last_offset(id) == 0
-
-  defp fresh_inbox?(%__MODULE__{}), do: true
 
   @impl true
   def terminate(reason, state), do: Migration.terminate(state, reason)
@@ -469,8 +488,8 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # The same path as the calls with nobody to answer. Suspended: the input is
-  # durable in the inbox, so it is not lost by not being forwarded now — the
-  # rehydrating bind delivers the whole undelivered tail.
+  # durable in the input log, so it is not lost by not being forwarded now —
+  # the rehydrating bind delivers the whole undelivered tail.
   @impl true
   def handle_cast({:io_in, message, metadata}, state) do
     {_verdict, state} = Ingest.confirming_ingest(state, message, metadata, :cast)
@@ -595,15 +614,15 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # The journaled wake deadline elapsed (`workflow-durable-suspension`): append a
-  # timer wake to the inbox and rehydrate. Routing the wake THROUGH the inbox is
-  # what makes two racing wake sources — a message and the deadline — collapse
-  # into one rehydration: the second is a no-op on an already-rehydrating
-  # instance, and the loop simply reads whatever the inbox holds. The wake item
-  # carries an empty payload, which the class's entry channel decodes as its
-  # tick.
+  # timer wake to the input log and rehydrate. Routing the wake THROUGH the log
+  # is what makes two racing wake sources — a message and the deadline —
+  # collapse into one rehydration: the second is a no-op on an
+  # already-rehydrating instance, and the loop simply reads whatever the log
+  # holds. The wake item carries an empty payload, which the class's entry
+  # channel decodes as its tick.
   @impl true
   def handle_info(:wake_deadline, %__MODULE__{} = state) do
-    _ = TaskInbox.append(state.id, "", %{"flz.wake" => "timer"})
+    :ok = Ingest.journal_wake(state)
     {:noreply, Migration.rehydrate(timer_fired(state, :wake))}
   end
 

@@ -201,6 +201,13 @@ republish outputs under a bumped epoch, using the same correction transaction
 with an empty splice. Targets older than retention SHALL be refused with an
 `outside_retention` error naming the earliest available point.
 
+A Cell of a workflow class SHALL be refused before anything is rewound, with an
+error stating that a workflow's baseline is a committed iteration in its
+journal and that its commit records carry no consumed offset at a WAL seq, so
+the correction transaction has no baseline to rewind to. The refusal SHALL name
+`flz operative rewind` as the workflow's verb for taking a loop back. The
+instance's input log SHALL be untouched by the refusal.
+
 #### Scenario: Replay heals a sink after a code fix
 
 - **WHEN** an operative with a calculation bug is fixed and redeployed, and the
@@ -214,6 +221,12 @@ with an empty splice. Targets older than retention SHALL be refused with an
   retained window
 - **THEN** the verb fails with `outside_retention` and reports the earliest
   available target
-</content>
-</invoke>
+
+#### Scenario: Replay of a workflow Cell is refused with its reason
+
+- **WHEN** the operator runs `flz operative replay` naming a Cell of a durable
+  workflow instance
+- **THEN** the verb fails naming the journal as the instance's baseline and
+  `flz operative rewind` as the verb to use, no Cell is rewound, no epoch is
+  bumped, and the instance's input log and floor are unchanged
 

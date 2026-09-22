@@ -95,7 +95,7 @@ record body:          [type u8][task_idx u16 BE][iter u32 BE][payload]
 | --- | --- | --- |
 | 1 | `task_committed` | the cells that ran, the handoff batch, the staged outbox, and the tasklet's completion if it asked to end the instance |
 | 2 | `outbox_flushed` | a marker: this entry's outbox reached its sinks |
-| 3 | `iter_committed` | the iteration's consumed inbox offset, its terminal handoff, and its completion |
+| 3 | `iter_committed` | the input-log offset the iteration consumed (or none, for a carry-fed pass), its terminal handoff, and its completion |
 | 4 | `parked` | the iteration the operative is suspended at, and an optional wake deadline |
 | 5 | `compensated` | an undo ran — with the undo's own outbox |
 | 6 | `rewound` | a marker: everything above this iteration is un-committed |
@@ -316,14 +316,16 @@ contains many tasklet commits; the iteration boundary is where durable suspensio
 keep-progress rollback unit, and rewind all attach.
 
 At every boundary the SDK ships `IterCommit`, the controller journals **one** `iter_committed`
-entry carrying the terminal handoff and the consumed inbox offset, acks, and only then does its
-post-ack cleanup: a boundary snapshot per cell, the outbox flush, and the inbox truncate. A
-failure in that cleanup costs work, not correctness.
+entry carrying the terminal handoff and the consumed input-log offset, acks, and only then does
+its post-ack cleanup: a boundary snapshot per cell, the outbox flush, and the release of the
+consumed input. A failure in that cleanup costs work, not correctness.
 
-**The durable inbox.** A workflow operative's input is journaled to a per-instance `inbox.wal`
-before it is forwarded — the same append-before-forward seam the effectively-once tier uses. A
-duplicate (a repeat of `flz.msg_id` within the undelivered window; a message without an id is
-never a duplicate) is absorbed and never delivered twice. A failed append is not forwarded.
+**The durable input log.** A workflow operative's input is journaled to the same per-instance
+input log the effectively-once tier uses, before it is forwarded, and stamped `flz.offset`. A
+duplicate (a repeat of a `flz.msg_id` the log still retains; a message without an id is never a
+duplicate) is absorbed and never delivered twice. A failed append is not forwarded. Each
+iteration commit reports its offset into the log's watermark, which is the instance's floor:
+the log's retention reclaims what lies below it, and every bind re-forwards what lies above it.
 
 ## Suspension
 
@@ -338,7 +340,7 @@ sequenceDiagram
     participant EX1 as ⚙️ Runner (old)
     participant EX2 as ⚙️ Runner (new)
 
-    Note over EX1: iteration N committed, the inbox is empty, the idle window elapses
+    Note over EX1: iteration N committed, nothing is waiting, the idle window elapses
     EX1->>CTRL: IterPark {iter N}
     CTRL->>CTRL: 💾 journal parked(N [, wake deadline]) — durable FIRST
     CTRL->>EX1: RemOperative — evict
@@ -347,9 +349,9 @@ sequenceDiagram
     Note over CTRL: hours pass. The controller may even redeploy —<br/>the wake timer is re-armed from the journal at boot.
 
     USER->>CTRL: a new message
-    CTRL->>CTRL: 💾 append to inbox.wal (offset + dedup) — before forwarding
+    CTRL->>CTRL: 💾 append to the input log (offset + id dedup) — before forwarding
     CTRL->>EX2: rehydrate — bind, carrying the journal state, then restore the cells
-    CTRL->>EX2: deliver the undelivered inbox tail
+    CTRL->>EX2: re-forward the log's records above the floor
     EX2->>EX2: iteration N+1
     Note over CTRL,EX2: a durable timer is the same model — the trigger is the clock, not a message
 ```
@@ -359,8 +361,8 @@ it, so there is one code path and one set of bugs. The journal rides that bind
 (`AddOperative.task_journal`) rather than a per-Cell restore, because it is instance-scoped: an
 operative whose tasklets hold no per-Cell state has nothing to restore, and would otherwise
 rehydrate at iteration 0 every time. The wake timer wakes the operative by
-appending an empty item to its own inbox, which means two racing wake sources — a message and a
-timer — collapse into one rehydration by construction.
+appending an empty record to its own input log, which means two racing wake sources — a message
+and a timer — collapse into one rehydration by construction.
 
 At boot, an instance whose journal ends in `parked` **and** which has nothing undelivered enters
 suspended without ever binding. Undelivered input outranks the park.
@@ -405,10 +407,10 @@ declares no `compensate` hook cannot be unwound — a workflow emit carries no n
 re-run's output cannot be relied on to overwrite the original. The rewind is refused, naming the
 channel.
 
-> **A rewind does not replay inputs.** The inbox is truncated at every iteration commit, so a
-> committed turn's message is gone from disk — moving the consumed offset back cannot resurrect
-> it. Rewind is **undo-and-continue**: the loop resumes waiting, and the next message becomes
-> iteration N+1.
+> **A rewind does not replay inputs.** Every iteration commit raises the instance's floor in its
+> input log and a rewind never lowers it, so a committed turn's message is not delivered again
+> even while the log still retains it. Rewind is **undo-and-continue**: the loop resumes
+> waiting, and the next message becomes iteration N+1.
 
 Cell state is unwound by the `compensate` hooks, exactly as in a saga — not by truncating the
 state WAL.
@@ -431,7 +433,7 @@ Field-level detail: [`protocol_spec.md`](../sdk/protocol_spec.md).
 
 ```
 flz state journal <operative/instance>    # every journal entry, and whether the graph is complete
-flz state inbox   <operative/instance>    # the durable inbox, and how far it is consumed
+flz state inbox   <operative/instance>    # the durable input log (either kind), and how far it is consumed
 flz operative info                        # phase: running | suspended
 flz operative rewind <instance> --to-iteration N
 ```

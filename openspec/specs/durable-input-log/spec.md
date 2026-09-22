@@ -5,41 +5,66 @@ TBD - created by archiving change effectively-once-output. Update Purpose after 
 ## Requirements
 ### Requirement: Per-operative offset-addressable input-log, gated by the tier
 
-For an operative with the effectively-once tier enabled, the controller SHALL
-journal every inbound payload (after the `:on_input` transform chain) into a
-durable per-operative input-log before forwarding it to the runner, assigning a
-strictly monotonic offset. Operatives without the tier SHALL NOT write an
-input-log and their ingest path SHALL be byte-identical to the pre-change
-behaviour.
+For an instance with durable input, the controller SHALL journal every inbound payload (after
+the `:on_input` transform chain) into one durable per-instance input log before forwarding it to
+the runner, assigning a strictly monotonic offset. An instance has durable input when it is a
+stream on the effectively-once tier or a durable workflow; there SHALL be one log module, one
+file and one offset space for both, keyed by the instance's on-disk state key, and no second
+input log of any kind. A stream that declares no durability SHALL NOT write an input log and its
+ingest path SHALL perform no journaling work.
 
 #### Scenario: Payload journaled before forward
 
-- **WHEN** a source plugin delivers a payload to an opted-in operative
-- **THEN** the payload is appended to the operative's input-log with offset N
-  before the runner receives it
+- **WHEN** a source plugin delivers a payload to a stream on the tier
+- **THEN** the payload is appended to the instance's input log with offset N before the runner
+  receives it
+
+#### Scenario: A workflow's input is journaled to the same log
+
+- **WHEN** a message is sent to a durable workflow instance
+- **THEN** it is appended to that instance's input log, the same module and file layout a tier
+  stream uses, before the runner receives it, and no other durable input file exists for the
+  instance
 
 #### Scenario: Tier off means no log
 
-- **WHEN** an operative without the tier receives payloads
-- **THEN** no input-log file exists for it and the forward path performs no
-  journaling work
+- **WHEN** a stream that declares no durability receives payloads
+- **THEN** no input log file exists for it and the forward path performs no journaling work
 
 ### Requirement: Offset travels with the forwarded input
 
-The assigned offset SHALL be stamped on the forwarded frame as reserved metadata
-`flz.offset`, and the SDK SHALL thread it through to the invocation so the
-resulting atomic effect record carries the same offset as its consumed-offset.
+The assigned offset SHALL be stamped on the forwarded frame as reserved metadata `flz.offset`,
+for an instance of either kind, and there SHALL be no other offset stamp. The SDK SHALL thread it
+through to the durable record that consumes it: a stream's atomic effect record SHALL carry it as
+its consumed offset, and a workflow's iteration commit SHALL carry the offset of the input that
+seeded the iteration. An iteration or an effect record that consumed no journaled input SHALL
+carry no offset; `0` is an offset, never "none".
 
 #### Scenario: Offset round-trips
 
-- **WHEN** input at offset 4711 is dispatched and the invocation produces an
+- **WHEN** input at offset 4711 is dispatched to a stream Cell and the invocation produces an
   effect record
-- **THEN** the effect record's consumed-offset equals 4711
+- **THEN** the effect record's consumed offset equals 4711
+
+#### Scenario: Offset round-trips through an iteration commit
+
+- **WHEN** input at offset 0 seeds a durable workflow's iteration
+- **THEN** that iteration's commit carries consumed offset 0, and the journal records 0, not
+  "none"
+
+#### Scenario: A pass that consumed nothing carries no offset
+
+- **WHEN** a chained iteration is seeded from the previous iteration's handoff, or a wake carrying
+  no journaled input runs
+- **THEN** its commit carries no consumed offset
 
 ### Requirement: Crash-safe, replayable log records
 
 Input-log records SHALL be crc-protected appends (same durability class as the
-per-Cell WAL, fsync-batched). On restart the controller SHALL be able to read
+per-Cell WAL, fsync-batched). An append SHALL be answered, and its input
+forwarded, only once the batch holding its record has synced, so an input the
+runner receives is never one a power loss could take back; every append of one
+batch shares that one sync. On restart the controller SHALL be able to read
 back any retained offset range in order; a torn tail record SHALL be discarded
 without affecting earlier records.
 
@@ -50,6 +75,12 @@ SHALL leave the file on disk. The input log opens through the same reader the
 per-Cell WAL opens through, so the two SHALL give the same answer to the same
 corrupt record; an input the Controller acknowledged is as durable as a change
 it persisted, and neither is deleted to make a log parse.
+
+#### Scenario: An append is answered once its record is synced
+
+- **WHEN** an input is appended while the batch sync has not yet run
+- **THEN** the append is not answered and the input is not forwarded until that sync completes,
+  and a log that stops first answers the appends its last sync made durable
 
 #### Scenario: Replay after crash
 
@@ -75,33 +106,53 @@ it persisted, and neither is deleted to make a log parse.
 
 ### Requirement: Min-watermark retention
 
-The controller SHALL track the minimum durable consumed-offset across all
-Cells of the operative (the watermark) and SHALL truncate the input-log only
-strictly below `min(watermark, now − hold_window)`. A Cell that has consumed
-nothing holds the watermark at the log start.
+The controller SHALL track the minimum durable consumed offset across all of an instance's
+reporters (the watermark) and SHALL truncate the input log only strictly below
+`min(watermark, now − hold_window)`. A stream's reporters are its Cells, each reporting from its
+durable effect records; a durable workflow's reporter is its journal, reporting the consumed
+offset of each iteration commit under the journal's reserved identity, seeded on every bind from
+the highest offset any committed iteration consumed. A reporter that has consumed nothing holds
+the watermark at the log start. A truncation SHALL rewrite the file only once the prefix below
+the floor exceeds the record-log cut threshold, so a loop's log is rewritten once per threshold
+rather than once per turn.
 
-`hold_window` SHALL resolve **per operative** as the greater of the operator-configured
-value and the operative's own declared `correction_window`. It SHALL default to zero
-for an operative that declares no correction window and for which the operator has
-configured none, so a non-correcting operative truncates at its watermark exactly as it
-does with no hold window at all.
+`hold_window` SHALL resolve **per instance** as the greater of the operator-configured value and
+the instance's own declared `correction_window`. It SHALL default to zero for an instance that
+declares no correction window and for which the operator has configured none, so a
+non-correcting instance truncates at its watermark exactly as it does with no hold window at all.
 
 #### Scenario: Truncation respects the slowest cell
 
 - **WHEN** cell A has durably consumed to offset 4711 and cell B to 4710
 - **THEN** truncation removes only offsets below 4710
 
+#### Scenario: An iteration commit advances a workflow's watermark
+
+- **WHEN** a durable workflow's iteration N commits with consumed offset 7
+- **THEN** the instance's watermark is 7, offsets below 7 become eligible for truncation, and
+  the source credit those records held is released
+
+#### Scenario: A rewind does not lower the watermark
+
+- **WHEN** a workflow whose watermark is 7 is rewound to an earlier iteration
+- **THEN** the watermark stays 7 and no released input is re-delivered
+
+#### Scenario: A small released prefix is not rewritten
+
+- **WHEN** iteration commits have released fewer bytes than the record-log cut threshold
+- **THEN** the sweep cuts nothing yet, and the file is rewritten once the released prefix exceeds
+  the threshold
+
 #### Scenario: A declared correction window holds the log
 
-- **WHEN** an operative declares `correction_window(60_000)`, every Cell has
-  consumed to offset 4711, and offset 4711 was appended 10 s ago
-- **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold
-  window
+- **WHEN** a stream declares `correction_window(60_000)`, every Cell has consumed to offset
+  4711, and offset 4711 was appended 10 s ago
+- **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold window
 
 #### Scenario: An operative with no correction window has no hold
 
-- **WHEN** an operative declares no correction window, the operator configures no hold
-  window, and every Cell has consumed to offset 4711
+- **WHEN** an instance declares no correction window, the operator configures no hold window,
+  and every reporter has consumed to offset 4711
 - **THEN** truncation removes every offset below 4711 immediately
 
 ### Requirement: The log owns its watermark
@@ -312,4 +363,67 @@ message, and SHALL NOT stop the log.
 - **WHEN** a message the log does not route arrives
 - **THEN** it is reported at error level naming the message, and the log keeps
   serving
+
+### Requirement: A sender's message id is the one duplicate identity
+
+The log SHALL absorb an append whose metadata carries a non-empty `flz.msg_id` equal to that of
+a record it still retains, answering the retained record's offset, and the caller SHALL forward
+nothing for it. A message carrying no id SHALL always be appended: two identical payloads without
+ids are two messages, for a stream and for a workflow alike. The log SHALL keep the id index
+itself, in memory over its retained records, built from the file on the first append that carries
+an id, maintained on every such append and trimmed by every truncation; an append SHALL NOT
+re-read the file. The record header SHALL keep carrying the append time; the id rides the
+metadata the record already holds.
+
+#### Scenario: A re-sent message is absorbed once
+
+- **WHEN** two appends carrying `flz.msg_id` `"m1"` reach the log before the first is truncated
+- **THEN** exactly one record exists, the second append answers the first record's offset, and
+  the operative receives the message once
+
+#### Scenario: Two identical payloads without an id are two inputs
+
+- **WHEN** the same payload is appended twice with no `flz.msg_id`
+- **THEN** two records exist at consecutive offsets and both are forwarded
+
+#### Scenario: The index survives a log restart
+
+- **WHEN** the log process is restarted and an id already retained in the file is appended again
+- **THEN** the append answers the retained record's offset from the index rebuilt off the file
+
+#### Scenario: A log that never sees an id builds no index
+
+- **WHEN** every append to a log carries no `flz.msg_id`
+- **THEN** the log walks its file for no index and each append costs what it cost before
+
+### Requirement: The retained tail is what every bind re-forwards
+
+On every bind of an instance with durable input, of either kind, the controller SHALL re-forward
+the retained records strictly above the instance's floor, in offset order, each stamped with its
+original `flz.offset` and never re-journaled, exactly once per bind, before the instance's source
+plugins are brought up. The floor SHALL be the log's watermark: the minimum durable consumed
+offset over the instance's reporters. There SHALL be one such re-forward function, shared by a
+fresh bind, a crash resume, a migration, a rehydrate from suspension and the bind of a stream that
+could not carry an earlier input. Whether an instance owes undelivered input SHALL be answered
+from the log's tail and floor, without decoding the file.
+
+#### Scenario: A rehydrated workflow receives its tail once
+
+- **WHEN** a durable workflow instance whose journal has consumed offset 6 rehydrates while the
+  log holds offsets 0..9
+- **THEN** offsets 7..9 are forwarded once, in order, each stamped with its own `flz.offset`, and
+  nothing at or below 6 is forwarded
+
+#### Scenario: A tier stream receives its tail once
+
+- **WHEN** an effectively-once stream whose slowest Cell has consumed to 4700 rebinds while the
+  log holds offsets up to 4720
+- **THEN** offsets 4701..4720 are forwarded once, in order, and a Cell ahead of 4700 skips the
+  offsets it already consumed
+
+#### Scenario: Owed input is judged without a file read
+
+- **WHEN** the controller asks whether a suspended instance owes undelivered input
+- **THEN** the answer is derived from the log's last offset and the instance's floor, and no
+  record body is decoded
 

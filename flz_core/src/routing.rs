@@ -65,9 +65,9 @@ impl EntryView for WorkflowInstance {
     }
 
     /// The driver counts the message consumed without a pass, so the park
-    /// record releases it from the durable inbox.
+    /// record releases it from the input log.
     fn entry_parked(&self, offset: Option<u64>) {
-        self.push_inbox(Inbound::Parked(offset.unwrap_or(0)));
+        self.push_inbox(Inbound::Parked(offset));
     }
 }
 
@@ -417,7 +417,7 @@ fn route_stream_frame(
         return;
     }
 
-    let (consumed_offset, replay) = frame_facts(metadata, "flz.offset");
+    let (consumed_offset, replay) = frame_facts(metadata);
     let Some((channel_id, channel)) =
         entry_channel_or_park(instance, &payload, metadata, consumed_offset)
     else {
@@ -452,7 +452,7 @@ fn route_stream_frame(
 
 /// A message into a workflow instance through the same entrance a stream's
 /// frame takes: the channel name resolved, the bytes wrapped, the typed
-/// value pushed into the driver's inbox with the durable-inbox offset the
+/// value pushed into the driver's inbox with the input-log offset the
 /// controller stamped. The entry edge's transforms run when the driver
 /// seeds the pass, on the chain the channel roots.
 pub fn feed_workflow_frame(
@@ -460,10 +460,8 @@ pub fn feed_workflow_frame(
     payload: Vec<u8>,
     metadata: &HashMap<String, String>,
 ) {
-    let (journaled, replay) = frame_facts(metadata, crate::workflow::INBOX_OFFSET_KEY);
-    let offset = journaled.unwrap_or(0);
-    let Some((channel_id, channel)) =
-        entry_channel_or_park(instance, &payload, metadata, journaled)
+    let (offset, replay) = frame_facts(metadata);
+    let Some((channel_id, channel)) = entry_channel_or_park(instance, &payload, metadata, offset)
     else {
         return;
     };
@@ -473,7 +471,7 @@ pub fn feed_workflow_frame(
             push_inbox_or_refuse(&instance, channel_id, value, offset, replay)
         }) as EntryDeliver
     };
-    if let Some(value) = wrap_entry(instance, channel_id, channel, payload, journaled, deliver) {
+    if let Some(value) = wrap_entry(instance, channel_id, channel, payload, offset, deliver) {
         if let Err(e) = push_inbox_or_refuse(instance, channel_id, value, offset, replay) {
             eprintln!("[flezha] {e}");
         }
@@ -484,7 +482,7 @@ fn push_inbox_or_refuse(
     instance: &WorkflowInstance,
     channel_id: ChannelId,
     value: Arc<dyn Any + Send + Sync>,
-    offset: u64,
+    offset: Option<u64>,
     replay: bool,
 ) -> Result<(), String> {
     if instance.push_inbox(Inbound::Message(InboxItem {
@@ -502,11 +500,13 @@ fn push_inbox_or_refuse(
     }
 }
 
-/// What the controller stamped: the offset under `offset_key` (a stream's
-/// input log, a workflow's durable inbox) and whether the frame is a
-/// replayed slice member.
-fn frame_facts(metadata: &HashMap<String, String>, offset_key: &str) -> (Option<u64>, bool) {
-    let consumed_offset = metadata.get(offset_key).and_then(|s| s.parse::<u64>().ok());
+/// What the controller stamped: the input-log offset `flz.offset` (a stream
+/// or a workflow with durable input) and whether the frame is a replayed
+/// slice member.
+fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, bool) {
+    let consumed_offset = metadata
+        .get("flz.offset")
+        .and_then(|s| s.parse::<u64>().ok());
     (consumed_offset, metadata.contains_key("flz.replay"))
 }
 

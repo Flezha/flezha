@@ -11,15 +11,19 @@ A backend SHALL implement exactly the blob-level contract — `put`, `get`, `lis
 - **THEN** it implements only the five blob operations and the tier's shipping, manifest, and recovery behavior work against it unchanged
 
 ### Requirement: Shipped artifact scope covers the operative's full durable identity
-The tier SHALL ship every durable artifact an operative needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal and durable inbox, its input log, and the registry cspec.
+The tier SHALL ship every durable artifact an operative needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a workflow instance's post-start input is the same input log a stream on the effectively-once tier ships, and a workflow's commit SHALL enqueue it for shipping with the journal suffix.
 
-An operative's artifacts SHALL be located through both of the identities it is stored under — its instance id, which keys the task-journal and durable inbox, and its resolved operative class, which keys the Cells and input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
+An operative's artifacts SHALL be located through both of the identities it is stored under, its instance id, which keys the task-journal, and its resolved operative class, which keys the Cells and the input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
 
 The registry cspec SHALL be stored per writing controller rather than under one shared key, because each controller holds its own replica of a gossiped registry and all of them are legitimate writers. Recovery SHALL select one replica deterministically.
 
 #### Scenario: The log a cut resumes from ships with the cut
 - **WHEN** an effectively-once operative closes a checkpoint interval
 - **THEN** both the Cell's state cut and the input log covering its consumed offset are shipped, so a hydrated Cell has a log to replay from
+
+#### Scenario: A workflow's input ships with its commit
+- **WHEN** a durable workflow instance commits an iteration
+- **THEN** its journal suffix and its input log are enqueued for shipping, and a controller hydrating the instance finds the input the instance has not consumed in that log
 
 #### Scenario: An operative's existence survives with its state
 - **WHEN** a controller boots with an empty state directory against a backend holding shipped artifacts

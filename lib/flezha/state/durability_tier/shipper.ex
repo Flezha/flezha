@@ -348,8 +348,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp upload_payload(state, _manifest, blob, bytes),
     do: state.backend.put(blob, bytes, state.opts)
 
-  # Seq-addressed artifact (Cell WAL + snapshots, task-journal, durable inbox,
-  # input log). The manifest is reconciled against local truth first — a rewind
+  # Seq-addressed artifact (Cell WAL + snapshots, task-journal, input log). The manifest is reconciled against local truth first — a rewind
   # dropped records above a seq, a compaction dropped them below one — and only
   # then extended with the cut being shipped.
   defp ship_seq_addressed(state, ref) do

@@ -23,10 +23,6 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-/// Frame-metadata key of a journaled input's durable-inbox offset, stamped
-/// by the controller before forwarding.
-pub const INBOX_OFFSET_KEY: &str = "flz.inbox_offset";
-
 /// How a structured chain repeats. Every message-fed pass waits for its
 /// message the same way: a durable instance idle past the threshold at a
 /// committed boundary, the one before its first pass included, parks until

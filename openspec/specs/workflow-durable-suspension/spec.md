@@ -2,39 +2,40 @@
 
 ## Purpose
 
-The workflow-durable-suspension capability lets a waiting durable workflow instance cost nothing while losing nothing. Post-start input for a durable workflow instance is no longer an in-memory channel: the controller appends every message to a per-instance append-only `inbox.wal` — same WalWriter/FsyncBatcher substrate as `task.journal` — with a monotonic offset and a dedup id (sender-supplied message id, else a payload hash) **before** forwarding it to the runner, so a duplicate send inside the undelivered window is absorbed at append and a message sent while the instance is suspended, crashed, or migrating is delivered on rehydrate rather than dropped. Payloads live only in `inbox.wal`; `task.journal` carries offsets, and the consumed offset recorded by `iter_committed` (`workflow-durable-loop`) is what makes consumed entries truncatable. When a looping durable instance blocks on an empty inbox at a committed iteration boundary, the SDK parks: the controller journals `parked(N[, wake_deadline])` and tears the instance down with no terminal completion — registry state `suspended`, zero live runner resources — while a mid-iteration `recv` still blocks in memory as before, and an eviction-hysteresis knob keeps trickling input from thrashing the cycle. A new inbox append or the elapse of the journaled wake deadline rehydrates the instance through the normal workflow spawn path on any live runner (existing session fencing applies): journal state and iteration-boundary snapshots are restored, the undelivered inbox tail is delivered from the recorded offset, and the loop enters iteration N+1. Every input to that decision is durable, so suspension survives controller restart or redeploy, and racing wake sources resolve to exactly one rehydration.
+The workflow-durable-suspension capability lets a waiting durable workflow instance cost nothing while losing nothing. Post-start input for a durable workflow instance goes to the one durable input log a stream on the effectively-once tier uses, stamped `flz.offset` and deduplicated by a retained `flz.msg_id`, **before** it is forwarded, so a message sent while the instance is suspended, crashed or migrating is delivered on rehydrate rather than dropped. Each iteration commit reports its consumed offset into the log's watermark, the instance's floor. A looping durable instance that finds nothing to consume at a committed iteration boundary parks: the controller journals `parked(N[, wake_deadline])` and evicts it from its runner, registry state `suspended`. A new input-log append or the journaled wake deadline rehydrates it through the normal bind path, which re-forwards the log's records above the floor. Every input to that decision is durable, so suspension survives a controller restart, and racing wake sources resolve to exactly one rehydration.
 ## Requirements
 ### Requirement: Post-start input is durably journaled before delivery
 
-The controller SHALL append every message for a durable workflow
-instance to a per-instance append-only `inbox.wal` (same WalWriter/FsyncBatcher
-substrate as `task.journal`) with a monotonic offset and, when the sender supplied
-one, its `flz.msg_id` as the dedup id — **before** forwarding it to the runner. A
-duplicate `flz.msg_id` within the undelivered window SHALL be dropped at append. A
-message without an `flz.msg_id` SHALL have no dedup id and SHALL always be appended:
-two identical payloads without ids are two messages, as they are on a stream. Entries
-at or below the consumed offset recorded by `iter_committed` SHALL be truncated.
-Message payloads SHALL live only in `inbox.wal`, never in `task.journal`.
+The controller SHALL append every post-start input for a durable workflow instance to the
+instance's durable input log (`durable-input-log`, the same module, file and offset space a
+stream on the effectively-once tier uses) with a monotonic offset **before** forwarding it to
+the runner, stamped `flz.offset`. An input carrying a `flz.msg_id` already retained in the log
+SHALL be absorbed at append; an input carrying no id SHALL always be appended. Entries at or
+below the offset the latest `iter_committed` recorded SHALL be released to the log's retention.
+Message payloads SHALL live only in the input log, never in `task.journal`.
 
 #### Scenario: Input survives the instance being down
 
 - **WHEN** a message arrives for a suspended (or crashed, not-yet-respawned) workflow instance
-- **THEN** it SHALL be durably appended to the instance's `inbox.wal` and delivered when the instance next runs — not dropped
+- **THEN** it SHALL be durably appended to the instance's input log and delivered when the
+  instance next runs, not dropped
 
 #### Scenario: Duplicate send is absorbed
 
-- **WHEN** a message carrying `flz.msg_id` `m-7` is sent twice before the instance consumes it
-- **THEN** exactly one inbox entry SHALL exist and the operative SHALL receive it once
+- **WHEN** the same message, carrying the same `flz.msg_id`, is sent twice before the instance
+  consumes it
+- **THEN** exactly one log record SHALL exist and the operative SHALL receive it once
 
-#### Scenario: Identical payloads without an id are both processed
+#### Scenario: A message without an id is never absorbed
 
-- **WHEN** the same payload is sent twice with no `flz.msg_id` before the instance consumes it
-- **THEN** two inbox entries SHALL exist and a `per_input` loop SHALL run one iteration for each
+- **WHEN** the same payload is sent twice with no `flz.msg_id`
+- **THEN** two records SHALL exist and the operative SHALL receive both
 
 #### Scenario: Consumed entries are truncated
 
 - **WHEN** iteration N commits with consumed offset 7
-- **THEN** inbox entries with offset ≤ 7 SHALL be eligible for truncation and later rehydrates SHALL NOT re-deliver them
+- **THEN** records at or below 7 SHALL be eligible for the log's retention and later rehydrates
+  SHALL NOT re-deliver them
 
 ### Requirement: A waiting loop parks durably and is evicted from memory
 
@@ -80,18 +81,20 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 
 ### Requirement: A suspended instance rehydrates on new input or its durable timer
 
-The controller SHALL rehydrate a `suspended` instance on a new inbox append or
-on the elapse of its journaled wake deadline: respawn through the normal workflow spawn
-path on any live runner (existing session fencing applies), restore journal
-state and iteration-boundary snapshots, deliver the undelivered inbox tail from
-the recorded offset, and enter iteration N+1. Rehydration SHALL survive
-controller restart/redeploy (all inputs are durable: journal, snapshots,
-inbox). Concurrent wake sources SHALL resolve to exactly one rehydration.
+The controller SHALL rehydrate a `suspended` instance on a new input-log append or on the elapse
+of its journaled wake deadline: respawn through the normal workflow spawn path on any live runner
+(existing session fencing applies), restore journal state and iteration-boundary snapshots,
+deliver the log's retained tail above the instance's floor through the one re-forward every bind
+runs, and enter iteration N+1. Rehydration SHALL survive controller restart/redeploy (all inputs
+are durable: journal, snapshots, input log). Concurrent wake sources SHALL resolve to exactly one
+rehydration. Whether a suspended instance still owes input SHALL be read from the log's tail and
+the instance's floor, not from a decode of the file.
 
 #### Scenario: New message wakes a suspended instance
 
 - **WHEN** a message arrives for an instance suspended at iteration N
-- **THEN** the instance SHALL be respawned (possibly on a different runner), restored from journal + iter-N snapshots, and SHALL process the message as iteration N+1
+- **THEN** the instance SHALL be respawned (possibly on a different runner), restored from
+  journal + iter-N snapshots, and SHALL process the message as iteration N+1
 
 #### Scenario: Suspension survives controller redeploy
 
@@ -106,11 +109,14 @@ inbox). Concurrent wake sources SHALL resolve to exactly one rehydration.
 #### Scenario: A park landing during an un-park keeps the suspension
 
 - **WHEN** the rehydrated driver parks again before the un-park task has reported its bound state
-- **THEN** the Overwatch SHALL stay suspended (the runner has already torn the instance down) and SHALL rehydrate again only if the inbox still owes undelivered input — the task's stale bound state SHALL NOT be adopted
+- **THEN** the Overwatch SHALL stay suspended (the runner has already torn the instance down)
+  and SHALL rehydrate again only if the log still holds records above the instance's floor; the
+  task's stale bound state SHALL NOT be adopted
 
 #### Scenario: Racing wake sources rehydrate once
 
-- **WHEN** an inbox append and a timer deadline fire for the same suspended instance concurrently
+- **WHEN** an input-log append and a timer deadline fire for the same suspended instance
+  concurrently
 - **THEN** exactly one rehydration SHALL occur
 
 ### Requirement: A rehydrated loop waits for the inbox tail it is owed before it parks

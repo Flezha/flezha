@@ -3,31 +3,30 @@
 ## Purpose
 
 The workflow-loop-rewind capability lets an operator take a looping workflow operative back to a committed iteration: `flz operative rewind <instance> --to-iteration N` compensates the tasklets of every iteration above N in reverse order, restores the inter-task handoff and consumed inbox offset to the iteration-N boundary, bumps the instance's epoch so re-run output supersedes the unwound output at conforming sinks, and resumes the loop at iteration N+1. It is undo-and-continue, not replay — the unwound iterations' inputs are gone with the truncated inbox. The rewind is refused, with no durable change, when the target iteration never committed or when an unwound tasklet staged plugin output it declares no `compensate` hook to undo.
-
 ## Requirements
-
 ### Requirement: Rewind to a committed iteration
 
 `flz operative rewind <instance> --to-iteration N` SHALL: compensate the
 tasklets of iterations above N in reverse order using the existing per-cell
-compensation machinery, restore the instance's inter-task handoff and consumed inbox
-offset to the iteration-N boundary, bump the epoch, and resume the loop at
+compensation machinery, restore the instance's inter-task handoff and consumed
+input-log offset to the iteration-N boundary, bump the epoch, and resume the loop at
 iteration N+1. Iteration N SHALL remain committed. Rewinding to an iteration that
 has not committed SHALL be refused with a typed error reporting the committed
 range, and SHALL make no durable change.
 
 Cell **state** SHALL be returned to the boundary by the unwound tasklets'
-own `compensate` hooks — the existing saga contract, in which a tasklet that
+own `compensate` hooks, the existing saga contract, in which a tasklet that
 needs its effects undone declares one and reverses its own State change. The
 engine SHALL NOT truncate the per-Cell state WAL to do it. A tasklet that
 declares no hook therefore leaves its State change in place, exactly as it does
 under an `AllOrNothing` crash rollback today.
 
-A rewind is undo-and-continue, not replay: an iteration's **input** is not
-retained past its commit (the durable inbox is truncated to the consumed offset
-at each iteration boundary), so the unwound iterations are not re-run from their
-original inputs. The loop resumes waiting, and the next input it receives is
-processed as iteration N+1.
+A rewind is undo-and-continue, not replay: an iteration's **input** is released
+to the input log's retention at its commit, and the instance's floor in that
+log, the highest offset any committed iteration consumed, SHALL NOT be lowered
+by a rewind, so the unwound iterations are not re-run from their original
+inputs even while the log still retains them. The loop resumes waiting, and the
+next input it receives is processed as iteration N+1.
 
 The rewind point SHALL be made durable before any compensation runs, so that a
 crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
@@ -39,6 +38,13 @@ crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
 - **THEN** the tasklets of iterations 5 and 4 are compensated in that order,
   the handoff equals the iteration-3 commit, and the next input is processed as
   iteration 4
+
+#### Scenario: Retained input is not re-delivered by a rewind
+
+- **WHEN** the operator rewinds to iteration 3 while the input log still retains
+  the inputs iterations 4 and 5 consumed
+- **THEN** the instance's floor stays at the offset iteration 5 consumed and
+  neither input is forwarded again
 
 #### Scenario: Crash mid-rewind resumes without double compensation
 
@@ -116,3 +122,4 @@ A tasklet that staged no plugin output SHALL require no coverage.
 
 - **WHEN** the iterations being unwound staged no plugin output
 - **THEN** the rewind proceeds with no coverage requirement
+

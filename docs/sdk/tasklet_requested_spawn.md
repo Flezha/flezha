@@ -90,8 +90,8 @@ the same entrance every message takes. It names no channel, so it enters the fir
 entry channel, is decoded by that channel's codec or parser, and runs the chain that channel
 roots, in every loop mode. Every SDK encodes it as its sink with no codec encodes a value,
 the rule `ctx.complete` applies: bytes as they are, a string as UTF-8, anything else as JSON,
-so a `text` or `json` entry reads it. A durable instance whose inbox already holds entries is
-a restart, not a spawn, and is not re-seeded.
+so a `text` or `json` entry reads it. A durable instance whose input log already holds records
+is a restart, not a spawn, and is not re-seeded.
 
 ## Failures resolve the handle, never `run`
 
@@ -143,7 +143,7 @@ a generated id existed only in the controller's answer to the live run.
 
 The request resolves on the path `flz operative start` uses, so the spawned instance is an
 ordinary workflow operative: namespace quota (`max_operatives`,
-`max_cells_per_operative`), durable inbox, loop and suspension, `WorkflowCompleted`
+`max_cells_per_operative`), durable input log, loop and suspension, `WorkflowCompleted`
 teardown, retention, `flz operative list`. There is no separate registry, no spawn journal, no
 scheduling (that is `flz schedule`), no cross-namespace reach.
 

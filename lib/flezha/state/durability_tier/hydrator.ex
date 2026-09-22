@@ -22,13 +22,13 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{InputLog, Outbox, Paths}
+  alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal}
 
   @doc """
   Hydrate every shipped reference of `operative_class` whose local files are
   absent. Called from the bind-time restore enumeration, so a fresh controller
-  binding a remote-only operative finds its Cells, task-journal, durable
-  inbox, input log and parked failures on disk by the time it enumerates them.
+  binding a remote-only operative finds its Cells, task-journal, input log and
+  parked failures on disk by the time it enumerates them.
   """
   @spec hydrate_operative(module(), keyword(), binary()) :: :ok
   def hydrate_operative(module, opts, operative_class) when is_binary(operative_class) do
@@ -284,6 +284,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     seed_consumed_offset(class, cell_id, manifest)
     seed_epoch(cell_id, manifest)
     seed_markers(cell_id, manifest)
+    seed_journal_floor(cell_id)
   end
 
   defp seed_local_facts(_manifest), do: :ok
@@ -300,6 +301,16 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
       _ ->
         :ok
     end
+  end
+
+  # A task-journal's consumed input is its instance's floor in the input log, an
+  # in-memory row the bind asks the log for: seeded from the journal just
+  # written, as a Cell's consumed offset is from its manifest, or the bind would
+  # re-deliver every retained input the instance had consumed.
+  defp seed_journal_floor({instance_id, _, _} = cell_id) do
+    if cell_id == Paths.journal_id(instance_id),
+      do: TaskJournal.release_input(instance_id),
+      else: :ok
   end
 
   # The epoch's only home on disk is the dedup cache, which is not an artifact —

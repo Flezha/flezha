@@ -21,7 +21,7 @@ defmodule Flezha.State.DurabilityTierTest do
   alias Flezha.Service.Cli.Controller, as: ControllerCli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{Outbox, Paths, TestHelpers}
+  alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal, TestHelpers}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.NodeTestHelper
@@ -248,6 +248,43 @@ defmodule Flezha.State.DurabilityTierTest do
 
       assert File.read!(log_path) == TestHelpers.wal_records(0..2)
       assert File.dir?(Path.dirname(log_path)), "hydration must not replace the class dir"
+    end
+
+    test "a workflow's commit ships its input log beside its journal", ctx do
+      # A workflow keys its journal, Cells and input log by its instance id, so
+      # the commit's refs name all three under the one key.
+      instance = ctx.class
+      journal = Paths.journal_id(instance)
+      TestHelpers.write_wal(journal, 0..1)
+      File.write!(Paths.input_log_path(instance), TestHelpers.wal_records(0..2))
+
+      assert {:cell, journal} in Artifact.cell_refs(instance)
+      assert :ok = DurabilityTier.on_workflow_commit(instance)
+
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 keys = Stub.keys()
+
+                 Manifest.key({:input_log, instance}) in keys and
+                   Manifest.key({:cell, journal}) in keys
+               end,
+               2_000
+             ),
+             "the commit enqueued its journal and its input log"
+    end
+
+    test "a hydrated task-journal seeds its instance's floor in the input log", ctx do
+      instance = ctx.class
+      journal = Paths.journal_id(instance)
+      :ok = TaskJournal.append_iter_committed(instance, 0, 2, [])
+      assert :ok = Shipper.ship_now({:cell, journal})
+
+      # The disk is gone, and with it the in-memory row the journal reported.
+      {:ok, %{status: :ok}} = Flezha.State.Supervisor.delete_cell(journal)
+      assert InputLog.watermark(instance) == nil
+
+      assert :ok = DurabilityTier.hydrate_operative(instance)
+      assert InputLog.watermark(instance) == 2
     end
 
     test "a subset request fetches only the cell keys it names", ctx do

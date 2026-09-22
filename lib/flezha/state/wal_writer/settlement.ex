@@ -402,9 +402,9 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   # Advance the dedup file (persistence watermark + flush cursor + epoch)
   # with one atomic tmp+rename — at most once per fsync batch. The reserved
-  # per-instance identities (task-journal, durable inbox) skip it: neither carries
-  # effect records, and the dedup side-file would register a phantom Cell
-  # with `Paths.scan_dir/1`.
+  # per-instance identity (the task-journal) skips it: it carries no effect
+  # records, and the dedup side-file would register a phantom Cell with
+  # `Paths.scan_dir/1`.
   def persist_dedup(%{cell_id: {_, _, key}} = state) when key in @reserved_cell_keys,
     do: state
 

@@ -261,13 +261,13 @@ defmodule Flezha.Operative.ClassRegistry do
   Record that `instance_id` resolves to `operative_class` on disk.
 
   These are two different key spaces, not two names for one thing. A workflow
-  instance's task-journal and durable inbox live under its INSTANCE id
-  (`Paths.journal_id/1`), while its Cells and input log live under the
-  resolved CLASS (`:operative_class`, defaulting to the instance id). They
-  coincide unless an operator sets that option — and where they diverge, asking
-  for one and getting the other returns half an operative's artifacts with no
-  error, which is how a synchronous-durability barrier can pass having shipped
-  almost nothing.
+  instance's task-journal lives under its INSTANCE id (`Paths.journal_id/1`),
+  while an operative's Cells and input log live under the resolved CLASS
+  (`:operative_class`, defaulting to the instance id). They coincide unless an
+  operator sets that option, which a workflow is refused — and where they
+  diverge, asking for one and getting the other returns half an operative's
+  artifacts with no error, which is how a synchronous-durability barrier can
+  pass having shipped almost nothing.
 
   Stored under both members so either answers, and in memory only: the callers
   are the commit path and hydration, both of which run against a live bind, and

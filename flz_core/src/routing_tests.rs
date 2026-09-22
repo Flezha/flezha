@@ -91,14 +91,11 @@ fn channel_metadata(channel: &str) -> HashMap<String, String> {
     HashMap::from([("channel".to_string(), channel.to_string())])
 }
 
-/// A frame naming `channel` at durable-inbox offset `offset`.
+/// A frame naming `channel` at input-log offset `offset`.
 fn journaled_metadata(channel: &str, offset: u64) -> HashMap<String, String> {
     HashMap::from([
         ("channel".to_string(), channel.to_string()),
-        (
-            crate::workflow::INBOX_OFFSET_KEY.to_string(),
-            offset.to_string(),
-        ),
+        ("flz.offset".to_string(), offset.to_string()),
     ])
 }
 
@@ -112,11 +109,11 @@ fn next_inbound(inbox: &crossbeam::channel::Receiver<Inbound>) -> Inbound {
 fn next_message(inbox: &crossbeam::channel::Receiver<Inbound>) -> InboxItem {
     match next_inbound(inbox) {
         Inbound::Message(item) => item,
-        Inbound::Parked(offset) => panic!("parked at offset {offset}, not delivered"),
+        Inbound::Parked(offset) => panic!("parked at offset {offset:?}, not delivered"),
     }
 }
 
-fn next_parked(inbox: &crossbeam::channel::Receiver<Inbound>) -> u64 {
+fn next_parked(inbox: &crossbeam::channel::Receiver<Inbound>) -> Option<u64> {
     match next_inbound(inbox) {
         Inbound::Parked(offset) => offset,
         Inbound::Message(_) => panic!("delivered, not parked"),
@@ -200,7 +197,7 @@ fn a_workflow_frame_naming_an_undeclared_channel_parks_under_that_name() {
 
     assert_eq!(
         next_parked(&inbox),
-        4,
+        Some(4),
         "the driver counts the parked message consumed"
     );
     let park = parks.lock().expect("park capture poisoned").remove(0);
@@ -238,7 +235,7 @@ fn a_workflow_frame_naming_no_channel_enters_the_first_entry_channel() {
         item.channel_id, 0,
         "the first declared entry channel took it"
     );
-    assert_eq!((item.offset, item.replay), (0, false));
+    assert_eq!((item.offset, item.replay), (None, false));
     let host = item
         .value
         .downcast_ref::<crate::host::HostPayload>()
@@ -256,10 +253,7 @@ fn a_workflow_frame_on_the_second_entry_channel_carries_that_channel_and_its_fac
     let (instance, inbox) = host_class::workflow("wf_second", &["first", "second"]);
     let metadata = HashMap::from([
         ("channel".to_string(), "second".to_string()),
-        (
-            crate::workflow::INBOX_OFFSET_KEY.to_string(),
-            "7".to_string(),
-        ),
+        ("flz.offset".to_string(), "7".to_string()),
         ("flz.replay".to_string(), "1".to_string()),
     ]);
 
@@ -270,7 +264,7 @@ fn a_workflow_frame_on_the_second_entry_channel_carries_that_channel_and_its_fac
         item.channel_id, 1,
         "the named channel took it, not the first"
     );
-    assert_eq!(item.offset, 7, "the durable-inbox offset rides the item");
+    assert_eq!(item.offset, Some(7), "the input-log offset rides the item");
     assert!(item.replay, "a re-forwarded message says so");
     state_sink::reset_for_test();
 }
@@ -286,7 +280,7 @@ fn a_workflow_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_
 
     assert_eq!(
         next_parked(&inbox),
-        5,
+        Some(5),
         "the driver counts the parked message consumed"
     );
     let park = parks.lock().expect("park capture poisoned").remove(0);

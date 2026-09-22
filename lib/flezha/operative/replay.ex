@@ -26,7 +26,6 @@ defmodule Flezha.Operative.Replay do
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.TaskInbox
   alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
   alias Flezha.State.WalTransfer
@@ -118,7 +117,7 @@ defmodule Flezha.Operative.Replay do
   def restore_on_bind(%Overwatch{arrived_via_hotswap?: true}, _operative),
     do: :ok
 
-  # Tier operatives restored synchronously in `restore_and_replay_journal/1`.
+  # Tier operatives restored synchronously in `restore_tier_cells/1`.
   def restore_on_bind(%Overwatch{effectively_once: true}, _operative),
     do: :ok
 
@@ -253,7 +252,7 @@ defmodule Flezha.Operative.Replay do
     if PersistenceResolver.persistent_state?(kind, operative_class) do
       # Remote hydration runs first, and in this one place: a controller
       # adopting an operative whose disk is gone then finds its Cells,
-      # task-journal, durable inbox and input log on disk by the time this walks
+      # task-journal and input log on disk by the time this walks
       # them — and every caller (bind restore, the tier's awaited restore, the
       # resume-gate count) sees the same set. Inert unless a durability backend
       # is configured and the local state really is absent.
@@ -287,16 +286,15 @@ defmodule Flezha.Operative.Replay do
 
   @doc """
   Effectively-once bind path: restore each persisted Cell through the
-  awaited control round-trip (the SDK has applied state + consumed floor
-  when the reply lands), then re-forward the journaled input tail above
-  the min durable consumed-offset.
+  awaited control round-trip, so the SDK has applied state + consumed floor
+  before the bind re-forwards the input tail (`reforward_undelivered_tail/1`).
 
   Runs in the Overwatch process before plugin activation; Cells ahead of the
   min watermark skip re-forwarded offsets they already consumed (SDK
   `consumed_floor`).
   """
-  @spec restore_and_replay_journal(Overwatch.t()) :: {:ok, Overwatch.t()} | {:error, term()}
-  def restore_and_replay_journal(%Overwatch{} = state) do
+  @spec restore_tier_cells(Overwatch.t()) :: {:ok, Overwatch.t()} | {:error, term()}
+  def restore_tier_cells(%Overwatch{} = state) do
     refused =
       state.builder.kind
       |> restorable_cells(Overwatch.operative_class(state))
@@ -311,59 +309,42 @@ defmodule Flezha.Operative.Replay do
         end
       end)
 
-    # Stop before the journal replay: re-forwarding the input tail onto an
-    # Cell whose baseline never landed is the silent loss this guards.
-    if refused do
-      {:error, refused}
-    else
-      replay_journaled_inputs(state)
-      {:ok, state}
-    end
+    # Stop before the re-forward: re-forwarding the input tail onto a Cell
+    # whose baseline never landed is the silent loss this guards.
+    if refused, do: {:error, refused}, else: {:ok, state}
   end
 
   # ---------- re-forwarding a durable tail ----------
 
   @doc """
-  Re-forward the retained journaled inputs above the min durable
-  consumed-offset, stamping each record's original `flz.offset` (never
-  re-journaling — the log already holds them, post-`:on_input`).
-  """
-  @spec replay_journaled_inputs(Overwatch.t()) :: :ok
-  def replay_journaled_inputs(%Overwatch{} = state) do
-    operative_class = Overwatch.operative_class(state)
+  Re-forward the retained input-log records above the instance's floor (the
+  log's watermark), in offset order, each stamped with its original
+  `flz.offset` and never re-journaled — the log already holds them,
+  post-`:on_input`.
 
-    if File.exists?(Paths.input_log_path(operative_class)) do
-      floor = InputLog.watermark(operative_class) || -1
-
-      # A refused log answers no tail. Re-forwarding from the prefix that
-      # verified would hand the Cell part of its journal as all of it, so
-      # nothing is re-forwarded; the refusal was already reported where it was
-      # read, and the operative is left to the bind's own restore verdict.
-      case InputLog.last_offset(operative_class) do
-        last when is_integer(last) and last > floor ->
-          replay_slice(state, operative_class, floor + 1, last)
-
-        _no_slice_or_refused ->
-          :ok
-      end
-    end
-
-    :ok
-  end
-
-  @doc """
-  Re-forward everything this operative's durable logs still owe: the
-  effectively-once input tail and the durable workflow's inbox tail.
-
-  The single entry point a data-stream bind takes. Both halves are the ones the
-  restore path already calls, so a bind and a restore re-forward through one
-  implementation and differ only in what triggered them. Both are self-guarding,
-  so a class with neither log does nothing.
+  The one re-forward, for either kind: every bind runs it once, before the
+  instance's sources come up, which is what makes a fresh bind, a crash resume,
+  a migration and a rehydrate from suspension one path, and a data-stream bind
+  that could not carry an earlier input runs the same function. An instance
+  without durable input has no log, and it does nothing.
   """
   @spec reforward_undelivered_tail(Overwatch.t()) :: Overwatch.t()
   def reforward_undelivered_tail(%Overwatch{} = state) do
-    _ = replay_journaled_inputs(state)
-    deliver_inbox_tail(state)
+    replay_slice(state, InputLog.undelivered(Overwatch.operative_class(state)))
+    state
+  end
+
+  @doc """
+  How many records `reforward_undelivered_tail/1` would re-forward now: the
+  retained records above the instance's floor, `0` for none and for a log that
+  refused. Read off the log's tail, so no record is read.
+  """
+  @spec owed_count(binary()) :: non_neg_integer()
+  def owed_count(state_key) do
+    case InputLog.tail(state_key) do
+      {:ok, floor, last} when last > floor -> last - floor
+      _owes_nothing_or_refused -> 0
+    end
   end
 
   @doc """
@@ -408,29 +389,6 @@ defmodule Flezha.Operative.Replay do
     end
   end
 
-  @doc """
-  Re-forward every inbox entry above the durable consumed offset, stamped with
-  its original offset (never re-journaling — the inbox already holds them).
-
-  Runs on every bind of a durable workflow instance, which is what makes crash
-  resume, migration, and rehydrate-from-suspension one path. The durable-inbox
-  half of what `replay_journaled_inputs/1` does for the effectively-once tier.
-  """
-  @spec deliver_inbox_tail(Overwatch.t()) :: Overwatch.t()
-  def deliver_inbox_tail(%Overwatch{durable_workflow: false} = state), do: state
-
-  def deliver_inbox_tail(%Overwatch{} = state) do
-    state.id
-    |> TaskInbox.undelivered()
-    |> Enum.map(fn entry ->
-      {entry.message,
-       Map.put(entry.metadata, "flz.inbox_offset", Integer.to_string(entry.offset))}
-    end)
-    |> then(&reforward(state, &1))
-
-    state
-  end
-
   # The one re-forward path, shared by crash recovery and deliberate correction
   # — which is the whole point. A correction leaves the on-disk state at a
   # rewound baseline with the input-log watermark lowered to match, and from
@@ -442,13 +400,15 @@ defmodule Flezha.Operative.Replay do
   # dispatching any of it. Re-forwarding in arrival order would put the late
   # input back after the inputs that overtook it and recompute the same wrong
   # answer.
-  defp replay_slice(%Overwatch{} = state, operative_class, from, to) do
-    case InputLog.read_range(operative_class, from, to) do
+  defp replay_slice(%Overwatch{} = state, read) do
+    case read do
       [] ->
         :ok
 
       # The log refused a record on the way: it serves no range, and the slice
-      # is not re-forwarded from the prefix that happened to verify.
+      # is not re-forwarded from the prefix that happened to verify, which would
+      # hand the instance part of its log as all of it. The refusal was reported
+      # where it was read.
       {:error, _refusal} ->
         :ok
 
@@ -476,10 +436,9 @@ defmodule Flezha.Operative.Replay do
   end
 
   # Re-forward already-durable payloads, stamped with the offset they were
-  # journaled at. The delivery half of both durability tiers' resume — the
-  # effectively-once input log and the durable workflow inbox — and
-  # deliberately NOT an ingest: these payloads are already in their log and
-  # already ran `:on_input`, so re-journaling them would duplicate them.
+  # journaled at. The delivery half of every resume, and deliberately NOT an
+  # ingest: these payloads are already in their log and already ran
+  # `:on_input`, so re-journaling them would duplicate them.
   defp reforward(%Overwatch{} = state, payloads) do
     dropped? =
       Enum.reduce(payloads, false, fn payload, any_dropped? ->
@@ -566,7 +525,7 @@ defmodule Flezha.Operative.Replay do
       last = InputLog.last_offset(operative_class)
 
       if is_integer(last) and last > consumed,
-        do: replay_slice(state, operative_class, consumed + 1, last)
+        do: replay_slice(state, InputLog.read_range(operative_class, consumed + 1, last))
 
       {:ok,
        %{

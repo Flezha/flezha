@@ -246,7 +246,7 @@ flowchart TB
         K5["Single-owner write path<br/>bind is the fence"]:::ctrl
         K6["Controller as the durable front<br/>evict · rehydrate"]:::ctrl
     end
-    BEXTRA[("workflow only:<br/>task journal · durable inbox · saga")]:::store
+    BEXTRA[("workflow only:<br/>task journal · saga")]:::store
 
     UNB --> KERN
     BND --> KERN
@@ -258,8 +258,9 @@ flowchart TB
 ```
 
 The WAL and the snapshot mechanism are **shared** — a workflow operative's cells persist
-exactly like a stream operative's. What is workflow-specific is the task journal, the durable
-inbox, and saga compensation.
+exactly like a stream operative's, and a durable workflow's input goes through the same input
+log a stream on the effectively-once tier uses. What is workflow-specific is the task journal and
+saga compensation.
 
 ---
 
@@ -440,14 +441,13 @@ flowchart TB
     AUD["audit/ · auth/ · certs/"]:::store
 
     CLS["&lt;operative_class&gt;/"]:::store
-    IL["input.log<br/><i>durable input log — effectively-once tier</i>"]:::store
+    IL["input.log<br/><i>durable input log — effectively-once tier, durable workflow</i>"]:::store
     DECL["effectively_once · checkpoint_ack<br/><i>declaration sidecars</i>"]:::store
     OPID["&lt;tasklet_id&gt;/"]:::store
     SEG["&lt;cell_key&gt;.wal<br/>&lt;cell_key&gt;.snap.&lt;seq&gt;<br/>&lt;cell_key&gt;.outbox.dedup"]:::store
 
     INST["&lt;instance_id&gt;/&lt;instance_id&gt;/"]:::store
     JRN["task.journal<br/><i>workflow step progress</i>"]:::store
-    INB["inbox.wal<br/><i>workflow durable inbox</i>"]:::store
 
     DLQE["&lt;class&gt;/&lt;tasklet&gt;/entries.jsonl + &lt;id&gt;.bin"]:::store
     PHR["&lt;hub_id&gt;/registry.dets"]:::store
@@ -463,7 +463,6 @@ flowchart TB
     OPID --> SEG
     ST --> INST
     INST --> JRN
-    INST --> INB
     DLQ --> DLQE
     PH --> PHR
 
@@ -474,9 +473,10 @@ The path triple `(operative_class, tasklet_id, cell_key)` uniquely identifies a 
 state. It does **not** include the runner id — a runner is an addressing concern, not a
 durability one, so a restarted runner pod inherits the state that was already on disk.
 
-The task journal and the durable inbox ride the *same* WalWriter substrate as a cell, under
-two reserved cell keys (`_task_journal`, `_task_inbox`), which is why they sit at
-`<instance_id>/<instance_id>/` and are skipped by the cell scan. Root is configurable
+The task journal rides the *same* WalWriter substrate as a cell, under one reserved cell key
+(`_task_journal`), which is why it sits at `<instance_id>/<instance_id>/` and is skipped by the
+cell scan. A workflow instance's class directory is its instance id, so its `input.log` sits at
+`<instance_id>/input.log`. Root is configurable
 (`:state_root`, default `app_data/state`).
 
 ---

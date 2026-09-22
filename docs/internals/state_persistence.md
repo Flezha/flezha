@@ -26,7 +26,7 @@ decided.
   {namespace}/                       # `_system` holds pre-namespace state
     {operative_class}/
       kind  effectively_once  checkpoint_ack  compact_after_bytes ...   # class sidecars
-      input.log                      # durable input log (effectively-once tier)
+      input.log                      # durable input log (effectively-once tier, durable workflow)
       completion.record              # a finished workflow operative
       {tasklet_id}/
         {cell_key}.wal
@@ -34,9 +34,8 @@ decided.
         {cell_key}.outbox.dedup
         {cell_key}.comp_intent       # saga compensation markers; presence is
         {cell_key}.comp_done         # the signal (empty files)
-    {instance_id}/{instance_id}/     # one workflow instance
+    {instance_id}/{instance_id}/     # one workflow instance, whose class dir is its id
       task.journal                   # step progress
-      inbox.wal                      # durable inbox
 ```
 
 The triple `(operative_class, tasklet_id, cell_key)` identifies a Cell's state and is all
@@ -52,10 +51,11 @@ never part of the layout: a restarted runner's state ships to it on attach via `
 
 `cell_key` is URL-safe base64 with a leading `_` when it contains characters outside
 `[A-Za-z0-9_.-]` (`Paths.encode_cell_key/1` / `decode_cell_key/1`). A workflow instance's
-`task.journal` and `inbox.wal` ride the same `WalWriter` + `FsyncBatcher` substrate under two
-reserved keys (`_task_journal`, `_task_inbox`; `Paths.journal_id/1` / `inbox_id/1`), write no
-dedup side-file, and are skipped by `Paths.scan_dir/1` along with `.tmp`, `.rewriting` and
-unknown suffixes, so nothing surfaces as a phantom Cell.
+`task.journal` rides the same `WalWriter` + `FsyncBatcher` substrate under one reserved key
+(`_task_journal`; `Paths.journal_id/1`), writes no dedup side-file, and is skipped by
+`Paths.scan_dir/1` along with `.tmp`, `.rewriting` and unknown suffixes, so nothing surfaces as
+a phantom Cell. A workflow's input lives in the class-level `input.log`, the same file a stream
+on the effectively-once tier writes.
 
 ## Module map
 
@@ -67,17 +67,17 @@ unknown suffixes, so nothing surfaces as a phantom Cell.
 | `Flezha.State.Metrics` | Per-Cell `:counters` (`persisted_changes_total`, `wal_size_bytes`, `snapshot_seq`, `wal_shed_total`, `stale_writer_refused_total`, `fsync_total`, ...) in an ETS table. |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Cell `WalWriter`s plus the `WriterRegistry` process registry: `find_or_start/1`, `delete_cell/1`, `registered_ids/0`. Creates the claims, watermark and `ClassRegistry` tables so they outlive any one process. |
 | `Flezha.State.WalWriter` | One GenServer per Cell: WAL handle, seq accounting, dedup, credit attribution, outbox cursors, realign and baseline logic. |
-| `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved logs over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
+| `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved journal over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
 | `Flezha.State.FsyncBatcher` | One shared GenServer casting `:fsync` to every dirty writer per tick. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
 | `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always a `WalWriter`: the Cell's for a stream, the journal writer for a workflow. |
-| `Flezha.State.InputLog` / `CreditLedger` | Effectively-once tier: per-Operative ingest journal (`<class>/input.log`), the min-watermark the log owns (`consumed: %{cell => offset}` in its state; the ETS table is the published view), truncation below `min(watermark, now - hold_window)`, and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
+| `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a stream on the effectively-once tier, a durable workflow): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a workflow's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
 | `Flezha.State.PersistenceResolver` | Per-class knobs: operator map → instance metadata → SDK declaration → global default. |
 | `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
 | `Flezha.State.Watchdog` | Sensor: compaction triggers and timeouts, output stalls, disk-quota and RPO alarms. |
 | `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, finished workflows (`completion.record`) and input logs. |
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
-| `Flezha.State.TaskJournal` / `TaskInbox` | Workflow step journal and durable inbox over the reserved writers. |
+| `Flezha.State.TaskJournal` | Workflow step journal over the reserved writer, and the reporter of each consumed offset into the input log's watermark (`release_input/2`). |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
 | `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md). |
 
@@ -168,8 +168,8 @@ no controller module, `Flezha.State.Paths` included.
 
 ## Reserved-log record formats
 
-`task.journal` and `inbox.wal` reuse the WAL record framing above; what differs is what the
-16-byte header and the change-bytes carry.
+`task.journal` reuses the WAL record framing above; what differs is what the 16-byte header and
+the change-bytes carry.
 
 The journal's header is what the writer dedups a commit barrier on: a re-sent
 `task_committed` / `iter_committed` / `compensated` for an identity the journal already holds
@@ -181,27 +181,24 @@ the iteration granularity from one scan.
 task.journal
 header: [epoch: u32 BE][type: u8][task_idx: u16 BE][iter: u32 BE][0: 40 bits]
 body:   [type: u8][task_idx: u16 BE][iter: u32 BE][payload]
-
-inbox.wal
-header: [sha256(dedup_id)[0..16]]
-body:   [dedup_len: u16 BE][dedup_id][meta_len: u32 BE][meta][payload]
 ```
 
 Journal entry types: `1 = task_committed` (the cells that ran, the serialized inter-task
 handoff and the tasklet's staged outbox — ONE durable write), `2 = outbox_flushed` (that
-outbox reached the plugins), `3 = iter_committed` (a loop iteration finished: the inbox offset
-it consumed, the entry channel whose chain it ran, and its terminal handoff), `4 = parked` (the
-loop is suspended at a committed boundary, with an optional wake deadline and the last inbox
-offset it parked to the dead-letter queue unread), `5 = compensated` (a compensation hook's undo
-outbox), `6 = rewound` (the loop was rewound to the iteration in this entry's `iter` field).
+outbox reached the plugins), `3 = iter_committed` (a loop iteration finished: the input-log
+offset it consumed, the entry channel whose chain it ran, and its terminal handoff), `4 =
+parked` (the loop is suspended at a committed boundary, with an optional wake deadline and the
+last input-log offset it parked to the dead-letter queue unread), `5 = compensated` (a
+compensation hook's undo outbox), `6 = rewound` (the loop was rewound to the iteration in this
+entry's `iter` field).
 
 ```text
 task_committed: [n_cells: u16 BE] n × ([len: u16 BE][cell_identity])
                 [handoff]
                 [outbox]
                 [completion]
-iter_committed: [consumed_offset: u64 BE][len: u16 BE][entry_channel][handoff][completion]
-parked:         [wake_deadline_ms: u64 BE][consumed_offset: u64 BE]   # 0 = no deadline / none
+iter_committed: [offset][len: u16 BE][entry_channel][handoff][completion]
+parked:         [wake_deadline_ms: u64 BE][offset]   # 0 = no deadline
 compensated:    [outbox]
 outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
 rewound:        <empty>          # the target iteration is the `iter` field
@@ -210,6 +207,8 @@ outbox:         [n: u32 BE] n × ([len: u16 BE][cell_identity][seq_in_task: u32 
                                  [len: u16 BE][channel][len: u32 BE][payload])
 completion:     <empty>                      # none; an entry written before completions existed
                 | [1: u8][len: u32 BE][result]
+offset:         [0: u8][0: u64 BE]           # consumed no journaled input
+                | [1: u8][consumed_offset: u64 BE]   # 0 is the log's first offset
 ```
 
 A torn tail is truncated by the `WalWriter` open scan; the read path stops at the first invalid
@@ -321,9 +320,12 @@ resets the strike.
 - **Finished workflows** — a class whose `completion.record` is older than
   `PersistenceResolver.completed_retention_hours/1` (default 72 h) loses its retained
   state and record.
-- **Input logs** — `InputLog.Sweep.run/1` per class: a cast that truncates below
-  `min(watermark, now - hold_window)` and emits `[:flezha, :state, :input_log_frozen_watermark]`
-  when the log grows while the watermark stays put.
+- **Input logs** — `InputLog.Sweep.run/1` per state key, for either kind: a cast that truncates
+  below `min(watermark, now - hold_window)`, rewriting the file only once the prefix below the
+  floor exceeds `:record_log_cut_after_bytes`, and emits
+  `[:flezha, :state, :input_log_frozen_watermark]` when the log grows while the watermark stays
+  put. A `once` workflow never commits an iteration, so its log goes with its class directory
+  under finished-job retention.
 
 ## Flow control
 
@@ -539,7 +541,7 @@ the episode and releases the ladder.
 A `RestoreInitState` lands on a Cell that may hold inputs in its mailbox — a rebind does not
 stop the runner, and `AddOperative` is idempotent. The queue survives only when the controller
 cannot hand it back: classes whose inputs are journaled before forwarding — the effectively-once
-tier (input log) and durable workflow instances (task inbox) — have the mailbox **cleared**,
+tier and durable workflow instances, both through the one input log — have the mailbox **cleared**,
 because the queue is a subset of the log the controller re-forwards and keeping it would
 double-apply it and, in a correction, re-order it behind the replayed slice. Every other class,
 including a plain stateful stream operative (the default), **keeps** its queue:
@@ -605,7 +607,7 @@ instance metadata → SDK declaration → global default.
 | `:credit_low_watermark_bytes` | `window / 2` | Grant trigger. |
 | `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed before the flush waits. |
 | `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back. |
-| `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before a reserved log (journal/inbox) cuts its prefix. |
+| `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before the journal or an input log rewrites to cut its prefix. |
 | `:default_compact_after_bytes` | `8 * 1024 * 1024` (`FLEZHA_COMPACT_AFTER_BYTES`) | Size trigger; `:compact_after_bytes` map overrides per class. |
 | `:compact_after_age_ms` | `300_000` (`FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`) | Age trigger; `0` disables; raised to a declared correction window. |
 | `:compaction_timeout_ms` | `30_000` | `CompactCell` → snapshot bound; `0` disables. |

@@ -129,7 +129,7 @@ wedge the moment both had a message in flight.
                                               └────────────► ingest, verdict
                                                                    │
                                                           :on_input → journal_input
-                                                                   → durable inbox
+                                                                   → durable input log
 ```
 
 Order is preserved: one payload is in flight at a time, and a retryable
@@ -148,7 +148,7 @@ input journal — and answers what happened.
 |---|---|---|
 | `:ok` | forwarded to the bound runner, or durably journaled | done |
 | `{:ok, :absorbed}` | filtered by an `:on_input` plugin, or absorbed as a duplicate | done |
-| `{:ok, :suspended}` | durable in the target's inbox; delivered when it rehydrates | done |
+| `{:ok, :suspended}` | durable in the target's input log; delivered when it rehydrates | done |
 | `{:error, :not_ready}` | target parked with an `init_error`, or unbound with no durable log | retry |
 | `{:error, :not_found}` | no pid registered for `(namespace, operative_id)` | retry |
 | `{:error, :refused}` | the durable log refused the append | retry |
@@ -163,7 +163,7 @@ to are specified in
 "Filtered" and "duplicate" are successes because the receiver has decided the
 payload needs no further delivery; a deterministic filter would filter the
 retry too. A suspended target is a success, not an outage: the payload is
-durable in its inbox and the append itself wakes it. The plain
+durable in its input log and the append itself wakes it. The plain
 `{:io_in, _, _}` cast keeps its silent drop for a parked operative; a sender
 that needs the payload held uses the confirming path.
 
@@ -173,7 +173,7 @@ that needs the payload held uses the confirming path.
 |---|---|---|
 | Shape | synchronous request/reply | asynchronous data flow |
 | Destination | an `on_message/2` handler on the target's Overwatch | the operative's **input stream** |
-| Durability | none — the reply is the result | the target's durable inbox / input log |
+| Durability | none — the reply is the result | the target's durable input log |
 | Caller | any process that can reach the Overwatch | the source operative's output |
 
 Reach for `:on_message` to **query** an operative; reach for this plugin to

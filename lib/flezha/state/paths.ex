@@ -36,33 +36,26 @@ defmodule Flezha.State.Paths do
   @safe_chars ~r/^[A-Za-z0-9_.-]+$/
 
   @journal_cell_key "_task_journal"
-  @inbox_cell_key "_task_inbox"
 
-  # Reserved cell-keys of a workflow instance's task-journal and durable inbox,
-  # each paired with the file it maps onto. They ride the Cell persistence
-  # substrate — `wal_path/1` writes these names, so the
-  # WalWriter/FsyncBatcher/delete machinery treats them as one more per-instance
-  # file — but they are not Cells: `scan_dir/1` skips the files and the
-  # WalWriter writes no dedup cache for the keys. One pairing serves both sides,
-  # so a new reserved identity cannot land on a filename nothing skips.
-  @reserved_file_by_key %{
-    @journal_cell_key => "task.journal",
-    @inbox_cell_key => "inbox.wal"
-  }
+  # The reserved cell-key of a workflow instance's task-journal, paired with the
+  # file it maps onto. It rides the Cell persistence substrate — `wal_path/1`
+  # writes this name, so the WalWriter/FsyncBatcher/delete machinery treats it
+  # as one more per-instance file — but it is not a Cell: `scan_dir/1` skips the
+  # file and the WalWriter writes no dedup cache for the key. One pairing serves
+  # both sides, so a new reserved identity cannot land on a filename nothing
+  # skips.
+  @reserved_file_by_key %{@journal_cell_key => "task.journal"}
   @reserved_cell_keys Map.keys(@reserved_file_by_key)
   @reserved_files Map.values(@reserved_file_by_key)
 
   @spec journal_cell_key() :: binary()
   def journal_cell_key(), do: @journal_cell_key
 
-  @spec inbox_cell_key() :: binary()
-  def inbox_cell_key(), do: @inbox_cell_key
-
   @doc """
   The reserved per-instance cell keys — identities that ride the Cell
   persistence substrate (WalWriter + FsyncBatcher) but are not Cells. The
-  `WalWriter` skips its outbox dedup side-file for them, which is also what
-  keeps `scan_dir/1` from ever surfacing one as a phantom Cell.
+  `WalWriter` skips its outbox dedup side-file for them, and `scan_dir/1` never
+  surfaces one as a phantom Cell.
   """
   @spec reserved_cell_keys() :: [binary()]
   def reserved_cell_keys(), do: @reserved_cell_keys
@@ -80,19 +73,6 @@ defmodule Flezha.State.Paths do
   @spec journal_path(binary()) :: binary()
   def journal_path(instance_id) when is_binary(instance_id),
     do: wal_path(journal_id(instance_id))
-
-  @doc """
-  Reserved inbox identity for a workflow instance's durable inbox
-  (`workflow-durable-suspension`) — the sibling of `journal_id/1`.
-  """
-  @spec inbox_id(binary()) :: cell_id()
-  def inbox_id(instance_id) when is_binary(instance_id),
-    do: {instance_id, instance_id, @inbox_cell_key}
-
-  @doc "On-disk path of a workflow instance's durable inbox."
-  @spec inbox_path(binary()) :: binary()
-  def inbox_path(instance_id) when is_binary(instance_id),
-    do: wal_path(inbox_id(instance_id))
 
   @doc """
   This controller's state root, absolute.
@@ -342,9 +322,10 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Path of the per-operative durable input-log (effectively-once tier).
-  Lives at the class level beside the `kind` sidecar — inert to the
-  Cell scanners, which only walk `<class>/<tasklet_id>/` dirs.
+  Path of an instance's durable input log (a stream on the effectively-once
+  tier, or a durable workflow). Lives at the class level beside the `kind`
+  sidecar — inert to the Cell scanners, which only walk `<class>/<tasklet_id>/`
+  dirs.
   """
   @spec input_log_path(binary()) :: binary()
   def input_log_path(operative_class) when is_binary(operative_class) do
@@ -502,9 +483,8 @@ defmodule Flezha.State.Paths do
         Durable.in_progress?(name) ->
           acc
 
-        # The per-instance journal and inbox ride the Cell substrate but are
-        # not Cells; `inbox.wal` would otherwise decode as a Cell named
-        # "inbox" and be shipped a `RestoreInitState`.
+        # The per-instance journal rides the Cell substrate but is not a
+        # Cell, so it is never shipped a `RestoreInitState`.
         name in @reserved_files ->
           acc
 

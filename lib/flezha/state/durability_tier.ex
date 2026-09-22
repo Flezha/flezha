@@ -7,8 +7,8 @@ defmodule Flezha.State.DurabilityTier do
   Local files stay authoritative: every ack path gates on local fsync alone,
   shipping neither mutates nor deletes one, and turning the tier off is a
   complete rollback. What ships are immutable artifacts at boundaries that
-  already exist: snapshots, WAL record bundles, task-journal and inbox suffixes,
-  the input log, the registry cspec, parked DLQ records, the control-plane
+  already exist: snapshots, WAL record bundles, task-journal suffixes, the
+  durable input log, the registry cspec, parked DLQ records, the control-plane
   registries. The per-cell manifest is written last, so a torn upload is
   invisible to recovery.
 
@@ -320,8 +320,8 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference stored under one on-disk STATE KEY: its Cells
-  plus the reserved task-journal/inbox identities (`Artifact.cell_refs/1`)
-  and, when the effectively-once tier holds one, its durable input log.
+  plus the reserved task-journal identity (`Artifact.cell_refs/1`) and, when
+  the instance has durable input, its input log.
 
   An operative can occupy two state keys — see `refs_of_operative/1`, which is
   what anything holding an operative id should call.
@@ -356,8 +356,9 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference of one operative, across BOTH identities it is
-  stored under — its instance id, which keys the task-journal and durable inbox,
-  and its resolved class, which keys the Cells and input log.
+  stored under — its instance id, which keys the task-journal, and its
+  resolved class, which keys the Cells and input log (for a workflow the two
+  are one key).
 
   Anything holding an operative id and wanting its whole durable identity goes
   through here; `refs_of/1` answers the narrower question about one state key.
@@ -404,8 +405,8 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   A workflow instance committed a task or an iteration: its journal suffix, and
-  the inbox prefix the commit consumed, are the artifacts that must reach the
-  remote store for the instance to resume elsewhere.
+  the input log holding what it has not consumed, are the artifacts that must
+  reach the remote store for the instance to resume elsewhere.
   """
   @spec on_workflow_commit(binary()) :: :ok
   def on_workflow_commit(operative_id) when is_binary(operative_id) do

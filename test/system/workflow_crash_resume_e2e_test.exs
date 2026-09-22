@@ -258,12 +258,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert {:ok, []} = TaskJournal.read(operative_id)
       refute File.exists?(Paths.journal_path(operative_id))
 
-      # The controller journals the message it forwarded, in the instance's
-      # inbox; the class's own state is what an opted-out class never writes.
+      # The class's own state is what an opted-out class never writes.
       assert [Paths.class_dir(operative_id), "**", "*.wal"]
              |> Path.join()
-             |> Path.wildcard()
-             |> Enum.reject(&(&1 == Paths.inbox_path(operative_id))) == [],
+             |> Path.wildcard() == [],
              "an opted-out class must write no WAL"
     end
   end
@@ -322,7 +320,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              "the resumed pass did not commit iteration 0: " <>
                inspect(committed_iters(operative_id))
 
-      assert consumed_offsets(operative_id) == [1],
+      assert consumed_offsets(operative_id) == [0],
              "the resumed pass did not seal with its message's offset"
 
       # A second message is the next iteration; the crashed turn's reply is
@@ -336,7 +334,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              "the next message did not run as iteration 1: " <>
                inspect(committed_iters(operative_id))
 
-      assert consumed_offsets(operative_id) == [1, 2]
+      assert consumed_offsets(operative_id) == [0, 1]
 
       assert collector |> await_outputs(2, operative_id) |> Enum.map(&elem(&1, 0)) ==
                ["reply:reply-crash", "reply:next"]

@@ -1,13 +1,13 @@
 defmodule Flezha.Service.Cli.Journal do
   @moduledoc """
-  `flz state journal | inbox` — a workflow instance's task-journal entries and
-  its durable inbox.
+  `flz state journal | inbox` — a workflow instance's task-journal entries, and
+  the durable input log of an instance of either kind.
   """
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.InputLog
   alias Flezha.State.Outbox
-  alias Flezha.State.TaskInbox
   alias Flezha.State.TaskJournal
 
   @doc "The row both reads are judged by: the instance's class namespace."
@@ -181,8 +181,10 @@ defmodule Flezha.Service.Cli.Journal do
       IO.puts("    flushes: #{flushes}")
     end
 
-    if Map.has_key?(row, :consumed_offset) do
-      IO.puts("    consumed inbox offset: #{row.consumed_offset}")
+    case Map.fetch(row, :consumed_offset) do
+      {:ok, nil} -> IO.puts("    consumed no journaled input")
+      {:ok, offset} -> IO.puts("    consumed input-log offset: #{offset}")
+      :error -> :ok
     end
 
     if Map.has_key?(row, :completes_bytes) do
@@ -201,46 +203,65 @@ defmodule Flezha.Service.Cli.Journal do
   end
 
   @doc """
-  `flz state inbox <instance>` — the durable inbox of a workflow instance
-  (`workflow-durable-suspension`): every appended input with its offset, marking
-  which are still undelivered (above the offset the journal has released).
+  `flz state inbox <instance>` — the instance's durable input log, for a stream
+  on the effectively-once tier and a durable workflow alike
+  (`durable-input-log`): every retained record with its offset, whether it is
+  at or below the instance's floor (consumed) or above it (pending), its size,
+  channel and wake mark.
   """
   def state_inbox(instance_id, output_format, _call) do
-    entries = TaskInbox.read(instance_id)
-    consumed = TaskJournal.released_offset(instance_id)
-
-    rows =
-      Enum.map(entries, fn entry ->
-        %{
-          offset: entry.offset,
-          consumed: entry.offset <= consumed,
-          bytes: byte_size(entry.message),
-          channel: Map.get(entry.metadata, "channel"),
-          wake: Map.get(entry.metadata, "flz.wake")
-        }
-      end)
-
-    case output_format do
-      "json" ->
-        IO.puts(Jason.encode!(%{instance: instance_id, consumed_offset: consumed, entries: rows}))
-
-      _ ->
-        if rows == [] do
-          IO.puts("no durable inbox for instance #{instance_id}")
-        else
-          IO.puts("durable inbox for instance #{instance_id} (consumed through #{consumed}):\n")
-
-          Enum.each(rows, fn row ->
-            IO.puts(
-              "  offset=#{row.offset} #{if row.consumed, do: "consumed", else: "PENDING"} " <>
-                "#{row.bytes} byte(s)" <>
-                if(row.channel, do: " channel=#{row.channel}", else: "") <>
-                if(row.wake, do: " wake=#{row.wake}", else: "")
-            )
+    case retained_input(instance_id) do
+      {:ok, floor, records} ->
+        rows =
+          Enum.map(records, fn {offset, message, metadata} ->
+            %{
+              offset: offset,
+              consumed: offset <= floor,
+              bytes: byte_size(message),
+              channel: Map.get(metadata, "channel"),
+              wake: Map.get(metadata, "flz.wake")
+            }
           end)
 
-          IO.puts("")
-        end
+        render_inbox(instance_id, floor, rows, output_format)
+
+      {:error, refusal} ->
+        IO.puts("the input log for #{instance_id} refused to serve: #{inspect(refusal)}")
     end
   end
+
+  # The floor is `-1` while no reporter has consumed anything.
+  defp retained_input(instance_id) do
+    with {:ok, floor, last} when last >= 0 <- InputLog.tail(instance_id),
+         records when is_list(records) <- InputLog.read_range(instance_id, 0, last) do
+      {:ok, floor, records}
+    else
+      {:ok, floor, -1} -> {:ok, floor, []}
+      {:error, _refusal} = refused -> refused
+    end
+  end
+
+  defp render_inbox(instance_id, floor, rows, "json"),
+    do: IO.puts(Jason.encode!(%{instance: instance_id, floor: floor, entries: rows}))
+
+  defp render_inbox(instance_id, _floor, [], _text),
+    do: IO.puts("no durable input log for #{instance_id}")
+
+  defp render_inbox(instance_id, floor, rows, _text) do
+    IO.puts("durable input log for #{instance_id} (#{consumed_through(floor)}):\n")
+
+    Enum.each(rows, fn row ->
+      IO.puts(
+        "  offset=#{row.offset} #{if row.consumed, do: "consumed", else: "PENDING"} " <>
+          "#{row.bytes} byte(s)" <>
+          if(row.channel, do: " channel=#{row.channel}", else: "") <>
+          if(row.wake, do: " wake=#{row.wake}", else: "")
+      )
+    end)
+
+    IO.puts("")
+  end
+
+  defp consumed_through(-1), do: "nothing consumed yet"
+  defp consumed_through(floor), do: "consumed through #{floor}"
 end

@@ -10,8 +10,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   Invariant: journal-then-ack. The ack carries the append's outcome in its
   `error` field (empty = durable) and gates the post-ack work — the outbox
-  flush, and for an iteration commit the boundary snapshot, the inbox release
-  and the journal cut. The ack itself is written by the channel, the one
+  flush, and for an iteration commit the boundary snapshot, the input-log
+  release and the journal cut. The ack itself is written by the channel, the one
   process that writes control frames.
   """
 
@@ -23,7 +23,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.State.Commands
-  alias Flezha.State.{DurabilityTier, TaskInbox, TaskJournal}
+  alias Flezha.State.{DurabilityTier, TaskJournal}
   alias Flezha.State.Paths
 
   # Re-attempt cadence for a journaled outbox whose operative is not bound yet
@@ -237,11 +237,12 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # terminal handoff, so a crash can re-seed the next iteration — then the ack.
   # Everything after the ack is cleanup the commit does not depend on: the
   # boundary snapshot (so a rehydrate loads iteration-N state instead of
-  # replaying the WAL tail), the iteration's staged outbox, the release of the
-  # inbox prefix it consumed, and the cut of the journal prefix the fold no
+  # replaying the WAL tail), the iteration's staged outbox, the report of the
+  # input it consumed into the input log's watermark (whose retention sweep
+  # then reclaims the prefix), and the cut of the journal prefix the fold no
   # longer needs. A failure in any of them costs work, never correctness — the
   # iteration is already committed. The flush runs here, in journal order; the
-  # two cuts are the writers' to run, so this process never waits on a file
+  # cuts are the writers' to run, so this process never waits on a file
   # rewrite.
   defp decode(%RunnerCommands.IterCommit{} = commit, state) do
     %RunnerCommands.IterCommit{
@@ -262,8 +263,13 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         {:iter_committed, iter, consumed_offset, entry_channel, handoff_items(handoff),
          completion(completes, result)},
       telemetry:
-        {[:flezha, :state, :iter_commit], %{count: 1, consumed_offset: consumed_offset},
-         %{namespace: state.namespace, operative_id: operative_id, iter: iter}},
+        {[:flezha, :state, :iter_commit], %{count: 1},
+         %{
+           namespace: state.namespace,
+           operative_id: operative_id,
+           iter: iter,
+           consumed_offset: consumed_offset
+         }},
       label: "task-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
       response:
         {:iter_commit_response,
@@ -271,7 +277,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       post: fn ->
         snapshot_iteration_boundary(runner_id, operative_id)
         flush_task_outbox(operative_id)
-        if consumed_offset > 0, do: TaskInbox.truncate(operative_id, consumed_offset)
+        TaskJournal.release_input(operative_id, consumed_offset)
         TaskJournal.cut(operative_id)
       end
     }

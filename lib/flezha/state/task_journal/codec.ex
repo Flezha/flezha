@@ -85,10 +85,11 @@ defmodule Flezha.State.TaskJournal.Codec do
 
   defp decode_payload(
          :iter_committed,
-         <<consumed_offset::64-big, chan_len::16-big, entry_channel::binary-size(chan_len),
+         <<offset::binary-size(9), chan_len::16-big, entry_channel::binary-size(chan_len),
            rest::binary>>
        ) do
-    with {:ok, handoff, rest} <- decode_handoff(rest),
+    with {:ok, consumed_offset} <- decode_offset(offset),
+         {:ok, handoff, rest} <- decode_handoff(rest),
          {:ok, completion} <- decode_completion(rest) do
       {:ok,
        %{
@@ -102,13 +103,15 @@ defmodule Flezha.State.TaskJournal.Codec do
     end
   end
 
-  defp decode_payload(:parked, <<deadline::64-big, consumed_offset::64-big>>),
-    do:
+  defp decode_payload(:parked, <<deadline::64-big, offset::binary-size(9)>>) do
+    with {:ok, consumed_offset} <- decode_offset(offset) do
       {:ok,
        %{
          wake_deadline_ms: if(deadline == 0, do: nil, else: deadline),
          consumed_offset: consumed_offset
        }}
+    end
+  end
 
   defp decode_payload(:compensated, payload) do
     case decode_outbox(payload) do
@@ -133,6 +136,19 @@ defmodule Flezha.State.TaskJournal.Codec do
       encode_handoff(handoff)
     ]
   end
+
+  @doc """
+  A consumed input-log offset or its absence, as an `iter_committed` or
+  `parked` payload carries it: one presence byte, then the offset. `0` is the
+  log's first offset, so it cannot stand for "none".
+  """
+  @spec encode_offset(non_neg_integer() | nil) :: binary()
+  def encode_offset(nil), do: <<0, 0::64-big>>
+  def encode_offset(offset) when is_integer(offset) and offset >= 0, do: <<1, offset::64-big>>
+
+  defp decode_offset(<<0, 0::64-big>>), do: {:ok, nil}
+  defp decode_offset(<<1, offset::64-big>>), do: {:ok, offset}
+  defp decode_offset(_), do: {:error, :bad_payload}
 
   @doc """
   The trailing completion segment of a `task_committed` or `iter_committed`

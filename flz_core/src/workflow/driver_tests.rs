@@ -92,7 +92,7 @@ fn answer(
         }
         EnginePayload::WorkflowStep(step) => {
             let bytes: Vec<Vec<u8>> = match &step.work {
-                StepWork::Items(values) => values.iter().map(|v| host_bytes(v)).collect(),
+                StepWork::Items(values) => values.iter().map(host_bytes).collect(),
                 StepWork::Compensate(_) => Vec::new(),
             };
             schema::ActivationOutcome::Work(
@@ -160,15 +160,12 @@ fn feed(node: &RunnerNode, id: &str, message: &[u8]) {
     crate::routing::feed_workflow_frame(&instance, message.to_vec(), &Default::default());
 }
 
-/// One message into workflow `id` naming `channel`, at durable-inbox `offset`.
+/// One message into workflow `id` naming `channel`, at input-log `offset`.
 fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
     let instance = node.get_workflow(id).expect("the workflow is registered");
     let metadata = std::collections::HashMap::from([
         ("channel".to_string(), channel.to_string()),
-        (
-            crate::workflow::INBOX_OFFSET_KEY.to_string(),
-            offset.to_string(),
-        ),
+        ("flz.offset".to_string(), offset.to_string()),
     ]);
     crate::routing::feed_workflow_frame(&instance, message.to_vec(), &metadata);
 }
@@ -363,7 +360,7 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
         .expect("init_values is a JSON object"));
     feed_at(&node, "host-release-1", "in", 3, b"bad");
     let park = await_park(&rx, "host-release-1");
-    assert_eq!((park.iter, park.consumed_offset), (0, 3));
+    assert_eq!((park.iter, park.consumed_offset), (0, Some(3)));
 
     // The entrance parks a name the class does not declare. The rebound run
     // owed that message, and still suspends on the idle window rather than
@@ -373,7 +370,7 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
         .expect("init_values is a JSON object"));
     feed_at(&node, "host-release-2", "refunds", 4, b"bad");
     let park = await_park(&rx, "host-release-2");
-    assert_eq!(park.consumed_offset, 4);
+    assert_eq!(park.consumed_offset, Some(4));
 
     std::env::remove_var("FLEZHA_WORKFLOW_PARK_IDLE_MS");
     state_sink::reset_for_test();

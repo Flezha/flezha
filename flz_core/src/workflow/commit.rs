@@ -80,7 +80,7 @@ pub(super) fn commit_task_boundary(
 pub(super) fn commit_iteration(
     ctx: &ChainCtx,
     iter: u32,
-    consumed_offset: u64,
+    consumed_offset: Option<u64>,
     channel_id: crate::channel::ChannelId,
     batch: &[Value],
     completion: Option<&[u8]>,

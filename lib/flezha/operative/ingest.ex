@@ -20,7 +20,6 @@ defmodule Flezha.Operative.Ingest do
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
   alias Flezha.State.InputLog
-  alias Flezha.State.TaskInbox
   alias Flezha.Transport.LivenessCounters
 
   require Logger
@@ -43,8 +42,8 @@ defmodule Flezha.Operative.Ingest do
 
   @doc """
   Ingest one inbound message. Answers the payload to forward, or `:pending`
-  when the effectively-once journal holds it — the log's answer comes back to
-  this process as a message for `journal_reply/2`.
+  when the durable input log holds it — the log's answer comes back to this
+  process as a message for `journal_reply/2`.
   """
   @spec ingest(Overwatch.t(), binary(), map(), reply_to()) ::
           {payload() | :pending, Overwatch.t()}
@@ -67,7 +66,7 @@ defmodule Flezha.Operative.Ingest do
   @spec confirming_ingest(Overwatch.t(), binary(), map(), reply_to()) ::
           {term() | :pending, Overwatch.t()}
   # Suspended: the forward is deferred to the rehydrating bind, which delivers
-  # the whole undelivered inbox tail; the journal's answer reports the
+  # the log's whole undelivered tail; the journal's answer reports the
   # suspension and wakes the instance (`settle/3`). An input a plugin filtered
   # journals nothing, and is answered — and wakes — at once.
   def confirming_ingest(%Overwatch{suspended: true} = state, message, metadata, reply_to) do
@@ -115,20 +114,40 @@ defmodule Flezha.Operative.Ingest do
   end
 
   # Durable ingest point — the one place an inbound payload is made durable
-  # BEFORE it is forwarded, for both durability tiers, asynchronously:
-  #
-  #   * effectively-once (`durable-input-log`): appended to the operative's
-  #     input log; the answer stamps `flz.offset`, which the SDK threads into
-  #     the effect record;
-  #   * durable workflow (`workflow-durable-suspension`): appended to the
-  #     instance's `inbox.wal` and stamped `flz.inbox_offset`, which the SDK
-  #     threads into the iteration commit as the consumed offset. A duplicate
-  #     dedup id in the undelivered window is absorbed (`nil` — nothing is
-  #     forwarded), and an append that fails answers `:refused` and is NOT
-  #     forwarded either: the contract is append-before-forward, so a lost frame
-  #     the sender can retry beats an undurable one it believes was accepted.
+  # BEFORE it is forwarded, asynchronously, for an instance with durable input
+  # (`durable-input-log`): a stream on the effectively-once tier or a durable
+  # workflow. The payload is appended to the instance's input log and the
+  # answer stamps `flz.offset`, which the SDK threads into the effect record or
+  # the iteration commit as the consumed offset. A `flz.msg_id` the log still
+  # retains is absorbed (`nil` — nothing is forwarded), and an append that
+  # fails answers `:refused` and is NOT forwarded either: the contract is
+  # append-before-forward, so a lost frame the sender can retry beats an
+  # undurable one it believes was accepted.
   #
   # Every other operative passes through untouched (cost-free default).
+  @doc """
+  Journal a suspended instance's timer wake: an empty record marked
+  `flz.wake`, appended like any input, so a racing message and the deadline
+  collapse into one rehydration, and forwarded by the rehydrating bind with
+  the rest of the tail.
+  """
+  @spec journal_wake(Overwatch.t()) :: :ok
+  def journal_wake(%Overwatch{} = state) do
+    _ = InputLog.append(Overwatch.operative_class(state), "", %{"flz.wake" => "timer"})
+    :ok
+  end
+
+  @doc """
+  Whether the next input is the instance's first: always for an instance
+  without a durable workflow's log, and for one whose log has journaled
+  nothing. A log that holds records makes a bind a restart, not a spawn.
+  """
+  @spec first_input?(Overwatch.t()) :: boolean()
+  def first_input?(%Overwatch{durable_workflow: true} = state),
+    do: match?({:ok, _floor, -1}, InputLog.tail(Overwatch.operative_class(state)))
+
+  def first_input?(%Overwatch{}), do: true
+
   defp journal_input(state, nil, _reply_to), do: {nil, state}
 
   defp journal_input(%Overwatch{} = state, payload, reply_to) do
@@ -142,37 +161,30 @@ defmodule Flezha.Operative.Ingest do
   # re-issues remain — so the in-flight collection IS the owed set.
   defp append_async(%Overwatch{} = state, {message, metadata} = payload, reply_to, retries) do
     label = {reply_to, payload, retries}
-    reqids = state.journal_reqids
 
     reqids =
-      if state.effectively_once,
-        do:
-          InputLog.append_async(
-            Overwatch.operative_class(state),
-            message,
-            metadata,
-            reqids,
-            label
-          ),
-        else: TaskInbox.append_async(state.id, message, metadata, reqids, label)
+      InputLog.append_async(
+        Overwatch.operative_class(state),
+        message,
+        metadata,
+        state.journal_reqids,
+        label
+      )
 
     %{state | journal_reqids: reqids}
   end
 
   # What the log's answer makes of the payload: forwardable and stamped with
-  # its durable offset, `nil` for a duplicate the inbox absorbed, `:refused`
-  # for an append the log rejected.
-  defp journaled(%Overwatch{effectively_once: true}, {message, metadata}, {:ok, offset}),
-    do: {message, stamp(metadata, "flz.offset", offset)}
+  # its durable offset, `nil` for a duplicate the log absorbed, `:refused` for
+  # an append the log rejected.
+  defp journaled(%Overwatch{}, {message, metadata}, {:ok, offset}),
+    do: {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
 
-  defp journaled(%Overwatch{}, {message, metadata}, {:ok, seq}),
-    do: {message, stamp(metadata, "flz.inbox_offset", TaskInbox.offset(seq))}
-
-  defp journaled(%Overwatch{} = state, _payload, {:duplicate, seq}) do
+  defp journaled(%Overwatch{} = state, _payload, {:duplicate, offset}) do
     :telemetry.execute(
       [:flezha, :state, :inbox_duplicate],
       %{count: 1},
-      %{operative_id: state.id, offset: TaskInbox.offset(seq)}
+      %{operative_id: state.id, offset: offset}
     )
 
     nil
@@ -180,17 +192,15 @@ defmodule Flezha.Operative.Ingest do
 
   defp journaled(%Overwatch{} = state, _payload, {:error, reason}) do
     Logger.error(
-      "[Overwatch] durable-inbox append failed for #{state.id}: #{inspect(reason)} — " <>
+      "[Overwatch] durable input append failed for #{state.id}: #{inspect(reason)} — " <>
         "input NOT forwarded (append-before-forward)"
     )
 
     :refused
   end
 
-  defp stamp(metadata, key, offset), do: Map.put(metadata, key, Integer.to_string(offset))
-
   # A journaled payload's forward and the reply it owed, once the log answered.
-  # A suspended instance forwards nothing: the payload waits in the inbox for the
+  # A suspended instance forwards nothing: the payload waits in the log for the
   # rehydrating bind, which is what the reply reports and what the append wakes.
   defp settle(%Overwatch{suspended: true} = state, reply_to, payload)
        when payload != :refused do

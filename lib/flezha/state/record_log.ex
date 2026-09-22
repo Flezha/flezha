@@ -2,14 +2,13 @@ defmodule Flezha.State.RecordLog do
   @moduledoc """
   Per-instance append-only record log on the Cell persistence substrate.
 
-  The shared core behind a workflow instance's two durable logs — its
-  `task.journal` (`Flezha.State.TaskJournal`) and its `inbox.wal`
-  (`Flezha.State.TaskInbox`). Both are WAL-framed record streams written through
-  the existing `WalWriter` + `FsyncBatcher` path under a reserved
-  `Flezha.State.Paths` identity, and both need exactly two tasklets from that
-  substrate: a **durable append** (assign the next seq, write, answer once the
-  record is synced) and a **torn-tail-tolerant read**. Those live here, so
-  neither log owns a copy of the substrate protocol.
+  What a workflow instance's `task.journal` (`Flezha.State.TaskJournal`) needs
+  from that substrate: a WAL-framed record stream written through the existing
+  `WalWriter` + `FsyncBatcher` path under a reserved `Flezha.State.Paths`
+  identity, with exactly two operations — a **durable append** (assign the next
+  seq, write, answer once the record is synced) and a **torn-tail-tolerant
+  read**. They live here, so the journal owns no copy of the substrate
+  protocol.
 
   A log is not a Cell: its reserved identity carries no effect records and no
   dedup side-file (`WalWriter` skips it), and `Paths.scan_dir/1` never surfaces

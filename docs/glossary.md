@@ -112,17 +112,18 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 ## Durability vocabulary
 
 - **WAL** — the per-cell append-only change log of framed, CRC-protected records, owned by one
-  `Flezha.State.WalWriter`; the input log, task journal and durable inbox share the record
-  format. See [`architecture/kernel.md`](architecture/kernel.md).
+  `Flezha.State.WalWriter`; the input log and the task journal share the record format. See [`architecture/kernel.md`](architecture/kernel.md).
 - **Snapshot / compaction** — on WAL size or age the controller asks the runner for a full state
   snapshot (`CompactCell`) and truncates the log beneath it; a restore (`RestoreInitState`)
   ships the latest snapshot plus the whole WAL tail.
 - **Effect record** — under the effectively-once tier, the one WAL record an invocation produces:
   `{changes, outputs, consumed_offset, dlq, event_time}`, appended and fsynced as a unit so
   state, output, progress and a park can never tear apart.
-- **Input log** — the offset-addressable durable log every source is normalised into under the
-  tier (`Flezha.State.InputLog`): append before forward, and each cell recovers from its own
-  consumed offset.
+- **Input log** — the offset-addressable durable log every input is normalised into for an
+  instance with durable input, a stream under the tier or a durable workflow
+  (`Flezha.State.InputLog`): one per instance, append before forward, stamped `flz.offset`,
+  deduplicated by `flz.msg_id`, and each reporter (a Cell, or a workflow's journal) recovers
+  from its own consumed offset.
 - **At-least-once / effectively-once** — the default tier adds no latency and permits a duplicate
   output on replay; `effectively_once()` on the channel builder turns on the input log, the
   effect record and the outbox and forces every plugin-bound channel to be `.keyed()`. It is
@@ -213,9 +214,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (one iteration per message) or `Chained` (the first message, then iteration N+1 seeded by
   N's terminal output into that message's chain). The **iteration boundary**
   (`IterCommit`) is where suspension, the keep-progress unit and rewind attach.
-- **Durable inbox** — a workflow instance's input, journaled to `inbox.wal` (`Flezha.State.TaskInbox`)
-  before it is forwarded and deduplicated by `flz.msg_id` within the undelivered window; a message
-  without an id is never a duplicate.
+- **Durable input (workflow)** — a durable workflow instance's input, journaled to its input
+  log before it is forwarded, as a tier stream's is, and deduplicated by a `flz.msg_id` the log
+  still retains; a message without an id is never a duplicate. Its iteration commits move the
+  log's watermark, and `flz state inbox` renders it. The driver's own queue of arrived messages
+  is still called its inbox.
 - **Suspension / rehydrate** — between iterations the instance is evicted from its runner entirely
   (`IterPark`, journaled first) while the Overwatch and registry entry remain; a new message or a
   durable wake timer rehydrates it through the ordinary bind path.

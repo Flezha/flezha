@@ -742,3 +742,42 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     end
   end
 end
+
+defmodule Flezha.Service.CliManagerReplayTest do
+  @moduledoc """
+  `flz operative replay <cell> --from <seq|ts>` on a Cell of a workflow class:
+  refused before anything is rewound, naming the journal as the instance's
+  baseline and `flz operative rewind` as the verb to use.
+  """
+  # async: false: the class registry and the state tree are node-global.
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
+
+  import ExUnit.CaptureIO
+
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Service.CliManager
+  alias Flezha.State.{TestHelpers, WalWriter}
+
+  test "a workflow Cell is refused, and nothing is rewound" do
+    class = "rp_#{System.unique_integer([:positive])}"
+    cell = {class, "task", "key"}
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell)
+    :ok = WalWriter.append(writer, 0, TestHelpers.stub_header(), "x0")
+    :ok = ClassRegistry.put(class, :workflow)
+    on_exit(fn -> ClassRegistry.delete(class) end)
+
+    stderr =
+      capture_io(:stderr, fn ->
+        try do
+          CliManager.operative_replay("default", "#{class}/task/key", "0")
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
+    assert stderr =~ "is a Cell of a workflow"
+    assert stderr =~ "committed iteration in its journal"
+    assert stderr =~ "flz operative rewind"
+    assert WalWriter.outbox_epoch(writer) == 0, "no epoch was bumped"
+  end
+end

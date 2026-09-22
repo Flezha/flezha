@@ -143,7 +143,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
 
   @doc """
   Destroy every local durable byte one operative owns — its Cell WALs,
-  snapshots, task-journal, durable inbox, input log and class sidecars — and
+  snapshots, task-journal, input log and class sidecars — and
   evict its in-memory class declarations.
 
   Scoped to the operative's own class directory rather than the whole state

@@ -1,9 +1,10 @@
 defmodule Flezha.State.InputLogTest do
   @moduledoc """
-  §2.4 `durable-input-log`: offset monotonicity across appends and restarts,
-  torn-tail discard, watermark truncation that respects the slowest Cell,
-  frozen-watermark telemetry, the fsync companion's death, and the tier-off
-  cost-free default (no journaling work, no file).
+  `durable-input-log`: offset monotonicity across appends and restarts,
+  torn-tail discard, watermark truncation that respects the slowest reporter,
+  the message-id index, answers that wait for their sync, frozen-watermark
+  telemetry, the fsync companion's death, and the tier-off cost-free default
+  (no journaling work, no file).
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use FlezhaTest.StateCase, async: false
@@ -22,6 +23,9 @@ defmodule Flezha.State.InputLogTest do
 
   setup %{base: base} do
     class = "il_" <> uniq()
+    # Every cut rewrites the file at once, so the cases can read it; the case
+    # that proves the threshold raises it again.
+    on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
 
     on_exit(fn ->
       # The log lives in the shared state tree and truncates in its own turn
@@ -285,7 +289,7 @@ defmodule Flezha.State.InputLogTest do
       InputLog.record_consumed(class, {class, "task", "a"}, 2)
 
       state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
-      :ok = Replay.replay_journaled_inputs(state)
+      assert ^state = Replay.reforward_undelivered_tail(state)
 
       assert_receive {:forwarded, ^class, {"m3", md3}}
       assert md3["flz.offset"] == "3"
@@ -297,7 +301,7 @@ defmodule Flezha.State.InputLogTest do
 
     test "no journal file means no re-forward work", %{class: class} do
       state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
-      :ok = Replay.replay_journaled_inputs(state)
+      assert ^state = Replay.reforward_undelivered_tail(state)
       refute_received {:forwarded, _, _}
       refute File.exists?(Paths.input_log_path(class))
     end
@@ -453,6 +457,130 @@ defmodule Flezha.State.InputLogTest do
     class
   end
 
+  describe "a sender's message id (the one duplicate identity)" do
+    test "a re-sent id is absorbed; a message without one never is", %{class: class} do
+      meta = %{"flz.msg_id" => "m-1"}
+
+      assert {:ok, 0} = InputLog.append(class, "hello", meta)
+      assert {:duplicate, 0} = InputLog.append(class, "hello", meta)
+      # A re-send with the same id but different bytes is still the same message.
+      assert {:duplicate, 0} = InputLog.append(class, "hello (edited)", meta)
+
+      # Two identical payloads without an id are two messages; an empty id is none.
+      assert {:ok, 1} = InputLog.append(class, "anon", %{})
+      assert {:ok, 2} = InputLog.append(class, "anon", %{})
+      assert {:ok, 3} = InputLog.append(class, "anon", %{"flz.msg_id" => ""})
+
+      assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 1)) ==
+               ["hello", "anon", "anon", "anon"]
+    end
+
+    test "the index is rebuilt from the file after a restart", %{class: class} do
+      {:ok, 0} = InputLog.append(class, "anon", %{})
+      {:ok, 1} = InputLog.append(class, "hello", %{"flz.msg_id" => "m-9"})
+      stop_log(class)
+
+      assert {:duplicate, 1} = InputLog.append(class, "hello", %{"flz.msg_id" => "m-9"})
+      assert {:ok, 2} = InputLog.append(class, "other", %{"flz.msg_id" => "m-10"})
+    end
+
+    test "a log whose senders stamp no id builds no index", %{class: class} do
+      for i <- 0..2, do: {:ok, ^i} = InputLog.append(class, "m#{i}", %{})
+      {:ok, log} = Supervisor.lookup({class, :input_log})
+
+      assert :sys.get_state(log).msg_ids == nil
+    end
+
+    test "a truncated id is a new message; a retained one is still absorbed",
+         %{class: class} do
+      for {id, n} <- [{"a", 0}, {"b", 1}, {"c", 2}],
+          do: {:ok, ^n} = InputLog.append(class, id, %{"flz.msg_id" => id})
+
+      InputLog.record_consumed(class, {class, "task", "a"}, 1)
+      :ok = Sweep.run(class)
+      assert wait_until(fn -> InputLog.read_range(class, 0, 9) |> length() == 2 end, 2_000)
+
+      assert {:ok, 3} = InputLog.append(class, "a", %{"flz.msg_id" => "a"})
+      assert {:duplicate, 1} = InputLog.append(class, "b", %{"flz.msg_id" => "b"})
+    end
+  end
+
+  describe "an append's answer" do
+    setup do
+      batcher = Process.whereis(FsyncBatcher)
+      on_exit(fn -> if Process.alive?(batcher), do: :sys.resume(batcher) end)
+      %{batcher: batcher}
+    end
+
+    test "waits for the sync that makes its record durable", %{class: class, batcher: batcher} do
+      {:ok, 0} = InputLog.append(class, "seed", %{})
+      :ok = :sys.suspend(batcher)
+
+      reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
+      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+
+      :ok = :sys.resume(batcher)
+      assert {{:reply, {:ok, 1}}, :m1, _} = :gen_server.wait_response(reqids, 2_000, true)
+    end
+
+    test "a log that stops answers what its last sync made durable",
+         %{class: class, batcher: batcher} do
+      {:ok, 0} = InputLog.append(class, "seed", %{})
+      {:ok, log} = Supervisor.lookup({class, :input_log})
+      :ok = :sys.suspend(batcher)
+
+      reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
+      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+
+      :ok = GenServer.stop(log)
+      assert {{:reply, {:ok, 1}}, :m1, _} = :gen_server.wait_response(reqids, 1_000, true)
+      :ok = :sys.resume(batcher)
+      assert InputLog.read_range(class, 0, 1) |> Enum.map(&elem(&1, 1)) == ["seed", "m1"]
+    end
+  end
+
+  describe "the instance's tail" do
+    test "is the floor and the last offset; what lies above the floor is owed",
+         %{class: class} do
+      for i <- 0..3, do: {:ok, ^i} = InputLog.append(class, "m#{i}", %{})
+      assert InputLog.tail(class) == {:ok, -1, 3}
+
+      InputLog.record_consumed(class, Paths.journal_id(class), 1)
+
+      assert InputLog.tail(class) == {:ok, 1, 3}
+      assert InputLog.undelivered(class) |> Enum.map(&elem(&1, 0)) == [2, 3]
+    end
+
+    test "starts no log for a key that has none", %{class: class} do
+      assert InputLog.tail(class) == {:ok, -1, -1}
+      assert InputLog.undelivered(class) == []
+      refute File.exists?(Paths.input_log_path(class))
+      assert Supervisor.lookup({class, :input_log}) == :error
+    end
+  end
+
+  test "a released prefix below the cut threshold is left for a later sweep",
+       %{class: class} do
+    on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 65_536))
+    for i <- 0..3, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+
+    InputLog.record_consumed(class, {class, "task", "a"}, 2)
+    :ok = Sweep.run(class)
+    {:ok, log} = Supervisor.lookup({class, :input_log})
+    # Answered strictly after the log has handled the sweep's cast.
+    _ = GenServer.call(log, :last_offset, 1_000)
+    assert InputLog.read_range(class, 0, 3) |> length() == 4
+
+    Application.put_env(:flezha, :record_log_cut_after_bytes, 0)
+    InputLog.record_consumed(class, {class, "task", "a"}, 3)
+    :ok = Sweep.run(class)
+
+    assert wait_until(
+             fn -> InputLog.read_range(class, 0, 3) |> Enum.map(&elem(&1, 0)) == [3] end,
+             2_000
+           )
+  end
+
   defp stop_log(class) do
     {:ok, pid} = Supervisor.lookup({class, :input_log})
     :ok = GenServer.stop(pid)
@@ -560,7 +688,7 @@ defmodule Flezha.State.InputLogTest do
 
         # No companion was spawned, so nothing is linked to a log that will
         # never sync — and the `:fsync` call answers instead of parking in
-        # `sync_now/1`, which is the wedge a companion-less log could reach.
+        # `companion_call/2`, which is the wedge a companion-less log could reach.
         assert :sys.get_state(pid).syncer == nil
         assert {:error, {:crc_mismatch, 0, ^second}} = GenServer.call(pid, :fsync, 500)
 
@@ -769,7 +897,7 @@ defmodule Flezha.State.InputLogTest do
   # Every `:sync` the traced log sent to a pid that had already exited.
   defp dead_syncs(count \\ 0) do
     receive do
-      {:trace, _pid, :send_to_non_existing_process, :sync, _to} -> dead_syncs(count + 1)
+      {:trace, _pid, :send_to_non_existing_process, {:sync, _}, _to} -> dead_syncs(count + 1)
       {:trace, _pid, _event, _message, _to} -> dead_syncs(count)
     after
       200 -> count

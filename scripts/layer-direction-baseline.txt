@@ -19,21 +19,18 @@ lib/flezha/operative/handover.ex -> Flezha.Plugin.Extension.Table
 lib/flezha/operative/handover.ex -> Flezha.State.WalWriter
 lib/flezha/operative/handover.ex -> Flezha.State.WriterRegistry
 lib/flezha/operative/ingest.ex -> Flezha.State.InputLog
-lib/flezha/operative/ingest.ex -> Flezha.State.TaskInbox
 lib/flezha/operative/lifecycle.ex -> Flezha.Convergence.Facts
 lib/flezha/operative/lifecycle.ex -> Flezha.Service.HubManager
 lib/flezha/operative/lifecycle.ex -> Flezha.Service.OperativeManager
 lib/flezha/operative/lifecycle.ex -> Flezha.State.Commands
 lib/flezha/operative/lifecycle.ex -> Flezha.State.DurabilityTier
 lib/flezha/operative/lifecycle.ex -> Flezha.State.PersistenceResolver
-lib/flezha/operative/lifecycle.ex -> Flezha.State.TaskInbox
 lib/flezha/operative/lifecycle.ex -> Flezha.State.Restore
 lib/flezha/operative/migration.ex -> Flezha.Plugin.Extension.Table
 lib/flezha/operative/migration.ex -> Flezha.Service.HubManager
 lib/flezha/operative/migration.ex -> Flezha.Service.OperativeManager
 lib/flezha/operative/migration.ex -> Flezha.Shutdown.Step
 lib/flezha/operative/migration.ex -> Flezha.State.PersistenceResolver
-lib/flezha/operative/migration.ex -> Flezha.State.TaskInbox
 lib/flezha/operative/migration.ex -> Flezha.State.TaskJournal
 lib/flezha/operative/overwatch.ex -> Flezha.Convergence.Facts
 lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.IO
@@ -48,7 +45,6 @@ lib/flezha/operative/overwatch.ex -> Flezha.Service.HubManager
 lib/flezha/operative/overwatch.ex -> Flezha.State.Outbox
 lib/flezha/operative/overwatch.ex -> Flezha.State.Paths
 lib/flezha/operative/overwatch.ex -> Flezha.State.PersistenceResolver
-lib/flezha/operative/overwatch.ex -> Flezha.State.TaskInbox
 lib/flezha/operative/overwatch.ex -> Flezha.State.TaskJournal
 lib/flezha/operative/partition_group.ex -> Flezha.AuthZ.Quotas
 lib/flezha/operative/partition_group.ex -> Flezha.Dlq
@@ -69,7 +65,6 @@ lib/flezha/operative/replay.ex -> Flezha.State.DurabilityTier
 lib/flezha/operative/replay.ex -> Flezha.State.InputLog
 lib/flezha/operative/replay.ex -> Flezha.State.Paths
 lib/flezha/operative/replay.ex -> Flezha.State.PersistenceResolver
-lib/flezha/operative/replay.ex -> Flezha.State.TaskInbox
 lib/flezha/operative/replay.ex -> Flezha.State.TaskJournal
 lib/flezha/operative/replay.ex -> Flezha.State.Restore
 lib/flezha/operative/replay.ex -> Flezha.State.Supervisor
@@ -85,7 +80,6 @@ lib/flezha/plugin/provider/operative_forward/forward_worker.ex -> Flezha.Service
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Commands
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Paths
-lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskInbox
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Operative.Migration
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.Admin

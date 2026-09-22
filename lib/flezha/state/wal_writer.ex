@@ -120,9 +120,9 @@ defmodule Flezha.State.WalWriter do
 
   `dedup: true` refuses a record whose 16-byte header matches one still in the
   file, answering `{:duplicate, seq}` with the existing record's seq — the
-  idempotency a re-sent barrier or a re-sent inbox message needs. The index is
-  built from the file on the first keyed append and trimmed by every prefix
-  cut, so a log that never dedups pays nothing.
+  idempotency a re-sent barrier needs. The index is built from the file on the
+  first keyed append and trimmed by every prefix cut, so a log that never
+  dedups pays nothing.
   """
   @spec append_next(GenServer.server(), binary(), binary(), keyword()) ::
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
@@ -628,7 +628,9 @@ defmodule Flezha.State.WalWriter do
   defp ensure_header_index(%{header_index: nil} = state) do
     # The boot scan walked this file to its end before any append reached it,
     # so a record that does not decode here is impossible, not a case.
-    {:ok, index} = RecordFrame.header_index(state.file_handle, state.wal_path)
+    {:ok, index} =
+      RecordFrame.index_by(state.file_handle, state.wal_path, fn {_seq, header, _} -> header end)
+
     %{state | header_index: index}
   end
 

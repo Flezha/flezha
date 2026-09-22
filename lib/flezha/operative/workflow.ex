@@ -7,7 +7,7 @@ defmodule Flezha.Service.Workflow do
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
 
-  The journal, the inbox and the completion record are records in flight —
+  The journal, the input log and the completion record are records in flight —
   the same kind of data the dead-letter queue holds — so they carry
   `state.records`, judged in the instance's own namespace, and a point-in-time
   read carries `state.at`. `rescale/5` and `rewind/4` move live work, so each
@@ -26,10 +26,10 @@ defmodule Flezha.Service.Workflow do
   alias Flezha.Service.CallerContext
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
+  alias Flezha.State.InputLog
   alias Flezha.State.Metrics
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.TaskInbox
   alias Flezha.State.TaskJournal
   alias Flezha.State.TimeTravel
 
@@ -76,22 +76,27 @@ defmodule Flezha.Service.Workflow do
     {:ok, TaskJournal.committed_iterations(instance_id)}
   end
 
-  @doc "The journal offset the instance has consumed up to."
+  @doc "The input-log offset the instance's last iteration consumed, `nil` for none."
   @spec consumed_offset(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb consumed_offset(instance_id, caller_context), verb: :state_journal, row: &instance_row/1 do
     {:ok, TaskJournal.consumed_offset(instance_id)}
   end
 
-  @doc "The inbox messages the instance has not taken yet."
+  @doc "The input-log records above the instance's floor: what it has not consumed yet."
   @spec undelivered(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
   verb undelivered(instance_id, caller_context), verb: :state_inbox, row: &instance_row/1 do
-    {:ok, TaskInbox.undelivered(instance_id)}
+    with records when is_list(records) <- InputLog.undelivered(instance_id) do
+      {:ok,
+       Enum.map(records, fn {offset, message, metadata} ->
+         %{offset: offset, message: message, metadata: metadata}
+       end)}
+    end
   end
 
-  @doc "The last offset written to the instance's inbox."
+  @doc "The last offset written to the instance's input log, `-1` when it has none."
   @spec last_offset(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb last_offset(instance_id, caller_context), verb: :state_inbox, row: &instance_row/1 do
-    {:ok, TaskInbox.last_offset(instance_id)}
+    with {:ok, _floor, last} <- InputLog.tail(instance_id), do: {:ok, last}
   end
 
   @doc "Durable-state counters across every operative class."

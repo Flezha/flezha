@@ -1058,7 +1058,9 @@ wait, for up to 60 seconds while a rehydrating bind still owes it inputs and oth
 `FLEZHA_WORKFLOW_PARK_IDLE_MS`, and SHALL park only when that wait ends with nothing to consume.
 A class that journals nothing SHALL wait until an input or a stop arrives, because it cannot
 park. A stop or the duration cap reached during the wait SHALL complete the run as `cancelled`.
-An iteration SHALL commit the durable-inbox offset its input carried in `flz.inbox_offset`.
+An iteration SHALL commit the durable input-log offset its input carried in `flz.offset`, and
+SHALL commit no offset when its input carried none, or when it was seeded from the previous
+terminal batch; the SDK SHALL read no other offset key.
 
 #### Scenario: The first iteration consumes the first input
 
@@ -1089,8 +1091,18 @@ An iteration SHALL commit the durable-inbox offset its input carried in `flz.inb
 
 #### Scenario: An iteration commits its input's inbox offset
 
-- **WHEN** an input stamped `flz.inbox_offset` `7` is consumed
+- **WHEN** an input stamped `flz.offset` `7` is consumed
 - **THEN** that iteration's `IterCommit` carries consumed offset `7`
+
+#### Scenario: An unjournaled input commits no offset
+
+- **WHEN** an input carrying no `flz.offset` is consumed
+- **THEN** that iteration's `IterCommit` carries no consumed offset
+
+#### Scenario: A carry-fed pass commits no offset
+
+- **WHEN** a journaling `:chained` loop's first pass consumes the input at `flz.offset` `0` and two carry-fed passes follow
+- **THEN** the three `IterCommit`s carry consumed offsets `0`, none and none
 
 ### Requirement: Socket mode reaches the controller through the SDK's own NIF
 

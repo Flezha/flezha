@@ -202,7 +202,7 @@ pub(super) fn next_iteration_seed(
         return match wait_for_input(ctx, cancel) {
             Some(item) => seed_or_fail(
                 resumed_start(ctx, resume, committed, item.channel_id, Some(&item)),
-                journaled_offset(&item),
+                item.offset,
             ),
             None => no_input(ctx, cancel),
         };
@@ -285,12 +285,6 @@ fn no_input(ctx: &ChainCtx, cancel: &AtomicBool) -> IterationSeed {
     }
 }
 
-/// Offset 0 = unjournaled input (opted-out class): keep the recorded
-/// consumed offset where it is.
-fn journaled_offset(item: &InboxItem) -> Option<u64> {
-    (item.offset > 0).then_some(item.offset)
-}
-
 fn seed_or_fail(
     seeded: Result<IterationStart, WorkflowError>,
     consumed: Option<u64>,
@@ -308,7 +302,7 @@ fn seed_or_fail(
 /// keeps waiting.
 fn enter(ctx: &ChainCtx, item: &InboxItem) -> IterationSeed {
     let error = match IterationStart::from_message(ctx, item) {
-        Ok(start) => return IterationSeed::Frontier(start, journaled_offset(item)),
+        Ok(start) => return IterationSeed::Frontier(start, item.offset),
         Err(e) => e,
     };
     let Some(channel) = ctx.topology.channel(item.channel_id) else {
@@ -319,7 +313,7 @@ fn enter(ctx: &ChainCtx, item: &InboxItem) -> IterationSeed {
         &format!("entry channel `{}` into its chain", channel.name),
         crate::retry::ParkTarget::edge(channel),
         ctx.instance_id,
-        journaled_offset(item),
+        item.offset,
         None,
         error.message,
         || {
@@ -328,7 +322,7 @@ fn enter(ctx: &ChainCtx, item: &InboxItem) -> IterationSeed {
         },
     );
     match entered {
-        Some(start) => IterationSeed::Frontier(start, journaled_offset(item)),
+        Some(start) => IterationSeed::Frontier(start, item.offset),
         None => {
             ctx.note_parked(item.offset);
             IterationSeed::Unread

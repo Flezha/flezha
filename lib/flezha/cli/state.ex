@@ -9,6 +9,7 @@ defmodule Flezha.Service.Cli.State do
   """
 
   alias Flezha.Config
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Lookup
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Operative.Replay
@@ -415,11 +416,14 @@ defmodule Flezha.Service.Cli.State do
   the epoch, and replay the input log forward. A conforming keyed sink overwrites
   the stale rows by natural key, which is what makes "deploy a fix, heal the
   recent past" a single verb rather than a migration.
+
+  A Cell of a workflow is refused before anything is rewound.
   """
   def operative_replay(_namespace, path_string, from_string, %{row: %{cell_id: cell_id}}) do
     {operative_class, _, _} = cell_id
 
-    with {:ok, overwatch} <- resolve_replay_overwatch(operative_class),
+    with :ok <- replayable(operative_class),
+         {:ok, overwatch} <- resolve_replay_overwatch(operative_class),
          {:ok, target_seq} <- resolve_replay_seq(cell_id, from_string) do
       Replay.replay_from(overwatch, cell_id, target_seq)
 
@@ -428,6 +432,14 @@ defmodule Flezha.Service.Cli.State do
           "bumped epoch; a keyed sink overwrites the stale rows by natural key."
       )
     else
+      {:error, :workflow_cell} ->
+        Context.fail!(
+          "replay: #{path_string} is a Cell of a workflow. A workflow's baseline is a " <>
+            "committed iteration in its journal, and its commit records carry no consumed " <>
+            "offset at a WAL seq, so there is no baseline to rewind to. Use " <>
+            "`flz operative rewind` to take a loop back."
+        )
+
       {:error, %{kind: :outside_retention, earliest_available: earliest}} ->
         Context.fail!(
           "replay: outside_retention — the earliest replayable point for " <>
@@ -436,6 +448,13 @@ defmodule Flezha.Service.Cli.State do
 
       {:error, reason} ->
         Context.fail!("replay: #{Context.format_reason(reason)}")
+    end
+  end
+
+  defp replayable(operative_class) do
+    case ClassRegistry.get(operative_class) do
+      :workflow -> {:error, :workflow_cell}
+      _stream -> :ok
     end
   end
 

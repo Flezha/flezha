@@ -272,8 +272,8 @@ defmodule Flezha.Config.DurationRows do
      derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}, runtimes: [:elixir_sdk]},
     {:sdk_idle_probe_ms, :ms, 50, runtimes: [:elixir_sdk]},
     {:sdk_max_reap_interval_ms, :ms, 30_000, runtimes: [:elixir_sdk]},
-    # How long a rehydrated per-input workflow loop waits for the inbox tail its
-    # bind still owes before it may park: a park there would drop the tail.
+    # How long a rehydrated per-input workflow loop waits for the input-log tail
+    # its bind still owes before it may park: a park there would drop the tail.
     {:sdk_owed_inbox_wait_ms, :ms, 60_000, runtimes: [:elixir_sdk]},
     {:sdk_serialize_wait_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # The task yield outlasts the read it awaits, so a wedged Cell answers the

@@ -61,9 +61,9 @@ pub(super) struct ChainCtx<'a> {
     /// Inbox items the controller still owes this bind; the park-idle clock
     /// starts at zero.
     pub(super) owed_inbox: std::cell::Cell<u32>,
-    /// The highest durable-inbox offset this run parked to the dead-letter
-    /// queue unread: consumed without a pass, and released by the park record.
-    pub(super) parked_offset: std::cell::Cell<u64>,
+    /// The highest input-log offset this run parked to the dead-letter queue
+    /// unread: consumed without a pass, and released by the park record.
+    pub(super) parked_offset: std::cell::Cell<Option<u64>>,
 }
 
 impl ChainCtx<'_> {
@@ -81,7 +81,7 @@ impl ChainCtx<'_> {
     }
 
     /// A message went to the dead-letter queue instead of into a pass.
-    pub(super) fn note_parked(&self, offset: u64) {
+    pub(super) fn note_parked(&self, offset: Option<u64>) {
         self.parked_offset.set(self.parked_offset.get().max(offset));
     }
 
@@ -220,7 +220,7 @@ fn run_structured(
         inbox,
         persistence_enabled: spec.persistence_enabled,
         owed_inbox: std::cell::Cell::new(instance.owed_inbox),
-        parked_offset: std::cell::Cell::new(0),
+        parked_offset: std::cell::Cell::new(None),
     };
     drive_chain(&ctx, &instance.cancel)
 }
@@ -347,7 +347,6 @@ fn drive_chain(ctx: &ChainCtx, cancel: &AtomicBool) -> RunOutcome {
         Err(outcome) => return outcome,
     };
     let mut iter = resume.iter;
-    let mut consumed_offset = resume.consumed_offset;
     // Terminal batch of the previous iteration, carried in memory by a
     // handoff-chained loop; on resume it comes back from the journal instead.
     let mut carry: Option<Vec<Value>> = None;
@@ -377,9 +376,6 @@ fn drive_chain(ctx: &ChainCtx, cancel: &AtomicBool) -> RunOutcome {
             Ok(None) => continue,
             Err(outcome) => return outcome,
         };
-        if let Some(offset) = consumed {
-            consumed_offset = offset;
-        }
         let channel = start.channel;
         pass_channel = Some(channel);
         let (terminal_batch, completion) =
@@ -395,7 +391,7 @@ fn drive_chain(ctx: &ChainCtx, cancel: &AtomicBool) -> RunOutcome {
             ctx,
             Seal {
                 iter,
-                consumed_offset,
+                consumed_offset: consumed,
                 channel,
                 terminal_batch: &terminal_batch,
                 completion,
@@ -416,7 +412,9 @@ fn drive_chain(ctx: &ChainCtx, cancel: &AtomicBool) -> RunOutcome {
 /// What an iteration hands its boundary.
 struct Seal<'a> {
     iter: u32,
-    consumed_offset: u64,
+    /// The offset of the input the iteration consumed; `None` for a
+    /// carry-fed pass.
+    consumed_offset: Option<u64>,
     /// The entry channel whose chain the iteration ran.
     channel: ChannelId,
     terminal_batch: &'a [Value],

@@ -220,10 +220,9 @@ than at emit.
 | `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
 | `flz.epoch` | controller → plugins | The Cell's WAL realign epoch (stream tier) or the instance's journal epoch (workflow outbox). `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
-| `flz.offset` | controller → runner | Effectively-once tier: the durable input-log offset of this forwarded input. The runner threads it through dispatch so the invocation's effect record carries it back as `consumed_offset`. |
-| `flz.inbox_offset` | controller → runner | Durable workflow inbox: the 1-based offset of this post-start input (§11). |
-| `flz.msg_id` | sender → controller | Sender-supplied message id used to deduplicate durable-inbox appends (§11). |
-| `flz.wake` | controller → runner | `"timer"` on the synthetic empty inbox entry that wakes a parked loop at its journaled deadline (§11). |
+| `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a stream on the effectively-once tier or a durable workflow (§11). A stream's invocation carries it back as its effect record's `consumed_offset`, a workflow's iteration as `IterCommit.consumed_offset`. |
+| `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
+| `flz.wake` | controller → runner | `"timer"` on the synthetic empty input-log record that wakes a parked loop at its journaled deadline (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
 
@@ -620,7 +619,7 @@ message AddOperative {
     uint32 partition_count = 8;        // < 2 ⇒ unpartitioned
     uint32 key_group_from = 9;         // inclusive key-group range, 0..255
     uint32 key_group_to = 10;
-    uint32 inbox_tail_count = 11;      // journaled inbox items forwarded after the bind
+    uint32 inbox_tail_count = 11;      // input-log records the bind re-forwards
 }
 ```
 
@@ -900,7 +899,7 @@ the same entrance: the channel is resolved the same way (an undeclared name
 parks under that name), the payload is wrapped through the channel's declared
 type or parser, a parse failure rides the entry channel's retry ladder to the
 dead-letter queue, and the typed value is pushed into the running driver's
-inbox with the channel it entered on and the `flz.inbox_offset` it carries;
+inbox with the channel it entered on and the `flz.offset` it carries;
 the entry edge's transforms run when the driver seeds the pass on that
 channel's chain (an instance that is not running or has no inbox drops the
 value with a log line). Dispatch onto host threads, per-Cell ordering and exclusivity are
@@ -1398,7 +1397,7 @@ message TaskJournalState {
     uint32 iter = 2;                               // the iteration to resume at
     repeated TaskHandoffItem handoff = 3;          // previous iteration's terminal batch
     repeated TaskCommittedTask committed_tasks = 4;// every forward commit, for compensation planning
-    uint64 consumed_offset = 5;                    // inbox offset the last committed iteration consumed
+    optional uint64 consumed_offset = 5;           // input-log offset the last committed iteration consumed; absent = none
     bool   parked = 6;                             // suspension record
     uint64 wake_deadline_ms = 7;
     repeated TaskCommittedTask rewind_undo = 8;    // unwound by a rewind, not yet compensated
@@ -1525,7 +1524,7 @@ byte-identical stamps.
 message IterCommit {
     string operative_id = 1;
     uint32 iter = 2;
-    uint64 consumed_offset = 3;             // durable-inbox offset this iteration consumed
+    optional uint64 consumed_offset = 3;    // flz.offset of the input this iteration consumed; absent = none
     repeated TaskHandoffItem handoff = 4;   // the iteration's terminal batch
     bool completes = 5;                     // a tasklet of this iteration called `ctx.complete`
     bytes result = 6;                       // the resolved result the instance ends with
@@ -1549,8 +1548,9 @@ entry carrying the terminal handoff, fsyncs, and acks under the same batching,
 terminal-error and bounded re-send contract as `TaskCommitResponse` (a re-sent
 `IterCommit` is journaled once by `{iter, epoch}`). Everything after the ack is
 cleanup: a boundary `CompactCell` per Cell of the instance, the flush of
-what the iteration staged, the release of the inbox prefix at or below
-`consumed_offset`, and a cut of the task-journal below the oldest entry its
+what the iteration staged, the report of `consumed_offset` into the input
+log's watermark (whose retention then reclaims the prefix below it), and a cut
+of the task-journal below the oldest entry its
 fold still needs (the latest `iter_committed`, entries whose outbox is still
 owed, the latest `rewound` marker with its pending undos), deferred until the
 settled prefix exceeds `:record_log_cut_after_bytes` (64 KiB) and skipped for
@@ -1565,7 +1565,7 @@ message IterPark {
     string operative_id = 1;
     uint32 iter = 2;               // the last COMMITTED iteration
     uint64 wake_deadline_ms = 3;   // 0 = wake on input only
-    uint64 consumed_offset = 4;    // the last message parked unread; 0 = none
+    optional uint64 consumed_offset = 4;  // the last message parked unread; absent = none
 }
 ```
 
@@ -1574,42 +1574,48 @@ A durable instance of any loop mode whose inbox has been empty past
 boundary, the boundary before its first pass included, tears its own run down and
 emits this instead of `WorkflowCompleted` — suspension is not a terminal
 outcome, and it is only ever offered at a committed boundary. A rehydrated loop
-waits up to 60 s for the inbox tail the controller owes it
+waits up to 60 s for the input-log tail the controller owes it
 (`AddOperative.inbox_tail_count`) before it may park again.
 
 A message the run parked to the dead-letter queue unread (an undeclared
 channel, a parse the entry's ladder never got past, a host decoder's unreadable
 verdict) is consumed without a pass; `consumed_offset` names the highest such
-inbox offset, so the park releases it as an `IterCommit` releases its input and
-a suspended instance is not rehydrated to receive it again.
+input-log offset, so the park releases it as an `IterCommit` releases its input
+and a suspended instance is not rehydrated to receive it again.
 
 The controller journals `parked(iter[, wake_deadline_ms], consumed_offset)`,
 durable BEFORE the eviction, then evicts the instance from its runner
 (`RemOperative`). The
 registry entry and the controller-side Overwatch stay: it is the **runner**
 that holds zero resources, and `flz operative info` reports the instance
-`suspended`. Rehydration has one path, whichever wakes it — a new inbox
-append, or the journaled deadline, which the controller delivers as a synthetic
-inbox entry with an empty payload and `flz.wake = timer` — and both re-bind
-the instance through the normal workflow spawn path on any live runner,
-restoring journal + boundary snapshots and delivering the undelivered inbox
-tail. Two racing wakes collapse into exactly one rehydration.
+`suspended`. Rehydration has one path, whichever wakes it — a new input-log
+append, or the journaled deadline, which the controller delivers as a
+synthetic input-log record with an empty payload and `flz.wake = timer` — and
+both re-bind the instance through the normal workflow spawn path on any live
+runner, restoring journal + boundary snapshots and delivering the input log's
+undelivered tail. Two racing wakes collapse into exactly one rehydration.
 
-### Data frame metadata: durable-inbox offset (`flz.inbox_offset`)
+### Data frame metadata: the durable input log (`flz.offset`, `flz.msg_id`)
 
-Post-start input for a **durable workflow** instance is appended to the
-instance's `inbox.wal` **before** it is forwarded, and the forwarded frame
-carries the assigned 1-based offset as `flz.inbox_offset` (absent ⇒ not
-journaled: an opted-out class). The runner threads it back through
+An instance has durable input when it is a stream on the effectively-once tier
+or a durable workflow. Its input is appended to the instance's one input log
+(`<state key>/input.log`) **before** it is forwarded, answered only once the
+record is synced, and the forwarded frame carries the assigned offset as
+`flz.offset`. Offsets are 0-based; absent means the input was not journaled (an
+instance without durable input), never offset `0`. A stream threads it into
+its effect record's `consumed_offset`; a workflow into
 `IterCommit.consumed_offset`, or `IterPark.consumed_offset` for a message it
-parked unread, which lets the controller release the consumed prefix and stops
-a rehydrate re-delivering it. Dedup at append is keyed on the
-sender's `flz.msg_id` metadata only, over the window of the file above its
-last release: a duplicate inside the undelivered window is absorbed, so an
-at-least-once sender cannot produce a duplicate turn, and a message without
-an id is always appended, as a stream processes every frame it is sent. The
-dedup identity is the first 16 bytes of `sha256(flz.msg_id)` in the record
-header, so an append reads no file and folds no journal.
+parked unread, and an iteration that consumed no journaled input (a carry-fed
+pass) carries none. The controller reports each into the log's watermark,
+retention reclaims below it, and every bind re-forwards exactly the retained
+records above it, each with its original `flz.offset`.
+
+Dedup at append is keyed on the sender's `flz.msg_id` metadata only: an append
+whose id the log still retains is absorbed and nothing is forwarded, so an
+at-least-once sender cannot produce a duplicate input, and a message without an
+id is always appended. The log keeps the index in memory, built from the file
+on the first append that carries an id, so an append reads no file and folds no
+journal.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
 

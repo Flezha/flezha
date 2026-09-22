@@ -19,6 +19,7 @@ defmodule Flezha.Operative.Migration do
   alias Flezha.Operative.Lifecycle
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
+  alias Flezha.Operative.Replay
   alias Flezha.Payloader
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
@@ -28,7 +29,6 @@ defmodule Flezha.Operative.Migration do
   alias Flezha.Service.OperativeManager
   alias Flezha.Shutdown
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.TaskInbox
   alias Flezha.State.TaskJournal
   alias ProcessHub.Service.Migration, as: HubMigration
 
@@ -56,9 +56,11 @@ defmodule Flezha.Operative.Migration do
 
   The rehydrating bind ships the folded journal back, so the driver undoes the
   unwound tasklets through the ordinary compensation planner and resumes the
-  loop at `to_iter + 1`, with the inbox items those iterations consumed
-  undelivered again. The marker is durable before the eviction, so a crash
-  mid-rewind resumes as a rewind rather than as a partially unwound loop.
+  loop at `to_iter + 1`, waiting for its next input: the inputs the unwound
+  iterations consumed stay released, since a rewind never lowers the
+  instance's floor in its input log. The marker is durable before the
+  eviction, so a crash mid-rewind resumes as a rewind rather than as a
+  partially unwound loop.
 
   The caller (`CliManager`) has already refused an uncommitted target and an
   iteration whose plugin output cannot be compensated.
@@ -102,8 +104,8 @@ defmodule Flezha.Operative.Migration do
 
   Parked (a failed init) and suspended (a durable loop park) both come back
   through the un-park task: it re-binds, restores journal and cells, and
-  delivers the undelivered inbox tail, off the Overwatch so a slow bind never
-  blocks it. A running operative migrates in place: one ping and start
+  re-forwards the input log's undelivered tail, off the Overwatch so a slow
+  bind never blocks it. A running operative migrates in place: one ping and start
   round-trip, kept synchronous for the HotSwap handover invariants that depend
   on the state being applied before the call returns.
   """
@@ -238,23 +240,24 @@ defmodule Flezha.Operative.Migration do
   # The invariant that keeps a turn from being stranded: an instance with
   # undelivered input is never left suspended. Applied wherever suspension is
   # entered — at the park, and at boot from durable state.
-  @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
-  @doc "Rehydrate a suspended instance that still owes an undelivered inbox tail."
+  @doc "Rehydrate a suspended instance whose input log still holds input above its floor."
   @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
   def rehydrate_if_pending(%Overwatch{suspended: false} = state), do: state
 
   def rehydrate_if_pending(%Overwatch{} = state) do
-    if TaskInbox.undelivered(state.id) == [], do: state, else: rehydrate(state)
+    if Replay.owed_count(Overwatch.operative_class(state)) > 0,
+      do: rehydrate(state),
+      else: state
   end
 
   @doc """
   Rehydrate a suspended instance through the normal bind path (the same
   `complete_init/4` an un-park drives), which restores journal + snapshots and
-  re-delivers the undelivered inbox tail.
+  re-forwards the input log's undelivered tail.
 
   Idempotent: an instance already running, or with a rehydrate already in
-  flight, no-ops — so two wake sources racing (an inbox append and the wake
-  deadline) rehydrate exactly once.
+  flight, no-ops — so two wake sources racing (an input-log append and the
+  wake deadline) rehydrate exactly once.
   """
   @spec rehydrate(Overwatch.t()) :: Overwatch.t()
   def rehydrate(%Overwatch{suspended: false} = state), do: state
@@ -285,8 +288,9 @@ defmodule Flezha.Operative.Migration do
   end
 
   @doc """
-  A durable workflow class: the kind that owns a task-journal and an inbox. An
-  opted-out class keeps the memory-only inbox and re-runs from the top.
+  A durable workflow class: the kind that owns a task-journal and a durable
+  input log. An opted-out class keeps only its driver's in-memory inbox and
+  re-runs from the top.
   """
   @spec durable_workflow?(Overwatch.t(), map()) :: boolean()
   def durable_workflow?(%Overwatch{} = state, operative) do
@@ -305,7 +309,7 @@ defmodule Flezha.Operative.Migration do
   @spec suspended_on_disk?(binary()) :: boolean()
   def suspended_on_disk?(instance_id) do
     case TaskJournal.restore_state(instance_id) do
-      %{parked: true} -> TaskInbox.undelivered(instance_id) == []
+      %{parked: true} -> Replay.owed_count(instance_id) == 0
       _ -> false
     end
   end

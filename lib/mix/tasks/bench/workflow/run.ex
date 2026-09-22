@@ -13,8 +13,8 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
+  alias Flezha.State.InputLog
   alias Flezha.State.Paths
-  alias Flezha.State.TaskInbox
   alias Flezha.State.TaskJournal
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
@@ -348,7 +348,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
 
   # Name what never arrived — the seqs without an output (and, for a chain,
   # without a completion) — and what the controller knows about each: the
-  # journal's last entries, the inbox it still owes, the Overwatch's belief.
+  # journal's last entries, the input it still owes, the Overwatch's belief.
   def diagnose_missing(st, id_of \\ &"wf_#{&1}") do
     no_output = Tally.missing(st.out)
     no_done = Tally.missing(st.done)
@@ -362,7 +362,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
         id = id_of.(seq)
         {:ok, entries} = TaskJournal.read(id)
         journal = entries |> Enum.map(&{&1.type, &1.iter}) |> Enum.take(-4)
-        undelivered = id |> TaskInbox.undelivered() |> Enum.map(& &1.offset)
+        undelivered = for {offset, _message, _metadata} <- InputLog.undelivered(id), do: offset
 
         overwatch =
           case OperativeManager.get_operative_pid(@namespace, id) do

@@ -69,7 +69,7 @@ defmodule Flezha.State.WalWriter.State do
     # in append order once the records are synced.
     :sync_waiters,
     # `header => seq` of every record still in the file, for a log whose
-    # appends dedup on their header (a record log's barrier or inbox entry).
+    # appends dedup on their header (a record log's barrier).
     # Built from the file on the first keyed append, never for a stream WAL.
     :header_index,
     # The record this writer's file refused (`Flezha.State.RecordFrame`), or

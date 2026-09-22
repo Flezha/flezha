@@ -237,6 +237,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     Task.start(fn ->
       case TaskJournal.append_parked(namespace, operative_id, iter, deadline, consumed_offset) do
         :ok ->
+          # Before the suspension asks the log whether input is still owed: a
+          # message the run parked unread is consumed, not owed.
+          TaskJournal.release_input(operative_id, consumed_offset)
           suspend_parked(namespace, operative_id, iter, deadline)
 
         {:error, reason} ->

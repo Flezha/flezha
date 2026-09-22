@@ -207,22 +207,36 @@ typed oversized error. The `outbox_flushed` and `compensated` entry types
 
 The task-journal codec SHALL write and interpret the `iter_committed` and
 `parked` entry types (previously reserved): `iter_committed` carries the
-iteration number, the consumed inbox offset, and, when a tasklet of that
-iteration called `ctx.complete(result)`, the completion and its result;
-`parked` carries the iteration number and an optional wake deadline. Per-task
+iteration number, the consumed input-log offset (the `flz.offset` of the input
+that seeded the iteration) or the fact that the iteration consumed no journaled
+input, and, when a tasklet of that iteration called `ctx.complete(result)`, the
+completion and its result; `parked` carries the iteration number and an
+optional wake deadline. The absence of a consumed offset SHALL be recorded as
+absence, never as offset `0`, since `0` is the log's first offset. Per-task
 `task_committed` entries SHALL carry the enclosing iteration in the `iter`
 field (0 for a non-looping chain) and, when that tasklet called
 `ctx.complete(result)`, its completion and result. An `iter_committed` or
 `task_committed` entry written before completions existed SHALL read as
 carrying none. The restore state shipped on a rebind SHALL carry the latest
-committed iteration's completion and each committed tasklet's own. The
-`flz state journal` verb SHALL render both entry types, and SHALL show a
-completing entry as completing.
+committed iteration's completion, its consumed offset or its absence, and each
+committed tasklet's own. The `flz state journal` verb SHALL render both entry
+types, SHALL show a completing entry as completing, and SHALL show an
+iteration that consumed nothing as such rather than as offset `0`.
 
 #### Scenario: Journal reflects loop progress
 
 - **WHEN** a looping instance has committed two iterations and parked
-- **THEN** `flz state journal` SHALL show the per-task entries tagged with their iteration, two `iter_committed` entries with consumed offsets, and a final `parked` entry
+- **THEN** `flz state journal` SHALL show the per-task entries tagged with their iteration, two `iter_committed` entries with their consumed input-log offsets, and a final `parked` entry
+
+#### Scenario: An iteration that consumed nothing is journaled as such
+
+- **WHEN** a chained iteration seeded from the previous handoff commits
+- **THEN** its `iter_committed` entry SHALL carry no consumed offset, the restore state SHALL ship none for it, and `flz state journal` SHALL render it as having consumed no input
+
+#### Scenario: The first offset is an offset
+
+- **WHEN** the input at `flz.offset` `0` seeds iteration 1 and the iteration commits
+- **THEN** its `iter_committed` entry SHALL carry consumed offset `0` and a rehydrate SHALL NOT re-deliver that input
 
 #### Scenario: A completing iteration is journaled as completing
 

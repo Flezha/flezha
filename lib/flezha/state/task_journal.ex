@@ -13,7 +13,7 @@ defmodule Flezha.State.TaskJournal do
   `live_entries/1`, which replays `rewound` markers — a rewind is a marker, not
   a truncation, so a rewound iteration's outbox stops being owed and
   `consumed_offset/1` moves back while `released_offset/1`, which no rewind
-  lowers, holds the inbox floor. The marker bumps the epoch, so a re-run's
+  lowers, holds the instance's floor in its input log. The marker bumps the epoch, so a re-run's
   output supersedes the unwound run's at a guarded sink.
   """
 
@@ -23,6 +23,7 @@ defmodule Flezha.State.TaskJournal do
   alias Flezha.Operative.Lookup
 
   alias Flezha.State.{
+    InputLog,
     Outbox,
     Paths,
     PersistenceResolver,
@@ -66,11 +67,14 @@ defmodule Flezha.State.TaskJournal do
           payload:
             %{cells_ran: [binary()], handoff: [handoff_item()], outbox: [outbox_entry()]}
             | %{
-                consumed_offset: non_neg_integer(),
+                consumed_offset: non_neg_integer() | nil,
                 entry_channel: String.t(),
                 handoff: [handoff_item()]
               }
-            | %{wake_deadline_ms: non_neg_integer() | nil, consumed_offset: non_neg_integer()}
+            | %{
+                wake_deadline_ms: non_neg_integer() | nil,
+                consumed_offset: non_neg_integer() | nil
+              }
             | %{outbox: [outbox_entry()]}
             | %{for_type: entry_type_name()}
             | %{}
@@ -90,8 +94,8 @@ defmodule Flezha.State.TaskJournal do
           {:task_committed, non_neg_integer(), non_neg_integer(), [binary()], [handoff_item()],
            [outbox_entry()], completion()}
           | {:compensated, non_neg_integer(), non_neg_integer(), [outbox_entry()]}
-          | {:iter_committed, non_neg_integer(), non_neg_integer(), String.t(), [handoff_item()],
-             completion()}
+          | {:iter_committed, non_neg_integer(), non_neg_integer() | nil, String.t(),
+             [handoff_item()], completion()}
 
   @typedoc "The result a tasklet's `complete` asked for, or `nil` when none did."
   @type completion :: binary() | nil
@@ -132,16 +136,17 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Append one `iter_committed` entry — loop iteration `iter` finished, having
-  run the chain of entry channel `entry_channel`, consumed the inbox up to
-  `consumed_offset` and released `handoff` as its terminal batch, and ended
-  the instance when `completion` is not `nil` — durable before the reply. The
-  commit boundary a crash-resume restarts after: iterations at or below
-  `iter` never re-run, and a chained loop re-enters the named chain.
+  run the chain of entry channel `entry_channel`, consumed the input log up to
+  `consumed_offset` (`nil` when it consumed no journaled input) and released
+  `handoff` as its terminal batch, and ended the instance when `completion` is
+  not `nil` — durable before the reply. The commit boundary a crash-resume
+  restarts after: iterations at or below `iter` never re-run, and a chained
+  loop re-enters the named chain.
   """
   @spec append_iter_committed(
           binary(),
           non_neg_integer(),
-          non_neg_integer(),
+          non_neg_integer() | nil,
           [handoff_item()],
           completion(),
           String.t()
@@ -164,11 +169,12 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Append one `parked` entry — the loop is suspended at the committed boundary of
-  iteration `iter`, to be rehydrated by a new inbox append or, when
+  iteration `iter`, to be rehydrated by a new input-log append or, when
   `wake_deadline_ms` is non-nil, by its durable timer. `consumed_offset` is the
-  highest inbox offset the run parked to the dead-letter queue unread (`0` when
-  none), which the inbox releases as an iteration's consumed input. Durable
-  before the instance is evicted, so suspension survives a controller redeploy.
+  highest input-log offset the run parked to the dead-letter queue unread
+  (`nil` when none), which the log releases as an iteration's consumed input.
+  Durable before the instance is evicted, so suspension survives a controller
+  redeploy.
 
   The park is named from `namespace` by an instance id alone, so one for an
   instance whose durable state another namespace owns is refused.
@@ -178,13 +184,12 @@ defmodule Flezha.State.TaskJournal do
           binary(),
           non_neg_integer(),
           non_neg_integer() | nil,
-          non_neg_integer()
+          non_neg_integer() | nil
         ) :: :ok | {:error, term()}
-  def append_parked(namespace, instance_id, iter, wake_deadline_ms \\ nil, consumed_offset \\ 0)
-      when is_binary(namespace) and is_binary(instance_id) and is_integer(iter) and iter >= 0 and
-             is_integer(consumed_offset) and consumed_offset >= 0 do
+  def append_parked(namespace, instance_id, iter, wake_deadline_ms \\ nil, consumed_offset \\ nil)
+      when is_binary(namespace) and is_binary(instance_id) and is_integer(iter) and iter >= 0 do
     owner = Paths.namespace_of_class(instance_id)
-    payload = <<wake_deadline_ms || 0::64-big, consumed_offset::64-big>>
+    payload = [<<wake_deadline_ms || 0::64-big>>, Codec.encode_offset(consumed_offset)]
 
     if owner in [namespace, "_system"],
       do: append(instance_id, @type_parked, 0, iter, payload),
@@ -373,7 +378,7 @@ defmodule Flezha.State.TaskJournal do
             rewind_undo: [committed_task()],
             parked: boolean(),
             wake_deadline_ms: non_neg_integer() | nil,
-            consumed_offset: non_neg_integer(),
+            consumed_offset: non_neg_integer() | nil,
             completion: completion()
           }
           | nil
@@ -412,37 +417,54 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  The inbox offset this instance has durably consumed — the one recorded by the
-  latest live `iter_committed`, `0` before the first iteration commits. The floor
-  for both inbox truncation and rehydrate delivery.
+  The input-log offset this instance has durably consumed — the one recorded by
+  the latest live `iter_committed`, `nil` while none has consumed any.
 
   A rewind moves it back with the rest of the fold, but it does NOT resurrect the
-  rewound iterations' inputs: the inbox was truncated to this offset when they
-  committed, so those entries are already gone. A rewind is undo-and-continue —
-  the loop resumes waiting, and the next input becomes iteration N+1.
+  rewound iterations' inputs: those were released when they committed, and the
+  instance's floor (`released_offset/1`) does not move back. A rewind is
+  undo-and-continue — the loop resumes waiting, and the next input becomes
+  iteration N+1.
   """
-  @spec consumed_offset(binary()) :: non_neg_integer()
+  @spec consumed_offset(binary()) :: non_neg_integer() | nil
   def consumed_offset(instance_id) when is_binary(instance_id) do
     instance_id |> live() |> latest_iter_committed() |> consumed_offset_of()
   end
 
   @doc """
-  The highest inbox offset any iteration ever consumed, or a park recorded as
-  parked to the dead-letter queue unread: what the inbox has released, whether
-  or not its file has been rewritten yet. Unlike `consumed_offset/1` a rewind
-  does not move it back: the rewound iterations' inputs were released when they
-  committed, and a rewind is undo-and-continue, never a replay. The delivery set
-  (`TaskInbox.undelivered/1`) is everything above it.
+  The highest input-log offset any iteration ever consumed, or a park recorded
+  as parked to the dead-letter queue unread, `nil` when none has: the
+  instance's floor in its input log. Unlike `consumed_offset/1` a rewind does
+  not move it back: the rewound iterations' inputs were released when they
+  committed, and a rewind is undo-and-continue, never a replay.
   """
-  @spec released_offset(binary()) :: non_neg_integer()
+  @spec released_offset(binary()) :: non_neg_integer() | nil
   def released_offset(instance_id) when is_binary(instance_id) do
     {:ok, raw} = read(instance_id)
 
     raw
     |> Enum.filter(&(&1.type in [:iter_committed, :parked]))
     |> Enum.map(&consumed_offset_of/1)
-    |> Enum.max(fn -> 0 end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.max(fn -> nil end)
   end
+
+  @doc """
+  Report input this instance has consumed into its input log's watermark,
+  under the journal's identity — the instance's one reporter, so its row is the
+  instance's floor. `offset` is a durable iteration commit's or park's, `nil`
+  when it consumed none. `release_input/1` reports `released_offset/1`, which
+  is how every bind seeds the row before the log is asked anything: the row is
+  in memory, and `record_consumed/3` only moves forward, so seeding again is
+  harmless.
+  """
+  @spec release_input(binary(), non_neg_integer() | nil) :: :ok
+  def release_input(instance_id), do: release_input(instance_id, released_offset(instance_id))
+
+  def release_input(_instance_id, nil), do: :ok
+
+  def release_input(instance_id, offset),
+    do: InputLog.record_consumed(instance_id, Paths.journal_id(instance_id), offset)
 
   @doc """
   Whether the instance's in-flight iteration has committed every **leaf**
@@ -583,7 +605,7 @@ defmodule Flezha.State.TaskJournal do
     end
   end
 
-  defp consumed_offset_of(nil), do: 0
+  defp consumed_offset_of(nil), do: nil
   defp consumed_offset_of(%{payload: %{consumed_offset: offset}}), do: offset
 
   defp entry_channel_of(nil), do: ""
@@ -596,8 +618,8 @@ defmodule Flezha.State.TaskJournal do
   defp wake_deadline(_), do: nil
 
   # Seed for a fresh iteration: the previous iteration's terminal handoff (a
-  # handoff-chained loop's input; ignored by an inbox-driven one, which re-seeds
-  # from the undelivered inbox tail).
+  # handoff-chained loop's input; ignored by an input-driven one, which re-seeds
+  # from its input log's undelivered tail).
   defp iter_handoff(nil), do: []
   defp iter_handoff(%{payload: %{handoff: handoff}}), do: handoff
 
@@ -662,7 +684,8 @@ defmodule Flezha.State.TaskJournal do
        do:
          {@type_iter_committed, 0, iter,
           [
-            <<consumed_offset::64-big, byte_size(entry_channel)::16-big>>,
+            Codec.encode_offset(consumed_offset),
+            <<byte_size(entry_channel)::16-big>>,
             entry_channel,
             Codec.encode_handoff(handoff),
             Codec.encode_completion(completion)

@@ -372,14 +372,16 @@ pub struct TaskCommitResponse {
 }
 /// SDK -> Controller, at each iteration boundary of a looping durable
 /// structured workflow operative (workflow-durable-loop): iteration `iter`
-/// finished, having consumed the durable inbox up to `consumed_offset` and
-/// released `handoff` as its terminal batch. The Controller appends
-/// `iter_committed(iter, consumed_offset)` to the task-journal, fsyncs, requests
-/// a boundary snapshot for the instance's cells, flushes whatever the
-/// iteration's tasklets staged, truncates the inbox below the consumed
-/// offset, and replies IterCommitResponse. The driver enters iteration
-/// `iter + 1` only on the successful reply — a crash before it re-runs the
-/// whole iteration (at-least-once), never the ones below it.
+/// finished, having consumed the durable input log up to `consumed_offset` —
+/// the `flz.offset` of the input that seeded it, absent when it consumed none
+/// (0 is the log's first offset) — and released `handoff` as its terminal
+/// batch. The Controller appends `iter_committed(iter, consumed_offset)` to the
+/// task-journal, fsyncs, requests a boundary snapshot for the instance's cells,
+/// flushes whatever the iteration's tasklets staged, reports the consumed
+/// offset into the input log's watermark, and replies IterCommitResponse. The
+/// driver enters iteration `iter + 1` only on the successful reply — a crash
+/// before it re-runs the whole iteration (at-least-once), never the ones below
+/// it.
 ///
 /// `completes` is set when a tasklet of the iteration called
 /// `ctx.complete(result)`: the instance ends with `result` once this commit is
@@ -390,8 +392,8 @@ pub struct IterCommit {
     pub operative_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
-    #[prost(uint64, tag = "3")]
-    pub consumed_offset: u64,
+    #[prost(uint64, optional, tag = "3")]
+    pub consumed_offset: ::core::option::Option<u64>,
     #[prost(message, repeated, tag = "4")]
     pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
     #[prost(bool, tag = "5")]
@@ -420,10 +422,10 @@ pub struct IterCommitResponse {
 /// it has torn its own run down WITHOUT a WorkflowCompleted (this is not a
 /// terminal outcome). The Controller journals `parked(iter\[, wake_deadline_ms\])`
 /// and evicts the instance from the runner; the registry keeps it `suspended`
-/// until a new inbox append — or the wake deadline — rehydrates it
+/// until a new input-log append — or the wake deadline — rehydrates it
 /// (workflow-durable-suspension). `wake_deadline_ms` is 0 when the operative
-/// declared no durable timer. `consumed_offset` is the highest durable-inbox
-/// offset the run parked to the dead-letter queue unread, 0 when none: consumed
+/// declared no durable timer. `consumed_offset` is the highest input-log offset
+/// the run parked to the dead-letter queue unread, absent when none: consumed
 /// without a pass, so the Controller releases it rather than re-delivering it.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterPark {
@@ -433,8 +435,8 @@ pub struct IterPark {
     pub iter: u32,
     #[prost(uint64, tag = "3")]
     pub wake_deadline_ms: u64,
-    #[prost(uint64, tag = "4")]
-    pub consumed_offset: u64,
+    #[prost(uint64, optional, tag = "4")]
+    pub consumed_offset: ::core::option::Option<u64>,
 }
 /// One journaled forward task commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
@@ -472,11 +474,12 @@ pub struct TaskEdgeHandoff {
 /// each of them released, which seeds their uncommitted children. `handoff` is
 /// the previous iteration's terminal batch, which re-seeds a handoff-chained
 /// loop. `committed_tasks` carries every forward task commit with its iteration
-/// (compensation planning), `consumed_offset` the inbox offset the last
-/// committed iteration consumed, and `parked` / `wake_deadline_ms` the
-/// suspension record (workflow-durable-suspension). `completed` / `result` are
-/// the last committed iteration's completion request: a resume ends the
-/// instance with `result` instead of waiting for input.
+/// (compensation planning), `consumed_offset` the input-log offset the last
+/// committed iteration consumed (absent when it consumed none), and `parked` /
+/// `wake_deadline_ms` the suspension record (workflow-durable-suspension).
+/// `completed` / `result` are the last committed iteration's completion
+/// request: a resume ends the instance with `result` instead of waiting for
+/// input.
 ///
 /// `rewind_undo` carries the tasklets a rewind unwound that have not been
 /// compensated yet (workflow-loop-rewind). The driver runs them through the
@@ -494,8 +497,8 @@ pub struct TaskJournalState {
     pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
     #[prost(message, repeated, tag = "4")]
     pub committed_tasks: ::prost::alloc::vec::Vec<TaskCommittedTask>,
-    #[prost(uint64, tag = "5")]
-    pub consumed_offset: u64,
+    #[prost(uint64, optional, tag = "5")]
+    pub consumed_offset: ::core::option::Option<u64>,
     #[prost(bool, tag = "6")]
     pub parked: bool,
     #[prost(uint64, tag = "7")]

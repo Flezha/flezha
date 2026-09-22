@@ -16,7 +16,7 @@ defmodule FlezhaTest.Operative.IngestTest do
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.{InputLog, TaskInbox, Supervisor, TestHelpers}
+  alias Flezha.State.{InputLog, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -99,7 +99,7 @@ defmodule FlezhaTest.Operative.IngestTest do
              Overwatch.handle_call({:ingest, "drop-me now", %{}}, self(), state)
   end
 
-  describe "the durable inbox" do
+  describe "a durable workflow's input log" do
     setup :set_mimic_global_until_exit
 
     setup do
@@ -119,7 +119,7 @@ defmodule FlezhaTest.Operative.IngestTest do
       test_pid = self()
 
       # No runner to rehydrate onto: the instance stays suspended and the payload
-      # waits in the inbox, which is exactly the guarantee the verdict reports.
+      # waits in the log, which is exactly the guarantee the verdict reports.
       stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, ^inst ->
         send(test_pid, :rehydrate_asked)
         nil
@@ -129,18 +129,18 @@ defmodule FlezhaTest.Operative.IngestTest do
       {:ok, host} = start_supervised({Host, state})
 
       assert {:ok, :suspended} = GenServer.call(host, {:ingest, "turn", %{}})
-      assert [%{offset: 1, message: "turn"}] = TaskInbox.undelivered(inst)
+      assert [{0, "turn", _metadata}] = InputLog.undelivered(inst)
       assert_receive :rehydrate_asked
     end
 
-    test "a duplicate absorbed by the durable inbox reports absorbed" do
+    test "a duplicate absorbed by the input log reports absorbed" do
       inst = instance_id()
       state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
       sent_once = %{"flz.msg_id" => "m-again"}
 
       assert :ok = GenServer.call(host, {:ingest, "again", sent_once})
-      assert_receive {:channel_got, ^inst, {"again", %{"flz.inbox_offset" => "1"}}}
+      assert_receive {:channel_got, ^inst, {"again", %{"flz.offset" => "0"}}}
 
       assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", sent_once})
       refute_received {:channel_got, _, _}
@@ -149,7 +149,7 @@ defmodule FlezhaTest.Operative.IngestTest do
     test "a durable-log refusal reports refused so the sender retries" do
       inst = instance_id()
       {:ok, writer} = start_supervised(RefusingWriter)
-      stub(Supervisor, :find_or_start, fn {^inst, ^inst, _key} -> {:ok, writer} end)
+      stub(Supervisor, :find_or_start, fn {^inst, :input_log} -> {:ok, writer} end)
 
       state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
@@ -160,7 +160,7 @@ defmodule FlezhaTest.Operative.IngestTest do
         end)
 
       # append-before-forward: the refusal is loud, and names why nothing moved.
-      assert log =~ "durable-inbox append failed for #{inst}"
+      assert log =~ "durable input append failed for #{inst}"
       assert log =~ ":enospc"
       assert log =~ "input NOT forwarded"
 
@@ -174,7 +174,7 @@ defmodule FlezhaTest.Operative.IngestTest do
                Overwatch.handle_call({:ingest, "x", %{}}, self(), state(inst, channel: nil))
 
       # A durable target answers `:ok` because the bind re-forwards what the
-      # inbox holds — which needs a channel that can still bind. A real unbound
+      # log holds — which needs a channel that can still bind. A real unbound
       # one stands in for the window between the control ack and the data
       # stream the runner opens after it.
       {channel, _pid} = NodeTestHelper.unbound_stream_channel()
@@ -183,7 +183,7 @@ defmodule FlezhaTest.Operative.IngestTest do
         start_supervised({Host, state(inst, durable_workflow: true, channel: channel)})
 
       assert :ok = GenServer.call(host, {:ingest, "x", %{}})
-      assert [%{message: "x"}] = TaskInbox.undelivered(inst)
+      assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
     end
 
     test "a durable target with no channel that can ever bind is refused" do
@@ -191,10 +191,10 @@ defmodule FlezhaTest.Operative.IngestTest do
       {:ok, host} = start_supervised({Host, state(inst, durable_workflow: true, channel: nil)})
 
       # Nothing will re-forward this, so `:ok` would be the accepted-and-dropped
-      # claim the input-delivery guarantee forbids. The inbox still holds the
-      # payload, and the sender's retry is absorbed by the inbox's dedup.
+      # claim the input-delivery guarantee forbids. The log still holds the
+      # payload, and a retry carrying its id is absorbed by the log's index.
       assert {:error, :not_ready} = GenServer.call(host, {:ingest, "x", %{}})
-      assert [%{message: "x"}] = TaskInbox.undelivered(inst)
+      assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
     end
   end
 

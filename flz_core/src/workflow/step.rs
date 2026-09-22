@@ -175,7 +175,7 @@ pub(super) fn park_unreadable(
         failure.error.message.clone(),
         failure.attempts,
     );
-    ctx.note_parked(origin_offset.unwrap_or(0));
+    ctx.note_parked(origin_offset);
 }
 
 /// The driver's stage barrier: every partition of a frontier, its place on

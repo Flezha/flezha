@@ -84,6 +84,18 @@ defmodule Flezha.State.PathsTest do
       assert "orders-op" in Paths.operative_classes()
     end
 
+    test "the task-journal is the one reserved per-instance file, and no Cell", %{tmp: base} do
+      assert Paths.reserved_cell_keys() == [Paths.journal_cell_key()]
+
+      journal = Paths.journal_path("wf-op")
+      assert journal == Path.join([base, "_system", "wf-op", "wf-op", "task.journal"])
+      File.mkdir_p!(Path.dirname(journal))
+      File.write!(journal, "journal-bytes")
+
+      assert %{wal_files: []} = Paths.scan_dir(Paths.journal_id("wf-op"))
+      assert Paths.cells_of("wf-op") == []
+    end
+
     test "an unclaimed class resolves from the on-disk layout, else _system", %{tmp: base} do
       File.mkdir_p!(Path.join([base, "team-a", "disk-op", "task-0"]))
 

@@ -34,7 +34,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
-  alias Flezha.State.TaskInbox
+  alias Flezha.State.InputLog
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -48,13 +48,13 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     # `workflow-durable-loop-and-suspension`, end to end on a real runner:
     #
     #   1. two chat turns → two journaled iterations, each with its consumed
-    #      inbox offset; the loop then PARKS on the idle inbox and the instance
+    #      input-log offset; the loop then PARKS on the idle inbox and the instance
     #      is evicted from the runner (still registered, `suspended`);
     #   2. a message sent while it is suspended is durably journaled and
     #      REHYDRATES it — processed as the next iteration, on a live runner;
     #   3. the runner is SIGKILLed mid-iteration 3 and a replacement takes
     #      over: the run resumes AT iteration 3 — the committed turns never
-    #      re-run — and the undelivered inbox tail is re-forwarded.
+    #      re-run — and the input log's undelivered tail is re-forwarded.
     test "loop commits iterations, parks when idle, rehydrates on input, resumes mid-iteration",
          ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
@@ -89,10 +89,10 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       assert replies(collector, 2, operative_id) == ["reply:hello", "reply:again"]
 
-      # Each iteration recorded the inbox offset it consumed, and the consumed
-      # prefix was released.
-      assert consumed_offsets(operative_id) == [1, 2]
-      assert TaskInbox.undelivered(operative_id) == []
+      # Each iteration recorded the input-log offset it consumed, and the
+      # consumed prefix was released.
+      assert consumed_offsets(operative_id) == [0, 1]
+      assert InputLog.undelivered(operative_id) == []
 
       # The iteration boundary compacts every Cell of the instance: the
       # controller's CompactCell must resolve a WORKFLOW Cell (not only a
@@ -140,10 +140,10 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       send_turn(namespace, operative_id, "mid-crash")
 
       assert NodeTestHelper.wait_until(
-               fn -> TaskInbox.last_offset(operative_id) >= 4 end,
+               fn -> match?({:ok, _floor, last} when last >= 3, InputLog.tail(operative_id)) end,
                20_000
              ),
-             "the crashing turn never reached the durable inbox"
+             "the crashing turn never reached the input log"
 
       # Operator surface, while the turn is still in flight: it is durable and
       # marked undelivered — this is what survives the SIGKILL below.
@@ -152,9 +152,9 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
           CliManager.state_inbox(operative_id)
         end)
 
-      assert pending_inbox =~ "durable inbox for instance #{operative_id}"
-      assert pending_inbox =~ "consumed through 3"
-      assert pending_inbox =~ "offset=4 PENDING"
+      assert pending_inbox =~ "durable input log for #{operative_id}"
+      assert pending_inbox =~ "consumed through 2"
+      assert pending_inbox =~ "offset=3 PENDING"
 
       sigkill(os_pid(port_a))
 
@@ -200,17 +200,17 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
         end)
 
       assert journal =~ "iter_committed"
-      assert journal =~ "consumed inbox offset:"
+      assert journal =~ "consumed input-log offset:"
       assert journal =~ "parked"
       assert journal =~ "task_committed task_idx=0 iter=3"
 
-      # Every turn is consumed now, so the inbox has released all of them: the
-      # journal keeps the offsets, the inbox delivers none. The file itself is
+      # Every turn is consumed now, so the log has released all of them: the
+      # journal keeps the offsets, the log delivers none. The file itself is
       # rewritten once the released prefix is worth its fsync (the cut
       # threshold); a few tiny turns stay on disk, never re-delivered.
-      assert TaskJournal.consumed_offset(operative_id) == 4
-      assert TaskJournal.released_offset(operative_id) == 4
-      assert TaskInbox.undelivered(operative_id) == []
+      assert TaskJournal.consumed_offset(operative_id) == 3
+      assert TaskJournal.released_offset(operative_id) == 3
+      assert InputLog.undelivered(operative_id) == []
     end
 
     # Suspension is durable STATE, not a live process: a controller-side restart
@@ -400,9 +400,9 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 30_000),
              "the instance waiting for a readable message never suspended"
 
-      # The parked message counts as consumed: the inbox owes nothing, so the
+      # The parked message counts as consumed: the log owes nothing, so the
       # suspension holds instead of rehydrating to deliver it again.
-      assert TaskInbox.undelivered(operative_id) == []
+      assert InputLog.undelivered(operative_id) == []
       refute_receive :rehydrating, 3_000
       assert suspended?(namespace, operative_id)
       assert [_one] = DlqStore.list(operative_id)
@@ -454,7 +454,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       assert replies(collector, 3, operative_id) == ["reply:alpha", "reply:beta", "reply:gamma"]
       assert TaskJournal.current_epoch(operative_id) == 0
-      assert consumed_offsets(operative_id) == [1, 2, 3]
+      assert consumed_offsets(operative_id) == [0, 1, 2]
 
       # --- rewind to iteration 0 ---
       rewind_out =

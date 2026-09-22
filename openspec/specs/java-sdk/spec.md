@@ -598,14 +598,14 @@ Compensation output SHALL ride the same handshake with `compensating` set.
 
 The Java SDK SHALL implement the `workflow-durable-loop` and `workflow-durable-suspension` capabilities. `WorkflowOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
 
-At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, the terminal handoff, and a tasklet's completion request with its result when one was made, and SHALL await `IterCommitResponse` (tag 31). A durable `CHAINED` loop whose terminal task releases no inter-tasklet channel — whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec — SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
+At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed input-log offset when the iteration's input carried one and no offset otherwise, the terminal handoff, and a tasklet's completion request with its result when one was made, and SHALL await `IterCommitResponse` (tag 31). A durable `CHAINED` loop whose terminal task releases no inter-tasklet channel, whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec, SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
 
-When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The SDK SHALL read its inbox offset from the inbound `flz.inbox_offset` metadata key.
+When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
 
 #### Scenario: Each loop iteration commits at its boundary
 
 - **WHEN** a `PER_INPUT` workflow class processes three inbox items
-- **THEN** the SDK SHALL ship three `IterCommit` commands, each carrying its iteration index and consumed inbox offset, and SHALL await each response before starting the next iteration
+- **THEN** the SDK SHALL ship three `IterCommit` commands, each carrying its iteration index and the input-log offset its item carried, and SHALL await each response before starting the next iteration
 
 #### Scenario: An idle loop parks instead of completing
 

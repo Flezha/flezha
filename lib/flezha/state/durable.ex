@@ -67,7 +67,6 @@ defmodule Flezha.State.Durable do
     {:input_log, "lib/flezha/state/input_log.ex", :record, :batched, ".rewriting", false, true},
     {:task_journal, "lib/flezha/state/task_journal.ex", :record, :batched, ".rewriting", false,
      true},
-    {:task_inbox, "lib/flezha/state/task_inbox.ex", :record, :batched, ".rewriting", false, true},
     {:snapshot, "lib/flezha/state/snapshot.ex", :whole, :inline, ".tmp", false, true},
     {:outbox_dedup, "lib/flezha/state/outbox.ex", :whole, :batched, ".tmp", false, false},
     {:completion, "lib/flezha/state/completion.ex", :whole, :inline, ".tmp", false, true},

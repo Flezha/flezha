@@ -1036,15 +1036,15 @@ SHALL make the answer depend on whether the Controller will re-forward it.
 
 The `RestoreInitState` requirement describes how a Cell's state is rebuilt
 but says nothing about the input a live Cell already holds queued when the
-restore lands. The SDKs consequently disagree — the Rust SDK discards it, the
-Java SDK preserves it — with neither behaviour documented as intended.
+restore lands. The SDKs consequently disagree, the Rust SDK discards it and the
+Java SDK preserves it, with neither behaviour documented as intended.
 
-The Controller re-forwards input only for classes whose inputs it journals
-before forwarding: the effectively-once tier, whose inputs land in the input
-log, and durable workflow instances, whose inputs land in the task inbox.
-`Ingest.journal_input/2` passes every other operative through un-journaled,
-including a plain stateful stream operative — the default configuration,
-since persistence defaults to enabled and the tier is an explicit opt-in.
+The Controller re-forwards input only for instances whose inputs it journals
+before forwarding, into the one durable input log: a stream on the
+effectively-once tier and a durable workflow instance. `Ingest.journal_input/3`
+passes every other operative through un-journaled, including a plain stateful
+stream operative, the default configuration, since persistence defaults to
+enabled and the tier is an explicit opt-in.
 
 A re-forward SHALL NOT be issued onto a data stream that has not yet bound. The
 Controller re-forwards after a rebind, and a fresh runner binds its primary data
@@ -1052,13 +1052,14 @@ stream after the control-channel handshake completes; a re-forward issued in
 that window is dropped and never re-driven, which loses exactly the input the
 restore exists to preserve. The re-forward SHALL therefore be gated on the bind,
 using the same mechanism that delivers a journaled input accepted before an
-operative's first bind — one re-forward path, not two.
+operative's first bind: one re-forward path for both kinds, not one per kind.
 
 #### Scenario: The contract distinguishes journaled from un-journaled classes
 
 - **WHEN** the restore contract is consulted for the fate of queued input
-- **THEN** it SHALL give different answers for a class whose inputs are
-  journaled and a class whose inputs are not
+- **THEN** it SHALL give different answers for an instance whose inputs are
+  journaled and one whose inputs are not, and the same answer for a journaled
+  stream and a journaled workflow
 
 #### Scenario: Un-journaled queued input survives a restore
 
@@ -1077,14 +1078,15 @@ operative's first bind — one re-forward path, not two.
 
 - **GIVEN** a rebind whose fresh runner has completed the control-channel
   handshake but has not yet bound its primary data stream
-- **WHEN** the Controller re-forwards a Cell's journaled offsets
+- **WHEN** the Controller re-forwards an instance's journaled offsets
 - **THEN** those offsets SHALL reach the tasklet once the data stream binds,
   and SHALL NOT be dropped
 
 #### Scenario: The restore and first-bind re-forwards share one path
 
-- **WHEN** the re-forward issued after a restore and the re-forward issued at an
-  operative's first data-stream bind are compared
+- **WHEN** the re-forward issued after a restore, the re-forward issued at an
+  operative's first data-stream bind, and the re-forward issued when a
+  workflow rehydrates are compared
 - **THEN** they SHALL be the same code path, differing only in what triggers them
 
 ### Requirement: The compaction handshake SHALL be verified end to end against a real SDK

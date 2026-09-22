@@ -1,20 +1,26 @@
 defmodule Flezha.State.InputLog do
   @moduledoc """
-  Per-operative offset-addressable ingest journal for the effectively-once tier.
+  Per-instance offset-addressable journal of durable input.
 
-  One GenServer per tier-enabled operative journals every inbound payload
-  (post-`:on_input`) at `<state_root>/<namespace>/<operative_class>/input.log`
-  before the Overwatch forwards it, at strictly monotonic offsets. Records reuse
-  the `WalWriter` framing, and durability rides the shared `FsyncBatcher`: the
-  server registers in the `WriterRegistry` under `{operative_class, :input_log}`
-  and answers the same `:fsync` call, so the batcher drains it unchanged.
+  An instance has durable input when it is a stream on the effectively-once
+  tier or a durable workflow; both journal through this one log. One GenServer
+  per instance journals every inbound payload (post-`:on_input`) at
+  `<state_root>/<namespace>/<state key>/input.log` before the Overwatch
+  forwards it, at strictly monotonic offsets, and answers once the record is
+  synced. Records reuse the `WalWriter` framing, and durability rides the shared
+  `FsyncBatcher`: the server registers in the `WriterRegistry` under
+  `{key, :input_log}` and answers the same `:fsync` call, so the batcher drains
+  it unchanged. A payload whose `flz.msg_id` the log still retains is absorbed
+  rather than journaled twice.
 
-  Retention is watermark-driven: each Cell's durable consumed-offset is
-  reported into a public ETS table (`record_consumed/3`) and `sweep/1` truncates
-  strictly below `min(watermark, now - hold_window)`. A Cell that consumed
-  nothing holds the watermark at the log start; a frozen watermark over a
-  growing log emits `[:flezha, :state, :input_log_frozen_watermark]` naming the
-  lagging Cell instead of silently accumulating.
+  Retention is watermark-driven: each reporter's durable consumed-offset (a
+  stream Cell's effect record, a workflow's iteration commit under its
+  journal's identity) is reported into a public ETS table
+  (`record_consumed/3`) and the sweep truncates strictly below
+  `min(watermark, now - hold_window)`. A reporter that consumed nothing holds
+  the watermark at the log start; a frozen watermark over a growing log emits
+  `[:flezha, :state, :input_log_frozen_watermark]` naming the lagging reporter
+  instead of silently accumulating.
   """
 
   use GenServer
@@ -60,13 +66,15 @@ defmodule Flezha.State.InputLog do
 
   @watermarks :flezha_input_log_watermarks
 
+  @msg_id_key "flz.msg_id"
+
   # Source-ingestion credit (`credit-grant-flow-control` §source): appends
   # debit the per-Operative ledger; min-watermark advances drain it (batched
   # by the low watermark); at zero credit the append parks via a deferred
   # reply, which the Overwatch holds open on the source's call
   # (`Flezha.Operative.Ingest`) — the websocket stops reading its socket until
   # credit mints, while the host keeps running the chains that mint it.
-  # `consumed` is the log's own copy of its Cells' durable consumed-offsets:
+  # `consumed` is the log's own copy of its reporters' durable consumed-offsets:
   # the min-watermark that drains source credit is taken from it, so an advance
   # never scans the shared table. The table stays the published view.
   # `positions` (a `Flezha.State.SeqIndex`) lets a truncation find its floor
@@ -87,7 +95,15 @@ defmodule Flezha.State.InputLog do
     # `nil`. Set, the log stays alive and refuses to serve: appending would
     # hand out offsets the file already holds past the failure, and reading
     # would serve the prefix before it as the whole log.
-    :refusal
+    :refusal,
+    # `flz.msg_id => offset` over the retained records, `nil` until the first
+    # append that carries an id builds it from the file, so a log whose senders
+    # never stamp one walks nothing for it.
+    msg_ids: nil,
+    # Answers owed until the records they name are synced, newest first, and
+    # whether anything was written since the companion was last handed them.
+    owed: [],
+    dirty: false
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -111,17 +127,20 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Journal one inbound payload, returning its assigned offset. Starts the
-  operative's log server on first use. The append (write syscall) completes
-  before this returns, so the caller forwards only journaled payloads;
-  durability is fsync-batched like the per-Cell WAL. At zero source
-  credit the call parks (deferred reply) until the min-watermark advance
-  mints credit — the intended source back-pressure, hence `:infinity`.
+  Journal one inbound payload, returning its assigned offset once the record is
+  synced, so the caller forwards only durable payloads; the sync is the shared
+  `FsyncBatcher` tick, so every append of one tick shares one fsync. Starts the
+  log server on first use. A payload whose metadata carries a `flz.msg_id` the
+  log still retains is absorbed: `{:duplicate, offset}` names the retained
+  record and nothing is written. At zero source credit the call parks (deferred
+  reply) until the min-watermark advance mints credit — the intended source
+  back-pressure, hence `:infinity`.
 
   The waiting form of `append_async/5`, for a caller with nothing else to do
   meanwhile; the Overwatch's ingest issues the request and carries on.
   """
-  @spec append(binary(), term(), map()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @spec append(binary(), term(), map()) ::
+          {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
   def append(operative_class, message, metadata),
     do: do_append(operative_class, message, metadata, 2)
 
@@ -142,19 +161,20 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Journal one inbound payload without waiting: the `{:append, body}` request is
-  issued with `:gen_server.send_request/4` under `label` into the caller's
-  request collection. The answer — `{:ok, offset}`, or the log's exit, which
-  the monitored request reports as `{:error, {reason, log}}` instead of leaving
-  the caller owed — arrives as a message the caller hands to
-  `:gen_server.check_response/3`. A zero-credit park is then the caller's to
-  hold, not its loop's to wait on.
+  Journal one inbound payload without waiting: the `{:append, body, msg_id}`
+  request is issued with `:gen_server.send_request/4` under `label` into the
+  caller's request collection. The answer — `append/3`'s, or the log's exit,
+  which the monitored request reports as `{:error, {reason, log}}` instead of
+  leaving the caller owed — arrives as a message the caller hands to
+  `:gen_server.check_response/3`, once the record is synced. A zero-credit park
+  is then the caller's to hold, not its loop's to wait on.
   """
   @spec append_async(binary(), term(), map(), :gen_server.request_id_collection(), term()) ::
           :gen_server.request_id_collection()
   def append_async(operative_class, message, metadata, reqids, label) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-    :gen_server.send_request(pid, {:append, encode_body(message, metadata)}, label, reqids)
+    request = {:append, encode_body(message, metadata), msg_id(metadata)}
+    :gen_server.send_request(pid, request, label, reqids)
   end
 
   # Encode in the caller rather than in the server: every ingest process pays
@@ -162,11 +182,65 @@ defmodule Flezha.State.InputLog do
   # journal process that every operative of this class shares.
   defp encode_body(message, metadata), do: :erlang.term_to_binary({message, metadata})
 
+  # The sender's message id, `nil` for none: two identical payloads without an
+  # id are two messages.
+  defp msg_id(metadata) do
+    case Map.get(metadata, @msg_id_key) do
+      id when is_binary(id) and id != "" -> id
+      _ -> nil
+    end
+  end
+
   @doc "Highest journaled offset, `-1` when the log is empty or absent."
   @spec last_offset(binary()) :: integer() | {:error, term()}
   def last_offset(operative_class) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
     call(pid, :last_offset)
+  end
+
+  @doc """
+  `{:ok, floor, last}` for a state key: the instance's floor (`watermark/1`,
+  `-1` when no reporter has reported) and its log's last offset (`-1` when
+  there is none). The instance owes undelivered input exactly when
+  `last > floor`.
+
+  Reads no record: a running log answers from memory, and a file whose log is
+  not running is opened (the scan its next append needs anyway). A key with
+  no file starts no log: asking whether an instance owes input must not create
+  a log for one that never had any.
+  """
+  @spec tail(binary()) :: {:ok, integer(), integer()} | {:error, term()}
+  def tail(operative_class) do
+    case retained_last_offset(operative_class) do
+      last when is_integer(last) -> {:ok, watermark(operative_class) || -1, last}
+      {:error, _refusal} = refused -> refused
+    end
+  end
+
+  @doc """
+  The retained records above the instance's floor, in offset order, as
+  `read_range/3` answers them: what the next bind re-forwards. `[]` for a key
+  with no log.
+  """
+  @spec undelivered(binary()) :: [{non_neg_integer(), term(), map()}] | {:error, term()}
+  def undelivered(operative_class) do
+    case tail(operative_class) do
+      {:ok, floor, last} when last > floor -> read_range(operative_class, floor + 1, last)
+      {:ok, _floor, _last} -> []
+      {:error, _refusal} = refused -> refused
+    end
+  end
+
+  defp retained_last_offset(operative_class) do
+    case Supervisor.lookup({operative_class, :input_log}) do
+      {:ok, pid} ->
+        call(pid, :last_offset)
+
+      :error ->
+        if File.exists?(Paths.input_log_path(operative_class)),
+          do: last_offset(operative_class),
+          else: -1
+    end
   end
 
   @doc """
@@ -184,9 +258,11 @@ defmodule Flezha.State.InputLog do
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
 
   @doc """
-  Report a Cell's durable consumed-offset (called when an effect record
-  carrying `consumed_offset` becomes durable, and on boot repopulation from
-  the WAL tail).
+  Report a reporter's durable consumed-offset: a stream Cell's when an effect
+  record carrying `consumed_offset` becomes durable (and on boot repopulation
+  from the WAL tail), a durable workflow's under `Paths.journal_id/1` when an
+  iteration commit or a park carrying one becomes durable (and at every bind,
+  from the journal).
 
   A consumed-offset only ever moves forward: the report takes effect when it is
   strictly greater than the stored one and is otherwise ignored, so a reporter
@@ -293,9 +369,9 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Minimum durable consumed-offset across the operative's reporting Cells,
-  or `nil` when no Cell has reported (the watermark then holds at the log
-  start and nothing truncates).
+  Minimum durable consumed-offset across the instance's reporters — its floor —
+  or `nil` when none has reported (the watermark then holds at the log start
+  and nothing truncates).
   """
   @spec watermark(binary()) :: non_neg_integer() | nil
   def watermark(operative_class) do
@@ -307,8 +383,8 @@ defmodule Flezha.State.InputLog do
 
   @doc """
   Producing-liveness cursors: the log's last offset and the durable consumed
-  offset of every Cell that has reported one. `nil` when no log is live —
-  the operative is not on the effectively-once tier and has none.
+  offset of every reporter that has reported one. `nil` when no log is running
+  for the key — an instance without durable input has none.
 
   Lookup-only on purpose. `last_offset/1` goes through `find_or_start/1`, and
   polling THAT from the convergence tick would create an input log — a file, a
@@ -414,17 +490,18 @@ defmodule Flezha.State.InputLog do
     {:reply, {:error, refusal}, state}
   end
 
-  def handle_call({:append, body}, from, state) do
+  def handle_call({:append, body, msg_id}, from, state) do
     # Fold in the appends already queued behind this one so a burst costs one
     # write syscall instead of N. Under light load the batch is a single
     # record and this is the old path with one extra `receive` that returns
     # immediately.
-    {:noreply,
-     write_queued_appends(state, [{from, body} | collect_appends(@max_append_batch - 1, [])])}
+    batch = [{from, body, msg_id} | collect_appends(@max_append_batch - 1, [])]
+    {:noreply, write_queued_appends(state, batch)}
   end
 
   def handle_call(:fsync, _from, state) do
-    {:reply, sync_now(state.syncer), state}
+    {:reply, companion_call(state.syncer, &{:sync, Enum.reverse(state.owed), &1, &2}),
+     %{state | owed: [], dirty: false}}
   end
 
   def handle_call(:last_offset, _from, state) do
@@ -445,32 +522,41 @@ defmodule Flezha.State.InputLog do
   def handle_cast(_request, %{refusal: {_, _, _}} = state), do: {:noreply, state}
 
   # The retention sweep's truncation. It runs in this loop — ingest waits
-  # behind it — so it costs the retained tail, never the log.
+  # behind it — so it costs the retained tail, never the log. A prefix below
+  # the record-log cut threshold is left for a later sweep, so a loop that
+  # releases one input per turn rewrites the file once per threshold.
   def handle_cast({:truncate_below, floor}, state) do
-    case RecordFrame.cut_below(state.path, state.file_handle, state.positions, floor) do
+    min_bytes = PersistenceResolver.record_log_cut_after_bytes()
+
+    case RecordFrame.cut_below(state.path, state.file_handle, state.positions, floor, min_bytes) do
       {:ok, _cut, file, positions} ->
         # The companion's descriptor still names the file the rename replaced.
-        send(state.syncer, {:reopen, state.path})
-        {:noreply, %{state | file_handle: file, positions: positions}}
+        # Awaited: a sync the companion merged across the swap would answer
+        # appends written to the new file by syncing the old one.
+        _ = companion_call(state.syncer, &{:reopen, state.path, &1, &2})
 
-      # Nothing below the floor, or the file is gone from under a queued
-      # truncation (its class directory removed): either way nothing to cut.
+        {:noreply,
+         %{state | file_handle: file, positions: positions, msg_ids: trim_ids(state, floor)}}
+
+      # Nothing (or too little) below the floor, or the file is gone from under
+      # a queued truncation (its class directory removed): nothing to cut.
       _ ->
         {:noreply, state}
     end
   end
 
-  # The batcher's tick: the companion syncs while this loop keeps appending.
+  # The batcher's tick: the companion syncs, then answers every append the
+  # sync made durable, while this loop keeps appending.
   def handle_cast(:fsync, state) do
-    send(state.syncer, :sync)
-    {:noreply, state}
+    send(state.syncer, {:sync, Enum.reverse(state.owed)})
+    {:noreply, %{state | owed: [], dirty: false}}
   end
 
-  # A Cell's durable consumed-offset moved (an effect record became durable,
-  # a correction rewound it, or the Cell was deleted: `-1`). Fold in every
-  # advance already queued, then drain the freed bytes from the source ledger
-  # once and, when the batched grant lands, unpark waiting appends in arrival
-  # order.
+  # A reporter's durable consumed-offset moved (an effect record or an
+  # iteration commit became durable, a correction rewound it, or the Cell was
+  # deleted: `-1`). Fold in every advance already queued, then drain the freed
+  # bytes from the source ledger once and, when the batched grant lands, unpark
+  # waiting appends in arrival order.
   def handle_cast({:consumed, cell_id, offset}, state) do
     state =
       state
@@ -511,7 +597,8 @@ defmodule Flezha.State.InputLog do
   @impl true
   def terminate(_reason, state) do
     if state.file_handle do
-      _ = :file.datasync(state.file_handle)
+      # The answers still owed name records this sync makes durable.
+      if :file.datasync(state.file_handle) == :ok, do: answer(Enum.reverse(state.owed))
       _ = :file.close(state.file_handle)
     end
 
@@ -524,7 +611,7 @@ defmodule Flezha.State.InputLog do
 
   # A second raw handle on the same file, in its own process: fdatasync syncs
   # the inode, not the descriptor, so the ~ms a datasync takes is spent here
-  # while the log's loop keeps answering appends — which every effectively-once
+  # while the log's loop keeps answering appends — which every durable-input
   # source is waiting on, one record at a time.
   defp start_syncer(path) do
     spawn_link(fn -> syncer_loop(open_raw(path)) end)
@@ -537,20 +624,24 @@ defmodule Flezha.State.InputLog do
 
   defp syncer_loop(fh) do
     receive do
-      :sync ->
+      {:sync, answers} ->
         # A backlog of ticks is one sync: datasync covers every write before it.
-        drain_syncs()
+        answers = drain_syncs([answers])
         :ok = :file.datasync(fh)
+        answer(answers)
         syncer_loop(fh)
 
-      {:sync, from, ref} ->
+      {:sync, answers, from, ref} ->
         :ok = :file.datasync(fh)
+        answer(answers)
         send(from, {ref, :ok})
         syncer_loop(fh)
 
-      {:reopen, path} ->
+      {:reopen, path, from, ref} ->
         _ = :file.close(fh)
-        syncer_loop(open_raw(path))
+        fh = open_raw(path)
+        send(from, {ref, :ok})
+        syncer_loop(fh)
 
       :stop ->
         _ = :file.close(fh)
@@ -558,23 +649,27 @@ defmodule Flezha.State.InputLog do
     end
   end
 
-  defp drain_syncs() do
+  defp drain_syncs(batches) do
     receive do
-      :sync -> drain_syncs()
+      {:sync, answers} -> drain_syncs([answers | batches])
     after
-      0 -> :ok
+      0 -> batches |> Enum.reverse() |> Enum.concat()
     end
   end
 
-  # The synchronous flush (`flush_now`, shutdown). The companion is the only
-  # process that can answer, so the monitor is the bound: a caller's call
-  # timeout bounds the caller, never this loop, and an unbounded wait here
-  # parks every append the log owes for the rest of its life. `:error` is what
-  # the `FsyncBatcher` already reads as "still dirty, sync it on the next
-  # drain", so a lost sync is retried rather than reported durable.
-  defp sync_now(syncer) do
+  defp answer(answers),
+    do: Enum.each(answers, fn {from, reply} -> GenServer.reply(from, reply) end)
+
+  # A request only the companion can answer: the synchronous flush
+  # (`flush_now`, shutdown) or the swap onto a rewritten file. The monitor is
+  # the bound: a caller's call timeout bounds the caller, never this loop, and
+  # an unbounded wait here parks every append the log owes for the rest of its
+  # life. `:error` is what the `FsyncBatcher` already reads as "still dirty,
+  # sync it on the next drain", so a lost sync is retried rather than reported
+  # durable.
+  defp companion_call(syncer, request) do
     ref = Process.monitor(syncer)
-    send(syncer, {:sync, self(), ref})
+    send(syncer, request.(self(), ref))
 
     receive do
       {^ref, :ok} ->
@@ -615,64 +710,89 @@ defmodule Flezha.State.InputLog do
     if grant > 0, do: unpark_waiters(state), else: state
   end
 
-  # Drain queued `{:append, body}` calls without disturbing the relative order
-  # of anything else in the mailbox — a selective receive leaves non-matching
-  # messages (`:fsync`, `{:consumed, ...}`, ...) queued where they were.
+  # Drain queued `{:append, body, msg_id}` calls without disturbing the relative
+  # order of anything else in the mailbox — a selective receive leaves
+  # non-matching messages (`:fsync`, `{:consumed, ...}`, ...) queued where they
+  # were.
   defp collect_appends(0, acc), do: Enum.reverse(acc)
 
   defp collect_appends(remaining, acc) do
     receive do
-      {:"$gen_call", from, {:append, body}} ->
-        collect_appends(remaining - 1, [{from, body} | acc])
+      {:"$gen_call", from, {:append, body, msg_id}} ->
+        collect_appends(remaining - 1, [{from, body, msg_id} | acc])
     after
       0 -> Enum.reverse(acc)
     end
   end
 
-  # Admit in arrival order, encode into one iolist, write once, reply to all.
-  # The first record that overruns credit parks, and so does everything behind
-  # it: once one has parked, the rest of the batch parks without re-testing the
-  # ledger, so a later smaller record can never be admitted ahead of an earlier
-  # parked one. That whole-tail park is what preserves the source's order — the
-  # same order one-append-per-message got for free from the mailbox.
+  # Admit in arrival order, encode into one iolist, write once, answer all once
+  # synced. An append whose id the log retains is answered with that record and
+  # writes nothing. The first record that overruns credit parks, and so does
+  # everything behind it: once one has parked, the rest of the batch parks
+  # without re-testing the ledger, so a later smaller record can never be
+  # admitted ahead of an earlier parked one. That whole-tail park is what
+  # preserves the source's order — the same order one-append-per-message got
+  # for free from the mailbox.
   defp write_queued_appends(state, batch) do
-    {state, iodata, replies, _parking?} =
-      Enum.reduce(batch, {state, [], [], false}, fn
-        {from, body}, {st, io, replies, false} ->
-          case CreditLedger.admit(st.ledger, byte_size(body)) do
-            {:ok, ledger} ->
-              {offset, record, st} = encode_append(%{st | ledger: ledger}, body)
-              {st, [io, record], [{from, offset} | replies], false}
+    state = if Enum.any?(batch, &elem(&1, 2)), do: ensure_ids(state), else: state
 
-            {:overrun, ledger} ->
-              {park(%{st | ledger: ledger}, from, body), io, replies, true}
+    {state, iodata, answers, _parking?} =
+      Enum.reduce(batch, {state, [], [], false}, fn
+        {from, _body, _id} = append, {st, io, answers, false} ->
+          case admit(st, append) do
+            {:ok, offset, record, st} ->
+              {st, [io, record], [{from, {:ok, offset}} | answers], false}
+
+            {:duplicate, _offset} = dup ->
+              {st, io, [{from, dup} | answers], false}
+
+            {:overrun, st} ->
+              {park(st, append), io, answers, true}
           end
 
-        {from, body}, {st, io, replies, true} ->
-          {park(st, from, body), io, replies, true}
+        append, {st, io, answers, true} ->
+          {park(st, append), io, answers, true}
       end)
 
-    state = flush_records(state, iodata)
-
-    Enum.each(Enum.reverse(replies), fn {from, offset} -> GenServer.reply(from, {:ok, offset}) end)
-
-    state
+    state |> flush_records(iodata) |> owe(answers)
   end
 
-  defp park(state, from, body),
-    do: %{state | waiters: :queue.in({from, body}, state.waiters)}
+  # One append's admission: absorbed by an id the log retains, held back by the
+  # credit window (the ledger still records the overrun), or encoded at the
+  # next offset. The caller decides when the record reaches the file.
+  defp admit(state, {_from, body, id}) do
+    with :none <- retained(state, id),
+         {:ok, ledger} <- CreditLedger.admit(state.ledger, byte_size(body)) do
+      {offset, record, state} = encode_append(%{state | ledger: ledger}, body, id)
+      {:ok, offset, record, state}
+    else
+      {:duplicate, _offset} = dup -> dup
+      {:overrun, ledger} -> {:overrun, %{state | ledger: ledger}}
+    end
+  end
+
+  defp park(state, append), do: %{state | waiters: :queue.in(append, state.waiters)}
+
+  # An answer leaves once the records it names are synced: owed to the next tick
+  # while anything written is unsynced, else handed to the companion, which
+  # sends it behind the sync already in flight. `answers` are newest first.
+  defp owe(state, []), do: state
+  defp owe(%{dirty: true} = state, answers), do: %{state | owed: answers ++ state.owed}
+
+  defp owe(state, answers) do
+    send(state.syncer, {:sync, Enum.reverse(answers)})
+    state
+  end
 
   defp flush_records(state, []), do: state
 
   defp flush_records(state, iodata) do
     :ok = :file.write(state.file_handle, iodata)
     FsyncBatcher.mark_dirty({state.operative_class, :input_log})
-    state
+    %{state | dirty: true}
   end
 
-  # Assign the next offset and encode the record; the caller decides when the
-  # bytes actually reach the file.
-  defp encode_append(state, body) do
+  defp encode_append(state, body, id) do
     offset = state.next_offset
     header = record_header(System.system_time(:millisecond))
     record = Frame.encode_record(offset, header, body)
@@ -682,14 +802,39 @@ defmodule Flezha.State.InputLog do
        state
        | next_offset: offset + 1,
          offset_sizes: :queue.in({offset, byte_size(body)}, state.offset_sizes),
-         positions: SeqIndex.note(state.positions, offset, byte_size(record))
+         positions: SeqIndex.note(state.positions, offset, byte_size(record)),
+         msg_ids: if(id, do: Map.put(state.msg_ids, id, offset), else: state.msg_ids)
      }}
   end
 
-  defp write_journal(state, body) do
-    {offset, record, state} = encode_append(state, body)
-    {offset, flush_records(state, [record])}
+  # ---------- Message-id index ----------
+
+  # Walked once per log lifetime, by the first append that carries an id. The
+  # open walked this file to its end, so a record that does not decode here is
+  # impossible, not a case.
+  defp ensure_ids(%{msg_ids: nil} = state) do
+    {:ok, ids} =
+      RecordFrame.index_by(state.file_handle, state.path, fn {_seq, _header, body} ->
+        {_message, metadata} = :erlang.binary_to_term(body)
+        msg_id(metadata)
+      end)
+
+    %{state | msg_ids: ids}
   end
+
+  defp ensure_ids(state), do: state
+
+  defp retained(_state, nil), do: :none
+
+  defp retained(state, id) do
+    case Map.fetch(state.msg_ids, id) do
+      {:ok, offset} -> {:duplicate, offset}
+      :error -> :none
+    end
+  end
+
+  defp trim_ids(%{msg_ids: nil}, _floor), do: nil
+  defp trim_ids(state, floor), do: Map.reject(state.msg_ids, fn {_, offset} -> offset < floor end)
 
   # Free the tracked bytes of every journaled offset at or below the
   # watermark (its consumption is durable; the log slot is reclaimable).
@@ -710,15 +855,19 @@ defmodule Flezha.State.InputLog do
       {:empty, _} ->
         state
 
-      {{:value, {from, body}}, rest} ->
-        case CreditLedger.admit(state.ledger, byte_size(body)) do
-          {:ok, ledger} ->
-            {offset, state} = write_journal(%{state | ledger: ledger, waiters: rest}, body)
-            GenServer.reply(from, {:ok, offset})
-            unpark_waiters(state)
+      {{:value, {from, _body, _id} = append}, rest} ->
+        case admit(state, append) do
+          {:ok, offset, record, state} ->
+            %{state | waiters: rest}
+            |> flush_records([record])
+            |> owe([{from, {:ok, offset}}])
+            |> unpark_waiters()
 
-          {:overrun, ledger} ->
-            %{state | ledger: ledger}
+          {:duplicate, _offset} = dup ->
+            unpark_waiters(owe(%{state | waiters: rest}, [{from, dup}]))
+
+          {:overrun, state} ->
+            state
         end
     end
   end

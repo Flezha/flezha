@@ -3,7 +3,7 @@
 The reference for **where Flezha can lose operative state or output, where it cannot, and how
 to operate so a planned action never loses data**, for operators and operative authors. It
 covers the scenario matrix, the hard-kill gap, the delivery semantics (at-least-once by
-default, the effectively-once tier), the workflow outbox and inbox contracts, the cross-hop
+default, the effectively-once tier), the durable input log and the workflow outbox, the cross-hop
 guarantee, timers, the dead-letter queue, late-input correction, the remote durability tier
 and the operator playbook. Operative *placement* recovery is
 [`../internals/process_hub.md`](../internals/process_hub.md); the WAL substrate itself is
@@ -56,10 +56,10 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Kafka broker down, runners alive** | No loss | Buffered, resumes | The producer reconnects; the queue drains when the broker returns. |
 | **Sustained overload** (changes outpace fsync) | **No loss** | At-least-once | Credit-grant flow control: the sender's byte window (`:wal_high_watermark_bytes`, 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path — park, never drop. A shed on a credit session emits `[:flezha, :state, :credit_anomaly]`. |
 | **Workflow operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet and its handoff, so committed tasks are skipped, not redone. Inspect with `flz state journal`. |
-| **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** | At-least-once | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the durable inbox. |
-| **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's `inbox.wal` before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
-| **Controller redeploy while a workflow instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + inbox + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
-| **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and its memory-only inbox is lost. Idempotent by author contract, or don't opt out. |
+| **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** | At-least-once | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
+| **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
+| **Controller redeploy while a workflow instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
+| **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and its driver's in-memory inbox is lost. Idempotent by author contract, or don't opt out. |
 | **Workflow operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Poison payload** (fails every retry) | **No loss** | Cell continues | Retry-then-park: after `retry_max` attempts the payload is parked durably to the DLQ *before* the Cell advances. Only retention (30 d / 4 GiB, loud) ever discards it. |
 
@@ -152,11 +152,14 @@ otherwise), and the tier is built by the shared runner core, so Rust and Java ea
 guarantee.
 
 - **Durable input log.** `Flezha.Operative.Ingest.ingest/4` appends every inbound payload to a
-  per-operative `input.log` before forwarding, stamped `flz.offset`. The host never waits on the
-  log (`InputLog.append_async/5`): the input is forwarded when the log answers, and a
-  zero-credit park lands on the source's call alone. Retention truncates only below the minimum
-  durable consumed-offset across the operative's Cells; a frozen watermark past the size
-  threshold emits `[:flezha, :state, :input_log_frozen_watermark]`.
+  per-instance `input.log` before forwarding, stamped `flz.offset`; the log answers once the
+  record is synced. It is the one durable input log, shared with a durable workflow (below). The
+  host never waits on the log (`InputLog.append_async/5`): the input is forwarded when the log
+  answers, and a zero-credit park lands on the source's call alone. A repeat of a `flz.msg_id`
+  the log still retains is absorbed; a message without an id is always appended. Retention
+  truncates only below the minimum durable consumed-offset across the instance's reporters (here
+  its Cells); a frozen watermark past the size threshold emits
+  `[:flezha, :state, :input_log_frozen_watermark]`.
 - **Atomic effect record.** State changes, outputs, consumed offset, dead-letter entry and event
   time form ONE `cell_effect_record` under ONE fsync. No partial combination is ever durable
   and effect records are never coalesced away.
@@ -310,22 +313,32 @@ the re-drive window (between a sink's confirmation and the `outbox_flushed` mark
 triggers); a dedup-capable sink absorbs that duplicate exactly. Inspect what an instance owes
 with `flz state journal <operative/instance>`.
 
-## Workflow operatives: the durable inbox
+## Workflow operatives: the same durable input log
 
-The input half of the same story. A durable instance's post-start input is appended to a
-per-instance `inbox.wal` — the same `WalWriter` + `FsyncBatcher` substrate as `task.journal` —
-**before** it is forwarded: a crash after the append re-delivers on rehydrate (at-least-once
-*into* the operative, exactly-once *completion* via the consumed offset), and an append that
-fails is not forwarded. Offsets are 1-based (`0` means nothing consumed); a duplicate of
-`flz.msg_id` inside the undelivered window is absorbed at append, so an at-least-once sender
-cannot produce a duplicate turn, while a message without an id is always appended. Delivery is filtered by the journal's
-*released* offset, which a rewind never lowers, so a deferred truncation costs disk, never a
-re-delivery.
+The input half of the same story. A durable workflow instance's input goes through the one
+durable input log the tier uses (above), keyed by the instance id: appended **before** it is
+forwarded, answered once synced, stamped `flz.offset`, and an append that fails is not
+forwarded. A crash after the append re-delivers on rehydrate (at-least-once *into* the
+operative, exactly-once *completion* via the consumed offset). A repeat of a `flz.msg_id` the
+log still retains is absorbed, so an at-least-once sender cannot produce a duplicate turn,
+while a message without an id is always appended.
+
+What differs is the reporter. A workflow's Cells report no consumed offset; its journal does,
+under its own reserved identity: each durable iteration commit (and a park that dead-lettered a
+message unread) reports the offset it consumed into the log's watermark, and every bind seeds
+that row from the highest offset any committed iteration consumed. The watermark is the
+instance's floor: retention reclaims below it, the bind re-forwards the retained records above
+it, and a rewind never lowers it, so a deferred truncation costs disk, never a re-delivery.
+
+**Source credit applies too.** A durable workflow's appends debit the same per-instance
+`:source_credit_window_bytes` window, drained as iterations commit, so a sender that has the
+window's worth of input (16 MiB by default) owed by one instance parks until the instance
+commits an iteration, instead of growing the log without bound.
 
 **Guarantee.** Input sent to a suspended, crashed or migrating durable instance is **never
-lost**. Inspect with `flz state inbox <operative/instance>`. An opted-out class keeps a
-memory-only inbox. Mechanics: [`workflow_operative.md`](workflow_operative.md) "Durable loop and
-suspension".
+lost**. Inspect with `flz state inbox <operative/instance>`, which renders the log of either
+kind. An opted-out class keeps only its driver's in-memory inbox. Mechanics:
+[`workflow_operative.md`](workflow_operative.md) "Durable loop and suspension".
 
 ## Operative to operative: the cross-hop delivery guarantee
 
@@ -333,8 +346,8 @@ suspension".
 stream with **no** new identity scheme, dedup store, ledger or wire format. Three existing parts
 assemble the guarantee: the source's outbox stamps `flz.seq` / `flz.key` / `flz.epoch` and makes
 the record durable; the plugin's worker holds the record and retries until the target confirms;
-the target's ingest absorbs a repeat of `flz.msg_id` inside its undelivered window and is
-offset-addressed under the tier.
+the target's ingest absorbs a repeat of a `flz.msg_id` its durable input log still retains and
+is offset-addressed in that log.
 
 **The guarantee is derived, never configured** — there is no delivery-mode option, because a
 source with no outbox has nothing to re-send from:
@@ -503,8 +516,8 @@ migration time, not replication. A production boot must choose: with `FLEZHA_DUR
 unset the controller refuses to start, and `FLEZHA_DURABILITY_BACKEND=none` is byte-identical
 to a build without the tier (`durability_posture: local_only`).
 
-When enabled, immutable artifacts — snapshots, WAL record bundles, task-journal and inbox
-suffixes, the input log, the registry cspec, parked DLQ records, the authz and schedule stores —
+When enabled, immutable artifacts — snapshots, WAL record bundles, task-journal suffixes, the
+durable input log, the registry cspec, parked DLQ records, the authz and schedule stores —
 ship to a Postgres, S3-compatible or file backend at boundaries that already exist (checkpoint
 close, compaction, workflow commit barriers, a park or a drop) plus one backstop timer
 (`ship_interval_ms`, 30 s). The manifest is written last, so a torn upload is invisible to

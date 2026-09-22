@@ -68,30 +68,37 @@ channels and nothing else. Either way a crash would re-seed empty, read as conve
 **The iteration boundary.** `IterCommit` rides the same commit worker as `TaskCommit` (below).
 After the ack the worker runs the post-ack cleanup in order: a boundary snapshot
 (`CompactCell` per Cell, in a task, best-effort — a failed compaction means the rehydrate
-replays the WAL tail), the outbox flush in journal order, the inbox release
-(`TaskInbox.truncate/2`) and the journal cut (`TaskJournal.cut/1`). The two cuts are the
-writers' own casts — the worker never waits on a file rewrite — and a prefix cut below
-`:record_log_cut_after_bytes` (64 KiB) is deferred until that many released bytes accumulate.
+replays the WAL tail), the outbox flush in journal order, the report of the iteration's
+consumed offset into the input log's watermark (`TaskJournal.release_input/2`) and the journal
+cut (`TaskJournal.cut/1`). An iteration that consumed no journaled input (a carry-fed pass)
+reports nothing. Both files are cut by their own writers — the journal on this cast, the input
+log by its retention sweep below the watermark — so the worker never waits on a file rewrite,
+and a prefix cut below `:record_log_cut_after_bytes` (64 KiB) is deferred until that many
+released bytes accumulate.
 The journal is cut only for a class whose `compensable_tasks` is `[]` (a saga or a rewind
 replans from the committed history); a cuttable loop can only be rewound to its current
 iteration.
 
-**The durable inbox.** `Ingest` holds the one append-before-forward seam: post-start
-input goes to `<state_root>/<ns>/<inst>/<inst>/inbox.wal` before it is forwarded, stamped
-`flz.inbox_offset` (WAL seq + 1; offset 0 means nothing consumed); a failed append is not
-forwarded. The record header is the first 16 bytes of `sha256(flz.msg_id)` and the writer's
-`dedup: true` index refuses a duplicate inside the window, the file above its last release; a
-message without an id is always appended, as a stream processes every frame it is sent.
-Delivery is filtered by the journal's **released** offset (the maximum consumed offset of any
-iteration commit or park over the raw journal, which no rewind lowers), so a re-sent consumed
-message is absorbed rather than re-delivered.
+**The durable input log.** `Ingest` holds the one append-before-forward seam, and a durable
+workflow uses the input log a stream on the effectively-once tier uses: input goes to
+`<state_root>/<ns>/<inst>/input.log` (`Flezha.State.InputLog`) before it is forwarded,
+answered once synced and stamped `flz.offset` (0-based; absent means not journaled, never
+`0`); a failed append is not forwarded. A repeat of a `flz.msg_id` the log still retains is
+absorbed, from an in-memory index the log builds from the file on the first append that
+carries an id; a message without an id is always appended. The instance's floor is the log's
+watermark under the journal's identity, seeded at every bind from the journal's **released**
+offset (the maximum consumed offset of any iteration commit or park over the raw journal, which
+no rewind lowers) and raised by every commit and park, so a consumed message is never
+re-delivered. The appends debit the source credit window like a stream's, so a sender with
+16 MiB owed by one instance parks until it commits.
 
 **Suspension.** An instance of any loop mode whose inbox stays empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
 (default 5 000; read in the shared core, so Rust and Java agree, and by the Elixir SDK's own driver) at a committed boundary tears
 its run down without a completion and ships `IterPark`, naming the last message it parked to
 the dead-letter queue unread. The controller journals
-`parked(iter[, wake_deadline_ms], consumed_offset)`, which releases that message from the inbox
-as an iteration commit releases its input, **before** `Migration.suspend/3` evicts the instance
+`parked(iter[, wake_deadline_ms], consumed_offset)` and reports that offset into the input
+log's watermark, releasing the message as an iteration commit releases its input, **before**
+`Migration.suspend/3` evicts the instance
 (`RemOperative`, runner tag `nil`); a park whose append fails leaves the instance bound and
 logged. The Overwatch and the registry entry stay, and the Overwatch **hibernates**
 (`:hibernate` on both suspension entries, releasing its bind-time heap).
@@ -104,24 +111,31 @@ logged. The Overwatch and the registry entry stay, and the Overwatch **hibernate
 | `flz state get` | refused — no live Cell |
 | removing its factory from the runner | the SDK's live-instance check cannot see a suspended instance, so the removal succeeds and the later rehydrate fails placement until a runner re-defines the factory; `FleetManager` warns `dropped factory ... that still has controller-known operatives` on the `UpdateFactories` frame. A blocking policy is deferred |
 
-**Rehydrate = bind.** A new inbox append, the wake deadline, a crash and a migration all go
+**Rehydrate = bind.** A new input-log append, the wake deadline, a crash and a migration all go
 through `Lifecycle.complete_init/4`: respawn on any live runner, `AddOperative.task_journal`
-with the folded journal, `resume_cell_count` Cell restores, then the undelivered tail
-(`Replay.deliver_inbox_tail/1`). `AddOperative.inbox_tail_count` tells the driver how many items
-it is owed; it waits up to 60 s for them before its park-idle clock starts, so a tail forwarded
-under load never hits a driver that already parked. An instance with undelivered input is never
-left suspended (`rehydrate_if_pending/1` runs at every park and at boot), and a park that lands
-while an un-park is still binding wins (`parked_in_flight` discards the task's stale bound state;
-the pending tail wakes it again).
+with the folded journal, `resume_cell_count` Cell restores, and the one re-forward every bind
+of either kind runs (`Replay.reforward_undelivered_tail/1`): the log's records above the floor,
+each with its original `flz.offset`, before the plugins come up.
+`AddOperative.inbox_tail_count` (the log's last offset minus the floor) tells the driver how
+many items it is owed; it waits up to 60 s for them before its park-idle clock starts, so a
+tail forwarded under load never hits a driver that already parked. An instance with
+undelivered input is never left suspended (`rehydrate_if_pending/1` runs at every park and at
+boot, and asks the log's tail rather than reading its records), and a park that lands while an
+un-park is still binding wins (`parked_in_flight` discards the task's stale bound state; the
+pending tail wakes it again). A workflow's journal, Cells and input log share one key, its
+instance id, so a bind whose `:operative_class` names anything else is refused.
 
 **The wake timer** (`wake_after()` / `wakeAfter()`) is journaled with the park record and
 re-armed with `Process.send_after` from the journal at boot, so it survives a controller
-redeploy. It fires by appending a synthetic empty inbox item (`flz.wake = timer`), so a racing
+redeploy. It fires by appending a synthetic empty input-log record (`flz.wake = timer`), so a racing
 message and timer collapse into one rehydration. At boot an instance whose journal ends in
 `parked` with nothing undelivered (`Migration.suspended_on_disk?/1`) enters suspended without
 binding; undelivered input outranks the park. Inspect with `flz state journal <operative/instance>`
-(entries tagged with their iteration, `iter_committed` with its consumed offset, the final
-`parked`) and `flz state inbox <operative/instance>` (offsets, and which are still undelivered).
+(entries tagged with their iteration, `iter_committed` with its consumed offset or "consumed no
+journaled input", the final `parked`) and `flz state inbox <operative/instance>` (the input log's
+retained records, and which are still above the floor). `flz operative replay` refuses a
+workflow Cell, since its baseline is a journal iteration, not an effect record; `flz operative
+rewind` is a loop's way back.
 
 The wake timer is the one timer a workflow has. Cell timers do not fire inside a workflow yet,
 so a timer a workflow tasklet registers is refused rather than dropped: every SDK's ctx answers
@@ -186,8 +200,9 @@ for a hookless tasklet, which is what drains the list. It does not consult the p
 markers: a cell that ran in two rewound iterations is undone once per iteration. A crash
 mid-rewind resumes with exactly the outstanding work; there is no done marker.
 
-A rewind **does not replay inputs**: the inbox is released at every iteration commit, so a
-committed turn's message is gone from disk. Rewind is undo-and-continue — the loop resumes
+A rewind **does not replay inputs**: every iteration commit raises the instance's floor in its
+input log and a rewind never lowers it, so a committed turn's message is not delivered again
+even while the log still retains it. Rewind is undo-and-continue — the loop resumes
 waiting and the next message becomes iteration `N + 1`. Cell state is unwound by the hooks,
 not by truncating the state WAL; a hookless tasklet leaves its state change in place.
 Telemetry `[:flezha, :workflow, :rewind]` (measurement `epoch`); `flz state journal` renders `rewound`.
@@ -348,7 +363,7 @@ address-space lever only, since a blocked driver's stack is not resident; an edg
 ## See also
 
 - [`../architecture/workflow_profile.md`](../architecture/workflow_profile.md) — the concepts and the wire table
-- [`data_durability.md`](data_durability.md) — the scenario matrix, the outbox and inbox contracts
+- [`data_durability.md`](data_durability.md) — the scenario matrix, the durable input log and the outbox
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the WAL substrate, `FsyncBatcher`, retention
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — field-level `TaskCommit` / `IterCommit` / `IterPark`
 - [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md) — `sync_remote`
