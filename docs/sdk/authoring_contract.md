@@ -181,7 +181,11 @@ for what its declaration does not already state:
   tasklet, which persists nothing. An argument still generic at the concrete
   class is **never guessed**: `registerFactory` fails naming the
   class and the parameter, and nothing is registered — a startup error, not a
-  dispatch error.
+  dispatch error. The optional hooks `compensate`, `cellsFor`, `eventTime`,
+  `mailboxCapacity` and `maxCells` are declared by writing them: registration
+  reads which ones the class overrides, itself or through a class above it, as
+  Ruby reads the methods a tasklet defines and PHP the methods it overrides, so
+  a hook cannot be written and left inactive.
 - **Rust** — `SimpleTasklet` declares `Input`, `Output`, `State`, `name`,
   `init_state` and `run`; a blanket impl lifts it to `Tasklet` with
   `Clock = WallClock`, `Config = ()` and the `State` type's derived change type.
@@ -424,7 +428,7 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 | Opt-in (Rust / Java)                                                         | Generated trait surface                                                               |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | none                                                                         | single-cell (empty `cell_keys()`)                                                 |
-| `keys = [..]` + `cells_for = f` / `keys = {..}` + an `@CellsFor` method | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` / `cellsForOverridden()`, `cells_for` delegates |
+| `keys = [..]` + `cells_for = f` / `keys = {..}` + an `@CellsFor` method | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` (Rust), `cells_for` delegates |
 | `idle_ttl = ms` / `max_cells = n` (Rust; dynamic knobs)                   | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java overrides `cellIdleTtl()` on a hand-written Tasklet; Elixir declares `cell_idle_ttl_ms/0` / `max_cells/0` |
 
 Declaring only one of `keys` / `cells_for` is refused. Static keying is

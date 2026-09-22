@@ -26,7 +26,7 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 
 ### Requirement: Tasklet Interface and Per-Cell Dispatch
 
-The Java SDK SHALL expose a generic `Tasklet<Input, State, Output, Change, Clock, Config>` interface in `com.flezha.sdk.tasklet`. Implementers SHALL provide `name()`, `inputType() → Class<Input>`, `outputType() → Class<Output>`, `initState(Optional<String> cellKey, Optional<RestoreInitPayload> initPayload) → State`, and `run(Input, StateHandle<State, Change>, TaskletCtx) throws TaskletException`. The default-method overrides `cellKeys()`, `cellsFor(Input)` and `cellsForOverridden()` declare static keying; dynamic keying is declared on the WIRING (`keyBy` on the consumer edge), not on the Tasklet. The cell mode is therefore single by default, static when `cellKeys()` is non-empty with `cellsForOverridden()` true, and dynamic when a consumer edge into the Tasklet carries a key function. The runtime SHALL invoke `run` on a per-cell basis with sticky ordering (see the Sticky Per-Cell Ordering requirement) and SHALL pass each input to all cells returned by `cellsFor(input)` for static-mode tasklets (single-mode tasklets skip the call and route to cell index 0).
+The Java SDK SHALL expose a generic `Tasklet<Input, State, Output, Change, Clock, Config>` interface in `com.flezha.sdk.tasklet`. Implementers SHALL provide `name()`, `inputType() → Class<Input>`, `outputType() → Class<Output>`, `initState(Optional<String> cellKey, Optional<RestoreInitPayload> initPayload) → State`, and `run(Input, StateHandle<State, Change>, TaskletCtx) throws TaskletException`. The default-method overrides `cellKeys()` and `cellsFor(Input)` declare static keying; dynamic keying is declared on the WIRING (`keyBy` on the consumer edge), not on the Tasklet. The cell mode is therefore single by default, static when `cellKeys()` is non-empty and the implementing class declares `cellsFor`, and dynamic when a consumer edge into the Tasklet carries a key function. The interface SHALL carry no `*Overridden()` companion for any optional hook: whether a hook is declared SHALL be read at registration from the implementing class, by comparing the declaring class of the hook's erased method against `Tasklet` itself, and a hook declared on an intermediate class in the hierarchy SHALL count as declared. This covers `compensate`, `cellsFor`, `eventTime`, `mailboxCapacity` and `maxCells`, and it is the same derivation the authoring contract already applies to the type tokens and `kryoTypes()`. The runtime SHALL invoke `run` on a per-cell basis with sticky ordering (see the Sticky Per-Cell Ordering requirement) and SHALL pass each input to all cells returned by `cellsFor(input)` for static-mode tasklets (single-mode tasklets skip the call and route to cell index 0).
 
 The `TaskletCtx` parameter SHALL provide:
 
@@ -44,7 +44,7 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 - **THEN** the SDK SHALL invoke the Tasklet's `run` once on the single allocated cell (cell index 0), with `state` argument equal to the value `initState(Optional.empty(), Optional.empty())` returned at operative startup
 
 #### Scenario: Static-mode Tasklet creates one cell per cellKey
-- **WHEN** a Tasklet's `cellKeys()` returns `["1m", "1h", "1d", "1w"]` and `cellsForOverridden()` returns `true`
+- **WHEN** a Tasklet's `cellKeys()` returns `["1m", "1h", "1d", "1w"]` and its class declares `cellsFor`
 - **THEN** at operative startup the SDK SHALL allocate exactly four `CellSlot` instances for that Tasklet, each constructed with `initState(Optional.of(key), Optional.empty())` for its corresponding key
 
 #### Scenario: Static-mode cellsFor fan-out enqueues input on each named cell
@@ -738,9 +738,13 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 - **WHEN** an Operative's `channels(c)` wires a Tasklet that is not reachable from the entry channel
 - **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` naming the unreachable Tasklet
 
-#### Scenario: Static-mode tasklet without cellsForOverridden is rejected
-- **WHEN** a Tasklet returns a non-empty list from `cellKeys()` but its `cellsForOverridden()` returns the default `false`
-- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` naming the Tasklet and stating that static-mode tasklets must override `cellsFor` and `cellsForOverridden`
+#### Scenario: Static-mode tasklet that declares no cellsFor is rejected
+- **WHEN** a Tasklet returns a non-empty list from `cellKeys()` but neither it nor any class in its hierarchy declares `cellsFor`
+- **THEN** `.registerFactory(...)` SHALL throw `StreamOperativeConfigurationException` naming the Tasklet and stating that a static-mode tasklet must declare `cellsFor`
+
+#### Scenario: A declared hook needs no second declaration
+- **WHEN** a workflow Tasklet declares `compensate` and nothing else about it
+- **THEN** `.registerFactory(...)` SHALL record it as compensable and the class declaration shipped to the controller SHALL carry `compensate_overridden` for it, with no further member written by the author
 
 #### Scenario: Dynamic-mode tasklet declares and creates cells lazily
 - **WHEN** a Tasklet returning an empty `cellKeys()` is wired through an edge declaring `keyBy`, and two inputs arrive whose key function returns `"BTC"` and `"ETH"`

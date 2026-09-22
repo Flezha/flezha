@@ -372,7 +372,7 @@ Because the body owns every emit, the return type no longer declares the output 
 
 Hand-written tasklet implementations SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
 
-- **Java**: the five type-token methods (`inputType`, `outputType`, `changeType`, `clockType`, `configType`) SHALL have default implementations resolving the type arguments from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When a token cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter — never guess. `kryoTypes()` SHALL default to the resolved change and state classes when both are resolvable and the change type is not `NoChange` — a `NoChange` tasklet persists nothing, so it keeps the empty-list default, which is also what keeps every existing declaration's meaning unchanged. An explicit override SHALL always win.
+- **Java**: the five type-token methods (`inputType`, `outputType`, `changeType`, `clockType`, `configType`) SHALL have default implementations resolving the type arguments from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When a token cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter — never guess. `kryoTypes()` SHALL default to the resolved change and state classes when both are resolvable and the change type is not `NoChange` — a `NoChange` tasklet persists nothing, so it keeps the empty-list default, which is also what keeps every existing declaration's meaning unchanged. An explicit override SHALL always win. Whether an **optional hook** is declared SHALL be derived the same way, from the implementing class rather than from a companion boolean: the interface SHALL carry no `*Overridden()` method, and registration SHALL read `compensate`, `cellsFor`, `eventTime`, `mailboxCapacity` and `maxCells` by comparing each hook's declaring class against the interface's own. This brings Java level with the Ruby and PHP bindings, where a declaration and its implementation cannot disagree.
 - **Rust**: a `SimpleTasklet` trait SHALL declare only `Input`, `Output`, `State` plus `name`, `init_state`, and `run`; a blanket implementation SHALL lift every `SimpleTasklet` to `Tasklet` with `Clock = WallClock`, `Config = ()`, and the `State` type's derived change type. Implementing `Tasklet` directly SHALL remain fully supported, and a type SHALL NOT implement both.
 
 The mandatory authoring surface for the common hand-written case therefore reduces to name, state initialization, and `run` in both SDKs.
@@ -396,6 +396,11 @@ The mandatory authoring surface for the common hand-written case therefore reduc
 
 - **WHEN** a Java implementation overrides `clockType()` (or a Rust implementation implements `Tasklet` directly with a non-default `Clock`)
 - **THEN** the explicit declaration SHALL be used, defaults notwithstanding
+
+#### Scenario: A Java hook cannot be written and left unclaimed
+
+- **WHEN** a Java class declares one of the optional hooks and writes nothing else about it
+- **THEN** registration SHALL treat the hook as declared, and the binding SHALL offer no way to write the hook while leaving it inactive
 
 ### Requirement: Every SDK binding passes the shared conformance suite
 

@@ -343,11 +343,6 @@ public final class ReserveFunds
     }
 
     @Override
-    public boolean compensateOverridden() {
-        return true;
-    }
-
-    @Override
     public void compensate(List<Reserved> completedOutput, StateHandle<Reservation, Taken> state, TaskletCtx ctx)
             throws TaskletException {
         System.out.println("[undo] released " + state.get().id);

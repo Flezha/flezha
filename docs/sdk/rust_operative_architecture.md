@@ -316,7 +316,8 @@ The Java SDK is the same model: `Tasklet<Input, State, Output, ChangeT,
 ClockT, ConfigT>` is a parameterized interface with `inputType()` /
 `outputType()` accessors, so bounds Rust checks at compile time become
 `StreamOperativeConfigurationException`s from `registerFactory(...)`;
-`cellsForOverridden()` replaces the `CELLS_FOR_OVERRIDDEN` const;
+a written `cellsFor`, read off the class at registration, replaces the
+`CELLS_FOR_OVERRIDDEN` const;
 dynamic mode is read off the wiring on both sides (the annotation processor
 refuses `@CellKey`) with `cellIdleTtl()` as the only knob; zero-copy
 passes the value by reference, so the producer must treat an emitted value as
