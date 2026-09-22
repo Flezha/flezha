@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.ShorthandE2ETest do
   @moduledoc """
   The §5 short form, driven end to end on the runtime `FLEZHA_E2E_RUNTIME`
-  selects. Five fixtures, one operative declaration each in every app — no
+  selects. Six fixtures, one operative declaration each in every app — no
   hand-written operative stands beside them, which is what the `shorthand`
   capability asserts:
 
@@ -11,15 +11,19 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
       `sugar_named_input_sink`;
     * `sugar_store_input`: the same shape with state, whose text inputs are
       read back off the live Cell;
-    * `sugar_workflow`: the workflow short form, a `once` workflow seeded on
-      `order` from its start values, whose output reaches
-      `sugar_workflow_placed` and which then completes;
+    * `sugar_workflow`: the workflow short form, a `once` workflow run on its
+      first message on `order`, whose output reaches `sugar_workflow_placed`
+      and which then completes;
+    * `sugar_workflow_per_input`: the workflow short form declaring the
+      `per_input` loop mode, one pass per message onto
+      `sugar_workflow_per_input_out`, which does not complete after a pass;
     * `sugar_state_only`: a short form with no sink, whose entry `ticks` feeds
       a tasklet that only keeps state, read back off the live Cell since
       no sink frame exists to observe.
 
   Text entries throughout, so the bytes a sink carries are equal across
   runtimes: a JSON round trip re-spaces the start values in some languages.
+  Every start names only the factory; the kind is the one its runner announced.
 
       FLEZHA_E2E_RUNTIME=node mix test --include system test/system/shorthand_e2e_test.exs
   """
@@ -97,7 +101,6 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
              OperativeManager.start_operative(ctx.namespace, %Builder{
                id: operative_id,
                factory_id: "sugar_workflow",
-               kind: :workflow,
                opts: [plugins: [sink(ctx.namespace, operative_id)]]
              })
 
@@ -112,6 +115,19 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     # the whole loop having run.
     assert wait_until(fn -> not registered?(ctx.namespace, operative_id) end, 30_000),
            "the workflow short form never completed"
+  end
+
+  test "a workflow short form that declares its loop mode runs once per message", ctx do
+    operative_id = start(ctx.namespace, "sugar_workflow_per_input")
+
+    send_until_accepted(ctx.namespace, operative_id, "m-1", %{"channel" => "input"})
+    assert receive_payloads(1) == ["m-1"]
+
+    send_until_accepted(ctx.namespace, operative_id, "m-2", %{"channel" => "input"})
+    assert receive_payloads(1) == ["m-2"]
+
+    assert registered?(ctx.namespace, operative_id),
+           "a per_input workflow completed after a pass, as a once workflow does"
   end
 
   # A send that lands before the bind is retryable; only an accepted one is

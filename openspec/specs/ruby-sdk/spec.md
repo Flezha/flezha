@@ -123,7 +123,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 ### Requirement: The single-tasklet short form is a class-body declaration
 The short form SHALL be a `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass, the same base a full-form operative subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operative base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operative already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels` or `tasklets`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form MAY declare `loop_mode :per_input` (or `:once`, `:chained`) in its class body and SHALL be a `once` workflow when it does not, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class setting written on a short form SHALL be refused naming it. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
 `Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
@@ -136,6 +136,11 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 - **WHEN** `class Place < Flezha::WorkflowOperative` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A short-form workflow declares its loop mode
+
+- **WHEN** `class Chat < Flezha::WorkflowOperative` declares `factory_id "chat"`, `sink "replies"`, `codec :text`, `loop_mode :per_input` and `run`, is registered, and two messages reach its entry channel
+- **THEN** the declaration carries `loop_mode` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
@@ -161,4 +166,23 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 - **WHEN** a `Flezha::StreamOperative` subclass declares `sink "out"` and `run` and no `factory_id`
 - **THEN** `register_factory` raises `Flezha::DeclarationError` naming the required `factory_id`, and no controller connection is attempted
+
+### Requirement: A Ruby workflow class carries what its builder recorded
+
+`Flezha::WorkflowOperative#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the stream's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::DeclarationError` naming it. `Flezha::WorkflowOperative` SHALL declare no `retry_attempts`, `retry_backoff_ms` or `barrier_retry_attempts` setting; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a workflow SHALL raise an error naming `TimersUnavailable` from `timer_after`, `timer_at_event_time` and `cancel_timer`.
+
+#### Scenario: A tier call on a workflow reaches the core
+
+- **WHEN** a `Flezha::WorkflowOperative` subclass's `channels` block calls `c.effectively_once`, the runner registers it and starts
+- **THEN** declaring it to the core raises naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+
+#### Scenario: A retired setting is refused
+
+- **WHEN** a `Flezha::WorkflowOperative` subclass writes `retry_attempts 5` in its class body
+- **THEN** loading it raises `NoMethodError`, the setting no longer being declared
+
+#### Scenario: A timer inside a workflow tasklet is refused
+
+- **WHEN** a tasklet of a running workflow calls `ctx.timer_after(1000)`
+- **THEN** the call raises an error naming `TimersUnavailable` and the effect carries no timer op
 

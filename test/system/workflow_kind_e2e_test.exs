@@ -1,11 +1,11 @@
 defmodule FlezhaTest.System.TaskKindE2ETest do
   @moduledoc """
-  End-to-end proof for `operative-task-kind` against a live runner of the
-  selected SDK runtime: a unit started with `kind: :workflow` flows
-  `AddOperative --kind task` → SDK spawns a task → runs `run` once → emits
-  `WorkflowCompleted` → the controller drives deregister-on-completion. The
-  whole loop is observable as the unit disappearing from the durable registry
-  without an explicit stop. Tagged
+  End-to-end proof of the workflow kind against a live runner of the selected
+  SDK runtime: a start that names only the factory takes the kind its runner
+  announced, flows `AddOperative` with kind `workflow` → the SDK runs the pass
+  once → emits `WorkflowCompleted` → the controller drives
+  deregister-on-completion. The whole loop is observable as the unit
+  disappearing from the durable registry without an explicit stop. Tagged
   `:system` (boots a real subprocess); run with
   `mix test --include system test/system/workflow_kind_e2e_test.exs`.
   """
@@ -18,6 +18,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Completion
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "task_kind_e2e"
@@ -55,10 +56,10 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   test "task runs once on its first message and is deregistered on completion" do
     operative_id = "task_e2e_#{System.unique_integer([:positive])}"
 
+    # No kind: the factory's runner announced it.
     builder = %Builder{
       id: operative_id,
       factory_id: @factory,
-      kind: :workflow,
       init_values: %{},
       opts: [seed_input: {"hi", %{}}]
     }
@@ -73,6 +74,26 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     # durable registry with no explicit stop — proof the full loop ran.
     assert wait_until(fn -> not registered?(operative_id) end, 5_000),
            "task was never deregistered after completion"
+  end
+
+  # Timers do not fire inside a workflow yet, so a tasklet that registers one
+  # is refused by name rather than having it vanish: the pass fails and the
+  # instance ends in error, whatever the runtime.
+  test "a timer registered inside a workflow tasklet ends the instance in error, by name" do
+    operative_id = "timer_refused_#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             OperativeManager.start_operative(@namespace, %Builder{
+               id: operative_id,
+               factory_id: "workflow_timer_refused",
+               opts: [seed_input: {"tick", %{}}]
+             })
+
+    assert wait_until(fn -> match?({:ok, _}, Completion.read(operative_id)) end, 30_000),
+           "the refused pass never ended the instance"
+
+    assert {:ok, %{status: "error", error: error}} = Completion.read(operative_id)
+    assert error =~ "TimersUnavailable"
   end
 
   # A tasklet spawns the `stateless_loop_workflow` loop once with no id and
@@ -100,8 +121,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     assert {:ok, _} =
              OperativeManager.start_operative(namespace, %Builder{
                id: requester,
-               factory_id: "spawn_requester",
-               kind: :stream
+               factory_id: "spawn_requester"
              })
 
     for _ <- 1..2 do
@@ -149,8 +169,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     assert {:ok, _} =
              OperativeManager.start_operative(namespace, %Builder{
                id: requester,
-               factory_id: "spawn_once_requester",
-               kind: :stream
+               factory_id: "spawn_once_requester"
              })
 
     assert :ok = OperativeManager.send_io_confirming(requester, namespace, "ticket-7", %{})

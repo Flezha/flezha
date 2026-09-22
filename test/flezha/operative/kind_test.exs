@@ -8,8 +8,6 @@ defmodule FlezhaTest.Operative.KindTest do
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Kind
-  alias Flezha.Service.OperativeManager.Admission
-  alias Flezha.Service.Validator
 
   @persistence_flags [:persistent_state?, :time_travel?, :dynamic_cells?, :output_stall_watch?]
 
@@ -45,19 +43,13 @@ defmodule FlezhaTest.Operative.KindTest do
   end
 
   describe "Builder kind field" do
-    test "an unspecified kind defaults to :stream" do
-      assert %Builder{id: "r", factory_id: "f"}.kind == :stream
+    test "a builder names no kind until the start resolves the factory's" do
+      assert %Builder{id: "r", factory_id: "f"}.kind == nil
     end
 
-    test "valid_kind accepts :stream and :workflow" do
-      assert Validator.valid_kind(:stream) == :ok
-      assert Validator.valid_kind(:workflow) == :ok
-    end
-
-    test "validate_operative rejects an unknown kind, naming it" do
-      operative = %Builder{id: "r", factory_id: "f", kind: :made_up_kind}
-      assert {:error, msg} = Admission.validate_operative("ns", operative)
-      assert msg =~ "made_up_kind"
+    test "a caller's written kind is refused, as any field it may not write" do
+      assert Builder.build(factory_id: "f", kind: "workflow") ==
+               {:error, {:unknown_fields, [:kind]}}
     end
   end
 

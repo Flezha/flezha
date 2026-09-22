@@ -257,7 +257,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
 
   defp factory(base), do: "#{base}_#{System.unique_integer([:positive])}"
 
-  defp forget(ns, ids), do: on_exit(fn -> FleetStateHelper.forget_langs(ns, ids) end)
+  defp forget(ns, ids), do: on_exit(fn -> FleetStateHelper.forget_established(ns, ids) end)
 
   describe "the placement filter" do
     test "places on a runner of the factory's own language", %{namespace: ns} do
@@ -324,7 +324,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       forget(ns, [id])
       FleetStateHelper.seed(ns, %{"elixir_runner" => [{id, @elixir}]})
 
-      assert ClassRegistry.sdk_lang(ns, id) == @elixir
+      assert ClassRegistry.established(ns, id, :sdk_lang) == @elixir
     end
 
     test "a lost record is re-derived from the advertisements, not read as a refusal",
@@ -336,22 +336,22 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       # Both halves of the record are losable: the ETS table is recreated
       # empty if its owner restarts, and the sidecar goes with the factory's
       # state directory.
-      ClassRegistry.delete_sdk_lang(ns, id)
+      ClassRegistry.delete_established(ns, id)
 
       assert Enum.sort(FleetManager.runners_for_factory(ns, id)) == ["r1", "r2"],
              "a missing record is no evidence of a conflict and must not refuse everyone"
 
       # The query derives; it does not write. The next advertisement re-records.
-      assert ClassRegistry.sdk_lang(ns, id) == nil
+      assert ClassRegistry.established(ns, id, :sdk_lang) == nil
       :ok = FleetStateHelper.sync(ns, "r1", [{id, @rust}])
-      assert ClassRegistry.sdk_lang(ns, id) == @rust
+      assert ClassRegistry.established(ns, id, :sdk_lang) == @rust
     end
 
     test "disagreeing advertisements with nothing recorded place nowhere", %{namespace: ns} do
       id = factory("ambiguous")
       forget(ns, [id])
       FleetStateHelper.seed(ns, %{"rust_runner" => [{id, @rust}], "java_runner" => [{id, @java}]})
-      ClassRegistry.delete_sdk_lang(ns, id)
+      ClassRegistry.delete_established(ns, id)
 
       assert FleetManager.runners_for_factory(ns, id) == [],
              "with no record and no agreement the controller cannot tell which " <>
@@ -362,11 +362,11 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       id = factory("dropped")
       forget(ns, [id])
       FleetStateHelper.seed(ns, %{"r1" => [{id, @rust}]})
-      assert ClassRegistry.sdk_lang(ns, id) == @rust
+      assert ClassRegistry.established(ns, id, :sdk_lang) == @rust
 
       :ok = FleetStateHelper.sync(ns, "r1", [])
 
-      assert ClassRegistry.sdk_lang(ns, id) == nil,
+      assert ClassRegistry.established(ns, id, :sdk_lang) == nil,
              "clearing lets a factory re-establish — the escape hatch from a " <>
                "factory deliberately re-authored in another language"
     end
@@ -377,12 +377,12 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       # on the filter refuses every runner that cannot read those bytes.
       id = factory("stateful")
       forget(ns, [id])
-      ClassRegistry.put_sdk_lang(ns, id, @java)
+      ClassRegistry.put_established(ns, id, :sdk_lang, @java)
 
       FleetStateHelper.seed(ns, %{"rust_runner" => []})
       :ok = FleetStateHelper.sync(ns, "rust_runner", [{id, @rust}])
 
-      assert ClassRegistry.sdk_lang(ns, id) == @java
+      assert ClassRegistry.established(ns, id, :sdk_lang) == @java
       assert FleetManager.runners_for_factory(ns, id) == []
     end
 
@@ -401,11 +401,11 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       assert Restore.class_sdk_lang("never_written") == nil
 
       # A Rust runner got there first and established the factory wrongly.
-      ClassRegistry.put_sdk_lang(ns, id, @rust)
+      ClassRegistry.put_established(ns, id, :sdk_lang, @rust)
 
       :ok = Restore.establish_sdk_lang_from_state(ns, id, operative)
 
-      assert ClassRegistry.sdk_lang(ns, id) == @java,
+      assert ClassRegistry.established(ns, id, :sdk_lang) == @java,
              "the bytes on disk outrank whichever runner advertised first"
     end
   end
@@ -439,6 +439,62 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       {:ok, factories} = FleetManager.list_factories(ns)
       assert Enum.any?(factories, &(&1.id == id))
       assert FleetManager.runners_for_factory(ns, id) == ["rust_runner"]
+    end
+  end
+
+  describe "the established kind" do
+    test "the first announcement establishes it, and a start reads it", %{namespace: ns} do
+      id = factory("paper_order")
+      forget(ns, [id])
+      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :workflow}]})
+
+      assert ClassRegistry.established(ns, id, :kind) == :workflow
+      assert FleetManager.factory_kind(ns, id) == {:ok, :workflow}
+      assert {:ok, [%{id: ^id, kind: :workflow}]} = FleetManager.list_factories(ns)
+    end
+
+    test "a runner announcing the other kind is stored, logged and never placed",
+         %{namespace: ns} do
+      id = factory("prices")
+      forget(ns, [id])
+      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :stream}], "r2" => []})
+      event = [:flezha, :runner, :factory_kind_conflict]
+      ref = :telemetry_test.attach_event_handlers(self(), [event])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          :ok = FleetStateHelper.sync(ns, "r2", [{id, @rust, :workflow}])
+        end)
+
+      assert log =~ "r2"
+      assert log =~ "as kind workflow"
+
+      assert_received {^event, ^ref, %{count: 1},
+                       %{factory: ^id, established: :stream, advertised: :workflow}}
+
+      assert FleetManager.runners_for_factory(ns, id) == ["r1"]
+
+      :ok = FleetStateHelper.sync(ns, "r1", [])
+      assert FleetManager.placement_refusal(ns, id) == {:kind, :stream}
+      assert FleetManager.factory_kind(ns, id) == {:error, {:kind, :stream}}
+    end
+
+    test "a runner announcing no kind never places", %{namespace: ns} do
+      id = factory("unkinded")
+      forget(ns, [id])
+
+      # The init frame of a runner built before the kind was announced.
+      FleetStateHelper.seed(ns, %{"old_runner" => []})
+
+      GenServer.cast(
+        FleetManager,
+        {:sync_factories, ns, "old_runner", [%{"id" => id, "sdk_lang" => @rust}]}
+      )
+
+      {:ok, factories} = FleetManager.list_factories(ns)
+      assert [%{id: ^id, kind: nil}] = factories
+      assert FleetManager.runners_for_factory(ns, id) == []
+      assert FleetManager.placement_refusal(ns, id) == :no_kind_declared
     end
   end
 end
@@ -714,7 +770,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     on_exit(fn ->
       :sys.replace_state(FleetManager, fn _ -> original end)
       Flezha.Service.HubManager.stop_hub(namespace)
-      FleetStateHelper.forget_langs(namespace, ["alpha", "beta"])
+      FleetStateHelper.forget_established(namespace, ["alpha", "beta"])
 
       case previous_grace do
         nil -> Application.delete_env(:flezha, :group_withdraw_grace_ms)

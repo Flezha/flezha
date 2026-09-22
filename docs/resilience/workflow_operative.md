@@ -123,19 +123,25 @@ binding; undelivered input outranks the park. Inspect with `flz state journal <o
 (entries tagged with their iteration, `iter_committed` with its consumed offset, the final
 `parked`) and `flz state inbox <operative/instance>` (offsets, and which are still undelivered).
 
+The wake timer is the one timer a workflow has. Cell timers do not fire inside a workflow yet,
+so a timer a workflow tasklet registers is refused rather than dropped: every SDK's ctx answers
+`TimersUnavailable`, and the shared core fails a step whose effect still carries a timer op
+with a non-retryable error of that name, so the run compensates and ends in `error`.
+
 ## Cell retry: the rung before the abort
 
 A failing cell inside a **structured** tasklet is retried in place while its finished
-siblings stay buffered at the barrier.
+siblings stay buffered at the barrier. The ladder is the one the tasklet's input edge
+declares, as on a stream; a workflow class declares none of its own.
 
-| Knob | Rust / Java | Default |
+| Knob | On the edge | Default |
 | --- | --- | --- |
-| total attempts, first run included | `retry_attempts()` / `retryAttempts()` | 3; `0` or `1` is fail-fast |
-| backoff base | `retry_backoff()` / `retryBackoff()` | 500 ms; attempt `n` waits `base × 2^(n-1)` ±50 % jitter, capped at 5 s (`RETRY_BACKOFF_MAX_MS`) |
+| total attempts, first run included | `retry_max(n)` / `retryMax(n)` | 3; `1` is fail-fast, `0` is refused (`RetryMaxZero`) |
+| backoff base | `retry_backoff_ms(ms)` / `retryBackoffMs(ms)` | 50 ms; attempt `n` waits `base × 2^(n-1)` ±50 % jitter, capped at 5 s (`RETRY_BACKOFF_MAX_MS`) |
 
-- More than one attempt with a zero backoff base is refused at registration (`ZeroRetryBackoff`).
-  `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,
-  which the author never got to classify — is retryable.
+- `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,
+  which the author never got to classify — is retryable. Where a stream parks an exhausted
+  input to the dead-letter queue, a workflow fails the tasklet and compensates.
 - A retried cell re-runs its whole batch over the state its failed attempt already applied —
   the at-least-once contract crash-resume imposes. Each attempt collects into a fresh sink, so a
   failed attempt's staged output is dropped, never double-emitted. The ladder is strictly
@@ -237,10 +243,10 @@ snapshot, journal or handshake — and a crash re-runs from the top.
 | flush | after the ack, on the worker | `TaskJournal.flush_pending/1` delivers in journal order and writes `outbox_flushed`; an unbound operative retries every 1 s |
 
 The driver's wait is `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 000). An expired wait re-sends
-the same frame under the same `reference_id`, after the class's retry backoff, up to
-`barrier_retry_attempts()` / `barrierRetryAttempts()` sends (default 3); the waiter stays
-registered across the ladder, so a late ack continues the chain, and only the exhausted ladder
-is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
+the same frame under the same `reference_id`, after the shared default backoff (50 ms base), up
+to three sends in all, a constant of the runner's controller connection rather than a class
+setting; the waiter stays registered across the ladder, so a late ack continues the chain, and
+only the exhausted ladder is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
 journal codec, in Rust from the producing tasklet's declared `Output` type — and a journal entry
 is bounded by `:wal_high_watermark_bytes` (16 MiB): keep bulk data in Cell state and hand off
 references. Every flushed item is stamped

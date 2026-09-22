@@ -507,13 +507,13 @@ defmodule Flezha.SDK.UnitTest do
     assert {:ok, %RunnerCommands.AddOperativeResponse{metadata: %{"keyed" => "false"}}} =
              RunnerCommands.AddOperativeResponse.decode(raw)
 
-    uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d"}]))
+    uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d", "workflow"}]))
 
     assert {:ok,
             %RunnerCommands.CommandRequest{command: {:update_factories, %{factories: [decl]}}}} =
              Codec.decode_command(uf)
 
-    assert decl.id == "a"
+    assert {decl.id, decl.kind} == {"a", "workflow"}
   end
 
   # --- KeyGroup / partition ---

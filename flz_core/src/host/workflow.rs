@@ -57,6 +57,13 @@ fn fold_effect(
             return Err(WorkflowError::unreadable(message));
         }
     }
+    // Timers do not fire inside a workflow yet; a host whose ctx let one
+    // through fails the step rather than dropping the timer.
+    if !effect.timers.is_empty() {
+        return Err(WorkflowError::non_retryable(
+            "TimersUnavailable: a workflow tasklet cannot register a timer".to_string(),
+        ));
+    }
     if !effect.changes.is_empty() {
         let mut buffer = flush_buffer.lock_recover();
         if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
@@ -138,6 +145,31 @@ mod tests {
         assert!(
             !failed.unreadable,
             "a readable message the tasklet failed on is not unreadable"
+        );
+    }
+
+    /// A timer op that reaches a workflow step is refused by name, never
+    /// dropped: nothing fires it until timers work inside a workflow.
+    #[test]
+    fn a_timer_op_fails_the_step_by_name() {
+        let buffer: Mutex<Box<dyn FlushableBuffer>> = Mutex::new(Box::new(BytesBuffer::default()));
+        let mut with_timer = effect(schema::Verdict::Ok);
+        with_timer.timers.push(schema::TimerOp::register(
+            schema::TimerKind::ProcessingTime,
+            1_000,
+        ));
+
+        let refused = fold_workflow_outcome(
+            &buffer,
+            schema::ActivationOutcome::Work(vec![with_timer]),
+            &mut Nothing,
+        )
+        .expect_err("a timer op is the step's failure");
+        assert!(refused.non_retryable, "a retry would register it again");
+        assert!(
+            refused.message.contains("TimersUnavailable"),
+            "{}",
+            refused.message
         );
     }
 }

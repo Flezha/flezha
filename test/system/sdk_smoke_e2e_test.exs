@@ -36,6 +36,12 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   @test_operative_factory "do_nothing"
   @test_filter_factory "compare_filter"
 
+  # Stream operatives that request workflow spawns: the workflow capability
+  # lists them because its scenarios drive them, not because they are one.
+  @stream_requesters ~w(spawn_requester spawn_once_requester)
+  # The workflow half of the shorthand capability.
+  @workflow_short_forms ~w(sugar_workflow sugar_workflow_per_input)
+
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.
   # A fresh fleet per test: the runner's connect is what most scenarios prove.
@@ -82,6 +88,14 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
         assert MapSet.difference(live_ids, declared) |> MapSet.to_list() == [],
                "the runner registers fixtures the manifest does not list"
+
+        for %{id: id, kind: kind} <- live do
+          expected = if workflow_fixture?(id), do: :workflow, else: :stream
+
+          assert kind == expected,
+                 "#{NodeTestHelper.runtime()} announced #{id} as #{inspect(kind)}, " <>
+                   "expected #{expected}"
+        end
       end
 
       @tag scenario: "AddOperative + data flow"
@@ -266,6 +280,13 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # The runner's stdout until `needle` appears. A hybrid channel's consumer
   # tasklet holds no state and answers nothing, so what it prints is its only
   # observable effect — and every SDK's fixture prints the same line.
+  # A fixture of the workflow kind: a workflow short form, or one the workflow
+  # capability lists that is not a stream requester.
+  defp workflow_fixture?(id) do
+    workflows = Map.get(NodeTestHelper.fixtures(), "workflow", []) -- @stream_requesters
+    id in workflows or id in @workflow_short_forms
+  end
+
   defp runner_said(port, needle, budget \\ 30_000) do
     NodeTestHelper.read_port(port, &String.contains?(&1, needle), budget)
   end

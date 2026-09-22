@@ -233,7 +233,7 @@ defmodule Flezha.Service.OperativeManager do
          :ok <- Admission.check_generated_id_free(namespace, operative.id, generated?),
          :ok <- Admission.validate_operative(namespace, operative),
          :ok <- Admission.refuse_group_base_claim(namespace, operative),
-         :ok <- Admission.validate_factory(namespace, operative.factory_id),
+         {:ok, operative} <- Admission.resolve_factory(namespace, operative),
          :ok <- Admission.check_operative_quota(namespace),
          :ok <- Admission.check_cell_quota(namespace, operative),
          :ok <- Admission.check_disk_quota(namespace),
@@ -532,7 +532,12 @@ defmodule Flezha.Service.OperativeManager do
   answered beside the id the request resolved to.
   """
   @type spawn_outcome ::
-          :spawned | :delivered | :already_running | :factory_unknown | {:refused, String.t()}
+          :spawned
+          | :delivered
+          | :already_running
+          | :factory_unknown
+          | :factory_not_workflow
+          | {:refused, String.t()}
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace`, the controller half of a
@@ -556,8 +561,9 @@ defmodule Flezha.Service.OperativeManager do
   the `operative.send` right with no record, because a delivery happens once per
   event. A refusal of either is audited. A start no local runner can take is
   forwarded by `start_operative/3` inside that judgment, so no peer acts on a
-  request nobody judged. `:already_running` and `:factory_unknown` perform no
-  act and are answered without one.
+  request nobody judged. `:already_running`, `:factory_unknown` and
+  `:factory_not_workflow` (a factory its runners announced as a stream) perform
+  no act and are answered without one.
   """
   @spec spawn_or_deliver(
           String.t(),
@@ -569,16 +575,36 @@ defmodule Flezha.Service.OperativeManager do
         ) ::
           {spawn_outcome(), String.t()}
   def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running, caller_context) do
-    cond do
-      instance_id != "" and exist?(namespace, instance_id) ->
-        resolve_running(namespace, instance_id, payload, if_running, caller_context)
+    if instance_id != "" and exist?(namespace, instance_id) do
+      resolve_running(namespace, instance_id, payload, if_running, caller_context)
+    else
+      case factory_kind(namespace, factory_id) do
+        {:error, :no_such_factory} ->
+          {:factory_unknown, instance_id}
 
-      FleetManager.runners_for_factory(namespace, factory_id) == [] and
-          capable_nodes(namespace, factory_id) == [] ->
-        {:factory_unknown, instance_id}
+        {:ok, :stream} ->
+          {:factory_not_workflow, instance_id}
 
-      true ->
-        spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context)
+        _workflow_or_refused ->
+          spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context)
+      end
+    end
+  end
+
+  # The kind `factory_id` is established at, asked of this node when a runner
+  # here advertises it and of a node the directory names otherwise, so the
+  # answer is the cluster's.
+  defp factory_kind(namespace, factory_id) do
+    if FleetManager.runners_for_factory(namespace, factory_id) != [] do
+      FleetManager.factory_kind(namespace, factory_id)
+    else
+      case capable_nodes(namespace, factory_id) do
+        [] ->
+          {:error, :no_such_factory}
+
+        [target | _] ->
+          route_call(target, FleetManager, :factory_kind, [namespace, factory_id], &{:error, &1})
+      end
     end
   end
 

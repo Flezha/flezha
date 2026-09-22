@@ -42,8 +42,8 @@
 hybrid_channel | 0 | input | entry | - | 0 | -
 hybrid_channel | 1 | hybrid_indicator | inter_task | 0 | 1 | hybrid_indicator
 
-# commit_block_chain — a structured workflow class, effectively-once, with the
-# same hybrid shape mid-chain and a keyed producing channel.
+# commit_block_chain — a structured workflow class with the same hybrid shape
+# mid-chain.
 # Tasklets: 0 tier_commit_a, 1 block_b.
 commit_block_chain | 0 | in | entry | - | 0 | -
 commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
@@ -123,13 +123,6 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   shorthand_typed_output  a short form on a tasklet whose output the SDK can
 #              see at declaration time. Rust, Java and Python (return hint)
 #              can; Node, Ruby, PHP and Elixir cannot
-#   raw_class_flags  a tier key written onto a WORKFLOW class's record. KI-147's
-#              fix is why no builder can: each gates `effectively_once` and
-#              `correction_window_ms` behind the class kind, keeping the flag in
-#              the spec (it still decides identity stamps) and out of the
-#              declaration. The rows stay so the refusal that catches a builder
-#              regressing has a name, and `flz_core/src/host/check_tests.rs`
-#              drives them against the record directly
 
 # `long_channel_name` declares a 256-character `named(...)`: one byte past the
 # metadata region's one-byte length prefix, which is the whole of what the row
@@ -166,8 +159,9 @@ CheckpointAckWithoutTier           | ack_no_tier      | class.checkpoint_ack; en
 MergeTooFewSources                 | merge_one_source | entry(in); merge(plain, in)                                                           | merge
 DuplicateMergeSource               | merge_same_twice | entry(in); entry(other); merge(plain, in, in)                                         | merge
 EdgeAlreadyWired                   | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
-EffectivelyOnceOnWorkflow          | eo_workflow      | class.workflow; class.persistent; class.effectively_once; entry(in); in.into(plain)   | raw_class_flags
-CorrectionWindowOnWorkflow         | correction_wf    | class.workflow; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | raw_class_flags
+EffectivelyOnceOnWorkflow          | eo_workflow      | class.workflow; class.persistent; class.effectively_once; entry(in); in.into(plain)   | workflow
+CorrectionWindowOnWorkflow         | correction_wf    | class.workflow; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | workflow
+CheckpointOnWorkflow               | checkpoint_workflow | class.workflow; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | workflow
 SyncDurabilityOnStream             | sync_stream      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
 AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
 

@@ -442,7 +442,7 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
 {
   "namespace": "<namespace>",
   "factory_ids": ["<factory_id>", ...],
-  "factories": [{"id": "<factory_id>", "description": null}, ...],
+  "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "kind": "workflow"}, ...],
   "stable_id": "<namespace>-<profile_hash8>-<rand6>",
   "namespace_secret": "flzt_<base32>"
 }
@@ -454,9 +454,13 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   naming a namespace the credential does not entitle, naming both namespaces in
   the refusal. `_system` is refused on every transport.
 - `factory_ids` / `factories` — every factory the runner currently declares
-  (`factories` adds an optional `description`), read at write time so a
-  reconnect resyncs post-start defines/removes: the init frame is the resync
-  of record.
+  (`factories` adds an optional `description`, the class's `sdk_lang` and its
+  `kind`, `"stream"` or `"workflow"`), read at write time so a reconnect
+  resyncs post-start defines/removes: the init frame is the resync of record.
+  The controller establishes each factory's language and kind from the first
+  announcement and places only on a runner announcing both as established; an
+  entry with no kind never places. A start names only the factory, so the kind
+  on `AddOperative` is the announced one.
 - `stable_id` — the runner's durable, self-owned identity, present on **every**
   connect (`profile_hash8` hashes the declared factory set order-independently,
   `rand6` is a per-process random suffix). The controller binds operatives to
@@ -609,7 +613,7 @@ message AddOperative {
     string operative_id = 1;
     string factory_id = 2;
     string init_values = 3;            // JSON; "" for none
-    string kind = 4;                   // "stream" | "workflow"; empty ⇒ "stream"
+    string kind = 4;                   // the announced kind: "stream" | "workflow"; empty ⇒ "stream"
     uint32 resume_cell_count = 5;      // RestoreInitState frames to expect on this bind
     TaskJournalState task_journal = 6; // workflow crash-resume state (§11)
     uint32 partition_index = 7;
@@ -792,7 +796,8 @@ resolved entirely by the re-presented `stable_id` in the handshake (§5). A
 ### UpdateFactories
 
 `UpdateFactories { repeated FactoryDecl factories }` (`FactoryDecl { id,
-description }`) travels runner → controller, fire-and-forget, after a
+description, sdk_lang, kind }`, the same keys as the init frame's entries)
+travels runner → controller, fire-and-forget, after a
 post-start define/remove on the runner handle, carrying the runner's **full**
 current factory set. Full-set semantics make it idempotent: `FleetManager`
 replaces the runner's stored list (remove-then-store), scoped to the sender; an
@@ -835,7 +840,9 @@ delivery answers `refused`. See
 
 `SpawnWorkflowResponse { outcome, error, instance_id }` returns controller →
 runner under the request's `reference_id`; `outcome` ∈ `spawned`, `delivered`,
-`already_running`, `factory_unknown`, `refused`, `error` details a `refused`,
+`already_running`, `factory_unknown`, `factory_not_workflow` (a factory its
+runners announced as a stream, decided before anything is placed), `refused`;
+`error` details a `refused`,
 and `instance_id` is the id the request resolved to: the requester's own, or
 the generated one (empty when a request that carried none started nothing). It resolves the requester's result handle and never faults the
 requesting tasklet (an unobserved handle logs the failure once); against an
@@ -1478,8 +1485,9 @@ run abnormally through the terminal-error path, including saga compensation.
 
 **Idempotent re-send.** An ack that does not arrive within the driver's wait
 (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`, default 30 s) is re-sent: the same frame
-goes out under the **same `reference_id`**, after the class's retry backoff, up
-to `barrier_retry_attempts()` / `barrierRetryAttempts()` sends (default 3). The
+goes out under the **same `reference_id`**, after the shared default backoff
+(50 ms base), up to three sends in all, a constant of the connection that no
+class sets. The
 controller journals a barrier once by its identity `{task_idx, iter, epoch}` —
 the journal writer refuses an append whose 16-byte record header
 (`[epoch u32][type u8][task_idx u16][iter u32]`, zero-padded) is already in the

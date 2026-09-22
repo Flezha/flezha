@@ -180,15 +180,15 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four definition fields
-The short form SHALL be declared with `defineOperative` or `defineWorkflow`, the same functions that declare a full-form operative, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `DeclarationError` naming the field and the operative function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; the kind is the function's own name and SHALL NOT be a field.
+The short form SHALL be declared with `defineStream` or `defineWorkflow`, the same functions that declare a full-form operative, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `DeclarationError` naming the field and the operative function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; the kind is the function's own name and SHALL NOT be a field. `defineOperative` SHALL NOT exist under that name, with no alias kept.
 
-A definition SHALL be a short form exactly when it carries `run` and not `channels` or `tasklets`; carrying both SHALL throw `DeclarationError` naming `ShortFormWithTopology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
+A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `DeclarationError` naming `ShortFormWithTopology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL accept `loopMode` and be a `once` workflow when it is absent, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level setting on a short form SHALL throw `DeclarationError` naming it. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
 An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. Whether `SinkWithoutOutput` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
 #### Scenario: A module exporting one definition is a whole stream operative
 
-- **WHEN** `./upcase.mjs` default-exports `defineOperative({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
+- **WHEN** `./upcase.mjs` default-exports `defineStream({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
 - **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
 
 #### Scenario: A module exporting one definition is a whole workflow operative
@@ -196,9 +196,14 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 - **WHEN** `./place.mjs` exports `defineWorkflow({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
 
+#### Scenario: A short-form workflow declares its loop mode
+
+- **WHEN** a module exports `defineWorkflow({ factoryId: 'chat', sink: 'replies', codec: 'text', loopMode: 'per_input', run })` and two messages reach its entry channel
+- **THEN** the spec's `workflow.loopMode` is `per_input`, `run` runs once per message, and the instance does not complete after the first
+
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a module exports `defineOperative({ factoryId: 'counter', input: 'ticks', codec: 'text', initialState, applyChange, run })`
+- **WHEN** a module exports `defineStream({ factoryId: 'counter', input: 'ticks', codec: 'text', initialState, applyChange, run })`
 - **THEN** the operative declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: A codec needs no sink
@@ -208,23 +213,28 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A run body beside a channels body is refused
 
-- **WHEN** a module calls `defineOperative({ factoryId: 'x', run, channels })`
+- **WHEN** a module calls `defineStream({ factoryId: 'x', run, channels })`
 - **THEN** loading it throws `DeclarationError` whose refusals contain `ShortFormWithTopology`
 
 #### Scenario: A definition with neither body is refused
 
-- **WHEN** a module calls `defineOperative({ factoryId: 'x' })`
+- **WHEN** a module calls `defineStream({ factoryId: 'x' })`
 - **THEN** loading it throws `DeclarationError` naming the missing `run` or `channels`
 
 #### Scenario: An operative field on a tasklet is refused
 
 - **WHEN** a module calls `defineTasklet({ name: 'upcase', sink: 'out', run })`
-- **THEN** loading it throws `DeclarationError` naming `sink` and `defineOperative`
+- **THEN** loading it throws `DeclarationError` naming `sink` and `defineStream`
 
 #### Scenario: A definition with no factory id is refused
 
-- **WHEN** a module calls `defineOperative({ sink: 'out', run })`
+- **WHEN** a module calls `defineStream({ sink: 'out', run })`
 - **THEN** loading it throws `DeclarationError` naming the required `factoryId`
+
+#### Scenario: The old stream function is gone
+
+- **WHEN** a module imports `defineOperative` from the SDK
+- **THEN** the import is `undefined` and no `defineOperative` export exists, `defineStream` being the stream's defining function
 
 #### Scenario: Plain JavaScript still needs no build step
 
@@ -232,7 +242,7 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 - **THEN** it registers and runs with no transpilation
 
 ### Requirement: A Node runner registers a factory with one awaited call
-The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide `defineStream`, `defineWorkflow` or `declare`. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operatives (stream, workflow or short form, the kind read from each), rejecting with an error naming the specifier when the import fails or the module exports no operative; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operative against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions `defineTasklet`, `defineOperative` and `defineWorkflow` SHALL keep their names, because they declare a class.
+The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide the authoring functions or a `declare` method as runner methods. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operatives (stream, workflow or short form, the kind read from each), rejecting with an error naming the specifier when the import fails or the module exports no operative; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operative against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions SHALL be `defineTasklet`, `defineStream` and `defineWorkflow`, module-level functions named for what they declare, a class of the named kind.
 
 #### Scenario: Registration is awaited before run
 
@@ -253,4 +263,23 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 
 - **WHEN** `unregisterFactory('./echo_operative.mjs')` is awaited after `run()`
 - **THEN** the promise rejects saying a running Node runner cannot stop serving a started declaration, and the operative stays declared
+
+### Requirement: A Node workflow definition carries what its builder recorded
+
+`defineWorkflow` SHALL build its `ClassSpec` from every field the channel builder recorded, exactly as `defineStream` does, and `toHostClassDecl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `WorkflowDefinition` SHALL carry no `retryAttempts`, `retryBackoffMs` or `barrierRetryAttempts`; the channel builder SHALL carry no `syncDurability()` call, the definition field being the one spelling. A tasklet context inside a workflow SHALL throw an error naming `TimersUnavailable` from `timerAfter`, `timerAtEventTime` and `cancelTimer`.
+
+#### Scenario: A tier call on a workflow reaches the core
+
+- **WHEN** a module exports `defineWorkflow({ factoryId: 'w', channels: (c) => { c.effectivelyOnce(); c.input('in').into(P).sink('out'); } })`, the runner registers it and runs
+- **THEN** declaring it to the core throws an error naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+
+#### Scenario: Synchronous durability has one spelling
+
+- **WHEN** a module exports `defineWorkflow({ factoryId: 'sd', syncDurability: true, channels })`
+- **THEN** the declaration carries `sync_durability: true`, and `c.syncDurability` is not a function on the builder
+
+#### Scenario: A timer inside a workflow tasklet is refused
+
+- **WHEN** a tasklet of a running workflow calls `ctx.timerAfter(1000)`
+- **THEN** the call throws an error naming `TimersUnavailable` and the effect carries no timer op
 

@@ -37,7 +37,7 @@ defmodule FlezhaTest.System.SetupAllRuntimeE2ETest do
   # `start_runner_port/2` with no runtime named, so the default decides.
   setup_all do
     # A record left by an earlier run would answer for this run's fleet.
-    ClassRegistry.delete_sdk_lang(@namespace, @factory)
+    ClassRegistry.delete_established(@namespace, @factory)
 
     {port, _runner_id} = NodeTestHelper.start_runner_port(@namespace)
 
@@ -48,11 +48,11 @@ defmodule FlezhaTest.System.SetupAllRuntimeE2ETest do
         _, _ -> :ok
       end
 
-      ClassRegistry.delete_sdk_lang(@namespace, @factory)
+      ClassRegistry.delete_established(@namespace, @factory)
       ensure_port_dead(port)
     end)
 
-    %{advertised: ClassRegistry.sdk_lang(@namespace, @factory)}
+    %{advertised: ClassRegistry.established(@namespace, @factory, :sdk_lang)}
   end
 
   test "a fleet spawned in setup_all runs the selected SDK's runner", %{advertised: advertised} do

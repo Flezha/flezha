@@ -261,7 +261,7 @@ TODO: not written yet.
 > {: .step}
 
 ```sh
-$ flz operative start paper_order --id order_1 --kind workflow --namespace trading --text '{"symbol": "AAPL", "quantity": 10}' --channel order
+$ flz operative start paper_order --id order_1 --namespace trading --text '{"symbol": "AAPL", "quantity": 10}' --channel order
 ```
 
 ```sh
@@ -390,7 +390,7 @@ TODO: not written yet.
 > {: .step}
 
 ```sh
-$ flz operative start paper_order --id order_2 --kind workflow --namespace trading --text '{"symbol": "AAPL", "quantity": 500}' --channel order
+$ flz operative start paper_order --id order_2 --namespace trading --text '{"symbol": "AAPL", "quantity": 500}' --channel order
 ```
 
 After ten seconds `confirm_fill` refuses it, is tried again, and once its tries

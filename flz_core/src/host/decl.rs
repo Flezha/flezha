@@ -195,8 +195,8 @@ pub struct HostClassDecl {
     pub sync_durability: bool,
     pub channels: Vec<HostChannelDecl>,
     pub tasklets: Vec<HostTaskletDecl>,
-    /// Present for a workflow class: its loop, rollback and ladder facts
-    /// over the tasklets declared above.
+    /// Present for a workflow class: its loop and rollback facts over the
+    /// tasklets declared above.
     #[serde(default)]
     pub workflow: Option<HostWorkflowDecl>,
 }
@@ -208,13 +208,6 @@ pub struct HostWorkflowDecl {
     pub loop_mode: HostLoopMode,
     #[serde(default)]
     pub rollback_mode: HostRollbackMode,
-    /// Attempts of the per-cell ladder; 0 is fail-fast.
-    #[serde(default = "default_workflow_retry_attempts")]
-    pub retry_attempts: u32,
-    #[serde(default = "workflow_backoff_ms")]
-    pub retry_backoff_ms: u64,
-    #[serde(default = "default_barrier_retry_attempts")]
-    pub barrier_retry_attempts: u32,
     #[serde(default)]
     pub max_duration_ms: Option<u64>,
     #[serde(default)]
@@ -236,16 +229,6 @@ pub enum HostRollbackMode {
     #[default]
     AllOrNothing,
     KeepProgress,
-}
-
-fn default_workflow_retry_attempts() -> u32 {
-    3
-}
-fn workflow_backoff_ms() -> u64 {
-    500
-}
-fn default_barrier_retry_attempts() -> u32 {
-    3
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]

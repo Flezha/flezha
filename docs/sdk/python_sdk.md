@@ -165,23 +165,57 @@ is written, a factory id equal to `id`, and every class-level setting at its
 default. The tasklet is named `id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
 another operative's channels body. A workflow short form is a `once` workflow,
-run once over its first message: `flz operative start --kind workflow --text
-'<payload>'`, or a start followed by `flz operative send`; a second message to
-a `once` instance is accepted and never read.
+run once over its first message: `flz operative start --text '<payload>'`, or
+a start followed by `flz operative send`; a second message to a `once`
+instance is accepted and never read. `loop_mode="per_input"` (or `"chained"`)
+is the one class setting a short form keeps, so a loop is still one
+declaration:
+
+```python
+@flezha.workflow_operative(id="chat", sink="replies", codec="text", loop_mode="per_input")
+def chat(turn: str) -> str:
+    return turn
+```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window. The short form declares none of them, and nothing is harvested: an
-operative a runner declares is one you registered.
+edge, an edge's retry budget, any other class setting. The short form declares
+none of them, and nothing is harvested: an operative a runner declares is one
+you registered.
 
 Three refusals name themselves. `ShortFormWithTopology` (a class with `run`
-that also declares `channels` or `tasklets`) and `SinkWithoutOutput` (a `sink` on a body with
+that also declares `channels`) and `SinkWithoutOutput` (a `sink` on a body with
 no return annotation, or `None`) are raised where the decorator runs, and
 `DuplicateFactoryId` where a second operative under one factory id is
-registered. A missing `id`, a class-level setting on a short form, and `sink`,
-`input`, `codec` or a tasklet keyword on a channels body are refused where the
-decorator runs too, as is `kind`, `sink`, `input` or `codec` on
-`flezha.tasklet`.
+registered. A missing `id`, a class-level setting other than `loop_mode` on a
+short form, and `sink`, `input`, `codec` or a tasklet keyword on a channels
+body are refused where the decorator runs too, as is `kind`, `sink`, `input`
+or `codec` on `flezha.tasklet`.
+
+### Workflow settings
+
+A workflow declares its graph in a channels body exactly as a stream does, and
+retries a failing tasklet on the edge that feeds it: `retry_max` and
+`retry_backoff_ms` on the channel (3 attempts, 50 ms base by default), so
+`retry_max(1)` is fail-fast. The decorator's own keywords are `persistent`,
+`loop_mode` (`"once"`, `"per_input"`, `"chained"`), `rollback_mode`
+(`"all_or_nothing"`, `"keep_progress"`), `max_duration_ms`, `wake_after_ms` and
+`sync_durability`; a mode outside its values raises `DeclarationError` naming
+the keyword and the value where the decorator runs.
+
+Every builder call reaches the core whatever the kind, and a setting of the
+other kind is refused under its own name when the runner declares its
+operatives, before it connects: `effectively_once()` on a workflow as
+`EffectivelyOnceOnWorkflow`, any checkpoint call as
+`CheckpointOnWorkflow`, `correction_window` as `CorrectionWindowOnWorkflow`,
+and `sync_durability=True` on `@flezha.stream_operative` as
+`SyncDurabilityOnStream`. The decorator keyword is the one spelling of
+synchronous durability; `Channels` has no such call.
+
+Timers do not fire inside a workflow yet, so `ctx.timer_after`,
+`ctx.timer_at_event_time` and `ctx.cancel_timer` in a workflow tasklet raise
+an `EmitError` naming `TimersUnavailable`, and the attempt fails as any
+raising handler's does. A `ctx.spawn_workflow` naming a stream factory
+resolves its handle to `SpawnFactoryNotWorkflowError`.
 
 ### Type hints are the declaration
 

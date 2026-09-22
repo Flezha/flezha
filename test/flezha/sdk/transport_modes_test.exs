@@ -758,7 +758,7 @@ defmodule Flezha.SDK.SpawnWorkflowE2ETest do
     def self_terminating?, do: false
     def max_duration_ms, do: 60_000
 
-    def tasklets(c) do
+    def channels(c) do
       import Flezha.SDK.Channels
       c |> input("in") |> into(Received)
     end

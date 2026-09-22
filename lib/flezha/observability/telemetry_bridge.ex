@@ -138,6 +138,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :correction, :refused] => {:flezha_correction, :refused, :event},
     [:flezha, :runner, :factory_language_conflict] =>
       {:flezha_runner, :factory_language_conflict, :event},
+    [:flezha, :runner, :factory_kind_conflict] =>
+      {:flezha_runner, :factory_kind_conflict, :event},
     [:flezha, :runner, :quota_refused] => {:flezha_runner, :quota_refused, :event},
     [:flezha, :runner, :admin_request] => {:flezha_runner, :admin_request, :event},
     [:flezha, :runner, :foreign_frame_refused] =>

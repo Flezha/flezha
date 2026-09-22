@@ -69,6 +69,13 @@ children = [{Flezha.SDK, namespace: "my_namespace", operatives: [MyOperative], t
 ```
 
 - `create_runner/2` returns a handle — no connection, no processes, no slot claim.
+- `register_factory/2` reads the kind from the module's `@behaviour`, which the `use` macros
+  set: `Flezha.SDK.StreamOperative` is a stream, `Flezha.SDK.WorkflowOperative` a workflow, and
+  both kinds write their graph in `channels/1`. A module declaring both answers
+  `{:error, {:AmbiguousOperativeKind, module}}`, one declaring neither
+  `{:error, {:UnknownOperativeKind, module}}`. The runner announces each factory's kind with its
+  id, in the handshake and in every `UpdateFactories`, so a start names the factory and nothing
+  else.
 - `register_factory/2` / `unregister_factory/2` work before and after `start/1`; a post-start change
   ships `UpdateFactories`; removing a type with live instances refuses
   `{:error, {:operative_type_in_use, factory_id, count}}`.
@@ -121,8 +128,8 @@ one (`name` for a tasklet, `factory_id` for an operative).
 ### The short form
 
 An operative module that writes its one tasklet's `run/3` instead of
-`channels/1` (or `tasklets/1`) is a whole single-tasklet operative of the
-kind its `use` names, registered as any operative is.
+`channels/1` is a whole single-tasklet operative of the kind its `use` names,
+registered as any operative is.
 
 ```elixir
 defmodule Upcase do
@@ -148,15 +155,29 @@ children = [{Flezha.SDK, namespace: "default", operatives: [Upcase, Place]}]
 
 The module generates the nested tasklet module `Upcase.Tasklet`, whose
 `name/0` is the factory id verbatim and which delegates to the tasklet
-callbacks the module defines, and a `channels/1` (or `tasklets/1`) wiring an
-entry channel named `"input"` (or the `input` option's value) into it and, with
-`sink`, it to that plugin sink. Every other operative callback is left undefined
-so its default applies. Because the tasklet is named after the factory id,
-its cells keep their state path when the module grows into the full form. A
-workflow short form is a `once` workflow, run once over its first message:
-`flz operative start --kind workflow --text '<payload>'`, or a start followed
-by `flz operative send`; a second message to a `once` instance is accepted
-and never read.
+callbacks the module defines, and a `channels/1` wiring an entry channel
+named `"input"` (or the `input` option's value) into it and, with `sink`, it
+to that plugin sink. Every other operative callback is left undefined so its
+default applies. Because the tasklet is named after the factory id, its cells
+keep their state path when the module grows into the full form. A workflow
+short form is a `once` workflow, run once over its first message:
+`flz operative start --text '<payload>'`, or a start followed by
+`flz operative send`; a second message to a `once` instance is accepted and
+never read. A workflow short form may write `loop_mode:`, the one class
+setting it takes, which it defines as the full form does:
+
+```elixir
+defmodule Chat do
+  use Flezha.SDK.WorkflowOperative, factory_id: "chat", sink: "replies", loop_mode: :per_input
+
+  def run(turn, state, ctx) do
+    emit(ctx, turn)
+    {:ok, state}
+  end
+end
+```
+
+`Chat` runs its tasklet once per message and does not complete after the first.
 
 `run/3` is written as in a tasklet: the ctx functions are imported, a `state`
 block and `defchange` work, and the options `use Flezha.SDK.Tasklet` takes
@@ -176,17 +197,22 @@ end
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window. Elixir names no entry codec — binaries pass through and `input_with/3`
-takes a parser — so the short form takes no `codec` option.
+edge, an edge's retry ladder, any class setting but a workflow's loop mode.
+Elixir names no entry codec — binaries pass through and `input_with/3` takes a
+parser — so the short form takes no `codec` option.
 
-The refusals are `CompileError`s. `run/3` beside `channels/1` or
-`tasklets/1` begins `ShortFormWithTopology`, and writing neither names both.
-A class setting (`persistence_enabled:`, `loop_mode:`, ...) on a short form and
-a short-form option on a full form each name the option, and
+The refusals are `CompileError`s. `run/3` beside `channels/1` begins
+`ShortFormWithTopology`, and writing neither names both. A class setting
+(`persistence_enabled:`, `max_duration_ms:`, ...) on a short form and a
+short-form option on a full form each name the option, a `loop_mode:` other
+than `:once`, `:per_input` or `:chained` (or a `rollback_mode:` other than
+`:all_or_nothing` or `:keep_progress`) names the value, and
 `use Flezha.SDK.Tasklet` refuses `kind`, `sink` and `input`, naming the
-operative macros. This SDK cannot see a tasklet's output type, so it owes no
-`SinkWithoutOutput` and its manifest does not list `shorthand_typed_output`.
+operative macros. A hand-written `loop_mode/0` or `rollback_mode/0` outside
+those values is refused at `register_factory/2` as
+`{:InvalidMode, factory_id, knob, value}`. This SDK cannot see a tasklet's
+output type, so it owes no `SinkWithoutOutput` and its manifest does not list
+`shorthand_typed_output`.
 
 ### The behaviours beneath
 
@@ -228,6 +254,8 @@ the schema four — `schema_version/0` (1), `min_readable_schema_version/0` (the
 timer four — `clock/0` (`:wall`), `event_time_of/1`, `on_timer/4`, `max_timers_per_cell/0`
 (10 000; see [Timers and clocks](#timers-and-clocks)).
 `StreamOperative` takes an optional `persistence_enabled/0` (default `true`).
+`WorkflowOperative` writes the same `channels/1`; it has no retry setting of its own, because
+a stage's ladder is the edge's `retry_max` / `retry_backoff_ms`, as a stream's is.
 `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers
 `{:error, {:reserved_metadata_key, k}}`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
 output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
@@ -239,10 +267,12 @@ invocation; the scheduled timestamp inside `on_timer/4`), `cell_key/1`, and the 
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
 `{:ok, at}`, the absolute timestamp a cancel takes, or
 `{:error, {:event_time_timer_without_event_time_clock, tasklet, clock}}` /
-`{:error, {:timer_cap_exceeded, tasklet, max}}`. `spawn_workflow(ctx, factory_id, payload, opts)`
-requests spawn-or-deliver of a workflow instance, `id:` and `if_running:` optional, and answers a
-`Flezha.SDK.Spawn` handle at once that resolves to `{:ok, %{id: id, outcome: outcome}}`; the
-contract is `docs/sdk/tasklet_requested_spawn.md`. A spawn without `id:` always starts a new
+`{:error, {:timer_cap_exceeded, tasklet, max}}`; inside a workflow's tasklet all four answer
+`{:error, :timers_unavailable}` (see [Timers and clocks](#timers-and-clocks)).
+`spawn_workflow(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a workflow
+instance, `id:` and `if_running:` optional, and answers a `Flezha.SDK.Spawn` handle at once
+that resolves to `{:ok, %{id: id, outcome: outcome}}`; the contract is
+`docs/sdk/tasklet_requested_spawn.md`. A spawn without `id:` always starts a new
 instance, starts a second one when reissued after a lost answer, and answers an empty id when
 skipped on replay; pass `id:` when that matters.
 
@@ -329,7 +359,9 @@ A failing `run/3` (error tuple, raise, or exit) retries up to `retry_max` (defau
 with exponential backoff and ±50 % jitter from `retry_backoff_ms` (default 50 ms, cap 5 s);
 `{:error, {:non_retryable, _}}` parks immediately. On exhaustion the SDK ships a
 byte-compatible `park_payload` and holds the Cell until the controller's `ParkPayloadAck`
-(sent after the DLQ store fsync). Identical in both modes.
+(sent after the DLQ store fsync). Identical in both modes. A workflow stage's Cells climb the
+same ladder, read off the edge that feeds them; an exhausted one fails the tasklet, and the
+instance unwinds, instead of parking.
 
 ## Partitioning
 
@@ -367,6 +399,11 @@ millisecond at dispatch entry, the default), `:logical` (the Cell's durable chan
 as `EventTimeClockWithoutExtractor` without it). Inside `on_timer/4`, `now/1` is the
 scheduled timestamp under every clock, so a chained `timer_after/2` schedules off the timer
 that woke it and a replay registers the same instant.
+
+Timers are a stream's. Until they fire inside a workflow, a workflow's tasklet cannot register
+or cancel one: its Cells run with timers unavailable, so each of the four ctx timer calls
+answers `{:error, :timers_unavailable}` and arms nothing, and a `run/3` that returns that
+error fails the tasklet with a text naming `TimersUnavailable`.
 
 A Tasklet registers a deadline from `run/3` or from a firing and handles it in
 `on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers
@@ -575,7 +612,10 @@ ack goes out, this side closes its streams, nothing reconnects and the process s
 `effectively_once: "true"` (and `ack_granularity: "checkpoint"` when one of the three
 checkpoint options is declared), which is what makes the controller stamp `flz.offset` on
 every forwarded input, re-forward from `watermark + 1` on every bind, and derive the output
-identity at flush.
+identity at flush. The tier is a stream's: a workflow commits stage by stage, so a workflow
+class declaring it, a checkpoint option or a correction window is refused at registration as
+`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` or `CorrectionWindowOnWorkflow`, and a
+stream class declaring `sync_durability/0` true is refused `SyncDurabilityOnStream`.
 
 **One record per effectful invocation.** In place of the change records and the trailing
 timer-ops record, the Cell ships one `cell_effect_record` (`format_id = 2`, the postcard

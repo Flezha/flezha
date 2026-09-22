@@ -184,7 +184,7 @@ defmodule Flezha.Service.HubManager.Placement do
   # behind it — without starting the operative either.
   #
   # The caller still learns, though not from here. A named factory with no runner
-  # is refused by `Admission.validate_factory/2` before the hub is asked — its
+  # is refused by `Admission.resolve_factory/2` before the hub is asked — its
   # catch-all clause means that covers a binary factory id only — and a runner
   # that goes away after that check reaches the caller through
   # `Init.bind_started/4`, whose bounded `:registry_runner_set` call meets the

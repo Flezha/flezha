@@ -31,8 +31,9 @@ defmodule Flezha.Service.Cli.Schedule do
 
   @doc """
   The call's options carry the flags: `cron`, `tz` and `factory`; `namespace`,
-  `init_values`, `kind` and `plugins`, each defaulting as the help screen says
-  when absent.
+  `init_values` and `plugins`, each defaulting as the help screen says when
+  absent. The kind is the factory's: one a connected runner announced as a
+  stream is refused here, and one nobody announces yet is judged at each fire.
   """
   def schedule_add(name, %{opts: opts}) do
     ns = Namespace.or_default(Keyword.get(opts, :namespace, ""))
@@ -43,7 +44,7 @@ defmodule Flezha.Service.Cli.Schedule do
 
     init_map = Context.json!(Keyword.get(opts, :init_values, ""), "--init-values")
 
-    with :ok <- schedule_workflow_only(Keyword.get(opts, :kind, "workflow")),
+    with :ok <- schedule_workflow_only(ns, factory_id),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
            Store.add(%{
@@ -151,8 +152,14 @@ defmodule Flezha.Service.Cli.Schedule do
     end
   end
 
-  defp schedule_workflow_only(kind) when kind in ["", "workflow"], do: :ok
-  defp schedule_workflow_only(kind), do: {:error, {:unschedulable_kind, kind}}
+  defp schedule_workflow_only(namespace, factory_id) do
+    case FleetManager.factory_kind(namespace, factory_id) do
+      {:ok, :stream} -> {:error, {:unschedulable_kind, factory_id}}
+      _workflow_or_unannounced -> :ok
+    end
+  catch
+    :exit, _ -> :ok
+  end
 
   # Full provider-resolving check at add time, so a typo fails at the CLI
   # rather than at 08:00. A slot instance id only exists at fire time, so the
@@ -208,8 +215,8 @@ defmodule Flezha.Service.Cli.Schedule do
 
   defp schedule_error_message({:invalid_name, msg}), do: "invalid schedule name: #{msg}"
 
-  defp schedule_error_message({:unschedulable_kind, kind}),
-    do: "only workflow operatives are schedulable (got kind #{kind})"
+  defp schedule_error_message({:unschedulable_kind, factory_id}),
+    do: "only a workflow factory is schedulable; factory #{factory_id} is a stream"
 
   defp schedule_error_message({:invalid_plugins, msg}), do: "invalid --plugins: #{msg}"
 

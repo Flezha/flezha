@@ -58,7 +58,7 @@ naming the host it detected, the package it looked for and the build above.
 ## Writing an operative
 
 ```ts
-import { createRunner, defineOperative, defineTasklet } from '@flezha/sdk';
+import { createRunner, defineStream, defineTasklet } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
 interface Candle { symbol: string; close: number }
@@ -78,7 +78,7 @@ const Ohlc = defineTasklet({
   },
 });
 
-export default defineOperative({
+export default defineStream({
   factoryId: 'candles',
   channels: (c) => {
     c.input<Trade>('trades').keyBy((trade) => trade.symbol).into(Ohlc).keyed().sink('candles');
@@ -100,6 +100,25 @@ refusal stops working. Everything static typing cannot see — cycles, missing
 entry channels, unservable clocks, keyed-channel rules, branch arity, duplicate
 sinks — is refused at registration, naming the handler and the defect.
 
+**A setting of one kind is refused by name on the other.** Both kinds use one
+builder, and the declaration carries everything it recorded: the
+effectively-once tier, a checkpoint setting or a correction window on a
+workflow is refused at registration as `EffectivelyOnceOnWorkflow`,
+`CheckpointOnWorkflow` or `CorrectionWindowOnWorkflow`, and
+`syncDurability: true` on a stream as `SyncDurabilityOnStream`. A workflow's
+own options (`loopMode`, `rollbackMode`, `maxDurationMs`, `wakeAfterMs`)
+written on `defineStream`, full form or short, are refused where it runs,
+naming them. Synchronous durability is only the definition's `syncDurability`
+field; the builder has no call for it.
+
+**Retry belongs to the edge, for both kinds.** `retryMax` and `retryBackoffMs`
+on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
+and `retryMax(1)` fails fast.
+
+**A tasklet inside a workflow cannot use timers yet.** `timerAfter`,
+`timerAtEventTime` and `cancelTimer` throw an error beginning
+`TimersUnavailable`, which fails the attempt.
+
 **State is mutated only through declared changes.** Assigning to a field of
 `ctx.state` throws, naming the field and the change-based path: declared state
 is rebuilt from its recorded changes on restart, so a direct assignment is lost
@@ -111,7 +130,7 @@ is what makes enabling worker threads a flag rather than a rewrite.
 
 ### The short form
 
-An operative of one tasklet can be one declaration: `defineOperative` or
+An operative of one tasklet can be one declaration: `defineStream` or
 `defineWorkflow` carrying that tasklet's `run` body in place of `channels`.
 The function's name is the kind. `factoryId` is required, `sink` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
@@ -121,7 +140,7 @@ reads) are written beside `run`.
 
 ```ts
 // upcase.mjs
-export const upcase = defineOperative({
+export const upcase = defineStream({
   factoryId: 'upcase',
   sink: 'out',
   codec: 'text',
@@ -150,15 +169,27 @@ single tasklet: an entry channel named `input`, or the `input` field's value,
 decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
 keep their state path when it grows into the full form; a plugin sink named by
 `sink`; and every class-level setting at its default. A workflow short form is
-a `once` workflow, run once over its first message: `flz operative start
---kind workflow --text '<payload>'`, or a start followed by `flz operative
-send`; a second message to a `once` instance is accepted and never read.
+a `once` workflow unless it writes `loopMode`, run once over its first
+message: `flz operative start --text '<payload>'`, or a start followed by
+`flz operative send`; a second message to a `once` instance is accepted and
+never read. With `loopMode: 'per_input'` it runs once per message and does
+not complete after the first:
+
+```ts
+export const chat = defineWorkflow({
+  factoryId: 'chat',
+  sink: 'replies',
+  codec: 'text',
+  loopMode: 'per_input',
+  run: (turn) => turn,
+});
+```
 
 With no `sink` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and returns nothing.
 
 ```ts
-export const counter = defineOperative({
+export const counter = defineStream({
   factoryId: 'counter',
   input: 'ticks',
   codec: 'text',
@@ -173,20 +204,24 @@ export const counter = defineOperative({
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window.
+edge, an edge's retry ladder, and every class-level setting but a workflow's
+loop mode (the effectively-once tier, a correction window, a rollback mode, a
+maximum duration).
 
-The spec is built where `defineOperative` or `defineWorkflow` runs, so a
+The spec is built where `defineStream` or `defineWorkflow` runs, so a
 malformed short form is refused while the module loads rather than inside
 `run()`. Two refusals name themselves: `ShortFormWithTopology` (`run` beside
 `channels`), and `DuplicateFactoryId`, raised when the runner declares a second
 operative, of either kind, under a factory id it holds. A key written where it
-does not belong is refused naming the key: a class-level setting, `name` or
-`kind` beside `run`, `sink`, `input`, `codec` or a tasklet field beside `channels`, and `kind`,
-`sink`, `input` or `codec` on a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs`
-author runs no type checker and this SDK ships no build step, so a body that
+does not belong is refused naming the key: a class-level setting other than a
+workflow's `loopMode`, `name` or `kind` beside `run`, `sink`, `input`, `codec`
+or a tasklet field beside `channels`, and `kind`, `sink`, `input` or `codec` on
+a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs` author runs
+no type checker and this SDK ships no build step, so a body that
 returns nothing cannot be seen here. The manifest leaves
-`shorthand_typed_output` off and the conformance row skips by name.
+`shorthand_typed_output` off and the conformance row skips by name. For the same
+reason a `loopMode` or `rollbackMode` outside the declared values is refused
+where `defineWorkflow` runs, naming the value.
 
 ## The parallelism model, as arithmetic
 

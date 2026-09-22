@@ -135,13 +135,19 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
 
   alias Flezha.Runner.{ControlChannel, FleetManager}
   alias FlezhaTest.Helper.ControlFrameTestHelper
+  alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-update-factories-test"
 
   setup do
     original = :sys.get_state(FleetManager)
-    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> original end) end)
+
+    on_exit(fn ->
+      :sys.replace_state(FleetManager, fn _ -> original end)
+      FleetStateHelper.forget_established(@namespace, ["alpha", "beta"])
+    end)
+
     :ok
   end
 
@@ -172,8 +178,12 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
         {:update_factories,
          %RunnerCommands.UpdateFactories{
            factories: [
-             %RunnerCommands.FactoryDecl{id: "alpha", description: "the alpha factory"},
-             %RunnerCommands.FactoryDecl{id: "beta", description: ""}
+             %RunnerCommands.FactoryDecl{
+               id: "alpha",
+               description: "the alpha factory",
+               kind: "workflow"
+             },
+             %RunnerCommands.FactoryDecl{id: "beta", description: "", kind: "stream"}
            ]
          }}
       )
@@ -191,8 +201,8 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
                {:ok, factories} = FleetManager.list_factories(@namespace)
 
                factories == [
-                 %{id: "alpha", description: "the alpha factory"},
-                 %{id: "beta", description: nil}
+                 %{id: "alpha", description: "the alpha factory", kind: :workflow},
+                 %{id: "beta", description: nil, kind: :stream}
                ]
              end,
              500,

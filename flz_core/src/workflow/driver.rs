@@ -24,7 +24,7 @@ use super::resume::{journaled_stages, next_iteration_seed, park, IterationSeed, 
 use super::spec::{EntryChain, TaskDag, WorkflowSpec};
 use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::cell::CellSlot;
-use crate::channel::{BuildCellArgs, ChannelId, ConsumerEdge, RetryPolicy, TaskletId};
+use crate::channel::{BuildCellArgs, ChannelId, ConsumerEdge, TaskletId};
 use crate::flusher::CellFlusher;
 use crate::operative::topology::{CellMode, OperativeTopology, TaskletDescriptor};
 use crate::state_sink::COMPENSATION_INTENT_PAYLOAD_ID;
@@ -57,8 +57,6 @@ pub(super) struct ChainCtx<'a> {
     pub(super) loop_mode: LoopMode,
     pub(super) wake_after: Option<Duration>,
     pub(super) inbox: &'a Receiver<Inbound>,
-    pub(super) retry: RetryPolicy,
-    pub(super) barrier_retry_attempts: u32,
     pub(super) persistence_enabled: bool,
     /// Inbox items the controller still owes this bind; the park-idle clock
     /// starts at zero.
@@ -220,8 +218,6 @@ fn run_structured(
         loop_mode: spec.loop_mode,
         wake_after: spec.wake_after,
         inbox,
-        retry: spec.retry,
-        barrier_retry_attempts: spec.barrier_retry_attempts,
         persistence_enabled: spec.persistence_enabled,
         owed_inbox: std::cell::Cell::new(instance.owed_inbox),
         parked_offset: std::cell::Cell::new(0),

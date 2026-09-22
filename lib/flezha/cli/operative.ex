@@ -20,11 +20,11 @@ defmodule Flezha.Service.Cli.Operative do
 
   @doc """
   Starts an operative and prints the id it runs under. The call's options carry
-  `id` (generated when absent), `plugins` (a JSON array, `[]` when absent),
-  `kind` (`stream` when absent) and, for a first message, `text` with an
-  optional `channel`, delivered as the instance's first input on the
-  mechanism a tasklet's spawn uses. Answers `{:ok, %{id:, outcome:}}`, which
-  the start's audit record reads.
+  `id` (generated when absent), `plugins` (a JSON array, `[]` when absent) and,
+  for a first message, `text` with an optional `channel`, delivered as the
+  instance's first input on the mechanism a tasklet's spawn uses. The kind is
+  the factory's, announced by its runners. Answers `{:ok, %{id:, outcome:}}`,
+  which the start's audit record reads.
   """
   def operative_start(namespace, factory_id, init_values, format, opts_json, %{opts: opts}) do
     format = Context.atom!(format, [:text, :json], "format")
@@ -39,7 +39,6 @@ defmodule Flezha.Service.Cli.Operative do
     operative = %Builder{
       id: Keyword.get(opts, :id),
       factory_id: factory_id,
-      kind: parse_kind(Keyword.get(opts, :kind, "stream")),
       init_values: Context.json!(init_values, "--init-values"),
       opts: seed_input(opts_kw, Keyword.get(opts, :text), Keyword.get(opts, :channel))
     }
@@ -172,19 +171,6 @@ defmodule Flezha.Service.Cli.Operative do
 
   defp render_start({:error, reason}, _format),
     do: Context.fail!("starting operative: #{Context.format_reason(reason)}")
-
-  # Resolve the wire kind string to its atom without minting atoms from
-  # untrusted input: only already-known kinds convert; anything else stays a
-  # string, which `Validator.valid_kind/1` rejects at start.
-  defp parse_kind(kind) when kind in [nil, "", "stream"], do: :stream
-
-  defp parse_kind(kind) when is_binary(kind) do
-    String.to_existing_atom(kind)
-  rescue
-    ArgumentError -> kind
-  end
-
-  defp parse_kind(kind), do: kind
 
   @doc "Stops a operative (cooperatively for a workflow operative, hard otherwise)."
   def operative_stop(namespace, operative_id, _call) do

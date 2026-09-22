@@ -31,7 +31,7 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
 
   defp seed(ns, runner_ids) do
     HubRegistryTestHelper.seed_runners(ns, runner_ids, @factory)
-    on_exit(fn -> FleetStateHelper.forget_langs(ns, [@factory]) end)
+    on_exit(fn -> FleetStateHelper.forget_established(ns, [@factory]) end)
     runner_ids
   end
 

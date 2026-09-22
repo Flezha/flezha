@@ -624,9 +624,9 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 
 ### Requirement: Java SDK implements the workflow cell retry ladder
 
-The Java SDK SHALL implement the `workflow-cell-retry` capability. `WorkflowOperative` SHALL declare `retryAttempts()` (default 3 total attempts) and `retryBackoff()` (default 500 ms base). Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
+The Java SDK SHALL implement the `workflow-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` a stream's edge declares; `WorkflowOperative` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
 
-Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryAttempts() == 0` SHALL collapse to a single attempt; `attempts > 1` with a zero backoff SHALL be rejected at registration with `ZeroRetryBackoff`. A `WorkflowException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
+Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `RetryMaxZero`, as on a stream. A `WorkflowException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
 
 #### Scenario: A transient cell failure recovers on retry
 
@@ -643,10 +643,10 @@ Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50
 - **WHEN** a cell throws `WorkflowException.nonRetryable("bad record")`
 - **THEN** the SDK SHALL NOT retry and SHALL proceed directly to the abort path
 
-#### Scenario: attempts > 1 with a zero backoff is refused
+#### Scenario: The edge's budget bounds the ladder
 
-- **WHEN** a workflow class declares `retryAttempts() == 3` and `retryBackoff() == Duration.ZERO`
-- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `ZeroRetryBackoff`
+- **WHEN** a workflow wires `c.input(String.class, "in").retryMax(2).into(Flaky.class)` and `Flaky` throws on every attempt
+- **THEN** the cell SHALL run exactly twice before the operative aborts, and `retryMax(0)` on that edge SHALL be refused at `registerFactory` naming `RetryMaxZero`
 
 ### Requirement: Java SDK implements workflow loop rewind
 
@@ -1119,4 +1119,47 @@ absent from.
   from `com.flezha.sdk.operative`, and the workflow supporting types
   (`WorkflowOperativeCtx`, `LoopMode`, `RollbackMode`, `WorkflowLoopBody` and the
   workflow exception types) SHALL resolve from the same package
+
+### Requirement: Both kinds declare their graph in `channels` on the `Operative` base
+
+`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operative.Operative`; `StreamOperative` and `WorkflowOperative` SHALL inherit it and SHALL NOT redeclare it, and `WorkflowOperative` SHALL carry no `tasklets` method. A workflow class SHALL be built through the same `StreamOperativeTopologyBuilder` entry a stream is, which reads the kind from the class's interface, and SHALL be registered as the same `StreamOperativeTopology` a stream is; the `@Tasklet` processor SHALL emit `channels` for a generated operative of either kind. `WorkflowOperative` SHALL keep only the settings that are a workflow's own: `maxDuration()`, `selfTerminating()`, `loopMode()`, `wakeAfter()`, `rollbackMode()`, `persistenceEnabled()` and `syncDurability()`; `retryAttempts()`, `retryBackoff()` and `barrierRetryAttempts()` SHALL NOT exist, and `WorkflowOperativeConfigurationException` SHALL carry no `ZeroRetryBackoff`. The javadoc of `Operative`, `StreamOperative`, `WorkflowOperative`, `com.flezha.sdk.operative.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a workflow as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
+
+#### Scenario: A workflow class writes channels
+
+- **WHEN** a class implementing `WorkflowOperative` overrides `channels(ChannelBuilder c)` and wires `c.input(OrderTicket.class, "order").into(ReserveFunds.class)`
+- **THEN** `registerFactory` SHALL declare a workflow whose graph is that wiring, and a class that instead declares `tasklets(ChannelBuilder)` SHALL compile only as an unrelated method the runtime never calls, its `channels` being abstract and unimplemented
+
+#### Scenario: A class of both kinds is refused
+
+- **WHEN** a class implements both `StreamOperative` and `WorkflowOperative`
+- **THEN** it SHALL fail to compile unless it resolves the `persistenceEnabled()` default both kinds declare, a class that does SHALL be refused at `registerFactory` with `AmbiguousOperativeKind`, and the base's single abstract `channels` SHALL give it no second body to write
+
+#### Scenario: The retry knobs are gone from the interface
+
+- **WHEN** a class overrides `retryAttempts()` on `WorkflowOperative`
+- **THEN** compilation SHALL fail, because the interface declares no such method, and the edge's `retryMax` / `retryBackoffMs` SHALL be the only retry declaration a workflow can write
+
+#### Scenario: The javadoc speaks in the graph vocabulary
+
+- **WHEN** `sdk/java/flezha-sdk-api/src/main/java` is searched for "ordered steps", "step sequence", "resumes at the step", "between two steps" or "step boundary"
+- **THEN** no javadoc or comment carries any of them, and `sdk/java/flezha-sdk-runtime/src/main/java` carries none either
+
+### Requirement: A Java workflow class carries no stream-only setting and no timer
+
+`HostClassDeclaration.forWorkflow` SHALL put on the wire every key the class's builder recorded, tier and checkpoint keys included, and SHALL run the core's check on a record that carries the `workflow` key, so a stream-only setting on a workflow class is refused by the core under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) at `registerFactory`, wrapped in `WorkflowOperativeConfigurationException` with the name in its message, and never stripped, never honoured in process while withheld from the controller. Inside a workflow instance, `OperativeInstance.runItem` SHALL attach no `TimerSession` to the `EmitContext`, as `compensate` already attaches none, so every timer call answers `TaskletException.TimersUnavailable`.
+
+#### Scenario: The tier on a workflow class is refused by the core's name
+
+- **WHEN** a `WorkflowOperative`'s `channels` calls `c.effectivelyOnce()`
+- **THEN** `registerFactory` SHALL throw `WorkflowOperativeConfigurationException` whose message contains `EffectivelyOnceOnWorkflow`, and the class SHALL NOT be registered
+
+#### Scenario: A checkpoint setting on a workflow class is refused by its own name
+
+- **WHEN** a `WorkflowOperative`'s `channels` calls `c.checkpointEvery(100)`
+- **THEN** `registerFactory` SHALL throw with a message containing `CheckpointOnWorkflow`
+
+#### Scenario: A timer inside a workflow tasklet is refused
+
+- **WHEN** a tasklet of a running workflow calls `ctx.timerAfter(Duration.ofSeconds(1))`
+- **THEN** the call SHALL throw `TaskletException.TimersUnavailable`, no timer op SHALL reach the effect, and the attempt SHALL fail as one throwing that exception fails
 

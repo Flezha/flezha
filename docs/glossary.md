@@ -35,7 +35,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 - **Operative** — the unit you start and stop (`flz operative start|stop|list|info`), registered
   under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operative` base),
-  with a **kind** frozen at start: `stream` (default) or `workflow` (`Flezha.Operative.Kind`).
+  with a **kind**, `stream` or `workflow`, that its class declares and its runner announces with
+  the factory id; a start names only the factory, and the kind is frozen for the instance's life
+  (`Flezha.Operative.Kind`).
 - **Stream operative** — the always-on kind: an endless input, no barrier, per-cell recovery.
   Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
 - **Workflow operative** — the terminating kind: a DAG of tasklets run level by level behind a
@@ -177,7 +179,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
   artifacts is written last, so a torn upload is invisible. See [`operations/remote_durability_tier.md`](operations/remote_durability_tier.md).
 - **Synchronous durability** — a workflow class declaring `SYNC_DURABILITY` / `syncDurability()`
-  has each commit barrier's ack gated on the remote ship (RPO 0). Stream classes are refused it.
+  (its one class-level spelling in each SDK) has each commit barrier's ack gated on the remote
+  ship (RPO 0). Stream classes are refused it (`SyncDurabilityOnStream`).
 - **RPO breach** — local progress unshipped past `rpo_target_ms` (default 120 s): alarm-grade
   `[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and `/healthz`. A
   **supersession** (`[:flezha, :state, :claim_superseded]`) is routine on every migration, not a breach.

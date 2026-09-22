@@ -211,10 +211,10 @@ defmodule Flezha.Runner.FleetManager do
   Why `factory_id` has no placement candidate in `namespace`.
 
   `:none` when some runner can take it; `:no_such_factory` when no runner
-  advertises the id at all; `{:language, established}` when runners advertise
-  it in another language than the one the factory is established at — a
-  factory that exists and is simply unplaceable here, which must not be
-  reported as a factory that does not exist.
+  advertises the id at all; `{:language, established}` or `{:kind, established}`
+  when runners advertise it at another language or kind than the one the
+  factory is established at — a factory that exists and is simply unplaceable
+  here, which must not be reported as a factory that does not exist.
   """
   @spec placement_refusal(String.t(), String.t(), timeout()) ::
           :none
@@ -222,8 +222,22 @@ defmodule Flezha.Runner.FleetManager do
           | :ambiguous_language
           | :no_language_declared
           | {:language, byte()}
+          | :ambiguous_kind
+          | :no_kind_declared
+          | {:kind, :stream | :workflow}
   def placement_refusal(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
+  end
+
+  @doc """
+  The kind `factory_id` is established at in `namespace`, which a start takes
+  rather than names: `{:ok, :stream | :workflow}` when a runner here can place
+  it, else `{:error, refusal}` in `placement_refusal/3`'s vocabulary.
+  """
+  @spec factory_kind(String.t(), String.t(), timeout()) ::
+          {:ok, :stream | :workflow} | {:error, term()}
+  def factory_kind(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
+    GenServer.call(__MODULE__, {:factory_kind, namespace, factory_id}, timeout)
   end
 
   @doc """
@@ -412,28 +426,18 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call({:placement_refusal, namespace, factory_id}, _from, state) do
-    {info, advertising} = Factories.advertising_runners(state, namespace, factory_id)
+    {:reply, placement_refusal_of(state, namespace, factory_id), state}
+  end
 
-    # The message must read the same derivation as the decision, or the two
-    # drift exactly where the record is missing and the operator is told a
-    # factory is established at a language nobody ever established.
-    refusal =
-      cond do
-        not Enum.empty?(Factories.placeable_runners(state, namespace, factory_id)) ->
-          :none
-
-        Enum.empty?(advertising) ->
-          :no_such_factory
-
-        true ->
-          case Factories.established_lang(namespace, factory_id, info, advertising) do
-            {:ok, lang} -> {:language, lang}
-            :ambiguous -> :ambiguous_language
-            :none -> :no_language_declared
-          end
+  @impl true
+  def handle_call({:factory_kind, namespace, factory_id}, _from, state) do
+    reply =
+      case placement_refusal_of(state, namespace, factory_id) do
+        :none -> {:ok, kind_of(state, namespace, factory_id)}
+        refusal -> {:error, refusal}
       end
 
-    {:reply, refusal, state}
+    {:reply, reply, state}
   end
 
   @impl true
@@ -473,7 +477,11 @@ defmodule Flezha.Runner.FleetManager do
       state.namespace_factories
       |> Map.get(namespace, %{})
       |> Enum.map(fn {factory_id, info} ->
-        %{id: factory_id, description: info.description}
+        %{
+          id: factory_id,
+          description: info.description,
+          kind: kind_of(state, namespace, factory_id)
+        }
       end)
       |> Enum.sort_by(& &1.id)
 
@@ -592,6 +600,36 @@ defmodule Flezha.Runner.FleetManager do
       _not_an_answer ->
         Logger.info("Received unexpected message at node manager: #{inspect(any)}")
         {:noreply, state}
+    end
+  end
+
+  # The message must read the same derivation as the decision, or the two
+  # drift exactly where the record is missing and the operator is told a
+  # factory is established at a value nobody ever established.
+  defp placement_refusal_of(state, namespace, factory_id) do
+    case Factories.placement(state, namespace, factory_id) do
+      {:ok, runners} ->
+        if Enum.empty?(runners), do: :no_such_factory, else: :none
+
+      {:refused, attribute, verdict} ->
+        refusal(attribute, verdict)
+    end
+  end
+
+  defp refusal(:sdk_lang, {:ok, lang}), do: {:language, lang}
+  defp refusal(:sdk_lang, :ambiguous), do: :ambiguous_language
+  defp refusal(:sdk_lang, :none), do: :no_language_declared
+  defp refusal(:kind, {:ok, kind}), do: {:kind, kind}
+  defp refusal(:kind, :ambiguous), do: :ambiguous_kind
+  defp refusal(:kind, :none), do: :no_kind_declared
+
+  # The kind a listed factory is established at, `nil` while nothing decides it.
+  defp kind_of(state, namespace, factory_id) do
+    {info, advertising} = Factories.advertising_runners(state, namespace, factory_id)
+
+    case Factories.established(namespace, factory_id, :kind, info, advertising) do
+      {:ok, kind} -> kind
+      _undecided -> nil
     end
   end
 

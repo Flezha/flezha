@@ -11,32 +11,33 @@ defmodule Flezha.Operative.Builder do
   the first declared one) and `:operative_class` (the on-disk persistence
   key, defaulting to `operative.id`).
 
-  Invariant: `:kind` is set at start and frozen for the operative's lifetime.
-  See `Flezha.Operative.Kind` for the kind/capability model.
+  Invariant: `:kind` is the factory's, resolved at start from what its runners
+  announced, and frozen for the operative's lifetime; a caller that sets one
+  asserts it and is refused when the factory disagrees. See
+  `Flezha.Operative.Kind` for the kind/capability model.
   """
 
-  alias Flezha.Operative.Kind
-
-  @declared [:id, :factory_id, :kind, :init_values, :opts]
+  # What a caller may write. The kind is not among them: it is the factory's,
+  # announced by its runners, and the start resolves it.
+  @declared [:id, :factory_id, :init_values, :opts]
 
   @type t() :: %__MODULE__{
           id: String.t() | nil,
           factory_id: String.t(),
-          kind: atom(),
+          kind: :stream | :workflow | nil,
           init_values: map(),
           opts: Keyword.t()
         }
   @enforce_keys [:factory_id]
-  defstruct [:id, :factory_id, kind: :stream, init_values: %{}, opts: []]
+  defstruct [:id, :factory_id, :kind, init_values: %{}, opts: []]
 
   @doc """
   Build a spec from named fields, so a caller that reached the controller over
   a wire never has to name this struct.
 
-  `:kind` may be written as text, and `:opts` as a map keyed by text: both are
-  what a JSON document carries. A field this struct does not declare, a kind
-  this controller does not know, or a missing `:factory_id` is refused rather
-  than guessed. A missing `:id` is not: the start authority generates one. A
+  `:opts` may be written as a map keyed by text, which is what a JSON document
+  carries. A field a caller may not write (the kind among them) or a missing
+  `:factory_id` is refused rather than guessed. A missing `:id` is not: the start authority generates one. A
   spec that is already built passes through.
   """
   @spec build(t() | keyword() | map()) :: {:ok, t()} | {:error, term()}
@@ -47,7 +48,6 @@ defmodule Flezha.Operative.Builder do
 
     with :ok <- required(fields),
          {:ok, fields} <- declared(fields),
-         {:ok, fields} <- resolve_kind(fields),
          {:ok, fields} <- resolve_opts(fields) do
       {:ok, struct!(__MODULE__, fields)}
     end
@@ -84,27 +84,6 @@ defmodule Flezha.Operative.Builder do
       [] -> {:ok, fields}
       unknown -> {:error, {:unknown_fields, unknown}}
     end
-  end
-
-  # A kind written as text resolves only to a kind this controller already
-  # knows, so no atom is minted from a wire value.
-  defp resolve_kind(fields) do
-    case Keyword.fetch(fields, :kind) do
-      :error -> {:ok, fields}
-      {:ok, kind} when is_atom(kind) -> {:ok, fields}
-      {:ok, text} when is_binary(text) -> put_known_kind(fields, text)
-      {:ok, other} -> {:error, {:unknown_kind, other}}
-    end
-  end
-
-  defp put_known_kind(fields, text) do
-    kind = String.to_existing_atom(text)
-
-    if Kind.known?(kind),
-      do: {:ok, Keyword.put(fields, :kind, kind)},
-      else: {:error, {:unknown_kind, text}}
-  rescue
-    ArgumentError -> {:error, {:unknown_kind, text}}
   end
 
   # `opts` is opaque to this struct, so its vocabulary is not enumerated here.

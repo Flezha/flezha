@@ -7,11 +7,16 @@ The workflow-cell-retry capability is the retry rung between a cell failure and 
 ### Requirement: A failing cell is retried with backoff before the tasklet fails
 
 A cell whose work errors inside a structured workflow tasklet SHALL be
-retried in place — default 3 attempts (the first run plus its retries), with the
-platform's shared jittered exponential backoff (`base × 2^(n-1)` ±50%, capped at
-`RETRY_BACKOFF_MAX_MS` = 5 s; default base 500 ms — the same helper the stream
-retry-then-park ladder uses) — while sibling cells' completed results stay
-buffered at the barrier and are not re-run. A retry that succeeds SHALL let the stage quiesce and commit
+retried in place, under the retry policy of the edge that feeds the tasklet, the same
+`retry_max` / `retry_backoff_ms` a stream's edge declares: default 3 attempts (the first run
+plus its retries), with the platform's shared jittered exponential backoff
+(`base × 2^(n-1)` ±50%, capped at `RETRY_BACKOFF_MAX_MS` = 5 s; default base 50 ms, the edge's
+default, computed by the same helper the stream retry-then-park ladder uses) — while sibling
+cells' completed results stay buffered at the barrier and are not re-run. There SHALL be no
+class-level retry policy on a workflow: the policy the step ladder reads SHALL be the one the
+shared core already derives for the tasklet from its input channel, and a workflow SHALL carry no
+`retry_attempts`, `retry_backoff` or `barrier_retry_attempts` declaration in any SDK or on the
+wire. A retry that succeeds SHALL let the stage quiesce and commit
 normally. The backoff wait SHALL observe cancellation (external stop /
 `max_duration`) at the existing wake granularity. The retried cell body
 re-runs under the same at-least-once idempotency contract crash-resume imposes.
@@ -20,6 +25,11 @@ re-runs under the same at-least-once idempotency contract crash-resume imposes.
 
 - **WHEN** cell k2 of a parallel stage errors once with a retryable error and succeeds on retry, while k1 and k3 completed
 - **THEN** the stage SHALL quiesce and commit normally, k1/k3 SHALL NOT re-run, and no compensation SHALL fire
+
+#### Scenario: The edge's budget is the ladder's
+
+- **WHEN** a workflow wires `c.input("order").retry_max(5).retry_backoff_ms(20).into(Reserve)` and `Reserve`'s cell errors retryably on every attempt
+- **THEN** the cell SHALL run five times, each wait SHALL grow from a 20 ms base, and the tasklet SHALL fail after the fifth attempt
 
 #### Scenario: Stop interrupts a waiting retry
 
@@ -49,9 +59,11 @@ cell, attempt, delay).
 
 `WorkflowError` SHALL support a non-retryable marker; an error so marked SHALL
 skip the ladder and fail the tasklet immediately. Errors produced by the
-existing string conversions SHALL remain retryable by default. The
-`WorkflowOperative` trait SHALL expose per-class policy knobs for attempt count
-and backoff base; attempts = 0 SHALL restore fail-fast. Retry SHALL apply to
+existing string conversions SHALL remain retryable by default. The policy knobs SHALL be the
+edge's, `retry_max` and `retry_backoff_ms` on the channel builder of every SDK, exactly as a
+stream tunes them; the `WorkflowOperative` trait SHALL expose no per-class knob for attempt
+count or backoff base, and `retry_max(1)` SHALL be fail-fast, `retry_max(0)` being refused as
+`RetryMaxZero` for both kinds. Retry SHALL apply to
 every workflow's tasklet cells, since every workflow runs tasklets, and
 SHALL only ever occur before the tasklet's commit (a committed tasklet is
 never retried).
@@ -61,10 +73,15 @@ never retried).
 - **WHEN** a cell returns an error marked non-retryable on its first attempt
 - **THEN** no retry SHALL occur and the tasklet SHALL fail immediately
 
-#### Scenario: attempts = 0 restores fail-fast
+#### Scenario: retry_max(1) is fail-fast
 
-- **WHEN** a class sets its retry attempts to 0 and a cell errors
-- **THEN** the tasklet SHALL fail on the first error, matching pre-change behavior
+- **WHEN** a workflow's entry edge declares `retry_max(1)` and a cell errors
+- **THEN** the tasklet SHALL fail on the first error, and the same declaration with `retry_max(0)` SHALL be refused at registration naming `RetryMaxZero`
+
+#### Scenario: The class-level knobs are gone from every SDK
+
+- **WHEN** the seven SDKs' workflow surfaces and `test/fixtures/host_class_decl_keys.txt` are searched for `retry_attempts`, `retryAttempts`, `retry_backoff`, `retryBackoff`, `barrier_retry_attempts` or `barrierRetryAttempts`
+- **THEN** no trait, interface, definition type, decorator keyword, class-body setting, attribute argument, `use` option or declaration key carries one, and `ZeroRetryBackoff` names no refusal in any SDK or in the core
 
 ### Requirement: A backoff wait holds no worker thread
 
@@ -90,4 +107,13 @@ SHALL be unchanged.
 - **THEN** the wait SHALL end promptly and the operative SHALL take the normal
   abnormal-exit path, exactly as the pre-existing stop-interrupts-backoff
   scenario pins
+
+### Requirement: A commit barrier is re-sent a fixed number of times
+
+The re-send of a task-commit, iteration-commit or compensation barrier whose acknowledgement timed out (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`) SHALL be governed by the runner's controller connection, not by the class: a constant of three sends, each waited out with the shared ladder's default backoff base, declared beside the acknowledgement timeout in the shared core and read by the Elixir SDK's driver from its knob table. The waiter SHALL stay registered across the re-sends so a late acknowledgement continues the chain, and only the exhausted count SHALL be a terminal error, as today.
+
+#### Scenario: A stalled acknowledgement is re-sent three times
+
+- **WHEN** a controller withholds every `TaskCommitResponse`
+- **THEN** the runner SHALL send the same barrier under the same reference id three times in total and then end the run with a terminal error, and no class setting SHALL change that count
 

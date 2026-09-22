@@ -7,7 +7,6 @@ use crate::rpc::{self, text, Opt};
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
 const TZ: OptSpec = OptSpec::text("--tz", "--tz", "<iana>").required();
 const FACTORY: OptSpec = OptSpec::text("--factory", "--factory", "<factory_id>").required();
-const KIND: OptSpec = OptSpec::text("--kind", "--kind", "<stream|workflow>");
 const PLUGINS: OptSpec = OptSpec::text("--plugins", "-p", "<json>");
 
 const NAME: &[Positional] = &[Positional::required("<name>")];
@@ -26,7 +25,6 @@ pub(crate) const TABLE: Command = Command {
                 INIT_VALUES,
                 TEXT,
                 CHANNEL,
-                KIND,
                 PLUGINS,
             ])
             .strict(),
@@ -71,13 +69,8 @@ fn handle_add(read: &Reading) {
         }
     }
     opts.extend(first_message_opts(read));
-    for (key, value) in [
-        ("kind", read.opt(KIND.long)),
-        ("plugins", plugins.as_deref()),
-    ] {
-        if let Some(value) = value {
-            opts.push((key, text(value)));
-        }
+    if let Some(plugins) = plugins.as_deref() {
+        opts.push(("plugins", text(plugins)));
     }
 
     rpc::run(

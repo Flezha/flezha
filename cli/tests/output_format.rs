@@ -336,8 +336,8 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (&["token", "list", "--token"], Refused("--token requires a value")),
     (
-        &["operative", "start", "fac", "--kind"],
-        Refused("--kind requires a value"),
+        &["operative", "start", "fac", "--id"],
+        Refused("--id requires a value"),
     ),
     (
         &["controller", "start", "--mode"],
@@ -531,13 +531,13 @@ const CASES: &[(&[&str], Want)] = &[
         &["reset", "--dry-run", "--probe-timeout-ms", "abc", NO_ROOT],
         Refused("invalid --probe-timeout-ms value 'abc'"),
     ),
-    // `flz operative start` carries `--id`, `--plugins` and `--kind` in the
-    // options list, and only when written; the two verbs whose credential once
-    // rode a JSON document or nowhere at all now end with the same list as
-    // every other.
+    // `flz operative start` carries `--id` and `--plugins` in the options
+    // list, and only when written; the two verbs whose credential once rode a
+    // JSON document or nowhere at all now end with the same list as every
+    // other.
     (
-        &["operative", "start", "fac", "--id", "op", "--kind", "workflow", "--plugins", "[]"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "fac", "{}", "text", "{}", [id: "op", plugins: "[]", kind: "workflow"])"#),
+        &["operative", "start", "fac", "--id", "op", "--plugins", "[]"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "fac", "{}", "text", "{}", [id: "op", plugins: "[]"])"#),
     ),
     // A start without an id carries no id at all: the controller generates it.
     (
@@ -559,8 +559,8 @@ const CASES: &[(&[&str], Want)] = &[
     // A first message rides the options list as text, with the entry channel
     // it names; a channel with no message names nothing.
     (
-        &["operative", "start", "paper_order", "--kind", "workflow", "--text", r#"{"symbol":"AAPL"}"#, "--channel", "order"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "paper_order", "{}", "text", "{}", [kind: "workflow", text: "{\"symbol\":\"AAPL\"}", channel: "order"])"#),
+        &["operative", "start", "paper_order", "--text", r#"{"symbol":"AAPL"}"#, "--channel", "order"],
+        Rpc(r#"Flezha.Service.CliManager.operative_start("", "paper_order", "{}", "text", "{}", [text: "{\"symbol\":\"AAPL\"}", channel: "order"])"#),
     ),
     (
         &["operative", "start", "echo", "-t", "hello"],
@@ -583,6 +583,16 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["operative", "start", "echo", "--init_values", r#"{"a":1}"#],
         Refused("unknown argument '--init_values'"),
+    ),
+    // The kind is the factory's, announced by its runner: a written one is an
+    // option neither verb declares.
+    (
+        &["operative", "start", "echo", "--kind", "stream"],
+        Refused("unknown argument '--kind'"),
+    ),
+    (
+        &["schedule", "add", "n", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--kind", "workflow"],
+        Refused("unknown argument '--kind'"),
     ),
     (
         &["schedule", "add", "d", "--cron", "* * * * *", "--tz", "Etc/UTC", "--factory", "f", "-iv", "{}"],
@@ -643,8 +653,8 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("--channel names the entry channel of --text"),
     ),
     (
-        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", kind: "workflow", plugins: "[{\"hooks\":[\"on_output\"],\"id\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
+        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
+        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", plugins: "[{\"hooks\":[\"on_output\"],\"id\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
     ),
 ];
 

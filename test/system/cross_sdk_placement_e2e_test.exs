@@ -51,7 +51,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
   setup_all do
     # The factory must start unestablished: a leftover record from another run
     # would decide the outcome before either runner connects.
-    ClassRegistry.delete_sdk_lang(@namespace, @shared_factory)
+    ClassRegistry.delete_established(@namespace, @shared_factory)
 
     # The Rust runner connects FIRST and establishes the factory's language.
     {rust_port, rust_runner} = NodeTestHelper.start_runner_port(@namespace, runtime: :rust)
@@ -66,7 +66,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
             fn -> OperativeManager.stop_all_operatives(@namespace) end,
             fn -> FleetManager.stop_namespace(@namespace) end,
             fn -> Enum.each([rust_port, java_port], &Port.close/1) end,
-            fn -> ClassRegistry.delete_sdk_lang(@namespace, @shared_factory) end
+            fn -> ClassRegistry.delete_established(@namespace, @shared_factory) end
           ] do
         try do
           step.()
@@ -88,7 +88,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
   # would pass or fail on the seed's ordering.
   test "placement never crosses languages, and a dead runner does not hand its factory over",
        ctx do
-    assert ClassRegistry.sdk_lang(@namespace, @shared_factory) == @rust,
+    assert ClassRegistry.established(@namespace, @shared_factory, :sdk_lang) == @rust,
            "the Rust runner connected first, so it establishes #{@shared_factory}"
 
     # -- both advertise the id; only the established language is a candidate --

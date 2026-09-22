@@ -5,7 +5,7 @@ TBD - created by archiving change sdk-runner-entrypoint-redesign. Update Purpose
 ## Requirements
 ### Requirement: UpdateFactories control message
 
-The wire protocol SHALL define an SDK→controller control message `UpdateFactories` (proto tag 33 in the `CommandRequest` oneof) carrying the runner's **full current factory set** as `repeated FactoryDecl { id, description, sdk_lang }`. `sdk_lang` SHALL be the language byte of the class registered under that factory id — the same value the SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0 of every durable record it writes. The connect/reconnect init frame's factory entries SHALL carry the same key, since the init frame is the resync of record. The message SHALL be fire-and-forget: the controller SHALL NOT reply with an ack, and the SDK SHALL NOT block on it. Full-set semantics make delivery idempotent; the connect/reconnect init frame remains the resync of record, so a lost `UpdateFactories` frame is corrected by the next frame or the next reconnect. A stale placement racing a removal fails at the SDK's `AddOperative` handler and is re-placed by convergence — the same failure mode as a runner dying mid-placement.
+The wire protocol SHALL define an SDK→controller control message `UpdateFactories` (proto tag 33 in the `CommandRequest` oneof) carrying the runner's **full current factory set** as `repeated FactoryDecl { id, description, sdk_lang, kind }`. `sdk_lang` SHALL be the language byte of the class registered under that factory id — the same value the SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0 of every durable record it writes. `kind` SHALL be exactly `"stream"` or `"workflow"`, the kind of the class registered under that id: the Rust and Elixir SDKs SHALL fill it from the registered class, and the shared core SHALL fill it for every host SDK from the registry the class declaration landed in, where it fills `sdk_lang`. The connect/reconnect init frame's factory entries SHALL carry the same keys, since the init frame is the resync of record. The message SHALL be fire-and-forget: the controller SHALL NOT reply with an ack, and the SDK SHALL NOT block on it. Full-set semantics make delivery idempotent; the connect/reconnect init frame remains the resync of record, so a lost `UpdateFactories` frame is corrected by the next frame or the next reconnect. A stale placement racing a removal fails at the SDK's `AddOperative` handler and is re-placed by convergence — the same failure mode as a runner dying mid-placement.
 
 #### Scenario: A post-start define reaches the controller
 - **GIVEN** a connected runner that declared factory A at connect time
@@ -24,6 +24,10 @@ The wire protocol SHALL define an SDK→controller control message `UpdateFactor
 #### Scenario: The advertised language rides both halves of the seam
 - **WHEN** a runner advertises factory A in its connect init frame and later ships `UpdateFactories{factories: [A, C]}`
 - **THEN** both the init frame's entry for A and the `UpdateFactories` entries for A and C SHALL carry the language byte of the class registered under each id, and the controller SHALL store it beside the id and description
+
+#### Scenario: The advertised kind rides both halves of the seam
+- **WHEN** a runner advertises a stream factory A in its connect init frame and later ships `UpdateFactories{factories: [A, W]}` where W is a workflow class
+- **THEN** the init frame's entry for A SHALL carry `kind` `"stream"`, the `UpdateFactories` entries SHALL carry `"stream"` for A and `"workflow"` for W, and the controller SHALL store each beside the id, description and language
 
 ### Requirement: Controller applies UpdateFactories as a full-set replacement
 
@@ -130,4 +134,32 @@ A placement that finds no candidate because of a language refusal SHALL report a
 - **GIVEN** factory `orders` established at language `1` and only a language-`2` runner connected
 - **WHEN** an operative of `orders` is started
 - **THEN** the error SHALL name the language mismatch and SHALL NOT claim the factory does not exist
+
+### Requirement: A factory is homogeneous in its kind, and placement enforces it
+
+The controller SHALL record, per **namespace and factory id**, one **established kind**, beside the established language and by the same rule: the first runner to advertise the factory establishes its kind, held for as long as any runner advertises it; a runner advertising the same id at the other kind SHALL be stored, excluded from placement for that factory by the single placement filter (`Flezha.Runner.FleetManager.Factories.placeable_runners/3`), warned about naming the namespace, runner, factory, established kind and advertised kind, and counted by a telemetry event. A factory entry carrying no kind, or a kind other than `stream` or `workflow`, SHALL NOT make its runner a placement candidate for that factory, and a start naming such a factory with no other candidate SHALL fail with an error naming the missing or unknown kind declaration, distinct from "factory does not exist".
+
+Every start path SHALL resolve the operative's kind from this record before admission: `flz operative start` and the service verb take it as the instance's kind; a schedule fire and a tasklet-requested spawn, which are workflow-only, SHALL be refused by name when the record says `stream`. Resolving the established kind SHALL NOT require reading state on each placement.
+
+#### Scenario: The first advertisement establishes the kind
+
+- **GIVEN** a namespace with no record for `paper_order`
+- **WHEN** a runner connects announcing `paper_order` with kind `workflow`
+- **THEN** the established kind SHALL be `workflow`, and `flz operative start paper_order` SHALL start a workflow instance
+
+#### Scenario: A conflicting kind is visible and not placeable
+
+- **GIVEN** factory `orders` established as a stream
+- **WHEN** a second runner announces `orders` as a workflow
+- **THEN** the controller SHALL store its factory set, SHALL exclude it from `orders` placement, SHALL log a warning naming both kinds, and SHALL emit a telemetry event
+
+#### Scenario: An announcement with no kind is not placeable
+
+- **WHEN** a runner announces factory `orders` with an empty `kind`
+- **THEN** it SHALL NOT be a placement candidate for `orders`, and a start of `orders` with no other candidate SHALL fail naming the missing kind declaration
+
+#### Scenario: A spawn naming a stream factory is refused by name
+
+- **WHEN** a tasklet requests a spawn of factory `prices`, which its runner announced as a stream
+- **THEN** the controller SHALL answer `factory_not_workflow` without placing anything, and SHALL NOT answer `factory_unknown` or `refused`
 

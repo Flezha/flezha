@@ -4,7 +4,7 @@
 TBD - created by archiving change elixir-sdk-native-transport. Update Purpose after archive.
 ## Requirements
 ### Requirement: The Elixir runner entry point mirrors the cross-SDK runner-as-handle surface
-The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, opts)` with `transport: :native | :uds | :quic` defaulting to `:native` — returning a runner handle carrying its own declared factory set (empty at creation; no connection, no singleton claim, no process spawn), with `register_factory/2` (an operative module of either kind, the kind read from the callbacks it exports: `channels/1` makes a stream, `tasklets/1` or `run/2` a workflow, both answer `{:error, {:AmbiguousOperativeKind, module}}` and neither `{:error, {:UnknownOperativeKind, module}}`) and its inverse `unregister_factory/2`, and the lifecycle verbs `start/1`, `await_termination/1`, `run/1` (exactly `start/1` then `await_termination/1`, never an independent implementation), `close/1`, and `namespace/1`. The process-wide active-runner slot SHALL be claimed atomically inside `start/1` — any number of unstarted handles may exist; the loser receives `{:error, {:already_running, ns}}`; double-start on one handle errors; closing a never-started handle is a no-op. Zero-operative start SHALL be legal. Authoring and connection failures SHALL be named error tuples returned at the causing call site (mirroring the Rust `FlezhaError` variants) — never a raise. `Flezha.SDK.child_spec/1` SHALL accept `namespace:`, `operatives:` (a list of operative modules of either kind), and `transport:`, and wrap exactly the create → register → start → await sequence for the host application's supervision tree — it MUST NOT introduce a second lifecycle path. On start the SDK SHALL connect over the selected transport with a handshake carrying the namespace, the declared factories (id + description), and its stable identity, then handle `AssignRunnerId` (storing the session token) and `ConnectSocket` (establishing N primary + N secondary streams through the mode's transport).
+The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, opts)` with `transport: :native | :uds | :quic` defaulting to `:native` — returning a runner handle carrying its own declared factory set (empty at creation; no connection, no singleton claim, no process spawn), with `register_factory/2` (an operative module of either kind, the kind read from the behaviour the module declares: `@behaviour Flezha.SDK.StreamOperative` makes a stream, `@behaviour Flezha.SDK.WorkflowOperative` a workflow, both answer `{:error, {:AmbiguousOperativeKind, module}}` and neither `{:error, {:UnknownOperativeKind, module}}`; the body is `channels/1` for both) and its inverse `unregister_factory/2`, and the lifecycle verbs `start/1`, `await_termination/1`, `run/1` (exactly `start/1` then `await_termination/1`, never an independent implementation), `close/1`, and `namespace/1`. The process-wide active-runner slot SHALL be claimed atomically inside `start/1` — any number of unstarted handles may exist; the loser receives `{:error, {:already_running, ns}}`; double-start on one handle errors; closing a never-started handle is a no-op. Zero-operative start SHALL be legal. Authoring and connection failures SHALL be named error tuples returned at the causing call site (mirroring the Rust `FlezhaError` variants) — never a raise. `Flezha.SDK.child_spec/1` SHALL accept `namespace:`, `operatives:` (a list of operative modules of either kind), and `transport:`, and wrap exactly the create → register → start → await sequence for the host application's supervision tree — it MUST NOT introduce a second lifecycle path. On start the SDK SHALL connect over the selected transport with a handshake carrying the namespace, the declared factories (id, description, language and kind), and its stable identity, then handle `AssignRunnerId` (storing the session token) and `ConnectSocket` (establishing N primary + N secondary streams through the mode's transport).
 
 #### Scenario: SDK boots and binds
 - **WHEN** a host app starts `{Flezha.SDK, namespace: "default", operatives: [MyOperative]}` on a node running the Controller
@@ -21,6 +21,10 @@ The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, 
 #### Scenario: Zero-operative start is legal
 - **WHEN** a handle with an empty declared set calls `start/1`
 - **THEN** the runner connects and registers with zero placeable factories, without error
+
+#### Scenario: The kind is the behaviour, not the body's name
+- **WHEN** a hand-written module declares `@behaviour Flezha.SDK.WorkflowOperative` with `factory_id/0` and `channels/1`, and another declares `@behaviour Flezha.SDK.StreamOperative` with the same two functions
+- **THEN** `register_factory/2` declares the first as a workflow and the second as a stream, and a module declaring both behaviours answers `{:error, {:AmbiguousOperativeKind, module}}`
 
 ### Requirement: One SDK core serves two deployment modes
 The SDK SHALL support both deployment modes from a single dispatch core, differing only in a client-transport seam: **in-node** (`transport: :native` — the Controller runs in the same BEAM; streams are pid-backed handles) and **standalone** (`transport: :uds | :quic` — the runner is its own BEAM node, on the same machine over UDS or a different machine over QUIC, and the Controller runs elsewhere). In the standalone mode the SDK SHALL speak the existing binary protocol byte-identically to the Rust runner — same `connect_control_channel` handshake framing, same per-runner data-socket paths (UDS) / 2-byte `[stream_type, key]` stream preamble (QUIC), same bounded connect retry, same client environment contract (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_QUIC_ADDRESS`, `FLEZHA_CA_CERT_PATH`) — and SHALL require **zero controller-side changes**: the controller cannot distinguish a standalone Elixir runner from a Rust runner. Everything above the transport seam — behaviours, builder, dispatch, ladder, guard, heartbeats, identity — SHALL be shared code with identical semantics in both modes. Distributed Erlang SHALL NOT be a runner transport.
@@ -685,21 +689,26 @@ the output was lost and no counter records it.
 ### Requirement: The Elixir SDK authors and drives workflow operatives in its own core
 
 The Elixir SDK SHALL carry a `Flezha.SDK.WorkflowOperative` behaviour whose class declares
-a structured `tasklets/1` DAG on the same builder token `channels/1` uses, and no one-function
+a structured DAG in `channels/1`, the same callback and builder token a stream class uses, and no one-function
 `run/2` body, plus the optional knobs `max_duration_ms/0`, `self_terminating?/0`,
-`loop_mode/0` (`:once` | `:per_input` | `:chained`), `wake_after_ms/0`, `retry_attempts/0`,
-`retry_backoff_ms/0`, `barrier_retry_attempts/0`, `rollback_mode/0` (`:all_or_nothing` |
+`loop_mode/0` (`:once` | `:per_input` | `:chained`), `wake_after_ms/0`, `rollback_mode/0` (`:all_or_nothing` |
 `:keep_progress`), `persistence_enabled/0` and `sync_durability/0`, each reading a default when
-the class is silent. `Flezha.SDK.register_factory/2` SHALL register such a class onto the runner handle
-exactly as it registers a stream class, because the controller places by factory id and learns
-the kind from the `AddOperative` it sends rather than from the advertisement.
+the class is silent. There SHALL be no `retry_attempts/0`, `retry_backoff_ms/0` or
+`barrier_retry_attempts/0`: a stage's ladder is bounded by the edge's `retry_max/2` and
+`retry_backoff_ms/2` as a stream's is, and a barrier is re-sent a fixed number of times read
+from `Flezha.SDK.Knob`. `Flezha.SDK.register_factory/2` SHALL register such a class onto the runner handle
+exactly as it registers a stream class, and the runner SHALL announce the class's kind with its
+factory id, so the controller places by factory id and knows the kind before it sends `AddOperative`.
 
 Registration SHALL accumulate refusals into `{:error, {:invalid_workflow, issues}}` (never a
-raise) using the reference's names: `NoWorkflowBody` (no `tasklets/1`), `ExternalStopOnly` (not
-self-terminating and no duration cap), `ZeroRetryBackoff`, `NoEntryChannel`, `DynamicCells` and
-`BranchingChainedLoop`. `EntryRoot` and `MergeFromEntryChannel` SHALL NOT exist: an entry channel
+raise) using the reference's names: `NoWorkflowBody` (no `channels/1`), `ExternalStopOnly` (not
+self-terminating and no duration cap), `NoEntryChannel`, `DynamicCells`, `BranchingChainedLoop`,
+and the kind facts `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`.
+`EntryRoot` and `MergeFromEntryChannel` SHALL NOT exist: an entry channel
 may feed several tasklets, a class may declare several entry channels, each rooting its own chain,
-and an entry channel may be a merge source, because every message carries the channel it arrived on. A refusal the shared
+and an entry channel may be a merge source, because every message carries the channel it arrived on.
+`ZeroRetryBackoff` SHALL NOT exist, the knob it judged being gone; `RetryMaxZero` on an edge is the
+shared topology's refusal for both kinds. A refusal the shared
 topology already raises SHALL be carried through as `{:Topology, issue}` rather than restated,
 and the reference's `Cycle`, `Disconnected` and `MultipleOutputChannels` SHALL NOT exist here:
 the first two are unreachable because the shared topology refuses a cycle first and a node
@@ -721,17 +730,18 @@ declared to the controller in the `AddOperative` response.
 
 #### Scenario: A structured class is refused for every fault at once
 
-- **WHEN** a class declares no tasklets, a zero retry backoff and no terminal condition
+- **WHEN** a class declares no tasklets, the effectively-once tier on its builder and no terminal condition
 - **THEN** registration answers `{:error, {:invalid_workflow, issues}}` naming
-  `NoWorkflowBody`, `ZeroRetryBackoff` and `ExternalStopOnly` together, not the first alone
+  `NoWorkflowBody`, `EffectivelyOnceOnWorkflow` and `ExternalStopOnly` together, not the first alone
 
 #### Scenario: A stage's Cells are the SDK's own, not a second mechanism
 
 - **WHEN** a workflow stage dispatches a batch
-- **THEN** it runs on `Flezha.SDK.Cell` processes with the same state, records, timers and
-  retry ladder a stream operative's Cells have, differing only in that the ladder's bounds
-  come from the class's `retry_attempts`/`retry_backoff_ms` and that an exhausted ladder fails
-  the tasklet instead of parking the input to the dead-letter queue
+- **THEN** it runs on `Flezha.SDK.Cell` processes with the same state, records and
+  retry ladder a stream operative's Cells have, the ladder's bounds read from the consuming
+  edge's `retry_max` / `retry_backoff_ms` exactly as a stream Cell reads them, differing only in
+  that an exhausted ladder fails the tasklet instead of parking the input to the dead-letter queue
+  and that timers are unavailable until they work inside a workflow
 
 #### Scenario: A stage's plugin output reaches nothing before its commit is durable
 
@@ -1107,7 +1117,7 @@ The SDK SHALL declare a connect behaviour for in-node runners and SHALL call the
 - **THEN** the SDK SHALL refuse naming the behaviour and the modes it does support
 
 ### Requirement: The Elixir SDK authors with `use` macros that expand to its behaviours
-The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `cell_idle_ttl_ms`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `clock` and `max_timers_per_cell`, plus the short-form options; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.StreamOperative` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.WorkflowOperative` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `wake_after_ms`, `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts`, `rollback_mode`, `persistence_enabled` and `sync_durability`,. Both operative macros SHALL import `Flezha.SDK.Channels`; a workflow tasklet ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module written with `@behaviour` and hand-written callbacks SHALL keep working unchanged.
+The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `cell_idle_ttl_ms`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `clock` and `max_timers_per_cell`, plus the short-form options; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.StreamOperative` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.WorkflowOperative` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `wake_after_ms`, `rollback_mode`, `persistence_enabled` and `sync_durability`; `loop_mode` SHALL accept only `:once`, `:per_input` and `:chained`, and `rollback_mode` only `:all_or_nothing` and `:keep_progress`, any other value being a `CompileError` naming it. Both operative macros SHALL import `Flezha.SDK.Channels`; a workflow tasklet ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module written with `@behaviour` and hand-written callbacks SHALL keep working unchanged.
 
 #### Scenario: A written option is a callback, an unwritten one is not
 
@@ -1128,6 +1138,11 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative`
 
 - **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "p", max_entites: 10`
 - **THEN** compilation fails with a `CompileError` naming `max_entites`
+
+#### Scenario: A retired workflow option fails to compile
+
+- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "w", retry_attempts: 5`
+- **THEN** compilation fails with a `CompileError` naming `retry_attempts`, as for any unknown option
 
 #### Scenario: The behaviour form is unchanged
 
@@ -1160,9 +1175,9 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative`
 ### Requirement: The single-tasklet short form is three `use` options
 The short form SHALL be declared with `use Flezha.SDK.StreamOperative` or `use Flezha.SDK.WorkflowOperative`, the same macros that declare a full-form operative, and SHALL NOT be declared with `use Flezha.SDK.Tasklet`, which SHALL accept none of `kind`, `sink` or `input` and SHALL raise a `CompileError` naming the option and the operative macro when one is given. Each operative macro SHALL accept `sink` and `input` beside the `factory_id` it already requires. The kind is the macro's own name and SHALL NOT be an option.
 
-A module SHALL be a short form exactly when it defines `run/3` and no topology body, a topology body being `channels/1` or `tasklets/1`. Defining both SHALL be a `CompileError` beginning `ShortFormWithTopology`, and defining neither SHALL be a `CompileError` naming the missing body; both SHALL be decided at `@before_compile`, where the module's definitions are known.
+A module SHALL be a short form exactly when it defines `run/3` and no `channels/1`, the one topology body both kinds share. Defining both SHALL be a `CompileError` beginning `ShortFormWithTopology`, and defining neither SHALL be a `CompileError` naming the missing body; both SHALL be decided at `@before_compile`, where the module's definitions are known. A workflow short form MAY write `loop_mode:`, which the macro defines as `loop_mode/0` exactly as it does for a full form; every other class option written on a short form SHALL be a `CompileError` naming the option and the full form.
 
-With `sink`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` (for a stream) or `tasklets/1` (for a workflow) wiring an entry channel named `"input"` (or the `input` value) into a generated nested tasklet module and that module to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Tasklet`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate tasklet and a separate operative rather than one module in both roles. Every other operative callback SHALL be left undefined so its default applies, and a workflow short form SHALL be a `once` workflow. The module SHALL be registered as any operative is: listed under `operatives:` in the child spec, or passed to `register_factory/2`.
+With `sink`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` wiring an entry channel named `"input"` (or the `input` value) into a generated nested tasklet module and that module to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Tasklet`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate tasklet and a separate operative rather than one module in both roles. Every other operative callback SHALL be left undefined so its default applies, and a workflow short form SHALL be a `once` workflow unless it writes `loop_mode:`. The module SHALL be registered as any operative is: listed under `operatives:` in the child spec, or passed to `register_factory/2`.
 
 The Elixir SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. The duplicate-id tuple `{:duplicate_factory_id, id}` SHALL keep its shape, and the runner's printed form of it SHALL contain `DuplicateFactoryId`.
 
@@ -1173,8 +1188,13 @@ The Elixir SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, 
 
 #### Scenario: An operative module with a run body is a whole workflow operative
 
-- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "place", sink: "placed", input: "order"` and `run/3`, is listed under `operatives:`, and an instance is started with init values
-- **THEN** `run/3` receives the start values on `order`, what it emits reaches `placed`, and the instance completes
+- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "place", sink: "placed", input: "order"` and `run/3`, is listed under `operatives:`, an instance is started, and one message is sent on `order`
+- **THEN** `run/3` receives the message on `order`, what it emits reaches `placed`, and the instance completes
+
+#### Scenario: A short-form workflow declares its loop mode
+
+- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "chat", sink: "replies", loop_mode: :per_input` and `run/3`, and two messages reach its entry channel
+- **THEN** the module exports `loop_mode/0` returning `:per_input`, `run/3` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
@@ -1189,7 +1209,7 @@ The Elixir SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, 
 #### Scenario: register reads a short form's kind
 
 - **WHEN** a module written with `use Flezha.SDK.WorkflowOperative` and a `sink` is passed to `register_factory/2`
-- **THEN** it is declared as a workflow operative, because the macro defined `tasklets/1` and no `channels/1`
+- **THEN** it is declared as a workflow operative, because the macro set `@behaviour Flezha.SDK.WorkflowOperative`, and its generated body is `channels/1` as a stream's is
 
 #### Scenario: The generated tasklet is a module of its own
 
@@ -1215,4 +1235,28 @@ The Elixir SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, 
 
 - **WHEN** a module writes `@behaviour Flezha.SDK.StreamOperative` with hand-written `factory_id/0` and `channels/1`
 - **THEN** it registers and runs unchanged, and owes no short-form refusal
+
+### Requirement: The Elixir SDK announces each class's kind and refuses the other kind's settings
+
+The handshake's factory entries and every `FactoryDecl` the SDK ships in `UpdateFactories` SHALL carry `kind`, `"stream"` or `"workflow"`, read from the module's behaviour, for a class registered before start and for one defined after it alike. `Flezha.SDK.Topology.build/2` SHALL judge kind facts for both kinds: on a workflow class it SHALL answer `EffectivelyOnceOnWorkflow` for `effectively_once/1`, `CheckpointOnWorkflow` for any of `checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2`, and `CorrectionWindowOnWorkflow` for `correction_window/2`, carried in `{:error, {:invalid_workflow, issues}}` as its other refusals are; on a stream class it SHALL keep `SyncDurabilityOnStream`. `Flezha.SDK.Declarations.for/1` SHALL declare no `effectively_once` for a workflow, because none can register. A hand-written `loop_mode/0` or `rollback_mode/0` outside the values the `use` macro accepts SHALL be refused at `register_factory/2` as `{:InvalidMode, factory_id, knob, value}` in the same `{:error, {:invalid_workflow, issues}}`. A workflow stage's Cells SHALL be started with timers unavailable, so `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` answer `{:error, :timers_unavailable}` inside a workflow tasklet and arm nothing.
+
+#### Scenario: The handshake carries the kind
+
+- **WHEN** a runner starts with a stream module and a workflow module under `operatives:`
+- **THEN** its handshake's `factories` entries carry `"kind" => "stream"` and `"kind" => "workflow"` respectively, and a module defined after start ships an `UpdateFactories` whose `FactoryDecl` carries the same
+
+#### Scenario: The tier on a workflow module is refused
+
+- **WHEN** a workflow module's `channels/1` calls `Channels.effectively_once/1`
+- **THEN** `register_factory/2` answers `{:error, {:invalid_workflow, issues}}` naming `EffectivelyOnceOnWorkflow`, and the module is not declared
+
+#### Scenario: A hand-written mode outside its set is refused
+
+- **WHEN** a module declaring `@behaviour Flezha.SDK.WorkflowOperative` defines `loop_mode/0` returning `:forever`
+- **THEN** `register_factory/2` answers `{:error, {:invalid_workflow, issues}}` carrying `{:InvalidMode, factory_id, :loop_mode, :forever}`
+
+#### Scenario: A timer inside a workflow tasklet is refused
+
+- **WHEN** a tasklet of a running workflow calls `Flezha.SDK.Ctx.timer_after(ctx, 1_000)`
+- **THEN** the call answers `{:error, :timers_unavailable}`, no timer is armed, and the same call inside a stream tasklet still answers `{:ok, at}`
 

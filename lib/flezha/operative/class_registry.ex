@@ -202,51 +202,56 @@ defmodule Flezha.Operative.ClassRegistry do
   def keyless?(_factory_id), do: false
 
   @doc """
-  Record the **established SDK language** of `factory_id` in `namespace` — the
-  one language every runner of that factory there must speak.
+  Record the **established** value of `attribute` for `factory_id` in
+  `namespace` — the one value every runner of that factory there must
+  advertise: its SDK language (`:sdk_lang`) and its kind (`:kind`).
 
   Scoped by namespace as well as factory, because a factory id names a class
   within a deployment, not across the cluster: the test fleet alone gives the
   same reference ids to every SDK, so a global record would let one namespace's
   Rust runner refuse another namespace's Java one.
 
-  In-memory only, like `put_keyless/2`: the durable header re-establishes it at
-  the next bind (`establish_sdk_lang_from_state/3`), and the SDK's own refusal
-  is the backstop either way — so a restarted controller simply learns again.
+  In-memory only, like `put_keyless/2`: the durable header re-establishes the
+  language at the next bind (`establish_sdk_lang_from_state/3`), the next
+  advertisement re-establishes both, and the SDK's own refusal is the backstop
+  either way — so a restarted controller simply learns again.
   """
-  @spec put_sdk_lang(binary(), binary(), byte()) :: :ok
-  def put_sdk_lang(namespace, factory_id, lang)
-      when is_binary(namespace) and is_binary(factory_id) and is_integer(lang) and lang > 0 do
+  @spec put_established(binary(), binary(), :sdk_lang | :kind, byte() | atom()) :: :ok
+  def put_established(namespace, factory_id, attribute, value)
+      when is_binary(namespace) and is_binary(factory_id) and attribute in [:sdk_lang, :kind] do
     ensure_table()
-    :ets.insert(@table, {{namespace, factory_id, :sdk_lang}, lang})
+    :ets.insert(@table, {{namespace, factory_id, attribute}, value})
     :ok
   end
 
   @doc """
-  `factory_id`'s established SDK language in `namespace`, or `nil` when none is
+  `factory_id`'s established `attribute` in `namespace`, or `nil` when none is
   established yet.
   """
-  @spec sdk_lang(binary(), binary()) :: byte() | nil
-  def sdk_lang(namespace, factory_id) when is_binary(namespace) and is_binary(factory_id) do
-    case ets_lookup({namespace, factory_id, :sdk_lang}) do
-      {:ok, lang} -> lang
+  @spec established(binary(), binary(), :sdk_lang | :kind) :: byte() | atom() | nil
+  def established(namespace, factory_id, attribute)
+      when is_binary(namespace) and is_binary(factory_id) do
+    case ets_lookup({namespace, factory_id, attribute}) do
+      {:ok, value} -> value
       :error -> nil
     end
   end
 
-  def sdk_lang(_namespace, _factory_id), do: nil
+  def established(_namespace, _factory_id, _attribute), do: nil
 
   @doc """
-  Forget the established language of `factory_id` in `namespace`, so the next
+  Forget everything established for `factory_id` in `namespace`, so the next
   advertisement establishes it afresh.
 
-  The escape hatch from a factory deliberately re-authored in another language.
+  The escape hatch from a factory deliberately re-authored in another language
+  or as the other kind.
   """
-  @spec delete_sdk_lang(binary(), binary()) :: :ok
-  def delete_sdk_lang(namespace, factory_id)
+  @spec delete_established(binary(), binary()) :: :ok
+  def delete_established(namespace, factory_id)
       when is_binary(namespace) and is_binary(factory_id) do
     if :ets.whereis(@table) != :undefined do
       :ets.delete(@table, {namespace, factory_id, :sdk_lang})
+      :ets.delete(@table, {namespace, factory_id, :kind})
     end
 
     :ok

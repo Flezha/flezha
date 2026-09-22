@@ -614,6 +614,14 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
 
 fn a_workflow_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
     declares_the_workflow_class(ctx, controller);
+    // A workflow's input is a message on its entry channel, as a stream's is.
+    let instance = flz_core::coordinator::LIVE_REGISTRY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|registry| registry.get_workflow("wf-1"))
+        .expect("AddOperative built the workflow");
+    flz_core::routing::feed_workflow_frame(&instance, b"seed".to_vec(), &Default::default());
     let (status, act) = abi_poll(ctx, 5_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "the workflow's step hands out");
     let act = act.unwrap();
@@ -669,8 +677,8 @@ fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
             operative_id: "wf-1".to_string(),
             factory_id: "abi_workflow".to_string(),
             kind: "workflow".to_string(),
-            init_values: "seed".to_string(),
             ..Default::default()
         }),
     );
+    controller.await_success("AddOperative workflow response", "ref-add-wf");
 }

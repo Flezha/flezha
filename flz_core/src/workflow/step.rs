@@ -15,7 +15,7 @@ use super::compensation::{CellRun, StagedOutput};
 use super::driver::{ChainCtx, Runnable, Value, CANCEL_POLL_CHUNK};
 use super::{WorkflowCollectSink, WorkflowError};
 use crate::cell::CellSlot;
-use crate::channel::{ChannelId, RetryPolicy};
+use crate::channel::ChannelId;
 use crate::operative::topology::{CellMode, TaskletDescriptor};
 use crate::poll_core::EnginePayload;
 use crate::util::LockRecover;
@@ -45,6 +45,13 @@ struct StepKey {
     cell_index: usize,
 }
 
+impl StepKey {
+    /// The cell slot the partition runs on.
+    fn slot<'a>(self, ctx: &'a ChainCtx) -> &'a Arc<CellSlot> {
+        &ctx.stage_cells[self.node][self.cell_index]
+    }
+}
+
 /// The first failure of a stage: the node, the error its ladder ended on,
 /// the items that partition was running and how many attempts it made.
 pub(super) struct StageFailure {
@@ -63,7 +70,7 @@ pub(super) fn run_stage(
     ctx: &ChainCtx,
     frontier: Vec<Runnable>,
 ) -> (Vec<(usize, StageOut)>, Option<StageFailure>) {
-    let mut barrier = StageBarrier::new(frontier.iter().map(|(node, _)| *node), ctx.retry);
+    let mut barrier = StageBarrier::new(frontier.iter().map(|(node, _)| *node));
     for (node, batch) in &frontier {
         let slots = &ctx.stage_cells[*node];
         for (cell_index, items) in partition(ctx.task(*node), slots.len(), batch)
@@ -180,11 +187,10 @@ struct StageBarrier {
     runs: BTreeMap<usize, Vec<CellRun>>,
     failed: HashSet<usize>,
     first_err: Option<StageFailure>,
-    max_attempts: u32,
 }
 
 impl StageBarrier {
-    fn new(nodes: impl Iterator<Item = usize>, retry: RetryPolicy) -> Self {
+    fn new(nodes: impl Iterator<Item = usize>) -> Self {
         let (tx, rx) = unbounded::<StepDone>();
         Self {
             tx,
@@ -193,7 +199,6 @@ impl StageBarrier {
             runs: nodes.map(|node| (node, Vec::new())).collect(),
             failed: HashSet::new(),
             first_err: None,
-            max_attempts: retry.max_attempts.max(1),
         }
     }
 
@@ -295,13 +300,14 @@ impl StageBarrier {
         }
     }
 
-    /// A retryable failure with budget left backs off; anything else fails
-    /// the node, dropping its whole stage output.
+    /// A retryable failure with budget left on its edge's policy backs off;
+    /// anything else fails the node, dropping its whole stage output.
     fn fail_or_retry(&mut self, ctx: &ChainCtx, key: StepKey, error: WorkflowError) {
         let Some(ladder) = self.ladders.get_mut(&key) else {
             return;
         };
-        if error.non_retryable || ladder.attempt >= self.max_attempts {
+        let policy = key.slot(ctx).dispatcher.retry_policy();
+        if error.non_retryable || ladder.attempt >= policy.max_attempts.max(1) {
             let ladder = self
                 .ladders
                 .remove(&key)
@@ -312,7 +318,7 @@ impl StageBarrier {
         let delay = crate::retry::note_failed_attempt(
             &step_label(ctx, key),
             ladder.attempt,
-            ctx.retry,
+            policy,
             &error,
         );
         ladder.retry = Some((Instant::now() + delay, error));
@@ -387,10 +393,7 @@ fn step_label(ctx: &ChainCtx, key: StepKey) -> String {
         "workflow {} tasklet {} cell {}",
         ctx.instance_id,
         ctx.task(key.node).name,
-        ctx.stage_cells[key.node][key.cell_index]
-            .cell_key
-            .as_deref()
-            .unwrap_or("-")
+        key.slot(ctx).cell_key.as_deref().unwrap_or("-")
     )
 }
 
@@ -399,7 +402,7 @@ fn step_label(ctx: &ChainCtx, key: StepKey) -> String {
 /// waits on is never queued behind work that blocks.
 fn submit_step(ctx: &ChainCtx, key: StepKey, work: StepWork, tx: &Sender<StepDone>) {
     crate::poll_core::global().submit_direct(EnginePayload::WorkflowStep(WorkflowStep {
-        slot: Arc::clone(&ctx.stage_cells[key.node][key.cell_index]),
+        slot: Arc::clone(key.slot(ctx)),
         work,
         instance_id: Arc::clone(ctx.instance_id),
         staging: ctx.journaling(),

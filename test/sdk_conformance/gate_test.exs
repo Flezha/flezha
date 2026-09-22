@@ -91,6 +91,29 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     elixir: "sdk/elixir/lib/flezha/sdk/admin.ex"
   }
 
+  # Names the workflow authoring surface retired: a workflow declares its graph
+  # in `channels` and its retry ladder on the edge, as a stream does, and Node's
+  # stream function is `defineStream`. Each pattern is the spelling a
+  # definition or a use would take, never prose.
+  @retired_workflow_names [
+    {"a `tasklets` body", ~r/\b(?:fn|def|void)\s+tasklets\s*\(/},
+    {"`defineOperative`", ~r/\bdefineOperative\b/},
+    {"a class-level retry knob",
+     ~r/\b(?:retry_attempts|retryAttempts|barrier_retry_attempts|barrierRetryAttempts)\b|\bfn retry_backoff\(|\bretryBackoff\(/},
+    {"`ZeroRetryBackoff`", ~r/\bZeroRetryBackoff\b/}
+  ]
+
+  # The authoring surface and everything written against it, but not the SDK
+  # suites that name a retired spelling to prove it is refused.
+  @authoring_roots ~w(
+    flz_core/src flz_core_ffi/src sdk/rust/src sdk/rust/macros/src sdk/rust/examples
+    sdk/rust/test_app sdk/java/flezha-sdk-api/src/main sdk/java/flezha-sdk-runtime/src/main
+    sdk/java/flezha-sdk-processor/src/main sdk/java/flezha-sdk-examples sdk/java/examples
+    sdk/java/test_app/src sdk/node/src sdk/node/examples sdk/node/test_app sdk/python/src
+    sdk/python/test_app sdk/ruby/lib sdk/ruby/test_app sdk/php/src sdk/php/examples
+    sdk/php/test_app sdk/elixir/lib sdk/elixir/test_app/lib examples
+  )
+
   # A manifest must declare all of these.
   @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports dispatch toolchain deferred fixtures docs)
 
@@ -759,6 +782,21 @@ defmodule FlezhaTest.SdkConformance.GateTest do
           # whole-word match is a reading of the retired one.
           File.read!(file) =~ ~r/#{name}(?![A-Z0-9_])/ do
         fail("#{runtime} reads the retired #{name} in #{file}; set FLEZHA_QUIC_ADDRESSES instead")
+      end
+    end
+  end
+
+  describe "the workflow authoring surface" do
+    test "no SDK reintroduces a name the workflow surface retired" do
+      files =
+        SourceWalk.files(@authoring_roots, ~w(.rs .java .ex .exs .ts .js .mjs .py .rb .php))
+
+      assert length(files) > 100, "read only #{length(files)} files; a root moved"
+
+      for {file, line, number} <- SourceWalk.code_lines(files),
+          {name, pattern} <- @retired_workflow_names,
+          line =~ pattern do
+        fail("#{file}:#{number} reintroduces #{name}: #{String.trim(line)}")
       end
     end
   end

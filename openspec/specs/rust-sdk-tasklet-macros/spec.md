@@ -21,7 +21,7 @@ The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to a s
 #### Scenario: Generated tasklet type is referenceable in channels
 
 - **WHEN** a tasklet is generated from `fn static_entry(..)`
-- **THEN** a PascalCase tasklet type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` or `tasklets()` body via `.from`/`.into`
+- **THEN** a PascalCase tasklet type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` body of an operative of either kind via `.from`/`.into`
 
 #### Scenario: An operative key on a tasklet is refused
 
@@ -162,9 +162,9 @@ An operative SHALL be able to mix macro-generated tasklets and hand-written task
 
 ### Requirement: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]` short-form attributes
 
-The Rust SDK SHALL provide two attribute macros applied to a single `run` function that declare a whole single-tasklet operative of the kind the attribute names: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operative]` because `flezha::operative!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
+The Rust SDK SHALL provide two attribute macros applied to a single `run` function that declare a whole single-tasklet operative of the kind the attribute names: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::workflow_operative]` SHALL additionally accept an optional `loop_mode` key taking `"once"`, `"per_input"` or `"chained"`, which the generated operative SHALL return from `loop_mode()`, and SHALL fail to compile naming any other value; `#[flezha::stream_operative]` SHALL refuse the key naming the workflow attribute. No other class-level setting SHALL be a key of either attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operative]` because `flezha::operative!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
 
-Each attribute SHALL emit **two** types: the operative type under the author's PascalCase name (`Echo` for `fn echo`), implementing `StreamOperative` with `channels()` or `WorkflowOperative` with `tasklets()`, with `factory_id()` equal to the `id` and every other operative item at its trait default; and the tasklet type beside it under that name suffixed `Tasklet` (`EchoTasklet`), carrying the `Tasklet` impl the `#[flezha::tasklet]` attribute would generate for the same function. The generated tasklet's `name()` SHALL be the `id` verbatim. `EchoTasklet` SHALL be nameable in another operative's `channels()` or `tasklets()` body.
+Each attribute SHALL emit **two** types: the operative type under the author's PascalCase name (`Echo` for `fn echo`), implementing `StreamOperative` or `WorkflowOperative`, each with `channels()`, with `factory_id()` equal to the `id` and every other operative item at its trait default; and the tasklet type beside it under that name suffixed `Tasklet` (`EchoTasklet`), carrying the `Tasklet` impl the `#[flezha::tasklet]` attribute would generate for the same function. The generated tasklet's `name()` SHALL be the `id` verbatim. `EchoTasklet` SHALL be nameable in another operative's `channels()` body, of either kind.
 
 With a `sink`, the generated topology SHALL wire the entry channel into the tasklet and the tasklet to that plugin sink. With no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A `sink` on a run function with a unit return and no `emits` SHALL fail to compile with a message beginning `SinkWithoutOutput`.
 
@@ -181,7 +181,17 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 #### Scenario: A workflow short form implements the workflow trait
 
 - **WHEN** `#[flezha::workflow_operative(id = "place", sink = "placed", input = "order")]` annotates `fn place(order: String) -> String`
-- **THEN** `Place` implements `WorkflowOperative` with `factory_id()` `place` and a `tasklets()` body wiring `order` into `PlaceTasklet` and `PlaceTasklet` to the `placed` plugin sink, every other workflow item at its default, and `runner.register_factory(Place)` registers it
+- **THEN** `Place` implements `WorkflowOperative` with `factory_id()` `place` and a `channels()` body wiring `order` into `PlaceTasklet` and `PlaceTasklet` to the `placed` plugin sink, every other workflow item at its default, and `runner.register_factory(Place)` registers it
+
+#### Scenario: A workflow short form declares its loop mode
+
+- **WHEN** `#[flezha::workflow_operative(id = "chat", sink = "replies", loop_mode = "per_input")]` annotates `fn chat(message: String) -> String`, `Chat` is registered, and two messages reach its entry channel
+- **THEN** `Chat::loop_mode()` is `LoopMode::PerInput`, the tasklet runs once per message, and the instance does not complete after the first
+
+#### Scenario: An unknown loop mode does not compile
+
+- **WHEN** `#[flezha::workflow_operative(id = "chat", loop_mode = "forever")]` annotates a run function
+- **THEN** the macro fails to compile naming `loop_mode` and the three accepted values
 
 #### Scenario: A short form with no sink wires only the entry channel
 
@@ -222,4 +232,23 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 
 - **WHEN** a type carrying a short-form attribute also has a hand-written `StreamOperative` or `WorkflowOperative` impl
 - **THEN** compilation fails, and the compile-fail fixture pinning it cites `ShortFormWithTopology`
+
+### Requirement: The Rust workflow trait carries the stream's body and none of the stream's settings
+
+`WorkflowOperative` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `StreamOperative::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff` or `barrier_retry_attempts` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `wake_after`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a workflow whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildWorkflowError` variants named `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`, and `ZeroRetryBackoff` SHALL NOT exist. A workflow cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `workflow_metadata` in the shared core SHALL advertise no `effectively_once` for a workflow class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
+
+#### Scenario: A workflow writes channels and no retry knob
+
+- **WHEN** a type implements `WorkflowOperative` with `fn channels(c: &ChannelBuilder)` wiring `c.input::<String>("in").retry_max(2).into(Flaky)` and `Flaky` fails on every attempt
+- **THEN** the class registers, the cell runs exactly twice before the instance aborts and compensates, and a type writing `fn retry_attempts() -> u32` in the same impl fails to compile
+
+#### Scenario: The tier on a workflow is refused by the SDK
+
+- **WHEN** a `WorkflowOperative`'s `channels` calls `c.effectively_once()`
+- **THEN** `register_factory` answers `BuildWorkflowError::EffectivelyOnceOnWorkflow`, nothing is registered, and no `AddOperativeResponse` for that class could carry `effectively_once`
+
+#### Scenario: A stale body does not compile
+
+- **WHEN** a type implements `WorkflowOperative` with `fn tasklets(c: &ChannelBuilder)` and no `channels`
+- **THEN** compilation fails naming the missing `channels` and the unknown `tasklets`
 

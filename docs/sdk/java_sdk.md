@@ -6,7 +6,8 @@ dispatch, overflow, the retry→park ladder, the partition guard, timers and the
 effectively-once tier are one implementation, not two.
 
 Authoring surface: `@Tasklet` classes, with `@State` for their state, wired by
-a `StreamOperative` / `WorkflowOperative` through `ChannelBuilder`; the
+a `StreamOperative` / `WorkflowOperative` in `channels(ChannelBuilder)`, the one
+graph body the `Operative` base declares for both kinds; the
 `Tasklet` interface the annotation processor implements for them; and the
 `@StreamOperative` / `@WorkflowOperative` short form. See
 [`authoring_contract.md`](authoring_contract.md) for what each tier expands to
@@ -110,11 +111,14 @@ Flezha.createRunner("default")
 The generated operative is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` element's
 value; the tasklet; a plugin sink named by `sink` when one is written; a
-`factoryId()` equal to `id`; and every other operative method at its interface
-default. A workflow short form is a `once` workflow, run once over its first
-message: `flz operative start --kind workflow --text '<payload>'`, or a start
-followed by `flz operative send`; a second message to a `once` instance is
-accepted and never read. Both annotations also
+`factoryId()` equal to `id`; `loopMode()` returning the `loopMode` element on
+`@WorkflowOperative`; and every other operative method at its interface
+default. A workflow short form is a `once` workflow unless it writes
+`loopMode`, run once over its first message:
+`flz operative start place --text '<payload>'`, or a start followed by
+`flz operative send`; a second message to a `once` instance is accepted and
+never read. `loopMode = LoopMode.PER_INPUT` runs `run` once per message, and
+the instance does not complete after the first. Both annotations also
 carry the tasklet's own elements, spelled as on `@Tasklet`: `key`, `emits`,
 `keys` with an `@CellsFor` method and `capacity`; and `onFull` for the entry
 channel.
@@ -137,9 +141,9 @@ public class Counter {
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window. Java names no entry codec — an entry decodes by its declared type — so
-the short form takes no `codec` element.
+edge, an edge's retry ladder, the effectively-once tier, a correction window,
+any workflow setting other than the loop mode. Java names no entry codec: an
+entry decodes by its declared type, so the short form takes no `codec` element.
 
 `id` must be written: the factory id is an address an operator types, and a
 class rename must not move it. The written `id` also names the tasklet, so a
@@ -154,6 +158,24 @@ fails `registerFactory` with `DuplicateFactoryId`.
 
 Nothing registers itself. There is no aggregator class: every operative a
 runner declares is one the application handed to `registerFactory`.
+
+## Workflows
+
+A `WorkflowOperative` declares its graph in `channels`, on the builder a stream
+uses, and its kind is the interface it implements: `flz operative start` names
+the factory and nothing else. Retry is the edge's, as on a stream:
+`.retryMax(n)` / `.retryBackoffMs(ms)` on the channel that feeds a tasklet
+(default 3 attempts, 50 ms), and `retryMax(0)` is refused as `RetryMaxZero`.
+
+A workflow carries none of a stream's delivery settings. The builder's
+`effectivelyOnce()`, checkpoint calls and `correctionWindow(ms)` reach the core
+as written, and `registerFactory` throws `WorkflowOperativeConfigurationException`
+naming `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` or
+`CorrectionWindowOnWorkflow`. `syncDurability()` is the workflow's own. Inside a
+workflow, a tasklet's context carries no timer session: every timer call throws
+`TaskletException.TimersUnavailable`, which fails the attempt as any tasklet
+exception does. A `spawnWorkflow` naming a stream factory reads
+`SpawnException.FactoryNotWorkflow`.
 
 ## Scope
 

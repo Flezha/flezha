@@ -43,12 +43,12 @@ or `skipped_on_replay`.
 
 The request SHALL NOT carry a namespace: the controller resolves it against the control channel the request arrived on, so a request cannot reach another namespace.
 
-Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time.
+Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time. A factory that is registered but whose established kind is `stream` SHALL yield `factory_not_workflow`, decided from the fleet's factory record before anything is placed, so the requester reads the reason rather than a `refused` carrying a runner's late error; the name SHALL be the same in every SDK's outcome vocabulary (`FactoryNotWorkflow` where the SDK spells outcomes as a type, `factory_not_workflow` where it spells them as strings).
 
 #### Scenario: First request spawns, second delivers
 
 - **WHEN** two tasklets issue a spawn of factory `worker` with id `w1` and `deliver`, carrying `p1` then `p2`, in sequence
-- **THEN** exactly one workflow instance `w1` SHALL exist, it SHALL have received the messages `p1` then `p2`, and the two results SHALL be `{id: "w1", outcome: spawned}` and `{id: "w1", outcome: delivered}`
+- **THEN** exactly one workflow instance `w1` SHALL exist, its inbox SHALL have received `p1` then `p2`, and the two results SHALL be `{id: "w1", outcome: spawned}` and `{id: "w1", outcome: delivered}`
 
 #### Scenario: error policy reports instead of delivering
 
@@ -85,10 +85,15 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 - **WHEN** a tasklet whose runner is connected to controller node A requests spawn of a factory whose only runner is connected to controller node B
 - **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `factory_unknown`
 
+#### Scenario: A stream factory is named by the answer
+
+- **WHEN** a tasklet issues `ctx.spawn_workflow("prices", p)` and `prices` is a factory its runner announced as a stream
+- **THEN** the requester's async result SHALL be `factory_not_workflow`, no instance SHALL be placed or started, and the result SHALL NOT be `factory_unknown` or `refused`
+
 #### Scenario: Every SDK exposes the call with one meaning
 
 - **WHEN** the capability ships in an SDK
-- **THEN** that SDK SHALL expose the call in the shape listed above with the semantics above, and its own suite SHALL cover the outcomes with and without an id, the error policy, `if_running` without an id, the refusal, the timeout, the replay skip and the no-control-plane case
+- **THEN** that SDK SHALL expose the call in the shape listed above with the semantics above, and its own suite SHALL cover the outcomes with and without an id, the error policy, `if_running` without an id, the refusal, the stream-factory answer, the timeout, the replay skip and the no-control-plane case
 
 ### Requirement: Spawn requests SHALL be idempotent under concurrency on (namespace, instance_id)
 

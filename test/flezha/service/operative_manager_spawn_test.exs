@@ -32,7 +32,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    %{registry: FakeStartRegistry.install(runners: ["runner-1"])}
+    %{registry: FakeStartRegistry.install(runners: ["runner-1"], kind: :workflow)}
   end
 
   # The one request every case sends: instance "w1" in this module's namespace.
@@ -119,6 +119,13 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
              spawn_or_deliver("nobody", "p1", :deliver)
   end
 
+  test "a factory its runners announced as a stream is named, not spawned" do
+    stub(FleetManager, :factory_kind, fn _ns, _factory -> {:ok, :stream} end)
+
+    assert {:factory_not_workflow, "w1"} = spawn_or_deliver("prices", "p1", :deliver)
+    assert FakeStartRegistry.started() == []
+  end
+
   test "a start forwarded to a node whose runner has gone answers factory_unknown" do
     # The directory still names a peer for the factory and the peer has lost its
     # runner. The pick lands on this node, so the real forward runs and the
@@ -199,7 +206,20 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
 
   describe "start authority — the one id claim (D6)" do
     defp builder(id) do
-      %Flezha.Operative.Builder{id: id, factory_id: @factory, kind: :stream, init_values: %{}}
+      %Flezha.Operative.Builder{id: id, factory_id: @factory, init_values: %{}}
+    end
+
+    test "a builder naming no kind takes the one its factory's runners announced" do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("k1"))
+      assert [%{kind: :workflow}] = FakeStartRegistry.started()
+    end
+
+    test "a kind the caller asserts is judged against the factory's, never taken" do
+      assert {:error, %{reason: reason}} =
+               OperativeManager.start_operative(@namespace, %{builder("k2") | kind: :stream})
+
+      assert reason =~ "is a workflow, and only a stream is started here"
+      assert FakeStartRegistry.started() == []
     end
 
     test "a named start is never redrawn and never asks the generator" do

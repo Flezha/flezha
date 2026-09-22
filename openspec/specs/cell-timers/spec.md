@@ -215,3 +215,22 @@ Wheel occupancy and pending-timer counts SHALL be exposed as per-Tasklet counter
 - **WHEN** timers are pending across an Operative's Cells
 - **THEN** a per-Tasklet pending-timer count SHALL be reported alongside the existing per-Tasklet counters
 
+### Requirement: A timer registered inside a workflow tasklet is refused until timers work there
+
+Until timers fire inside a workflow (the `fire-timers-inside-a-workflow` change, which replaces this requirement with working Cell timers and deletes `wake_after`), a tasklet running inside a workflow operative SHALL NOT be able to register or cancel a timer silently. Every SDK's tasklet context SHALL answer each of its timer calls (`timer_after`, `timer_at_event_time` and the two cancellations, in that SDK's spelling) with an error named `TimersUnavailable`, in the form that SDK reports a context error: Rust's `TaskletError::TimersUnavailable`, Java's `TaskletException.TimersUnavailable`, a thrown or raised error naming `TimersUnavailable` in Node, Python, Ruby and PHP, and `{:error, :timers_unavailable}` in Elixir. The refusal SHALL be structural where the SDK can make it so (the context carries no timer session), and SHALL be read from the kind the context already knows on its emit path elsewhere. The shared core SHALL be the backstop: a step effect that arrives carrying a timer operation SHALL fail the step with a non-retryable error naming `TimersUnavailable` instead of being folded without it. A stream operative's timers, and a workflow's `wake_after` / `wakeAfter`, are unchanged.
+
+#### Scenario: A workflow tasklet cannot arm a timer in any SDK
+
+- **WHEN** a tasklet of a workflow operative calls its context's `timer_after` in any of the seven SDKs
+- **THEN** the call SHALL fail naming `TimersUnavailable`, no timer SHALL be armed, and the tasklet's attempt SHALL fail as an attempt raising that error fails
+
+#### Scenario: The core drops nothing
+
+- **WHEN** a host's step effect reaches the shared core with a non-empty timer list
+- **THEN** the core SHALL fail that step with a non-retryable error naming `TimersUnavailable`, and SHALL NOT fold the effect's changes or outputs
+
+#### Scenario: A stream's timers are untouched
+
+- **WHEN** a stream operative's tasklet registers a processing-time timer
+- **THEN** it SHALL fire and reach `on_timer` exactly as the per-Cell timer requirements above define
+

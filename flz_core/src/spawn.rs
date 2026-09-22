@@ -115,6 +115,9 @@ pub enum SpawnError {
     #[error("no connected runner registers factory `{0}`")]
     FactoryUnknown(String),
 
+    #[error("factory `{0}` is a stream, and only a workflow is spawned")]
+    FactoryNotWorkflow(String),
+
     #[error("the controller refused the spawn: {0}")]
     Refused(String),
 
@@ -130,6 +133,7 @@ impl SpawnError {
         match self {
             SpawnError::AlreadyRunning(_) => "already_running",
             SpawnError::FactoryUnknown(_) => "factory_unknown",
+            SpawnError::FactoryNotWorkflow(_) => "factory_not_workflow",
             SpawnError::Refused(_) => "refused",
             SpawnError::Timeout => "timeout",
             SpawnError::Unavailable => "unavailable",
@@ -302,9 +306,9 @@ impl Drop for SpawnHandle {
     }
 }
 
-/// Map a controller reply onto the public result. `already_running` and
-/// `factory_unknown` arrive as outcomes rather than errors because they are
-/// the controller's decision, not a failed exchange.
+/// Map a controller reply onto the public result. `already_running`,
+/// `factory_unknown` and `factory_not_workflow` arrive as outcomes rather than
+/// errors because they are the controller's decision, not a failed exchange.
 fn interpret(
     instance_id: &str,
     factory_id: &str,
@@ -322,6 +326,9 @@ fn interpret(
         "delivered" => SpawnOutcome::Delivered,
         "already_running" => return Err(SpawnError::AlreadyRunning(id.to_string())),
         "factory_unknown" => return Err(SpawnError::FactoryUnknown(factory_id.to_string())),
+        "factory_not_workflow" => {
+            return Err(SpawnError::FactoryNotWorkflow(factory_id.to_string()))
+        }
         other => return Err(SpawnError::Refused(format!("unknown outcome `{other}`"))),
     };
     Ok(SpawnResult {
@@ -471,6 +478,11 @@ mod tests {
             answer(Ok(encode_ack("factory_unknown", ""))),
             Err(SpawnError::FactoryUnknown("worker".to_string()))
         );
+        assert_eq!(
+            answer(Ok(encode_ack("factory_not_workflow", ""))),
+            Err(SpawnError::FactoryNotWorkflow("worker".to_string())),
+            "a stream factory is its own answer, neither unknown nor refused"
+        );
     }
 
     #[test]
@@ -558,6 +570,7 @@ mod tests {
         let words: Vec<&str> = [
             SpawnError::AlreadyRunning("w1".to_string()),
             SpawnError::FactoryUnknown("worker".to_string()),
+            SpawnError::FactoryNotWorkflow("worker".to_string()),
             SpawnError::Refused("quota".to_string()),
             SpawnError::Timeout,
             SpawnError::Unavailable,
@@ -570,6 +583,7 @@ mod tests {
             [
                 "already_running",
                 "factory_unknown",
+                "factory_not_workflow",
                 "refused",
                 "timeout",
                 "unavailable"

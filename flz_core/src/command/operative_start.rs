@@ -183,17 +183,11 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
     AddOperativeResponse { metadata }.encode_to_vec()
 }
 
-/// What a workflow class declares: the tier, synchronous durability, the
-/// compensable positions (a rewind may only unwind those) and the leaves
-/// (the operative is done when all committed).
+/// What a workflow class declares: synchronous durability, the compensable
+/// positions (a rewind may only unwind those) and the leaves (the operative
+/// is done when all committed).
 fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
     let spec = crate::workflow::registry::get_class(factory_id);
-    if spec
-        .as_ref()
-        .is_some_and(|spec| spec.topology.effectively_once)
-    {
-        metadata.insert("effectively_once".to_string(), "true".to_string());
-    }
     if spec.as_ref().is_some_and(|spec| spec.sync_durability) {
         metadata.insert("durability".to_string(), "sync_remote".to_string());
     }

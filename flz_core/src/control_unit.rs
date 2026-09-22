@@ -53,6 +53,9 @@ struct FactoryInfo {
     /// The class's declared language, from the registry; `0` for a factory
     /// with no class, which the controller refuses to place.
     sdk_lang: u8,
+    /// `"stream"` or `"workflow"`, from the registry; empty for a factory
+    /// with no class.
+    kind: &'static str,
 }
 
 #[derive(Serialize)]
@@ -492,10 +495,14 @@ fn send_init_msg(
     let factory_ids: Vec<String> = declared.read().unwrap().clone();
     let factories: Vec<FactoryInfo> = factory_ids
         .iter()
-        .map(|id| FactoryInfo {
-            id: id.clone(),
-            description: None,
-            sdk_lang: crate::operative::registry::sdk_lang_for_factory(id),
+        .map(|id| {
+            let (sdk_lang, kind) = crate::operative::registry::advertised_for_factory(id);
+            FactoryInfo {
+                id: id.clone(),
+                description: None,
+                sdk_lang,
+                kind,
+            }
         })
         .collect();
 

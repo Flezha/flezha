@@ -38,17 +38,19 @@ pub fn class_factory_ids() -> Vec<&'static str> {
     CLASS_REGISTRY.read().unwrap().keys().copied().collect()
 }
 
-/// The SDK language to advertise for `factory_id` — the one lookup both
+/// What a runner advertises for `factory_id`: the class's SDK language and
+/// its kind, read from the registry the class landed in — the one lookup both
 /// advertisements read. An undeclared factory answers
-/// [`crate::header::SDK_LANG_UNSPECIFIED`], which the controller refuses to
-/// place.
-pub fn sdk_lang_for_factory(factory_id: &str) -> u8 {
+/// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty kind, which the
+/// controller refuses to place.
+pub fn advertised_for_factory(factory_id: &str) -> (u8, &'static str) {
     get_class(factory_id)
-        .map(|topology| topology.sdk_lang)
+        .map(|topology| (topology.sdk_lang, "stream"))
         .or_else(|| {
-            crate::workflow::registry::get_class(factory_id).map(|spec| spec.topology.sdk_lang)
+            crate::workflow::registry::get_class(factory_id)
+                .map(|spec| (spec.topology.sdk_lang, "workflow"))
         })
-        .unwrap_or(crate::header::SDK_LANG_UNSPECIFIED)
+        .unwrap_or((crate::header::SDK_LANG_UNSPECIFIED, ""))
 }
 
 pub struct OperativeRegistry {

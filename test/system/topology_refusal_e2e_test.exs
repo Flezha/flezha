@@ -65,7 +65,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   # cannot name a node nothing wired, and every SDK's `outputs_at_checkpoint`
   # takes the delay its flag needs. The fixture header states both; they are
   # skipped everywhere and counted as skips, never as holes.
-  @unauthorable ~w(detached raw_flags raw_class_flags)
+  @unauthorable ~w(detached raw_flags)
 
   describe "every runtime reads the whole refusal table" do
     for runtime <- PortPilot.runtimes() do

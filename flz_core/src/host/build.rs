@@ -291,11 +291,6 @@ pub(super) fn register_workflow_class(
             rollback_mode: rollback_of(workflow.rollback_mode),
             loop_mode,
             wake_after: workflow.wake_after_ms.map(std::time::Duration::from_millis),
-            retry: RetryPolicy {
-                max_attempts: workflow.retry_attempts,
-                backoff_base_ms: workflow.retry_backoff_ms,
-            },
-            barrier_retry_attempts: workflow.barrier_retry_attempts,
             persistence_enabled: decl.persistent,
             sync_durability: decl.sync_durability,
         },

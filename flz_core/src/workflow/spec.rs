@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{LoopMode, RollbackMode};
-use crate::channel::{ChannelId, ChannelKind, RetryPolicy, TaskletId};
+use crate::channel::{ChannelId, ChannelKind, TaskletId};
 use crate::operative::topology::{OperativeTopology, TaskletDescriptor};
 
 /// The tasklet DAG in Kahn order from the entry channels' consumers, so
@@ -290,10 +290,6 @@ pub struct WorkflowSpec {
     pub rollback_mode: RollbackMode,
     pub loop_mode: LoopMode,
     pub wake_after: Option<Duration>,
-    /// The per-cell ladder inside a stage.
-    pub retry: RetryPolicy,
-    /// Sends of one barrier before an unacked commit fails the run.
-    pub barrier_retry_attempts: u32,
     pub persistence_enabled: bool,
     /// The controller ships a barrier to its durability backend before acking
     /// it; inert without a backend.
@@ -309,8 +305,6 @@ impl std::fmt::Debug for WorkflowSpec {
             .field("max_duration", &self.max_duration)
             .field("rollback_mode", &self.rollback_mode)
             .field("loop_mode", &self.loop_mode)
-            .field("retry", &self.retry)
-            .field("barrier_retry_attempts", &self.barrier_retry_attempts)
             .field("persistence_enabled", &self.persistence_enabled)
             .field("sync_durability", &self.sync_durability)
             .finish()
@@ -389,18 +383,27 @@ pub enum BuildWorkflowError {
     },
 
     #[error(
-        "workflow operative `{factory_id}` declares a retry ladder ({attempts} attempts) with a \
-         zero backoff base; retries would re-run the failing cell in a hot loop. Give \
-         retry_backoff() a non-zero base, or set retry_attempts() to 0 for fail-fast"
+        "EffectivelyOnceOnWorkflow: workflow operative `{factory_id}` declares \
+         effectively_once(); a workflow commits at its stage boundary and carries no tier"
     )]
-    ZeroRetryBackoff {
-        factory_id: &'static str,
-        attempts: u32,
-    },
+    EffectivelyOnceOnWorkflow { factory_id: &'static str },
+
+    #[error(
+        "CheckpointOnWorkflow: workflow operative `{factory_id}` declares a checkpoint \
+         (checkpoint_ack, checkpoint_every, outputs_at_checkpoint); a workflow commits at its \
+         stage boundary"
+    )]
+    CheckpointOnWorkflow { factory_id: &'static str },
+
+    #[error(
+        "CorrectionWindowOnWorkflow: workflow operative `{factory_id}` declares \
+         correction_window(); correction replays a stream's input log, which a workflow has not"
+    )]
+    CorrectionWindowOnWorkflow { factory_id: &'static str },
 
     #[error(
         "workflow operative `{factory_id}` declares no tasklets; a workflow runs a graph of \
-         tasklets from its entry channels, declared in tasklets() on the builder a stream uses"
+         tasklets from its entry channels, declared in channels() on the builder a stream uses"
     )]
     NoTasklets { factory_id: &'static str },
 

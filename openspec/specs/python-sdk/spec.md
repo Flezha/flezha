@@ -280,7 +280,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 ### Requirement: The single-tasklet short form is four decorator keywords
 The short form SHALL be declared with `@flezha.stream_operative` or `@flezha.workflow_operative`, the same decorators that declare a full-form operative, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operative decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; the kind is the decorator's own name and SHALL NOT be a keyword.
 
-A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operative of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
+A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operative of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL accept `loop_mode=` and be a `once` workflow when it is absent, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level keyword written on a short form SHALL raise `DeclarationError` naming it. `loop_mode` SHALL accept only `"once"`, `"per_input"` and `"chained"` and `rollback_mode` only `"all_or_nothing"` and `"keep_progress"`, on the short form and the full form alike, any other value raising `DeclarationError` naming the keyword and the value at decoration. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
 
 At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a body whose return annotation is absent or `None`, and `ShortFormWithTopology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operative, and `Runner.register_modules` SHALL register the operatives a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
@@ -293,6 +293,16 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 
 - **WHEN** a module declares `@flezha.workflow_operative(id="place", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
 - **THEN** the tasklet receives the message as text on `order`, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A short-form workflow declares its loop mode
+
+- **WHEN** a module declares `@flezha.workflow_operative(id="chat", sink="replies", codec="text", loop_mode="per_input") def chat(s: str) -> str` and two messages reach its entry channel
+- **THEN** the declaration carries `loop_mode` `per_input`, the tasklet runs once per message, and the instance does not complete after the first
+
+#### Scenario: An unknown loop mode is refused at decoration
+
+- **WHEN** a module declares `@flezha.workflow_operative(id="w", loop_mode="forever")` over any body, or `rollback_mode="best_effort"`
+- **THEN** importing it raises `DeclarationError` naming the keyword and the value, and nothing is declared
 
 #### Scenario: A short form with no sink is declared
 
@@ -338,4 +348,23 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 
 - **WHEN** a short form's generated tasklet is named in another operative's `Channels` body
 - **THEN** it wires as any tasklet does, and the short form's own operative is declared only if the runner is also handed it or its module
+
+### Requirement: A Python workflow class carries what its builder recorded
+
+A workflow's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder a stream's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `workflow_operative` SHALL take no `retry_attempts`, `retry_backoff_ms` or `barrier_retry_attempts`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a workflow SHALL raise an error naming `TimersUnavailable` from `timer_after`, `timer_at_event_time` and `cancel_timer`.
+
+#### Scenario: A tier call on a workflow reaches the core
+
+- **WHEN** a `@flezha.workflow_operative(id="w")` channels body calls `c.effectively_once()`, the runner registers it and starts
+- **THEN** declaring it to the core raises naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+
+#### Scenario: A retired keyword is refused
+
+- **WHEN** a module declares `@flezha.workflow_operative(id="w", retry_attempts=5)`
+- **THEN** importing it raises `TypeError` for the unknown keyword, the decorator declaring none
+
+#### Scenario: A timer inside a workflow tasklet is refused
+
+- **WHEN** a tasklet of a running workflow calls `ctx.timer_after(1000)`
+- **THEN** the call raises an error naming `TimersUnavailable` and the effect carries no timer op
 

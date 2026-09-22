@@ -99,6 +99,7 @@ a restart, not a spawn, and is not re-seeded.
 |---|---|
 | `AlreadyRunning` | the id is taken and the request said `Error` |
 | `FactoryUnknown` | no connected runner **on any cluster node** registers that factory |
+| `FactoryNotWorkflow` | the factory's runners announced it as a stream; decided from the fleet's record before anything is placed (`factory_not_workflow` where an SDK spells outcomes as strings) |
 | `Refused(reason)` | authorization is on and `runner@<namespace>` holds no role that grants the spawn: bind it with `flz role bind runner@<namespace> spawner <namespace>`, which also lets that connection call `Operative.start` and `Operative.send` on the [administration surface](admin.md) and nothing else ([`authn_authz.md`](../operations/authn_authz.md)); quota exhausted; controller shutting down; start failed |
 | `Timeout` | no answer within 30 s |
 | `Unavailable` | no control plane to request on |

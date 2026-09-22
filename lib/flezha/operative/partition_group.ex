@@ -109,6 +109,11 @@ defmodule Flezha.Operative.PartitionGroup do
   @spec members(String.t(), String.t()) :: [%{id: String.t(), partition: map()}]
   def members(namespace, group_id), do: HubManager.partition_members(namespace, group_id)
 
+  # A partitioned start names no kind either: the factory's is read where a
+  # runner here announces it, and each member's start judges it where it lands.
+  defp workflow?(namespace, %{kind: kind, factory_id: factory_id}),
+    do: kind == :workflow or FleetManager.factory_kind(namespace, factory_id) == {:ok, :workflow}
+
   defp check_partitionable(namespace, operative, partitions, already_held) do
     cond do
       partitions < 2 or partitions > KeyGroup.key_groups() ->
@@ -116,10 +121,10 @@ defmodule Flezha.Operative.PartitionGroup do
          "partitions must be between 2 and #{KeyGroup.key_groups()} " <>
            "(one partition per key group); got #{partitions}"}
 
-      operative.kind != :stream ->
+      workflow?(namespace, operative) ->
         {:error,
-         "partitions apply to stream operatives only; #{operative.id} is a " <>
-           "#{operative.kind} operative"}
+         "partitions apply to stream operatives only; factory #{operative.factory_id} is a " <>
+           "workflow"}
 
       # The base id is never claimed by a group — only member ids are — so a
       # live claim on it means an unpartitioned operative already runs there.

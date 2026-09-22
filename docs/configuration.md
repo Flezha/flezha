@@ -736,8 +736,8 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 | Declaration | Default | What it does |
 |---|---|---|
 | `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Cell mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
-| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue. The Elixir SDK refuses `0`. |
-| `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts; the wait holds no thread. |
+| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a workflow tasklet, before the tasklet fails and the run compensates. `0` is refused (`RetryMaxZero`). |
+| `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts, for both kinds; the wait holds no thread. |
 | `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
 | `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |
 | `.sink(name)` / `.sink_with(name, f)` (`sink`) | — | Wire the channel to a named plugin; a second sink on one channel is a registration error. |
@@ -757,7 +757,10 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 
 ### Workflow class options
 
-Overridden on the `WorkflowOperative` trait (Rust) or interface (Java).
+Overridden on the `WorkflowOperative` trait (Rust) or interface (Java). A
+tasklet's retry ladder is its input edge's (above), and a commit barrier whose
+ack timed out is re-sent three times, a constant, before the run ends
+abnormally.
 
 | Override | Default | What it does |
 |---|---|---|
@@ -765,8 +768,6 @@ Overridden on the `WorkflowOperative` trait (Rust) or interface (Java).
 | `self_terminating()` (`selfTerminating`) | `true` | Whether the run ends on its own or waits for a stop. |
 | `loop_mode()` (`loopMode`) | `Once` | `Once`, `PerInput` or `Chained` looping over the durable inbox. |
 | `wake_after()` (`wakeAfter`) | none | Deadline at which a parked loop rehydrates without input. |
-| `retry_attempts()` / `retry_backoff()` (`retryAttempts` / `retryBackoff`) | `3` / `500 ms` | Pre-commit retry ladder for a failing task. |
-| `barrier_retry_attempts()` (`barrierRetryAttempts`) | `3` | Re-sends of a task-commit barrier whose ack timed out before the run ends abnormally. |
 | `rollback_mode()` (`rollbackMode`) | `AllOrNothing` | How a rewind undoes journaled tasks: `AllOrNothing` or `KeepProgress`. |
 | `PERSISTENCE_ENABLED` (`persistenceEnabled`) | `true` | `false` keeps the instance in memory only: a crash re-runs from the top. |
 | `SYNC_DURABILITY` (`syncDurability`) | `false` | Ack a commit barrier only after its remote ship (RPO 0); inert without a durability backend, workflow classes only. |

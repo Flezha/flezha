@@ -1,8 +1,8 @@
 defmodule Flezha.Service.OperativeManager.Admission do
   @moduledoc """
   The checks a start must clear before an operative is created: the three
-  quotas, the factory's placement validity, and the refusals a partition group's
-  base id earns.
+  quotas, the factory's placement validity and kind, and the refusals a
+  partition group's base id earns.
   """
 
   alias Flezha.AuthZ.Quotas
@@ -24,11 +24,21 @@ defmodule Flezha.Service.OperativeManager.Admission do
   def cluster_wide_refusal(namespace, _factory_id),
     do: "no runners in namespace #{namespace} on any cluster node"
 
-  # A factory that exists in another language is not a factory nobody has:
-  # reporting it as missing sends the operator looking for a runner that is
-  # already connected. Both refusal sites read this, so the two cannot drift.
-  defp factory_refusal(namespace, factory_id, absent) do
-    case FleetManager.placement_refusal(namespace, factory_id) do
+  # A factory that exists in another language or as the other kind is not a
+  # factory nobody has: reporting it as missing sends the operator looking for a
+  # runner that is already connected. Both refusal sites read this, so the two
+  # cannot drift.
+  defp factory_refusal(namespace, factory_id, absent),
+    do:
+      refusal_text(
+        FleetManager.placement_refusal(namespace, factory_id),
+        namespace,
+        factory_id,
+        absent
+      )
+
+  defp refusal_text(refusal, namespace, factory_id, absent) do
+    case refusal do
       {:language, established} ->
         "factory #{factory_id} in namespace #{namespace} is established at sdk_lang " <>
           "#{inspect(established)}; every runner advertising it is of another SDK and " <>
@@ -46,10 +56,50 @@ defmodule Flezha.Service.OperativeManager.Admission do
           "sdk_lang with none established; the controller cannot tell which language owns " <>
           "its state — run one language's runners, or clear the factory's durable state"
 
+      {:kind, established} ->
+        "factory #{factory_id} in namespace #{namespace} is established as a " <>
+          "#{established}, and every runner advertising it announces the other kind; run " <>
+          "runners whose class of that id is a #{established}"
+
+      :no_kind_declared ->
+        "factory #{factory_id} in namespace #{namespace} is advertised without a kind " <>
+          "declaration; a runner that does not announce its class's kind is never a " <>
+          "placement candidate, since the class declares it and its runner announces it"
+
+      :ambiguous_kind ->
+        "factory #{factory_id} in namespace #{namespace} is announced as both a stream and " <>
+          "a workflow with neither established; run runners of one kind for it"
+
       _ ->
         absent
     end
   end
+
+  @doc """
+  Admit the start's factory and take its kind: a runner here must be able to
+  place it, and the kind is the one its runners announced, which no caller
+  names. A kind a caller asserts (a spawn or a schedule fire, both
+  workflow-only) is judged against it rather than taken.
+  """
+  @spec resolve_factory(String.t(), map()) :: {:ok, map()} | {:error, String.t()}
+  def resolve_factory(namespace, %{factory_id: factory_id, kind: asserted} = operative)
+      when is_binary(factory_id) do
+    case FleetManager.factory_kind(namespace, factory_id) do
+      {:ok, kind} when asserted in [nil, kind] ->
+        {:ok, %{operative | kind: kind}}
+
+      {:ok, kind} ->
+        {:error,
+         "factory #{factory_id} in namespace #{namespace} is a #{kind}, and only a " <>
+           "#{asserted} is started here"}
+
+      {:error, refusal} ->
+        absent = "Factory with id #{factory_id} does not exist"
+        {:error, refusal_text(refusal, namespace, factory_id, absent)}
+    end
+  end
+
+  def resolve_factory(_namespace, operative), do: {:ok, operative}
 
   @doc """
   Whether a `generated?` id names nothing yet: no partition group and no state
@@ -127,8 +177,7 @@ defmodule Flezha.Service.OperativeManager.Admission do
   def check_not_shutting_down(namespace), do: Shutdown.admit(:namespace, namespace)
 
   def validate_operative(namespace, operative) do
-    with :ok <- Validator.valid_kind(operative.kind),
-         :ok <- operative_id_within_limit(operative.id),
+    with :ok <- operative_id_within_limit(operative.id),
          :ok <- Validator.valid_namespace(namespace),
          :ok <- Validator.operative_unique(namespace, operative.id) do
       :ok
@@ -147,19 +196,6 @@ defmodule Flezha.Service.OperativeManager.Admission do
         {:error, "operative id exceeds #{Identificator.limit(:operative)} bytes"}
     end
   end
-
-  def validate_factory(namespace, factory_id) when is_binary(factory_id) do
-    case FleetManager.runners_for_factory(namespace, factory_id) do
-      [_ | _] ->
-        :ok
-
-      [] ->
-        {:error,
-         factory_refusal(namespace, factory_id, "Factory with id #{factory_id} does not exist")}
-    end
-  end
-
-  def validate_factory(_namespace, _factory_id), do: :ok
 
   def cell_count(operative) do
     case Map.get(operative, :cells) do

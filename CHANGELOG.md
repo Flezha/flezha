@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed: a workflow is declared like a stream
+
+A workflow class writes its graph in `channels`, as a stream class does, in all seven SDKs; the
+workflow-only `tasklets` body is gone, and Node's `defineOperative` is `defineStream`. The runner
+announces each factory's kind with its id, so `flz operative start` and `flz schedule add` take no
+`--kind`, the admin start has no `kind` field, a schedule of a stream factory is refused, and a
+spawn naming a stream factory answers `factory_not_workflow`. The class-level `retry_attempts`,
+`retry_backoff_ms` and `barrier_retry_attempts` are deleted: a workflow stage's retry ladder is its
+consuming edge's `retry_max` / `retry_backoff_ms`, as on a stream, and a commit barrier is re-sent a
+fixed three times. A workflow class is refused by name when it sets the effectively-once tier
+(`EffectivelyOnceOnWorkflow`), a checkpoint setting (`CheckpointOnWorkflow`) or a correction window
+(`CorrectionWindowOnWorkflow`), and a timer call inside a workflow tasklet fails naming
+`TimersUnavailable`. The short form of a workflow may write its loop mode.
+
 ### Changed: the workload levels are Operative → Tasklet → Cell
 
 <!-- tasklet-cell-naming-record:begin -->Procedure is now Tasklet and Entity is now Cell<!-- tasklet-cell-naming-record:end -->,

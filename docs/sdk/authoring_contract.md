@@ -18,7 +18,7 @@ define only the callbacks written, so every default stays where
 `function_exported?` resolves it; a `state do field … end` block is its §3
 derive layer and `defchange` its manual boundary. The plain `@behaviour` form
 keeps working unchanged — see [`elixir_sdk.md`](elixir_sdk.md). The Node SDK exposes factory functions —
-`defineTasklet`, `defineOperative`, `registerFactory`, wired by a fluent
+`defineTasklet`, `defineStream`, `defineWorkflow`, `registerFactory`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
 which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). The Ruby SDK
@@ -512,7 +512,8 @@ SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
 **The short form is an operative declaration**, written at the SDK's
 kind-named operative entry point, the one a full-form operative already uses.
 An operative declaration is a short form exactly when it carries its one
-tasklet's body **instead of** a topology body (`channels` or `tasklets`).
+tasklet's body **instead of** a topology body, `channels`, the one name both
+kinds give it in every SDK.
 The body is `run`, the name every SDK gives a tasklet's body. The kind is the
 entry point's own name (in PHP, the base class the `#[Operative]` class
 extends), never a key. The identity is the operative's factory id, spelled as
@@ -525,7 +526,7 @@ is an address an operator types and a rename must not move it.
 | Rust | `#[flezha::stream_operative(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String` | `#[flezha::workflow_operative(...)]` |
 | Java | `@StreamOperative(id = "echo", sink = "out", input = "in") class Echo { String run(String s) }` | `@WorkflowOperative(...)` |
 | Python | `@flezha.stream_operative(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str` | `@flezha.workflow_operative(...)` |
-| Node | `defineOperative({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineWorkflow({ ... })` |
+| Node | `defineStream({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineWorkflow({ ... })` |
 | Ruby | `class Echo < Flezha::StreamOperative; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = s; end` | `< Flezha::WorkflowOperative` |
 | PHP | `#[Operative(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends StreamOperative { public function run(mixed $s, Ctx $ctx): mixed }` | `extends WorkflowOperative` |
 | Elixir | `use Flezha.SDK.StreamOperative, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.WorkflowOperative, ...` |
@@ -541,12 +542,23 @@ tasklet: the operative that only keeps state is one declaration. `input` and
 channel named by `input` (or `input` when none is written) and decoded by
 `codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the sink
 when one is written; a factory id equal to the identity; and every class-level
-setting at that SDK's default for that kind. A stream short form is a default
-stream. A workflow short form is a `once` workflow: its entry channel receives
-the instance's first message, from a spawn, `flz operative send` or
-`flz operative start --text`, the tasklet runs once, its output reaches the
-sink after the commit, and the instance completes; `--init-values` is the
-tasklet's initial state, as on a stream.
+setting at that SDK's default for that kind, with one exception: a workflow
+short form may declare its loop mode. A stream short form is a default
+stream. A workflow short form is a `once` workflow unless it declares another
+loop mode: its entry channel receives the instance's first message, from a
+spawn, `flz operative send` or `flz operative start --text`, the tasklet runs
+once, its output reaches the sink after the commit, and the instance
+completes; `--init-values` is the tasklet's initial state, as on a stream.
+With `per_input` the tasklet runs once per message and the instance stays.
+The loop mode is written in the spelling the SDK's full form gives it:
+`loop_mode = "per_input"` on the Rust attribute, `loopMode = LoopMode.PER_INPUT`
+on `@WorkflowOperative`, `loopMode: 'per_input'` on the Node definition,
+`loop_mode="per_input"` on the Python decorator, `loop_mode :per_input` in the
+Ruby class body, `#[Workflow(loopMode: LoopMode::PerInput)]` beside
+`#[Operative]` in PHP, `loop_mode: :per_input` on the Elixir `use`. A loop mode
+or rollback mode outside `once` / `per_input` / `chained` and
+`all_or_nothing` / `keep_progress` is refused where it is written, naming the
+value.
 
 **The expansion is an ordinary tasklet and an ordinary operative, and the
 tasklet is named after the factory id, verbatim.** A cell lives at
@@ -594,12 +606,15 @@ the short form's, describing the entry channel it generates.
   terminator takes one.
 
 - **Multi-tasklet topology stays explicit.** More than one tasklet, any
-  fan-out or multi-input edge, a keyed edge, or any class-level setting (a loop
-  mode, a retry ladder, a duration, persistence off, the effectively-once tier,
-  a correction window) requires the full form: an explicit `channels()` /
-  `tasklets()` body, or, in Rust, the linear `flezha::operative! { pub struct
-  Name; id: "…", pipeline: input::<T> -> A -> B -> plugin::<U>("name") }` sugar
-  for a strictly linear chain. The SDK refuses rather than guessing a graph.
+  fan-out or multi-input edge, a keyed edge, or any class-level setting other
+  than a workflow's loop mode (a duration, persistence off, the
+  effectively-once tier, a correction window, a rollback mode, synchronous
+  durability) requires the full form: an explicit `channels()` body, or, in
+  Rust, the linear `flezha::operative! { pub struct Name; id: "…", pipeline:
+  input::<T> -> A -> B -> plugin::<U>("name") }` sugar for a strictly linear
+  chain. The SDK refuses rather than guessing a graph. A retry ladder is not a
+  class setting: it is the edge's `retry_max` / `retry_backoff_ms`, for both
+  kinds.
 
 - **Registration is written by the author, in every SDK.** The author hands the
   short form to the runner's `register_factory` like any operative, naming the
@@ -614,9 +629,12 @@ interface `StreamOperative` and `WorkflowOperative` both extend, and in Rust a
 sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
 `Operative<StreamKind>`) and every `WorkflowOperative` (as
 `Operative<WorkflowKind>`), so an author implements only the kind trait. The
-base's shared member is `factory_id()`; the kind-divergent surface (`channels`
-and the persistence opt-in on one side, `tasklets` and the workflow settings
-on the other) stays on the per-kind traits.
+base's shared members are `factory_id()` and, in Java, `channels(ChannelBuilder)`:
+both kinds declare their graph in a body named `channels`, on the same builder,
+in every SDK (in Rust each kind trait declares it, because an author cannot
+implement the sealed base). The kind-divergent surface (the persistence opt-in
+on one side; loop mode, rollback mode, maximum duration, self-termination and
+synchronous durability on the other) stays on the per-kind traits.
 
 An operative declares its kind where it is written, so a runner call that names
 the kind again says nothing new and can disagree with the declaration. Every
@@ -649,7 +667,21 @@ An operative whose kind cannot be read — it declares both kinds, or neither �
 is refused at registration with an error beginning `AmbiguousOperativeKind` or
 `UnknownOperativeKind` naming the class or module. In Rust such a type cannot
 be passed to `register_factory` at all: the kind parameter is unresolvable, so
-it is a compile error. Adding a future operative kind means implementing the
+it is a compile error. In Java a class implementing both kind interfaces does
+not compile unless it resolves the `persistenceEnabled()` default both declare,
+and one that does is refused at registration.
+
+**The runner announces the kind it read.** Every factory entry a runner ships,
+in its connect frame and in each `UpdateFactories`, carries `kind`, exactly
+`"stream"` or `"workflow"`: Rust and Elixir fill it from the registered class,
+and the shared core fills it for Java, Node, Python, Ruby and PHP from the
+registry the class declaration landed in. The controller establishes a
+factory's kind from the first announcement, as it establishes its language,
+and a runner announcing the other kind, or none, is never a placement
+candidate for it. So a start names only the factory: `flz operative start` and
+`flz schedule add` take no `--kind`, a schedule of a factory announced as a
+stream is refused at `add`, and a tasklet's spawn naming one answers
+`factory_not_workflow`. Adding a future operative kind means implementing the
 base and teaching `register_factory` / `unregister_factory` the kind, without
 editing either existing authoring surface and without adding a runner method.
 
@@ -669,7 +701,7 @@ refusal table's short-form rows are checked against:
 
 | Name | Condition |
 | --- | --- |
-| `ShortFormWithTopology` | an operative declaration carries a tasklet body and also a `channels` or `tasklets` body |
+| `ShortFormWithTopology` | an operative declaration carries a tasklet body and also a `channels` body |
 | `SinkWithoutOutput` | a `sink` on a body the SDK can see declares no output |
 | `DuplicateFactoryId` | a second operative, of either kind, under a factory id the runner holds |
 
@@ -701,6 +733,22 @@ it).
   and the policy in the Elixir SDK, which is its own core — and again in
   `flz_core`'s declaration validation for the six hosts on it, so a
   hand-written host declaration cannot slip past.
+
+### 5.3 A setting of one kind is refused on the other, by name
+
+What an author writes reaches the judgement of its class's kind; no SDK drops
+a setting because the kind does not carry it. A stream-only setting on a
+workflow is refused at registration as `EffectivelyOnceOnWorkflow` (the
+effectively-once tier), `CheckpointOnWorkflow` (any checkpoint setting) or
+`CorrectionWindowOnWorkflow` (the correction window); a workflow-only setting
+on a stream as `SyncDurabilityOnStream`, and in PHP `#[Workflow]` on a class
+extending `Flezha\StreamOperative` is refused naming the attribute. The shared
+core judges the five host SDKs' declarations; Rust and Elixir judge their own
+under the same names. Synchronous durability has one spelling per SDK, the
+class-level one; no channel builder carries it. A timer registered inside a
+workflow tasklet is refused with `TimersUnavailable` until timers work inside
+a workflow; `compact_after_bytes` belongs to a tasklet and is accepted on
+either kind.
 
 ## 6. Canonical reference operative (cross-SDK conformance anchor)
 

@@ -5,7 +5,7 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 ## Requirements
 ### Requirement: The controller SHALL maintain a durable registry of cron schedules for workflow spawns
 
-`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--text payload] [--channel ch] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: workflow` SHALL be schedulable; scheduling a stream factory SHALL be rejected at `add`. Cron syntax, timezone, kind, and the plugin spec SHALL be validated at `add`. `--init-values` SHALL be the initial state per tasklet the fired instance starts with, as it is for `flz operative start`; `--text` SHALL be the first message every fired instance receives, on the entry channel `--channel` names or on the first declared one, stored verbatim; an entry stored without `--text` SHALL fire an instance that waits for its first message. `--channel` without `--text` SHALL be refused at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
+`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--text payload] [--channel ch] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only a workflow factory SHALL be schedulable, and the kind is the factory's own, announced by its runner: `add` SHALL take no `--kind`, SHALL reject a factory the namespace has established as a stream, and SHALL accept a factory no runner has yet announced; every fire SHALL resolve the factory's established kind through the standard start path, where a stream factory fails the slot as any refused start does. Cron syntax, timezone, and the plugin spec SHALL be validated at `add`. `--init-values` SHALL be the initial state per tasklet the fired instance starts with, as it is for `flz operative start`; `--text` SHALL be the first message every fired instance receives, on the entry channel `--channel` names or on the first declared one, stored verbatim; an entry stored without `--text` SHALL fire an instance that waits for its first message. `--channel` without `--text` SHALL be refused at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
 
 #### Scenario: Schedule survives restart
 
@@ -16,6 +16,17 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 
 - **WHEN** `schedule add` is issued with a malformed cron expression or unknown timezone
 - **THEN** the command SHALL fail with a message naming the invalid field and no entry SHALL be stored
+
+#### Scenario: A stream factory is rejected at add
+
+- **WHEN** `schedule add` names a factory a connected runner has announced as a stream
+- **THEN** the command SHALL fail stating that only a workflow factory is schedulable, naming the factory, and no entry SHALL be stored
+
+#### Scenario: A factory that changed kind fails its slot, not the schedule
+
+- **GIVEN** a schedule added for a factory announced as a workflow
+- **WHEN** at a later fire the only runner announcing that id has established it as a stream
+- **THEN** the slot SHALL fail with a result naming the kind, SHALL be retried and listed as any failed slot is, and the entry SHALL remain
 
 #### Scenario: A first message is stored with the entry
 
@@ -151,18 +162,19 @@ works on a node whose schedule hub is down.
 ### Requirement: The schedule verbs SHALL carry their optional flags as one options document
 
 A schedule verb's optional flags SHALL travel to the controller as one options
-document (the namespace, the initial values, the first message's text and channel, the kind, the
+document (the namespace, the initial values, the first message's text and channel, the
 plugin spec and the caller's credential), the keyword list every other gated schedule verb already
 carries its credential in, rather than as positional arguments with defaults.
-This rule governs the request the CLI builds, not the spelling of the
-operator-facing flags. A value that must reach the controller as text, such as
+There SHALL be no `kind` entry in that document, because a schedule names a factory and
+the factory's runner names its kind. This rule governs the request the CLI builds, not the
+spelling of the operator-facing flags. A value that must reach the controller as text, such as
 the plugin spec the decoder reads verbatim and the first message, SHALL be carried as text whatever it
 parses as.
 
 #### Scenario: An optional flag is absent
 
 - **WHEN** `flz schedule add` is issued without `--namespace`, `--init-values`,
-  `--text`, `--channel`, `--plugins` or `--kind`
+  `--text`, `--channel` or `--plugins`
 - **THEN** the controller SHALL apply the same defaults it applies today, and the
   request SHALL carry no positional placeholder for the absent flag
 

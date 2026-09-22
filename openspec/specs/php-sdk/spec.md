@@ -271,7 +271,7 @@ The short form SHALL be declared with the `#[Operative]` attribute a full-form o
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL be a `once` workflow with every workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form MAY carry `#[Workflow(loopMode: ...)]` beside `#[Operative]` and SHALL be a `once` workflow when it does not, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Workflow]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operative]`, SHALL throw `DeclarationException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
 `Runner::registerFactory` SHALL accept such a class string and register the generated operative, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
@@ -284,6 +284,11 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 - **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
+
+#### Scenario: A short-form workflow declares its loop mode
+
+- **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Workflow(loopMode: LoopMode::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
+- **THEN** the declaration carries `loop_mode` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
@@ -314,4 +319,23 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 - **WHEN** a class extending `Flezha\StreamOperative` defines `run` and carries no `#[Operative]` attribute
 - **THEN** `registerFactory` throws naming the required `#[Operative(factoryId: ...)]`
+
+### Requirement: A PHP class of either kind is judged on what it wrote
+
+`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationException` naming it. `#[Workflow]` on a class extending `Flezha\StreamOperative` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Workflow]` SHALL carry no `retryAttempts`, `retryBackoffMs` or `barrierRetryAttempts`; the builder SHALL carry no `syncDurability()` call, `#[Workflow(syncDurability: true)]` being the one spelling. A `Ctx` inside a workflow SHALL throw an error naming `TimersUnavailable` from `timerAfter`, `timerAtEventTime` and `cancelTimer`.
+
+#### Scenario: A tier call on a workflow reaches the core
+
+- **WHEN** a class extending `Flezha\WorkflowOperative` calls `$c->effectivelyOnce()` in `channels`, the runner registers it and starts
+- **THEN** declaring it to the core throws `DeclarationException` naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+
+#### Scenario: A workflow attribute on a stream class is refused
+
+- **WHEN** a class extending `Flezha\StreamOperative` carries `#[Workflow(loopMode: LoopMode::PerInput)]`
+- **THEN** `registerFactory` throws `DeclarationException` naming `#[Workflow]` and the class
+
+#### Scenario: A timer inside a workflow tasklet is refused
+
+- **WHEN** a tasklet of a running workflow calls `$ctx->timerAfter(1000)`
+- **THEN** the call throws an error naming `TimersUnavailable` and the effect carries no timer op
 

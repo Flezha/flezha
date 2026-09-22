@@ -458,11 +458,11 @@ and journals nothing.
 
 ```javascript
 // echo_operative.mjs: the operative. The graph, and the unit the controller schedules.
-import { defineOperative } from '@flezha/sdk';
+import { defineStream } from '@flezha/sdk';
 
 import { EchoTasklet } from './echo_tasklet.mjs';
 
-export default defineOperative({
+export default defineStream({
   factoryId: 'echo',
   channels: (c) => {
     c.input('in', { codec: 'text' })
@@ -476,7 +476,7 @@ export default defineOperative({
 delivers as a string; an entry that names no codec reads JSON instead. The sink
 names no codec, so the tasklet's string leaves as its UTF-8 bytes, and any
 value other than a string or bytes would leave as JSON. The module exports what
-`defineOperative` returned, and that export is what the runner finds.
+`defineStream` returned, and that export is what the runner finds.
 
 ```javascript
 // runner.mjs: the runner. Connects, offers the operative, and serves.

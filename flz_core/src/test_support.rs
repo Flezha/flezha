@@ -90,12 +90,14 @@ pub(crate) mod host_class {
     use crate::operative::instance::StreamInstance;
 
     /// One entry-channel declaration per name, each chaining into `p0`.
-    fn entry_channels(names: &[&str]) -> String {
+    /// An entry channel per name, each into tasklet 0; `facts` are extra
+    /// channel keys, written before the chains.
+    fn entry_channels(names: &[&str], facts: &str) -> String {
         names
             .iter()
             .map(|name| {
                 format!(
-                    r#"{{"name":"{name}","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},"#
+                    r#"{{"name":"{name}","kind":"entry",{facts}"chains":[[{{"link":"into","tasklet":0}}]]}},"#
                 )
             })
             .collect()
@@ -137,7 +139,7 @@ pub(crate) mod host_class {
             )
             .collect::<Vec<_>>()
             .join(",");
-        let entry_json = entry_channels(entries);
+        let entry_json = entry_channels(entries, "");
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,
                  "channels":[{entry_json}
@@ -152,17 +154,20 @@ pub(crate) mod host_class {
     }
 
     /// A host `once` workflow class: an entry channel per name in `entries`,
-    /// each into the one tasklet `p0`, whose stage ladder has
-    /// `retry_attempts` rungs of 1 ms.
-    pub(crate) fn workflow_json(id: &str, entries: &[&str], retry_attempts: u32) -> String {
-        let entry_json = entry_channels(entries);
+    /// each into the one tasklet `p0` on an edge whose ladder has `retry_max`
+    /// rungs of 1 ms.
+    pub(crate) fn workflow_json(id: &str, entries: &[&str], retry_max: u32) -> String {
+        let entry_json = entry_channels(
+            entries,
+            &format!(r#""retry_max":{retry_max},"retry_backoff_ms":1,"#),
+        );
         format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
                  "channels":[{entry_json}
                              {{"name":"out","kind":"plugin","producer":0,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
                  "tasklets":[{{"name":"p0"}}],
-                 "workflow":{{"retry_attempts":{retry_attempts},"retry_backoff_ms":1}}}}"#
+                 "workflow":{{}}}}"#
         )
     }
 

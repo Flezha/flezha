@@ -211,6 +211,12 @@ pub enum TopologyIssue {
     CorrectionWindowOnWorkflow,
 
     #[error(
+        "a workflow class cannot declare a checkpoint (checkpoint_ack, checkpoint_every, \
+         checkpoint_outputs, checkpoint_max_delay_ms); a workflow commits at its stage boundary"
+    )]
+    CheckpointOnWorkflow,
+
+    #[error(
         "class `{factory_id}` declares sync_durability, which only a workflow class may: a stream \
          class acknowledges at input rates, and a remote round trip per acknowledgement is \
          not a guarantee it can keep"
@@ -225,7 +231,7 @@ pub enum TopologyIssue {
 
     /// A refusal this vocabulary has not named yet: the residue of the text
     /// refusals `register` has always printed (the language byte, the SDK
-    /// version, the workflow ladder, the DAG leaf, the index arities). It is
+    /// version, the DAG leaf, the index arities). It is
     /// the one variant the fixture does not pair a row with, so that a
     /// declaration is never refused with no verdict at all.
     #[error("{0}")]
@@ -271,6 +277,7 @@ impl TopologyIssue {
             Self::EdgeAlreadyWired { .. } => "EdgeAlreadyWired",
             Self::EffectivelyOnceOnWorkflow => "EffectivelyOnceOnWorkflow",
             Self::CorrectionWindowOnWorkflow => "CorrectionWindowOnWorkflow",
+            Self::CheckpointOnWorkflow => "CheckpointOnWorkflow",
             Self::SyncDurabilityOnStream { .. } => "SyncDurabilityOnStream",
             Self::AtCheckpointWithoutMaxDelay => "AtCheckpointWithoutMaxDelay",
             Self::Declaration(..) => "Declaration",

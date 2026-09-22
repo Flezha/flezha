@@ -93,13 +93,13 @@ The declarations are named for the Cell, not the Tasklet. Static mode is declare
 - **THEN** it SHALL offer no `cell_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
 ### Requirement: Single-tasklet auto-wiring and registration
-The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both operative kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operative declaration**, written at the SDK's kind-named operative entry point, and SHALL NOT be a tasklet declaration that becomes an operative: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]` in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` / `@flezha.workflow_operative` in Python, `defineOperative` / `defineWorkflow` in Node, a `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class extending `Flezha\StreamOperative` / `Flezha\WorkflowOperative` in PHP, `use Flezha.SDK.StreamOperative` / `use Flezha.SDK.WorkflowOperative` in Elixir.
+The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both operative kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operative declaration**, written at the SDK's kind-named operative entry point, and SHALL NOT be a tasklet declaration that becomes an operative: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]` in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` / `@flezha.workflow_operative` in Python, `defineStream` / `defineWorkflow` in Node, a `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class extending `Flezha\StreamOperative` / `Flezha\WorkflowOperative` in PHP, `use Flezha.SDK.StreamOperative` / `use Flezha.SDK.WorkflowOperative` in Elixir.
 
-An operative declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels` or `tasklets`. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operative]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operative's factory id, spelled as that SDK's full-form operative already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
+An operative declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operative]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operative's factory id, spelled as that SDK's full-form operative already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
 
 `sink` SHALL be optional. With a `sink`, the generated operative SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form operative already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
 
-The generated operative SHALL otherwise be the operative an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow whose entry channel receives its first message, from a spawn, `flz operative send` or `flz operative start --text`, and whose `init_values` are the tasklet's initial state as on a stream. A class-level setting (loop mode, retry ladder, duration, persistence, the effectively-once tier, a correction window) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
+The generated operative SHALL otherwise be the operative an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz operative send` or `flz operative start --text`, and its `init_values` being the tasklet's initial state as on a stream: the loop mode SHALL be accepted on a workflow short form in every SDK, in the spelling that SDK's full form gives the setting (`loop_mode` on the Rust attribute, `loopMode()` on `@WorkflowOperative`, `loopMode` on the Node definition, `loop_mode=` on the Python decorator, `loop_mode` in the Ruby class body, `#[Workflow(loopMode: ...)]` beside `#[Operative]` in PHP, `loop_mode:` on the Elixir `use`), and SHALL reach the generated operative as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `all_or_nothing`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
 
 The expansion SHALL produce an ordinary tasklet and an ordinary operative, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operative's, because that is what the declaration declares.
 
@@ -139,12 +139,22 @@ An operative declaration carrying both a tasklet body and a topology body SHALL 
 
 #### Scenario: A class setting on a short form is refused
 
-- **WHEN** a short form, in an SDK whose spelling can write one, declares a class-level setting such as a loop mode or persistence off
+- **WHEN** a short form, in an SDK whose spelling can write one, declares a class-level setting other than the loop mode, such as persistence off or a maximum duration
 - **THEN** the SDK SHALL refuse the declaration naming the setting
+
+#### Scenario: A workflow short form declares its loop mode
+
+- **WHEN** a workflow short form in any of the seven SDKs declares the `per_input` loop mode in that SDK's spelling, is registered, and two messages reach its entry channel
+- **THEN** the generated operative SHALL declare `loop_mode` `per_input`, the tasklet SHALL run once per message, and the instance SHALL not complete after the first
+
+#### Scenario: An unknown loop mode is refused at declaration
+
+- **WHEN** a Python workflow is decorated with `loop_mode="forever"`, or a workflow in any SDK whose spelling takes a string names a rollback mode outside the declared set
+- **THEN** the declaration SHALL be refused naming the value, and nothing SHALL reach the core
 
 #### Scenario: A short-form key beside a topology body is refused
 
-- **WHEN** an operative declaration carries a `channels` or `tasklets` body and also a `sink`, an `input` or a `codec`
+- **WHEN** an operative declaration carries a `channels` body and also a `sink`, an `input` or a `codec`
 - **THEN** the SDK SHALL refuse the declaration rather than ignore the key
 
 #### Scenario: The kind is read from the entry point, not from a key
@@ -179,7 +189,7 @@ An operative declaration carrying both a tasklet body and a topology body SHALL 
 
 #### Scenario: A tasklet body beside a topology body is refused
 
-- **WHEN** an operative declaration carries a tasklet body and also a `channels` or `tasklets` body
+- **WHEN** an operative declaration carries a tasklet body and also a `channels` body
 - **THEN** the SDK SHALL refuse naming `ShortFormWithTopology`, at compile time where the language has one and at declaration or registration otherwise
 
 #### Scenario: A sink on a body with no output is refused
@@ -189,7 +199,7 @@ An operative declaration carrying both a tasklet body and a topology body SHALL 
 
 #### Scenario: Multi-tasklet topology stays explicit
 
-- **WHEN** an operative has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting
+- **WHEN** an operative has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting other than a workflow's loop mode
 - **THEN** the SDK requires the full form and does not auto-wire
 
 #### Scenario: Duplicate factory id fails fast across kinds
@@ -507,24 +517,31 @@ Both authoring surfaces SHALL be rooted in a shared `Operative` base: in Java an
 interface that `StreamOperative` and `WorkflowOperative` both extend, and in Rust a
 sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
 `Operative<StreamKind>`) and every `WorkflowOperative` (as `Operative<WorkflowKind>`), so
-an author implements only the kind trait. The base's shared member SHALL be
-`factory_id()`, the one method both authoring traits already share; the kind-divergent
-surface (`channels` and the persistence opt-in on one side, `run` and `tasklets` on the
-other) SHALL remain on the per-kind traits.
+an author implements only the kind trait. The base's shared members SHALL be
+`factory_id()` and, in Java, `channels(ChannelBuilder)`: both kinds declare their graph in a
+body named `channels`, in every SDK, on the same builder, so the body is not kind-divergent
+and is declared once where the language lets the base declare it (in Rust each kind trait
+declares `channels` itself, because an author cannot implement the sealed base). The
+kind-divergent surface (the persistence opt-in on one side, the workflow settings on the
+other: loop mode, rollback mode, maximum duration, self-termination, synchronous durability)
+SHALL remain on the per-kind traits. There SHALL be no `tasklets` body in any SDK.
 
 Every SDK's runner handle SHALL register an operative of either kind through one method,
 `register_factory`, and remove it through one inverse, `unregister_factory` (`registerFactory` and
 `unregisterFactory` in Java, Node and PHP), both taking the same argument, short form or full: a Rust operative value (`register_factory(EchoOperative)`), a Java class, a Python
 operative, a Node module specifier, a Ruby class, a PHP class
 string, an Elixir module. The kind SHALL be read from the operative and never named by the
-call. `unregister_factory` SHALL undo a registration made before the runner starts in every SDK, and
+call, from what already names it: the sealed `Operative<K>` impl in Rust, the kind interface
+in Java, the defining function in Node, the decorator in Python, the base class in Ruby and
+PHP, the `@behaviour` in Elixir (`Flezha.SDK.StreamOperative` or `Flezha.SDK.WorkflowOperative`,
+set by the `use` macro or written by hand). `unregister_factory` SHALL undo a registration made before the runner starts in every SDK, and
 one made after start in every SDK whose runner can stop serving a started declaration; an SDK whose
 runner cannot SHALL reject a post-start call with an error that says so, never ignore it. Both SHALL be methods on the concrete runner handle (functions over the handle in
 Elixir), not free functions, static methods, or methods on a builder type, and SHALL be
 generic over the shared base where the host language expresses such a bound. An operative
 whose kind cannot be read, because it declares both kinds or neither, SHALL be refused at
 registration with an error beginning `AmbiguousOperativeKind` or `UnknownOperativeKind`; in
-Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error. A short form's kind is its entry point's name, so no short form can reach either refusal. The
+Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error, and in Java a class implementing both kind interfaces does not compile unless it resolves the `persistenceEnabled()` default both declare, and is refused at registration when it does. A short form's kind is its entry point's name, so no short form can reach either refusal. The
 base SHALL NOT require unifying the sealed operative *instance* enum, which stays
 asymmetric. Adding a future operative kind SHALL require implementing the base and teaching
 `register_factory` and `unregister_factory` the kind, without editing the existing two authoring surfaces
@@ -551,8 +568,13 @@ that the grouping states the taxonomy the vocabulary already uses.
 
 #### Scenario: An operative of both kinds is refused
 
-- **WHEN** a Java class implementing both `StreamOperative` and `WorkflowOperative`, or an Elixir module exporting both `channels/1` and `tasklets/1`, is handed to `registerFactory` or `register_factory/2`
-- **THEN** registration SHALL fail with an error beginning `AmbiguousOperativeKind` naming the class or module, and nothing SHALL be declared
+- **WHEN** an Elixir module declaring both `@behaviour Flezha.SDK.StreamOperative` and `@behaviour Flezha.SDK.WorkflowOperative` is handed to `register_factory/2`, or a Java class implementing both `StreamOperative` and `WorkflowOperative` is compiled and, if it compiles, handed to `registerFactory`
+- **THEN** the Elixir registration SHALL fail with an error beginning `AmbiguousOperativeKind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile on the `persistenceEnabled()` default both kinds declare, or, when it resolves that default itself, fail registration with `AmbiguousOperativeKind`
+
+#### Scenario: Both kinds declare their graph in channels
+
+- **WHEN** a workflow class in Rust, Java or Elixir declares its graph in `channels` on the builder a stream uses, and the same class is rewritten with a `tasklets` body
+- **THEN** the first SHALL register and run, and the second SHALL fail: at compile time in Rust and Java (no such member), and in Elixir at `@before_compile` naming the missing `channels/1`
 
 #### Scenario: A new kind is added without editing the existing surfaces
 
@@ -591,4 +613,46 @@ The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWitho
 
 - **WHEN** the seven SDK repositories are searched for `SinkWithoutId`, `SinkWithoutKind` or `ShorthandKeyWithoutSink`
 - **THEN** no source, test, fixture or document names any of the three
+
+### Requirement: A setting that belongs to one kind is refused by name on the other
+
+Every SDK SHALL let what an author writes on a class reach the judgement of that class's kind, and SHALL never drop a setting because the kind does not carry it. A stream-only setting on a workflow class SHALL be refused at registration under the reference's name: the effectively-once tier as `EffectivelyOnceOnWorkflow`, any checkpoint setting (`checkpoint_ack`, `checkpoint_every`, `outputs_at_checkpoint`, its maximum delay) as `CheckpointOnWorkflow`, the correction window as `CorrectionWindowOnWorkflow`. A workflow-only setting on a stream class SHALL be refused the same way: synchronous durability as `SyncDurabilityOnStream`, and in PHP the `#[Workflow]` attribute on a class extending `Flezha\StreamOperative`, naming the attribute. The name SHALL appear verbatim in the error the author reads, in every SDK, whether the SDK judges the class itself (Rust, Elixir) or the shared core judges it (Java, Node, Python, Ruby, PHP); a host SDK raises it where it declares the class to the core, which in Node, Python, Ruby and PHP is the runner's start for a class registered before it. No SDK SHALL keep a per-kind gate that removes such a setting from the declaration before it is judged, and no SDK SHALL honour such a setting in its own runtime while withholding it from the declaration.
+
+Synchronous durability SHALL have one spelling per SDK, the class-level one (`SYNC_DURABILITY` in Rust, `syncDurability()` in Java, the `syncDurability` definition field in Node, the `sync_durability` decorator keyword in Python, the `sync_durability` class-body flag in Ruby, `#[Workflow(syncDurability: true)]` in PHP, the `sync_durability` `use` option in Elixir). No channel builder SHALL carry a `sync_durability` call.
+
+`compact_after_bytes` is a tasklet's setting and belongs to both kinds; it SHALL be accepted on a workflow as on a stream.
+
+#### Scenario: The tier on a workflow is refused, not dropped
+
+- **WHEN** a workflow class in any of the seven SDKs declares the effectively-once tier on its builder
+- **THEN** registration SHALL fail with an error containing `EffectivelyOnceOnWorkflow`, nothing SHALL be declared, and no SDK SHALL run the tier for that class
+
+#### Scenario: A checkpoint setting on a workflow is refused by its own name
+
+- **WHEN** a workflow class declares `checkpoint_every(500)` and nothing else stream-only
+- **THEN** registration SHALL fail with an error containing `CheckpointOnWorkflow`, and SHALL NOT report `CheckpointAckWithoutTier`
+
+#### Scenario: A workflow attribute on a PHP stream class is refused
+
+- **WHEN** a class extending `Flezha\StreamOperative` carries `#[Workflow(loopMode: LoopMode::PerInput)]`
+- **THEN** `registerFactory` SHALL throw `DeclarationException` naming `#[Workflow]` and the class, and nothing SHALL be declared
+
+#### Scenario: The builder spelling of synchronous durability is gone
+
+- **WHEN** the Node, Python, Ruby and PHP channel builders are searched for a `sync_durability` / `syncDurability` method
+- **THEN** none carries one, and a Node workflow whose definition sets `syncDurability: true` declares `sync_durability` to the core
+
+### Requirement: The class declares its kind and the runner announces it
+
+The kind of an operative SHALL be a fact of its class alone, read by `register_factory` as the contract already requires, and SHALL be announced by the runner to the controller with the factory id: every factory entry the runner ships, in the connect init frame and in `UpdateFactories`, SHALL carry `kind`, exactly `"stream"` or `"workflow"`. Rust and Elixir SHALL fill it from the registered class; Java, Node, Python, Ruby and PHP announce through the shared core, which SHALL fill it from the registry the class declaration landed in, where it already fills `sdk_lang`. No start command, schedule or spawn SHALL name a kind to the controller; the controller reads the announced one.
+
+#### Scenario: Every runtime announces the kind of every fixture
+
+- **WHEN** any of the seven test apps connects
+- **THEN** every factory entry it ships carries `kind`, `"workflow"` for every id its manifest lists under a workflow capability and `"stream"` for every other id
+
+#### Scenario: A class's kind needs no flag at start
+
+- **WHEN** `flz operative start paper_order` names a factory a runner announced as a workflow
+- **THEN** a workflow instance SHALL start, with no `--kind` written and none accepted
 

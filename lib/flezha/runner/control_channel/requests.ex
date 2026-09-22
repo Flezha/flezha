@@ -287,12 +287,14 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       Enum.map(factories, fn %RunnerCommands.FactoryDecl{
                                id: id,
                                description: description,
-                               sdk_lang: sdk_lang
+                               sdk_lang: sdk_lang,
+                               kind: kind
                              } ->
         %{
           "id" => id,
           "description" => if(description == "", do: nil, else: description),
-          "sdk_lang" => sdk_lang
+          "sdk_lang" => sdk_lang,
+          "kind" => kind
         }
       end)
 

@@ -6,8 +6,9 @@ USAGE:
 SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
         [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
-        [--plugins <json>] [--kind workflow]
-                 Add a durable schedule (workflow operatives only).
+        [--plugins <json>]
+                 Add a durable schedule of a workflow factory; a factory a
+                 connected runner announced as a stream is refused.
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.

@@ -306,7 +306,6 @@ USAGE:
 OPTIONS:
     --id <id>, -i <id>          Id to start under (default: generated)
     --namespace <ns>            Namespace to start in (default: default)
-    --kind <stream|workflow>    Operative kind (default: stream)
     --init-values <json>        Seed state at start
     --text <payload>, -t        First message, delivered as `send` does
     --channel <ch>, -c          Entry channel the first message names
@@ -315,6 +314,10 @@ OPTIONS:
     --snapshot-interval <N>     Changes between snapshots
     --output <text|json>        Output format (default: text)
     --json                      The same as --output json
+
+KIND:
+    The factory's own: its class declares stream or workflow and its runner
+    announces it, so a start names only the factory.
 
 ID:
     Without --id the controller generates one, <factory>-<16 characters>, and
@@ -348,7 +351,7 @@ EXAMPLES:
     flz operative start do_nothing --id my_operative
     flz operative start candles --id ohlc --partitions 3
     flz operative start order_aggregator -i orders --namespace prod -o json
-    flz operative start paper_order --kind workflow --text '{"symbol":"AAPL"}' --channel order"#;
+    flz operative start paper_order --text '{"symbol":"AAPL"}' --channel order"#;
 
 pub(crate) const OPERATIVE_LISTEN: Help = r#"flz operative listen - Print the frames an operative emits or ingests
 
@@ -570,8 +573,9 @@ USAGE:
 SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
         [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
-        [--plugins <json>] [--kind workflow]
-                 Add a durable schedule (workflow operatives only).
+        [--plugins <json>]
+                 Add a durable schedule of a workflow factory; a factory a
+                 connected runner announced as a stream is refused.
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.

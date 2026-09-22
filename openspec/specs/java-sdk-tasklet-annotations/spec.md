@@ -21,7 +21,7 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Ta
 #### Scenario: Generated tasklet is referenceable in channels
 
 - **WHEN** an `@Tasklet` class `StaticEntry` is processed
-- **THEN** its generated `Tasklet` type can be named in a hand-written `channels()` or `tasklets()` body via `from`/`into`
+- **THEN** its generated `Tasklet` type can be named in a hand-written `channels()` body of an operative of either kind via `from`/`into`
 
 #### Scenario: A written id is the tasklet's name
 
@@ -143,9 +143,9 @@ The `@Tasklet` annotation processor SHALL recognise an `@InitState`-annotated me
 
 ### Requirement: `@StreamOperative` and `@WorkflowOperative` carry the short form
 
-The Java SDK SHALL provide annotations `@StreamOperative` and `@WorkflowOperative` in `com.flezha.sdk.authoring`, applied to a class with exactly one public method named `run`, declaring a whole single-tasklet operative of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink` and an optional `input` defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `com.flezha.sdk.authoring.OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
+The Java SDK SHALL provide annotations `@StreamOperative` and `@WorkflowOperative` in `com.flezha.sdk.authoring`, applied to a class with exactly one public method named `run`, declaring a whole single-tasklet operative of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink` and an optional `input` defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@WorkflowOperative` SHALL additionally accept `loopMode()`, a `LoopMode` defaulting to `ONCE`, which the generated operative SHALL return from its `loopMode()`; no other class-level setting SHALL be a member of either annotation. `com.flezha.sdk.authoring.OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
 
-The processor SHALL generate `<Class>Tasklet`, whose `name()` is the written `id` verbatim, and `<Class>StreamOperative implements StreamOperative` (with `channels()`) or `<Class>WorkflowOperative implements WorkflowOperative` (with `tasklets()`), whose `factoryId()` is that `id`, whose topology body wires the entry channel into `<Class>Tasklet` and, when a `sink` is written, `<Class>Tasklet` to that plugin sink, and whose every other operative method is at its interface default. With no `sink`, the topology body SHALL declare the entry channel and the tasklet and no plugin channel. The processor SHALL register nothing and SHALL NOT generate an aggregate registration class. An empty or absent `id` SHALL fail compilation naming the required member. A `sink` on a class whose `run` returns `void` and declares no `emits` SHALL fail compilation with a message beginning `SinkWithoutOutput`. An annotated class that also implements `StreamOperative` or `WorkflowOperative` SHALL fail compilation with a message beginning `ShortFormWithTopology`.
+The processor SHALL generate `<Class>Tasklet`, whose `name()` is the written `id` verbatim, and `<Class>StreamOperative implements StreamOperative` or `<Class>WorkflowOperative implements WorkflowOperative`, each with `channels()`, whose `factoryId()` is that `id`, whose topology body wires the entry channel into `<Class>Tasklet` and, when a `sink` is written, `<Class>Tasklet` to that plugin sink, and whose every other operative method is at its interface default. With no `sink`, the topology body SHALL declare the entry channel and the tasklet and no plugin channel. The processor SHALL register nothing and SHALL NOT generate an aggregate registration class. An empty or absent `id` SHALL fail compilation naming the required member. A `sink` on a class whose `run` returns `void` and declares no `emits` SHALL fail compilation with a message beginning `SinkWithoutOutput`. An annotated class that also implements `StreamOperative` or `WorkflowOperative` SHALL fail compilation with a message beginning `ShortFormWithTopology`.
 
 `FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept a class annotated `@StreamOperative` or `@WorkflowOperative` and resolve its generated operative by the processor's naming rule, so the author registers the class they wrote. Resolution SHALL be per class, with no aggregate class written in the processor's last round.
 
@@ -158,6 +158,11 @@ The processor SHALL generate `<Class>Tasklet`, whose `name()` is the written `id
 
 - **WHEN** a class `Place` is annotated `@WorkflowOperative(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message on `order`, its return value reaches `placed`, and the instance completes as a `once` workflow
+
+#### Scenario: A short-form workflow declares its loop mode
+
+- **WHEN** a class is annotated `@WorkflowOperative(id = "chat", sink = "replies", loopMode = LoopMode.PER_INPUT)`, is registered, and two messages reach its entry channel
+- **THEN** the generated operative's `loopMode()` returns `PER_INPUT`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 

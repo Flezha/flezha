@@ -123,6 +123,28 @@ Everything a type system would have caught is refused at registration, naming
 the class, the handler and the defect: the same set, in the same vocabulary, as
 the Rust builder's compile-time refusals.
 
+### What each kind takes
+
+A class extending `WorkflowOperative` carries its driver settings in
+`#[Workflow]`: the loop mode, the rollback mode, a maximum duration, a wake
+deadline and `syncDurability: true`, the one spelling of synchronous
+durability. Retry is the edge's for both kinds: `retryMax` and
+`retryBackoffMs` on the channel that feeds a tasklet, three attempts from a
+50 ms base when neither is written, and `retryMax(1)` fails fast.
+
+A setting of one kind written on the other is refused by name, never dropped.
+The builder's `effectivelyOnce()`, checkpoint calls and `correctionWindow()`
+reach the core from a workflow too, which refuses them as
+`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and
+`CorrectionWindowOnWorkflow` when the runner starts. `#[Workflow]` on a class
+extending `StreamOperative` is refused at `registerFactory`, naming the
+attribute and the class, and as `SyncDurabilityOnStream` when it sets
+`syncDurability: true`.
+
+A workflow fires no timers yet, so inside one `timerAfter`,
+`timerAtEventTime` and `cancelTimer` throw naming `TimersUnavailable`, and the
+tasklet fails without a retry.
+
 ### The short form
 
 An operative class that defines its one tasklet's `run` instead of
@@ -165,9 +187,22 @@ tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`state`, `applyChange`, ...),
 and a `#[Task]` on the class carries its settings, all but `name`. A workflow
 short form is a `once` workflow, run once over its first message:
-`flz operative start --kind workflow --text '<payload>'`, or a start followed
-by `flz operative send`; a second message to a `once` instance is accepted and
-never read.
+`flz operative start --text '<payload>'`, or a start followed by
+`flz operative send`; a second message to a `once` instance is accepted and
+never read. `#[Workflow(loopMode: ...)]` beside `#[Operative]` sets its loop
+mode, the one class-level setting a short form takes:
+
+```php
+#[Operative(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]
+#[Workflow(loopMode: LoopMode::PerInput)]
+final class Chat extends WorkflowOperative
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return $input;
+    }
+}
+```
 
 `sink` is optional. Without one, the operative declares its entry channel into
 the tasklet and no plugin channel, which is all an operative that only keeps
@@ -197,8 +232,10 @@ final class Counter extends StreamOperative
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window.
+edge, a retry ladder, the effectively-once tier, a correction window, and every
+class-level setting but a workflow's loop mode. A short form writing another
+one, `persistent: false` or a `#[Workflow]` argument other than `loopMode`, is
+refused at `registerFactory` naming the setting and the full form.
 
 The factory id is always written: it is an address an operator types, and a
 class rename must not move it, so a class with no `#[Operative]` is refused as

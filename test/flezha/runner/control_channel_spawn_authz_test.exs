@@ -47,7 +47,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    registry = FakeStartRegistry.install(runners: ["runner-1"])
+    registry = FakeStartRegistry.install(runners: ["runner-1"], kind: :workflow)
 
     test_pid = self()
 

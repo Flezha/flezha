@@ -571,6 +571,11 @@ message FactoryDecl {
     // language, because the State/Change bodies below the shared envelope are
     // per-SDK. 0 (absent) is "unspecified" and never places.
     uint32 sdk_lang = 3;
+    // The kind of the class registered under this id, "stream" or
+    // "workflow": the class declares it, so no start names it. The Controller
+    // places a start only on a runner advertising the factory's established
+    // kind; empty (absent) never places.
+    string kind = 4;
 }
 
 // SDK -> Controller. Ships the runner's FULL current factory set after a
@@ -620,8 +625,8 @@ message SpawnWorkflowRequest {
 // Controller -> SDK reply to SpawnWorkflowRequest, carrying the originating
 // request's reference_id so the SDK wakes the requester's result handle.
 // `outcome` is one of `spawned | delivered | already_running |
-// factory_unknown | refused`; `error` details a `refused` (quota, shutdown,
-// start failure) and is empty otherwise. `instance_id` is the id the request
+// factory_unknown | factory_not_workflow | refused`; `error` details a
+// `refused` (quota, shutdown, start failure) and is empty otherwise. `instance_id` is the id the request
 // resolved to: the requester's own, or the generated one for a request that
 // carried none (empty when nothing was started). The reply never faults the
 // requesting tasklet — it only resolves its handle.

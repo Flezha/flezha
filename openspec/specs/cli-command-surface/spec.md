@@ -305,7 +305,10 @@ for both operative kinds, and SHALL carry `text` and `channel` in the options li
 the controller SHALL deliver that message as the instance's first input on the mechanism a
 tasklet's spawn uses, and an instance started without `--text` SHALL wait for `send`.
 `--channel` without `--text` SHALL be refused by the verb. `--init-values` SHALL mean initial
-state per tasklet for both kinds.
+state per tasklet for both kinds. `flz operative start` and `flz schedule add` SHALL declare
+no `kind` option: the kind is the factory's, announced by its runner, and a written `--kind`
+SHALL be refused as an unknown option by the same rule that refuses any option a verb does not
+declare. The help screens of both verbs, pinned by their captures, SHALL NOT mention `--kind`.
 
 #### Scenario: A verb with no options still ends with the list
 
@@ -315,30 +318,39 @@ state per tasklet for both kinds.
 
 #### Scenario: `operative start` carries its trailing flags in the list
 
-- **WHEN** `flz operative start <factory> --id <op> --plugins '[…]' --kind workflow` is run
-- **THEN** the request SHALL carry `id`, `plugins` and `kind` in the options list, as text
-  where the controller reads text, and SHALL carry no positional placeholder for an
-  absent flag
+- **WHEN** `flz operative start <factory> --id <op> --plugins '[…]'` is run
+- **THEN** the request SHALL carry `id` and `plugins` in the options list, as text
+  where the controller reads text, SHALL carry no `kind` entry, and SHALL carry no
+  positional placeholder for an absent flag
 
 #### Scenario: `operative start` carries a first message
 
-- **WHEN** `flz operative start paper_order --kind workflow --text '{"symbol":"AAPL"}' --channel order` is run
+- **WHEN** `flz operative start paper_order --text '{"symbol":"AAPL"}' --channel order` is run
+  for a factory its runner announced as a workflow
 - **THEN** the options list SHALL carry `text` and `channel` as text, the instance SHALL
   receive that message as its first input on `order`, and a `once` workflow SHALL run its
   pass over it
 
 #### Scenario: `operative start` without a message starts an instance that waits
 
-- **WHEN** `flz operative start paper_order --kind workflow` is run and
+- **WHEN** `flz operative start paper_order` is run and
   `flz operative send <id> --text '{"symbol":"AAPL"}'` follows
 - **THEN** the options list SHALL carry no `text` entry, the instance SHALL wait for its
   first message, and the send SHALL be that message
 
 #### Scenario: `operative start` without an id carries none
 
-- **WHEN** `flz operative start <factory> --kind workflow` is run with no `--id`
+- **WHEN** `flz operative start <factory>` is run with no `--id`
 - **THEN** the options list SHALL carry no `id` entry, and the request SHALL carry no
   positional placeholder for it
+
+#### Scenario: A written kind is an unknown option on both verbs
+
+- **WHEN** `flz operative start echo --kind stream` or
+  `flz schedule add n --cron "* * * * *" --tz UTC --factory f --kind workflow` is run
+- **THEN** the CLI SHALL refuse `--kind` as an option the verb does not declare, SHALL build
+  no request, and `flz operative start --help` and `flz schedule --help` SHALL match their
+  captures with no `--kind` line
 
 #### Scenario: One rule, one test
 

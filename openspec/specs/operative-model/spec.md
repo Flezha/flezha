@@ -35,16 +35,16 @@ The prohibition on `bounded` and `unbounded` applies to the **kind sense only**.
 
 ### Requirement: An operative declares a kind
 
-Every Operative SHALL carry a `kind` atom. The kind SHALL be set when the operative is started and SHALL be frozen for its lifetime — it cannot change without a stop + start cycle. When a kind is not specified at start, it SHALL default to `:stream`. The recognized kinds are `:stream` and `:workflow`; starting an operative with any other kind SHALL fail with a clear error naming the unknown kind, and no operative process SHALL be created. On the wire, the accepted set of `kind` string literals SHALL be exactly `""` (empty ⇒ the `:stream` default), `"stream"`, and `"workflow"`; the SDK SHALL reject any other literal with an error naming the unknown kind. The former literals `"unbounded"` and `"bounded"` SHALL NOT be accepted.
+Every Operative SHALL carry a `kind` atom. The kind SHALL be the kind its class declares, read from the factory announcement the runner shipped for the factory id the start names, and SHALL be frozen for the operative's lifetime — it cannot change without a stop + start cycle. No start path (`flz operative start`, a schedule fire, a tasklet-requested spawn, the service verb) SHALL take a kind from its caller; a caller that asserts one (a spawn or a schedule, which are workflow-only) SHALL be judged against the announced kind and refused by name when they disagree. The recognized kinds are `:stream` and `:workflow`; a factory whose announced kind is any other literal, or empty, SHALL NOT be placeable, and a start naming it SHALL fail with a clear error naming the factory and the missing or unknown kind, and no operative process SHALL be created. On the wire from controller to runner, the accepted set of `kind` string literals on `AddOperative` SHALL be exactly `""` (empty ⇒ the `:stream` default), `"stream"`, and `"workflow"`; the SDK SHALL reject any other literal with an error naming the unknown kind. The former literals `"unbounded"` and `"bounded"` SHALL NOT be accepted.
 
-#### Scenario: Default kind is `:stream`
+#### Scenario: The kind is the class's
 
-- **WHEN** an operative is started without an explicit kind
-- **THEN** its kind SHALL be `:stream`
+- **WHEN** a runner announces factory `prices` as a stream and `paper_order` as a workflow, and an operator starts one of each naming only the factory
+- **THEN** the first instance's kind SHALL be `:stream` and the second's `:workflow`
 
 #### Scenario: Workflow is a recognized kind
 
-- **WHEN** an operative is started with kind `:workflow`
+- **WHEN** an operative is started for a factory announced with kind `:workflow`
 - **THEN** the start SHALL be accepted and the operative's kind SHALL be `:workflow`
 
 #### Scenario: Kind is frozen for the operative's lifetime
@@ -54,14 +54,16 @@ Every Operative SHALL carry a `kind` atom. The kind SHALL be set when the operat
 
 #### Scenario: Unknown kind is rejected at start
 
-- **WHEN** an operative is started with a kind that is not recognized (any wire literal other than `""`, `"stream"`, or `"workflow"`)
-- **THEN** the start SHALL fail with an error that names the unknown kind, and no operative process SHALL be created
+- **WHEN** an operative is started for a factory whose announcement carries a kind that is not recognized (any literal other than `"stream"` or `"workflow"`, or none)
+- **THEN** the start SHALL fail with an error that names the factory and the unknown or missing kind, and no operative process SHALL be created
 
 #### Scenario: A retired kind literal is rejected
 
 - **WHEN** an operative is started with the wire literal `"unbounded"` or `"bounded"`
 - **THEN** the start SHALL fail with an error naming the unknown kind, exactly as for any other unrecognized literal, and no compatibility mapping to `:stream` or `:workflow` SHALL be applied
 <!-- kind-naming-record:end -->
+
+<!-- kind-naming-record:begin -->
 
 ### Requirement: Each kind declares a sparse, default-false capability descriptor
 
@@ -136,16 +138,11 @@ A request for an operative's per-Cell state SHALL succeed only when the operativ
 
 ### Requirement: Unified `flz operative` CLI verb
 
-The CLI SHALL expose a single `flz operative` verb tree for lifecycle management of every operative kind: `flz operative start <factory> [--id|-i <id>] [--kind <stream|workflow>]`, `flz operative stop`, `flz operative list`, and `flz operative info`. `--kind` SHALL default to `stream`. The factory SHALL be the start verb's only positional argument, and the id SHALL be an option: a start with no `--id` SHALL be given a generated id. A successful start SHALL print `Started <id>`, naming the id it started under whether the operator wrote it or the controller generated it, and SHALL print no progress line before it. With `--output json` (`-o json`) or `--json` it SHALL print one JSON object `{"id": <id>, "outcome": <outcome>}` and nothing else, the way `flz operative list` and `flz operative info` render JSON. There SHALL be no `flz relay` verb, and `--kind unbounded` / `--kind bounded` SHALL NOT be accepted.
-
-#### Scenario: Start a stream operative by default
-
-- **WHEN** the operator runs `flz operative start <factory>` without `--kind`
-- **THEN** a stream operative SHALL be started
+The CLI SHALL expose a single `flz operative` verb tree for lifecycle management of every operative kind: `flz operative start <factory> [--id|-i <id>]`, `flz operative stop`, `flz operative list`, and `flz operative info`. The kind SHALL be the one the factory's runner announced; `flz operative start` SHALL carry no `--kind` option, and a written `--kind` SHALL be refused as an unknown option, never read and never ignored. The factory SHALL be the start verb's only positional argument, and the id SHALL be an option: a start with no `--id` SHALL be given a generated id. A successful start SHALL print `Started <id>`, naming the id it started under whether the operator wrote it or the controller generated it, and SHALL print no progress line before it. With `--output json` (`-o json`) or `--json` it SHALL print one JSON object `{"id": <id>, "outcome": <outcome>}` and nothing else, the way `flz operative list` and `flz operative info` render JSON. There SHALL be no `flz relay` verb, and `--kind unbounded` / `--kind bounded` SHALL NOT be accepted, as no `--kind` is.
 
 #### Scenario: Start a workflow operative
 
-- **WHEN** the operator runs `flz operative start <factory> --kind workflow`
+- **WHEN** the operator runs `flz operative start <factory>` for a factory its runner announced as a workflow
 - **THEN** a workflow operative SHALL be started
 
 #### Scenario: A start without an id prints the generated id
@@ -165,8 +162,8 @@ The CLI SHALL expose a single `flz operative` verb tree for lifecycle management
 
 #### Scenario: A retired kind argument is rejected
 
-- **WHEN** the operator runs `flz operative start <factory> --kind bounded`
-- **THEN** the CLI SHALL reject it as an invalid kind and SHALL NOT start an operative
+- **WHEN** the operator runs `flz operative start <factory> --kind workflow` or `flz operative start <factory> --kind bounded`
+- **THEN** the CLI SHALL reject `--kind` as an unknown option and SHALL NOT start an operative
 
 #### Scenario: The legacy verb is gone
 

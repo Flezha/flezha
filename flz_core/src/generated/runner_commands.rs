@@ -114,6 +114,9 @@ pub struct AddOperative {
     pub operative_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
+    /// Initial state per tasklet name, a JSON object, for both kinds: a
+    /// workflow's tasklets take it as a stream's do, and a workflow's input
+    /// is the messages on its entry channels, never this document.
     #[prost(string, tag = "3")]
     pub init_values: ::prost::alloc::string::String,
     /// Operative kind for this unit: "stream" or "workflow". Default
@@ -727,6 +730,12 @@ pub struct FactoryDecl {
     /// per-SDK. 0 (absent) is "unspecified" and never places.
     #[prost(uint32, tag = "3")]
     pub sdk_lang: u32,
+    /// The kind of the class registered under this id, "stream" or
+    /// "workflow": the class declares it, so no start names it. The Controller
+    /// places a start only on a runner advertising the factory's established
+    /// kind; empty (absent) never places.
+    #[prost(string, tag = "4")]
+    pub kind: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. Ships the runner's FULL current factory set after a
 /// post-start define or remove (sdk-runner-entrypoint-redesign). Full-set
@@ -781,8 +790,8 @@ pub struct SpawnWorkflowRequest {
 /// Controller -> SDK reply to SpawnWorkflowRequest, carrying the originating
 /// request's reference_id so the SDK wakes the requester's result handle.
 /// `outcome` is one of `spawned | delivered | already_running |
-/// factory_unknown | refused`; `error` details a `refused` (quota, shutdown,
-/// start failure) and is empty otherwise. `instance_id` is the id the request
+/// factory_unknown | factory_not_workflow | refused`; `error` details a
+/// `refused` (quota, shutdown, start failure) and is empty otherwise. `instance_id` is the id the request
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
 /// requesting tasklet — it only resolves its handle.

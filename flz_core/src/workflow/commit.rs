@@ -16,10 +16,13 @@ use crate::cell::CellSlot;
 use crate::channel::RetryPolicy;
 
 /// One wait for a commit response (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`); an
-/// expired wait re-sends under the same `reference_id`, up to the class's
-/// `barrier_retry_attempts`.
+/// expired wait re-sends under the same `reference_id`, up to
+/// [`BARRIER_RESEND_ATTEMPTS`] sends backed off on the shared default ladder.
 const ACK_TIMEOUT_DEFAULT_MS: u64 = 30_000;
 const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS";
+/// Sends of one barrier before an unacked commit fails the run. A re-send is
+/// the controller connection's business, not the class's, so no class sets it.
+const BARRIER_RESEND_ATTEMPTS: u32 = 3;
 
 /// Ship `TaskCommit` for a completed stage (its handoff through the output
 /// channel's codec, its staged plugin output as the outbox, the completion it
@@ -195,10 +198,10 @@ pub(super) fn ship_and_await(
         crate::util::nonce_suffix()
     );
     let rx = crate::shutdown::register_pending_ack(reference_id.clone());
-    let attempts = ctx.barrier_retry_attempts.max(1);
+    let attempts = BARRIER_RESEND_ATTEMPTS;
     let policy = RetryPolicy {
         max_attempts: attempts,
-        backoff_base_ms: ctx.retry.backoff_base_ms,
+        ..RetryPolicy::default()
     };
     let timeout = ack_timeout();
     let label = format!("workflow {} {what} {idx}", ctx.instance_id);

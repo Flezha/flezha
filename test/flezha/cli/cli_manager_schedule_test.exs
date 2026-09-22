@@ -46,12 +46,23 @@ defmodule Flezha.Service.CliManagerScheduleTest do
       add_digest(
         tz: "Europe/Tallinn",
         namespace: "prod",
-        init_values: ~s({"mode": "daily"}),
-        kind: "workflow"
+        init_values: ~s({"mode": "daily"})
       )
 
     assert output =~ "warning: factory ai_digest has no live runner in namespace prod"
     assert {:ok, %{init_values: %{"mode" => "daily"}}} = ScheduleStore.get("digest")
+  end
+
+  test "schedule_add refuses a factory its runner announced as a stream" do
+    stub(FleetManager, :factory_kind, fn "default", "prices" -> {:ok, :stream} end)
+
+    err =
+      capture_io(:stderr, fn ->
+        assert catch_exit(add_digest(factory: "prices")) == {:shutdown, 1}
+      end)
+
+    assert err =~ "only a workflow factory is schedulable; factory prices is a stream"
+    assert ScheduleStore.get("digest") == :error
   end
 
   test "schedule_list renders entries with the next fire time" do

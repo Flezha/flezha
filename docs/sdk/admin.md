@@ -34,7 +34,7 @@ other verbs in the table below.
 
 | What | Verb on the wire | Arguments after the namespace |
 |---|---|---|
-| Start an operative | `Operative.start` | the spec `flz operative start` takes: `factory_id`, and optionally `id`, `kind`, `init_values`, `opts`; answers `{"id": ..., "outcome": "started" \| "already_running"}` |
+| Start an operative | `Operative.start` | the spec `flz operative start` takes: `factory_id`, and optionally `id`, `init_values`, `opts` (the kind is the factory's, announced by its runner, and a written `kind` is refused); answers `{"id": ..., "outcome": "started" \| "already_running"}` |
 | Stop an operative | `Operative.stop` | `operative_id` |
 | Send to an operative | `Operative.send` | `operative_id`, `message`, `channel` (`""` for none) |
 | Enable a plugin | `PluginManager.enable` | `plugin_id`, the fields `flz plugin enable` takes |

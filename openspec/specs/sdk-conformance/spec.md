@@ -181,11 +181,15 @@ Where this requirement names a document, it SHALL name the path that document oc
 
 ### Requirement: The live factory set matches the manifest
 
-The smoke tier SHALL assert that the factory ids the controller lists for a freshly connected runner (`FleetManager.list_factories/1`) equal the union of the runtime's manifest `fixtures`.
+The smoke tier SHALL assert that the factory ids the controller lists for a freshly connected runner (`FleetManager.list_factories/1`) equal the union of the runtime's manifest `fixtures`, and that the kind the controller recorded for each id is `workflow` for every id the manifest lists under a workflow capability (`workflow` and the workflow half of `shorthand`, `sugar_workflow`) and `stream` for every other id.
 
 #### Scenario: The manifest and the app disagree
 - **WHEN** a manifest lists `session_timeout` under `cell_timers` and the app registers `java_session_timeout`
 - **THEN** the smoke tier fails naming the id present in the manifest and absent from the runner, and vice versa
+
+#### Scenario: A runtime announcing the wrong kind fails the smoke tier
+- **WHEN** a runtime announces `commit_block_workflow` as a stream, or announces any factory with an empty kind
+- **THEN** the smoke tier fails naming the runtime, the id and the kind it expected
 
 ### Requirement: The declared surface matches a golden snapshot
 
@@ -819,4 +823,30 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 - **WHEN** the refusal table carries a row named `ShortFormWithTopology` with `needs` `shorthand`
 - **THEN** `topology_check_test.exs` passes without an issue variant of that name, and fails if `docs/sdk/authoring_contract.md` §5 does not list the name
+
+### Requirement: Kind-only settings are refusal rows every builder reaches
+
+The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `EffectivelyOnceOnWorkflow`, `CorrectionWindowOnWorkflow`, `CheckpointOnWorkflow` (a workflow class writing `class.checkpoint_every(500)`) and `SyncDurabilityOnStream`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three workflow rows, which SHALL need the `workflow` surface instead. The one remaining named skip is `SyncDurabilityOnStream` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose stream class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_workflow` and `saga_block_workflow` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms` or `barrier_retry_attempts` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `workflow.retry_attempts`, `workflow.retry_backoff_ms` or `workflow.barrier_retry_attempts`.
+
+A `test/system/` scenario tagged `capability: :workflow` SHALL drive a workflow fixture whose tasklet registers a timer, on every runtime, and SHALL assert the instance ends with an error naming `TimersUnavailable`; no runtime SHALL complete that instance with status `ok`.
+
+#### Scenario: A builder that drops a stream-only setting fails the drill
+
+- **WHEN** a runtime's builder builds the `eo_workflow` row and its declaration reaches the core without `effectively_once`
+- **THEN** the drill fails naming the runtime and the row, because the boot did not refuse
+
+#### Scenario: The checkpoint row is driven on every runtime
+
+- **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=checkpoint_workflow`
+- **THEN** it exits non-zero and its output contains `CheckpointOnWorkflow`
+
+#### Scenario: A retired surface is gone from every manifest
+
+- **WHEN** the seven manifests and the `needs` vocabulary are read
+- **THEN** none names `raw_class_flags`, the three workflow rows need `workflow`, and only the Rust and Java manifests lack `sync_durability`, skipping `SyncDurabilityOnStream` by that name
+
+#### Scenario: A timer in a workflow tasklet is refused on every runtime
+
+- **WHEN** the timer-in-workflow fixture is started under any runtime and one message reaches its entry channel
+- **THEN** the instance ends with status `error` and an error naming `TimersUnavailable`, and no timer fires
 

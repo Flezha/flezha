@@ -599,7 +599,8 @@ pub unsafe extern "C" fn flz_core_spawn_request(
 /// `{"id","outcome"}`, the id the request resolved to and one of `spawned`,
 /// `delivered`, `skipped_on_replay`. [`FLZ_SPAWN_FAILED`]: `out` holds
 /// `{"id","error","message"}`, `error` one of `already_running`,
-/// `factory_unknown`, `refused`, `timeout`, `unavailable`. A resolved handle
+/// `factory_unknown`, `factory_not_workflow`, `refused`, `timeout`,
+/// `unavailable`. A resolved handle
 /// answers every later read the same. [`FLZ_SPAWN_PENDING`]: no answer yet,
 /// `out` untouched. [`FLZ_ERR`]: the handle was released, because the
 /// activation that made it was completed or abandoned. Free `out` with

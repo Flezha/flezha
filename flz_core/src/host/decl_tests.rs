@@ -350,15 +350,25 @@ mod sdk_lang_declaration_tests {
                 .header();
             assert_eq!((header.sdk_lang, header.format_id), (lang, format));
             assert_eq!(
-                crate::operative::registry::sdk_lang_for_factory(&id),
-                lang,
-                "the advertisement reads the declared value from the core"
+                crate::operative::registry::advertised_for_factory(&id),
+                (lang, "stream"),
+                "the advertisement reads the declared value and kind from the core"
             );
         }
+        let workflow = factory("host_lang_workflow");
+        crate::host::register_host_class_json(
+            crate::test_support::host_class::workflow_json(&workflow, &["in"], 1).as_bytes(),
+        )
+        .expect("a workflow class registers");
         assert_eq!(
-            crate::operative::registry::sdk_lang_for_factory("never_declared"),
-            SDK_LANG_UNSPECIFIED,
-            "an undeclared factory advertises no language rather than a guess"
+            crate::operative::registry::advertised_for_factory(&workflow).1,
+            "workflow",
+            "the kind is the registry the class declaration landed in"
+        );
+        assert_eq!(
+            crate::operative::registry::advertised_for_factory("never_declared"),
+            (SDK_LANG_UNSPECIFIED, ""),
+            "an undeclared factory advertises no language and no kind rather than a guess"
         );
     }
 }

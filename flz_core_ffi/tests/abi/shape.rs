@@ -525,6 +525,7 @@ fn record_effect(e: &schema::ItemEffect) -> Value {
         schema::Verdict::Ok => ("ok", Value::Null),
         schema::Verdict::RetryableError { message } => ("retryable", json!(message)),
         schema::Verdict::NonRetryableError { message } => ("non_retryable", json!(message)),
+        schema::Verdict::Unreadable { message } => ("unreadable", json!(message)),
     };
     json!({
         "verdict": verdict,

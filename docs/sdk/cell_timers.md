@@ -165,9 +165,11 @@ wedged, not an idle Operative.
   `State` alone, and a handover that carried state suppresses the WAL restore
   that would fold the pending set; the timers are still on disk, so a later
   restore rebuilds them.
-- **Workflow operatives have no timers** — they have `wake_after` /
-  `wakeAfter`. `TaskletCtx` in a workflow stage or `compensate` hook carries
-  no timer session, so every timer call answers `TimersUnavailable`.
+- **Workflow operatives have no timers yet** — they have `wake_after` /
+  `wakeAfter`. Every SDK's ctx in a workflow stage or `compensate` hook
+  refuses a timer call with `TimersUnavailable`, and the shared core fails a
+  workflow step whose effect still carries a timer op under the same name, so
+  a timer never vanishes silently.
 - **Resolution is milliseconds.**
 - **A firing can run late** — during a restore backlog, or while every poll
   worker is inside user code, since promotion needs a thread in `poll`.

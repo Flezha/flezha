@@ -6,17 +6,22 @@ The workflow-operative capability is the contract for the **Workflow Operative**
 ## Requirements
 ### Requirement: A workflow operative is authored with a distinct run-once trait
 
-The SDK SHALL expose a `WorkflowOperative` authoring surface distinct from the stream one, registered through the runner's `register_factory`, making the workflow class spawnable by its `factory_id`. A workflow operative SHALL declare its tasklets, Channels and Cells in a `tasklets` body on the same graph builder a stream uses; there SHALL be no one-function `run(ctx, args)` form, and a workflow class declaring no tasklets SHALL be refused at registration. Registering a workflow operative SHALL NOT require the author to enumerate capability flags; choosing the workflow kind is sufficient.
+The SDK SHALL expose a `WorkflowOperative` authoring surface distinct from the stream one, registered through the runner's `register_factory`, making the workflow class spawnable by its `factory_id`. A workflow operative SHALL declare its tasklets, Channels and Cells in a `channels` body on the same graph builder a stream uses, the body carrying the one name both kinds give it in every SDK; there SHALL be no `tasklets` body and no one-function `run(ctx, args)` form, and a workflow class declaring no tasklets SHALL be refused at registration. Registering a workflow operative SHALL NOT require the author to enumerate capability flags; choosing the workflow kind is sufficient, and the runner SHALL announce that kind to the controller with the factory id.
 
 #### Scenario: A registered workflow operative is spawnable by factory id
 
 - **WHEN** a workflow class is registered with the SDK before the runner starts
-- **THEN** its `factory_id` SHALL be resolvable, and an `AddOperative` naming that `factory_id` with the workflow kind SHALL spawn a workflow instance
+- **THEN** its `factory_id` SHALL be resolvable, the runner SHALL announce it with kind `workflow`, and an `AddOperative` naming that `factory_id` with the workflow kind SHALL spawn a workflow instance
 
 #### Scenario: A workflow with no tasklets is refused
 
-- **WHEN** a workflow class whose `tasklets` body declares no tasklet is handed to `register_factory`
+- **WHEN** a workflow class whose `channels` body declares no tasklet is handed to `register_factory`
 - **THEN** registration SHALL fail naming the class and the missing tasklets, and nothing SHALL be declared
+
+#### Scenario: The workflow body is the stream's body
+
+- **WHEN** a workflow class in Rust, Java or Elixir is written with `channels` and the same graph is written in a stream class's `channels`
+- **THEN** both SHALL register, the two declarations SHALL differ only in the kind and the workflow's own settings, and a `tasklets` member SHALL exist on no operative type in any SDK
 
 ### Requirement: Starting an operative with the workflow kind spawns a workflow instance
 

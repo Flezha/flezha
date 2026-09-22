@@ -112,9 +112,21 @@ written, a factory id equal to `factory_id`, and every class-level setting at
 its default. The tasklet is named after the factory id, so a full form that
 names its tasklet the same keeps every cell where it was. A workflow short
 form is a `once` workflow, run once over its first message: `flz operative
-start --kind workflow --text '<payload>'`, or a start followed by
-`flz operative send`; a second message to a `once` instance is accepted and
-never read.
+start --text '<payload>'`, or a start followed by `flz operative send`; a
+second message to a `once` instance is accepted and never read.
+`loop_mode :per_input` (or `:chained`) is the one class setting a short form
+keeps, so a loop is still one class:
+
+```ruby
+class Chat < Flezha::WorkflowOperative
+  factory_id "chat"
+  sink "replies"
+  codec :text
+  loop_mode :per_input
+
+  def run(turn, _ctx) = turn
+end
+```
 
 With no `sink`, the operative declares the entry channel and the tasklet and
 no plugin channel: the operative that only keeps state.
@@ -142,10 +154,9 @@ generated tasklet: settings such as `cell_keys`, `dynamic_cells`,
 `initial_state`, `apply_change` and `cells_for`.
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
-window. A class setting written on a short form is refused rather than
-ignored, and so is a `sink`, `input`, `codec` or tasklet setting written
-beside `channels`.
+edge, an edge's retry budget, any other class setting. A class setting other
+than `loop_mode` written on a short form is refused rather than ignored, and
+so is a `sink`, `input`, `codec` or tasklet setting written beside `channels`.
 
 `factory_id` must be written: the factory id is an address an operator types,
 and a class rename must not move it. A class without one is refused at
@@ -154,6 +165,33 @@ both `run` and `channels`, naming `ShortFormWithTopology`, and one defining
 neither. A second operative under a factory id the runner already holds, short
 or full, fails naming `DuplicateFactoryId` when the runner declares its
 classes.
+
+### Workflow settings
+
+A workflow declares its graph in `channels` exactly as a stream does, and
+retries a failing tasklet on the edge that feeds it: `retry_max` and
+`retry_backoff_ms` on the channel (3 attempts, 50 ms base by default), so
+`retry_max(1)` is fail-fast. Its class body declares `loop_mode` (`:once`,
+`:per_input`, `:chained`), `rollback_mode` (`:all_or_nothing`,
+`:keep_progress`), `max_duration_ms`, `wake_after_ms` and `sync_durability`;
+a mode outside its values raises `Flezha::DeclarationError` naming the setting
+and the value where the class body writes it, on the full form and the short
+form alike.
+
+Every builder call reaches the core whatever the kind, and a setting of the
+other kind is refused under its own name when the runner declares its
+classes: `effectively_once` on a workflow as `EffectivelyOnceOnWorkflow`, any
+checkpoint call as `CheckpointOnWorkflow`, `correction_window` as
+`CorrectionWindowOnWorkflow`, and `sync_durability` in a
+`Flezha::StreamOperative` body as `SyncDurabilityOnStream`. The class-body
+flag is the one spelling of synchronous durability; the builder has no such
+call.
+
+Timers do not fire inside a workflow yet, so `ctx.timer_after`,
+`ctx.timer_at_event_time` and `ctx.cancel_timer` in a workflow tasklet raise
+a `Flezha::EmitError` naming `TimersUnavailable`, and the attempt fails as
+any raising handler's does. A `ctx.spawn_workflow` naming a stream factory
+resolves its handle to `Flezha::SpawnError::FactoryNotWorkflow`.
 
 ### Channel payloads
 

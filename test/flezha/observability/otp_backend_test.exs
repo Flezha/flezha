@@ -143,7 +143,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       {:ok, _} = HubRegistryTestHelper.ensure_hub(ns)
       on_exit(fn -> HubManager.stop_hub(ns) end)
       HubRegistryTestHelper.seed_runners(ns, [busy, idle], "bound_factory")
-      on_exit(fn -> FleetStateHelper.forget_langs(ns, ["bound_factory"]) end)
+      on_exit(fn -> FleetStateHelper.forget_established(ns, ["bound_factory"]) end)
 
       HubRegistryTestHelper.inject_operative(ns, "bound_op")
       HubManager.operative_set_runner(ns, "bound_op", busy)

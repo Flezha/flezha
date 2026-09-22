@@ -168,9 +168,9 @@ defmodule Flezha.State.Restore do
         :ok
 
       lang ->
-        if ClassRegistry.sdk_lang(namespace, factory_id) == lang,
+        if ClassRegistry.established(namespace, factory_id, :sdk_lang) == lang,
           do: :ok,
-          else: ClassRegistry.put_sdk_lang(namespace, factory_id, lang)
+          else: ClassRegistry.put_established(namespace, factory_id, :sdk_lang, lang)
     end
   end
 end

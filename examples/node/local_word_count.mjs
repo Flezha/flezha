@@ -9,7 +9,7 @@
 //
 // State is held in memory and nothing is durable; the run says so on stderr.
 
-import { LocalOperative, defineOperative, defineTasklet } from '@flezha/sdk';
+import { LocalOperative, defineStream, defineTasklet } from '@flezha/sdk';
 
 const Split = defineTasklet({
   name: 'split',
@@ -34,7 +34,7 @@ const Tally = defineTasklet({
   },
 });
 
-const WordCount = defineOperative({
+const WordCount = defineStream({
   factoryId: 'local_word_count_example',
   channels: (c) => {
     c.input('lines', { codec: 'text' })

@@ -34,8 +34,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       {"plugin", fn -> Cli.Plugin.disable_plugin("no-such-plugin-xyz", @call) end},
       {"state", fn -> Cli.State.state_retention("some_class", "not-a-number", @call) end},
       {"observe", fn -> Cli.Observe.observability_render_enable("no-such-source-xyz", @call) end},
-      {"schedule",
-       fn -> Cli.Schedule.schedule_add("s", %{opts: [kind: "stream", cron: "* * * * *"]}) end},
+      {"schedule", fn -> Cli.Schedule.schedule_add("s", %{opts: [cron: "* * * * *"]}) end},
       {"schedule", fn -> Cli.Schedule.schedule_add("s", %{opts: [init_values: "not json"]}) end}
     ]
   end

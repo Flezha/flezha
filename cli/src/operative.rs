@@ -9,7 +9,6 @@ use crate::settings::serialize_flags;
 const OPERATIVE_ID: &[Positional] = &[Positional::required("<operative_id>")];
 
 const ID: OptSpec = OptSpec::text("--id", "-i", "<id>");
-const KIND: OptSpec = OptSpec::text("--kind", "--kind", "<stream|workflow>");
 const PLUGINS: OptSpec = OptSpec::text("--plugins", "--plugins", "<json-array>");
 const PARTITIONS: OptSpec = OptSpec::number("--partitions", "--partitions", "<N>");
 const SNAPSHOT_INTERVAL: OptSpec =
@@ -32,7 +31,6 @@ pub(crate) const TABLE: Command = Command {
             .taking(&[Positional::required("<factory_id>")])
             .reading(&[
                 ID,
-                KIND,
                 NAMESPACE,
                 INIT_VALUES,
                 TEXT,
@@ -103,11 +101,12 @@ fn start_opts(read: &Reading) -> String {
     serialize_flags(&opts)
 }
 
-/// `--id`, `--plugins`, `--kind`, `--text` and `--channel` ride the options
-/// list, and only when written: an absent flag is absent from the request and
-/// the controller applies its default, which for the id is one it generates.
+/// `--id`, `--plugins`, `--text` and `--channel` ride the options list, and
+/// only when written: an absent flag is absent from the request and the
+/// controller applies its default, which for the id is one it generates.
 /// `--text` is the instance's first message, on the entry channel `--channel`
-/// names; a channel with no text names nothing and is refused.
+/// names; a channel with no text names nothing and is refused. The kind is the
+/// factory's, announced by its runner, so no flag names it.
 fn handle_start(read: &Reading) {
     let mut opts: Vec<Opt> = Vec::new();
 
@@ -116,9 +115,6 @@ fn handle_start(read: &Reading) {
     }
     if let Some(plugins) = read.opt(PLUGINS.long) {
         opts.push(("plugins", text(&plugins_json_or_refuse(plugins))));
-    }
-    if let Some(kind) = read.opt(KIND.long) {
-        opts.push(("kind", text(kind)));
     }
     opts.extend(first_message_opts(read));
 

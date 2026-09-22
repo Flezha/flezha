@@ -386,8 +386,9 @@ spawn-and-wait entry (`flz_core_spawn_workflow` is removed):
   already resolved to `skipped_on_replay`, carrying the given id or an empty id.
 - `flz_core_spawn_result(ctx, handle, timeout_ms, out)` SHALL answer pending, or the resolved result
   carrying the instance id the request resolved to and the outcome (`spawned`, `delivered` or
-  `skipped_on_replay`), or the failure (`already_running`, `factory_unknown`, `refused` with its
-  reason, `timeout`, `unavailable`) the way every other entry reports a failure. A timeout of zero
+  `skipped_on_replay`), or the failure (`already_running`, `factory_unknown`,
+  `factory_not_workflow`, `refused` with its reason, `timeout`, `unavailable`) the way every
+  other entry reports a failure. A timeout of zero
   SHALL never wait, including while another thread's read of the same handle is waiting. A handle
   read to resolution SHALL answer every later read the same while its activation is outstanding.
 
@@ -409,6 +410,10 @@ released rather than wait.
 #### Scenario: A failure nobody read is logged once
 - **WHEN** a handle's request is refused and the host completes the activation without reading the handle
 - **THEN** the reaper SHALL log the refusal once, naming the instance id (empty when none was given), the factory id and the reason, and a later `flz_core_spawn_result` on that handle SHALL answer that it was released
+
+#### Scenario: A stream factory is a named failure through the ABI
+- **WHEN** the controller answers a request with outcome `factory_not_workflow`
+- **THEN** `flz_core_spawn_result` SHALL report the failure `factory_not_workflow`, distinct from `factory_unknown` and from `refused`, and every veneer SHALL surface it under that name
 
 #### Scenario: The blocking spawn entry is gone
 - **WHEN** the ABI surface fixture is compared with the exported symbols

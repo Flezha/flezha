@@ -87,7 +87,7 @@ In async mode (all stream classes, and workflow classes that do not opt into syn
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Per-class synchronous mode for workflow operatives
-A workflow class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0). A stream class declaring synchronous mode SHALL be refused at registration.
+A workflow class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0). The declaration SHALL have exactly one spelling per SDK, the class-level one; no SDK's channel builder SHALL carry a synchronous-durability call. A stream class declaring synchronous mode SHALL be refused at registration under the name `SyncDurabilityOnStream`, whether the SDK judges the class itself or the shared core does.
 
 #### Scenario: Sync workflow commit is remote-durable before ack
 - **WHEN** a sync-declared workflow class reaches an IterCommit and the remote ship succeeds
@@ -98,8 +98,12 @@ A workflow class SHALL be able to declare synchronous durability via the class-d
 - **THEN** the SDK, never having received the ack, re-runs the uncommitted task on resume and no divergent state is exposed
 
 #### Scenario: Stream class cannot opt into sync
-- **WHEN** a stream class declares synchronous durability
-- **THEN** registration is refused with an error naming the class and the reason
+- **WHEN** a stream class declares synchronous durability, in any SDK whose spelling lets a stream class write it
+- **THEN** registration is refused with an error naming the class and `SyncDurabilityOnStream`
+
+#### Scenario: One spelling per SDK
+- **WHEN** the Python, Ruby, PHP and Node channel builders are searched for a synchronous-durability call
+- **THEN** none carries one, and each SDK's workflow class declares the mode through its class-level setting alone
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
 Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. Local state SHALL always take precedence: a reference with local durable files SHALL NOT be overwritten.

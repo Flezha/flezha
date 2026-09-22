@@ -26,10 +26,10 @@ struct Row {
     needs: String,
 }
 
-/// The surfaces no record can express either. `detached` is authorable here —
+/// The surface no record can express either. `detached` is authorable here —
 /// the record is data, and a tasklet nothing wires is one line of it — so
-/// only the two flag families the fixture header names are skipped.
-const UNWRITABLE: [&str; 2] = ["raw_flags", "raw_class_flags"];
+/// only the flag family the fixture header names is skipped.
+const UNWRITABLE: [&str; 1] = ["raw_flags"];
 
 /// The rows a record can be judged on. A short-form row is refused by its SDK
 /// before any declaration exists, so the core never sees one.
@@ -370,26 +370,20 @@ fn every_fixture_row_answers_what_it_names() {
     );
 }
 
-/// The two rows no builder can author still have to be reachable from a record,
-/// or the refusal that catches a regressing builder is dead code.
+/// A stream-only setting on a workflow is refused by the workflow's name, never
+/// by the stream rule that assumes the tier it would rest on.
 #[test]
-fn the_rows_no_builder_can_author_are_still_reachable_from_a_record() {
-    let raw: Vec<Row> = rows()
-        .into_iter()
-        .filter(|r| r.needs == "raw_class_flags")
-        .collect();
-    assert!(!raw.is_empty(), "the fixture names the rows KI-147 guards");
-
-    for row in raw {
-        let issues = check(record_of(&row)).expect_err("the row names a refusal");
-        let names: Vec<&str> = issues.iter().map(TopologyIssue::name).collect();
-        assert!(
-            names.contains(&row.refusal.as_str()),
-            "row `{}` must refuse with {}, read {names:?}",
-            row.topology,
-            row.refusal
-        );
-    }
+fn a_stream_setting_on_a_workflow_is_refused_by_the_workflows_name() {
+    let row = Row {
+        refusal: "CheckpointOnWorkflow".into(),
+        topology: "checkpoint_workflow".into(),
+        steps: "class.workflow; class.persistent; class.checkpoint_ack; entry(in); in.into(plain)"
+            .into(),
+        needs: "workflow".into(),
+    };
+    let issues = check(record_of(&row)).expect_err("a checkpoint on a workflow is refused");
+    let names: Vec<&str> = issues.iter().map(TopologyIssue::name).collect();
+    assert_eq!(names, ["CheckpointOnWorkflow"]);
 }
 
 /// Every named variant is produced by some row. `Declaration` is the residue

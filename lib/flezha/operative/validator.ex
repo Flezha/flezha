@@ -1,14 +1,6 @@
 defmodule Flezha.Service.Validator do
   alias Flezha.Identificator
-  alias Flezha.Operative.Kind
   alias Flezha.Service.HubManager
-
-  def valid_kind(kind) do
-    case Kind.known?(kind) do
-      true -> :ok
-      false -> {:error, "unknown operative kind: #{inspect(kind)}"}
-    end
-  end
 
   def valid_namespace(namespace) do
     case HubManager.hub_alive?(namespace) do

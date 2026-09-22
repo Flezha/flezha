@@ -216,27 +216,30 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
             "a host class declares at least one tasklet".to_string(),
         ));
     }
-    if let Some(workflow) = &decl.workflow {
-        refuse_workflow_facts(decl, workflow, issues);
+    // Each kind is judged on its own settings; a setting of the other kind is
+    // refused by its own name rather than by the rule that assumes its kind.
+    match &decl.workflow {
+        Some(_) => refuse_workflow_facts(decl, issues),
+        None => {
+            if decl.sync_durability {
+                issues.push(TopologyIssue::SyncDurabilityOnStream {
+                    factory_id: decl.factory_id.clone(),
+                });
+            }
+            refuse_tier_facts(decl, issues);
+        }
     }
-    if decl.sync_durability && decl.workflow.is_none() {
-        issues.push(TopologyIssue::SyncDurabilityOnStream {
-            factory_id: decl.factory_id.clone(),
-        });
-    }
-    refuse_tier_facts(decl, issues);
 }
 
-fn refuse_workflow_facts(
-    decl: &HostClassDecl,
-    workflow: &HostWorkflowDecl,
-    issues: &mut Vec<TopologyIssue>,
-) {
+fn refuse_workflow_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     if decl.effectively_once {
         issues.push(TopologyIssue::EffectivelyOnceOnWorkflow);
     }
     if decl.correction_window_ms.is_some() {
         issues.push(TopologyIssue::CorrectionWindowOnWorkflow);
+    }
+    if derive_ack_granularity(decl) == HostAckGranularity::Checkpoint {
+        issues.push(TopologyIssue::CheckpointOnWorkflow);
     }
     if decl.sync_durability && !decl.persistent {
         issues.push(TopologyIssue::Declaration(
@@ -244,13 +247,6 @@ fn refuse_workflow_facts(
              for a class that journals nothing"
                 .to_string(),
         ));
-    }
-    if workflow.retry_attempts > 1 && workflow.retry_backoff_ms == 0 {
-        issues.push(TopologyIssue::Declaration(format!(
-            "workflow retry ladder ({} attempts) declares a zero backoff base; retries \
-             would re-run the failing cell in a hot loop",
-            workflow.retry_attempts
-        )));
     }
     for task_decl in &decl.tasklets {
         if task_decl.cell_mode == HostCellModeDecl::Dynamic {

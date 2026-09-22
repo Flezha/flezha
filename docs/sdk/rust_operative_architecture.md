@@ -57,8 +57,9 @@ underneath in [`poll_core.md`](poll_core.md) and
 
 ### Operative kinds (controller side)
 
-Every operative carries a **kind** (`:stream` by default, `:workflow`), set at
-start and frozen. `Flezha.Operative.Kind` is the one capability table: a kind
+Every operative carries a **kind** (`:stream` or `:workflow`), the one its
+class declares and its runner announces with the factory id, resolved at start
+and frozen. `Flezha.Operative.Kind` is the one capability table: a kind
 declares only the capabilities it has, and the control plane reads every flag
 through `Kind.capable?/2` with a `false` default. `:stream` declares
 `persistent_state?`, `time_travel?`, `dynamic_cells?` and
@@ -68,17 +69,18 @@ of probing the compute unit — `flz state get` on a workflow operative answers
 
 ### The `:workflow` kind
 
-A workflow operative is a run-once job: `flz operative start <factory> [--id <id>]
---kind workflow` sets the optional `kind` on `AddOperative` (empty ⇒
-`:stream`). The SDK keeps one sealed registry of live units (`Operative::Stream`
-| `Operative::Workflow`) resolved once per frame at the dispatch boundary. A
-workflow class declares its tasklets on the same builder a stream uses:
+A workflow operative is a job that ends itself: `flz operative start <factory>
+[--id <id>]` names only the factory, and the controller puts the kind the
+runner announced on `AddOperative`. The SDK keeps one sealed registry of live
+units (`Operative::Stream` | `Operative::Workflow`) resolved once per frame at
+the dispatch boundary. A workflow class declares its graph in `channels`, on
+the same builder a stream uses:
 
 ```rust
 struct Greet;
 impl flezha_runner::WorkflowOperative for Greet {
     fn factory_id() -> &'static str { "greet" }
-    fn tasklets(c: &flezha_runner::ChannelBuilder) {
+    fn channels(c: &flezha_runner::ChannelBuilder) {
         c.input::<String>("in").into::<SayHello>().sink_named("out");
     }
 }
@@ -89,7 +91,12 @@ flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
 The entry channel takes the instance's first message, from a spawn,
 `flz operative send` or `flz operative start --text`; `init_values` is the
 tasklets' initial state, as on a stream. A class declaring no tasklet is
-refused at registration. A tasklet ends a
+refused at registration, and so is one whose `channels` set the stream's
+`effectively_once`, a checkpoint flag or `correction_window`
+(`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`,
+`CorrectionWindowOnWorkflow`). A tasklet's retry ladder is its input edge's
+`retry_max` / `retry_backoff_ms`, as on a stream, and a timer registered inside
+a workflow tasklet fails with `TimersUnavailable`. A tasklet ends a
 looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
 `WorkflowCompleted` on the control stream and the controller drives the one
 teardown path (`Flezha.Service.OperativeManager.stop_operative/3`). A tasklet
@@ -219,8 +226,10 @@ tasklet (`UpcaseTasklet`) is named `id` verbatim, so its cells keep their
 state path when the operative grows into the full form, and it wires into
 another operative's `channels()` body like any tasklet. A workflow short form
 is a `once` workflow, run once over its first message: `flz operative start
---kind workflow --text '<payload>'`, or a start followed by `flz operative
-send`; a second message to a `once` instance is accepted and never read.
+<id> --text '<payload>'`, or a start followed by `flz operative send`; a second
+message to a `once` instance is accepted and never read. It may declare
+another loop mode, `#[flezha_runner::workflow_operative(id = "chat", sink =
+"replies", loop_mode = "per_input")]`, and then runs once per message.
 
 `sink` is optional. With none, the entry channel feeds the tasklet and no
 plugin channel is declared: the operative that only keeps state.

@@ -179,11 +179,6 @@ fn parsing_workflow(
         rollback_mode: crate::workflow::RollbackMode::AllOrNothing,
         loop_mode: crate::workflow::LoopMode::Once,
         wake_after: None,
-        retry: RetryPolicy {
-            max_attempts: 1,
-            backoff_base_ms: 1,
-        },
-        barrier_retry_attempts: 1,
         persistence_enabled: false,
         sync_durability: false,
     };

@@ -220,57 +220,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  describe "effectively-once tier (reference/uds)" do
-    @describetag transport: :uds, scenario: :uds_tier, reference_runtime: true
-
-    # §6.2: a tier workflow operative crashes mid-run and resumes; every keyed
-    # output reaches the conforming sink with the durable identity stamps, the
-    # Model-A re-run re-emits a byte-identical payload under the stable key,
-    # and the changelog upsert converges to exactly one value — never lost,
-    # never divergent.
-    test "tier workflow crash-resume converges the conforming changelog sink", ctx do
-      operative_id =
-        drive_crash_resume(
-          ctx,
-          "tier_commit_block_workflow",
-          "ok",
-          fn oid -> Replay.resume_cell_count(:workflow, oid) > 0 end,
-          plugins: [forward_sink("tier_sink", self())]
-        )
-
-      # The run is already complete; only the final flush's casts are in flight.
-      outputs = await_tier_outputs(1, operative_id)
-
-      assert outputs != [], "no tier output reached the sink"
-
-      for {msg, md} <- outputs do
-        assert md["flz.key"] == "job"
-        assert md["flz.epoch"], "tier output missing its epoch stamp"
-        assert md["flz.seq"], "tier output missing its durable outbox seq"
-        assert String.starts_with?(msg, "committed:")
-      end
-
-      # Deterministic re-run: the pre-crash emit and the resume's re-emit are
-      # byte-identical, so the changelog upsert converges to one value.
-      assert outputs |> Enum.map(fn {msg, _} -> msg end) |> Enum.uniq() |> length() == 1,
-             "re-run emitted a divergent payload: #{inspect(outputs)}"
-
-      changelog =
-        Enum.reduce(outputs, %{}, fn {msg, md}, acc -> Map.put(acc, md["flz.key"], msg) end)
-
-      assert map_size(changelog) == 1
-
-      # Exact-identity dedup holds within an identity: no identity ever
-      # carries two different payloads.
-      outputs
-      |> Enum.group_by(fn {_m, md} -> {md["flz.cell"], md["flz.seq"], md["flz.epoch"]} end)
-      |> Enum.each(fn {identity, group} ->
-        payloads = group |> Enum.map(fn {m, _} -> m end) |> Enum.uniq()
-        assert length(payloads) == 1, "identity #{inspect(identity)} diverged"
-      end)
-    end
-  end
-
   describe "opted-out class (reference/uds)" do
     @describetag transport: :uds, scenario: :uds_optout, reference_runtime: true
 
@@ -586,35 +535,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   # The identity a flushed outbox entry is keyed by.
   defp identity(md), do: Map.take(md, ["flz.cell", "flz.seq", "flz.epoch", "channel"])
-
-  defp drain_tier_outputs(acc) do
-    receive do
-      {:message_forward, msg, md} -> drain_tier_outputs([{to_string(msg), md} | acc])
-    after
-      0 -> Enum.reverse(acc)
-    end
-  end
-
-  # Same wait for the tier sink, which forwards into this process's mailbox
-  # rather than a collector.
-  defp await_tier_outputs(count, operative_id) do
-    outputs = drain_tier_outputs([])
-
-    outputs =
-      if length(outputs) >= count do
-        outputs
-      else
-        NodeTestHelper.wait_until(
-          fn -> match?({:messages, [_ | _]}, Process.info(self(), :messages)) end,
-          30_000
-        )
-
-        outputs ++ drain_tier_outputs([])
-      end
-
-    assert journal_settled?(operative_id), "the task journal still owes output"
-    outputs ++ drain_tier_outputs([])
-  end
 
   # Number of per-Cell compensation-done markers the controller has written
   # for this operative (one per compensated Cell).
