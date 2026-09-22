@@ -337,10 +337,12 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let _parks = capture_parks();
-    std::env::set_var("FLEZHA_WORKFLOW_PARK_IDLE_MS", "200");
+    std::env::set_var("FLEZHA_PARK_IDLE_MS", "200");
     let id = format!("host_wf_release_{}", std::process::id());
-    let durable = host_class::workflow_json(&id, &["in"], 1)
-        .replace(r#""persistent":false"#, r#""persistent":true"#);
+    let durable = host_class::workflow_json(&id, &["in"], 1).replace(
+        r#""persistent":false"#,
+        r#""persistent":true,"sleep_when_idle":true"#,
+    );
     crate::host::register_host_class_json(durable.as_bytes()).expect("class registers");
     let _host = FakeHost::serve(|_| schema::Verdict::Unreadable {
         message: "not json".to_string(),
@@ -361,7 +363,7 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
     let park = await_park(&rx, "host-release-2");
     assert_eq!(park.consumed_offset, Some(4));
 
-    std::env::remove_var("FLEZHA_WORKFLOW_PARK_IDLE_MS");
+    std::env::remove_var("FLEZHA_PARK_IDLE_MS");
     state_sink::reset_for_test();
 }
 
@@ -540,7 +542,10 @@ fn a_host_workflows_released_values_cross_once_for_their_keys() {
     let (mut outs, done) = drain(&rx, "host-keyed-1");
     outs.sort();
     assert_eq!(done.0, "ok");
-    assert_eq!(outs, [b"k:a:a".to_vec(), b"k:b:b".to_vec(), b"k:c:c".to_vec()]);
+    assert_eq!(
+        outs,
+        [b"k:a:a".to_vec(), b"k:b:b".to_vec(), b"k:c:c".to_vec()]
+    );
     assert_eq!(live_keys(&node, "host-keyed-1"), ["a", "b", "c"]);
     assert_eq!(
         *crossings.0.lock().unwrap(),

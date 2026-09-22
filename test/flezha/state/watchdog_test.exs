@@ -305,39 +305,44 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
-  test "a workflow class is not flagged for output stall or input silence", %{
+  test "an awake silent workflow is flagged like a stream; a sleeping instance is not", %{
     header: header
   } do
-    # The sweep is off at its default, so the exemption is only observable
-    # with the window armed.
+    # The sweep is off at its default, so the rule is only observable with the
+    # window armed.
     on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
 
-    class = "WorkflowWatch" <> uniq()
-    ClassRegistry.put(class, :workflow)
-    on_exit(fn -> ClassRegistry.delete(class) end)
+    workflow = "WorkflowWatch" <> uniq()
+    asleep = "SleepingWatch" <> uniq()
+    ClassRegistry.put(workflow, :workflow)
+    :ok = ClassRegistry.put_parked(asleep, %{wake_deadline_ms: nil, consumed_offset: nil})
+
+    on_exit(fn ->
+      ClassRegistry.put_parked(asleep, nil)
+      ClassRegistry.delete(workflow)
+      ClassRegistry.delete(asleep)
+    end)
 
     forward_state_event(:input_silence)
 
-    pid = {class, "task", "seg" <> uniq()}
-    {:ok, _} = Supervisor.find_or_start(pid)
-    {:ok, w} = Supervisor.lookup(pid)
-    :ok = WalWriter.append(w, 0, header, "z")
-    :ok = WalWriter.append(w, 1, header, "a")
-    :ok = WalWriter.append(w, 2, header, "b")
+    for class <- [workflow, asleep] do
+      pid = {class, "task", "seg" <> uniq()}
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, w} = Supervisor.lookup(pid)
+      :ok = WalWriter.append(w, 0, header, "z")
+      :ok = WalWriter.append(w, 1, header, "a")
+      # Silent past the timeout, with output behind it.
+      TestHelpers.age_writer(w, @stall_ms * 2)
+    end
 
-    # The same stall signature that flags a stream class: window lapses,
-    # then a duplicate Change keeps it "not idle" with a frozen seq.
-    TestHelpers.age_writer(w, @stall_ms * 2)
-    :duplicate = WalWriter.append(w, 1, header, "a")
+    on_exit(override_log_level(:warning))
 
-    :ok = Watchdog.sweep_now()
+    ExUnit.CaptureLog.capture_log(fn ->
+      :ok = Watchdog.sweep_now()
 
-    # Scoped to THIS test's class and cell. The Watchdog is a singleton whose
-    # sweep walks every registered cell, so an unscoped refute also matches a
-    # sibling test's resync (a compaction timeout on its own WAL, say).
-    refute_received {:output_stall, _, %{operative_class: ^class}}
-    refute_received {:resync_called, ^pid, _}
-    refute_received {:input_silence, _, %{operative_class: ^class}}
+      assert_receive {:input_silence, _, %{operative_class: ^workflow}}, 1_000
+      refute_received {:input_silence, _, %{operative_class: ^asleep}}
+    end)
   end
 
   test "a checkpoint-ack class's quiet interval does not trip the input-silence sweep", %{

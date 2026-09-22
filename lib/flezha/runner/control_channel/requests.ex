@@ -200,11 +200,12 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  The SDK's loop found its inbox empty at a committed iteration boundary and
-  tore its run down without a completion (`workflow-durable-suspension`).
-  Journal the park record, durable before the eviction so a controller crash in
-  between still rediscovers the suspension, then hand the instance to its
-  Overwatch, which evicts it from this runner and keeps it resumable.
+  An instance of either kind has been idle past the threshold and stopped
+  without a completion (`workflow-durable-suspension`). Hand it to its
+  Overwatch, which writes the park record durably before it evicts the instance
+  from this runner and keeps it resumable; with no Overwatch here, the record
+  is written under the instance's own key so the sleep is rediscovered when the
+  instance is next started.
 
   Off this process: the eviction drives a `RemOperative` whose response returns
   on this control stream, so doing it inline would deadlock the reader, the
@@ -233,36 +234,15 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     )
 
     namespace = state.namespace
+    park = %{wake_deadline_ms: deadline, consumed_offset: consumed_offset}
 
     Task.start(fn ->
-      case TaskJournal.append_parked(namespace, operative_id, iter, deadline, consumed_offset) do
-        :ok ->
-          # Before the suspension asks the log whether input is still owed: a
-          # message the run parked unread is consumed, not owed.
-          TaskJournal.release_input(operative_id, consumed_offset)
-          suspend_parked(namespace, operative_id, iter, deadline)
+      # Before the suspension asks the log whether input is still owed: a
+      # message the run parked unread is consumed, not owed.
+      TaskJournal.release_input(operative_id, consumed_offset)
 
-        {:error, reason} ->
-          # The park is not durable, so the instance must NOT be evicted: leave
-          # it bound. Its driver has already exited, so it stays idle until the
-          # runner reconnects or convergence rebinds it — at which point it
-          # resumes from the last committed iteration and parks again.
-          Logger.warning(
-            "[control_channel] park record failed for #{inspect(operative_id)} " <>
-              "iter=#{iter}: #{inspect(reason)} — instance left bound"
-          )
-      end
+      Migration.suspend(namespace, operative_id, iter, park)
     end)
-  end
-
-  # No Overwatch to suspend (already migrated / torn down) is not a failure: the
-  # park record is durable, so the instance is rediscovered as suspended
-  # whenever it is next started.
-  defp suspend_parked(namespace, operative_id, iter, deadline) do
-    case HubManager.get_pid(namespace, operative_id) do
-      {:ok, pid} when is_pid(pid) -> Migration.suspend(pid, iter, deadline)
-      _ -> :ok
-    end
   end
 
   @doc """

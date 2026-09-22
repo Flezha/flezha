@@ -73,6 +73,9 @@ pub struct OperativeTopology {
     /// The class's declared persistence; the instance resolves the runner
     /// override against it.
     pub persistence_enabled_const: bool,
+    /// An idle instance sleeps: parks, is evicted and wakes on its next
+    /// input. Refused without persistence.
+    pub sleep_when_idle: bool,
     /// The effectively-once tier: emits ride the effect record on the
     /// reliable sink instead of the primary stream.
     pub effectively_once: bool,

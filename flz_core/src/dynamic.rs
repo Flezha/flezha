@@ -114,12 +114,8 @@ impl DynamicCellRegistry {
             {
                 continue;
             }
-            if !slot.mailbox.claim_inflight() {
-                continue; // a drain is scheduled/running; retry next sweep
-            }
-            if !slot.mailbox.is_empty() {
-                slot.mailbox.release_inflight(); // queued work; not idle
-                continue;
+            if !slot.claim_drained() {
+                continue; // queued or running; retry next sweep
             }
             candidates.push((entry.key().clone(), Arc::clone(slot)));
         }
@@ -135,10 +131,7 @@ impl DynamicCellRegistry {
         self.cells.remove(&key);
         if !slot.mailbox.is_empty() {
             self.cells.insert(key, Arc::clone(&slot));
-            slot.mailbox.release_inflight();
-            if slot.mailbox.claim_inflight() {
-                crate::poll_core::global().schedule(&slot);
-            }
+            slot.release_drained();
             return;
         }
         if let Some(id) = slot.flusher_entry_id {

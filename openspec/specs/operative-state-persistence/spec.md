@@ -278,25 +278,42 @@ A (re)started batcher SHALL seed its dirty set with every registered writer: wit
 
 ### Requirement: Per-Operative persistence toggle resolution at operative startup
 
-The agent SHALL resolve a per-Operative-class boolean `persistence_enabled` at the moment an Operative instance is added (`AddOperative` command processed in `Overwatch.init/1`) using the following ordered rule:
+The controller SHALL resolve a per-Operative-class boolean `persistence_enabled` for an
+instance of either kind using the following ordered rule:
 
-1. If the agent's runtime config defines `operative_persistence.<OperativeClass>` for this Operative class, use that value.
-2. Otherwise, if the `AddOperative` metadata carries an Operative-class const value (`StreamOperative::PERSISTENCE_ENABLED`), use that value.
+1. If the controller's runtime config defines `operative_persistence.<OperativeClass>` for this
+   Operative class, use that value.
+2. Otherwise, use the class's own switch as the runner announced it in the `AddOperative`
+   response metadata (`persistent`, present as `"false"` when the class opts out), recorded by
+   the class registry with the class's other declarations so a process-less read at boot or in
+   a sweep resolves it too.
 3. Otherwise, use the built-in default of `true`.
 
-The resolved value SHALL be bound to the Operative instance for its entire lifetime. Subsequent changes to the runner-side config or to the SDK's Operative-class const (via SDK redeploy) SHALL NOT affect already-running instances.
+The kind SHALL NOT enter the resolution: a stream and a workflow are resolved by the same rule
+from the same declaration. The resolved value SHALL be bound to the Operative instance for its
+entire lifetime. Subsequent changes to the runner-side config or to the SDK's class switch (via
+SDK redeploy) SHALL NOT affect already-running instances.
 
-When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot files for any of that Operative's Cells, SHALL ignore (drop with a counter increment) any incoming `cell_state_change` or `cell_state_snapshot` frames for those Cells, and SHALL NOT issue `RestoreInitState` on reconnect.
+When `persistence_enabled = false`, the controller SHALL NOT allocate WAL or snapshot files for
+any of that Operative's Cells, SHALL ignore (drop with a counter increment) any incoming
+`cell_state_change` or `cell_state_snapshot` frames for those Cells, SHALL NOT issue
+`RestoreInitState` on reconnect, and SHALL refuse a live Cell-state read as
+`{:error, :persistence_off}`.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** a runner does not configure `operative_persistence.MarketOperative` AND `MarketOperative`'s `AddOperative` metadata does not declare `PERSISTENCE_ENABLED`
-- **THEN** the agent SHALL resolve `persistence_enabled = true` for `MarketOperative`
+- **WHEN** a runner does not configure `operative_persistence.MarketOperative` AND `MarketOperative`'s `AddOperative` response announces no `persistent` key
+- **THEN** the controller SHALL resolve `persistence_enabled = true` for `MarketOperative`
+
+#### Scenario: The class's opt-out reaches the controller
+
+- **WHEN** a class of either kind declares persistence off in its SDK and an instance of it is added
+- **THEN** the `AddOperative` response SHALL carry `persistent = "false"`, the controller SHALL resolve `persistence_enabled = false` for the class, no restore SHALL be shipped on its next bind, and its live Cell-state read SHALL answer `{:error, :persistence_off}`
 
 #### Scenario: Runner override takes precedence
 
-- **WHEN** `MarketOperative`'s `AddOperative` metadata declares `PERSISTENCE_ENABLED = true` AND the runner sets `operative_persistence.MarketOperative = false`
-- **THEN** the agent SHALL resolve `persistence_enabled = false` for `MarketOperative`
+- **WHEN** `MarketOperative`'s `AddOperative` response announces nothing (the class switch is on) AND the runner sets `operative_persistence.MarketOperative = false`
+- **THEN** the controller SHALL resolve `persistence_enabled = false` for `MarketOperative`
 
 #### Scenario: Mid-life config change does not affect running instance
 
@@ -1386,6 +1403,11 @@ a conclusion its evidence does not support. The convergence judge already holds
 this rule for the same observation: a flat marker with no input-side advance is
 idle, and idle is healthy.
 
+The sweep SHALL consider an instance of either kind, and SHALL skip an instance that is
+sleeping (its park record is present in the class registry), because a sleeper receives no
+Change by design; it SHALL also keep skipping a checkpoint-ack class between checkpoints. It
+SHALL NOT skip an instance for its kind.
+
 The knob SHALL be `input_silence_timeout_ms`, defaulting to `0`, which the sweep
 already reads as "do not run". The telemetry event SHALL be
 `[:flezha, :state, :input_silence]`. Both are plain renames of the previous
@@ -1413,4 +1435,16 @@ already reads as "do not run". The telemetry event SHALL be
 - **GIVEN** an operative the sweep has reported
 - **WHEN** a Change arrives for it and the sweep runs again
 - **THEN** the latch SHALL clear so a later silence is reported afresh
+
+#### Scenario: A sleeping instance is never flagged
+
+- **GIVEN** `input_silence_timeout_ms` set to a positive value and an instance of either kind that produced output, then slept
+- **WHEN** the watchdog sweeps after the window has elapsed with the instance still asleep
+- **THEN** no `input_silence` event SHALL be emitted for it
+
+#### Scenario: An awake silent workflow is flagged like a stream
+
+- **GIVEN** `input_silence_timeout_ms` set to a positive value and an awake `per_input` workflow whose class does not sleep and which produced output earlier
+- **WHEN** it receives no Change for longer than the window
+- **THEN** `[:flezha, :state, :input_silence]` SHALL be emitted once for it
 

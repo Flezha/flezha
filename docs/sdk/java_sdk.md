@@ -171,7 +171,17 @@ A workflow carries none of a stream's delivery settings. The builder's
 `effectivelyOnce()`, checkpoint calls and `correctionWindow(ms)` reach the core
 as written, and `registerFactory` throws `WorkflowOperativeConfigurationException`
 naming `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` or
-`CorrectionWindowOnWorkflow`. `syncDurability()` is the workflow's own. Inside a
+`CorrectionWindowOnWorkflow`. `syncDurability()` is the workflow's own.
+
+Both kind interfaces carry the two class settings: `persistenceEnabled()` (default
+`true`, read from the class whatever its tasklets' Change types) and
+`sleepWhenIdle()`, `false` on `StreamOperative` and `persistenceEnabled()` on
+`WorkflowOperative`. An instance whose class sleeps is evicted after
+`FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its cells
+restored; declaring it with persistence off makes `registerFactory` throw naming
+`SleepWithoutPersistence`.
+
+Inside a
 workflow, a tasklet's context carries no timer session: every timer call throws
 `TaskletException.TimersUnavailable`, which fails the attempt as any tasklet
 exception does. A `spawnWorkflow` naming a stream factory reads

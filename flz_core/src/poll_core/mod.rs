@@ -252,6 +252,13 @@ impl PollCore {
         polled
     }
 
+    /// What a poll pass does first, without handing out work: for a test
+    /// that must not drain Cells other tests hold.
+    #[cfg(test)]
+    pub(crate) fn promote_due_wakes(&self) {
+        self.promote_due();
+    }
+
     fn poll_until(&self, deadline: Instant) -> Polled {
         loop {
             // First thing in the pass, before any lock is taken: promotion

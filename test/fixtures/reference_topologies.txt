@@ -80,7 +80,8 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <task>.mailbox(<n>)        the tasklet's per-Cell mailbox capacity
 #   class.<flag>[(<value>)]    persistent | effectively_once | checkpoint_ack |
 #                              checkpoint_every(n) | outputs_at_checkpoint(ms) |
-#                              correction_window(ms) | sync_durability | workflow
+#                              correction_window(ms) | sync_durability |
+#                              sleep_when_idle | workflow
 #   shorthand(<id>|-, <sink>|-, <input>|-)
 #                              one §5 short form, a stream operative declaration
 #                              carrying a tasklet body: the factory id, the
@@ -163,6 +164,7 @@ EffectivelyOnceOnWorkflow          | eo_workflow      | class.workflow; class.pe
 CorrectionWindowOnWorkflow         | correction_wf    | class.workflow; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | workflow
 CheckpointOnWorkflow               | checkpoint_workflow | class.workflow; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | workflow
 SyncDurabilityOnStream             | sync_stream      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
+SleepWithoutPersistence            | sleep_no_persist | class.sleep_when_idle; entry(in); in.into(plain)                                      | -
 AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
 
 # The §5 short-form refusals. Their names are the authoring contract's, not

@@ -417,12 +417,12 @@ pub struct IterCommitResponse {
     #[prost(string, tag = "3")]
     pub error: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. A looping durable workflow operative found its inbox empty
-/// at the committed boundary of iteration `iter` and past the idle threshold:
-/// it has torn its own run down WITHOUT a WorkflowCompleted (this is not a
-/// terminal outcome). The Controller journals `parked(iter\[, wake_deadline_ms\])`
-/// and evicts the instance from the runner; the registry keeps it `suspended`
-/// until a new input-log append — or the wake deadline — rehydrates it
+/// SDK -> Controller. An instance of either kind whose class sleeps has been idle
+/// past the threshold (a workflow at the committed boundary of iteration `iter`,
+/// a stream at `iter` 0): it asks to sleep WITHOUT a WorkflowCompleted (this is
+/// not a terminal outcome). The Controller writes the instance's park record and
+/// evicts it from the runner; the registry keeps it `suspended` until a new
+/// input-log append, or the wake deadline, rehydrates it
 /// (workflow-durable-suspension). `wake_deadline_ms` is 0 when the operative
 /// declared no durable timer. `consumed_offset` is the highest input-log offset
 /// the run parked to the dead-letter queue unread, absent when none: consumed
@@ -475,8 +475,8 @@ pub struct TaskEdgeHandoff {
 /// the previous iteration's terminal batch, which re-seeds a handoff-chained
 /// loop. `committed_tasks` carries every forward task commit with its iteration
 /// (compensation planning), `consumed_offset` the input-log offset the last
-/// committed iteration consumed (absent when it consumed none), and `parked` /
-/// `wake_deadline_ms` the suspension record (workflow-durable-suspension).
+/// committed iteration consumed (absent when it consumed none). Where an
+/// instance sleeps is not the journal's: it rides no field here.
 /// `completed` / `result` are the last committed iteration's completion
 /// request: a resume ends the instance with `result` instead of waiting for
 /// input.
@@ -499,10 +499,6 @@ pub struct TaskJournalState {
     pub committed_tasks: ::prost::alloc::vec::Vec<TaskCommittedTask>,
     #[prost(uint64, optional, tag = "5")]
     pub consumed_offset: ::core::option::Option<u64>,
-    #[prost(bool, tag = "6")]
-    pub parked: bool,
-    #[prost(uint64, tag = "7")]
-    pub wake_deadline_ms: u64,
     #[prost(message, repeated, tag = "8")]
     pub rewind_undo: ::prost::alloc::vec::Vec<TaskCommittedTask>,
     #[prost(message, repeated, tag = "9")]

@@ -17,6 +17,7 @@ defmodule Flezha.Operative.Overwatch do
 
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Handover
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Lifecycle
@@ -85,6 +86,9 @@ defmodule Flezha.Operative.Overwatch do
     # task's reference + pid so `terminate/2` can kill it cleanly. `nil`
     # when no migrate is in flight.
     migrate_task: nil,
+    # Outputs that arrived while a migrate task was binding, newest first,
+    # delivered once its binding is adopted.
+    held_outputs: [],
     # Effectively-once tier, declared by the SDK in the AddOperative response
     # metadata: one of the two ways an instance has durable input, which gates
     # the input-log journal and the `flz.offset` stamp on `:io_in`.
@@ -93,14 +97,16 @@ defmodule Flezha.Operative.Overwatch do
     # label carries the reply it owes and the payload to forward.
     journal_reqids: :gen_server.reqids_new(),
     # Durable workflow class (kind + per-class persistence): the other way an
-    # instance has durable input, and the gate on the suspension lifecycle
-    # (`workflow-durable-suspension`).
+    # instance has durable input, and the one that journals stage by stage.
     durable_workflow: false,
-    # Suspended at a committed iteration boundary: zero live runner resources,
-    # registry entry retained. A new input-log append — or the journaled wake
+    # The class sleeps when idle, declared by the SDK: its input is journaled
+    # so a message that finds it asleep wakes it and waits in the log.
+    sleeps: false,
+    # Asleep (`workflow-durable-suspension`): zero live runner resources,
+    # registry entry retained. A new input-log append, or the recorded wake
     # deadline — rehydrates through the normal bind path.
     suspended: false,
-    # Timer ref for the journaled wake deadline while suspended.
+    # Timer ref for the recorded wake deadline while suspended.
     timers: %{},
     # A park that landed while an un-park task was binding: the task's bound
     # state is stale by the time it reports, and the journaled tail still
@@ -138,8 +144,10 @@ defmodule Flezha.Operative.Overwatch do
   `{:error, :send_buffer_full}`, with the frame unsent and nothing discarded.
   """
   @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream | :send_buffer_full}
-  def deliver(%__MODULE__{} = state, payload),
-    do: StreamChannel.io_in(state.channel, state.id, payload)
+  def deliver(%__MODULE__{} = state, payload) do
+    with :ok <- StreamChannel.io_in(state.channel, state.id, payload),
+         do: Replay.forwarded(state, payload)
+  end
 
   # Every plugin verb is one bounded call into a running Overwatch. The bound
   # belongs here rather than to each caller: an Overwatch busy folding an entry
@@ -281,19 +289,26 @@ defmodule Flezha.Operative.Overwatch do
   defp one_state_key(%__MODULE__{}), do: :ok
 
   defp continue_bind(stale_runner_id, operative, %__MODULE__{} = state) do
-    state = %__MODULE__{state | durable_workflow: Migration.durable_workflow?(state, operative)}
+    class = operative_class(state)
 
-    # Suspended instances are rediscovered from durable state alone (journal +
-    # input log), so a controller redeploy neither binds them to a runner nor
-    # loses their suspension (`workflow-durable-suspension`). An instance with
-    # undelivered input is not suspended any more — it binds and consumes it.
-    # The journal's floor is seeded first, since the log answers that question
-    # against it.
+    state = %__MODULE__{
+      state
+      | durable_workflow: Migration.durable_workflow?(state, operative),
+        sleeps: ClassRegistry.sleep_when_idle?(class)
+    }
+
+    # Sleeping instances are rediscovered from durable state alone (the park
+    # record and the input log), so a controller redeploy neither binds them to
+    # a runner nor loses their sleep (`workflow-durable-suspension`). An
+    # instance with undelivered input is not asleep any more: it binds and
+    # consumes it. The floor is seeded first, since the log answers that
+    # question against it.
     if state.durable_workflow, do: TaskJournal.release_input(operative.id)
+    park = ClassRegistry.parked(class)
+    Replay.release_parked(state, park)
 
-    if state.durable_workflow and Migration.suspended_on_disk?(operative.id) do
-      {:noreply, Migration.enter_suspended(state, TaskJournal.restore_state(operative.id)),
-       :hibernate}
+    if Migration.suspended_on_disk?(class) do
+      {:noreply, Migration.enter_suspended(state, park), :hibernate}
     else
       Lifecycle.bind(state, stale_runner_id, operative)
     end
@@ -401,6 +416,18 @@ defmodule Flezha.Operative.Overwatch do
   def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state),
     do: Migration.runner_migrate(state, new_runner_id)
 
+  # A stop of a sleeping workflow: woken onto a runner with the stop carried,
+  # so it ends as it would stopped awake. `{:error, :awake}` when it is not
+  # asleep, and the caller stops it as an awake one.
+  @impl true
+  def handle_call({:wake, then: :stop}, _from, %__MODULE__{suspended: true} = state) do
+    {reply, state} = Migration.wake(state, :stop)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:wake, then: :stop}, _from, %__MODULE__{} = state),
+    do: {:reply, {:error, :awake}, state}
+
   # The convergence loop's `publish_binding`: re-write the durable row and the
   # runner's route from the binding this process holds. Must run here — the
   # route points at `self()`.
@@ -500,7 +527,16 @@ defmodule Flezha.Operative.Overwatch do
   # run settles the entry it was dispatched under, carrying the holds its sinks
   # took — so an output no delivery-guaranteed sink took is complete the moment
   # the chain has had it, filtered included.
+  # A migrate task binds the plugins on its own copy of this state, so an
+  # output of the instance it woke waits for that binding to be adopted rather
+  # than meet a plugin table the wake has not brought up (a sleeper
+  # rediscovered at boot has none running).
   @impl true
+  def handle_cast(frame, %__MODULE__{migrate_task: %{}} = state)
+      when is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] do
+    {:noreply, %__MODULE__{state | held_outputs: [frame | state.held_outputs]}}
+  end
+
   def handle_cast({:io_out_batch, outputs}, state) do
     Outbox.run(outputs, fn message, metadata ->
       Plugins.transform_io(state, :on_output, message, metadata)
@@ -529,8 +565,8 @@ defmodule Flezha.Operative.Overwatch do
   # A sleeper hibernates: the bind's restore frames and plugin setup leave
   # megabytes of garbage on a heap that otherwise sits uncollected until the
   # next wake (2.5 MiB → 5 KiB per sleeper measured).
-  def handle_cast({:suspend, iter, wake_deadline_ms}, %__MODULE__{} = state) do
-    {:noreply, Migration.suspend_at(state, iter, wake_deadline_ms), :hibernate}
+  def handle_cast({:suspend, iter, park}, %__MODULE__{} = state) do
+    {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
   end
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
@@ -613,7 +649,7 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, %{state | extensions: Table.fire_timer(state.extensions, name, plugin_id)}}
   end
 
-  # The journaled wake deadline elapsed (`workflow-durable-suspension`): append a
+  # The recorded wake deadline elapsed (`workflow-durable-suspension`): append a
   # timer wake to the input log and rehydrate. Routing the wake THROUGH the log
   # is what makes two racing wake sources — a message and the deadline —
   # collapse into one rehydration: the second is a no-op on an
@@ -635,7 +671,9 @@ defmodule Flezha.Operative.Overwatch do
         {:migrate_task_result, _task_pid, result},
         %__MODULE__{migrate_task: %{}} = state
       ) do
-    {:noreply, Migration.apply_migrate_result(state, result)}
+    # The task reports a copy of this state taken before the outputs it held.
+    %__MODULE__{} = adopted = Migration.apply_migrate_result(state, result)
+    {:noreply, release_outputs(%__MODULE__{adopted | held_outputs: state.held_outputs})}
   end
 
   # Late delivery: the task was terminated by a teardown, or a second
@@ -649,7 +687,7 @@ defmodule Flezha.Operative.Overwatch do
         {:DOWN, ref, :process, _pid, _reason},
         %__MODULE__{migrate_task: %{ref: ref}} = state
       ) do
-    {:noreply, Migration.rehydrate_if_pending(%{state | migrate_task: nil})}
+    {:noreply, Migration.rehydrate_if_pending(%{state | migrate_task: nil}) |> release_outputs()}
   end
 
   # Task.Supervisor.async_nolink also sends `{ref, return_value}` from the task
@@ -703,6 +741,19 @@ defmodule Flezha.Operative.Overwatch do
     end
   end
 
+  # Deliver what arrived while a migrate task was binding, in arrival order;
+  # a migrate spawned meanwhile holds them again.
+  defp release_outputs(%__MODULE__{held_outputs: []} = state), do: state
+
+  defp release_outputs(%__MODULE__{held_outputs: held} = state) do
+    held
+    |> Enum.reverse()
+    |> Enum.reduce(%__MODULE__{state | held_outputs: []}, fn frame, acc ->
+      {:noreply, acc} = handle_cast(frame, acc)
+      acc
+    end)
+  end
+
   # A crashed subscriber is recorded by the table and declared here: the table
   # is a data structure and decides nothing, and the restart is the loop's.
   defp plugin_down(%__MODULE__{} = state, ref, pid, reason) do
@@ -734,8 +785,8 @@ defmodule Flezha.Operative.Overwatch do
   # effect of a read. `flz state at` is the durable-read path.
   defp read_cell_state(%__MODULE__{} = state, from, selector) do
     cond do
-      not PersistenceResolver.persistent_state?(state.builder.kind, operative_class(state)) ->
-        {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, state}
+      not PersistenceResolver.persistence_enabled?(operative_class(state)) ->
+        {:reply, {:error, :persistence_off}, state}
 
       state.suspended ->
         {:reply, {:error, {:not_resident, :suspended}}, state}

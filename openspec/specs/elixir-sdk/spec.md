@@ -1083,28 +1083,30 @@ reaches such a caller. The request SHALL be written as a `:control` frame.
 
 ### Requirement: The Elixir per-input loop waits for its inbox as the shared core does
 
-A workflow of any loop mode in the Elixir SDK SHALL seed every message-fed pass, the first
-included, from the next message in its inbox and never from `init_values`, which are applied as
-Cell state through the same `Commands.apply_json/3` a stream instance takes: a `:once` class its one
-pass, a `:per_input` class every pass, a `:chained` class its first pass, the later ones from the
-previous terminal batch into the chain the first message picked. With nothing queued it SHALL
+A `:per_input` workflow loop in the Elixir SDK SHALL seed every iteration, the first included,
+from the next input in its inbox and never from the spawn args. With nothing queued it SHALL
 wait, for up to 60 seconds while a rehydrating bind still owes it inputs and otherwise for
-`FLEZHA_WORKFLOW_PARK_IDLE_MS`, and SHALL park only when that wait ends with nothing to consume.
-A class that journals nothing SHALL wait until an input or a stop arrives, because it cannot
-park. A stop or the duration cap reached during the wait SHALL complete the run as `cancelled`.
-An iteration SHALL commit the durable input-log offset its input carried in `flz.offset`, and
-SHALL commit no offset when its input carried none, or when it was seeded from the previous
-terminal batch; the SDK SHALL read no other offset key.
+`FLEZHA_PARK_IDLE_MS`, and SHALL park only when that wait ends with nothing to consume and the
+class sleeps (`sleep_when_idle`, which defaults to the class's `persistence_enabled/0`). A class
+whose persistence is off SHALL wait until an input or a stop arrives, because it cannot sleep,
+and declaring `sleep_when_idle: true` on it SHALL be refused by `Topology.build/2` naming
+`SleepWithoutPersistence`. A stop or the duration cap reached during the wait SHALL complete
+the run as `cancelled`. An iteration SHALL commit the durable input-log offset its input
+carried in `flz.offset`, and SHALL commit no offset when its input carried none; the SDK SHALL
+read no other offset key.
+
+A stream operative in the Elixir SDK whose class declares `sleep_when_idle` SHALL sleep the
+same way, re-expressed in its own core: its instance process SHALL arm one idle timer at bind
+(after any owed input tail has arrived), SHALL ask its Cells the idle question when it fires
+(mailbox empty, nothing in flight, buffer flushed, no timer armed) and re-arm from the latest
+activity when any Cell is busy, and, idle, SHALL ship `IterPark` with iteration `0` and stop
+its Cells; the class SHALL announce `sleep_when_idle` and `persistence_enabled` in its
+declarations for the controller.
 
 #### Scenario: The first iteration consumes the first input
 
-- **WHEN** a per-input loop is started with `init_values` and one message then arrives
-- **THEN** its first committed iteration ran over that message, its Cells started from the `init_values` state, and no iteration ran over the document
-
-#### Scenario: A once class waits for its message
-
-- **WHEN** a `:once` class is started with no message
-- **THEN** it dispatches no stage, parks after the idle window when it journals, waits when it does not, and runs its one pass over the first message that arrives
+- **WHEN** a per-input loop is started with spawn args and one input then arrives
+- **THEN** its first committed iteration ran over that input, and no iteration ran over the args
 
 #### Scenario: An empty inbox parks only after the idle window
 
@@ -1119,19 +1121,34 @@ terminal batch; the SDK SHALL read no other offset key.
 
 #### Scenario: A loop that journals nothing waits instead of parking
 
-- **WHEN** a per-input loop whose class journals nothing finds its inbox empty
+- **WHEN** a per-input loop whose class's persistence is off finds its inbox empty
 - **THEN** it ships no `IterPark`, runs the next input that arrives, and a stop completes it as
   `cancelled`
 
-#### Scenario: An iteration commits its input's inbox offset
+#### Scenario: A sleeping stream class parks its instance
+
+- **WHEN** a stream class declares `sleep_when_idle: true` and an instance of it receives nothing for `FLEZHA_PARK_IDLE_MS` with every Cell drained
+- **THEN** the instance ships `IterPark` with iteration `0`, stops its Cells, and the next message the controller forwards after the wake reaches a Cell restored to its state before the sleep
+
+#### Scenario: Sleeping without persistence is refused
+
+- **WHEN** a module declares `sleep_when_idle: true` and `persistence_enabled: false` in either `use` macro
+- **THEN** `register_factory/2` fails with an error naming `SleepWithoutPersistence` and the module, and nothing is declared
+
+#### Scenario: An iteration commits its input's offset
 
 - **WHEN** an input stamped `flz.offset` `7` is consumed
 - **THEN** that iteration's `IterCommit` carries consumed offset `7`
 
 #### Scenario: An unjournaled input commits no offset
 
-- **WHEN** an input carrying no `flz.offset` is consumed
+- **WHEN** an input carrying no `flz.offset` is consumed by a class that journals nothing
 - **THEN** that iteration's `IterCommit` carries no consumed offset
+
+#### Scenario: A once class waits for its message
+
+- **WHEN** a `:once` class is started with no message
+- **THEN** it dispatches no stage, parks after the idle window when it journals, waits when it does not, and runs its one pass over the first message that arrives
 
 #### Scenario: A carry-fed pass commits no offset
 

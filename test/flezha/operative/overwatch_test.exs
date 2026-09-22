@@ -229,17 +229,17 @@ defmodule FlezhaTest.Operative.OverwatchCellStateGateTest do
     ]
 
   @moduledoc """
-  §5b.2: `:get_cell_state` is gated on `persistent_state?` (kind+class).
-  `:stream` and a durable-by-default `:workflow` class proceed to query the
-  runner exactly as before; a `:workflow` class that opted out of persistence —
-  or any stateless kind — is rejected with
-  `{:error, {:unsupported_for_kind, :persistent_state}}` and never contacts the
-  runner (the handler replies synchronously instead of spawning the send).
+  `:get_cell_state` is gated on the class's persistence switch, for either
+  kind: a class that persists proceeds to query the runner; one whose switch is
+  off, declared by the class or forced by the operator, is refused as
+  `{:error, :persistence_off}` and never contacts the runner (the handler
+  replies synchronously instead of spawning the send).
   """
-  # async: false: writes Application env.
-  use FlezhaTest.Case, fixtures: [:env], async: false
+  # async: false: writes Application env and the class registry.
+  use FlezhaTest.Case, fixtures: [:env, :tmp_app_data], async: false
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
 
   defp state_for(kind, id \\ "r_gate") do
@@ -269,20 +269,26 @@ defmodule FlezhaTest.Operative.OverwatchCellStateGateTest do
              Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 
-  test "an opted-out :workflow class is rejected and does not contact the runner" do
-    Application.put_env(:flezha, :operative_persistence, %{"opted_out" => false})
-    state = state_for(:workflow, "opted_out")
+  test "a class that declares persistence off is refused, for either kind" do
+    for kind <- [:stream, :workflow] do
+      id = "declared_off_#{kind}"
+      :ok = ClassRegistry.put_persistent(id, false)
+      state = state_for(kind, id)
 
-    # A synchronous {:reply, error, state} (no spawn) proves the runner was not
-    # contacted for state.
-    assert {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, ^state} =
-             Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
+      # A synchronous {:reply, error, state} (no spawn) proves the runner was
+      # not contacted for state.
+      assert {:reply, {:error, :persistence_off}, ^state} =
+               Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
+
+      :ok = ClassRegistry.put_persistent(id, true)
+    end
   end
 
-  test "a stateless kind is rejected and does not contact the runner" do
-    state = state_for(:made_up_kind)
+  test "an operator opt-out is refused the same way" do
+    Application.put_env(:flezha, :operative_persistence, %{"opted_out" => false})
+    state = state_for(:stream, "opted_out")
 
-    assert {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, ^state} =
+    assert {:reply, {:error, :persistence_off}, ^state} =
              Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 end
@@ -404,13 +410,12 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
     ]
 
   @moduledoc """
-  §5b.2 crash-resume gate (controller half): `Flezha.Operative.Replay.resume_cell_count/2`
+  Crash-resume gate (controller half): `Flezha.Operative.Replay.resume_cell_count/1`
   is the number of persisted Cells the bind-time restore path will ship a
   `RestoreInitState` for, threaded onto `AddOperative.resume_cell_count` so a
-  durable workflow driver holds its first Tasklet until that many restores land.
+  durable workflow's run holds its first Tasklet until that many restores land.
 
-  Non-zero only for a durable `:workflow` class with WAL on disk; `0` for a fresh
-  spawn, a stream operative, or an opted-out workflow one.
+  `0` for a fresh spawn and for a class whose persistence is off.
   """
   # async: false: writes Application env; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
@@ -432,24 +437,18 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
     seed_cell("resume_class", "task", "even")
     seed_cell("resume_class", "task", "odd")
 
-    assert Replay.resume_cell_count(:workflow, "resume_class") == 2
+    assert Replay.resume_cell_count("resume_class") == 2
   end
 
   test "a fresh durable workflow operative (no WAL) waits for nothing" do
-    assert Replay.resume_cell_count(:workflow, "unseeded_class") == 0
+    assert Replay.resume_cell_count("unseeded_class") == 0
   end
 
-  test "a stream operative never waits for a workflow-style restore gate" do
-    seed_cell("cont_class", "task", "s")
-
-    assert Replay.resume_cell_count(:stream, "cont_class") == 0
-  end
-
-  test "an opted-out workflow class counts zero even with WAL on disk" do
+  test "an opted-out class counts zero even with WAL on disk" do
     Application.put_env(:flezha, :operative_persistence, %{"optout_class" => false})
     seed_cell("optout_class", "task", "s")
 
-    assert Replay.resume_cell_count(:workflow, "optout_class") == 0
+    assert Replay.resume_cell_count("optout_class") == 0
   end
 end
 

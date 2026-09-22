@@ -246,8 +246,10 @@ defmodule Flezha.Service.Cli.State do
       "the Operative is not bound to a runner, so nothing holds its state — " <>
         "read its durable state with `flz state at`"
 
-  defp render_state_get_error({:unsupported_for_kind, :persistent_state}),
-    do: "this Operative kind holds no per-Cell state, so there is nothing to read"
+  defp render_state_get_error(:persistence_off),
+    do:
+      "this class declares persistence off, so its Cells hold no durable state and " <>
+        "live reads are refused"
 
   defp render_state_get_error({:oversized_state, bytes}),
     do:

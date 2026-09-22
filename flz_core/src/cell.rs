@@ -164,8 +164,8 @@ pub struct CellSlot {
     /// Wire identity `(operative instance, tasklet, cell_key)` per
     /// `flusher::encode_cell_identity`; the controller routes on it.
     pub cell_identity: Arc<Vec<u8>>,
-    /// `util::monotonic_ms` of the last successful push; the dynamic reaper's
-    /// idle clock.
+    /// `util::monotonic_ms` of the last successful push; the idle clock of
+    /// the dynamic reaper and of an instance's sleep.
     pub last_activity_ms: AtomicI64,
     /// `Some` iff the class persists changes; eviction deregisters it.
     pub flusher_entry_id: Option<crate::flusher::FlusherEntryId>,
@@ -201,6 +201,48 @@ pub struct PendingPush {
 impl CellSlot {
     pub fn counters(&self) -> &CellCounters {
         self.mailbox.counters()
+    }
+
+    /// Take the drain gate when nothing is queued: `false` while a round is
+    /// scheduled or running (a retry backoff and a push holdback keep it
+    /// held). The dynamic reaper evicts under the gate this leaves held.
+    pub(crate) fn claim_drained(self: &Arc<Self>) -> bool {
+        if !self.mailbox.claim_inflight() {
+            return false;
+        }
+        if self.mailbox.is_empty() {
+            return true;
+        }
+        self.release_drained();
+        false
+    }
+
+    /// Give back the gate [`Self::claim_drained`] took; a push that landed
+    /// meanwhile found it taken and scheduled nothing, so it is scheduled here.
+    pub(crate) fn release_drained(self: &Arc<Self>) {
+        self.mailbox.release_inflight();
+        if !self.mailbox.is_empty() && self.mailbox.claim_inflight() {
+            crate::poll_core::global().schedule(self);
+        }
+    }
+
+    /// Whether this Cell has nothing left to do: drained, nothing staged
+    /// behind a replay slice, nothing unflushed and no timer pending. The
+    /// sleep of an instance asks it of every Cell.
+    pub(crate) fn quiescent(self: &Arc<Self>) -> bool {
+        if !self.claim_drained() {
+            return false;
+        }
+        let unflushed = !self
+            .flush_buffer
+            .try_lock()
+            .is_ok_and(|buffer| buffer.is_empty());
+        let idle = !unflushed
+            && self.replay_depth.load(Ordering::Acquire) == 0
+            && self.deferred_live.lock_recover().is_empty()
+            && self.timers.lock_recover().is_empty();
+        self.release_drained();
+        idle
     }
 
     /// One `DropNothing` wait iteration: the per-Cell counter and the

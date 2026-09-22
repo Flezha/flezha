@@ -224,6 +224,12 @@ pub enum TopologyIssue {
     SyncDurabilityOnStream { factory_id: String },
 
     #[error(
+        "class `{factory_id}` declares sleep_when_idle with persistence off: a sleeping \
+         instance is evicted and restored from its durable state, and this class keeps none"
+    )]
+    SleepWithoutPersistence { factory_id: String },
+
+    #[error(
         "checkpoint_outputs at_checkpoint requires checkpoint_max_delay_ms: an interval that \
          never closes would hold its outputs forever on a quiet Cell"
     )]
@@ -279,6 +285,7 @@ impl TopologyIssue {
             Self::CorrectionWindowOnWorkflow => "CorrectionWindowOnWorkflow",
             Self::CheckpointOnWorkflow => "CheckpointOnWorkflow",
             Self::SyncDurabilityOnStream { .. } => "SyncDurabilityOnStream",
+            Self::SleepWithoutPersistence { .. } => "SleepWithoutPersistence",
             Self::AtCheckpointWithoutMaxDelay => "AtCheckpointWithoutMaxDelay",
             Self::Declaration(..) => "Declaration",
         }

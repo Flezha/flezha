@@ -36,6 +36,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
   defp instance_id(), do: "susp_#{System.unique_integer([:positive])}"
 
+  defp park(deadline \\ nil), do: %{wake_deadline_ms: deadline, consumed_offset: nil}
+
   defp state(inst, overrides \\ []) do
     base = %Overwatch{
       id: inst,
@@ -118,7 +120,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       :ok
     end)
 
-    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, park()}, state(inst))
 
     # Zero live runner resources; the registry entry (and this process) stay.
     assert_receive :evicted
@@ -140,7 +142,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     :ok = ClassRegistry.put_overwatch(inst, self(), "ex_1")
     on_exit(fn -> ClassRegistry.delete(inst) end)
 
-    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, park()}, state(inst))
 
     assert suspended.runner_id == nil
     assert ClassRegistry.owner(inst) == {:ok, self(), "ex_1", nil}
@@ -160,7 +162,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     :ok = TaskJournal.append_iter_committed(inst, 0, 0, [])
     :ok = TaskJournal.release_input(inst, 0)
 
-    {:noreply, after_park, :hibernate} = Overwatch.handle_cast({:suspend, 0, nil}, state(inst))
+    {:noreply, after_park, :hibernate} = Overwatch.handle_cast({:suspend, 0, park()}, state(inst))
 
     assert after_park.migrate_task != nil,
            "an instance with undelivered input must rehydrate, not sit suspended " <>
@@ -171,7 +173,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     # With nothing pending, the same park suspends and stays there.
     :ok = TaskJournal.append_iter_committed(inst, 1, 1, [])
     :ok = TaskJournal.release_input(inst, 1)
-    {:noreply, idle, :hibernate} = Overwatch.handle_cast({:suspend, 1, nil}, state(inst))
+    {:noreply, idle, :hibernate} = Overwatch.handle_cast({:suspend, 1, park()}, state(inst))
     assert idle.suspended
     assert idle.migrate_task == nil
   end
@@ -184,7 +186,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     deadline = System.system_time(:millisecond) + 50_000
 
     {:noreply, suspended, :hibernate} =
-      Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
+      Overwatch.handle_cast({:suspend, 1, park(deadline)}, state(inst))
 
     assert Timer.armed?(suspended.timers, :wake)
     assert Process.read_timer(elem(Map.fetch!(suspended.timers, :wake), 0)) > 40_000
@@ -270,6 +272,131 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     :ok
   end
 
+  test "a park writes the record before it evicts, and a record that fails leaves it bound" do
+    inst = instance_id()
+    test_pid = self()
+
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> send(test_pid, :evicted) end)
+
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+
+    {:noreply, asleep, :hibernate} = Overwatch.handle_cast({:suspend, 3, park(nil)}, state(inst))
+    assert asleep.suspended
+    assert ClassRegistry.parked(inst) == park(nil)
+    assert_received :evicted
+
+    stub(ClassRegistry, :put_parked, fn _, _ -> {:error, :eio} end)
+    other = instance_id()
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      {:noreply, bound, :hibernate} = Overwatch.handle_cast({:suspend, 3, park()}, state(other))
+      refute bound.suspended
+      assert bound.runner_id == "ex_1"
+    end)
+
+    refute_received :evicted
+  end
+
+  test "a park landing while an un-park binds keeps its record and the suspension" do
+    inst = instance_id()
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+    binding = state(inst, migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark})
+
+    {:noreply, parked, :hibernate} = Overwatch.handle_cast({:suspend, 4, park()}, binding)
+    assert parked.parked_in_flight
+
+    recovered = %{parked | runner_id: "ex_stale", suspended: false}
+
+    {:noreply, after_bind} =
+      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+
+    assert after_bind.suspended, "the stale bound state is not adopted"
+    assert ClassRegistry.parked(inst) == park()
+  end
+
+  test "whether an instance sleeps is read from its park record and its log, for either kind" do
+    for kind <- [:stream, :workflow] do
+      inst = instance_id()
+      refute Flezha.Operative.Migration.suspended_on_disk?(inst)
+
+      :ok = ClassRegistry.put_parked(inst, park())
+      assert Flezha.Operative.Migration.suspended_on_disk?(inst), "#{kind} asleep"
+
+      # Input that arrived while it slept outranks the record: it binds.
+      {:ok, 0} = InputLog.append(inst, "arrived", %{})
+      refute Flezha.Operative.Migration.suspended_on_disk?(inst), "#{kind} owes input"
+    end
+  end
+
+  test "a sleeping stream is rediscovered asleep at boot, and its forwarded floor with it" do
+    inst = instance_id()
+    builder = %Builder{id: inst, factory_id: "counter", kind: :stream, opts: []}
+    for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
+    :ok = ClassRegistry.put_sleep_when_idle(inst, true)
+    :ok = ClassRegistry.put_parked(inst, %{wake_deadline_ms: nil, consumed_offset: 1})
+    fresh = %Overwatch{id: inst, namespace: "default", factory_id: "counter", builder: builder}
+
+    {:noreply, booted, :hibernate} =
+      Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh)
+
+    assert booted.suspended
+    assert booted.sleeps, "a message that finds it asleep is journaled"
+
+    assert InputLog.tail(inst) == {:ok, 1, 1},
+           "what it was forwarded before the sleep is not owed"
+  end
+
+  test "a stop of a sleeping workflow wakes it with the stop, and the bind sends it" do
+    inst = instance_id()
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> "ex_2" end)
+    :ok = ClassRegistry.put_parked(inst, park())
+    asleep = state(inst, suspended: true, runner_id: nil, channel: nil)
+
+    {:reply, :ok, waking} = Overwatch.handle_call({:wake, then: :stop}, self(), asleep)
+    assert waking.migrate_task.then == :stop
+    :ok = await_migrate_task(waking)
+    assert ClassRegistry.parked(inst) == nil, "the bind cleared the record before the start"
+
+    # The un-park reports its binding: the stop follows it to that runner.
+    test_pid = self()
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+    stub(Flezha.Runner.StreamPool, :put_route, fn _, _, _ -> :ok end)
+
+    stub(Flezha.Runner.ControlUnit, :workflow_stop, fn runner, id ->
+      send(test_pid, {:workflow_stop, runner, id})
+      :ok
+    end)
+
+    carrying = %{
+      asleep
+      | migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark, then: :stop}
+    }
+
+    recovered = %{carrying | runner_id: "ex_2", suspended: false}
+
+    {:noreply, _awake} =
+      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, carrying)
+
+    assert_received {:workflow_stop, "ex_2", ^inst}
+  end
+
+  test "a stop finds no runner to wake on, or the instance already awake" do
+    inst = instance_id()
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
+    asleep = state(inst, suspended: true, runner_id: nil, channel: nil)
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:reply, {:error, :no_runner}, still} =
+               Overwatch.handle_call({:wake, then: :stop}, self(), asleep)
+
+      assert still.suspended
+    end)
+
+    assert {:reply, {:error, :awake}, _} =
+             Overwatch.handle_call({:wake, then: :stop}, self(), state(inst))
+  end
+
   test "a suspended instance is rediscovered from durable state after a redeploy" do
     inst = instance_id()
     builder = %Builder{id: inst, factory_id: "chat", kind: :workflow, opts: []}
@@ -279,7 +406,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     {:ok, 0} = InputLog.append(inst, "turn-0", %{})
     :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [])
     :ok = TaskJournal.append_iter_committed(inst, 0, 0, [])
-    :ok = TaskJournal.append_parked("default", inst, 0, System.system_time(:millisecond) + 60_000)
+    :ok = ClassRegistry.put_parked(inst, park(System.system_time(:millisecond) + 60_000))
 
     fresh = %Overwatch{
       id: inst,
@@ -293,7 +420,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     assert booted.suspended, "the boot never binds a suspended instance to a runner"
     assert booted.runner_id == nil
-    assert Timer.armed?(booted.timers, :wake), "the journaled wake deadline is re-armed"
+    assert Timer.armed?(booted.timers, :wake), "the recorded wake deadline is re-armed"
 
     # The boot seeded the floor from the journal, so the consumed input is not
     # owed. Undelivered input outranks the park: an instance with work waiting
@@ -314,7 +441,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     inst = instance_id()
     {:ok, 0} = InputLog.append(inst, "turn-0", %{})
     :ok = TaskJournal.append_iter_committed(inst, 0, 0, [])
-    :ok = TaskJournal.append_parked("default", inst, 0, nil)
+    :ok = ClassRegistry.put_parked(inst, park())
     :ok = TaskJournal.release_input(inst)
     {:ok, log} = Flezha.State.Supervisor.lookup({inst, :input_log})
 
@@ -386,10 +513,9 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert [%{task_idx: 0, iter: 2}] = TaskJournal.restore_state(inst).rewind_undo
 
     # A rewind is a rebind, not a park: the instance comes straight back up and
-    # nothing was journaled as `parked`.
+    # no park record was written.
     assert state.migrate_task != nil
-    {:ok, entries} = TaskJournal.read(inst)
-    refute Enum.any?(entries, &(&1.type == :parked))
+    assert ClassRegistry.parked(inst) == nil
 
     # Undo-and-continue: the rebind's seed leaves the floor where the commits put
     # it, so the unwound iterations' inputs are not owed again.
@@ -505,6 +631,13 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       inst = instance_id()
       assert Overwatch.migration_consent(state(inst, durable_workflow: false)) == :ready
     end
+
+    test "a stream that sleeps consents awake and asleep" do
+      inst = instance_id()
+      st = state(inst, durable_workflow: false, sleeps: true)
+      assert Overwatch.migration_consent(st) == :ready
+      assert Overwatch.migration_consent(%{st | suspended: true}) == :ready
+    end
   end
 
   describe "migration_ready barriers (processhub-deferred-migration)" do
@@ -519,7 +652,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
         {:error, :not_deferred}
       end)
 
-      {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+      {:noreply, suspended, :hibernate} =
+        Overwatch.handle_cast({:suspend, 2, park()}, state(inst))
 
       assert_receive {:migration_ready, hub_id, ^inst}
       assert hub_id == Identificator.hub("default")

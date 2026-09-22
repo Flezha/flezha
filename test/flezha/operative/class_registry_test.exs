@@ -1,11 +1,9 @@
 defmodule FlezhaTest.Operative.ClassRegistryTest do
   @moduledoc """
-  §1.2: `ClassRegistry` resolves `operative_class → kind` for the State
-  subsystem — in-memory ETS → durable sidecar → default `:stream` — so the
-  stream-only capabilities can be gated per class. An unknown class stays
-  fully stream (gating is only ever subtractive); a `:workflow` class reads
-  every stream-only flag false and its kind survives ETS eviction via the
-  sidecar.
+  `ClassRegistry` resolves what a class declared, and whether its instance is
+  asleep, for paths that carry only the class string: in-memory ETS → durable
+  sidecar → default. A sidecar exists only for a value other than its default,
+  and every value survives ETS eviction through it.
   """
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
@@ -19,20 +17,58 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
   end
 
-  test "an unknown class defaults to :stream and reads every flag true", %{class: class} do
+  test "an unknown class defaults to :stream", %{class: class} do
     assert ClassRegistry.get(class) == :stream
-    assert ClassRegistry.capable?(class, :time_travel?)
-    assert ClassRegistry.capable?(class, :dynamic_cells?)
-    assert ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
-  test "a :workflow class resolves and reads every stream-only flag false", %{class: class} do
-    :ok = ClassRegistry.put(class, :workflow)
+  test "the known kinds are the stream and the workflow" do
+    assert ClassRegistry.known_kind?(:stream)
+    assert ClassRegistry.known_kind?(:workflow)
+    refute ClassRegistry.known_kind?(:made_up_kind)
+  end
 
-    assert ClassRegistry.get(class) == :workflow
-    refute ClassRegistry.capable?(class, :time_travel?)
-    refute ClassRegistry.capable?(class, :dynamic_cells?)
-    refute ClassRegistry.capable?(class, :output_stall_watch?)
+  test "a class persists unless it declares otherwise, whichever kind it is", %{class: class} do
+    assert ClassRegistry.persistent?(class)
+
+    :ok = ClassRegistry.put(class, :workflow)
+    :ok = ClassRegistry.put_persistent(class, false)
+    refute ClassRegistry.persistent?(class)
+    assert File.read!(Path.join(Paths.class_dir(class), "persistence_off")) == "true"
+
+    :ok = ClassRegistry.delete(class)
+    refute ClassRegistry.persistent?(class), "the switch survives eviction"
+
+    :ok = ClassRegistry.put_persistent(class, true)
+    assert ClassRegistry.persistent?(class)
+    refute File.exists?(Path.join(Paths.class_dir(class), "persistence_off"))
+  end
+
+  test "the sleep setting defaults off and survives eviction", %{class: class} do
+    refute ClassRegistry.sleep_when_idle?(class)
+
+    :ok = ClassRegistry.put_sleep_when_idle(class, true)
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.sleep_when_idle?(class)
+
+    :ok = ClassRegistry.put_sleep_when_idle(class, false)
+    refute ClassRegistry.sleep_when_idle?(class)
+  end
+
+  test "a park record survives a table wipe and is gone once cleared", %{class: class} do
+    assert ClassRegistry.parked(class) == nil
+
+    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: 1_700_000, consumed_offset: nil})
+    :ets.delete_all_objects(:flezha_operative_class_registry)
+
+    assert ClassRegistry.parked(class) == %{wake_deadline_ms: 1_700_000, consumed_offset: nil}
+
+    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: nil, consumed_offset: 7})
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.parked(class) == %{wake_deadline_ms: nil, consumed_offset: 7}
+
+    :ok = ClassRegistry.put_parked(class, nil)
+    :ets.delete_all_objects(:flezha_operative_class_registry)
+    assert ClassRegistry.parked(class) == nil
   end
 
   test "an :stream put writes no sidecar; a :workflow put does", %{class: class} do
@@ -51,7 +87,6 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     # ETS entry gone, durable sidecar remains → still resolves :workflow, so a
     # process-less retention sweep over retained state gets the right kind.
     assert ClassRegistry.get(class) == :workflow
-    refute ClassRegistry.capable?(class, :time_travel?)
   end
 
   test "a garbage sidecar resolves to the default", %{class: class} do
@@ -137,7 +172,9 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         leaf_tasks: [1, 2],
         correction_window_ms: 60_000,
         compact_after_bytes: 4_194_304,
-        sync_durability: true
+        sync_durability: true,
+        persistent: false,
+        sleep_when_idle: true
       })
 
     assert ClassRegistry.effectively_once?(class)
@@ -147,6 +184,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     assert ClassRegistry.correction_window_ms(class) == 60_000
     assert ClassRegistry.compact_after_bytes(class) == 4_194_304
     assert ClassRegistry.sync_durability?(class)
+    refute ClassRegistry.persistent?(class)
+    assert ClassRegistry.sleep_when_idle?(class)
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
@@ -158,7 +197,9 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         leaf_tasks: nil,
         correction_window_ms: nil,
         compact_after_bytes: nil,
-        sync_durability: false
+        sync_durability: false,
+        persistent: true,
+        sleep_when_idle: false
       })
 
     refute ClassRegistry.effectively_once?(class)
@@ -168,6 +209,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     refute ClassRegistry.correction_window_ms(class)
     refute ClassRegistry.compact_after_bytes(class)
     refute ClassRegistry.sync_durability?(class)
+    assert ClassRegistry.persistent?(class)
+    refute ClassRegistry.sleep_when_idle?(class)
   end
 
   test "sync durability defaults false, survives eviction, and reverts when dropped",

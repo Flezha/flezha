@@ -20,16 +20,14 @@ use super::instance::{
     AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Message, MidResume,
     Pass, PassSheet, Phase, Release, Stage, StageState, Undo, UndoStep, Value, WorkflowRun,
 };
-use super::resume::{
-    carried_channel, iter_park, journaled_stages, park_idle, resumed_seed, seed_from_journal, Seed,
-    OWED_INBOX_WAIT,
-};
+use super::resume::{carried_channel, journaled_stages, resumed_seed, seed_from_journal, Seed};
 use super::spec::{EntryChain, WorkflowSpec};
 use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge, OverflowPolicy};
-use crate::operative::instance::OperativeInstance;
 use crate::host::HostPayload;
+use crate::operative::instance::OperativeInstance;
+use crate::operative::sleep::{iter_park, park_idle, OWED_INBOX_WAIT};
 use crate::operative::topology::{CellMode, TaskletDescriptor};
 use crate::pb::command_request::Command;
 use crate::routing::Destination;
@@ -63,7 +61,7 @@ impl<'a> Run<'a> {
     /// the `TaskCommit` handshake and output staging. A transport-less run
     /// has no journal, so its plugin output goes straight to the wire.
     pub(crate) fn journaling(&self) -> bool {
-        self.inst.persistence_enabled() && crate::runner::coordinator_installed()
+        self.inst.durable()
     }
 
     pub(crate) fn task(&self, node: usize) -> &TaskletDescriptor {
@@ -201,7 +199,6 @@ pub fn message(
 pub fn entry_parked(inst: &OperativeInstance, offset: Option<u64>) {
     if let Some(r) = Run::of(inst) {
         r.decide(|d| {
-            d.s.owed_inbox = d.s.owed_inbox.saturating_sub(1);
             d.s.parked_offset = d.s.parked_offset.max(offset);
             d.rearm_park_idle();
         });
@@ -307,7 +304,9 @@ pub fn attempt_failed(slot: &Arc<CellSlot>) {
 
 /// One of a stage's items settled, its outputs already held.
 pub fn item_settled(slot: &Arc<CellSlot>) {
-    with_cell(slot, |r, node, cell| r.decide(|d| d.settled(node, cell, slot)));
+    with_cell(slot, |r, node, cell| {
+        r.decide(|d| d.settled(node, cell, slot))
+    });
 }
 
 /// Items consumed without running: a dead pass's queue, a disarmed retry.
@@ -892,7 +891,7 @@ impl Decide<'_, '_, '_> {
     // -- messages and passes -----------------------------------------------------
 
     /// Back at a committed boundary: the next queued message starts its pass,
-    /// or the instance waits, and a journaling one arms its park.
+    /// or the instance waits, and one whose class sleeps arms its park.
     fn enter_waiting(&mut self) {
         self.s.pass = None;
         if self.cancelled() {
@@ -916,10 +915,10 @@ impl Decide<'_, '_, '_> {
     /// is still owed (a park then would drop it at the socket), else the park
     /// idle.
     fn rearm_park_idle(&mut self) {
-        if self.s.phase != Phase::Waiting || !self.r.journaling() {
+        if self.s.phase != Phase::Waiting || !self.r.inst.sleeps() {
             return;
         }
-        let idle = if self.s.owed_inbox > 0 {
+        let idle = if self.r.inst.owed_inbox() > 0 {
             OWED_INBOX_WAIT
         } else {
             park_idle()
@@ -928,7 +927,6 @@ impl Decide<'_, '_, '_> {
     }
 
     fn arrived(&mut self, message: Message) {
-        self.s.owed_inbox = self.s.owed_inbox.saturating_sub(1);
         if self.s.phase == Phase::Waiting && self.message_fed() {
             self.disarm(Deadline::ParkIdle);
             self.s.phase = Phase::Starting;
@@ -1446,6 +1444,9 @@ impl Decide<'_, '_, '_> {
                 if self.s.parks_in_flight > 0 {
                     return self.arm(Deadline::ParkIdle, ADMIT_RETRY);
                 }
+                if !self.r.inst.cells_idle() {
+                    return self.arm(Deadline::ParkIdle, park_idle());
+                }
                 self.park();
             }
             Deadline::MaxDuration => self.stop(),
@@ -1474,9 +1475,12 @@ impl Decide<'_, '_, '_> {
     /// without a completion.
     fn park(&mut self) {
         let iter = self.s.iter.saturating_sub(1);
-        self.fx
-            .control
-            .push(iter_park(self.r, iter, self.s.parked_offset));
+        self.fx.control.push(iter_park(
+            &self.r.inst.instance_id,
+            iter,
+            self.r.spec.wake_after,
+            self.s.parked_offset,
+        ));
         self.s.phase = Phase::Parked;
         self.clear_waits();
     }
@@ -1707,10 +1711,10 @@ impl Run<'_> {
         }
         let core = crate::poll_core::global();
         for (deadline, due) in disarm {
-            core.disarm_workflow(self.run.seq, deadline, due);
+            core.disarm_instance(self.inst.seq, deadline, due);
         }
         for (deadline, due) in arm {
-            core.arm_workflow(self.weak(), self.run.seq, deadline, due);
+            core.arm_instance(self.weak(), self.inst.seq, deadline, due);
         }
         self.admit(admit);
         for slot in cancel_retries {

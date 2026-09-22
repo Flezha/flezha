@@ -238,13 +238,21 @@ defmodule Flezha.State.TimeTravelTest do
              TimeTravel.query(pid, {:seq, 50})
   end
 
-  test "rejects a query for a workflow (non-time-travel) class" do
+  test "a workflow Cell answers a point-in-time query as a stream Cell does" do
     class = "tt_workflow_" <> uniq()
     :ok = ClassRegistry.put(class, :workflow)
     on_exit(fn -> ClassRegistry.delete(class) end)
+    cell_id = {class, "task", "seg"}
+    header = TestHelpers.stub_header()
+    {:ok, _} = Supervisor.find_or_start(cell_id)
+    {:ok, srv} = Supervisor.lookup(cell_id)
 
-    assert {:error, %{kind: :unsupported_for_kind}} =
-             TimeTravel.query({class, "task", "seg"}, {:seq, 0})
+    for n <- 0..3, do: :ok = WalWriter.append(srv, n, header, "i" <> Integer.to_string(n))
+    {:ok, _} = Snapshot.write_snapshot(cell_id, 1, header, "iter@1")
+
+    assert {:ok, result} = TimeTravel.query(cell_id, {:seq, 3})
+    assert result.snapshot_bytes == "iter@1"
+    assert result.terminal_seq == 3
   end
 end
 
@@ -469,49 +477,31 @@ defmodule Flezha.State.RetentionTest do
     end
   end
 
-  describe "time-travel retention gating (kind-aware)" do
-    test "a workflow class is swept as retention_hours=0 (older snapshot reaped)" do
+  describe "time-travel retention" do
+    test "keeps the older snapshot under the window for a stream and a workflow alike" do
       header = TestHelpers.stub_header()
-      class = "bnd_ret_" <> uniq()
-      pid = {class, "task", "seg"}
-      ClassRegistry.put(class, :workflow)
-      on_exit(fn -> ClassRegistry.delete(class) end)
 
-      {:ok, _} = Supervisor.find_or_start(pid)
-      {:ok, srv} = Supervisor.lookup(pid)
-      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x")
-      {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
-      {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
+      for kind <- [:stream, :workflow] do
+        class = "ret_#{kind}_" <> uniq()
+        pid = {class, "task", "seg"}
+        ClassRegistry.put(class, kind)
+        on_exit(fn -> ClassRegistry.delete(class) end)
 
-      # snap@2 predates the window; a workflow class has no time-travel, so the
-      # sweep forces retention_hours=0 → only the latest snapshot survives.
-      File.touch!(Paths.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
-      Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
+        {:ok, _} = Supervisor.find_or_start(pid)
+        {:ok, srv} = Supervisor.lookup(pid)
+        for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x")
+        {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
+        {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
 
-      :ok = Retention.sweep_now()
+        # snap@2 is older than the 48h window, so it stays as the floor a
+        # point-in-time query reads from.
+        File.touch!(Paths.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
+        Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
 
-      assert [{5, _}] = Paths.snapshot_paths(pid)
-    end
+        :ok = Retention.sweep_now()
 
-    test "a stream class keeps the older snapshot under the same window" do
-      header = TestHelpers.stub_header()
-      class = "cont_ret_" <> uniq()
-      pid = {class, "task", "seg"}
-
-      {:ok, _} = Supervisor.find_or_start(pid)
-      {:ok, srv} = Supervisor.lookup(pid)
-      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x")
-      {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
-      {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
-
-      # Same setup, but a (default) stream class keeps snap@2 as the
-      # retention floor because it is older than the 48h window.
-      File.touch!(Paths.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
-      Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
-
-      :ok = Retention.sweep_now()
-
-      assert [{2, _}, {5, _}] = Paths.snapshot_paths(pid)
+        assert [{2, _}, {5, _}] = Paths.snapshot_paths(pid), "#{kind}"
+      end
     end
   end
 

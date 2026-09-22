@@ -24,42 +24,19 @@ defmodule Flezha.State.PersistenceResolver do
 
   require Logger
 
-  @default_persistence_enabled true
-
+  @doc """
+  Whether `operative_class` keeps durable per-Cell state (WAL, snapshots,
+  bind-time restore, live Cell reads), for either kind: the operator's
+  `:operative_persistence` override, then the class's own switch as the
+  runner announced it (`ClassRegistry.persistent?/1`, on unless declared off).
+  """
   @spec persistence_enabled?(binary(), map()) :: boolean()
   def persistence_enabled?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
     resolve(:operative_persistence, :operative_persistence_enabled, operative_class, metadata,
       valid: &is_boolean/1,
-      default: fn -> @default_persistence_enabled end
+      default: fn -> ClassRegistry.persistent?(operative_class) end
     )
   end
-
-  @doc """
-  Whether an operative of `kind` + `operative_class` has durable per-Cell
-  state (WAL + snapshot + restore) — the kind+class resolution of the
-  `persistent_state?` capability that gates bind-time restore (crash-resume)
-  and `:get_cell_state` introspection:
-
-    * `:stream` — always durable.
-    * `:workflow` — durable **by default**, opt-out per class (same precedence
-      as `persistence_enabled?/2`: operator override → instance metadata →
-      default `true`).
-    * any other kind — not durable.
-
-  Distinct from the pure per-kind `Flezha.Operative.Kind.capable?/2` flags
-  (`time_travel?`, `dynamic_cells?`, `output_stall_watch?`) which a durable
-  workflow operative does NOT inherit.
-  """
-  @spec persistent_state?(atom(), binary(), map()) :: boolean()
-  def persistent_state?(kind, operative_class, metadata \\ %{})
-
-  def persistent_state?(:stream, _operative_class, _metadata), do: true
-
-  def persistent_state?(:workflow, operative_class, metadata)
-      when is_binary(operative_class),
-      do: persistence_enabled?(operative_class, metadata)
-
-  def persistent_state?(_kind, _operative_class, _metadata), do: false
 
   @spec retention_hours(binary(), map()) :: non_neg_integer()
   def retention_hours(operative_class, metadata \\ %{}) when is_binary(operative_class) do

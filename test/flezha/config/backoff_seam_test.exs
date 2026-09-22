@@ -152,7 +152,7 @@ defmodule Flezha.Config.BackoffSeamTest do
       commit = File.read!("flz_core/src/workflow/commit.rs")
       liveness = File.read!("flz_transport/src/transport/liveness.rs")
       shutdown = File.read!("flz_core/src/shutdown.rs")
-      resume = File.read!("flz_core/src/workflow/resume.rs")
+      sleep = File.read!("flz_core/src/operative/sleep.rs")
 
       retry = Knob.ladder(:sdk_retry)
       reconnect = Knob.ladder(:sdk_reconnect)
@@ -178,7 +178,7 @@ defmodule Flezha.Config.BackoffSeamTest do
                rust_const(liveness, "DEFAULT_IDLE_TIMEOUT_MS")
 
       assert Durations.default(:sdk_spawn_reply_ms) == rust_const(shutdown, "REPLY_TIMEOUT")
-      assert Durations.default(:sdk_owed_inbox_wait_ms) == rust_const(resume, "OWED_INBOX_WAIT")
+      assert Durations.default(:sdk_owed_inbox_wait_ms) == rust_const(sleep, "OWED_INBOX_WAIT")
     end
 
     test "both runtimes reset the reconnect ladder on a completed handshake, and only there" do

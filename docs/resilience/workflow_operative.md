@@ -91,21 +91,26 @@ answered once synced and stamped `flz.offset` (0-based; absent means not journal
 absorbed, from an in-memory index the log builds from the file on the first append that
 carries an id; a message without an id is always appended. The instance's floor is the log's
 watermark under the journal's identity, seeded at every bind from the journal's **released**
-offset (the maximum consumed offset of any iteration commit or park over the raw journal, which
-no rewind lowers) and raised by every commit and park, so a consumed message is never
-re-delivered. The appends debit the source credit window like a stream's, so a sender with
+offset (the maximum consumed offset of any iteration commit over the raw journal, which no rewind
+lowers) and from the park record while the instance sleeps, and raised by every commit and park,
+so a consumed message is never re-delivered. The appends debit the source credit window like a stream's, so a sender with
 16 MiB owed by one instance parks until it commits.
 
-**Suspension.** An instance of any loop mode whose inbox stays empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
-(default 5 000; read in the shared core, so Rust and Java agree, and by the Elixir SDK's own driver) at a committed boundary tears
-its run down without a completion and ships `IterPark`, naming the last message it parked to
-the dead-letter queue unread. The controller journals
-`parked(iter[, wake_deadline_ms], consumed_offset)` and reports that offset into the input
-log's watermark, releasing the message as an iteration commit releases its input, **before**
-`Migration.suspend/3` evicts the instance
-(`RemOperative`, runner tag `nil`); a park whose append fails leaves the instance bound and
-logged. The Overwatch and the registry entry stay, and the Overwatch **hibernates**
-(`:hibernate` on both suspension entries, releasing its bind-time heap).
+**Suspension.** Sleeping when idle is a class setting of both kinds, `sleep_when_idle`, on by
+default for a workflow whose persistence is on; a class that declares it with persistence off is
+refused at registration as `SleepWithoutPersistence`. An instance of any loop mode whose class
+sleeps and whose inbox stays empty past `FLEZHA_PARK_IDLE_MS` (default 600 000; read in the
+shared core, so every host SDK agrees, and by the Elixir SDK's own driver) at a committed
+boundary, with every Cell drained, asks to sleep without a completion and ships `IterPark`,
+naming the last message it parked to the dead-letter queue unread. The controller writes the
+instance's park record (`ClassRegistry.put_parked/2`, an ETS entry and a durable sidecar in the
+class directory, never a journal entry) and reports that offset into the input log's watermark,
+releasing the message as an iteration commit releases its input, **before**
+`Migration.suspend/3` evicts the instance (`RemOperative`, runner tag `nil`); a park whose record
+fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
+Overwatch **hibernates** (`:hibernate` on both suspension entries, releasing its bind-time heap).
+A stream that sleeps takes the same path at iteration `0`
+([`data_durability.md`](data_durability.md#sleeping-instances)).
 
 | Surface | While suspended |
 | --- | --- |
@@ -113,6 +118,8 @@ logged. The Overwatch and the registry entry stay, and the Overwatch **hibernate
 | convergence loop | skipped (`suspended?`), plugin diff included — its plugins left with the runner and the rehydrating bind replays them |
 | namespace hub | outlives its runner: `HubManager.stop_hub_if_vacant/1` stops a hub only with no operative registered, so a parked fleet survives its sole runner dying |
 | `flz state get` | refused — no live Cell |
+| `flz operative stop` | wakes it onto a runner with the stop carried: `WorkflowStop` follows the bind, and it ends `cancelled` with its record and directory kept, as it would stopped awake. With no runner to wake on, the hard removal |
+| input-silence sweep | never flags it: the sweep skips a class whose park record exists |
 | removing its factory from the runner | the SDK's live-instance check cannot see a suspended instance, so the removal succeeds and the later rehydrate fails placement until a runner re-defines the factory; `FleetManager` warns `dropped factory ... that still has controller-known operatives` on the `UpdateFactories` frame. A blocking policy is deferred |
 
 **Rehydrate = bind.** A new input-log append, the wake deadline, a crash and a migration all go
@@ -129,14 +136,16 @@ un-park is still binding wins (`parked_in_flight` discards the task's stale boun
 pending tail wakes it again). A workflow's journal, Cells and input log share one key, its
 instance id, so a bind whose `:operative_class` names anything else is refused.
 
-**The wake timer** (`wake_after()` / `wakeAfter()`) is journaled with the park record and
-re-armed with `Process.send_after` from the journal at boot, so it survives a controller
-redeploy. It fires by appending a synthetic empty input-log record (`flz.wake = timer`), so a racing
-message and timer collapse into one rehydration. At boot an instance whose journal ends in
-`parked` with nothing undelivered (`Migration.suspended_on_disk?/1`) enters suspended without
-binding; undelivered input outranks the park. Inspect with `flz state journal <operative/instance>`
-(entries tagged with their iteration, `iter_committed` with its consumed offset or "consumed no
-journaled input", the final `parked`) and `flz state inbox <operative/instance>` (the input log's
+**The wake timer** (`wake_after()` / `wakeAfter()`) is kept in the park record and re-armed
+with `Process.send_after` from it at boot, so it survives a controller redeploy. It fires by
+appending a synthetic empty input-log record (`flz.wake = timer`), so a racing message and timer
+collapse into one rehydration. At boot an instance with a park record and nothing undelivered
+(`Migration.suspended_on_disk?/1`) enters suspended without binding; undelivered input outranks
+the park. The bind that wakes it clears the record before the runner is told to start the
+instance, so a park landing after the start keeps its own record. Inspect with
+`flz state journal <operative/instance>` (entries tagged with their iteration, `iter_committed`
+with its consumed offset or "consumed no journaled input"; the journal records no park) and
+`flz state inbox <operative/instance>` (the input log's
 retained records, and which are still above the floor). `flz operative replay` refuses a
 workflow Cell, since its baseline is a journal iteration, not an effect record; `flz operative
 rewind` is a loop's way back.
@@ -194,7 +203,7 @@ flz operative rewind <instance> --to-iteration N
 2. **The marker.** `TaskJournal.append_rewound/2` appends `rewound(N)` at `current_epoch + 1` with
    a synchronous fsync. The fold purges accumulated entries with `iter > N` and keeps everything
    appended after the marker, so a rewound iteration's unflushed outbox ceases to be owed.
-3. **Evict and rehydrate unconditionally** — a rebind, not a park: no `parked` entry, no wake
+3. **Evict and rehydrate unconditionally**: a rebind, not a park: no park record, no wake
    timer, and the loop comes back with no input waiting because it must run the undo.
 
 The undo list rides `TaskJournalState.rewind_undo`: the tasklets committed before the marker at
@@ -247,9 +256,11 @@ and hooks are idempotent.
 ## Durability: staged commit, task.journal, outbox, crash-resume
 
 A class is durable by default and opts out with `PERSISTENCE_ENABLED = false` /
-`persistenceEnabled()`; the controller resolves it in `PersistenceResolver.persistent_state?/3`
-(operator override available). Opted out, the per-Cell flush drains and discards — no WAL,
-snapshot, journal or handshake — and a crash re-runs from the top.
+`persistenceEnabled()`, the switch a stream class carries too; the runner announces it
+(`persistent = "false"` in the `AddOperative` response) and the controller resolves it in
+`PersistenceResolver.persistence_enabled?/1` (operator override available). Opted out, the
+per-Cell flush drains and discards (no WAL, snapshot, journal or handshake); a crash re-runs
+from the top, a live Cell read answers `{:error, :persistence_off}`, and the class cannot sleep.
 
 **The commit path.** When a stage's last item settles, the worker that settled it ships
 `TaskCommit` (`task_idx`, `iter`, `cells_ran`, the handoff through the channel's codec, the
@@ -318,17 +329,19 @@ mismatch. An opted-out class leaves no state to retain; its record is best-effor
 | `:default_workflow_completed_retention_hours`, env `FLEZHA_WORKFLOW_RETENTION_HOURS` | 72 |
 | `:workflow_completed_retention_hours` — `%{<class> => hours}` per-class override | none |
 
-## Capability split
+## What decides each behaviour
 
-`Flezha.Operative.Kind` declares per-kind capabilities; an undeclared flag reads `false`, and an
-unknown class defaults to `:stream`, so every gate is subtractive.
+No behaviour is attached to a kind. Each follows from what the class declares or from the
+instance's own state:
 
-| Flag | Meaning | `:stream` | `:workflow` |
-| --- | --- | --- | --- |
-| `persistent_state?` | per-Cell WAL + restore, state introspection | always | durable by default, per-class opt-out (`PersistenceResolver.persistent_state?/3`) |
-| `time_travel?` | point-in-time queries, retention beyond the latest snapshot (`flz state at`) | yes | no |
-| `dynamic_cells?` | lazy per-key Cells, destructive idle eviction | yes | runner side yes (evicted only between passes and never within a rollback's reach); the controller refuses the evicted Cell's state delete and keeps the state, a gate that goes with this table |
-| `output_stall_watch?` | per-Cell output-staleness watchdog → forced rebind | yes | no |
+| Behaviour | Decided by |
+| --- | --- |
+| per-Cell WAL, bind-time restore, live Cell reads (`flz state get`) | the class's persistence switch |
+| sleeping when idle, and the durable input a sleeping stream keeps | the class's sleep setting |
+| point-in-time queries and history retention (`flz state at`, `time_travel_retention_hours`) | nothing: a workflow Cell keeps history like a stream Cell, then finished-job retention reclaims the directory |
+| dynamic Cells and their destructive idle eviction | nothing: a workflow evicts only between passes and never within a rollback's reach, and the controller deletes the evicted Cell's state |
+| output-stall watch and the forced rebind it drives | nothing: a wedged workflow is rebound and resumes at its stage |
+| input-silence sweep | the instance's state: never a sleeping instance, never a checkpoint-ack class between checkpoints |
 
 ## How many instances a runner holds
 
@@ -369,10 +382,15 @@ mapping) run on the worker that produced the value, as on a stream.
   a graceful stop lets a running instance migrate; a SIGKILL forces crash-resume.
 - **Retention grows disk for many small jobs.** Opt out for fire-and-forget, or lower
   `FLEZHA_WORKFLOW_RETENTION_HOURS`. Workflow is not the high-throughput path.
+- **A sleeper costs a bind to stop.** Stopping a suspended workflow restores it onto a runner
+  first, so it can end `cancelled` exactly as it would awake; with no runner it is removed hard.
+- **History grows with the retention window.** A workflow Cell keeps point-in-time history for
+  `time_travel_retention_hours`; set it to `0` for a class that wants only its latest snapshot.
 - **Proof:** `test/system/workflow_crash_resume_e2e_test.exs` and
   `test/system/workflow_control_flow_e2e_test.exs` — SIGKILL mid-run and mid-compensation, the
-  fan-in diamond, the outbox re-drive, cell retry, park and rehydrate, rewind; on Rust and
-  Java, UDS and QUIC.
+  fan-in diamond, the outbox re-drive, cell retry, park and rehydrate, stopping a sleeper,
+  rewind; `test/system/sleep_when_idle_e2e_test.exs` for a sleeping stream and the persistence
+  switch; on every SDK runtime, UDS and QUIC.
 
 ## See also
 

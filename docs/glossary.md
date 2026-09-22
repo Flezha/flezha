@@ -36,8 +36,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Operative** — the unit you start and stop (`flz operative start|stop|list|info`), registered
   under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operative` base),
   with a **kind**, `stream` or `workflow`, that its class declares and its runner announces with
-  the factory id; a start names only the factory, and the kind is frozen for the instance's life
-  (`Flezha.Operative.Kind`).
+  the factory id; a start names only the factory, and the kind is frozen for the instance's life.
+  No behaviour is attached to the kind: persistence and sleeping are class settings of both.
+- **Sleeping**: an instance whose class declares `sleep_when_idle` (on by default for a durable
+  workflow, off for a stream) and has been idle for `FLEZHA_PARK_IDLE_MS` ships `IterPark`, is
+  evicted from its runner (`suspended`) and wakes on its next message with its Cells restored.
+  Refused as `SleepWithoutPersistence` on a class whose persistence is off.
 - **Stream operative** — the always-on kind: an endless input, no barrier, per-cell recovery.
   Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
 - **Workflow operative** — the terminating kind: a DAG of tasklets run level by level behind a
@@ -161,7 +165,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Park** — four senses, all "hold, never drop": a **DLQ park** ships a retry-exhausted payload
   durably to the controller (`park_payload` / `ParkPayloadAck`, or inside the effect record)
   before the cell advances; a **credit park** waits for a grant; a **key-group park** refuses a
-  mis-routed key; an **`IterPark`** suspends a workflow loop.
+  mis-routed key; an **`IterPark`** asks for an idle instance of either kind to sleep.
 - **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
   (`Flezha.Dlq.Store`, `app_data/dlq/<operative_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
@@ -199,7 +203,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Task journal** — the per-instance append-only journal of workflow progress
   (`<state_root>/<namespace>/<instance_id>/<instance_id>/task.journal`, `Flezha.State.TaskJournal`)
   on the WAL substrate under a reserved cell key. Its entries (`task_committed`, `outbox_flushed`,
-  `iter_committed`, `parked`, `compensated`, `rewound`) are folded, never truncated.
+  `iter_committed`, `compensated`, `rewound`) are folded, never truncated. Where an instance
+  sleeps is not the journal's but its park record's, beside the class's declarations.
 - **Stage barrier / `TaskCommit`** — when a tasklet's last item settles, the runner ships one
   `TaskCommit` for it `{cells_ran, handoff, staged outbox}`; the controller journals it and acks,
   and only then do its outputs reach its children. Siblings commit independently. A committed

@@ -158,18 +158,25 @@ defmodule Flezha.Operative.Lifecycle do
     with {:ok, state} <- Plugins.prepare(state, plugins),
          {:ok, state, operative} <- Plugins.resolve_init_state(state, operative),
          operative =
-           with_resume_state(operative, state.builder.kind, Overwatch.operative_class(state)),
+           with_resume_state(operative, Overwatch.operative_class(state)),
+         # A park landing after the runner starts the instance writes a record
+         # that stays; a failed start leaves none for a boot to take for a sleep.
+         :ok <- ClassRegistry.put_parked(Overwatch.operative_class(state), nil),
          {:ok, add_operative_raw, state} <- start_once(state, operative, owner),
          # The class's SDK-side declarations ride the AddOperative response;
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
-         %{effectively_once: effectively_once, correction_window_ms: correction_window_ms} =
-           declarations = ClassRegistry.decode_declarations(add_operative_raw),
+         %{
+           effectively_once: effectively_once,
+           correction_window_ms: correction_window_ms,
+           sleep_when_idle: sleeps
+         } = declarations = ClassRegistry.decode_declarations(add_operative_raw),
          state =
            %{
              state
              | effectively_once: effectively_once,
-               correction_window_ms: correction_window_ms
+               correction_window_ms: correction_window_ms,
+               sleeps: sleeps
            }
            |> Map.put(:init_error, nil),
          :ok <- await_stream_bound(state),
@@ -182,9 +189,9 @@ defmodule Flezha.Operative.Lifecycle do
              operative.factory_id,
              Overwatch.operative_class(state)
            ),
-         # Tier: restore every persisted Cell (awaited) before the tail is
-         # re-forwarded onto them.
-         {:ok, state} <- tier_restore(state, effectively_once),
+         # The tier and a sleeping stream: restore every persisted Cell
+         # (awaited) before the tail is re-forwarded onto them.
+         {:ok, state} <- awaited_restore(state),
          # Once per bind, for either kind, BEFORE sources activate: the log's
          # tail above the floor reaches the runner ahead of fresh input (fold
          # order at the SDK), whether this bind is a fresh start, a crash
@@ -206,11 +213,10 @@ defmodule Flezha.Operative.Lifecycle do
     # on it.
     {state, _not_running} = Plugins.bring_up(state)
 
-    # Record this class's kind so the State subsystem can gate stream-only
-    # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-    # workflow operative — plus every SDK declaration (the Overwatch pid the
-    # fsync-gated outbox flush dispatches `:on_output` through was recorded
-    # before the SDK started).
+    # Record this class's kind and every SDK declaration for the paths that
+    # hold only the class string (the Overwatch pid the fsync-gated outbox
+    # flush dispatches `:on_output` through was recorded before the SDK
+    # started).
     operative_class = Overwatch.operative_class(state)
     _ = ClassRegistry.put(operative_class, state.builder.kind)
     _ = ClassRegistry.put_declarations(operative_class, declarations)
@@ -243,12 +249,13 @@ defmodule Flezha.Operative.Lifecycle do
   # runner, so the operative parks rather than folding new inputs onto empty
   # state. Rides the existing parked-error contract, so `bind/3` needs no new
   # failure arm.
-  defp tier_restore(state, false), do: {:ok, state}
-
-  defp tier_restore(state, true) do
-    case Replay.restore_tier_cells(state) do
+  defp awaited_restore(state) do
+    with true <- Replay.awaited_restore?(state),
+         {:error, reason} <- Replay.restore_cells_awaited(state) do
+      {:error, {:restore_refused, reason}, state}
+    else
+      false -> {:ok, state}
       {:ok, state} -> {:ok, state}
-      {:error, reason} -> {:error, {:restore_refused, reason}, state}
     end
   end
 
@@ -300,22 +307,15 @@ defmodule Flezha.Operative.Lifecycle do
 
   # Stamp everything a resuming bind carries onto the operative's opts so
   # `control_unit` can set the `AddOperative` fields: how many Cell restores
-  # to wait for, the task-journal the driver resumes its iteration from, and how
-  # many inputs the bind's re-forward owes it. Only a workflow instance has a
-  # journal and a driver that counts its tail, and the kind check is what keeps
-  # a stream bind from reading for a file that cannot exist.
-  defp with_resume_state(operative, kind, operative_class) do
+  # to wait for, the task-journal the run resumes its iteration from, and how
+  # many inputs the bind's re-forward owes it, for any instance whose input is
+  # journaled. A class without a journal or an input log reads `nil` and `0`.
+  defp with_resume_state(operative, operative_class) do
     opts =
       operative.opts
-      |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(kind, operative_class))
-      |> Keyword.put(
-        :task_journal,
-        if(kind == :workflow, do: Commands.task_journal_state(operative_class))
-      )
-      |> Keyword.put(
-        :inbox_tail_count,
-        if(kind == :workflow, do: Replay.owed_count(operative_class), else: 0)
-      )
+      |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(operative_class))
+      |> Keyword.put(:task_journal, Commands.task_journal_state(operative_class))
+      |> Keyword.put(:inbox_tail_count, Replay.owed_count(operative_class))
 
     %{operative | opts: opts}
   end
@@ -484,8 +484,8 @@ defmodule Flezha.Operative.Lifecycle do
   # Suspension (`workflow-durable-suspension`)
   # ---------------------------------------------------------------
 
-  # The durable timer: a `parked` record's wake deadline, re-armed from the
-  # journal on every boot, so it survives a controller redeploy. Armed here on
+  # The durable timer: a park record's wake deadline, re-armed from the record
+  # on every boot, so it survives a controller redeploy. Armed here on
   # the Overwatch's behalf, under the `:wake` key that module declares.
   @spec arm_wake_timer(Overwatch.t(), non_neg_integer() | nil) :: Overwatch.t()
   def arm_wake_timer(%Overwatch{} = state, nil), do: state
@@ -495,7 +495,7 @@ defmodule Flezha.Operative.Lifecycle do
     %Overwatch{state | timers: Timer.arm(state.timers, :wake, delay, :wake_deadline)}
   end
 
-  # Cancel the journaled wake timer, if one is armed.
+  # Cancel the recorded wake timer, if one is armed.
   @spec cancel_wake_timer(Overwatch.t()) :: Overwatch.t()
   def cancel_wake_timer(%Overwatch{} = state),
     do: %Overwatch{state | timers: Timer.cancel(state.timers, :wake)}

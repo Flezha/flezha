@@ -4,7 +4,7 @@
 //! bit.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
@@ -30,6 +30,10 @@ pub fn fnv1a128(mut hash: u128, bytes: &[u8]) -> u128 {
 }
 
 pub const KEY_GROUPS: u32 = 256;
+
+/// Every instance's identity on the deferred-wake list: never reused, where
+/// an instance id comes back with a rehydration.
+static INSTANCE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// `fnv1a128(key) mod 256`; each partition owns a contiguous range.
 pub fn key_group(key: &str) -> u32 {
@@ -105,6 +109,9 @@ pub struct OperativeInstance {
     pub(crate) ladders: AtomicUsize,
     /// Resolved once at start from the class const and the runner override.
     persistence_enabled: bool,
+    pub(crate) seq: u64,
+    /// The owed input tail and, for a stream, its idle deadline.
+    pub(crate) idle: crate::operative::sleep::IdleWatch,
     /// `Some` for a workflow class: the pass sheet its events advance.
     pub workflow: Option<crate::workflow::WorkflowRun>,
 }
@@ -169,6 +176,8 @@ impl OperativeInstance {
                 background_stop,
                 background_handles: Mutex::new(background_handles),
                 persistence_enabled,
+                seq: INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed),
+                idle: Default::default(),
                 workflow: topology_is_workflow
                     .then(|| crate::workflow::WorkflowRun::new(Weak::clone(weak))),
             }
@@ -234,6 +243,12 @@ impl OperativeInstance {
 
     pub fn persistence_enabled(&self) -> bool {
         self.persistence_enabled
+    }
+
+    /// Whether this instance's state is durable: persistence on, and a
+    /// controller to ship it to. A transport-less run keeps nothing.
+    pub(crate) fn durable(&self) -> bool {
+        self.persistence_enabled && crate::runner::coordinator_installed()
     }
 
     /// Stop and join the reapers; idempotent.

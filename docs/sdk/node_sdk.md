@@ -111,6 +111,12 @@ written on `defineStream`, full form or short, are refused where it runs,
 naming them. Synchronous durability is only the definition's `syncDurability`
 field; the builder has no call for it.
 
+**Persistence and sleeping are settings of both kinds.** Either definition
+takes `persistent` (default `true`) and `sleepWhenIdle`, which defaults to
+`persistent` on a workflow and to `false` on a stream; `sleepWhenIdle: true`
+with `persistent: false` is refused at registration as
+`SleepWithoutPersistence`.
+
 **Retry belongs to the edge, for both kinds.** `retryMax` and `retryBackoffMs`
 on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
 and `retryMax(1)` fails fast.

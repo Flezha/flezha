@@ -58,7 +58,8 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Workflow operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet and its handoff, so committed tasks are skipped, not redone. Inspect with `flz state journal`. |
 | **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** | At-least-once | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
 | **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
-| **Controller redeploy while a workflow instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
+| **Input sent to a sleeping stream instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once. |
+| **Controller redeploy while an instance of either kind is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
 | **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
 | **Workflow operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Poison payload** (fails every retry) | **No loss** | Cell continues | Retry-then-park: after `retry_max` attempts the payload is parked durably to the DLQ *before* the Cell advances. Only retention (30 d / 4 GiB, loud) ever discards it. |
@@ -326,7 +327,8 @@ while a message without an id is always appended.
 What differs is the reporter. A workflow's Cells report no consumed offset; its journal does,
 under its own reserved identity: each durable iteration commit (and a park that dead-lettered a
 message unread) reports the offset it consumed into the log's watermark, and every bind seeds
-that row from the highest offset any committed iteration consumed. The watermark is the
+that row from the highest offset any committed iteration consumed, and from the park record
+while the instance sleeps. The watermark is the
 instance's floor: retention reclaims below it, the bind re-forwards the retained records above
 it, and a rewind never lowers it, so a deferred truncation costs disk, never a re-delivery.
 
@@ -339,6 +341,27 @@ commits an iteration, instead of growing the log without bound.
 lost**. Inspect with `flz state inbox <operative/instance>`, which renders the log of either
 kind. An opted-out class keeps its waiting messages in memory only. Mechanics:
 [`workflow_operative.md`](workflow_operative.md) "Durable loop and suspension".
+
+## Sleeping instances
+
+Sleeping when idle is a class setting of both kinds, `sleep_when_idle`: on by default for a
+workflow whose persistence is on, off for a stream, and refused as `SleepWithoutPersistence` on a
+class whose persistence is off. An instance whose Cells hold nothing queued, in flight, retrying,
+unflushed or timed, idle for `FLEZHA_PARK_IDLE_MS` (default ten minutes), ships `IterPark` and is
+evicted; the controller writes its park record first. A workflow sleeps only at a committed
+boundary, a stream at iteration `0`.
+
+A stream that sleeps keeps durable input: every message is appended to its input log before it
+is forwarded, one append per message. Its Cells report no consumed offset, so its floor is what
+the controller forwarded to a bound runner, reported by the Overwatch after each forward and kept
+in the park record while it sleeps. The log therefore retains only what arrived while nobody
+could take it, and an input already handed to the runner is the runner's, as for any plain
+stream. The bind that wakes it restores every persisted Cell, awaited, before it re-forwards
+that tail. A stream that does not declare the setting pays nothing.
+
+**Guarantee.** A message sent to a sleeping instance of either kind wakes it and is delivered
+once, across a controller restart while it sleeps. A sleeping workflow stopped by an operator is
+woken to end `cancelled`; a sleeping stream's stop removes it, as a stream's stop always does.
 
 ## Operative to operative: the cross-hop delivery guarantee
 

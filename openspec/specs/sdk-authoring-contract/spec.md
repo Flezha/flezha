@@ -522,9 +522,11 @@ an author implements only the kind trait. The base's shared members SHALL be
 body named `channels`, in every SDK, on the same builder, so the body is not kind-divergent
 and is declared once where the language lets the base declare it (in Rust each kind trait
 declares `channels` itself, because an author cannot implement the sealed base). The
-kind-divergent surface (the persistence opt-in on one side, the workflow settings on the
-other: loop mode, rollback mode, maximum duration, self-termination, synchronous durability)
-SHALL remain on the per-kind traits. There SHALL be no `tasklets` body in any SDK.
+persistence switch and the sleep setting belong to both kinds and SHALL be declared on both
+kind surfaces under one spelling each (on the base where the language lets the base carry a
+default that differs per kind, else on each kind trait); the kind-divergent surface (the
+workflow settings: loop mode, rollback mode, maximum duration, self-termination, synchronous
+durability) SHALL remain on the per-kind traits. There SHALL be no `tasklets` body in any SDK.
 
 Every SDK's runner handle SHALL register an operative of either kind through one method,
 `register_factory`, and remove it through one inverse, `unregister_factory` (`registerFactory` and
@@ -541,7 +543,7 @@ Elixir), not free functions, static methods, or methods on a builder type, and S
 generic over the shared base where the host language expresses such a bound. An operative
 whose kind cannot be read, because it declares both kinds or neither, SHALL be refused at
 registration with an error beginning `AmbiguousOperativeKind` or `UnknownOperativeKind`; in
-Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error, and in Java a class implementing both kind interfaces does not compile unless it resolves the `persistenceEnabled()` default both declare, and is refused at registration when it does. A short form's kind is its entry point's name, so no short form can reach either refusal. The
+Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error, and in Java a class implementing both kind interfaces does not compile against the base's single `channels`. A short form's kind is its entry point's name, so no short form can reach either refusal. The
 base SHALL NOT require unifying the sealed operative *instance* enum, which stays
 asymmetric. Adding a future operative kind SHALL require implementing the base and teaching
 `register_factory` and `unregister_factory` the kind, without editing the existing two authoring surfaces
@@ -568,13 +570,18 @@ that the grouping states the taxonomy the vocabulary already uses.
 
 #### Scenario: An operative of both kinds is refused
 
-- **WHEN** an Elixir module declaring both `@behaviour Flezha.SDK.StreamOperative` and `@behaviour Flezha.SDK.WorkflowOperative` is handed to `register_factory/2`, or a Java class implementing both `StreamOperative` and `WorkflowOperative` is compiled and, if it compiles, handed to `registerFactory`
-- **THEN** the Elixir registration SHALL fail with an error beginning `AmbiguousOperativeKind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile on the `persistenceEnabled()` default both kinds declare, or, when it resolves that default itself, fail registration with `AmbiguousOperativeKind`
+- **WHEN** an Elixir module declaring both `@behaviour Flezha.SDK.StreamOperative` and `@behaviour Flezha.SDK.WorkflowOperative` is handed to `register_factory/2`, or a Java class implementing both `StreamOperative` and `WorkflowOperative` is compiled
+- **THEN** the Elixir registration SHALL fail with an error beginning `AmbiguousOperativeKind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile
 
 #### Scenario: Both kinds declare their graph in channels
 
 - **WHEN** a workflow class in Rust, Java or Elixir declares its graph in `channels` on the builder a stream uses, and the same class is rewritten with a `tasklets` body
 - **THEN** the first SHALL register and run, and the second SHALL fail: at compile time in Rust and Java (no such member), and in Elixir at `@before_compile` naming the missing `channels/1`
+
+#### Scenario: Both kinds carry the persistence switch and the sleep setting
+
+- **WHEN** the two authoring surfaces of any SDK are inspected
+- **THEN** each SHALL expose the persistence switch and `sleep_when_idle` under the SDK's one spelling, and neither surface SHALL expose either setting the other lacks
 
 #### Scenario: A new kind is added without editing the existing surfaces
 
@@ -655,4 +662,51 @@ The kind of an operative SHALL be a fact of its class alone, read by `register_f
 
 - **WHEN** `flz operative start paper_order` names a factory a runner announced as a workflow
 - **THEN** a workflow instance SHALL start, with no `--kind` written and none accepted
+
+### Requirement: Persistence and sleeping are class settings of both kinds in every SDK
+
+Every SDK SHALL carry two class-level settings on a stream class and a workflow class alike,
+each under one spelling per SDK, read by the SDK's own runtime and announced in the class
+declaration so the controller reads the same value:
+
+- the **persistence switch**, default on: `PERSISTENCE_ENABLED` on both Rust traits,
+  `persistenceEnabled()` on both Java kind interfaces, `persistent` on Node's
+  `OperativeDefinition` and `WorkflowDefinition`, the `persistent` keyword of both Python
+  decorators, the `persistent` class-body flag in Ruby, `#[Operative(persistent:)]` in PHP, and
+  `persistence_enabled/0` on both Elixir behaviours. Off, the runtime SHALL drain and discard the
+  class's change bytes and ship no state frame, for a stream as for a workflow, and the
+  declaration SHALL say `persistent = false`; no SDK SHALL derive the switch from the
+  tasklets' change types.
+- the **sleep setting**, `sleep_when_idle`, default the persistence switch for a workflow and
+  off for a stream: `SLEEP_WHEN_IDLE` on both Rust traits, `sleepWhenIdle()` on both Java kind
+  interfaces, `sleepWhenIdle` on both Node definitions, the `sleep_when_idle` keyword of both
+  Python decorators, the `sleep_when_idle` class-body flag in Ruby, `#[Operative(sleepWhenIdle:)]`
+  in PHP, and the `sleep_when_idle` `use` option and optional callback on both Elixir
+  behaviours. The declaration SHALL carry the resolved boolean. A class that declares sleeping
+  with its persistence switch off SHALL be refused at registration as `SleepWithoutPersistence`,
+  the name verbatim in the error, whether the SDK judges the class itself (Rust, Elixir) or the
+  shared core does (Java, Node, Python, Ruby, PHP).
+
+Neither setting is kind-divergent, so neither SHALL be refused on either kind, and a short form
+SHALL be unable to set either, as it can set no class-level setting.
+
+#### Scenario: A stream opts out of persistence in every SDK
+
+- **WHEN** a stream class in each of the seven SDKs declares persistence off and an instance of it records ten changes
+- **THEN** no `cell_state_change` frame SHALL reach the wire from any of the seven runtimes, and each declaration SHALL announce `persistent = false`
+
+#### Scenario: A stream declares sleeping in every SDK
+
+- **WHEN** a stream class in each of the seven SDKs declares `sleep_when_idle`
+- **THEN** each declaration SHALL announce `sleep_when_idle = true`, and an instance of it left idle past `FLEZHA_PARK_IDLE_MS` on that runtime SHALL sleep
+
+#### Scenario: A workflow that opts out of persistence does not sleep by default
+
+- **WHEN** a workflow class declares persistence off and leaves `sleep_when_idle` at its default
+- **THEN** registration SHALL succeed, the declaration SHALL announce `sleep_when_idle = false`, and a waiting instance of it SHALL stay in memory
+
+#### Scenario: Sleeping without persistence is refused by name
+
+- **WHEN** a class of either kind, in any SDK, declares `sleep_when_idle` on and its persistence switch off
+- **THEN** registration SHALL fail with an error containing `SleepWithoutPersistence` and nothing SHALL be declared
 

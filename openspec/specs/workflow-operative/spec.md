@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The workflow-operative capability is the contract for the **Workflow Operative** kind, the operative that runs to an exit trigger and finishes. It defines the `WorkflowOperative` authoring surface (a graph of tasklets declared in `tasklets` on the builder a stream uses; a class declaring none is refused), registration through the runner's `register_factory`, the workflow-kind spawn path through one sealed per-runner operative registry, and the terminal `WorkflowCompleted` control message that drives standard teardown with no retry and no convergence action. Because the workflow kind does not declare `persistent_state?`, per-Cell state queries against a workflow operative are rejected through the kind-unsupported gate. Loops, exit triggers and a tasklet's `ctx.complete` are in `workflow-operative-lifecycle` and `workflow-durable-loop`.
+The workflow-operative capability is the contract for the **Workflow Operative** kind, the operative that runs to an exit trigger and finishes. It defines the `WorkflowOperative` authoring surface (a graph of tasklets declared in `tasklets` on the builder a stream uses; a class declaring none is refused), registration through the runner's `register_factory`, the workflow-kind spawn path through one sealed per-runner operative registry, and the terminal `WorkflowCompleted` control message that drives standard teardown with no retry and no convergence action. Loops, exit triggers and a tasklet's `ctx.complete` are in `workflow-operative-lifecycle` and `workflow-durable-loop`.
 ## Requirements
 ### Requirement: A workflow operative is authored with a distinct run-once trait
 

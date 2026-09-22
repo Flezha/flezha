@@ -279,13 +279,15 @@ defmodule Flezha.Service.OperativeManager do
   @doc """
   Stops `operative_id` the way its kind expects.
 
-  A bound `:workflow` operative is stopped **cooperatively**: a `WorkflowStop`
-  trips the SDK's cancellation token and the operative winds down to its own
-  `WorkflowCompleted` (status "cancelled"), which drives the single teardown via
-  `ControlChannel.handle_workflow_completed/2`. Everything else (`:stream`, or
-  a workflow operative not bound to a runner) takes the hard `stop_operative/2`
-  teardown. An unreadable kind (not found / wedged) also falls back to the hard
-  stop so `flz operative stop` always attempts removal.
+  A `:workflow` operative is stopped **cooperatively**, awake or asleep: a
+  `WorkflowStop` trips the SDK's cancellation token and the operative winds
+  down to its own `WorkflowCompleted` (status "cancelled"), which drives the
+  single teardown via `ControlChannel.handle_workflow_completed/2`. A sleeping
+  one is first woken onto a runner, and the stop follows the bind. A stream,
+  and a workflow no runner can take or whose runner cannot be reached, take the
+  hard `stop_operative/2` teardown. An unreadable kind (not found / wedged)
+  also falls back to the hard stop so `flz operative stop` always attempts
+  removal.
 
   Returns `{:ok, :cooperative}` when a cooperative stop was signalled, `:ok` after
   a hard teardown, or `{:error, reason}`.
@@ -301,8 +303,16 @@ defmodule Flezha.Service.OperativeManager do
     end)
   end
 
-  defp do_request_stop(namespace, operative_id) do
+  defp do_request_stop(namespace, operative_id, wake? \\ true) do
     case get_overwatch_state(namespace, operative_id) do
+      {:ok, %{builder: %{kind: :workflow}, suspended: true}} when wake? ->
+        case wake_to_stop(namespace, operative_id) do
+          :ok -> {:ok, :cooperative}
+          # Woken meanwhile: stopped as an awake one, once.
+          {:error, :awake} -> do_request_stop(namespace, operative_id, false)
+          {:error, _no_runner} -> stop_operative(namespace, operative_id)
+        end
+
       {:ok, %{builder: %{kind: :workflow}, runner_id: runner_id}}
       when is_binary(runner_id) ->
         case ControlUnit.workflow_stop(runner_id, operative_id) do
@@ -314,6 +324,15 @@ defmodule Flezha.Service.OperativeManager do
       _ ->
         stop_operative(namespace, operative_id)
     end
+  end
+
+  defp wake_to_stop(namespace, operative_id) do
+    with_operative_pid(namespace, operative_id, fn pid ->
+      case SafeCall.bounded(pid, {:wake, then: :stop}, overwatch_call_timeout_ms()) do
+        {:ok, reply} -> reply
+        {:error, _} = unreachable -> unreachable
+      end
+    end)
   end
 
   @doc """

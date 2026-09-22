@@ -207,7 +207,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
         flunk("the input tail was read after a refused restore")
       end)
 
-      {result, log} = with_log(fn -> Replay.restore_tier_cells(tier_state(id)) end)
+      {result, log} = with_log(fn -> Replay.restore_cells_awaited(tier_state(id)) end)
 
       assert result == {:error, @refusal}
       assert_refusal_logged(log, id)

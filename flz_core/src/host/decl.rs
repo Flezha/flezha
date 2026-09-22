@@ -160,6 +160,9 @@ pub struct HostClassDecl {
     /// Change bytes in completions reach the per-Cell WAL.
     #[serde(default)]
     pub persistent: bool,
+    /// An idle instance sleeps; the SDK resolves the kind's default.
+    #[serde(default)]
+    pub sleep_when_idle: bool,
     /// The language byte ([`crate::header`]); mandatory, since an untagged
     /// veneer's state could be handed to another language.
     pub sdk_lang: u8,

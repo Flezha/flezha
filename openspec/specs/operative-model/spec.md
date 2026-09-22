@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work a Runner runs at a Controller's direction), its two kinds today — **Stream** (runs-forever) and **Workflow** (runs-to-completion) — and the per-Operative concepts of **Tasklet** (a typed stage) and **Cell** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface) and the sparse, default-`false` capability descriptor model that lets new kinds and capabilities be added additively without touching existing kinds. Capabilities attach to the kind, not to user computation code; `persistent_state?` gates per-Cell state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
+The operative-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operative** umbrella (the generic top-level unit of work a Runner runs at a Controller's direction), its two kinds today, **Stream** (runs-forever) and **Workflow** (runs-to-completion) — and the per-Operative concepts of **Tasklet** (a typed stage) and **Cell** (the per-key, state-bearing slice). It mandates the no-synonyms rule (no `relay`, `shard`, `partition`, or `task` survives in any shipped surface). What an instance does is decided by its class's settings, never by its kind; the class's persistence switch gates per-Cell state introspection. The unified `flz operative` CLI verb tree manages every kind's lifecycle.
 ## Requirements
 
 <!-- kind-naming-record:begin -->
@@ -65,49 +65,20 @@ Every Operative SHALL carry a `kind` atom. The kind SHALL be the kind its class 
 
 <!-- kind-naming-record:begin -->
 
-### Requirement: Each kind declares a sparse, default-false capability descriptor
-
-There SHALL be a single source of truth mapping a kind to a **sparse** capability descriptor — a map declaring only the capabilities the kind *has* (as `true`). The control plane SHALL read every capability with a default of `false`. Capabilities SHALL attach to the kind, not to user-authored computation code.
-
-The previously-coarse `persistent_state?` capability SHALL be **split** so that it means exactly "has durable per-Cell WAL state + restore", and the stream-only behaviors that previously rode on it SHALL each have their own default-`false` flag:
-
-- `persistent_state?` — durable per-Cell WAL + snapshot + restore. Resolved per kind+class: `:stream` declares it, and `:workflow` declares it **by default** unless its class opts out of persistence (see `workflow-operative-durability`).
-- `time_travel?` — point-in-time queries and retention beyond the latest snapshot (gates `flz state at`). Declared by `:stream` only.
-- `dynamic_cells?` — lazy per-key Cell creation and destructive idle eviction with cold-start-fresh. Declared by `:stream` only.
-- `output_stall_watch?` — the per-Cell output-staleness watchdog that forces a rebind. Declared by `:stream` only.
-
-#### Scenario: Stream declares the full persistence surface
-
-- **WHEN** the capability descriptor for kind `:stream` is requested
-- **THEN** `persistent_state?`, `time_travel?`, `dynamic_cells?`, and `output_stall_watch?` SHALL all read `true`
-
-#### Scenario: A durable workflow operative has durable state without stream-only behaviors
-
-- **WHEN** a `:workflow` class that has not opted out of persistence is read
-- **THEN** `persistent_state?` SHALL read `true` while `time_travel?`, `dynamic_cells?`, and `output_stall_watch?` SHALL each read `false`
-
-#### Scenario: An opted-out workflow operative declares no durable state
-
-- **WHEN** a `:workflow` class that opted out of persistence is read
-- **THEN** `persistent_state?` SHALL read `false`
-
-#### Scenario: Undeclared capabilities read as false
-
-- **WHEN** the control plane reads a capability that a kind's descriptor does not declare
-- **THEN** the value SHALL be `false`, and the descriptor SHALL NOT be required to list every defined capability
-
 ### Requirement: The capability model is extensible without affecting existing kinds
 
-Introducing a new operative kind OR a new capability flag SHALL be additive: it SHALL require only declaring the new kind/flag and opting in the kinds that need it. A kind that does not opt into a newly-introduced capability SHALL be unaffected and SHALL continue to read that capability as `false`. Adding a third (or later) kind SHALL NOT force edits to the existing `:stream` or `:workflow` kinds, to user-authored computation code, or to the routing boundary beyond registering the new kind. Kind names SHALL be independent words rather than variations on a shared pattern, so that a third kind joins as a peer without renaming the existing two.
-
-#### Scenario: A new flag defaults off for kinds that do not opt in
-
-- **WHEN** a new capability flag is added and a kind's descriptor does not declare it
-- **THEN** that kind SHALL read the new capability as `false`, and its existing behavior SHALL be unchanged
+Introducing a new operative kind SHALL be additive: it SHALL require registering the new kind
+and nothing else. Adding a third (or later) kind SHALL NOT force edits to the existing
+`:stream` or `:workflow` kinds, to user-authored computation code, or to the routing boundary
+beyond registering the new kind. Kind names SHALL be independent words rather than variations
+on a shared pattern, so that a third kind joins as a peer without renaming the existing two.
+There SHALL be no per-kind capability table: what an instance can do SHALL follow from what
+its class declares (its persistence switch, its sleep setting, the tier) and from its own state
+(sleeping, bound, journaling), never from a flag attached to its kind.
 
 #### Scenario: A future kind is additive
 
-- **WHEN** a new operative kind is registered with its own capability descriptor
+- **WHEN** a new operative kind is registered
 - **THEN** the existing kinds SHALL be unaffected, and the new kind SHALL be selectable at start without changing the existing kinds' behavior
 
 #### Scenario: A third kind requires no rename of the existing two
@@ -115,26 +86,10 @@ Introducing a new operative kind OR a new capability flag SHALL be additive: it 
 - **WHEN** a third operative kind is introduced
 - **THEN** `:stream` and `:workflow` SHALL keep their names, and no shared naming pattern SHALL have to be extended or abandoned to accommodate it
 
-### Requirement: Cell-state introspection is gated by `persistent_state?`
+#### Scenario: No gate reads a kind's capability
 
-A request for an operative's per-Cell state SHALL succeed only when the operative's kind+class reads `persistent_state?` as `true` (true for `:stream`, and for a `:workflow` class that has not opted out of persistence). When the capability is absent, the request SHALL fail with the structured error `{:error, {:unsupported_for_kind, :persistent_state}}` rather than querying a computation that has no durable state. Point-in-time `flz state at` queries SHALL additionally require `time_travel?`, so a durable workflow operative (which does not declare `time_travel?`) SHALL expose current Cell state but SHALL reject time-travel queries.
-
-#### Scenario: Cell-state query succeeds for a durable operative
-
-- **WHEN** the per-Cell state of an operative whose kind+class declares `persistent_state? = true` is requested
-- **THEN** the request SHALL return the serialized current state
-
-#### Scenario: Cell-state query is rejected for a stateless operative
-
-- **WHEN** the per-Cell state of an operative whose kind+class reads `persistent_state? = false` is requested
-- **THEN** the request SHALL return `{:error, {:unsupported_for_kind, :persistent_state}}` and SHALL NOT contact the computation
-
-#### Scenario: Time-travel is rejected for a kind lacking `time_travel?`
-
-- **WHEN** a `flz state at` point-in-time query targets a durable workflow operative (which does not declare `time_travel?`)
-- **THEN** the query SHALL be rejected as unsupported, while a current-state query SHALL still succeed
-
-<!-- kind-naming-record:begin -->
+- **WHEN** the controller's time-travel query, retention sweep, dynamic-cell delete, output-stall watch and input-silence sweep are inspected
+- **THEN** none SHALL consult a kind-to-capability map, and `Flezha.Operative.Kind` and `ClassRegistry.capable?/2` SHALL NOT exist
 
 ### Requirement: Unified `flz operative` CLI verb
 
@@ -331,4 +286,31 @@ Reporting a park SHALL NOT change when one happens: an unloadable provider modul
 
 - **WHEN** one plugin in an operative's list has an unloadable provider and healthy plugins follow it
 - **THEN** the operative SHALL park exactly as before and the plugins after the failing one SHALL still never be attempted
+
+### Requirement: Cell-state introspection is gated by the class's persistence switch
+
+A request for an operative's live per-Cell state SHALL succeed for an instance of either kind
+whose class's persistence switch is on and which is resident on a runner. When the class has
+opted out of persistence, the request SHALL fail with the structured error
+`{:error, :persistence_off}` rather than querying a computation whose state is held in memory
+alone, for a stream and a workflow alike; the CLI SHALL render it as a clear, non-zero outcome
+naming the class's declaration. A suspended or unbound instance SHALL be refused as
+`{:not_resident, :suspended}` or `{:not_resident, :unbound}` as today. Point-in-time
+`flz state at` queries SHALL serve a Cell of either kind from its retained snapshots and WAL
+records, under the same retention rule; no kind SHALL be refused time travel.
+
+#### Scenario: Cell-state query succeeds for a durable operative
+
+- **WHEN** the live per-Cell state of a bound instance whose class's persistence switch is on is requested, for a stream or a workflow
+- **THEN** the request SHALL return the serialized current state
+
+#### Scenario: Cell-state query is rejected for a stateless operative
+
+- **WHEN** the live per-Cell state of an instance whose class declares persistence off is requested, for a stream or a workflow
+- **THEN** the request SHALL return `{:error, :persistence_off}` and SHALL NOT contact the computation
+
+#### Scenario: Time travel serves a workflow Cell
+
+- **WHEN** `flz state at <instance/tasklet/cell> <seq>` targets a Cell of a durable `per_input` workflow whose iteration-boundary snapshots and WAL records cover `<seq>`
+- **THEN** the query SHALL answer the Cell's state at that sequence exactly as it would for a stream Cell
 

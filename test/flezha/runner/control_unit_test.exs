@@ -351,7 +351,9 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
                leaf_tasks: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil,
-               sync_durability: false
+               sync_durability: false,
+               persistent: true,
+               sleep_when_idle: false
              }
     end
   end
@@ -365,8 +367,17 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
              leaf_tasks: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil,
-             sync_durability: false
+             sync_durability: false,
+             persistent: true,
+             sleep_when_idle: false
            }
+  end
+
+  test "a class persists and stays awake unless it says otherwise" do
+    assert declarations(%{"other" => "x"}).persistent
+    refute declarations(%{"persistent" => "false"}).persistent
+    refute declarations(%{"other" => "x"}).sleep_when_idle
+    assert declarations(%{"sleep_when_idle" => "true"}).sleep_when_idle
   end
 
   test "keyless is declared only when true — a keyed class says nothing" do

@@ -83,7 +83,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         # entry durable before the SIGKILL.
         operative_id =
           drive_crash_resume(ctx, "commit_block_workflow", "ok", fn oid ->
-            Replay.resume_cell_count(:workflow, oid) > 0 and
+            Replay.resume_cell_count(oid) > 0 and
               TaskJournal.restore_state(oid) != nil
           end)
 
@@ -134,7 +134,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
             "keyed_block_workflow",
             "ok",
             fn oid ->
-              Replay.resume_cell_count(:workflow, oid) >= 3 and
+              Replay.resume_cell_count(oid) >= 3 and
                 match?(%{committed_task_idxs: [0, 1 | _]}, TaskJournal.restore_state(oid))
             end,
             first_message: "a,b,c"

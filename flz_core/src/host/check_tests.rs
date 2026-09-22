@@ -221,7 +221,8 @@ impl Interpreter {
     fn class_flag(&mut self, flag: &str, value: &str) {
         match flag {
             "workflow" => self.workflow = true,
-            "persistent" | "effectively_once" | "checkpoint_ack" | "sync_durability" => {
+            "persistent" | "effectively_once" | "checkpoint_ack" | "sync_durability"
+            | "sleep_when_idle" => {
                 self.class.push(format!(r#""{flag}":true"#));
             }
             "checkpoint_every" => self.class.push(format!(r#""checkpoint_every":{value}"#)),

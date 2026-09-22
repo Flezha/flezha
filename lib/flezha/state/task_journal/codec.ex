@@ -17,14 +17,12 @@ defmodule Flezha.State.TaskJournal.Codec do
   @type_task_committed 1
   @type_outbox_flushed 2
   @type_iter_committed 3
-  @type_parked 4
   @type_compensated 5
   @type_rewound 6
   @entry_types %{
     @type_task_committed => :task_committed,
     @type_outbox_flushed => :outbox_flushed,
     @type_iter_committed => :iter_committed,
-    @type_parked => :parked,
     @type_compensated => :compensated,
     @type_rewound => :rewound
   }
@@ -103,16 +101,6 @@ defmodule Flezha.State.TaskJournal.Codec do
     end
   end
 
-  defp decode_payload(:parked, <<deadline::64-big, offset::binary-size(9)>>) do
-    with {:ok, consumed_offset} <- decode_offset(offset) do
-      {:ok,
-       %{
-         wake_deadline_ms: if(deadline == 0, do: nil, else: deadline),
-         consumed_offset: consumed_offset
-       }}
-    end
-  end
-
   defp decode_payload(:compensated, payload) do
     case decode_outbox(payload) do
       {:ok, outbox, <<>>} -> {:ok, %{outbox: outbox}}
@@ -138,8 +126,8 @@ defmodule Flezha.State.TaskJournal.Codec do
   end
 
   @doc """
-  A consumed input-log offset or its absence, as an `iter_committed` or
-  `parked` payload carries it: one presence byte, then the offset. `0` is the
+  A consumed input-log offset or its absence, as an `iter_committed` payload
+  carries it: one presence byte, then the offset. `0` is the
   log's first offset, so it cannot stand for "none".
   """
   @spec encode_offset(non_neg_integer() | nil) :: binary()

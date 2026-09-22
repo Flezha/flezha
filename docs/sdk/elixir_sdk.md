@@ -253,7 +253,12 @@ the schema four — `schema_version/0` (1), `min_readable_schema_version/0` (the
 `migrate_state/2`, `migrate_change/2` (see [Schema evolution](#schema-evolution)) — and the
 timer four — `clock/0` (`:wall`), `event_time_of/1`, `on_timer/4`, `max_timers_per_cell/0`
 (10 000; see [Timers and clocks](#timers-and-clocks)).
-`StreamOperative` takes an optional `persistence_enabled/0` (default `true`).
+`StreamOperative` takes an optional `persistence_enabled/0` (default `true`) and
+`sleep_when_idle/0` (default `false`); `WorkflowOperative` takes the same two, its
+`sleep_when_idle/0` defaulting to its `persistence_enabled/0`. Both are `use` options too.
+An instance whose class sleeps is evicted after `FLEZHA_PARK_IDLE_MS` of idleness and wakes on
+its next message with its Cells restored; declaring it with persistence off is refused by
+`register_factory/2` as `SleepWithoutPersistence`.
 `WorkflowOperative` writes the same `channels/1`; it has no retry setting of its own, because
 a stage's ladder is the edge's `retry_max` / `retry_backoff_ms`, as a stream's is.
 `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers

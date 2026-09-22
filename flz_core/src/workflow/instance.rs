@@ -6,7 +6,7 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use super::compensation::{CellRun, StageRecord, StagedOutput};
@@ -21,8 +21,9 @@ pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 /// settled first: its declared index, and for a keyed Cell (index 0) its key.
 pub(crate) type CellPos = (usize, Option<Arc<str>>);
 
-/// What a bind carries into a workflow instance: the Cell restores to wait
-/// for, the input the controller still owes it and the committed journal.
+/// What a bind carries into an instance: the input the controller still owes
+/// it and, for a workflow, the Cell restores to wait for and the committed
+/// journal.
 #[derive(Default)]
 pub struct Resume {
     pub expected: usize,
@@ -30,7 +31,8 @@ pub struct Resume {
     pub journal: Option<JournalResume>,
 }
 
-/// A workflow deadline on the poll core's deferred-wake list.
+/// An instance's deadline on the poll core's deferred-wake list: `ParkIdle`
+/// for either kind, the rest a workflow run's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Deadline {
     /// Waiting at a committed boundary long enough to suspend.
@@ -46,15 +48,10 @@ pub enum Deadline {
     Admit,
 }
 
-static RUN_SEQ: AtomicU64 = AtomicU64::new(0);
-
 pub struct WorkflowRun {
     /// The instance carrying this run, for the events that outlive a call:
     /// wakes and ack callbacks hold it weakly.
     pub(crate) me: Weak<OperativeInstance>,
-    /// This run's identity on the deferred-wake list: never reused, where an
-    /// instance id comes back with a rehydration.
-    pub(crate) seq: u64,
     pub(crate) cancel: AtomicBool,
     /// The pass failed or was cancelled: what its Cells still have queued is
     /// consumed without running.
@@ -66,7 +63,6 @@ impl WorkflowRun {
     pub fn new(me: Weak<OperativeInstance>) -> Self {
         Self {
             me,
-            seq: RUN_SEQ.fetch_add(1, Ordering::Relaxed),
             cancel: AtomicBool::new(false),
             pass_dead: AtomicBool::new(false),
             sheet: Mutex::new(PassSheet::default()),
@@ -77,7 +73,6 @@ impl WorkflowRun {
     pub fn bind(&self, resume: Resume) {
         let mut sheet = self.sheet();
         sheet.expected = resume.expected;
-        sheet.owed_inbox = resume.owed_inbox;
         sheet.journal = resume.journal;
     }
 
@@ -136,7 +131,6 @@ pub(crate) struct PassSheet {
     pub(crate) pass: Option<Pass>,
     /// Messages that arrived while no pass could start.
     pub(crate) queue: VecDeque<Message>,
-    pub(crate) owed_inbox: u32,
     /// The highest input-log offset parked unread, released by the park record.
     pub(crate) parked_offset: Option<u64>,
     /// Unread messages still on their way to the dead-letter queue.

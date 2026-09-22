@@ -211,14 +211,12 @@ defmodule Flezha.Runner.StreamChannel.Records do
     :refused
   end
 
-  # Emit `output_stall` for each mapped operative whose kind runs the output-stall
-  # watchdog, naming the runner whose stream stalled: the stall is about that
-  # binding, and the loop drops it once the operative is bound elsewhere. A kind
-  # without the watchdog (a durable workflow operative) legitimately goes
-  # silent, so flagging it would spuriously rebind.
+  # Emit `output_stall` for each mapped operative, naming the runner whose
+  # stream stalled: the stall is about that binding, and the loop drops it once
+  # the operative is bound elsewhere. A sleeping instance is not mapped to any
+  # runner, so it is never flagged.
   def emit_output_stall(runner_id, operative_mapping) do
-    for {operative_id, _} <- operative_mapping,
-        ClassRegistry.capable?(operative_id, :output_stall_watch?) do
+    for {operative_id, _} <- operative_mapping do
       :telemetry.execute(
         [:flezha, :state, :output_stall],
         %{count: 1},
@@ -510,21 +508,14 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   # Run the file teardown off this channel's loop: it stops the writer and
   # unlinks files, which we never want to gate the output-carrying channel on.
-  # Destructive idle-eviction is a dynamic-cell mode behaviour; ignore it for a
-  # kind without dynamic cells so a durable workflow operative's state is
-  # never dropped out from under it.
-  defp delete_if_dynamic({rc, _sh, _pk} = cell_id) do
-    if ClassRegistry.capable?(rc, :dynamic_cells?) do
-      spawn(fn -> Flezha.State.Supervisor.delete_cell(cell_id) end)
-    else
-      Logger.warning("[stream] delete_cell_state ignored for non-dynamic class #{inspect(rc)}")
-    end
+  defp delete_cell(cell_id) do
+    spawn(fn -> Flezha.State.Supervisor.delete_cell(cell_id) end)
   end
 
   def handle_delete_cell_state(state, frame) do
     case Wire.decode_cell_id(frame) do
       {:ok, {rc, _sh, _pk} = cell_id} ->
-        if admit(state, rc, :delete_cell_state), do: delete_if_dynamic(cell_id)
+        if admit(state, rc, :delete_cell_state), do: delete_cell(cell_id)
 
       {:error, reason} ->
         Logger.warning("[stream] delete_cell_state decode failed: #{inspect(reason)}")

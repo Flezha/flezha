@@ -71,9 +71,10 @@ impl RunnerNode {
 
     /// Spawn an instance of a registered class of either kind; `instance_id`
     /// is the wire's `operative_id`. Idempotent: a duplicate id answers the
-    /// existing instance. A workflow instance takes the bind's resume facts
-    /// and waits for [`crate::workflow::open`] before its first pass, so its
-    /// `init_values` land first.
+    /// existing instance. The instance takes the input tail the bind owes it;
+    /// a workflow also takes the rest of the resume facts and waits for
+    /// [`crate::workflow::open`] before its first pass, so its `init_values`
+    /// land first.
     pub fn start_operative(
         &self,
         factory_id: String,
@@ -91,6 +92,7 @@ impl RunnerNode {
             None,
             partition,
         );
+        instance.owe_inbox(resume.owed_inbox);
         if let Some(run) = &instance.workflow {
             run.bind(resume);
         }

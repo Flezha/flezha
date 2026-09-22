@@ -1,37 +1,39 @@
 defmodule Flezha.State.PersistenceResolverTest do
   @moduledoc """
-  §5b.1: the kind+class `persistent_state?` resolution (workflow durable-by-default,
-  opt-out per class) and the finished-job retention window resolver.
+  The persistence switch resolved for either kind from the operator override and
+  the class's own declaration, and the finished-job retention window resolver.
   """
   # async: false: writes Application env.
-  use FlezhaTest.Case, fixtures: [:env], async: false
+  use FlezhaTest.Case, fixtures: [:env, :tmp_app_data], async: false
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.PersistenceResolver
 
-  describe "persistent_state?/3" do
-    test ":stream is always durable" do
-      assert PersistenceResolver.persistent_state?(:stream, "any_class")
+  describe "persistence_enabled?/2" do
+    test "a class that declares nothing is durable" do
+      assert PersistenceResolver.persistence_enabled?("pe_default")
     end
 
-    test ":workflow is durable by default" do
-      assert PersistenceResolver.persistent_state?(:workflow, "bnd_default")
+    test "the class's declaration decides, for a stream and a workflow alike" do
+      for {class, kind} <- [{"pe_off_stream", :stream}, {"pe_off_workflow", :workflow}] do
+        :ok = ClassRegistry.put(class, kind)
+        :ok = ClassRegistry.put_persistent(class, false)
+        refute PersistenceResolver.persistence_enabled?(class)
+        :ok = ClassRegistry.put_persistent(class, true)
+      end
     end
 
-    test ":workflow honours a per-class operator opt-out; other classes stay durable" do
-      Application.put_env(:flezha, :operative_persistence, %{"bnd_optout" => false})
-      refute PersistenceResolver.persistent_state?(:workflow, "bnd_optout")
-      assert PersistenceResolver.persistent_state?(:workflow, "bnd_other")
-    end
+    test "the operator override wins over the declaration, both ways" do
+      :ok = ClassRegistry.put_persistent("pe_declared_off", false)
 
-    test ":workflow honours an instance-metadata opt-out" do
-      refute PersistenceResolver.persistent_state?(:workflow, "bnd_meta", %{
-               "operative_persistence_enabled" => false
-             })
-    end
+      Application.put_env(:flezha, :operative_persistence, %{
+        "pe_declared_off" => true,
+        "pe_forced_off" => false
+      })
 
-    test "an unknown kind is not durable" do
-      refute PersistenceResolver.persistent_state?(:made_up, "x")
+      assert PersistenceResolver.persistence_enabled?("pe_declared_off")
+      refute PersistenceResolver.persistence_enabled?("pe_forced_off")
+      :ok = ClassRegistry.put_persistent("pe_declared_off", true)
     end
   end
 

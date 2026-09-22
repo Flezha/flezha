@@ -3,17 +3,15 @@
 ## Purpose
 
 The operative-migration-consent capability makes Overwatch a participant in ProcessHub's migration-consent protocol so a cluster redistribution (node join/leave, convergence rebind, graceful-shutdown drain) can no longer tear an Overwatch out mid-critical-work. Overwatch answers `:defer` while a late-input correction is pending, while a durable workflow instance is between commit barriers, or while an effectively-once instance has unflushed outbox items — and signals `ProcessHub.Service.Migration.migration_ready/2` at its existing safe barriers (suspension, correction completion) so deferred moves resume promptly. `Flezha.Service.HubManager` enables the protocol via `consent_settings` on the HotSwap strategy, with the deferral ceiling derived from the graceful-shutdown budget and each knob env-overridable. A deferred operative that exhausts its deferral window is force-migrated through the existing best-effort handover and lands on the existing recovery paths (RestoreInitState/baseline pull, task-journal fold, the workflow ack timeout → compensation → re-placement) with no new wire message.
-
 ## Requirements
-
 ### Requirement: Overwatch SHALL participate in ProcessHub's migration-consent protocol
 
 `Flezha.Operative.Overwatch` SHALL `use ProcessHub.Strategy.Migration.MigrationConsent` and override `migration_consent/1`. The callback SHALL answer over the Overwatch's own GenServer state (plus at most one bounded-time pending-outbox query) and SHALL return:
 
 - `:defer` while a late-input correction is pending (`corrections != %{}`),
-- `:defer` while the instance is a durable workflow class that is not suspended (`durable_workflow and not suspended`),
+- `:defer` while the instance journals its progress stage by stage and is awake (a persistent workflow that is not sleeping: `durable_workflow and not suspended`), because a pass in flight is not a state document a handover can ship,
 - `:defer` while an effectively-once instance has pending (unflushed) outbox items in any of its live WalWriters,
-- `:ready` otherwise — including when the instance is suspended.
+- `:ready` otherwise, including for a sleeping instance of either kind, and for an awake stream whether or not its class declares `sleep_when_idle`, which migrates in place through the handover.
 
 A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: worst case equals pre-consent behaviour). While the Overwatch is synchronously executing a correction/replay transaction it cannot answer the consent query; the protocol's no-reply-within-`consent_timeout` path SHALL be relied upon to defer it — no additional in-flight marker is introduced.
 
@@ -29,6 +27,12 @@ A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: w
 - **WHEN** both are asked for migration consent
 - **THEN** the unsuspended one returns `:defer` and the suspended one returns `:ready`
 
+#### Scenario: A sleeping stream consents
+
+- **GIVEN** a stream Overwatch whose class declares `sleep_when_idle` and which is suspended
+- **WHEN** it is asked for migration consent
+- **THEN** it returns `:ready`, and the next bind on the destination node wakes it from its durable state
+
 #### Scenario: Effectively-once instance with pending outbox defers
 
 - **GIVEN** an effectively-once Overwatch whose cell WalWriter reports pending outbox items not yet flushed downstream
@@ -38,13 +42,13 @@ A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: w
 
 #### Scenario: Idle stream operative migrates immediately
 
-- **GIVEN** a stream Overwatch with no correction pending and no pending outbox
+- **GIVEN** a stream Overwatch with no correction pending and no pending outbox, awake, whether or not its class can sleep
 - **WHEN** it is asked for migration consent
 - **THEN** it returns `:ready` and migrates through the regular HotSwap handover path with no deferral
 
 ### Requirement: Overwatch SHALL signal early migration readiness at its existing safe barriers
 
-`ProcessHub.Service.Migration.migration_ready/2` SHALL be called from exactly two places in `Overwatch`: (a) `enter_suspended/2` — a durable workflow instance reached a committed iteration boundary — and (b) correction completion when `corrections` becomes empty. Both calls SHALL tolerate the `{:error, :not_deferred}` no-op result (no migration was waiting). No new completion-notification seam SHALL be added for the WAL/outbox condition; it relies on the consent re-query performed on every deferred-list retry tick.
+`ProcessHub.Service.Migration.migration_ready/2` SHALL be called from exactly two places in `Overwatch`: (a) `enter_suspended/2`, when an instance of either kind went to sleep, and (b) correction completion when `corrections` becomes empty. Both calls SHALL tolerate the `{:error, :not_deferred}` no-op result (no migration was waiting). No new completion-notification seam SHALL be added for the WAL/outbox condition; it relies on the consent re-query performed on every deferred-list retry tick.
 
 #### Scenario: Deferred workflow operative migrates promptly on suspension
 
@@ -83,3 +87,4 @@ A deferred Overwatch that reaches `max_defer_time` (or the drain deadline) SHALL
 - **GIVEN** a durable workflow Overwatch under continuous input that never suspends, deferred until `max_defer_time` expires
 - **WHEN** the hub force-migrates it to a peer node
 - **THEN** upstream logs the forced-migration warning, the target node rebinds the instance, its task-journal fold skips every committed task, and the interrupted iteration re-runs without protocol wedge — the runner-side driver either re-attaches or fails its pending ack within the existing 30 s bound and recovers via compensation + re-placement
+

@@ -19,7 +19,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
   @sink_id "bench_sink"
 
   defp runner_env(cfg) do
-    [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", cfg.park_idle_ms}] ++
+    [{"FLEZHA_PARK_IDLE_MS", cfg.park_idle_ms}] ++
       if(cfg.wake_after_ms, do: [{"FLEZHA_BENCH_WAKE_AFTER_MS", cfg.wake_after_ms}], else: [])
   end
 

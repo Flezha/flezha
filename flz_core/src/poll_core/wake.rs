@@ -1,5 +1,5 @@
 //! The core's one deferred-wake list: retry backoffs, processing-time timer
-//! deadlines, interval closes, push re-arms and workflow deadlines, keyed by
+//! deadlines, interval closes, push re-arms and instance deadlines, keyed by
 //! due time. It owns no
 //! thread — entries are promoted by whichever poller next enters or wakes —
 //! and nothing in a promotion waits for mailbox room: a firing that cannot be
@@ -40,8 +40,9 @@ pub(super) enum WakeTiebreak {
     /// The Cell whose open checkpoint interval is due to close; distinct
     /// from `Timer` so the two cannot evict each other on one millisecond.
     Interval(Arc<Vec<u8>>),
-    /// One deadline of one workflow run: re-arming it replaces the entry.
-    Workflow(u64, crate::workflow::Deadline),
+    /// One deadline of one instance, by its seq: re-arming it replaces the
+    /// entry.
+    Instance(u64, crate::workflow::Deadline),
 }
 
 pub(super) enum Wake {
@@ -61,9 +62,9 @@ pub(super) enum Wake {
     },
     /// A checkpoint interval's `max_delay_ms` elapsed; `Weak` as a timer is.
     CloseInterval { slot: Weak<CellSlot> },
-    /// A workflow run's deadline came due; `Weak` so a removed instance's
+    /// An instance's deadline came due; `Weak` so a removed instance's
     /// deadlines die with it.
-    Workflow {
+    Instance {
         instance: Weak<crate::operative::instance::OperativeInstance>,
         deadline: crate::workflow::Deadline,
     },
@@ -105,7 +106,7 @@ impl DeferredWake {
             .keys()
             .filter(|k| match &k.tiebreak {
                 WakeTiebreak::Timer(armed) | WakeTiebreak::Interval(armed) => armed == cell,
-                WakeTiebreak::Retry(_) | WakeTiebreak::Workflow(..) => false,
+                WakeTiebreak::Retry(_) | WakeTiebreak::Instance(..) => false,
             })
             .cloned()
             .collect();
@@ -193,9 +194,9 @@ impl PollCore {
     pub(super) fn promote_due(&self) {
         let now = crate::util::wall_now_ms();
         for (key, wake) in self.wakes.take_due(now) {
-            if let Wake::Workflow { instance, deadline } = wake {
+            if let Wake::Instance { instance, deadline } = wake {
                 if let Some(instance) = instance.upgrade() {
-                    crate::workflow::deadline_due(&instance, deadline, key.due_at_ms);
+                    crate::operative::sleep::deadline_due(&instance, deadline, key.due_at_ms);
                 }
                 continue;
             }
@@ -253,7 +254,7 @@ impl PollCore {
                     },
                 ))
             }
-            Wake::Workflow { .. } => None,
+            Wake::Instance { .. } => None,
         }
     }
 
@@ -318,42 +319,43 @@ impl PollCore {
         });
     }
 
-    /// Arm one of workflow run `run`'s deadlines. A promotion decides under
-    /// the run's lock whether it still applies.
-    pub fn arm_workflow(
+    /// Arm one of the deadlines of the instance numbered `seq`. A promotion
+    /// decides whether it still applies.
+    pub fn arm_instance(
         &self,
         instance: Weak<crate::operative::instance::OperativeInstance>,
-        run: u64,
+        seq: u64,
         deadline: crate::workflow::Deadline,
         due_at_ms: u64,
     ) {
         self.wakes.record(
             WakeKey {
                 due_at_ms,
-                tiebreak: WakeTiebreak::Workflow(run, deadline),
+                tiebreak: WakeTiebreak::Instance(seq, deadline),
             },
-            Wake::Workflow { instance, deadline },
+            Wake::Instance { instance, deadline },
         );
         self.notify_waiters();
     }
 
-    /// Disarm one workflow deadline armed for `due_at_ms`. Idempotent.
-    pub fn disarm_workflow(&self, run: u64, deadline: crate::workflow::Deadline, due_at_ms: u64) {
+    /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.
+    pub fn disarm_instance(&self, seq: u64, deadline: crate::workflow::Deadline, due_at_ms: u64) {
         self.wakes.remove(&WakeKey {
             due_at_ms,
-            tiebreak: WakeTiebreak::Workflow(run, deadline),
+            tiebreak: WakeTiebreak::Instance(seq, deadline),
         });
     }
 
-    /// The deadlines armed for workflow run `run`, with their due times.
+    /// The deadlines armed for the instance numbered `seq`, with their due
+    /// times.
     #[cfg(test)]
-    pub(crate) fn workflow_deadlines(&self, run: u64) -> Vec<(crate::workflow::Deadline, u64)> {
+    pub(crate) fn instance_deadlines(&self, seq: u64) -> Vec<(crate::workflow::Deadline, u64)> {
         self.wakes
             .entries
             .lock_recover()
             .keys()
             .filter_map(|key| match key.tiebreak {
-                WakeTiebreak::Workflow(armed, deadline) if armed == run => {
+                WakeTiebreak::Instance(armed, deadline) if armed == seq => {
                     Some((deadline, key.due_at_ms))
                 }
                 _ => None,

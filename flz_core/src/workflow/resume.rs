@@ -1,12 +1,10 @@
 //! What the journal says about where a run resumes: its committed work as
-//! stage records, the handoffs a resumed pass re-seeds its children from, and
-//! the park record a suspending run ships. The invariant: a resumed chain sees
-//! exactly what the live one did — a re-seeded value goes through the same
-//! edge, and a journaled iteration is either wholly committed or wholly in
-//! flight.
+//! stage records and the handoffs a resumed pass re-seeds its children from.
+//! The invariant: a resumed chain sees exactly what the live one did: a
+//! re-seeded value goes through the same edge, and a journaled iteration is
+//! either wholly committed or wholly in flight.
 
 use std::collections::{BTreeMap, HashMap};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::compensation::{CellRun, StageRecord};
 use super::instance::{CommittedTask, Completion, JournalResume, MidResume, Release, Value};
@@ -14,52 +12,6 @@ use super::run::{unwired_stream, Run};
 use super::{RollbackMode, WorkflowError};
 use crate::channel::{ChannelId, ChannelKind};
 use crate::operative::topology::OperativeTopology;
-
-/// Eviction hysteresis: how long an inbox-driven loop waits at a committed
-/// boundary before it parks (`FLEZHA_WORKFLOW_PARK_IDLE_MS`).
-const PARK_IDLE_DEFAULT_MS: u64 = 5_000;
-const ENV_PARK_IDLE_MS: &str = "FLEZHA_WORKFLOW_PARK_IDLE_MS";
-
-/// How long a rehydrated loop waits for the owed inbox tail before parking
-/// regardless; a lost forward must not wedge it.
-pub(super) const OWED_INBOX_WAIT: Duration = Duration::from_secs(60);
-
-pub(super) fn park_idle() -> Duration {
-    Duration::from_millis(crate::util::env_parse(
-        ENV_PARK_IDLE_MS,
-        PARK_IDLE_DEFAULT_MS,
-    ))
-}
-
-/// The park record for the committed boundary of `iter`, carrying the last
-/// message this run parked unread so the controller releases it; the
-/// controller rehydrates on the next input or the wake deadline.
-pub(super) fn iter_park(
-    r: &Run<'_>,
-    iter: u32,
-    parked_offset: Option<u64>,
-) -> (String, crate::pb::command_request::Command) {
-    let wake_deadline_ms = r.spec.wake_after.map_or(0, |after| {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        (now + after).as_millis() as u64
-    });
-    (
-        format!(
-            "iter-park-{}-{}-{}",
-            r.inst.instance_id,
-            iter,
-            crate::util::nonce_suffix()
-        ),
-        crate::pb::command_request::Command::IterPark(crate::pb::IterPark {
-            operative_id: r.inst.instance_id.to_string(),
-            iter,
-            wake_deadline_ms,
-            consumed_offset: parked_offset,
-        }),
-    )
-}
 
 /// The chain a carry-fed pass re-enters: the one the loop's first message
 /// picked, from the journaled entry channel.

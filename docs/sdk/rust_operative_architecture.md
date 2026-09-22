@@ -59,13 +59,11 @@ underneath in [`poll_core.md`](poll_core.md) and
 
 Every operative carries a **kind** (`:stream` or `:workflow`), the one its
 class declares and its runner announces with the factory id, resolved at start
-and frozen. `Flezha.Operative.Kind` is the one capability table: a kind
-declares only the capabilities it has, and the control plane reads every flag
-through `Kind.capable?/2` with a `false` default. `:stream` declares
-`persistent_state?`, `time_travel?`, `dynamic_cells?` and
-`output_stall_watch?`; `:workflow` declares none. A gate reads the flag instead
-of probing the compute unit — `flz state get` on a workflow operative answers
-`{:error, {:unsupported_for_kind, :persistent_state}}`.
+and frozen. No behaviour is attached to the kind: what an instance can do
+follows from what its class declares (the persistence switch, the sleep
+setting, the tier) and from its own state. `flz state get` on an instance of
+either kind whose class declares persistence off answers
+`{:error, :persistence_off}`.
 
 ### The `:workflow` kind
 
@@ -107,6 +105,13 @@ completes before the start RPC confirms its binding is reported as a successful
 start with no live `runner_id`. Lifecycle, durable loop, suspension, saga
 compensation, cell retry and finished-job retention are in
 [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
+
+Both traits carry the two class settings: `PERSISTENCE_ENABLED` (default `true`)
+and `SLEEP_WHEN_IDLE`, `false` on `StreamOperative` and `Self::PERSISTENCE_ENABLED`
+on `WorkflowOperative`. An instance whose class sleeps is evicted after
+`FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its Cells
+restored; declaring it with persistence off fails `register_factory` with
+`SleepWithoutPersistence`.
 
 ## Public API
 
@@ -619,9 +624,9 @@ Persistence rides the `Change` trait: `state.apply(change)` is a `Vec::push`
 on the hot path; serialization, coalescing and the wire send happen on one
 per-process flusher thread on a 5 ms linger (`FLEZHA_FLUSH_LINGER_MS`).
 `type Change = NoChange` opts a Tasklet out. The class toggle
-`StreamOperative::PERSISTENCE_ENABLED` (default `true`) is frozen at instance
-start; the runner overrides it per instance with the operative-start metadata
-key `operative_persistence.<OperativeClass>`. Trait surface, wire format,
+`PERSISTENCE_ENABLED` (default `true`, on both kind traits) is frozen at
+instance start and announced to the controller, which an operator can override
+per class with `:operative_persistence`. Trait surface, wire format,
 `TaskletTestHarness` (`replay_equals`, `replay_emits_equal`) and the Java
 port: [`state_persistence.md`](state_persistence.md).
 

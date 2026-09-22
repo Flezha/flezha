@@ -53,12 +53,27 @@ A workflow operative SHALL loop by declaring its loop mode (`PerInput`, one iter
 
 ### Requirement: A workflow operative can be stopped externally
 
-`flz operative stop <id>` (and the equivalent controller-issued path) SHALL **cooperatively** cancel a running workflow operative — distinct from a hard removal — and drive the standard terminal teardown with completion status `cancelled`.
+`flz operative stop <id>` (and the equivalent controller-issued path) SHALL **cooperatively** cancel a workflow operative (distinct from a hard removal) and drive the standard terminal teardown with completion status `cancelled`, whether the instance is awake or asleep. A sleeping (suspended) instance SHALL first be woken through the ordinary bind on a live runner, with the stop carried by that wake so `WorkflowStop` reaches the runner as soon as the binding is published; the manager SHALL answer `{:ok, :cooperative}` once the wake is under way. The woken instance, waiting at a committed boundary with nothing owed, SHALL end `cancelled` with nothing to roll back, exactly as an awake instance stopped at the same boundary; a message that starts a pass before the stop lands SHALL be cancelled with that pass's compensation. Its completion record SHALL be written and its state directory kept under the finished-instance retention rule. Only when no runner can take the wake, or an awake instance's runner cannot be reached, SHALL the stop fall back to the hard removal, and it SHALL do so the same way for both. A stream's stop SHALL remain a hard removal, awake or asleep.
 
 #### Scenario: Operator stops a running workflow operative
 
 - **WHEN** the operator runs `flz operative stop <id>` for a running workflow operative
 - **THEN** the SDK SHALL cancel in-flight work, run compensation if partial progress was made, emit completion with status `cancelled`, and the Controller SHALL tear it down terminally
+
+#### Scenario: Operator stops a sleeping workflow operative
+
+- **WHEN** the operator runs `flz operative stop <id>` for a durable loop that is suspended and a runner is available
+- **THEN** the instance SHALL be rehydrated onto that runner, `WorkflowStop` SHALL follow the bind, the instance SHALL end with a `cancelled` completion record, its state directory SHALL be kept, and the stop SHALL answer `{:ok, :cooperative}`, exactly as for the same loop stopped awake at its boundary
+
+#### Scenario: A sleeping instance with no runner to wake on is removed hard
+
+- **WHEN** the operator stops a suspended workflow instance while no runner in its namespace can take it
+- **THEN** the stop SHALL take the hard removal, as it does for an awake instance whose runner cannot be reached, and SHALL NOT leave the instance suspended
+
+#### Scenario: A sleeping stream is removed hard
+
+- **WHEN** the operator runs `flz operative stop <id>` for a stream instance that is suspended
+- **THEN** the instance SHALL be removed and its state directory deleted, as for an awake stream, with no runner woken
 
 ### Requirement: All exit triggers converge on one terminal teardown
 

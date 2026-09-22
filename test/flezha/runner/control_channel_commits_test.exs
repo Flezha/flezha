@@ -448,7 +448,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
                    1_000
   end
 
-  test "IterPark journals the park record and suspends the instance" do
+  test "IterPark hands the park record to the instance's Overwatch" do
     inst = "park_inst_#{System.unique_integer([:positive])}"
     {control_channel, _stream_ref} = start_control_channel("park")
 
@@ -462,11 +462,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     payload = build_iter_park_payload(inst, 3, 1_800_000_000_000, "ref-park", 0)
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    assert_receive {:"$gen_cast", {:suspend, 3, 1_800_000_000_000}}, 1_000
-
-    # The park is durable BEFORE the eviction, so a controller crash in between
-    # still rediscovers the suspension.
-    assert %{parked: true, wake_deadline_ms: 1_800_000_000_000} = TaskJournal.restore_state(inst)
+    # The Overwatch writes the record durably before it evicts the instance.
+    assert_receive {:"$gen_cast",
+                    {:suspend, 3, %{wake_deadline_ms: 1_800_000_000_000, consumed_offset: 0}}},
+                   1_000
 
     # The message the run parked unread (offset 0) is released before the
     # suspension asks the log whether input is owed.

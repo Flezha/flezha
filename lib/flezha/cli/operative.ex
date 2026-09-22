@@ -378,10 +378,11 @@ defmodule Flezha.Service.Cli.Operative do
       {:error, :not_found} ->
         IO.puts("Operative '#{operative_id}' not found in namespace '#{namespace_display}'.")
 
-      {:error, {:unsupported_for_kind, :persistent_state}} ->
+      {:error, :persistence_off} ->
         Context.fail!(
           "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-cell state: " <>
-            "its kind does not support state introspection."
+            "its class declares persistence off, so its Cells hold no durable state and " <>
+            "live reads are refused."
         )
 
       {:error, reason} when is_binary(reason) ->

@@ -13,8 +13,7 @@ defmodule Flezha.Operative.Builder do
 
   Invariant: `:kind` is the factory's, resolved at start from what its runners
   announced, and frozen for the operative's lifetime; a caller that sets one
-  asserts it and is refused when the factory disagrees. See
-  `Flezha.Operative.Kind` for the kind/capability model.
+  asserts it and is refused when the factory disagrees.
   """
 
   # What a caller may write. The kind is not among them: it is the factory's,

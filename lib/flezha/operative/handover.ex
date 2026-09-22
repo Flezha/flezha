@@ -137,10 +137,12 @@ defmodule Flezha.Operative.Handover do
 
   @doc """
   Busy classification for ProcessHub's migration consent: defer while a
-  correction is pending, while a durable workflow is off an iteration
-  boundary (suspension IS the safe barrier), or while the effectively-once
+  correction is pending, while an instance that journals its progress stage by
+  stage is awake (a pass in flight is not a state document a handover can
+  ship, so it migrates only from its sleep), or while the effectively-once
   outbox still owes output that would strand on this node — queued behind the
-  flush, or dispatched and not yet confirmed by a sink.
+  flush, or dispatched and not yet confirmed by a sink. A sleeping instance of
+  either kind consents, and so does an awake stream, whether or not it sleeps.
 
   The synchronous correction transaction needs no clause — mid-run this process
   cannot answer, and consent's no-reply timeout defers it.

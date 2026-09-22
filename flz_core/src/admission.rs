@@ -35,8 +35,8 @@ fn note_admitted(slot: &Arc<CellSlot>) {
         .counters()
         .pushes_total
         .fetch_add(1, Ordering::Relaxed);
-    // Activity stamp for the dynamic-mode reaper (one atomic store; inert for
-    // single/static Cells that are never reaped).
+    // Activity stamp for the dynamic-mode reaper and an instance's sleep (one
+    // atomic store).
     slot.last_activity_ms
         .store(crate::util::monotonic_ms(), Ordering::Relaxed);
     if slot.mailbox.claim_inflight() {

@@ -17,6 +17,7 @@ defmodule Flezha.Operative.Replay do
   alias Flezha.Config
 
   alias Flezha.Config.Durations
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Lookup
   alias Flezha.Operative.Overwatch
   alias Flezha.Process.Timer
@@ -117,14 +118,21 @@ defmodule Flezha.Operative.Replay do
   def restore_on_bind(%Overwatch{arrived_via_hotswap?: true}, _operative),
     do: :ok
 
-  # Tier operatives restored synchronously in `restore_tier_cells/1`.
-  def restore_on_bind(%Overwatch{effectively_once: true}, _operative),
-    do: :ok
-
   def restore_on_bind(%Overwatch{} = state, operative) do
-    dispatch_restore(state, operative.opts, state.runner_id)
+    # An awaited restore already ran, before the tail was re-forwarded.
+    unless awaited_restore?(state), do: dispatch_restore(state, operative.opts, state.runner_id)
     :ok
   end
+
+  @doc """
+  Whether the bind restores every persisted Cell, awaited, before it
+  re-forwards the input tail onto them: a stream whose input is durable (the
+  tier, or one that sleeps, whose tail is what arrived while it slept). A
+  workflow's run holds its tail behind its own restore gate instead.
+  """
+  @spec awaited_restore?(Overwatch.t()) :: boolean()
+  def awaited_restore?(%Overwatch{} = state),
+    do: floor_reporter(state) in [:cells, :forward]
 
   @doc """
   Enumerate this operative's persisted Cells and ship a `RestoreInitState` for
@@ -163,9 +171,8 @@ defmodule Flezha.Operative.Replay do
     end
   end
 
-  # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
-  # `:stream` always; a durable `:workflow` class (this IS its crash-resume)
-  # unless it opted out. A stateless kind has no WAL to replay.
+  # Bind-time restore follows the class's persistence switch, for either kind;
+  # for a workflow it IS its crash-resume.
   defp replay_persisted_cells(kind, operative_class, runner_id, overwatch) do
     # Transactional outbox re-drive (workflow-transactional-outbox): a tasklet
     # journaled `task_committed` (or `compensated`) whose outbox never reached the
@@ -181,7 +188,7 @@ defmodule Flezha.Operative.Replay do
     # does blocking disk reads) and Cells are independent, so the awaits run
     # concurrently rather than serialising a large rebind.
     refusals =
-      restorable_cells(kind, operative_class)
+      restorable_cells(operative_class)
       |> Flezha.Parallel.map(&await_restore(runner_id, &1),
         max_concurrency: restore_concurrency()
       )
@@ -246,10 +253,10 @@ defmodule Flezha.Operative.Replay do
   defp restore_concurrency,
     do: Config.get(:bind_restore_concurrency)
 
-  # Persisted, restorable Cells of this class — empty when the kind/class
-  # combination has no persistent state.
-  defp restorable_cells(kind, operative_class) do
-    if PersistenceResolver.persistent_state?(kind, operative_class) do
+  # Persisted, restorable Cells of this class, empty when its persistence is
+  # off.
+  defp restorable_cells(operative_class) do
+    if PersistenceResolver.persistence_enabled?(operative_class) do
       # Remote hydration runs first, and in this one place: a controller
       # adopting an operative whose disk is gone then finds its Cells,
       # task-journal and input log on disk by the time this walks
@@ -273,19 +280,16 @@ defmodule Flezha.Operative.Replay do
   first Tasklet until that many restores land (crash-resume,
   `workflow-operative-durability`).
 
-  Non-zero only for a durable `:workflow` class with WAL state on disk; `0` for a
-  fresh spawn, a stream operative, or an opted-out workflow one — those need
-  no restore-before-run gate. Matches the frames `replay_persisted_cells/4`
-  ships (same enumeration + `has_persisted_state?` filter).
+  `0` for a fresh spawn and for a class whose persistence is off. Matches the
+  frames `replay_persisted_cells/4` ships (same enumeration +
+  `has_persisted_state?` filter); only a workflow's run waits on it.
   """
-  @spec resume_cell_count(atom(), binary()) :: non_neg_integer()
-  def resume_cell_count(:workflow, operative_class),
-    do: length(restorable_cells(:workflow, operative_class))
-
-  def resume_cell_count(_kind, _operative_class), do: 0
+  @spec resume_cell_count(binary()) :: non_neg_integer()
+  def resume_cell_count(operative_class),
+    do: length(restorable_cells(operative_class))
 
   @doc """
-  Effectively-once bind path: restore each persisted Cell through the
+  The `awaited_restore?/1` bind path: restore each persisted Cell through the
   awaited control round-trip, so the SDK has applied state + consumed floor
   before the bind re-forwards the input tail (`reforward_undelivered_tail/1`).
 
@@ -293,11 +297,12 @@ defmodule Flezha.Operative.Replay do
   min watermark skip re-forwarded offsets they already consumed (SDK
   `consumed_floor`).
   """
-  @spec restore_tier_cells(Overwatch.t()) :: {:ok, Overwatch.t()} | {:error, term()}
-  def restore_tier_cells(%Overwatch{} = state) do
+  @spec restore_cells_awaited(Overwatch.t()) :: {:ok, Overwatch.t()} | {:error, term()}
+  def restore_cells_awaited(%Overwatch{} = state) do
     refused =
-      state.builder.kind
-      |> restorable_cells(Overwatch.operative_class(state))
+      state
+      |> Overwatch.operative_class()
+      |> restorable_cells()
       |> Enum.find_value(fn cell_id ->
         # Starting the writer replays its WAL scan: arms the outbox re-drive
         # and repopulates the Cell's durable consumed-offset watermark.
@@ -313,6 +318,70 @@ defmodule Flezha.Operative.Replay do
     # whose baseline never landed is the silent loss this guards.
     if refused, do: {:error, refused}, else: {:ok, state}
   end
+
+  # ---------- the instance's floor ----------
+
+  @doc """
+  Who reports the instance's floor in its input log, which is what makes its
+  input durable: its Cells on the effectively-once tier, its journal when it
+  journals, the controller's forwards for a plain stream that sleeps (the log
+  then retains only what arrived while nobody could take it), or nobody, and
+  its input is not journaled.
+  """
+  @spec floor_reporter(Overwatch.t()) :: :cells | :journal | :forward | nil
+  def floor_reporter(%Overwatch{effectively_once: true}), do: :cells
+  def floor_reporter(%Overwatch{durable_workflow: true}), do: :journal
+  def floor_reporter(%Overwatch{sleeps: true}), do: :forward
+  def floor_reporter(%Overwatch{}), do: nil
+
+  defp forward_reporter(operative_class),
+    do: {operative_class, operative_class, "_forwarded"}
+
+  @doc """
+  A payload reached the bound runner: for a plain sleeping stream its offset is
+  now the runner's, and the instance's floor moves past it.
+  """
+  @spec forwarded(Overwatch.t(), {binary(), map()}) :: :ok
+  def forwarded(%Overwatch{} = state, {_message, %{"flz.offset" => offset}}) do
+    if floor_reporter(state) == :forward,
+      do: release(state, String.to_integer(offset)),
+      else: :ok
+  end
+
+  def forwarded(%Overwatch{}, _payload), do: :ok
+
+  @doc """
+  The park record `state` sleeps with. A plain sleeping stream's floor lives
+  only in memory while it is awake, so its record carries it, and a boot that
+  rediscovers the sleep reads it back through `release_parked/2`.
+  """
+  @spec floor_at_park(Overwatch.t(), ClassRegistry.park()) :: ClassRegistry.park()
+  def floor_at_park(%Overwatch{} = state, park) do
+    if floor_reporter(state) == :forward,
+      do: %{park | consumed_offset: InputLog.watermark(Overwatch.operative_class(state))},
+      else: park
+  end
+
+  @doc """
+  Seed the instance's floor from its park record at boot: the offset a
+  workflow parked unread, or a plain sleeping stream's forwarded floor.
+  """
+  @spec release_parked(Overwatch.t(), ClassRegistry.park() | nil) :: :ok
+  def release_parked(%Overwatch{} = state, %{consumed_offset: offset}) when is_integer(offset),
+    do: release(state, offset)
+
+  def release_parked(%Overwatch{}, _park), do: :ok
+
+  defp release(%Overwatch{} = state, offset), do: release(floor_reporter(state), state, offset)
+
+  defp release(:journal, state, offset), do: TaskJournal.release_input(state.id, offset)
+
+  defp release(:forward, state, offset) do
+    class = Overwatch.operative_class(state)
+    InputLog.record_consumed(class, forward_reporter(class), offset)
+  end
+
+  defp release(_cells_or_nobody, _state, _offset), do: :ok
 
   # ---------- re-forwarding a durable tail ----------
 

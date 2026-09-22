@@ -410,7 +410,7 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — write failures inside the window that request a reconnect. The Elixir SDK reads them for its `data_heartbeat`, which is owed no delivery and whose misses are the only signal an idle runner gives |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — an unanswered reconnect request re-arms after this, so it cannot disarm the detector for good |
 | `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` | `30000` | `flz_core::workflow` — how long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet |
-| `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | `flz_core::workflow` (the pass sheet's park deadline) and the Elixir SDK's workflow driver — inbox-loop park hysteresis |
+| `FLEZHA_PARK_IDLE_MS` | `600000` | `flz_core::operative::sleep` and the Elixir SDK's instances: how long an instance of either kind whose class declares `sleep_when_idle` stays idle before it sleeps |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
 
 ### The socket-directory ladder
@@ -582,7 +582,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:default_time_travel_retention_hours` | `6` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_workflow_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_output_stall_timeout_ms` | `60_000` | `lib/flezha/state/persistence_resolver.ex` |
-| `:operative_persistence` / `:time_travel_retention_hours` / `:workflow_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:sync_durability` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex` — per-class operator overrides, `%{"OperativeClass" => value}`, winning over the SDK declaration and the instance metadata |
+| `:operative_persistence` / `:time_travel_retention_hours` / `:workflow_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:sync_durability` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class operator overrides, `%{"OperativeClass" => value}`, winning over the SDK declaration and the instance metadata; `:operative_persistence` overrides the persistence switch a class of either kind announces |
 | `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Cell-scale payload bound |
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |

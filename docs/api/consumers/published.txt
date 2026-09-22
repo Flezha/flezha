@@ -70,7 +70,6 @@ Flezha.Service.Observability.subscribe/2
 Flezha.Service.Observability.tail/2
 Flezha.Service.Observability.unsubscribe/2
 Flezha.Service.Operative.cell_state/4
-Flezha.Service.Operative.kind_capabilities/2
 Flezha.Service.Operative.kind_known?/2
 Flezha.Service.Operative.list_namespaces/1
 Flezha.Service.Operative.list_operatives/2

@@ -216,6 +216,11 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
             "a host class declares at least one tasklet".to_string(),
         ));
     }
+    if decl.sleep_when_idle && !decl.persistent {
+        issues.push(TopologyIssue::SleepWithoutPersistence {
+            factory_id: decl.factory_id.clone(),
+        });
+    }
     // Each kind is judged on its own settings; a setting of the other kind is
     // refused by its own name rather than by the rule that assumes its kind.
     match &decl.workflow {
@@ -517,6 +522,7 @@ fn register(derived: Derived) -> Result<(), Error> {
         tasklet_name_to_id,
         factory_id: class.factory_id,
         persistence_enabled_const: decl.persistent,
+        sleep_when_idle: decl.sleep_when_idle,
         effectively_once: decl.effectively_once,
         correction: class.correction,
         ack_granularity: class.ack_granularity,

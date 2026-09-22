@@ -141,6 +141,11 @@ extending `StreamOperative` is refused at `registerFactory`, naming the
 attribute and the class, and as `SyncDurabilityOnStream` when it sets
 `syncDurability: true`.
 
+`#[Operative]` carries the two settings of both kinds: `persistent` (default
+`true`) and `sleepWhenIdle`, which defaults to `persistent` on a workflow and
+to `false` on a stream. `sleepWhenIdle: true` with `persistent: false` is
+refused as `SleepWithoutPersistence` when the runner starts.
+
 A workflow fires no timers yet, so inside one `timerAfter`,
 `timerAtEventTime` and `cancelTimer` throw naming `TimersUnavailable`, and the
 tasklet fails without a retry.
@@ -234,8 +239,9 @@ final class Counter extends StreamOperative
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a retry ladder, the effectively-once tier, a correction window, and every
 class-level setting but a workflow's loop mode. A short form writing another
-one, `persistent: false` or a `#[Workflow]` argument other than `loopMode`, is
-refused at `registerFactory` naming the setting and the full form.
+one, `persistent: false`, `sleepWhenIdle` or a `#[Workflow]` argument other
+than `loopMode`, is refused at `registerFactory` naming the setting and the
+full form.
 
 The factory id is always written: it is an address an operator types, and a
 class rename must not move it, so a class with no `#[Operative]` is refused as

@@ -5,7 +5,7 @@ TBD - created by archiving change workflow-operative-functionality. Update Purpo
 ## Requirements
 ### Requirement: WAL persistence for a workflow operative is durable by default, opt-out per class
 
-A workflow operative class SHALL be **durable by default**; an author MAY **opt out** per class (fire-and-forget) via a flag on the operative (mirroring the stream persistence flag), resolved at start through the existing persistence resolver, with an operator override still available. When durable, its tasklets/cells SHALL be WAL-backed on the **same substrate** (WalWriter framing, snapshots, fsync batching, retention) and the **same `{operative_class, tasklet_id, cell_key}` identity** a stream operative uses. When opted out, a workflow operative SHALL be pure in-memory and SHALL leave no on-disk state artifacts.
+A workflow operative class SHALL be **durable by default**; an author MAY **opt out** per class (fire-and-forget) through the same class-level persistence switch a stream class carries, under each SDK's one spelling for it, announced by the runner in the `AddOperative` response and resolved by the controller through the existing persistence resolver with the operator override still available. When durable, its tasklets/cells SHALL be WAL-backed on the **same substrate** (WalWriter framing, snapshots, fsync batching, restore) as a stream operative's, with no parallel persistence machinery. An opted-out class SHALL produce no WAL, snapshot, journal or input log on the controller, SHALL ship no state frames from the runner, SHALL be given no restore on a rebind, and SHALL NOT sleep: declaring `sleep_when_idle` on it SHALL be refused at registration as `SleepWithoutPersistence`, and a `once` or `per_input` instance of it waits in memory for its message or a stop.
 
 #### Scenario: Durable workflow operative is WAL-backed by default
 
@@ -15,7 +15,12 @@ A workflow operative class SHALL be **durable by default**; an author MAY **opt 
 #### Scenario: Opted-out workflow operative writes nothing to disk
 
 - **WHEN** a workflow operative class opts out of persistence and runs to completion
-- **THEN** no WAL, snapshot, or state files SHALL be created for it
+- **THEN** no WAL, snapshot, journal, input log or state files SHALL be created for it, in any SDK
+
+#### Scenario: The opt-out is honoured on both sides
+
+- **WHEN** a workflow class opts out of persistence in Java, Node, Python, Ruby, PHP, Rust or Elixir and an instance of it is rebound after its runner died
+- **THEN** the runner SHALL have shipped no `cell_state_change` frame for it, the controller SHALL ship no `RestoreInitState` and no `task_journal`, and every tasklet SHALL re-run from the top
 
 ### Requirement: A durable workflow operative resumes from the WAL on crash, at-least-once
 

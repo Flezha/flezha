@@ -37,7 +37,6 @@ defmodule Flezha.State.TaskJournal do
   @type_task_committed Codec.type_code(:task_committed)
   @type_outbox_flushed Codec.type_code(:outbox_flushed)
   @type_iter_committed Codec.type_code(:iter_committed)
-  @type_parked Codec.type_code(:parked)
   @type_compensated Codec.type_code(:compensated)
   @type_rewound Codec.type_code(:rewound)
 
@@ -54,7 +53,6 @@ defmodule Flezha.State.TaskJournal do
           :task_committed
           | :outbox_flushed
           | :iter_committed
-          | :parked
           | :compensated
           | :rewound
 
@@ -70,10 +68,6 @@ defmodule Flezha.State.TaskJournal do
                 consumed_offset: non_neg_integer() | nil,
                 entry_channel: String.t(),
                 handoff: [handoff_item()]
-              }
-            | %{
-                wake_deadline_ms: non_neg_integer() | nil,
-                consumed_offset: non_neg_integer() | nil
               }
             | %{outbox: [outbox_entry()]}
             | %{for_type: entry_type_name()}
@@ -165,35 +159,6 @@ defmodule Flezha.State.TaskJournal do
       instance_id,
       {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion}
     )
-  end
-
-  @doc """
-  Append one `parked` entry — the loop is suspended at the committed boundary of
-  iteration `iter`, to be rehydrated by a new input-log append or, when
-  `wake_deadline_ms` is non-nil, by its durable timer. `consumed_offset` is the
-  highest input-log offset the run parked to the dead-letter queue unread
-  (`nil` when none), which the log releases as an iteration's consumed input.
-  Durable before the instance is evicted, so suspension survives a controller
-  redeploy.
-
-  The park is named from `namespace` by an instance id alone, so one for an
-  instance whose durable state another namespace owns is refused.
-  """
-  @spec append_parked(
-          binary(),
-          binary(),
-          non_neg_integer(),
-          non_neg_integer() | nil,
-          non_neg_integer() | nil
-        ) :: :ok | {:error, term()}
-  def append_parked(namespace, instance_id, iter, wake_deadline_ms \\ nil, consumed_offset \\ nil)
-      when is_binary(namespace) and is_binary(instance_id) and is_integer(iter) and iter >= 0 do
-    owner = Paths.namespace_of_class(instance_id)
-    payload = [<<wake_deadline_ms || 0::64-big>>, Codec.encode_offset(consumed_offset)]
-
-    if owner in [namespace, "_system"],
-      do: append(instance_id, @type_parked, 0, iter, payload),
-      else: {:error, {:namespace_conflict, instance_id, owner}}
   end
 
   @doc """
@@ -376,8 +341,6 @@ defmodule Flezha.State.TaskJournal do
             task_handoffs: [%{task_idx: non_neg_integer(), handoff: [handoff_item()]}],
             committed_tasks: [committed_task()],
             rewind_undo: [committed_task()],
-            parked: boolean(),
-            wake_deadline_ms: non_neg_integer() | nil,
             consumed_offset: non_neg_integer() | nil,
             completion: completion()
           }
@@ -408,8 +371,6 @@ defmodule Flezha.State.TaskJournal do
           task_handoffs: task_handoffs(in_flight),
           committed_tasks: for(%{type: :task_committed} = e <- entries, do: committed_task(e)),
           rewind_undo: rewind_undo(raw),
-          parked: match?(%{type: :parked}, List.last(entries)),
-          wake_deadline_ms: wake_deadline(List.last(entries)),
           consumed_offset: consumed_offset_of(last_iter),
           completion: completion_of(last_iter)
         }
@@ -432,9 +393,8 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  The highest input-log offset any iteration ever consumed, or a park recorded
-  as parked to the dead-letter queue unread, `nil` when none has: the
-  instance's floor in its input log. Unlike `consumed_offset/1` a rewind does
+  The highest input-log offset any iteration ever consumed, `nil` when none
+  has: the instance's floor in its input log. Unlike `consumed_offset/1` a rewind does
   not move it back: the rewound iterations' inputs were released when they
   committed, and a rewind is undo-and-continue, never a replay.
   """
@@ -443,7 +403,7 @@ defmodule Flezha.State.TaskJournal do
     {:ok, raw} = read(instance_id)
 
     raw
-    |> Enum.filter(&(&1.type in [:iter_committed, :parked]))
+    |> Enum.filter(&(&1.type == :iter_committed))
     |> Enum.map(&consumed_offset_of/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.max(fn -> nil end)
@@ -613,9 +573,6 @@ defmodule Flezha.State.TaskJournal do
 
   defp completion_of(nil), do: nil
   defp completion_of(%{payload: %{completion: completion}}), do: completion
-
-  defp wake_deadline(%{type: :parked, payload: %{wake_deadline_ms: ms}}), do: ms
-  defp wake_deadline(_), do: nil
 
   # Seed for a fresh iteration: the previous iteration's terminal handoff (a
   # handoff-chained loop's input; ignored by an input-driven one, which re-seeds

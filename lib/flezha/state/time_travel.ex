@@ -17,7 +17,6 @@ defmodule Flezha.State.TimeTravel do
   Out-of-retention errors are returned as `%TimeTravelError{}`.
   """
 
-  alias Flezha.Operative.ClassRegistry
   alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.SDK.Wire
   alias Flezha.State.{Paths, RecordFrame, Snapshot}
@@ -28,7 +27,7 @@ defmodule Flezha.State.TimeTravel do
     defexception [:kind, :message, :earliest_available]
 
     @type t :: %__MODULE__{
-            kind: :outside_retention | :no_data | :decode | :unsupported_for_kind,
+            kind: :outside_retention | :no_data | :decode,
             message: binary(),
             earliest_available: term()
           }
@@ -56,19 +55,7 @@ defmodule Flezha.State.TimeTravel do
 
   @spec query(Paths.cell_id(), target()) ::
           {:ok, result()} | {:error, TimeTravelError.t()}
-  def query({operative_class, _, _} = cell_id, target) do
-    if ClassRegistry.capable?(operative_class, :time_travel?) do
-      do_query(cell_id, target)
-    else
-      {:error,
-       TimeTravelError.exception(
-         kind: :unsupported_for_kind,
-         message: "time-travel is not supported for this operative kind"
-       )}
-    end
-  end
-
-  defp do_query(cell_id, target) do
+  def query(cell_id, target) do
     snaps = Paths.snapshot_paths(cell_id)
     target_seq = resolve_target_seq(cell_id, target)
 

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: an operative of either kind sleeps when idle
+
+`sleep_when_idle` is a class setting of both kinds in all seven SDKs. A stream class that declares
+it sleeps once every cell has been idle for `FLEZHA_PARK_IDLE_MS` (600 000 ms), is evicted from
+the runner, and wakes on its next input with its state intact; a workflow class sleeps by default
+when it persists, as before. Sleeping needs persistence: a class that declares it with
+persistence off is refused at registration (`SleepWithoutPersistence`). The knob
+`FLEZHA_WORKFLOW_PARK_IDLE_MS` is now `FLEZHA_PARK_IDLE_MS`, and the park record moved out of the
+task journal into the class directory.
+
+The persistence switch is one class setting for both kinds too: a Java stream class that turns
+persistence off is now declared so (it used to read its tasklets), and a live state read of any
+class with persistence off answers `persistence_off`. Time travel, retention, the watchdog and
+evicted-cell deletion now treat a workflow's cells as a stream's. Stopping a sleeping workflow
+wakes it and stops it cleanly instead of removing it hard.
+
 ### Changed: a workflow tasklet may be keyed
 
 A `key_by` edge into a workflow tasklet is accepted in all seven SDKs; the `DynamicCells` refusal

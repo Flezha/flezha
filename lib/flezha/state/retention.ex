@@ -21,7 +21,6 @@ defmodule Flezha.State.Retention do
   use Flezha.Process.Timer, keys: [:sweep]
 
   alias Flezha.Config.Durations
-  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.InputLog.Sweep
 
   alias Flezha.State.{
@@ -84,16 +83,7 @@ defmodule Flezha.State.Retention do
 
   defp sweep_all() do
     Enum.each(Paths.all_cells(), fn {operative_class, _, _} = pid ->
-      hours =
-        if ClassRegistry.capable?(operative_class, :time_travel?) do
-          PersistenceResolver.retention_hours(operative_class)
-        else
-          # No time-travel for this kind (a durable :workflow operative): keep
-          # only the latest snapshot, never retain history for point-in-time.
-          0
-        end
-
-      sweep_cell(pid, hours)
+      sweep_cell(pid, PersistenceResolver.retention_hours(operative_class))
     end)
   end
 

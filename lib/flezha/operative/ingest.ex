@@ -151,7 +151,7 @@ defmodule Flezha.Operative.Ingest do
   defp journal_input(state, nil, _reply_to), do: {nil, state}
 
   defp journal_input(%Overwatch{} = state, payload, reply_to) do
-    if durable_input?(state),
+    if Replay.floor_reporter(state),
       do: {:pending, append_async(state, payload, reply_to, 1)},
       else: {payload, state}
   end
@@ -241,12 +241,10 @@ defmodule Flezha.Operative.Ingest do
   end
 
   defp undeliverable(%Overwatch{} = state) do
-    if durable_input?(state) and Replay.arm_bind_reforward(state) == :armed,
+    if Replay.floor_reporter(state) && Replay.arm_bind_reforward(state) == :armed,
       do: :ok,
       else: {:error, :not_ready}
   end
-
-  defp durable_input?(%Overwatch{effectively_once: eo, durable_workflow: db}), do: eo or db
 
   # Liveness bookkeeping for one ingress message: always an io_in, then either
   # filtered (on_input returned nil) or forwarded to the channel.

@@ -24,13 +24,13 @@ fn re_arming_a_workflow_deadline_replaces_its_wake() {
 
     assert!(second > first);
     assert_eq!(
-        core.workflow_deadlines(r.run.seq),
+        core.instance_deadlines(r.inst.seq),
         vec![(Deadline::ParkIdle, second)],
         "one wake, at the later due time"
     );
 
     r.decide(|d| d.disarm(Deadline::ParkIdle));
-    assert!(core.workflow_deadlines(r.run.seq).is_empty());
+    assert!(core.instance_deadlines(r.inst.seq).is_empty());
 }
 
 #[test]
@@ -58,5 +58,5 @@ fn a_stale_workflow_deadline_is_a_no_op() {
         Phase::Gated,
         "the current one opens it"
     );
-    crate::poll_core::global().disarm_workflow(r.run.seq, Deadline::RestoreGate, current);
+    crate::poll_core::global().disarm_instance(r.inst.seq, Deadline::RestoreGate, current);
 }

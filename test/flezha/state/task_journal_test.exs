@@ -173,7 +173,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert resume.committed_task_idxs == [], "iteration 1 has committed no tasklet yet"
     assert resume.handoff == [{2, "carry"}], "a fresh iteration seeds from the terminal handoff"
     assert resume.consumed_offset == 4
-    refute resume.parked
+    refute Map.has_key?(resume, :parked), "where an instance sleeps is not the journal's"
 
     # Iteration 1 gets one task in before the crash: resume skips it and seeds
     # from ITS handoff instead.
@@ -255,16 +255,6 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert rendered =~ "consumed no journaled input"
   end
 
-  test "a park records the offset it parked unread, or none" do
-    inst = instance_id()
-    :ok = TaskJournal.append_parked("default", inst, 0, nil)
-    assert {:ok, [%{payload: %{consumed_offset: nil}}]} = TaskJournal.read(inst)
-    assert TaskJournal.released_offset(inst) == nil
-
-    :ok = TaskJournal.append_parked("default", inst, 0, nil, 0)
-    assert TaskJournal.released_offset(inst) == 0
-  end
-
   test "the journal reports what it released into the input log's watermark" do
     inst = instance_id()
     :ok = TaskJournal.release_input(inst)
@@ -336,33 +326,6 @@ defmodule FlezhaTest.State.TaskJournalTest do
     json = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "json", nil) end)
     assert %{"entries" => [task, iter]} = Jason.decode!(json)
     assert {task["completes_bytes"], iter["completes_bytes"]} == {4, 4}
-  end
-
-  test "park record survives as the suspension signal until the loop runs again" do
-    inst = instance_id()
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [])
-    :ok = TaskJournal.append_iter_committed(inst, 0, 2, [])
-
-    refute TaskJournal.restore_state(inst).parked
-
-    :ok = TaskJournal.append_parked("default", inst, 0, 1_800_000_000_000)
-
-    resume = TaskJournal.restore_state(inst)
-    assert resume.parked, "the journal's last entry is the park"
-    assert resume.wake_deadline_ms == 1_800_000_000_000
-    assert resume.iter == 1, "a rehydrate still enters the iteration after the committed one"
-
-    # A park with no deadline waits for input alone.
-    :ok = TaskJournal.append_iter_committed(inst, 1, 5, [])
-    :ok = TaskJournal.append_parked("default", inst, 1, nil)
-    resume = TaskJournal.restore_state(inst)
-    assert resume.parked
-    assert resume.wake_deadline_ms == nil
-
-    # Once the loop runs again the instance is unparked: a park holds only
-    # while it is the LAST entry.
-    :ok = TaskJournal.append_task_committed(inst, 0, 2, [], [])
-    refute TaskJournal.restore_state(inst).parked
   end
 
   test "the journal never registers a phantom Cell" do
@@ -599,9 +562,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
                  handoff: [%RunnerCommands.TaskHandoffItem{channel_id: 2, payload: "h"}]
                }
              ],
-             consumed_offset: 3,
-             parked: false,
-             wake_deadline_ms: 0
+             consumed_offset: 3
            } = journal
 
     # Every forward task commit, with its iteration — the driver's compensation
@@ -839,8 +800,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
              iter: 2,
              consumed_offset: 2,
              handoff: [{1, "redone"}],
-             rewind_undo: [],
-             parked: false
+             rewind_undo: []
            } =
              TaskJournal.restore_state(inst)
 

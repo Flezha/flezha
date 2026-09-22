@@ -187,6 +187,11 @@ checkpoint call as `CheckpointOnWorkflow`, `correction_window` as
 flag is the one spelling of synchronous durability; the builder has no such
 call.
 
+Both kinds' class bodies take `persistent` (default `true`) and the
+`sleep_when_idle` flag, which defaults to `persistent` on a workflow and to off
+on a stream; `sleep_when_idle` with `persistent false` is refused as
+`SleepWithoutPersistence` when the runner declares its classes.
+
 Timers do not fire inside a workflow yet, so `ctx.timer_after`,
 `ctx.timer_at_event_time` and `ctx.cancel_timer` in a workflow tasklet raise
 a `Flezha::EmitError` naming `TimersUnavailable`, and the attempt fails as

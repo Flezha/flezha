@@ -157,6 +157,14 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
            "run never completed with status #{inspect(status)}"
   end
 
+  # Asleep: evicted from its runner, its Overwatch kept.
+  def suspended?(namespace, operative_id) do
+    match?(
+      {:ok, %{suspended: true}},
+      OperativeManager.get_overwatch_state(namespace, operative_id)
+    )
+  end
+
   def registered?(namespace, operative_id) do
     match?({:ok, pid} when is_pid(pid), HubManager.get_pid(namespace, operative_id))
   end

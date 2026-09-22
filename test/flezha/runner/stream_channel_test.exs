@@ -334,7 +334,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
   end
 
-  describe "output_stall / delete gating (kind-aware)" do
+  describe "output_stall and delete for either kind" do
     setup do
       FlezhaTest.Case.install([:tmp_app_data])
       ClassRegistry.ensure_table()
@@ -342,7 +342,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok
     end
 
-    test "a workflow operative is not flagged for output_stall on stream close", %{pid: pid} do
+    test "a workflow operative is flagged for output_stall on stream close, as a stream is",
+         %{pid: pid} do
       ClassRegistry.put("bnd_op", :workflow)
       on_exit(fn -> ClassRegistry.delete("bnd_op") end)
 
@@ -366,10 +367,10 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       _ = GenServer.call(pid, :stream_ref_status)
 
       assert_receive {:output_stall, "cont_op"}
-      refute_received {:output_stall, "bnd_op"}
+      assert_receive {:output_stall, "bnd_op"}
     end
 
-    test "delete_cell_state is ignored for a workflow (non-dynamic) class", %{pid: pid} do
+    test "delete_cell_state removes a workflow Cell's state, as a stream's", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
       ClassRegistry.put(class, :workflow)
       on_exit(fn -> ClassRegistry.delete(class) end)
@@ -381,11 +382,9 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       frame = Wire.encode_cell_id(class, "task", "seg")
       send(pid, {:flz_data, :ref_z, "delete_cell_state", frame, %{}})
-      # Flush the frame through the channel: the gate is decided inside the
-      # handler, so a delete it did not spawn there is never spawned.
-      _ = GenServer.call(pid, :stream_ref_status)
 
-      assert File.exists?(wal)
+      assert NodeTestHelper.wait_until(fn -> not File.exists?(wal) end, 5_000),
+             "the evicted workflow Cell's state was kept"
     end
   end
 

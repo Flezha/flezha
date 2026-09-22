@@ -291,17 +291,22 @@ seal.
 ### Requirement: Deferred wakes never hold a thread
 
 The core SHALL maintain one deferred-wake list — "this cell becomes eligible
-at time T", or "this workflow instance's deadline is due at T" — serviced by threads already
+at time T", or "this instance's deadline is due at T", serviced by threads already
 waiting in `poll` and checked on every `poll` entry. Recording a deferred wake SHALL return the
 calling thread immediately. A retryable failure's backoff SHALL be expressed as a deferred
 wake: the failed head and unprocessed tail ride the existing per-cell
 holdback, the cell's exclusivity gates stay held across the window exactly as
 they are across an in-line backoff, and the release-then-reclaim runs when the
-entry comes due. A workflow instance's deadlines (park idle, `max_duration`, the commit-ack
-re-send and the restore-gate cap) SHALL be entries on the same list, keyed by instance and
-deadline kind so re-arming replaces, and a promoted deadline SHALL decide under the instance's
-lock and act without waiting; a deadline that no longer applies SHALL be a no-op. No thread
-SHALL sleep out a backoff delay or a workflow deadline, and no dedicated thread SHALL exist to
+entry comes due. An instance's deadlines SHALL be entries on the same list, keyed by instance
+and deadline kind so re-arming replaces: the idle deadline (`FLEZHA_PARK_IDLE_MS`) of any
+instance whose class declares `sleep_when_idle`, and a workflow's `max_duration`, commit-ack
+re-send and restore-gate cap. A promoted deadline SHALL decide over what the instance holds
+(the pass sheet under its lock for a workflow, the cells' mailboxes, holdbacks, buffers and
+timers for either kind) and act without waiting; a deadline that no longer applies SHALL be a
+no-op, and an idle deadline that finds the instance busy or its cells active more recently than
+the window SHALL re-arm rather than sleep. The idle deadline SHALL be armed once per bind (and,
+for a workflow, when its sheet enters `Waiting`) and never per admitted input. No thread SHALL
+sleep out a backoff delay or an instance deadline, and no dedicated thread SHALL exist to
 service the list.
 
 #### Scenario: Correlated failure does not stall the runner
@@ -329,17 +334,32 @@ service the list.
 
 #### Scenario: A workflow deadline that no longer applies does nothing
 
-- **WHEN** a `PerInput` instance's park-idle deadline comes due after a message already started
+- **WHEN** a `PerInput` instance's idle deadline comes due after a message already started
   its next pass, or a commit-ack deadline comes due after the ack arrived
 - **THEN** the promoting poller SHALL find the deadline stale under the instance's lock and
   SHALL neither park the instance nor re-send the barrier
 
 #### Scenario: A due park-idle parks without a thread
 
-- **WHEN** a journaling `PerInput` instance has waited past `FLEZHA_WORKFLOW_PARK_IDLE_MS` at a
-  committed boundary with nothing queued and no inbox tail owed
+- **WHEN** a journaling `PerInput` instance has waited past `FLEZHA_PARK_IDLE_MS` at a
+  committed boundary with nothing queued and no input tail owed
 - **THEN** the poller promoting the deadline SHALL send `IterPark` and mark the instance parked,
   and no thread SHALL have waited out the idle window
+
+#### Scenario: A due idle deadline parks a stream without a thread
+
+- **WHEN** a stream instance whose class declares `sleep_when_idle` has had no cell activity for `FLEZHA_PARK_IDLE_MS`, every cell's mailbox, holdback and flush buffer is empty, no retry or timer wake names one of its cells, and no input tail is owed
+- **THEN** the poller promoting the deadline SHALL send `IterPark` with iteration `0` and remove the instance, and no thread SHALL have waited out the idle window
+
+#### Scenario: Recent activity re-arms instead of sleeping
+
+- **WHEN** an idle deadline comes due and a cell of the instance was active more recently than the window
+- **THEN** the poller SHALL re-arm the deadline for the remainder of the window from that activity and SHALL NOT sleep the instance
+
+#### Scenario: Admitting an input does not touch the wake list
+
+- **WHEN** ten thousand inputs are admitted into a class that declares `sleep_when_idle`
+- **THEN** no deferred-wake entry SHALL be recorded or replaced on their account; only the cells' activity stamps move
 
 ### Requirement: The core caps jobs underway and signals starvation
 

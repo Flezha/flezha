@@ -79,6 +79,7 @@ impl AddOperative {
             return;
         }
         crate::workflow::open(&instance);
+        crate::operative::sleep::bound(&instance);
     }
 
     /// The member's range; `partition_count < 2` is the whole space, guard
@@ -133,10 +134,18 @@ fn partition_refusal(
 }
 
 /// The class's declarations as `AddOperativeResponse` metadata; empty bytes
-/// when nothing is declared, and for a class that never registered.
+/// when nothing is declared, and for a class that never registered. The
+/// persistence switch rides only when off and the sleep setting only when on,
+/// for either kind.
 fn metadata_response(class: Option<&OperativeTopology>) -> Vec<u8> {
     let mut metadata = std::collections::HashMap::new();
     if let Some(topology) = class {
+        if !topology.persistence_enabled_const {
+            metadata.insert("persistent".to_string(), "false".to_string());
+        }
+        if topology.sleep_when_idle {
+            metadata.insert("sleep_when_idle".to_string(), "true".to_string());
+        }
         match &topology.workflow {
             Some(spec) => workflow_metadata(topology, spec, &mut metadata),
             None => stream_metadata(topology, &mut metadata),
@@ -257,6 +266,42 @@ mod metadata_tests {
             decoded.metadata.get("durability").map(String::as_str),
             Some("sync_remote")
         );
+    }
+
+    #[test]
+    fn the_persistence_switch_and_the_sleep_setting_ride_for_either_kind() {
+        let keys = |id: &str, facts: &str, kind: &str| {
+            let json = format!(
+                r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",{facts}
+                     "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                     "tasklets":[{{"name":"p0"}}]{kind}}}"#
+            );
+            crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+            let encoded = metadata_response(crate::operative::registry::get_class(id).as_deref());
+            AddOperativeResponse::decode(encoded.as_slice())
+                .expect("response decodes")
+                .metadata
+        };
+        for (suffix, kind) in [("stream", ""), ("workflow", r#","workflow":{}"#)] {
+            let off = keys(
+                &format!("meta_off_{suffix}_{}", std::process::id()),
+                r#""persistent":false,"#,
+                kind,
+            );
+            assert_eq!(off.get("persistent").map(String::as_str), Some("false"));
+            assert!(!off.contains_key("sleep_when_idle"));
+
+            let sleeps = keys(
+                &format!("meta_sleeps_{suffix}_{}", std::process::id()),
+                r#""persistent":true,"sleep_when_idle":true,"#,
+                kind,
+            );
+            assert_eq!(
+                sleeps.get("sleep_when_idle").map(String::as_str),
+                Some("true")
+            );
+            assert!(!sleeps.contains_key("persistent"));
+        }
     }
 
     #[test]

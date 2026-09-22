@@ -412,7 +412,7 @@ read. Every refusal exits non-zero with the reason on stderr; the non-resident f
 | `cell_key_without_tasklet` | a key given with no Tasklet to scope it (a key is unique only within its Tasklet) | SDK |
 | `{:not_resident, :suspended}` | the instance is suspended at a committed boundary and holds no runner resources | controller |
 | `{:not_resident, :unbound}` | the Operative is not bound to a runner; refused rather than waiting for a bind | controller |
-| `{:unsupported_for_kind, :persistent_state}` | the kind has no per-Cell state | controller |
+| `:persistence_off` | the class declares persistence off, so its Cells hold no durable state | controller |
 | `{:oversized_state, bytes}` | the reply exceeds `:wal_high_watermark_bytes` | controller |
 
 `cell_evicted` vs `cell_not_found` is a real distinction: eviction unlinks the Cell's files,
@@ -617,7 +617,7 @@ instance metadata → SDK declaration → global default.
 | `:time_travel_retention_hours` / `:default_time_travel_retention_hours` | `%{}` / `6` | Snapshot history kept; `0` keeps only the latest. |
 | `:workflow_completed_retention_hours` / `:default_workflow_completed_retention_hours` | `%{}` / `72` (`FLEZHA_WORKFLOW_RETENTION_HOURS`) | Finished workflow data kept before the sweeper reclaims it. |
 | `:input_log_hold_window_ms` | `0` (`FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`) | Floor on how long a consumed input stays in `input.log`; a declared correction window raises it. |
-| `:operative_persistence` | `%{}` (default `true`) | Per-class persistence on/off (workflow kinds; a stream is always persistent). |
+| `:operative_persistence` | `%{}` (default: the class's announced switch) | Per-class persistence on/off, overriding what a class of either kind announces. |
 | `:sync_durability` | `%{}` (default: the SDK declaration) | Per-class: commit barriers wait for the remote tier. |
 
 ## Smoke check (manual)

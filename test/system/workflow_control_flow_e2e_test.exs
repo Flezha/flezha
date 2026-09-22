@@ -69,7 +69,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {port_a, exec_a} =
         boot_runner(namespace, ctx, id_path,
           release?: false,
-          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
         )
 
       info =
@@ -93,7 +93,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       # Each iteration recorded the input-log offset it consumed, and the
       # consumed prefix was released.
       assert consumed_offsets(operative_id) == [0, 1]
-      assert InputLog.undelivered(operative_id) == []
+      assert_released(operative_id)
 
       # The iteration boundary compacts every Cell of the instance: the
       # controller's CompactCell must resolve a WORKFLOW Cell (not only a
@@ -106,7 +106,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
                inspect(File.ls(Path.join(Paths.class_dir(operative_id), "chat_turn")))
 
       assert NodeTestHelper.wait_until(
-               fn -> TaskJournal.restore_state(operative_id).parked end,
+               fn -> ClassRegistry.parked(operative_id) != nil end,
                20_000
              ),
              "the idle loop never parked at its committed boundary"
@@ -162,7 +162,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {_port_b, exec_b} =
         boot_runner(namespace, ctx, id_path,
           release?: true,
-          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
         )
 
       assert exec_b != exec_a
@@ -202,7 +202,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       assert journal =~ "iter_committed"
       assert journal =~ "consumed input-log offset:"
-      assert journal =~ "parked"
+      refute journal =~ "parked", "where the loop slept is not the journal's"
       assert journal =~ "task_committed task_idx=0 iter=3"
 
       # Every turn is consumed now, so the log has released all of them: the
@@ -211,7 +211,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       # threshold); a few tiny turns stay on disk, never re-delivered.
       assert TaskJournal.consumed_offset(operative_id) == 3
       assert TaskJournal.released_offset(operative_id) == 3
-      assert InputLog.undelivered(operative_id) == []
+      assert_released(operative_id)
     end
 
     # Suspension is durable STATE, not a live process: a controller-side restart
@@ -229,7 +229,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {_port, _exec} =
         boot_runner(namespace, ctx, id_path,
           release?: true,
-          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
         )
 
       start_workflow(namespace, operative_id, "chat_loop_workflow",
@@ -275,7 +275,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {_port, _exec} =
         boot_runner(namespace, ctx, id_path,
           release?: true,
-          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
         )
 
       start_workflow(namespace, operative_id, "stateless_loop_workflow",
@@ -291,7 +291,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
              "the idle stateless loop never parked"
 
       # Nothing on disk to restore — the journal is the only thing carried over.
-      assert Replay.resume_cell_count(:workflow, operative_id) == 0
+      assert Replay.resume_cell_count(operative_id) == 0
 
       send_turn(namespace, operative_id, "two")
 
@@ -301,6 +301,41 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
       # The point of the test: the second turn's staged output was delivered.
       assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
+    end
+  end
+
+  describe "stopping a sleeping loop (uds)" do
+    @describetag transport: :uds, scenario: :uds_stop_sleeping
+
+    # A stop answers the same whether the loop is asleep or awake: the sleeper
+    # is woken onto a runner, `WorkflowStop` follows the bind, and it ends
+    # `cancelled` with its record and directory kept.
+    test "a suspended loop is woken and ends cancelled with its directory kept", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("workflow_stop_sleeping")
+      operative_id = unique("chat_loop_workflow")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      {_port, _exec} =
+        boot_runner(namespace, ctx, id_path,
+          release?: false,
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
+        )
+
+      start_workflow(namespace, operative_id, "chat_loop_workflow",
+        first_message: nil,
+        plugins: [forward_sink("chat_sink", collector)]
+      )
+
+      send_turn(namespace, operative_id, "hello")
+      assert replies(collector, 1, operative_id) == ["reply:hello"]
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 20_000)
+
+      assert {:ok, :cooperative} = OperativeManager.request_stop(namespace, operative_id)
+      await_status(operative_id, "cancelled", 30_000)
+      assert File.dir?(Paths.class_dir(operative_id))
     end
   end
 
@@ -324,7 +359,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {_port, _exec} =
         boot_runner(namespace, ctx, id_path,
           release?: false,
-          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
         )
 
       start_workflow(namespace, operative_id, "chat_loop_workflow",
@@ -352,7 +387,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       last = entries |> Enum.filter(&(&1.type == :iter_committed)) |> List.last()
       assert last.payload.completion == "3"
 
-      refute entries |> Enum.drop_while(&(&1 != last)) |> Enum.any?(&(&1.type == :parked)),
+      assert ClassRegistry.parked(operative_id) == nil,
              "the completed loop parked after its last turn"
     end
   end
@@ -388,7 +423,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {_port, _exec} =
         boot_runner(namespace, ctx, id_path,
           release?: false,
-          extra_env: [{"FLEZHA_WORKFLOW_PARK_IDLE_MS", "700"}]
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
         )
 
       start_workflow(namespace, operative_id, "typed_once_workflow", first_message: nil)
@@ -765,11 +800,11 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     collector |> await_outputs(count, operative_id) |> Enum.map(fn {payload, _md} -> payload end)
   end
 
-  defp suspended?(namespace, operative_id) do
-    case OperativeManager.get_overwatch_state(namespace, operative_id) do
-      {:ok, %{suspended: true}} -> true
-      _ -> false
-    end
+  # A commit releases its input after it is acked, so the journal can show
+  # the offset consumed a moment before the log stops owing it.
+  defp assert_released(operative_id) do
+    assert NodeTestHelper.wait_until(fn -> InputLog.undelivered(operative_id) == [] end, 10_000),
+           "the log still owes #{inspect(InputLog.undelivered(operative_id))}"
   end
 
   # Count change-log records in a tasklet's retained WAL file(s). The WAL is

@@ -211,6 +211,11 @@ and `sync_durability=True` on `@flezha.stream_operative` as
 `SyncDurabilityOnStream`. The decorator keyword is the one spelling of
 synchronous durability; `Channels` has no such call.
 
+Both decorators take `persistent` (default `True`) and `sleep_when_idle`, which
+defaults to `persistent` on a workflow and to `False` on a stream;
+`sleep_when_idle=True` with `persistent=False` is refused as
+`SleepWithoutPersistence` when the runner declares its operatives.
+
 Timers do not fire inside a workflow yet, so `ctx.timer_after`,
 `ctx.timer_at_event_time` and `ctx.cancel_timer` in a workflow tasklet raise
 an `EmitError` naming `TimersUnavailable`, and the attempt fails as any

@@ -39,6 +39,8 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   @unresolved_today %{
     {Flezha.AuthZ.RoleStore, :list_for_namespace, 1} => :withdrawn,
     {Flezha.Dlq.Store, :procedures, 1} => :withdrawn,
+    {Flezha.Operative.Kind, :capabilities, 1} => :withdrawn,
+    {Flezha.Operative.Kind, :known?, 1} => :moved,
     {Flezha.Operative.Lifecycle, :rewind, 2} => :moved,
     {Flezha.Service.CliManager, :cluster_status_recovery, 2} => :withdrawn,
     {Flezha.Service.ConfigManager, :get_provider_info, 0} => :withdrawn,

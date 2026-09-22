@@ -73,7 +73,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:partition_coverage, [[]]},
       {:partition_groups, [[]]},
       {:kind_known?, [:stream]},
-      {:kind_capabilities, [:stream]},
       {:cell_state, ["default", "rc", "key"]},
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
@@ -196,8 +195,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert is_list(kinds) and kinds != []
 
       assert {:ok, true} = Operative.kind_known?(:stream, context)
-      assert {:ok, capabilities} = Operative.kind_capabilities(:stream, context)
-      assert is_map(capabilities)
 
       assert {:ok, []} = Operative.partition_groups([], context)
       assert {:ok, _coverage} = Operative.partition_coverage([], context)

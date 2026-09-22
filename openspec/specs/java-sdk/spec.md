@@ -336,33 +336,34 @@ The Java SDK's `Tasklet` interface SHALL declare `Clock extends com.flezha.sdk.s
 
 ### Requirement: Operative declares persistenceEnabled default-method, frozen at instance start
 
-The Java SDK's `StreamOperative` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Operative-instance `persistenceEnabled: boolean` at the moment `AddOperative` is processed using:
+The Java SDK's `StreamOperative` and `WorkflowOperative` interfaces SHALL each declare `default boolean persistenceEnabled() { return true; }` and `default boolean sleepWhenIdle()` (`false` on `StreamOperative`, `persistenceEnabled()` on `WorkflowOperative`). The runtime SHALL read `persistenceEnabled()` from the class for either kind when it builds the class declaration, SHALL write it as the declaration's `persistent` and SHALL NOT derive `persistent` from whether any Tasklet declares a Change other than `NoChange`; it SHALL write `sleepWhenIdle()` as `sleep_when_idle`. The core resolves the per-instance value from the declaration when `AddOperative` is processed and announces both to the controller.
 
-1. If the `AddOperative` metadata carries `operative_persistence.<OperativeClass>` with a boolean value (runner override), use that.
-2. Otherwise, use the value of `StreamOperative.persistenceEnabled()` (the Operative-class default).
-3. If neither is overridden, the result is `true`.
-
-The resolved value SHALL be bound to the `StreamOperativeInstance` and SHALL be propagated to every `CellSlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the SDK's `StreamOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the instance and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the class's method (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** an Operative's `persistenceEnabled()` is the default (returns `true`) AND no runner override is present
-- **THEN** `StreamOperativeInstance.persistenceEnabled()` SHALL return `true`
+- **WHEN** an Operative's `persistenceEnabled()` is the default (returns `true`)
+- **THEN** the class declaration SHALL announce `persistent: true` and the instance SHALL resolve `persistenceEnabled = true`
 
 #### Scenario: Code-declared opt-out is honored
 
-- **WHEN** `MarketOperative.persistenceEnabled()` returns `false` (user override) AND no runner override is present
+- **WHEN** `MarketOperative.persistenceEnabled()` returns `false` (user override)
 - **THEN** the class declaration SHALL announce `persistent: false` and the core SHALL drain-and-discard this instance's change bytes — no `cell_state_change` frame reaches the wire
 
-#### Scenario: Runner override takes precedence
+#### Scenario: A stream's opt-out is read from the class, not its Tasklets
 
-- **WHEN** `MarketOperative.persistenceEnabled()` returns `true` AND `AddOperative` metadata sets `operative_persistence.MarketOperative = false`
-- **THEN** `StreamOperativeInstance.persistenceEnabled()` SHALL return `false`
+- **WHEN** a `StreamOperative` whose Tasklets declare Changes other than `NoChange` returns `false` from `persistenceEnabled()`
+- **THEN** the class declaration SHALL announce `persistent: false`, no `cell_state_change` frame SHALL reach the wire, and a rebind after the runner dies SHALL restore nothing
+
+#### Scenario: Sleeping without persistence is refused
+
+- **WHEN** a class of either kind returns `true` from `sleepWhenIdle()` and `false` from `persistenceEnabled()`
+- **THEN** `registerFactory` SHALL throw a configuration exception whose message contains `SleepWithoutPersistence`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** an `StreamOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent runner config change sets `operative_persistence.<OperativeClass> = false`
-- **THEN** the running `StreamOperativeInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
+- **WHEN** an instance is constructed with resolved `persistenceEnabled = true`, AND the class is redeployed returning `false` while the instance runs
+- **THEN** the running instance SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
 
 ### Requirement: initState accepts optional restoration payload
 

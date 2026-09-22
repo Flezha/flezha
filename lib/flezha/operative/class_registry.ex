@@ -1,27 +1,29 @@
 defmodule Flezha.Operative.ClassRegistry do
   @moduledoc """
-  Resolves an `operative_class` to its `kind`, its declarations and its
-  effectively-once tier, for paths that carry only the class string.
+  Resolves an `operative_class` to its `kind`, its declarations and its park
+  record, for paths that carry only the class string.
 
-  `Retention`, `Watchdog`, `StreamChannel` and `TimeTravel` are keyed purely by
-  `operative_class` and never carry a kind; this registry is the seam that lets
-  them gate the stream-only capabilities through `Kind.capable?/2`.
+  `Retention`, `Watchdog`, `StreamChannel` and the persistence resolver are
+  keyed purely by `operative_class`; this registry answers them with what the
+  class declared (its persistence switch, its sleep setting, its tier) and
+  whether its instance is asleep.
 
-  `get/1` resolves in three steps: the in-memory ETS table (written at bind,
+  Every read resolves in three steps: the in-memory ETS table (written at bind,
   evicted at teardown), a durable per-class sidecar under `Paths.class_dir/1`
-  so a process-less sweep still resolves the kind, then the default `:stream`.
+  so a process-less sweep still resolves it, then the default.
 
-  Invariant: the sidecar is written only for non-`:stream` kinds, so a stream
-  operative's on-disk layout is unchanged and every `Paths` scanner ignores it.
+  Invariant: a sidecar is written only for a value other than its default, so
+  a class that declares nothing keeps its on-disk layout unchanged and every
+  `Paths` scanner ignores it.
   """
 
-  alias Flezha.Operative.Kind
   alias Flezha.State.Paths
 
   require Logger
 
   @table :flezha_operative_class_registry
   @default_kind :stream
+  @kinds [:stream, :workflow]
   @sidecar "kind"
   @tier_sidecar "effectively_once"
   @compensable_sidecar "compensable_tasks"
@@ -30,6 +32,9 @@ defmodule Flezha.Operative.ClassRegistry do
   @correction_sidecar "correction_window_ms"
   @compact_bytes_sidecar "compact_after_bytes"
   @sync_durability_sidecar "sync_durability"
+  @persistence_off_sidecar "persistence_off"
+  @sleep_sidecar "sleep_when_idle"
+  @parked_sidecar "parked"
 
   # Every per-class SDK declaration, keyed `{operative_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
@@ -41,7 +46,10 @@ defmodule Flezha.Operative.ClassRegistry do
     :leaf_tasks,
     :correction_window_ms,
     :compact_after_bytes,
-    :sync_durability
+    :sync_durability,
+    :persistence_off,
+    :sleep_when_idle,
+    :parked
   ]
 
   # ---------- table lifecycle ----------
@@ -97,7 +105,18 @@ defmodule Flezha.Operative.ClassRegistry do
           leaf_tasks: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil,
           compact_after_bytes: pos_integer() | nil,
-          sync_durability: boolean()
+          sync_durability: boolean(),
+          persistent: boolean(),
+          sleep_when_idle: boolean()
+        }
+
+  @typedoc """
+  An instance asleep: the durable wake deadline it parked with, and the
+  highest input-log offset its run parked to the dead-letter queue unread.
+  """
+  @type park :: %{
+          wake_deadline_ms: non_neg_integer() | nil,
+          consumed_offset: non_neg_integer() | nil
         }
 
   @doc """
@@ -121,7 +140,10 @@ defmodule Flezha.Operative.ClassRegistry do
       leaf_tasks: parse_ops(Map.get(metadata, "leaf_tasks")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms")),
       compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
-      sync_durability: Map.get(metadata, "durability") == "sync_remote"
+      sync_durability: Map.get(metadata, "durability") == "sync_remote",
+      # Announced only when off: a class that says nothing persists.
+      persistent: Map.get(metadata, "persistent") != "false",
+      sleep_when_idle: Map.get(metadata, "sleep_when_idle") == "true"
     }
   end
 
@@ -172,6 +194,84 @@ defmodule Flezha.Operative.ClassRegistry do
     put_correction_window(operative_class, declarations.correction_window_ms)
     put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
     put_sync_durability(operative_class, declarations.sync_durability)
+    put_persistent(operative_class, declarations.persistent)
+    put_sleep_when_idle(operative_class, declarations.sleep_when_idle)
+  end
+
+  @doc """
+  Record `operative_class`'s persistence switch. Durable because the bind-time
+  restore and the live read resolve it through
+  `Flezha.State.PersistenceResolver.persistence_enabled?/1`, possibly while the
+  instance is unbound; the sidecar exists only while persistence is off.
+  """
+  @spec put_persistent(binary(), boolean()) :: :ok
+  def put_persistent(operative_class, persistent?)
+      when is_binary(operative_class) and is_boolean(persistent?) do
+    put_declaration(operative_class, :persistence_off, @persistence_off_sidecar, not persistent?)
+  end
+
+  @doc """
+  Resolve `operative_class`'s persistence switch: ETS → durable sidecar →
+  `true` (a class persists unless it declares otherwise).
+  """
+  @spec persistent?(binary()) :: boolean()
+  def persistent?(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :persistence_off, @persistence_off_sidecar, &(&1 == "true")) !=
+      true
+  end
+
+  @doc """
+  Record whether `operative_class`'s instances sleep when idle. Durable so an
+  instance rediscovered asleep at boot journals the input that wakes it before
+  any runner has told the controller again.
+  """
+  @spec put_sleep_when_idle(binary(), boolean()) :: :ok
+  def put_sleep_when_idle(operative_class, sleeps?)
+      when is_binary(operative_class) and is_boolean(sleeps?) do
+    put_declaration(operative_class, :sleep_when_idle, @sleep_sidecar, sleeps?)
+  end
+
+  @doc "Resolve `operative_class`'s sleep setting: ETS → durable sidecar → `false`."
+  @spec sleep_when_idle?(binary()) :: boolean()
+  def sleep_when_idle?(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :sleep_when_idle, @sleep_sidecar, &(&1 == "true")) == true
+  end
+
+  @doc """
+  Record that `operative_class`'s instance is asleep, or clear it with `nil`.
+  Written durably before the instance is evicted, so a controller restart
+  rediscovers the sleep, and a write that did not land is answered as an error
+  so the caller leaves the instance bound; cleared by the bind that wakes it,
+  before the runner is told to start the instance.
+  """
+  @spec put_parked(binary(), park() | nil) :: :ok | {:error, term()}
+  def put_parked(operative_class, nil) when is_binary(operative_class),
+    do: put_declaration(operative_class, :parked, @parked_sidecar, nil)
+
+  def put_parked(operative_class, park) when is_binary(operative_class) do
+    with :ok <- install_sidecar(operative_class, @parked_sidecar, encode_declaration(park)) do
+      ensure_table()
+      :ets.insert(@table, {{operative_class, :parked}, park})
+      :ok
+    end
+  end
+
+  @doc """
+  `put_parked/2` on behalf of `namespace`, refused when another namespace owns
+  the instance's durable state.
+  """
+  @spec put_parked(binary(), park(), binary()) :: :ok | {:error, term()}
+  def put_parked(operative_class, park, namespace) do
+    case Paths.namespace_of_class(operative_class) do
+      owner when owner in [namespace, "_system"] -> put_parked(operative_class, park)
+      owner -> {:error, {:namespace_conflict, operative_class, owner}}
+    end
+  end
+
+  @doc "The park record of `operative_class`'s sleeping instance, `nil` when awake."
+  @spec parked(binary()) :: park() | nil
+  def parked(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :parked, @parked_sidecar, &parse_park/1)
   end
 
   @doc """
@@ -496,12 +596,6 @@ defmodule Flezha.Operative.ClassRegistry do
     end
   end
 
-  @doc "Whether `operative_class`'s resolved kind declares `capability`."
-  @spec capable?(binary(), Kind.capability()) :: boolean()
-  def capable?(operative_class, capability) when is_binary(operative_class) do
-    Kind.capable?(get(operative_class), capability)
-  end
-
   @doc """
   Resolve `operative_class`'s effectively-once tier: ETS → durable
   sidecar → `false` (the cost-free default).
@@ -588,6 +682,17 @@ defmodule Flezha.Operative.ClassRegistry do
   defp encode_declaration(tasks) when is_list(tasks), do: Enum.join(tasks, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
 
+  defp encode_declaration(%{wake_deadline_ms: deadline, consumed_offset: offset}),
+    do: "#{deadline || "-"},#{offset || "-"}"
+
+  defp parse_park(text) do
+    [deadline, offset] = String.split(text, ",")
+    %{wake_deadline_ms: parse_optional(deadline), consumed_offset: parse_optional(offset)}
+  end
+
+  defp parse_optional("-"), do: nil
+  defp parse_optional(digits), do: String.to_integer(digits)
+
   defp ets_lookup(operative_class) do
     case :ets.whereis(@table) do
       :undefined ->
@@ -607,10 +712,10 @@ defmodule Flezha.Operative.ClassRegistry do
   defp write_sidecar(operative_class, kind),
     do: write_sidecar_file(operative_class, @sidecar, Atom.to_string(kind))
 
+  # A declaration whose sidecar did not land is logged and kept in memory: the
+  # next bind writes it again.
   defp write_sidecar_file(operative_class, filename, content) do
-    path = sidecar_path(operative_class, filename)
-
-    case Paths.atomic_install(path, &:file.write(&1, content), :class_kind) do
+    case install_sidecar(operative_class, filename, content) do
       :ok ->
         :ok
 
@@ -623,6 +728,11 @@ defmodule Flezha.Operative.ClassRegistry do
     end
   end
 
+  defp install_sidecar(operative_class, filename, content) do
+    path = sidecar_path(operative_class, filename)
+    Paths.atomic_install(path, &:file.write(&1, content), :class_kind)
+  end
+
   defp read_sidecar(operative_class) do
     case File.read(sidecar_path(operative_class)) do
       {:ok, bin} -> parse_kind(String.trim(bin))
@@ -632,8 +742,12 @@ defmodule Flezha.Operative.ClassRegistry do
 
   defp parse_kind(str) do
     kind = String.to_existing_atom(str)
-    if Kind.known?(kind), do: kind, else: nil
+    if known_kind?(kind), do: kind, else: nil
   rescue
     ArgumentError -> nil
   end
+
+  @doc "Whether `kind` is an operative kind."
+  @spec known_kind?(atom()) :: boolean()
+  def known_kind?(kind), do: kind in @kinds
 end

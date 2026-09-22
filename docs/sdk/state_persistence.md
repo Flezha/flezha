@@ -57,12 +57,21 @@ their place, carrying the outputs rather than preceding them.
 
 ### Persistence toggle
 
+One switch per class, for a stream and a workflow alike, frozen on the instance at start (a
+change applies on the next stop + start). The runner announces it (`persistent = "false"` in the
+`AddOperative` response), so the controller reads the same value: an opted-out class of either
+kind keeps no WAL or snapshot, is given no restore on a rebind, and answers a live Cell read with
+`{:error, :persistence_off}`. Beside it sits the sleep setting, which needs the switch on.
+
 | Surface | Rust | Java | Elixir |
 |---|---|---|---|
-| Stream class toggle | `StreamOperative::PERSISTENCE_ENABLED` const, default `true`; frozen on the instance at start, a change applies on the next stop + start | `StreamOperative.persistenceEnabled()` default-method exists but the runtime does not read it; the host declaration ships `persistent = true` iff some Tasklet declares a Change other than `NoChange`, so the Java opt-out is per-Tasklet via `NoChange` | `StreamOperative.persistence_enabled/0`, default `true`, read when a Cell starts; a Tasklet without `apply_change/2` is `NoChange` |
-| Runner override | `OperativeInstance::with_options` (`flz_core/src/operative/instance.rs`, `operator_override.unwrap_or(class_const)`) accepts an `operative_persistence.<OperativeClass>` override, but the runner's `start_operative` passes none — the class const decides | same core seam, same unfed override | none — the class callback decides |
-| Workflow class toggle | `WorkflowOperative::PERSISTENCE_ENABLED`, default `true` | `WorkflowOperative.persistenceEnabled()`, default `true` | `WorkflowOperative.persistence_enabled/0`, default `true` |
-| Controller side | `:operative_persistence` (`%{class => bool}`) resolves `persistent_state?` for workflow classes; a stream class is always durable on the controller side | same | same |
+| Persistence switch, both kinds | `PERSISTENCE_ENABLED` const on both traits, default `true` | `persistenceEnabled()` on both kind interfaces, default `true`, read from the class whatever its Tasklets' Change types | `persistence_enabled/0` on both behaviours (a `use` option), default `true` |
+| Sleep setting | `SLEEP_WHEN_IDLE`: `false` on `StreamOperative`, `PERSISTENCE_ENABLED` on `WorkflowOperative` | `sleepWhenIdle()`: `false` on `StreamOperative`, `persistenceEnabled()` on `WorkflowOperative` | `sleep_when_idle` (a `use` option or callback): `false` for a stream, `persistence_enabled/0` for a workflow |
+| Sleeping with persistence off | refused as `SleepWithoutPersistence` | same | same |
+| Controller side | `:operative_persistence` (`%{class => bool}`) overrides the announced switch per class | same | same |
+
+The Node, Python, Ruby and PHP SDKs carry the same two settings under their own spellings
+(`persistent` and `sleepWhenIdle` / `sleep_when_idle`); each SDK page lists them.
 
 Durable-vs-opted-out workflow guarantees: [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
 

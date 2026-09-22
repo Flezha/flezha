@@ -54,8 +54,8 @@ defmodule Flezha.Schedule.Job do
   workflow start path. Also serves `flz schedule run` (manual fire).
 
   The entry's plugin spec is decoded per firing (provider ids resolve against
-  the running controller) and attached AT SPAWN — a workflow instance finishes
-  in milliseconds, so a plugin attached afterwards would miss the whole run.
+  the running controller) and attached AT SPAWN: a plugin attached after the
+  spawn misses whatever the instance already ran.
   """
   @spec spawn_instance(Store.entry(), String.t(), pos_integer()) ::
           {:ok, map()} | :duplicate | {:error, term()}

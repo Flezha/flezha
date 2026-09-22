@@ -145,14 +145,14 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     refute parked?(op)
   end
 
-  test "KB-210: runner B's IterPark journals no park for an instance another namespace claims",
+  test "KB-210: runner B's IterPark records no park for an instance another namespace claims",
        ctx do
     foreign = "claimed-elsewhere-#{System.unique_integer([:positive])}"
     :ok = Paths.claim_namespace(foreign, "team-other")
 
     # No ownership record names the instance here, so the park is bounded by
     # the namespace its durable state belongs to.
-    assert TaskJournal.append_parked(@ns, foreign, 3, nil) ==
+    assert ClassRegistry.put_parked(foreign, %{wake_deadline_ms: nil, consumed_offset: nil}, @ns) ==
              {:error, {:namespace_conflict, foreign, "team-other"}}
 
     write_frame(
@@ -237,7 +237,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
   defp journaled?(instance_id), do: match?({:ok, [_ | _]}, TaskJournal.read(instance_id))
 
-  defp parked?(instance_id), do: match?(%{parked: true}, TaskJournal.restore_state(instance_id))
+  defp parked?(instance_id), do: ClassRegistry.parked(instance_id) != nil
 
   defp start_channel(runner_id) do
     test_pid = self()

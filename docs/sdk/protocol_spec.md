@@ -222,7 +222,7 @@ than at emit.
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a stream on the effectively-once tier or a durable workflow (§11). A stream's invocation carries it back as its effect record's `consumed_offset`, a workflow's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
-| `flz.wake` | controller → runner | `"timer"` on the synthetic empty input-log record that wakes a parked loop at its journaled deadline (§11). |
+| `flz.wake` | controller → runner | `"timer"` on the synthetic empty input-log record that wakes a parked loop at its recorded deadline (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
 
@@ -625,7 +625,7 @@ message AddOperative {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed, and while any of its `inbox_tail_count` owed inbox items has not arrived its park deadline is 60 s instead of the park idle |
+| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either kind, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of the park idle |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedTasklet: ...` |
@@ -636,6 +636,8 @@ channel (absent/undecodable ⇒ every default):
 
 | Key | Value | Meaning |
 |-----|-------|---------|
+| `persistent` | `"false"` | either kind: the class keeps no durable Cell state (sent only when false) |
+| `sleep_when_idle` | `"true"` | either kind: an idle instance sleeps (sent only when true) |
 | `effectively_once` | `"true"` | the class runs on the effectively-once tier |
 | `durability` | `"sync_remote"` | workflow only: withhold barrier acks until the remote backend holds them |
 | `keyed` | `"false"` | stream class with no keyed entry-fed tasklet (sent only when false) |
@@ -1397,8 +1399,7 @@ message TaskJournalState {
     repeated TaskHandoffItem handoff = 3;          // previous iteration's terminal batch
     repeated TaskCommittedTask committed_tasks = 4;// every forward commit, for compensation planning
     optional uint64 consumed_offset = 5;           // input-log offset the last committed iteration consumed; absent = none
-    bool   parked = 6;                             // suspension record
-    uint64 wake_deadline_ms = 7;
+    reserved 6, 7;                                 // where an instance sleeps is not the journal's
     repeated TaskCommittedTask rewind_undo = 8;    // unwound by a rewind, not yet compensated
     repeated TaskEdgeHandoff task_handoffs = 9;    // in-flight iteration, per committed task
     bool   completed = 10;                         // the last committed iteration ended the instance
@@ -1562,19 +1563,20 @@ iteration.
 ```protobuf
 message IterPark {
     string operative_id = 1;
-    uint32 iter = 2;               // the last COMMITTED iteration
+    uint32 iter = 2;               // the last COMMITTED iteration; 0 for a stream
     uint64 wake_deadline_ms = 3;   // 0 = wake on input only
     optional uint64 consumed_offset = 4;  // the last message parked unread; absent = none
 }
 ```
 
-A durable instance of any loop mode whose inbox has been empty past
-`FLEZHA_WORKFLOW_PARK_IDLE_MS` (default 5 s) at a **committed** iteration
-boundary, the boundary before its first pass included, tears its own run down and
-emits this instead of `WorkflowCompleted` — suspension is not a terminal
-outcome, and it is only ever offered at a committed boundary. A rehydrated loop
-waits up to 60 s for the input-log tail the controller owes it
-(`AddOperative.inbox_tail_count`) before it may park again.
+An instance of either kind whose class sleeps (`sleep_when_idle`) asks to
+sleep with this once it has been idle past `FLEZHA_PARK_IDLE_MS` (default ten
+minutes) with every Cell holding nothing queued, in flight, retrying, unflushed
+or timed. A workflow of any loop mode does so only at a **committed** iteration
+boundary, the boundary before its first pass included, and emits it instead of
+`WorkflowCompleted`; a stream sends `iter` `0`. Suspension is not a terminal
+outcome. A rehydrated instance waits up to 60 s for the input-log tail the
+controller owes it (`AddOperative.inbox_tail_count`) before it may sleep again.
 
 A message the run parked to the dead-letter queue unread (an undeclared
 channel, a parse the entry's ladder never got past, a host decoder's unreadable
@@ -1582,22 +1584,23 @@ verdict) is consumed without a pass; `consumed_offset` names the highest such
 input-log offset, so the park releases it as an `IterCommit` releases its input
 and a suspended instance is not rehydrated to receive it again.
 
-The controller journals `parked(iter[, wake_deadline_ms], consumed_offset)`,
-durable BEFORE the eviction, then evicts the instance from its runner
-(`RemOperative`). The
+The controller writes the instance's park record (its wake deadline and
+`consumed_offset`) beside the class's declarations, durable BEFORE the
+eviction, then evicts the instance from its runner (`RemOperative`); the
+bind that wakes it clears the record. The
 registry entry and the controller-side Overwatch stay: it is the **runner**
 that holds zero resources, and `flz operative info` reports the instance
 `suspended`. Rehydration has one path, whichever wakes it — a new input-log
 append, or the journaled deadline, which the controller delivers as a
 synthetic input-log record with an empty payload and `flz.wake = timer` — and
-both re-bind the instance through the normal workflow spawn path on any live
-runner, restoring journal + boundary snapshots and delivering the input log's
+both re-bind the instance through the normal spawn path on any live runner,
+restoring its Cells (and a workflow's journal) and delivering the input log's
 undelivered tail. Two racing wakes collapse into exactly one rehydration.
 
 ### Data frame metadata: the durable input log (`flz.offset`, `flz.msg_id`)
 
-An instance has durable input when it is a stream on the effectively-once tier
-or a durable workflow. Its input is appended to the instance's one input log
+An instance has durable input when it is a stream on the effectively-once tier,
+a durable workflow, or an instance of a class that sleeps. Its input is appended to the instance's one input log
 (`<state key>/input.log`) **before** it is forwarded, answered only once the
 record is synced, and the forwarded frame carries the assigned offset as
 `flz.offset`. Offsets are 0-based; absent means the input was not journaled (an
@@ -1605,9 +1608,10 @@ instance without durable input), never offset `0`. A stream threads it into
 its effect record's `consumed_offset`; a workflow into
 `IterCommit.consumed_offset`, or `IterPark.consumed_offset` for a message it
 parked unread, and an iteration that consumed no journaled input (a carry-fed
-pass) carries none. The controller reports each into the log's watermark,
-retention reclaims below it, and every bind re-forwards exactly the retained
-records above it, each with its original `flz.offset`.
+pass) carries none. A stream that sleeps reports none: the controller reports each offset it
+forwarded to a bound runner instead. The controller reports each into the
+log's watermark, retention reclaims below it, and every bind re-forwards
+exactly the retained records above it, each with its original `flz.offset`.
 
 Dedup at append is keyed on the sender's `flz.msg_id` metadata only: an append
 whose id the log still retains is absorbed and nothing is forwarded, so an

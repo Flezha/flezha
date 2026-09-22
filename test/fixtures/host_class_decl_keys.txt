@@ -14,6 +14,7 @@
 # PHP and Python builders — one change, every SDK (docs/architecture/runner.md).
 class.factory_id
 class.persistent
+class.sleep_when_idle
 class.sdk_lang
 class.sdk_version
 class.change_format_id

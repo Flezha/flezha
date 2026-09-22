@@ -353,12 +353,10 @@ defmodule Flezha.State.Watchdog do
       cell_statuses()
       |> Enum.group_by(fn {{rc, _sh, _pk}, _status} -> rc end)
       |> Enum.reduce(state, fn {rc, list}, acc ->
-        # The sweep is stream-only: a durable :workflow operative legitimately
-        # goes quiet between stages/iterations, and so does a checkpoint-ack
-        # one between checkpoints, where making nothing durable for a whole
-        # interval is the steady state, not a dead feed.
-        if ClassRegistry.capable?(rc, :output_stall_watch?) and
-             not ClassRegistry.checkpoint_ack?(rc) do
+        # A sleeping instance receives no Change by design, and a
+        # checkpoint-ack one makes nothing durable for a whole interval
+        # between checkpoints: neither silence is a dead feed.
+        if not ClassRegistry.checkpoint_ack?(rc) and is_nil(ClassRegistry.parked(rc)) do
           any_silent? = Enum.any?(list, fn {_pid, s} -> input_silent?(s, now, timeout) end)
           latched? = MapSet.member?(acc.input_silence, rc)
 
@@ -415,8 +413,7 @@ defmodule Flezha.State.Watchdog do
     Enum.each(Paths.all_cells(), fn {rc, _sh, _pk} = pid ->
       timeout = PersistenceResolver.output_stall_timeout_ms(rc)
 
-      with true <- ClassRegistry.capable?(rc, :output_stall_watch?),
-           true <- timeout > 0,
+      with true <- timeout > 0,
            {:ok, writer} <- WriterRegistry.lookup(pid),
            {:ok, status} <- safe_stall_status(writer),
            true <- stalled?(status, now, timeout) do

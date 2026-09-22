@@ -83,13 +83,6 @@ defmodule Flezha.Service.Cli.Journal do
     |> journal_completion(payload.completion)
   end
 
-  defp journal_row(%{type: :parked, payload: payload} = entry) do
-    entry
-    |> base_journal_row()
-    |> Map.put(:wake_deadline_ms, payload.wake_deadline_ms)
-    |> Map.put(:consumed_offset, payload.consumed_offset)
-  end
-
   # `for_type` names which entry's outbox this marks delivered — a tasklet
   # can have both a forward `task_committed` outbox and a `compensated` undo one.
   defp journal_row(%{type: :outbox_flushed, payload: %{for_type: for_type}} = entry) do
@@ -189,10 +182,6 @@ defmodule Flezha.Service.Cli.Journal do
 
     if Map.has_key?(row, :completes_bytes) do
       IO.puts("    completes the instance: result #{row.completes_bytes} byte(s)")
-    end
-
-    if Map.has_key?(row, :wake_deadline_ms) do
-      IO.puts("    wakes at: #{row.wake_deadline_ms || "next input"}")
     end
 
     if Map.has_key?(row, :rewound_to) do

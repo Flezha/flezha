@@ -261,33 +261,34 @@ The Rust SDK's `Tasklet::run` SHALL receive `state: StateHandle<'_, Self>` inste
 - **THEN** the read SHALL succeed via `StateHandle`'s `Deref` impl with no Change recording, no buffer mutation, and zero heap allocations
 
 ### Requirement: Operative declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
-The Rust SDK's `StreamOperative` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Operative-instance `persistence_enabled: bool` at `start_operative(factory_id, instance_id)` time using:
+The Rust SDK's `StreamOperative` and `WorkflowOperative` traits SHALL each declare `const PERSISTENCE_ENABLED: bool = true` and `const SLEEP_WHEN_IDLE: bool` (`false` on `StreamOperative`, `Self::PERSISTENCE_ENABLED` on `WorkflowOperative`). The runtime SHALL resolve a per-instance `persistence_enabled: bool` when the instance is started from the class's `PERSISTENCE_ENABLED`, for either kind, and SHALL declare both consts to the controller in the class's `AddOperative` response (`persistent = "false"` when off, `sleep_when_idle = "true"` when on). A class declaring `SLEEP_WHEN_IDLE = true` with `PERSISTENCE_ENABLED = false` SHALL be refused at registration as `SleepWithoutPersistence`.
 
-1. If the operative-start metadata from the agent contains `operative_persistence.<OperativeClass>` with a boolean value, use that.
-2. Otherwise, use the value of `StreamOperative::PERSISTENCE_ENABLED`.
-3. The default of the trait const is `true`.
-
-The resolved value SHALL be bound to the `StreamInstance` and SHALL be propagated to every `CellSlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the `StreamOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
+The resolved value SHALL be bound to the `OperativeInstance` and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the const (via SDK redeploy) SHALL NOT affect already-running instances; the new value takes effect on the next `stop_operative` + `start_operative` cycle for that instance.
 
 #### Scenario: Default const value is true
 
-- **WHEN** a Operative does not declare `PERSISTENCE_ENABLED` and no runner override is present in operative-start metadata
-- **THEN** `StreamInstance::persistence_enabled()` SHALL return `true`
+- **WHEN** an Operative of either kind does not declare `PERSISTENCE_ENABLED`
+- **THEN** `OperativeInstance::persistence_enabled()` SHALL return `true` and the `AddOperative` response SHALL carry no `persistent` key
 
 #### Scenario: Const-declared opt-out is honored
 
-- **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = false` and no runner override is present
-- **THEN** `StreamInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Cells; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
+- **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = false`
+- **THEN** `OperativeInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Cells; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance; and the `AddOperative` response SHALL carry `persistent = "false"`
 
-#### Scenario: Runner override takes precedence over const
+#### Scenario: A workflow's opt-out is the same const
 
-- **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = true` AND the operative-start metadata carries `operative_persistence.MarketOperative = false`
-- **THEN** `StreamInstance::persistence_enabled()` SHALL return `false`
+- **WHEN** a `WorkflowOperative` declares `const PERSISTENCE_ENABLED: bool = false`
+- **THEN** its Cells SHALL drain-and-discard exactly as a stream's do, it SHALL ship no `TaskCommit`, and its `SLEEP_WHEN_IDLE` default SHALL read `false`
+
+#### Scenario: Sleeping without persistence is refused
+
+- **WHEN** a class of either kind declares `SLEEP_WHEN_IDLE = true` and `PERSISTENCE_ENABLED = false`
+- **THEN** `register_factory` SHALL fail with an error containing `SleepWithoutPersistence`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `StreamInstance` is constructed with resolved `persistence_enabled = true`, AND the runner subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
-- **THEN** the running `StreamInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
+- **WHEN** an `OperativeInstance` is constructed with resolved `persistence_enabled = true`, AND the class is redeployed with the const `false` while the instance runs
+- **THEN** the running `OperativeInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
 
 ### Requirement: init_state accepts optional restoration payload (Rust SDK)
 The Rust SDK's `Tasklet::init_state` signature SHALL be `fn init_state(cell_key: Option<&str>, init_payload: Option<RestoreInitPayload<'_>>) -> Self::State`. When `init_payload = None`, `init_state` SHALL behave as a fresh-start constructor. When `init_payload = Some(payload)`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload (snapshot decode + change-log fold via `Tasklet::apply_change`) AFTER `init_state` returns, replacing the user-constructed state with the restored state.

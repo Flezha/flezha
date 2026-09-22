@@ -450,6 +450,9 @@ fn route_stream_frame(
     }
 
     let (consumed_offset, replay) = frame_facts(metadata);
+    if consumed_offset.is_some() {
+        instance.owed_arrived();
+    }
     let Some((channel_id, channel)) =
         entry_channel_or_park(instance, &payload, metadata, consumed_offset)
     else {

@@ -105,10 +105,10 @@ record body:          [type u8][task_idx u16 BE][iter u32 BE][payload]
 | 1 | `task_committed` | the cells that ran, the handoff batch, the staged outbox, and the tasklet's completion if it asked to end the instance |
 | 2 | `outbox_flushed` | a marker: this entry's outbox reached its sinks |
 | 3 | `iter_committed` | the input-log offset the iteration consumed (or none, for a carry-fed pass), its terminal handoff, and its completion |
-| 4 | `parked` | the iteration the operative is suspended at, and an optional wake deadline |
 | 5 | `compensated` | an undo ran — with the undo's own outbox |
 | 6 | `rewound` | a marker: everything above this iteration is un-committed |
 
+Type 4 is unused: where an instance sleeps is not the journal's (see [Suspension](#suspension)).
 The journal is **append-only**. `rewound` does not truncate it — one fold applies the markers,
 and every reader (what is committed, what is owed, what is compensated, where the loop is) runs
 over that fold. The epoch lives in the record header and stays `0` until a rewind bumps it.
@@ -340,9 +340,11 @@ the log's retention reclaims what lies below it, and every bind re-forwards what
 
 ## Suspension
 
-A loop waiting for input should cost nothing. Between iterations, a workflow operative is
-**evicted from its runner entirely** — the Overwatch and the registry entry stay, so a new
-message still has somewhere to land, but the runner holds zero resources for it.
+A loop waiting for input should cost nothing. Between iterations, a workflow operative whose
+class sleeps (`sleep_when_idle`, on whenever its persistence is) is **evicted from its runner
+entirely** once it has waited `FLEZHA_PARK_IDLE_MS`; the Overwatch and the registry entry stay,
+so a new message still has somewhere to land, but the runner holds zero resources for it. A
+stream whose class declares the setting sleeps the same way, at iteration `0`.
 
 ```mermaid
 sequenceDiagram
@@ -353,11 +355,11 @@ sequenceDiagram
 
     Note over EX1: iteration N committed, nothing is waiting, the idle window elapses
     EX1->>CTRL: IterPark {iter N}
-    CTRL->>CTRL: 💾 journal parked(N [, wake deadline]) — durable FIRST
+    CTRL->>CTRL: 💾 park record (wake deadline) in the class directory, durable FIRST
     CTRL->>EX1: RemOperative — evict
     Note over CTRL,EX1: the runner now holds NOTHING for this operative.<br/>The Overwatch and the registry entry remain.
 
-    Note over CTRL: hours pass. The controller may even redeploy —<br/>the wake timer is re-armed from the journal at boot.
+    Note over CTRL: hours pass. The controller may even redeploy:<br/>the wake timer is re-armed from the park record at boot.
 
     USER->>CTRL: a new message
     CTRL->>CTRL: 💾 append to the input log (offset + id dedup) — before forwarding
@@ -375,8 +377,13 @@ rehydrate at iteration 0 every time. The wake timer wakes the operative by
 appending an empty record to its own input log, which means two racing wake sources — a message
 and a timer — collapse into one rehydration by construction.
 
-At boot, an instance whose journal ends in `parked` **and** which has nothing undelivered enters
-suspended without ever binding. Undelivered input outranks the park.
+The park record is a per-instance fact beside the class's declarations, written before the
+eviction and cleared by the bind that wakes the instance, before the runner is told to start it.
+At boot, an instance with a park record **and** nothing undelivered enters suspended without ever
+binding; undelivered input outranks the park. Only a journaling instance, whose pass in flight is
+not a state document, waits for its sleep to migrate; a sleeping instance of either kind
+consents at once. Stopping a sleeping workflow wakes it with the stop carried, so it ends
+`cancelled` exactly as it would awake.
 
 ## Rewind
 
@@ -436,7 +443,7 @@ state WAL.
 | `TaskCommitResponse` | 29 | controller → SDK, after the journal fsync |
 | `IterCommit` | 30 | SDK → controller, at every iteration boundary |
 | `IterCommitResponse` | 31 | controller → SDK, after the journal fsync |
-| `IterPark` | 32 | SDK → controller, on suspension (fire and forget) |
+| `IterPark` | 32 | SDK → controller, on suspension, for either kind (fire and forget) |
 
 Field-level detail: [`protocol_spec.md`](../sdk/protocol_spec.md).
 

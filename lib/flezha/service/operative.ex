@@ -20,7 +20,7 @@ defmodule Flezha.Service.Operative do
 
   alias Flezha.AuthZ.Namespace
   alias Flezha.Operative.Builder
-  alias Flezha.Operative.Kind
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
@@ -91,13 +91,7 @@ defmodule Flezha.Service.Operative do
   @doc "Whether `kind` is an operative kind this controller knows."
   @spec kind_known?(term(), caller_context()) :: {:ok, boolean()} | {:error, term()}
   verb kind_known?(kind, caller_context), verb: :kind_read do
-    {:ok, Kind.known?(kind)}
-  end
-
-  @doc "The capability flags an operative kind carries."
-  @spec kind_capabilities(term(), caller_context()) :: {:ok, map()} | {:error, term()}
-  verb kind_capabilities(kind, caller_context), verb: :kind_read do
-    {:ok, Kind.capabilities(kind)}
+    {:ok, ClassRegistry.known_kind?(kind)}
   end
 
   @doc """
