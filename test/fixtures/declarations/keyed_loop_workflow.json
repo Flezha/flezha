@@ -1,0 +1,6 @@
+{
+  "compensable_tasks": "",
+  "leaf_tasks": "0",
+  "loop_mode": "per_input",
+  "sleep_when_idle": "true"
+}

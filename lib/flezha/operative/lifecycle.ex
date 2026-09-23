@@ -157,6 +157,9 @@ defmodule Flezha.Operative.Lifecycle do
 
     with {:ok, state} <- Plugins.prepare(state, plugins),
          {:ok, state, operative} <- Plugins.resolve_init_state(state, operative),
+         # Before the resume state is read: a workflow resumes from the
+         # journal, restore count and log tail it finds here.
+         :ok <- Replay.adopt_foreign_state(operative.opts, Overwatch.operative_class(state)),
          operative =
            with_resume_state(operative, Overwatch.operative_class(state)),
          # A park landing after the runner starts the instance writes a record
@@ -221,9 +224,10 @@ defmodule Flezha.Operative.Lifecycle do
     _ = ClassRegistry.put(operative_class, state.builder.kind)
     _ = ClassRegistry.put_declarations(operative_class, declarations)
     # Partitionability is a class-code fact, so it is recorded against the
-    # factory: a later `--partitions N` start of a known-keyless class is
-    # then refused before a runner is touched.
-    _ = ClassRegistry.put_keyless(operative.factory_id, declarations.keyless)
+    # factory: a later `--partitions N` start of a known-keyless class, or of
+    # a workflow that reads one message, is then refused before a runner is
+    # touched.
+    _ = ClassRegistry.put_partitioning(operative.factory_id, declarations)
     _ = ClassRegistry.put_state_keys(operative.id, operative_class)
 
     # The declaration is durable now, so the retention floors it needs resolve

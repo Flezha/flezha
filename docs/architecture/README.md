@@ -89,9 +89,10 @@ flowchart LR
 ```
 
 - **Operative** — the unit you start and stop. It has a **kind**, frozen at start:
-  `stream` (default) or `workflow`. A stream operative may be started with `--partitions N`,
+  `stream` (default) or `workflow`. An operative may be started with `--partitions N`,
   which materializes it as N ordinary instances (`<id>#p0..#p{N-1}`) splitting the key space
-  by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operatives).
+  by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operatives); a
+  workflow must loop `per_input`.
 - **Tasklet** — a typed stage inside an operative. Declares `Input`, `Output`, `State`,
   `Change`, and `Clock` types, and lives as long as its operative.
 - **Cell** — one keyed instance of a tasklet. Durability is per cell: one WAL, one snapshot

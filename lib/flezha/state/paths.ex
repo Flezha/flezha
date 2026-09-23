@@ -375,7 +375,8 @@ defmodule Flezha.State.Paths do
   Every on-disk path that belongs to one Cell (WAL, all snapshots, the
   outbox-dedup file, both compensation markers). Paths are returned whether or
   not the file exists — the one definition of "this Cell's durable set",
-  shared by the hard-delete path and the cross-controller transfer.
+  shared by the hard-delete path and the cross-controller transfer
+  (`durable_files/1`).
   """
   @spec cell_files(cell_id()) :: [binary()]
   def cell_files({_, _, _} = pid) do
@@ -387,20 +388,62 @@ defmodule Flezha.State.Paths do
     ] ++ Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end)
   end
 
+  @typedoc """
+  A unit of an instance's durable state that moves between nodes whole: one
+  Cell's file set (a workflow's journal is this shape, under its reserved
+  identity) or the instance's input log.
+  """
+  @type durable_ref :: {:cell, cell_id()} | {:input_log, binary()}
+
   @doc """
-  Resolve one basename from `cell_files/1` back to its full path, or `nil`
-  when the Cell's layout does not produce that name.
+  The durable references this node holds for `operative_class`: its Cells, a
+  workflow's journal and the input log, each only when present.
+  """
+  @spec durable_refs(binary()) :: [durable_ref()]
+  def durable_refs(operative_class) when is_binary(operative_class) do
+    journal =
+      if File.exists?(journal_path(operative_class)), do: [journal_id(operative_class)], else: []
+
+    log =
+      if File.exists?(input_log_path(operative_class)),
+        do: [{:input_log, operative_class}],
+        else: []
+
+    for(cell <- Enum.uniq(cells_of(operative_class) ++ journal), do: {:cell, cell}) ++ log
+  end
+
+  @doc "Every path `ref` is made of, whether or not the file exists."
+  @spec durable_files(durable_ref()) :: [binary()]
+  def durable_files({:cell, cell_id}), do: cell_files(cell_id)
+  def durable_files({:input_log, operative_class}), do: [input_log_path(operative_class)]
+
+  @doc """
+  Resolve one basename of `ref` back to its full path, or `nil` when the
+  reference's layout does not produce that name.
 
   The `nil` is a guard, not a convenience: the cross-controller transfer takes
-  the name off the wire, and joining it onto `state_dir/1` would let a peer
+  the name off the wire, and joining it onto a directory would let a peer
   address any path on the node. Snapshots are rebuilt from the seq in the name
   rather than matched, since a node can legitimately be asked for a snapshot it
   does not hold yet.
   """
-  @spec cell_file_path(cell_id(), binary()) :: binary() | nil
-  def cell_file_path({_, _, cell_key} = pid, name) when is_binary(name) do
-    Enum.find(cell_files(pid), &(Path.basename(&1) == name)) ||
-      snapshot_file_path(pid, cell_key, name)
+  @spec durable_file_path(durable_ref(), binary()) :: binary() | nil
+  def durable_file_path({:cell, {_, _, cell_key} = pid} = ref, name) when is_binary(name) do
+    named(ref, name) || snapshot_file_path(pid, cell_key, name)
+  end
+
+  def durable_file_path({:input_log, _operative_class} = ref, name) when is_binary(name),
+    do: named(ref, name)
+
+  defp named(ref, name), do: Enum.find(durable_files(ref), &(Path.basename(&1) == name))
+
+  @doc "Remove `ref`'s files, pruning the directories they leave empty."
+  @spec delete_durable(durable_ref()) :: :ok
+  def delete_durable({:cell, cell_id}), do: delete_files(cell_id)
+
+  def delete_durable({:input_log, operative_class} = ref) do
+    ref |> durable_files() |> Enum.each(&File.rm/1)
+    prune_class_dir(operative_class)
   end
 
   defp snapshot_file_path(pid, cell_key, name) do
@@ -444,6 +487,10 @@ defmodule Flezha.State.Paths do
     # evidence of prior intent (intent-mismatch detection); rmdir fails
     # harmlessly while a sibling Cell or Tasklet still holds files.
     _ = File.rmdir(state_dir(pid))
+    prune_class_dir(operative_class)
+  end
+
+  defp prune_class_dir(operative_class) do
     class_dir = class_dir(operative_class)
     _ = File.rmdir(class_dir)
 

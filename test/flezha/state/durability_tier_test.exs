@@ -258,7 +258,7 @@ defmodule Flezha.State.DurabilityTierTest do
       TestHelpers.write_wal(journal, 0..1)
       File.write!(Paths.input_log_path(instance), TestHelpers.wal_records(0..2))
 
-      assert {:cell, journal} in Artifact.cell_refs(instance)
+      assert {:cell, journal} in DurabilityTier.refs_of_state_key(instance)
       assert :ok = DurabilityTier.on_workflow_commit(instance)
 
       assert NodeTestHelper.wait_until(

@@ -346,6 +346,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
       assert ClassRegistry.decode_declarations(raw) == %{
                effectively_once: false,
                keyless: false,
+               loop_mode: nil,
                checkpoint_ack: false,
                compensable_tasks: nil,
                leaf_tasks: nil,
@@ -362,6 +363,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     assert ClassRegistry.decode_declarations(<<255, 255, 255, 1>>) == %{
              effectively_once: false,
              keyless: false,
+             loop_mode: nil,
              checkpoint_ack: false,
              compensable_tasks: nil,
              leaf_tasks: nil,
@@ -430,6 +432,14 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     # is refused); absent = the class declares nothing at all (no information).
     assert declarations(%{"compensable_tasks" => ""}).compensable_tasks == []
     assert declarations(%{"other" => "x"}).compensable_tasks == nil
+  end
+
+  test "a workflow's loop mode resolves to an atom, and anything else to none" do
+    assert declarations(%{"loop_mode" => "per_input"}).loop_mode == :per_input
+    assert declarations(%{"loop_mode" => "once"}).loop_mode == :once
+    assert declarations(%{"loop_mode" => "chained"}).loop_mode == :chained
+    assert declarations(%{"loop_mode" => "sometimes"}).loop_mode == nil
+    assert declarations(%{"other" => "x"}).loop_mode == nil
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do

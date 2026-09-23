@@ -100,6 +100,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @type declarations :: %{
           effectively_once: boolean(),
           keyless: boolean(),
+          loop_mode: loop_mode() | nil,
           checkpoint_ack: boolean(),
           compensable_tasks: [non_neg_integer()] | nil,
           leaf_tasks: [non_neg_integer()] | nil,
@@ -109,6 +110,9 @@ defmodule Flezha.Operative.ClassRegistry do
           persistent: boolean(),
           sleep_when_idle: boolean()
         }
+
+  @typedoc "How a workflow class repeats; a stream class declares none."
+  @type loop_mode :: :once | :per_input | :chained
 
   @typedoc """
   An instance asleep: the durable wake deadline it parked with, and the
@@ -135,6 +139,7 @@ defmodule Flezha.Operative.ClassRegistry do
       # The SDK declares `keyed` only when it is false — a class with no keyed
       # entry-fed tasklet, which cannot be partitioned.
       keyless: Map.get(metadata, "keyed") == "false",
+      loop_mode: parse_loop_mode(Map.get(metadata, "loop_mode")),
       checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
       compensable_tasks: parse_ops(Map.get(metadata, "compensable_tasks")),
       leaf_tasks: parse_ops(Map.get(metadata, "leaf_tasks")),
@@ -155,6 +160,11 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   defp decode_metadata(_raw_data), do: %{}
+
+  defp parse_loop_mode("once"), do: :once
+  defp parse_loop_mode("per_input"), do: :per_input
+  defp parse_loop_mode("chained"), do: :chained
+  defp parse_loop_mode(_raw), do: nil
 
   defp parse_ops(nil), do: nil
   defp parse_ops(""), do: []
@@ -274,8 +284,14 @@ defmodule Flezha.Operative.ClassRegistry do
     declaration(operative_class, :parked, @parked_sidecar, &parse_park/1)
   end
 
+  @typedoc """
+  What decides whether a factory's class may run partitioned: no keyed
+  entry-fed tasklet, and for a workflow its loop mode.
+  """
+  @type partitioning :: %{keyless: boolean(), loop_mode: loop_mode() | nil}
+
   @doc """
-  Record whether `factory_id`'s topology has no keyed entry-fed tasklet.
+  Record `factory_id`'s partitioning facts, as its bind declared them.
 
   The one declaration keyed by FACTORY rather than operative class:
   partitionability is a property of the class's code, and every instance of a
@@ -283,23 +299,25 @@ defmodule Flezha.Operative.ClassRegistry do
   learns again at the next bind, which is the same path a never-bound class
   takes, and the SDK's own refusal is the authority either way.
   """
-  @spec put_keyless(binary(), boolean()) :: :ok
-  def put_keyless(factory_id, keyless?) when is_binary(factory_id) and is_boolean(keyless?) do
+  @spec put_partitioning(binary(), map()) :: :ok
+  def put_partitioning(factory_id, %{keyless: keyless?, loop_mode: mode})
+      when is_binary(factory_id) and is_boolean(keyless?) do
     ensure_table()
-    :ets.insert(@table, {{factory_id, :keyless}, keyless?})
+    :ets.insert(@table, {{factory_id, :partitioning}, %{keyless: keyless?, loop_mode: mode}})
     :ok
   end
 
   @doc """
-  Whether `factory_id` is known to have no keyed entry-fed tasklet. `false`
-  for a class that has never bound — the bind itself then refuses.
+  `factory_id`'s recorded partitioning facts; for a class that has never bound,
+  nothing refuses, and the bind itself then does.
   """
-  @spec keyless?(binary()) :: boolean()
-  def keyless?(factory_id) when is_binary(factory_id) do
-    ets_lookup({factory_id, :keyless}) == {:ok, true}
+  @spec partitioning(binary()) :: partitioning()
+  def partitioning(factory_id) when is_binary(factory_id) do
+    case ets_lookup({factory_id, :partitioning}) do
+      {:ok, facts} -> facts
+      :error -> %{keyless: false, loop_mode: nil}
+    end
   end
-
-  def keyless?(_factory_id), do: false
 
   @doc """
   Record the **established** value of `attribute` for `factory_id` in
@@ -311,7 +329,7 @@ defmodule Flezha.Operative.ClassRegistry do
   same reference ids to every SDK, so a global record would let one namespace's
   Rust runner refuse another namespace's Java one.
 
-  In-memory only, like `put_keyless/2`: the durable header re-establishes the
+  In-memory only, like `put_partitioning/2`: the durable header re-establishes the
   language at the next bind (`establish_sdk_lang_from_state/3`), the next
   advertisement re-establishes both, and the SDK's own refusal is the backstop
   either way — so a restarted controller simply learns again.

@@ -13,19 +13,22 @@ defmodule Flezha.Service.OperativeManager.Teardown do
   alias Flezha.Service.HubManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
+  alias Flezha.State.TaskJournal
 
   @behaviour Flezha.Shutdown.Step
 
   @typedoc """
-  The `:operative` walk's target: the operative, the runner it is bound to (or
-  `nil`), whether its state stays on disk (a rescale moving it), and the
-  Cell count its start allocated.
+  The `:operative` walk's target: the operative, the node its Overwatch ran
+  on, the runner it is bound to (or `nil`), whether its state stays on disk (a
+  rescale moving it, `:sealed` for a workflow survivor), and the Cell count its
+  start allocated.
   """
   @type target :: %{
           namespace: binary(),
           operative_id: binary(),
+          node: node(),
           runner_id: binary() | nil,
-          preserve_state?: boolean(),
+          preserve_state?: boolean() | :sealed,
           cell_count: non_neg_integer()
         }
 
@@ -69,13 +72,37 @@ defmodule Flezha.Service.OperativeManager.Teardown do
     end
   end
 
-  # A stop that is a move — a rescale taking the group down to redistribute
-  # its Cells — keeps the files: they are the state about to be handed to
-  # another member, not garbage.
-  defp state_dir_step(%{preserve_state?: true}, _budget), do: :ok
+  # The state and its writers are on the node the Overwatch ran on, which a
+  # stop issued from another controller is not.
+  defp state_dir_step(target, budget) do
+    :erpc.call(
+      target.node,
+      __MODULE__,
+      :reclaim_state_dir,
+      [target.operative_id, target.preserve_state?],
+      budget
+    )
+  end
 
-  defp state_dir_step(%{operative_id: operative_id}, _budget),
-    do: delete_operative_state_dir(operative_id)
+  @doc """
+  What a stop owes the operative's state on this node. A stop that is a move —
+  a rescale taking the group down to redistribute its Cells — keeps the files:
+  they are the state about to be handed to another member, not garbage. Its
+  writers close all the same, so the member restarted under this id opens the
+  files where the move left them. `:sealed` first cuts a workflow's journal to
+  its latest committed iteration (`TaskJournal.cut/2`), the history boundary a
+  surviving member of a rescale resumes from.
+  """
+  @spec reclaim_state_dir(binary(), boolean() | :sealed) :: :ok
+  def reclaim_state_dir(operative_id, :sealed) do
+    :ok = TaskJournal.cut(operative_id, seal: true)
+    reclaim_state_dir(operative_id, true)
+  end
+
+  def reclaim_state_dir(operative_id, true),
+    do: Flezha.State.Supervisor.close_writers(operative_id)
+
+  def reclaim_state_dir(operative_id, false), do: delete_operative_state_dir(operative_id)
 
   # Released symmetrically with the start: the operative, and the Cells its
   # class declared.

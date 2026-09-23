@@ -73,8 +73,8 @@ What a pipeline usually has to build around itself is already there:
   it aborts, and can undo finished steps with saga compensation
   ([`workflow_profile.md`](docs/architecture/workflow_profile.md)).
   `flz schedule` starts one on a cron schedule, with no external scheduler.
-- **Scale by key.** `--partitions N` splits one stream operative into N
-  instances across its key space
+- **Scale by key.** `--partitions N` splits one stream operative, or a
+  per-input workflow, into N instances across its key space
   ([`partitioned_operatives.md`](docs/sdk/partitioned_operatives.md)).
 
 ## Reading further

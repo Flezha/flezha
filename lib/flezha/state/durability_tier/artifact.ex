@@ -45,22 +45,6 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   # with it instead of being listed a second time here.
   @control_subtrees %{"authz" => :auth, "schedules" => :schedules}
 
-  @doc """
-  Every Cell reference of `operative_class` that has local durable files —
-  Cells, and (for a workflow instance) its reserved task-journal identity,
-  which `Paths.all_cells/0` does not surface.
-  """
-  @spec cell_refs(binary()) :: [ref()]
-  def cell_refs(operative_class) do
-    reserved =
-      Enum.map(Paths.reserved_cell_keys(), &{operative_class, operative_class, &1})
-
-    (Paths.cells_of(operative_class) ++ reserved)
-    |> Enum.uniq()
-    |> Enum.filter(&has_local_state?({:cell, &1}))
-    |> Enum.map(&{:cell, &1})
-  end
-
   @doc "Local WAL path of `ref`, or `nil` for a whole-file reference."
   @spec wal_path(ref()) :: binary() | nil
   def wal_path({:cell, cell_id}), do: Paths.wal_path(cell_id)

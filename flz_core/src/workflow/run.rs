@@ -180,7 +180,8 @@ pub fn removed(inst: &OperativeInstance) {
 
 /// A message through the entrance: its items for the chain's roots are
 /// addressed here, on the reader, and the pass starts at once or waits in the
-/// queue. An entry edge that unwinds rides the channel's ladder off the reader.
+/// queue. An entry edge that unwinds, or a key this partition member does not
+/// own, rides the channel's ladder off the reader and opens no pass.
 pub fn message(
     inst: &OperativeInstance,
     channel: &ChannelDescriptor,

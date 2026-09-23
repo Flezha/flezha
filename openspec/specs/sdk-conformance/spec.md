@@ -912,3 +912,49 @@ Every manifest SHALL list two fixtures under `workflow`, registered under the sa
 - **WHEN** `event_timer_workflow` receives a message with event time 1000 and then one with event time 1150
 - **THEN** the sink SHALL receive `fired:1100` before whatever the second message produces, on every runtime
 
+### Requirement: A keyed per-input workflow is a fixture every manifest carries and proves partitioned
+
+Every SDK test app SHALL register `keyed_loop_workflow`, and every manifest SHALL list it under
+`workflow` and under `partitioned` in the reference's order. `keyed_loop_workflow` SHALL be a
+durable `per_input` workflow with one entry channel `trades` whose entry edge declares `key_by`
+over the message's symbol (the text before the first `:`), one tasklet that counts the
+messages it has seen for its key in declared state and emits `<symbol>:<count>` on a sink
+named `keyed_loop_workflow_out`, and no compensation hook. The refusal of a `once` workflow SHALL
+be proven on `echo_workflow`, the `once` fixture every manifest already carries, so no fixture
+exists for a refusal alone. The scenarios that drive them SHALL live in
+`test/system/partitioned_operatives_e2e_test.exs`, tagged `capability: :partitioned` and pinned
+to no runtime, and SHALL assert through the controller: the members' rows and ranges, each
+member's journal, each key's Cell under its owner, the dead-letter listing for a mis-route, and
+the coverage report.
+
+#### Scenario: Messages by key reach their member and each member commits its own passes
+
+- **WHEN** `keyed_loop_workflow` is started with `--partitions 2` under any of the seven runtimes
+  and five messages for three keys are sent, each to the member owning its key
+- **THEN** each key's Cell exists under its owner and nowhere else, each member's journal holds
+  one committed iteration per message it received, the sink carries `<symbol>:<count>` per
+  message, and `flz operative info` reports the group `2/2` with full coverage
+
+#### Scenario: A mis-routed key parks and opens no pass on every runtime
+
+- **WHEN** a message whose key the receiving member does not own is sent to it
+- **THEN** the member's dead-letter listing holds it with the contract error naming the key, its
+  group and the owning partition, the member's journal gains no iteration, and its next in-range
+  message commits as the next iteration
+
+#### Scenario: A rescale between passes continues every key on its new owner
+
+- **WHEN** the group is rescaled to 3 while every member is quiet and messages for the same
+  keys are sent to their new owners
+- **THEN** each key's count continues from its pre-rescale value on the member that now owns
+  it, the survivors' journals resume at their next iteration and hold no iteration below their
+  seal, `<group>#p2` commits its first pass as iteration 0, and coverage shows all 256 groups
+  owned once
+
+#### Scenario: A once workflow is refused partitions on every runtime
+
+- **WHEN** `echo_workflow` is started with `--partitions 2` under any runtime
+- **THEN** the first member's bind is refused with `PartitionsWithoutPerInputLoop` and not with
+  the keyless refusal, the group is rolled back with no member left running, and a second
+  attempt is refused before any member starts
+

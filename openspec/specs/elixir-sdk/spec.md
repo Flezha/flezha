@@ -217,15 +217,23 @@ A failing `run/3` — error tuple, raise, or exit — SHALL be retried up to the
 - **THEN** one `cell_effect_record` ships carrying no change, the `dlq` entry with the error and the payload bytes, and consumed offset 7; no `park_payload` frame ships; and the queued input dispatches without any ack
 
 ### Requirement: Partitioned placement is guarded with the controller's own hash
-The SDK SHALL decode `AddOperative`'s `partition_index`/`partition_count`/`key_group_from`/`key_group_to` (zero values = unpartitioned; the shipped range is authoritative, never re-derived). When `partition_count >= 2`: a dynamically computed cell key SHALL be admitted against the owned range **before** any Cell state is created — a miss parks the input with the named contract error; statically declared Cells outside the range SHALL be silently idle (`owns` filter); and a topology with no keyed entry-fed tasklet SHALL refuse the bind with `PartitionsWithoutKeyedTasklet` naming `key_by`. When `partition_count < 2` the guard SHALL cost no more than one comparison. The key-group function SHALL be `Flezha.SDK.KeyGroup.group_of/1`, the pinned FNV-1a-128 the controller's range assignment calls too, verified against the shared fixture vectors.
+The SDK SHALL decode `AddOperative`'s `partition_index`/`partition_count`/`key_group_from`/`key_group_to` (zero values = unpartitioned; the shipped range is authoritative, never re-derived), for an instance of either kind: the workflow driver SHALL hold the range as the stream operative does, and the Cell set the two share SHALL apply the guard on it. When `partition_count >= 2`: a dynamically computed cell key SHALL be admitted against the owned range **before** any Cell state is created — a miss parks the input with the named contract error, and on a workflow member opens no pass; statically declared Cells outside the range SHALL be silently idle (`owns` filter); a topology with no keyed entry-fed tasklet SHALL refuse the bind with `PartitionsWithoutKeyedTasklet` naming `key_by`, for a stream class and a workflow class alike; and a workflow class whose loop mode is `once` or `chained` SHALL refuse the bind with `PartitionsWithoutPerInputLoop` naming `loop_mode per_input`. A workflow class's response metadata SHALL declare `loop_mode` with its declared value. When `partition_count < 2` the guard SHALL cost no more than one comparison. The key-group function SHALL be `Flezha.SDK.KeyGroup.group_of/1`, the pinned FNV-1a-128 the controller's range assignment calls too, verified against the shared fixture vectors.
 
 #### Scenario: Mis-routed frame parks loudly
 - **WHEN** a partition member receives a frame whose key hashes outside its range
 - **THEN** the input parks with the contract error naming the key, its group, and the owning partition, and no Cell state is created
 
+#### Scenario: A workflow member parks a mis-routed message and opens no pass
+- **WHEN** a partition member of a `per_input` workflow receives a message whose `key_by` result hashes outside its range
+- **THEN** the message parks with the contract error through the shared pre-dispatch park, no Cell is minted, no stage is dispatched and the loop waits for its next message
+
 #### Scenario: Keyless class refuses partitioned bind
 - **WHEN** `partition_count >= 2` arrives for a class with no `key_by` edge and no declared cell keys
 - **THEN** the `AddOperative` is refused with `PartitionsWithoutKeyedTasklet`
+
+#### Scenario: A once workflow refuses partitioned bind
+- **WHEN** `partition_count >= 2` arrives for a workflow class declaring `loop_mode: :once`
+- **THEN** the `AddOperative` is refused with `PartitionsWithoutPerInputLoop`, and a `per_input` class of the same shape binds and declares `loop_mode: "per_input"`
 
 #### Scenario: Hash agrees with the fixtures
 - **WHEN** the SDK's key-group function hashes the shared fixture inputs

@@ -9,7 +9,8 @@ defmodule FlezhaTest.State.WalTransferTest do
   # async: false: writes Application env; a shared on-disk root; a peer BEAM.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
-  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalTransfer, WalWriter}
+  alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TaskJournal, TestHelpers}
+  alias Flezha.State.{WalTransfer, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
   defp seed_cell(suffix) do
@@ -25,17 +26,17 @@ defmodule FlezhaTest.State.WalTransferTest do
   test "manifest lists only files that exist" do
     cell_id = seed_cell("man")
 
-    assert Path.basename(Paths.wal_path(cell_id)) in WalTransfer.manifest(cell_id)
+    assert Path.basename(Paths.wal_path(cell_id)) in WalTransfer.manifest({:cell, cell_id})
 
     # A Cell with nothing on disk offers nothing — the destination cold-starts.
-    assert WalTransfer.manifest(TestHelpers.sample_cell_id("empty")) == []
+    assert WalTransfer.manifest({:cell, TestHelpers.sample_cell_id("empty")}) == []
   end
 
-  test "cells enumerates a class the destination cannot see locally" do
+  test "durable_refs enumerates a class the destination cannot see locally" do
     cell_id = {class, _, _} = seed_cell("enum")
 
-    assert cell_id in WalTransfer.cells(class)
-    assert WalTransfer.cells("no_such_class") == []
+    assert {:cell, cell_id} in Paths.durable_refs(class)
+    assert Paths.durable_refs("no_such_class") == []
   end
 
   # fails when: read_chunk joins the requested name onto the state directory.
@@ -45,24 +46,40 @@ defmodule FlezhaTest.State.WalTransferTest do
     cell_id = seed_cell("guard")
 
     assert {:error, :not_in_manifest} =
-             WalTransfer.read_chunk(cell_id, "../../../etc/passwd", 0)
+             WalTransfer.read_chunk({:cell, cell_id}, "../../../etc/passwd", 0)
 
-    assert {:error, :not_in_manifest} = WalTransfer.read_chunk(cell_id, "unrelated.wal", 0)
+    assert {:error, :not_in_manifest} =
+             WalTransfer.read_chunk({:cell, cell_id}, "unrelated.wal", 0)
+  end
+
+  # fails when: the log's name is resolved by joining it onto the class
+  # directory, where the class's sidecars live beside it.
+  test "read_chunk refuses a name that is not the input log's" do
+    class = "wf_guard_#{System.unique_integer([:positive])}"
+    {:ok, 0} = InputLog.append(class, "m", %{})
+    FsyncBatcher.flush_now()
+
+    assert {:error, :not_in_manifest} = WalTransfer.read_chunk({:input_log, class}, "kind", 0)
+
+    assert {:error, :not_in_manifest} =
+             WalTransfer.read_chunk({:input_log, class}, "../../../etc/passwd", 0)
+
+    assert {:ok, _chunk} = WalTransfer.read_chunk({:input_log, class}, "input.log", 0)
   end
 
   test "read_chunk walks a real file to :eof" do
     cell_id = seed_cell("chunk")
     name = Path.basename(Paths.wal_path(cell_id))
 
-    assert {:ok, first} = WalTransfer.read_chunk(cell_id, name, 0)
+    assert {:ok, first} = WalTransfer.read_chunk({:cell, cell_id}, name, 0)
     assert byte_size(first) > 0
-    assert :eof = WalTransfer.read_chunk(cell_id, name, byte_size(first))
+    assert :eof = WalTransfer.read_chunk({:cell, cell_id}, name, byte_size(first))
   end
 
   test "pulling from this node is a no-op" do
     cell_id = seed_cell("self")
 
-    assert {:ok, 0} = WalTransfer.pull_cell(node(), cell_id)
+    assert {:ok, 0} = WalTransfer.pull_cell(node(), {:cell, cell_id})
     assert 0 = WalTransfer.pull_operative(node(), elem(cell_id, 0))
   end
 
@@ -85,18 +102,18 @@ defmodule FlezhaTest.State.WalTransferTest do
     # nowhere here once this node moves off it.
     refute File.exists?(Paths.wal_path(source))
 
-    assert {:ok, files} = WalTransfer.move_cell(peer_node, source, destination)
+    assert {:ok, files} = WalTransfer.move_cell(peer_node, {:cell, source}, {:cell, destination})
     assert files > 0
 
     assert File.read!(Paths.wal_path(destination)) == source_bytes
     refute File.exists?(Paths.wal_path(destination) <> ".transferring")
 
     # The peer does not hold it — the delete runs only after the rename.
-    assert :erpc.call(peer_node, WalTransfer, :manifest, [source]) == []
+    assert :erpc.call(peer_node, WalTransfer, :manifest, [{:cell, source}]) == []
 
     # Re-running is a no-op: the source is gone, so nothing is owed and the
     # destination is untouched. That is what makes a crashed rescale re-runnable.
-    assert {:ok, 0} = WalTransfer.move_cell(peer_node, source, destination)
+    assert {:ok, 0} = WalTransfer.move_cell(peer_node, {:cell, source}, {:cell, destination})
     assert File.read!(Paths.wal_path(destination)) == source_bytes
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
@@ -117,15 +134,68 @@ defmodule FlezhaTest.State.WalTransferTest do
     {class, tasklet, _key} = source
     unresolvable = {class, tasklet, "a-different-key"}
 
-    assert {:error, _reason} = WalTransfer.move_cell(peer_node, source, unresolvable)
+    assert {:error, _reason} =
+             WalTransfer.move_cell(peer_node, {:cell, source}, {:cell, unresolvable})
 
     # Nothing was deleted: a half-moved Cell is the one outcome that loses data.
     assert Path.basename(Paths.wal_path(source)) in :erpc.call(
              peer_node,
              WalTransfer,
              :manifest,
-             [source]
+             [{:cell, source}]
            )
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: the same-id clause answers before asking where the Cell is,
+  # so a rescale's gather of a member that keeps its id leaves its Cells on
+  # the peer.
+  @tag :multi_node
+  test "a same-id move from a peer pulls the cell and removes the peer's copy" do
+    cell_id = seed_cell("sameid")
+    source_bytes = File.read!(Paths.wal_path(cell_id))
+
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(:waltransfer4, state_root: Paths.state_root())
+
+    dest_root = TestHelpers.tmp_app_data_dir()
+    on_exit(fn -> File.rm_rf(dest_root) end)
+
+    assert {:ok, files} = WalTransfer.move_cell(peer_node, {:cell, cell_id}, {:cell, cell_id})
+    assert files > 0
+    assert File.read!(Paths.wal_path(cell_id)) == source_bytes
+    assert :erpc.call(peer_node, WalTransfer, :manifest, [{:cell, cell_id}]) == []
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: the pull enumerates Cells only, so a workflow instance placed
+  # on another controller resumes without its journal and its input log.
+  @tag :multi_node
+  test "a workflow instance's journal and input log are pulled with its cells" do
+    class = "wf_pull_#{System.unique_integer([:positive])}"
+    cell_id = {class, "counter", "k"}
+    {:ok, srv} = Supervisor.find_or_start(cell_id)
+    :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "alpha")
+    :ok = TaskJournal.append_iter_committed(class, 0, 0, [])
+    {:ok, 0} = InputLog.append(class, "m", %{})
+    FsyncBatcher.flush_now()
+
+    journal_bytes = File.read!(Paths.journal_path(class))
+    log_bytes = File.read!(Paths.input_log_path(class))
+
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(:waltransfer5, state_root: Paths.state_root())
+
+    dest_root = TestHelpers.tmp_app_data_dir()
+    on_exit(fn -> File.rm_rf(dest_root) end)
+
+    WalTransfer.pull_operative(peer_node, class)
+
+    assert File.exists?(Paths.wal_path(cell_id))
+    assert File.read!(Paths.journal_path(class)) == journal_bytes
+    assert File.read!(Paths.input_log_path(class)) == log_bytes
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end

@@ -110,12 +110,20 @@ defmodule Flezha.State.Supervisor do
   defdelegate live_writers(operative_class), to: WriterRegistry
 
   @doc """
-  Stop every live writer of `operative_class`; the files stay. What a stopped
-  operative owes whether its state is deleted or retained for inspection.
+  Stop every live writer of `operative_class` and its input log; the files
+  stay. What a stopped operative owes whether its state is deleted, retained
+  for inspection or kept for a rescale to move.
   """
   @spec close_writers(String.t()) :: :ok
   def close_writers(operative_class) do
     Enum.each(live_writers(operative_class), &WalWriter.close/1)
+
+    case lookup({operative_class, :input_log}) do
+      {:ok, pid} -> _ = DynamicSupervisor.terminate_child(__MODULE__, pid)
+      :error -> :ok
+    end
+
+    :ok
   end
 
   @doc "Every registered writer id — Cell writers and input logs alike."

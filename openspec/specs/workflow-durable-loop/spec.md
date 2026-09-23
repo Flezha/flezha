@@ -109,7 +109,11 @@ termination of a looping durable instance, be built from journaled `iter_committ
 markers: **keep-progress** SHALL keep every journaled iteration and undo only
 the in-flight one; **all-or-nothing** SHALL undo the in-flight iteration and
 then every journaled iteration in reverse. The existing `plan_compensation`
-ordering contract SHALL be reused unchanged.
+ordering contract SHALL be reused unchanged. For a member of a partition group the
+journaled iterations are those committed since the member's last rescale, because a rescale
+seals the member's journal at its resume point: an all-or-nothing rollback SHALL reach back
+to that seal and no further, and a member's rollback SHALL never touch another member's
+iterations.
 
 #### Scenario: Keep-progress keeps journaled iterations across a crash
 
@@ -120,6 +124,11 @@ ordering contract SHALL be reused unchanged.
 
 - **WHEN** an all-or-nothing looping instance with journaled iterations 1–2 fails in iteration 3
 - **THEN** compensation SHALL undo iteration 3's completed tasklets, then iterations 2 and 1, in reverse completion order
+
+#### Scenario: All-or-nothing on a partition member stops at its seal
+
+- **WHEN** an all-or-nothing member sealed at iteration 6 by a rescale commits iterations 7 and 8 and fails in iteration 9
+- **THEN** compensation SHALL undo iteration 9's completed tasklets, then 8 and 7, and SHALL NOT compensate any iteration at or below 6
 
 ### Requirement: A tasklet ends its workflow after the iteration commits
 

@@ -1,6 +1,9 @@
 defmodule Flezha.State.WalTransfer do
   @moduledoc """
-  Cross-controller pull of one Cell's durable files.
+  Cross-controller pull of an operative's durable files, one reference at a
+  time: a Cell's file set (`{:cell, cell_id}`, a workflow's journal among them
+  under its reserved identity) or the instance's input log
+  (`{:input_log, class}`).
 
   A controller that loses every runner drains its operatives to a peer. The
   handover carries the SDK's in-memory state — but it sources that from the
@@ -13,7 +16,7 @@ defmodule Flezha.State.WalTransfer do
   a half-written file: `manifest/1` and `read_chunk/3` run on the source,
   `pull_cell/3` on the destination, through a fsynced-then-renamed
   `.transferring` sibling. A failure removes the artefact and leaves the
-  destination cold, never half-restored. One-shot per Cell per migration;
+  destination cold, never half-restored. One-shot per reference per migration;
   this is NOT ongoing replication.
   """
 
@@ -22,36 +25,29 @@ defmodule Flezha.State.WalTransfer do
 
   @chunk_bytes 64 * 1024
 
-  @type cell_id :: {binary(), binary(), binary()}
+  @type ref :: Paths.durable_ref()
 
   # ---------- source side (runs via :erpc on the node that holds the files) ----------
 
-  @doc """
-  Cell ids this node holds durable files for under `operative_class`. The
-  destination cannot enumerate them locally — it has nothing on disk yet.
-  """
-  @spec cells(binary()) :: [cell_id()]
-  def cells(operative_class), do: Paths.cells_of(operative_class)
-
-  @doc "Basenames of the files `cell_id` actually has on this node."
-  @spec manifest(cell_id()) :: [binary()]
-  def manifest({_, _, _} = cell_id) do
-    cell_id
-    |> Paths.cell_files()
+  @doc "Basenames of the files `ref` actually has on this node."
+  @spec manifest(ref()) :: [binary()]
+  def manifest(ref) do
+    ref
+    |> Paths.durable_files()
     |> Enum.filter(&File.regular?/1)
     |> Enum.map(&Path.basename/1)
   end
 
   @doc """
-  One slice of `name` under `cell_id`. `name` arrives over the wire, so it is
-  resolved through `Paths.cell_file_path/2` — never joined onto the state
+  One slice of `name` under `ref`. `name` arrives over the wire, so it is
+  resolved through `Paths.durable_file_path/2` — never joined onto the state
   directory, which would let a peer read arbitrary paths off this node.
   """
-  @spec read_chunk(cell_id(), binary(), non_neg_integer()) ::
+  @spec read_chunk(ref(), binary(), non_neg_integer()) ::
           {:ok, binary()} | :eof | {:error, term()}
-  def read_chunk({_, _, _} = cell_id, name, offset)
+  def read_chunk(ref, name, offset)
       when is_binary(name) and is_integer(offset) and offset >= 0 do
-    case Paths.cell_file_path(cell_id, name) do
+    case Paths.durable_file_path(ref, name) do
       nil -> {:error, :not_in_manifest}
       path -> pread(path, offset)
     end
@@ -74,10 +70,13 @@ defmodule Flezha.State.WalTransfer do
   # ---------- destination side ----------
 
   @doc """
-  Pull every Cell of `operative_class` from `source_node`. Returns the
-  number of Cells whose files landed; `0` means the source held nothing and
-  a cold start is correct. A per-Cell failure is logged via telemetry and
-  skipped — one unreadable Cell must not cost the operative the rest.
+  Pull every durable file of `operative_class` from `source_node`: its Cells,
+  a workflow's journal, and its input log, which travel together because a
+  journal pulled without its log seeds the instance's floor in an empty
+  offset space. Returns the number of references whose files landed; `0`
+  means the source held nothing and a cold start is correct. A per-reference
+  failure is logged via telemetry and skipped — one unreadable Cell must not
+  cost the operative the rest.
   """
   @spec pull_operative(node(), binary(), keyword()) :: non_neg_integer()
   def pull_operative(source_node, operative_class, opts \\ [])
@@ -87,9 +86,9 @@ defmodule Flezha.State.WalTransfer do
   def pull_operative(source_node, operative_class, opts) do
     timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
 
-    case call(source_node, :cells, [operative_class], timeout) do
-      {:ok, cell_ids} ->
-        Enum.count(cell_ids, &landed?(pull_cell(source_node, &1, opts)))
+    case call(source_node, Paths, :durable_refs, [operative_class], timeout) do
+      {:ok, refs} ->
+        Enum.count(refs, &landed?(pull_cell(source_node, &1, opts)))
 
       {:error, reason} ->
         emit(:wal_pull_failed, %{operative_class: operative_class, reason: reason})
@@ -101,72 +100,74 @@ defmodule Flezha.State.WalTransfer do
   defp landed?(_), do: false
 
   @doc """
-  Pull every file of `cell_id` from `source_node` into this node's state
-  tree. `{:ok, 0}` means the source held nothing — a cold start is correct.
+  Pull every file of `ref` from `source_node` into this node's state tree.
+  `{:ok, 0}` means the source held nothing — a cold start is correct.
 
-  `:as` writes the files under a different Cell id — the same tasklet and
-  key under another Operative class, which is what a partition rescale's
-  cross-controller move is. The cell key is unchanged, so every basename
-  resolves in the destination's layout.
+  `:as` writes the files under a different reference of the same kind — for a
+  Cell, the same tasklet and key under another Operative class, which is what
+  a partition rescale's cross-controller move is. The cell key is unchanged,
+  so every basename resolves in the destination's layout.
   """
-  @spec pull_cell(node(), cell_id(), keyword()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
-  def pull_cell(source_node, cell_id, opts \\ [])
+  @spec pull_cell(node(), ref(), keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def pull_cell(source_node, ref, opts \\ [])
 
-  def pull_cell(source_node, cell_id, opts) when source_node == node() do
-    if Keyword.get(opts, :as, cell_id) == cell_id, do: {:ok, 0}, else: {:error, :same_node}
+  def pull_cell(source_node, ref, opts) when source_node == node() do
+    if Keyword.get(opts, :as, ref) == ref, do: {:ok, 0}, else: {:error, :same_node}
   end
 
-  def pull_cell(source_node, {_, _, _} = cell_id, opts) do
+  def pull_cell(source_node, ref, opts) do
     timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
-    destination = Keyword.get(opts, :as, cell_id)
+    destination = Keyword.get(opts, :as, ref)
 
-    case call(source_node, :manifest, [cell_id], timeout) do
+    case call(source_node, __MODULE__, :manifest, [ref], timeout) do
       {:ok, []} ->
         {:ok, 0}
 
       {:ok, entries} ->
-        pull_all(source_node, cell_id, entries, timeout, destination)
+        pull_all(source_node, ref, entries, timeout, destination)
 
       {:error, _} = err ->
-        emit(:wal_pull_failed, %{cell_id: cell_id, reason: elem(err, 1)})
+        emit(:wal_pull_failed, %{ref: ref, reason: elem(err, 1)})
         err
     end
   end
 
   @doc """
-  Move one Cell's whole durable file set to `destination`, wherever it
+  Move one reference's whole durable file set to `destination`, wherever it
   currently lives.
 
-  Same node: an atomic rename per file. Another node: the destination-pulled
-  chunked copy, and the source's copy is removed only after every file has
+  Same node: an atomic rename per file, and nothing to do onto itself.
+  Another node: the destination-pulled chunked copy, the same reference
+  included, and the source's copy is removed only after every file has
   landed. Idempotent — a source that holds nothing is already moved, which is
   what lets a crashed rescale be re-run.
   """
-  @spec move_cell(node() | nil, cell_id(), cell_id()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
+  @spec move_cell(node() | nil, ref(), ref()) :: {:ok, non_neg_integer()} | {:error, term()}
   def move_cell(source_node, source, destination)
 
-  def move_cell(_source_node, source, source), do: {:ok, 0}
+  def move_cell(source_node, source, source) when source_node in [nil] or source_node == node(),
+    do: {:ok, 0}
 
   def move_cell(source_node, source, destination)
       when source_node in [nil] or source_node == node() do
-    files = Enum.filter(Paths.cell_files(source), &File.exists?/1)
+    files = Enum.filter(Paths.durable_files(source), &File.exists?/1)
 
     if files == [] do
       {:ok, 0}
     else
-      File.mkdir_p!(Paths.state_dir(destination))
-
       moved =
         Enum.count(files, fn path ->
-          case Paths.cell_file_path(destination, Path.basename(path)) do
-            nil -> false
-            dest -> File.rename(path, dest) == :ok
+          case Paths.durable_file_path(destination, Path.basename(path)) do
+            nil ->
+              false
+
+            dest ->
+              File.mkdir_p!(Path.dirname(dest))
+              File.rename(path, dest) == :ok
           end
         end)
 
-      emit(:wal_moved, %{cell_id: source, destination: destination, files: moved})
+      emit(:wal_moved, %{ref: source, destination: destination, files: moved})
       {:ok, moved}
     end
   end
@@ -183,12 +184,12 @@ defmodule Flezha.State.WalTransfer do
           :erpc.call(
             source_node,
             Paths,
-            :delete_files,
+            :delete_durable,
             [source],
             Durations.get(:wal_transfer_call_ms)
           )
 
-        emit(:wal_moved, %{cell_id: source, destination: destination, files: files})
+        emit(:wal_moved, %{ref: source, destination: destination, files: files})
         {:ok, files}
 
       err ->
@@ -198,20 +199,20 @@ defmodule Flezha.State.WalTransfer do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  defp pull_all(source_node, cell_id, names, timeout, destination) do
+  defp pull_all(source_node, ref, names, timeout, destination) do
     Enum.reduce_while(names, {:ok, 0}, fn name, {:ok, done} ->
-      case pull_file(source_node, cell_id, name, timeout, destination) do
+      case pull_file(source_node, ref, name, timeout, destination) do
         :ok ->
           {:cont, {:ok, done + 1}}
 
         {:error, reason} = err ->
-          emit(:wal_pull_failed, %{cell_id: cell_id, file: name, reason: reason})
+          emit(:wal_pull_failed, %{ref: ref, file: name, reason: reason})
           {:halt, err}
       end
     end)
     |> case do
       {:ok, count} = ok ->
-        emit(:wal_pulled, %{cell_id: cell_id, files: count, source_node: source_node})
+        emit(:wal_pulled, %{ref: ref, files: count, source_node: source_node})
         ok
 
       err ->
@@ -221,30 +222,30 @@ defmodule Flezha.State.WalTransfer do
 
   # `Paths.atomic_install/3` owns the `.transferring` → fsync → rename dance;
   # this only fills the handle it is given.
-  defp pull_file(source_node, {_, _, _} = cell_id, name, timeout, destination) do
-    case Paths.cell_file_path(destination, name) do
+  defp pull_file(source_node, ref, name, timeout, destination) do
+    case Paths.durable_file_path(destination, name) do
       nil ->
         {:error, {:unknown_file, name}}
 
       dest ->
-        File.mkdir_p!(Paths.state_dir(destination))
+        File.mkdir_p!(Path.dirname(dest))
 
         Paths.atomic_install(
           dest,
-          &copy_chunks(source_node, cell_id, name, &1, 0, timeout),
+          &copy_chunks(source_node, ref, name, &1, 0, timeout),
           :wal_transfer
         )
     end
   end
 
-  defp copy_chunks(source_node, cell_id, name, fd, offset, timeout) do
-    case call(source_node, :read_chunk, [cell_id, name, offset], timeout) do
+  defp copy_chunks(source_node, ref, name, fd, offset, timeout) do
+    case call(source_node, __MODULE__, :read_chunk, [ref, name, offset], timeout) do
       {:ok, :eof} ->
         :ok
 
       {:ok, {:ok, data}} ->
         case :file.write(fd, data) do
-          :ok -> copy_chunks(source_node, cell_id, name, fd, offset + byte_size(data), timeout)
+          :ok -> copy_chunks(source_node, ref, name, fd, offset + byte_size(data), timeout)
           {:error, reason} -> {:error, reason}
         end
 
@@ -256,8 +257,8 @@ defmodule Flezha.State.WalTransfer do
     end
   end
 
-  defp call(node, fun, args, timeout) do
-    {:ok, :erpc.call(node, __MODULE__, fun, args, timeout)}
+  defp call(node, module, fun, args, timeout) do
+    {:ok, :erpc.call(node, module, fun, args, timeout)}
   catch
     kind, reason -> {:error, {kind, reason}}
   end

@@ -75,15 +75,17 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   identically on live delivery and replay. See [`sdk/multi_input_tasklets.md`](sdk/multi_input_tasklets.md).
 - **`route_latest`** — delivers an operative-wide document to each keyed cell on that key's own
   traffic, never as a remembered-set fan-out.
-- **Partition** — one member of a partitioned stream operative: an ordinary instance `<id>#pK`
-  with its own Overwatch, registry row, binding, input log, state tree, plugins and DLQ identity.
+- **Partition** — one member of a partitioned operative, a stream or a `per_input` workflow: an
+  ordinary instance `<id>#pK` with its own Overwatch, registry row, binding, input log, state tree,
+  plugins and DLQ identity, and for a workflow its own journal and pass sheet.
   `flz operative start <factory> --id <id> --partitions N` starts N; `flz operative scale <group> M`
   rescales. See [`sdk/partitioned_operatives.md`](sdk/partitioned_operatives.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
   (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
   `AddOperative`; the SDK **key-group guard** parks the first frame whose key falls outside it.
-- **Group** — the logical operative N partitions make up, named by the base id. No group record is
-  stored: the single `flz operative list` row and `info`'s coverage check derive from the members.
+- **Group** — the logical operative N partitions make up, named by the base id, of either kind. No
+  group record is stored: the single `flz operative list` row and `info`'s coverage check derive
+  from the members. A workflow group has no end, result or rollback of its own; each member has.
 - **Timer (per-cell)** — a deadline a tasklet registers on its own cell. An **event-time**
   timer fires when the cell's event-time high-water crosses it, a **processing-time** timer from
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the

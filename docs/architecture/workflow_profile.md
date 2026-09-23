@@ -80,9 +80,9 @@ and its commit names each of those cells once. An idle keyed cell is evicted by 
 tasklet is held until the instance ends, under keep-progress only the running pass's cells
 are. A `task_committed` entry counts its cells in 16 bits, so one pass of one tasklet runs at
 most 65 535 cells, below the `max_cells` default of 100 000; a class that keys more than that
-per pass declares a smaller cap. `--partitions` is refused —
-[partitioning](stream_profile.md#partitioned-operatives) is a stream concern; a workflow scales
-by spawning instances.
+per pass declares a smaller cap. A `per_input` workflow whose entry edge is keyed may be
+[partitioned](../sdk/partitioned_operatives.md#a-per-input-workflow-as-a-group) into N instances
+that each end, compensate and commit on their own; a `once` or `chained` one is refused.
 
 The `(operative_class, tasklet_id, cell_key)` identity is the same one a stream operative
 uses. A workflow operative genuinely has tasklets and cells; there are no synthetic

@@ -88,6 +88,22 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
     refute_received {:pulled, _, _}
   end
 
+  # fails when: the pull runs whatever this node holds, so a restore after the
+  # member made progress here overwrites it with the source's older copy.
+  test "a node that already holds the instance's files pulls nothing" do
+    expect_pull(self())
+    peer = :"peer@127.0.0.1"
+    cell = {"ohlc#p1", "candle", "BTC-USD"}
+    File.mkdir_p!(Flezha.State.Paths.state_dir(cell))
+    File.write!(Flezha.State.Paths.wal_path(cell), "newer")
+
+    assert :ok = Replay.adopt_foreign_state([state_source_node: peer], "ohlc#p1")
+    refute_received {:pulled, _, _}
+
+    assert :ok = Replay.adopt_foreign_state([state_source_node: peer], "ohlc#p2")
+    assert_received {:pulled, ^peer, "ohlc#p2"}
+  end
+
   test "an operative that was never rescaled pulls nothing" do
     expect_pull(self())
     scanned = expect_scan(self())

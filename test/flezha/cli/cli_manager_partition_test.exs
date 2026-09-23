@@ -295,6 +295,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
            to: 3,
            cells_moved: 1,
            vacated: ["ohlc#p2"],
+           sealed: [],
            members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
            warnings: ["more partitions than runners"]
          }}
@@ -306,6 +307,28 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       assert out =~ "Operative ohlc rescaled 2 -> 3"
       assert out =~ "1 cells moved, 1 trees removed"
       assert out =~ "  ohlc#p0"
+      refute out =~ "Sealed"
+    end
+
+    test "a workflow group's rescale names the members it sealed" do
+      stub(PartitionGroup, :rescale, fn _ns, "orders", 3, _opts ->
+        {:ok,
+         %{
+           group: "orders",
+           from: 2,
+           to: 3,
+           cells_moved: 2,
+           vacated: [],
+           sealed: ["orders#p0", "orders#p1"],
+           members: ["orders#p0", "orders#p1", "orders#p2"],
+           warnings: []
+         }}
+      end)
+
+      out = capture_io(fn -> CliManager.operative_scale("default", "orders", "3", "{}") end)
+
+      assert out =~ "Sealed orders#p0, orders#p1 at their latest committed iteration"
+      assert out =~ "no rewind or rollback reaches a pass committed before this rescale"
     end
   end
 

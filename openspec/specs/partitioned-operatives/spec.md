@@ -11,14 +11,35 @@ quietly missing data.
 ## Requirements
 ### Requirement: A partitioned start SHALL materialize N ordinary operative instances
 
-`flz operative start <factory> --id <id> --partitions N` (N ≥ 2, stream kind only) SHALL start N ordinary operative instances named `<id>#p0` … `<id>#p{N-1}`, each a full operative: own Overwatch, own ProcessHub child and registry row, own runner binding, own input log, own state tree, own plugins, own DLQ identity. Each member's durable cspec opts SHALL carry `group` (the base id), `partition`, `partitions`, and its owned key-group range. There SHALL be no stored group record: every group-level view SHALL be derived from member rows at read time. `partitions: 1` (the default) SHALL be byte-identical to an unpartitioned start.
+`flz operative start <factory> --id <id> --partitions N` (N ≥ 2) SHALL start N ordinary operative
+instances named `<id>#p0` … `<id>#p{N-1}`, each a full operative of the factory's kind: own
+Overwatch, own ProcessHub child and registry row, own runner binding, own input log, own state
+tree, own plugins, own DLQ identity, and, for a workflow, own journal and own pass sheet. Each
+member's durable cspec opts SHALL carry `group` (the base id), `partition`, `partitions`, and its
+owned key-group range. There SHALL be no stored group record: every group-level view SHALL be
+derived from member rows at read time. `partitions: 1` (the default) SHALL be byte-identical to
+an unpartitioned start. The group SHALL be started, converged, read and rescaled through the one
+group module for either kind; a workflow kind SHALL add no group mechanism of its own. A
+partitioned start SHALL NOT carry a first message (`--text`): a message names one instance, and a
+group's message reaches its member by key; such a start SHALL be refused before any member
+starts, naming the keyed forward and the member id as the ways in.
 
-A partitioned start with no `--id` SHALL generate the base id, trimming the factory prefix so that the largest member id, `<base>#p{N-1}`, still fits the operative id limit, and SHALL report that base as the started id. A generated base is never refused on the id budget.
+A partitioned start with no `--id` SHALL generate the base id, trimming the factory prefix so that
+the largest member id, `<base>#p{N-1}`, still fits the operative id limit, and SHALL report that
+base as the started id. A generated base is never refused on the id budget.
 
 #### Scenario: Start creates self-describing members
 
 - **WHEN** `flz operative start <factory> --id ohlc --partitions 3` succeeds
 - **THEN** registry rows `ohlc#p0`, `ohlc#p1`, `ohlc#p2` exist, each with cspec opts `group: "ohlc"`, its `partition`, `partitions: 3`, and a key-group range, and each member is bound and running as an ordinary operative
+
+#### Scenario: A per-input workflow starts as N instances
+
+- **WHEN** `flz operative start <factory> --id orders --partitions 2` names a `per_input`
+  workflow factory
+- **THEN** `orders#p0` and `orders#p1` exist as ordinary workflow instances, each with its own
+  journal at its own state key, its own durable input log and its own key-group range, bound and
+  waiting for a message, and no record of the group exists beyond the two rows
 
 #### Scenario: A partitioned start without an id generates a base that fits
 
@@ -30,10 +51,19 @@ A partitioned start with no `--id` SHALL generate the base id, trimming the fact
 - **WHEN** an operative is started without `--partitions` (or with `--partitions 1`)
 - **THEN** exactly one instance starts with no partition opts and behavior is identical to an unpartitioned start
 
-#### Scenario: Workflow kind is refused
+#### Scenario: A once or chained workflow is refused partitions
 
-- **WHEN** `--partitions 2` is given with `--kind workflow`
-- **THEN** the start is refused with an error naming that partitions apply to stream operatives only, and nothing is started
+- **WHEN** `--partitions 2` names a workflow factory whose loop mode is `once` or `chained`
+- **THEN** the start is refused with `PartitionsWithoutPerInputLoop`, naming that its one
+  message would reach one member while the others waited for nothing, at the controller when the
+  class's loop mode is already recorded and at the first member's bind otherwise, and no member
+  is left running
+
+#### Scenario: A first message is refused with partitions
+
+- **WHEN** `flz operative start <factory> --partitions 2 --text '{"symbol":"AAPL"}'` is run
+- **THEN** the start is refused before any member starts, naming that a group's message reaches
+  a member by key, and nothing is started
 
 #### Scenario: Id budget is checked before any member starts
 
@@ -82,7 +112,7 @@ The partition function SHALL be `group(key) = fnv1a128(key_bytes) mod 256`, usin
 - **THEN** the migrate-time AddOperative carries the same partition fields and the guard re-arms on the new runner
 
 ### Requirement: The SDK SHALL refuse a mis-routed key on its first frame
-When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed cell key hashes into the partition's own key-group range. A miss SHALL take the park path with an error naming the key, its group, the owning partition, and the contract ("the routing item / flz.key must equal the key_by result") — before any state for that key is created or modified. When `partition_count < 2` the check SHALL cost no more than one comparison.
+When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed cell key hashes into the partition's own key-group range. A miss SHALL take the park path with an error naming the key, its group, the owning partition, and the contract ("the routing item / flz.key must equal the key_by result") — before any state for that key is created or modified. When `partition_count < 2` the check SHALL cost no more than one comparison. The check SHALL be the one the router applies where a value is addressed to a Cell, for an instance of either kind: on a workflow member it runs for the entry stage and for every inner keyed stage alike, and a message none of whose entry items it admits SHALL open no pass and SHALL NOT count as a message, exactly as a message the entrance cannot read does not.
 
 #### Scenario: Mis-routed frame parks loudly
 - **WHEN** a frame whose key hashes to a group outside the member's range is dispatched
@@ -91,6 +121,10 @@ When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed ce
 #### Scenario: Correctly routed frames are unaffected
 - **WHEN** every arriving key hashes into the member's range
 - **THEN** dispatch behavior and output are identical to an unpartitioned operative
+
+#### Scenario: A mis-routed message to a workflow member opens no pass
+- **WHEN** a member of a partitioned `per_input` workflow receives a message whose `key_by` result hashes outside its range
+- **THEN** the message is parked under the entry channel with the named contract error, no Cell is minted for its key, no pass opens, no iteration commits, and the member's next in-range message runs its pass as the next iteration
 
 ### Requirement: Partitioning SHALL be refused for a keyless topology
 A class with no keyed tasklet (neither `key_by` nor declared cell keys on any entry-fed tasklet) SHALL NOT run partitioned: splitting a single unkeyed cell across N members would fold each member's input slice into a private copy of "the one" state — N divergent partial truths, silently. Because the topology is SDK-owned (key closures are compiled code, never on the wire), the authoritative refusal SHALL live in the SDK at the AddOperative boundary: when `partition_count ≥ 2` and the topology has no keyed tasklet, the SDK SHALL refuse the AddOperative with an error naming `key_by` (`PartitionsWithoutKeyedTasklet`). The controller SHALL treat that refusal as a member start failure (group rollback, error surfaced to the caller). Additionally, the class SHALL declare its keyedness via the existing `AddOperativeResponse.metadata` → `ClassRegistry` declaration seam, so a later partitioned start of a known-keyless class is refused at the controller before any member starts. A statically keyed topology (declared cell keys, no `key_by`) SHALL be accepted; members' out-of-range static cells simply receive no input.
@@ -146,7 +180,7 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 - **THEN** the missing member's instance is enabled, the two existing instances are untouched, and the command exits 0 reporting one enabled and two already enabled
 
 ### Requirement: The CLI SHALL present the group as one logical operative
-`flz operative list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operative info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operative stop <group>` SHALL stop all members. `flz state get <group>/<tasklet>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; tasklet-level and selector-less reads SHALL fan out over members and merge.
+`flz operative list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operative info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operative stop <group>` SHALL stop all members, each the way its kind is stopped: a workflow member cooperatively, ending `cancelled` with its own completion record. `flz state get <group>/<tasklet>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; tasklet-level and selector-less reads SHALL fan out over members and merge. Everything a workflow instance records for itself, its completion record, its journal, its input log and its rewind, SHALL be per member and addressed by the member id; a member that ended itself SHALL appear in `info` as a finished workflow under its member id, and the group SHALL show the coverage gap it left until a converge restarts it.
 
 #### Scenario: List shows one row
 - **WHEN** `ohlc` runs with 3 partitions
@@ -159,6 +193,14 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 #### Scenario: Keyed state read resolves the owner
 - **WHEN** `flz state get ohlc/<tasklet>/BTC-USD` is issued
 - **THEN** the controller hashes the key, routes to the member owning that group, and returns that member's live cell state
+
+#### Scenario: A workflow member that completed itself is a finished member
+- **WHEN** `orders#p1` of a 2-member `per_input` workflow group ends itself with `ctx.complete` while `orders#p0` keeps running
+- **THEN** `flz operative info` lists `orders#p1` as a finished workflow with its status and result under its own id, reports the group as `1/2` with the gap over `orders#p1`'s key groups, and `orders#p0` is untouched
+
+#### Scenario: Stopping a workflow group stops each member cooperatively
+- **WHEN** `flz operative stop orders` is issued against a 2-member `per_input` workflow group
+- **THEN** each member receives its own cooperative stop, each ends `cancelled` with its own completion record, and no group-level record is written
 
 ### Requirement: One partition's entire state SHALL live on one controller node
 A partition, being one ordinary operative instance, SHALL keep its whole durable state (input log, cell WALs, snapshots, DLQ entries) on the controller node that owns it. No mechanism introduced by this capability may split one member's cells across controller nodes.
@@ -200,7 +242,7 @@ Converging needs the group's id. A partitioned start with no `--id` generates a 
 
 ### Requirement: Group-base and singleton id collisions SHALL be refused in both directions
 
-A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused.
+A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused. A tasklet-requested spawn and a schedule carry no key and SHALL therefore address an unpartitioned instance only: a spawn naming a group's base id finds no instance under it, takes the start path and is refused by this guard, and the requester's result SHALL be `refused` with that sentence; a tasklet feeds a partitioned workflow through a keyed sink forwarded by `operative_forward`, which resolves the member from the group's ranges.
 
 #### Scenario: A plain start of a group base is refused
 
@@ -211,4 +253,59 @@ A plain (unpartitioned) start of an id that names an existing group's base SHALL
 
 - **WHEN** a live unpartitioned operative holds `demo` and `flz operative start <factory> --id demo --partitions 3` is issued
 - **THEN** the start is refused before any member starts
+
+#### Scenario: A spawn naming a group's base is refused
+
+- **WHEN** a tasklet calls `ctx.spawn_workflow` with instance id `demo`, `if_running: deliver` and a payload, while `demo` is a live partition group of a `per_input` workflow
+- **THEN** no instance starts, nothing is delivered to any member, and the requester's async result is `refused` with the sentence naming the group's member count
+
+#### Scenario: A keyed forward reaches the member
+
+- **WHEN** a stream's keyed sink is forwarded by `operative_forward` to the group `demo` and emits a value whose `flz.key` hashes into `demo#p1`'s range
+- **THEN** `demo#p1` receives the message and runs its pass over it, and no other member receives it
+
+### Requirement: Partitioning SHALL be refused for a workflow that reads one message
+
+A workflow class whose loop mode is `once` or `chained` SHALL NOT run partitioned: its one
+message reaches one member, and the other members would wait for a message that never comes.
+Only a `per_input` workflow, one pass per message, is a group. Because the loop mode is a class
+declaration the topology carries and the controller never sees at start, the authoritative
+refusal SHALL live in the SDK at the `AddOperative` boundary: when `partition_count >= 2` names a
+workflow class whose loop mode is not `per_input`, the SDK SHALL refuse the `AddOperative` with an
+error named `PartitionsWithoutPerInputLoop` that names the class, its loop mode and `loop_mode
+per_input` as the remedy, and the controller SHALL treat that refusal as a member start failure
+(group rollback, error surfaced to the caller). Additionally, a workflow class SHALL declare its
+loop mode as `loop_mode` (`once` | `per_input` | `chained`) in the `AddOperativeResponse.metadata`
+declaration seam beside `keyed`, recorded against the factory as the keyless fact is, so a later
+partitioned start of a known `once` or `chained` class is refused at the controller before any
+member starts, with the same sentence. The keyless refusal applies to a workflow unchanged: a
+`per_input` workflow whose entry-fed tasklet declares neither `key_by` nor cell keys SHALL be
+refused with `PartitionsWithoutKeyedTasklet`.
+
+#### Scenario: First partitioned start of a once workflow fails at bind, loudly
+
+- **WHEN** `--partitions 3` is used with a workflow class whose loop mode is `once` and that has
+  never bound
+- **THEN** the first member's `AddOperative` is refused with `PartitionsWithoutPerInputLoop`, any
+  already-started members are stopped, and the CLI receives the SDK's error naming the class,
+  `once` and `loop_mode per_input`
+
+#### Scenario: Repeat partitioned start of a known chained workflow fails immediately
+
+- **WHEN** a `chained` workflow class has bound before, so its `loop_mode` declaration is
+  recorded against its factory, and a partitioned start of it is attempted
+- **THEN** the controller refuses before starting any member, with the same named error
+
+#### Scenario: A per-input workflow with a keyed entry partitions normally
+
+- **WHEN** a `per_input` workflow whose entry edge declares `key_by` is started with
+  `--partitions 2`
+- **THEN** the start succeeds, both members bind, and each member's response metadata carries
+  `loop_mode: "per_input"`
+
+#### Scenario: A per-input workflow with a single-cell entry is refused as keyless
+
+- **WHEN** a `per_input` workflow whose entry-fed tasklet declares no `key_by` and no cell keys is
+  started with `--partitions 2`
+- **THEN** the start is refused with `PartitionsWithoutKeyedTasklet`, as a stream's would be
 

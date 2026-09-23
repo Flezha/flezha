@@ -89,21 +89,33 @@ controller whose disk holds it. A HotSwap handover normally carries state in-ban
 the runner, so a migration triggered by that runner's death (the hub's own redistribution, after
 a controller loses its last runner for a factory and withdraws it) ships an empty payload. The handover stamps `source_node`; on an
 empty payload the destination runs `WalTransfer.pull_operative/3` against that node before the
-ordinary replay. The transfer is destination-driven — the source only answers reads
-(`cells/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails
+ordinary replay. The pull carries every durable file of the instance, one reference at a time:
+each Cell's file set (`{:cell, cell_id}`), a workflow's journal under its reserved identity, and
+the instance's input log (`{:input_log, class}`), because a journal without its log would seed
+the floor in an empty offset space. It runs only while this node holds none of those files, so a
+later restore never overwrites newer progress with the copy the source was left holding. The
+transfer is destination-driven — the source only answers reads
+(`Paths.durable_refs/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails
 the pull instead of stranding a partial file. Each file lands through `Paths.atomic_install/2`
 (a `.transferring` sibling, fsynced, renamed; any failure discards it and leaves that Cell
-cold). A requested name is resolved against `Paths.cell_files/1`, never joined onto the state
+cold). A requested name is resolved against the reference's own file set — `Paths.cell_files/1`
+for a Cell, the one `Paths.input_log_path/1` for the log — never joined onto the state
 directory, so a peer cannot read arbitrary paths. Telemetry `[:flezha, :state, :wal_pulled]` /
 `[:flezha, :state, :wal_pull_failed]`. Source files stay; the Retention sweeper reaps orphans.
 
 **Partition rescale.** `WalTransfer.move_cell/3` is the same machinery pointed at a different
 Operative class: each Cell whose owner changes moves into the new member's tree under the same
 tasklet and key — an atomic rename per file on one controller, the pull with `:as` across
-controllers with the source deleted only after every file landed. The move is atomic per Cell,
-so re-running `flz operative scale` after a crash moves nothing twice; the rescale stamps
-`state_source_node` on the new members' opts so a member placed elsewhere pulls its class tree
-first ([`../sdk/partitioned_operatives.md`](../sdk/partitioned_operatives.md)). All of this is
+controllers with the source deleted only after every file landed. A member that keeps its id
+but sits on another controller is gathered the same way, and a workflow member's journal and
+input log move with its Cells under its own id. The stop that precedes the moves preserves the
+files but closes the member's writers and its input log on the node it ran on, so the restarted
+member opens the files where the move left them. A surviving workflow member's stop first seals
+its journal (`TaskJournal.cut/2` with `seal: true`) at its latest committed iteration. The
+move is atomic per Cell, so re-running `flz operative scale` after a crash moves nothing twice;
+the rescale stamps `state_source_node` on the new members' opts so a member placed elsewhere
+pulls its class tree before its bind reads its resume state
+([`../sdk/partitioned_operatives.md`](../sdk/partitioned_operatives.md)). All of this is
 one-shot at migration time, not replication: a controller that dies together with its disk takes
 its Operatives' state with it unless the remote durability tier is enabled.
 

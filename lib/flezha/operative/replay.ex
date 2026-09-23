@@ -147,16 +147,29 @@ defmodule Flezha.Operative.Replay do
     # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
     operative_class = Keyword.get(operative_opts, :operative_class, state.id)
     overwatch = owner_pid(state)
-    source_node = foreign_state_source(operative_opts)
 
     spawn(fn ->
-      # A partition rescale gathers the group's Cells on the node that ran
-      # it, so a member placed elsewhere pulls its class tree first. The
-      # restore below is the same one every bind runs, and it is what covers
-      # the case where the state is already local.
-      if source_node, do: WalTransfer.pull_operative(source_node, operative_class)
+      :ok = adopt_foreign_state(operative_opts, operative_class)
       replay_persisted_cells(state.builder.kind, operative_class, runner_id, overwatch)
     end)
+
+    :ok
+  end
+
+  @doc """
+  Pull the instance's durable files from the node its state was last assembled
+  on (`:state_source_node`) while this node holds none of them: a partition
+  member placed away from the node that rescaled it, or a migration whose
+  handover arrived empty. A node that holds any of them already runs the
+  instance's state, and a copy from the source would overwrite that progress
+  with what the source was left holding.
+  """
+  @spec adopt_foreign_state(keyword(), binary()) :: :ok
+  def adopt_foreign_state(operative_opts, operative_class) do
+    with source when source != nil <- foreign_state_source(operative_opts),
+         [] <- Paths.durable_refs(operative_class) do
+      _ = WalTransfer.pull_operative(source, operative_class)
+    end
 
     :ok
   end

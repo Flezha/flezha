@@ -35,7 +35,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
     registry = FakeStartRegistry.install()
 
     ClassRegistry.ensure_table()
-    ClassRegistry.put_keyless(@factory, false)
+    ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: nil})
 
     %{registry: registry}
   end
@@ -87,11 +87,37 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   end
 
   describe "refusals, all of which run before the first member starts" do
-    test "a workflow operative cannot be partitioned" do
-      assert {:error, message} =
+    test "a per-input workflow passes the preflight and starts as N ordinary members" do
+      ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: :per_input})
+      stub(FleetManager, :factory_kind, fn _ns, @factory -> {:ok, :workflow} end)
+
+      assert {:ok, %{members: ["chat#p0", "chat#p1"]}} =
                PartitionGroup.start(@namespace, builder("chat", :workflow), 2)
 
-      assert message =~ "stream operatives only"
+      assert Enum.all?(started_members(), &(&1.kind == :workflow))
+    end
+
+    test "a workflow class known to read one message is refused without touching a runner" do
+      for mode <- [:once, :chained] do
+        ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: mode})
+
+        assert {:error, message} =
+                 PartitionGroup.start(@namespace, builder("chat", :workflow), 2)
+
+        assert message =~ "PartitionsWithoutPerInputLoop: class #{@factory}"
+        assert message =~ "(loop_mode #{mode})"
+        assert message =~ "declare loop_mode per_input"
+        assert started_members() == []
+      end
+    end
+
+    test "a first message is refused: it names one instance, and a group's reaches a member by key" do
+      operative = %{builder() | opts: [seed_input: {"AAPL:1", %{}}]}
+
+      assert {:error, message} = PartitionGroup.start(@namespace, operative, 2)
+      assert message =~ "carries no first message"
+      assert message =~ "keyed forward"
+      assert message =~ "ohlc#p0"
       assert started_members() == []
     end
 
@@ -128,7 +154,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
     end
 
     test "a class already known to be keyless is refused without touching a runner" do
-      ClassRegistry.put_keyless(@factory, true)
+      ClassRegistry.put_partitioning(@factory, %{keyless: true, loop_mode: nil})
 
       assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
       assert message =~ "PartitionsWithoutKeyedTasklet"
@@ -282,6 +308,31 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       assert started_members() == []
     end
 
+    # A spawn carries no key, so it can only name one instance; the group's
+    # base is none, and the start authority refuses it as it refuses any start.
+    test "a spawn naming a live workflow group's base is refused, and nothing is delivered" do
+      stub(FleetManager, :factory_kind, fn _ns, @factory -> {:ok, :workflow} end)
+      stub(FleetManager, :placement_refusal, fn _ns, @factory -> :none end)
+      ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: :per_input})
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder("orders", :workflow), 2)
+      _ = started_members()
+
+      caller = %{source: :sdk, principal: "runner@" <> @namespace, namespace: @namespace}
+
+      assert {{:refused, reason}, "orders"} =
+               OperativeManager.spawn_or_deliver(
+                 @namespace,
+                 "orders",
+                 @factory,
+                 "x",
+                 :deliver,
+                 caller
+               )
+
+      assert reason =~ "partition group of 2 live member(s)"
+      assert started_members() == []
+    end
+
     test "a partitioned start over a live unpartitioned operative is refused" do
       assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("solo"))
       _ = started_members()
@@ -296,7 +347,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
     test "generates a base that leaves room for its largest member" do
       factory = "orders_enrichment_pipeline_v2x"
       assert byte_size(factory) == 30
-      ClassRegistry.put_keyless(factory, false)
+      ClassRegistry.put_partitioning(factory, %{keyless: false, loop_mode: nil})
 
       assert {:ok, result} =
                PartitionGroup.start(@namespace, %Builder{id: nil, factory_id: factory}, 16)
@@ -380,6 +431,8 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.Service.PluginManager
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
+  alias Flezha.State.Supervisor, as: StateSupervisor
+  alias Flezha.State.TaskJournal
   alias Flezha.State.WalTransfer
   alias FlezhaTest.Helper.FakeStartRegistry
 
@@ -392,20 +445,8 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   setup do
     parent = self()
 
-    # Three live members, each owning a third of the key space.
-    seed =
-      for {range, index} <- Enum.with_index(Partition.ranges(3)) do
-        id = Partition.member_id(@group, index)
-
-        %Builder{
-          id: id,
-          factory_id: @factory,
-          kind: :stream,
-          opts: [plugins: []] ++ Partition.member_opts(@group, index, 3, range)
-        }
-      end
-
-    registry = FakeStartRegistry.install(seed: seed, runners: ["r1", "r2", "r3", "r4", "r5"])
+    registry =
+      FakeStartRegistry.install(seed: seed(:stream), runners: ["r1", "r2", "r3", "r4", "r5"])
 
     stub(PluginManager, :disable_operatives, fn _ns, ids ->
       for id <- ids, do: send(parent, {:sources_off, id})
@@ -413,13 +454,24 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     end)
 
     stub(Dlq.Store, :list, fn _class -> [] end)
-    stub(InputLog, :last_offset, fn _class -> -1 end)
-    stub(InputLog, :watermark, fn _class -> nil end)
+    stub(InputLog, :tail, fn _class -> {:ok, -1, -1} end)
 
     ClassRegistry.ensure_table()
-    ClassRegistry.put_keyless(@factory, false)
+    ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: nil})
 
     %{registry: registry}
+  end
+
+  # Three live members, each owning a third of the key space.
+  defp seed(kind) do
+    for {range, index} <- Enum.with_index(Partition.ranges(3)) do
+      %Builder{
+        id: Partition.member_id(@group, index),
+        factory_id: @factory,
+        kind: kind,
+        opts: [plugins: []] ++ Partition.member_opts(@group, index, 3, range)
+      }
+    end
   end
 
   defp write_cell(class, tasklet, key, bytes) do
@@ -446,8 +498,9 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     end
 
     test "aborts naming the laggard, having stopped and moved nothing", %{registry: registry} do
-      stub(InputLog, :last_offset, fn class -> if class == "ohlc#p1", do: 42, else: -1 end)
-      stub(InputLog, :watermark, fn _class -> 7 end)
+      stub(InputLog, :tail, fn class ->
+        if class == "ohlc#p1", do: {:ok, 7, 42}, else: {:ok, -1, -1}
+      end)
 
       assert {:error, message} =
                PartitionGroup.rescale(@namespace, @group, 2, quiesce_timeout_ms: 0)
@@ -609,26 +662,97 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     end
   end
 
+  describe "a workflow group" do
+    setup do
+      parent = self()
+
+      FakeStartRegistry.install(
+        seed: seed(:workflow),
+        runners: ["r1", "r2", "r3", "r4"],
+        kind: :workflow
+      )
+
+      stub(InputLog, :tail, fn class ->
+        send(parent, {:tail, class})
+        {:ok, -1, -1}
+      end)
+
+      stub(TaskJournal, :cut, fn class, opts ->
+        send(parent, {:sealed, class, opts})
+        Mimic.call_original(TaskJournal, :cut, [class, opts])
+      end)
+
+      stub(WalTransfer, :move_cell, fn source_node, {:cell, {class, _, _}} = source, dest ->
+        send(parent, {:writers_at_move, class, StateSupervisor.live_writers(class)})
+        Mimic.call_original(WalTransfer, :move_cell, [source_node, source, dest])
+      end)
+
+      for id <- ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
+          iter <- 0..2,
+          do: :ok = TaskJournal.append_iter_committed(id, iter, iter, [])
+
+      :ok
+    end
+
+    test "quiesces on the log, closes the writers before moving, seals only the survivors" do
+      # ETH-USD hashes to key group 213: p2 of three, p1 of two.
+      write_cell("ohlc#p2", "candle", "ETH-USD", "eth")
+
+      assert {:ok, result} = PartitionGroup.rescale(@namespace, @group, 2)
+      assert result.sealed == ["ohlc#p0", "ohlc#p1"]
+      assert result.vacated == ["ohlc#p2"]
+
+      assert :tail |> drain() |> MapSet.new() ==
+               MapSet.new(["ohlc#p0", "ohlc#p1", "ohlc#p2"])
+
+      assert [{"ohlc#p2", []}] =
+               for({class, writers} <- drain_pairs(:writers_at_move), do: {class, writers})
+
+      assert Enum.sort(for {class, opts} <- drain_pairs(:sealed), do: {class, opts}) ==
+               [{"ohlc#p0", [seal: true]}, {"ohlc#p1", [seal: true]}]
+
+      for survivor <- ["ohlc#p0", "ohlc#p1"],
+          do: assert(TaskJournal.committed_iterations(survivor) == [2])
+
+      refute File.exists?(Paths.class_dir("ohlc#p2"))
+    end
+
+    test "a new member starts with no journal and is never sealed" do
+      assert {:ok, result} = PartitionGroup.rescale(@namespace, @group, 4)
+      assert result.sealed == ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
+      assert Enum.sort(for {class, _opts} <- drain_pairs(:sealed), do: class) == result.sealed
+      refute File.exists?(Paths.journal_path("ohlc#p3"))
+    end
+  end
+
+  defp drain_pairs(tag) do
+    receive do
+      {^tag, a, b} -> [{a, b} | drain_pairs(tag)]
+    after
+      0 -> []
+    end
+  end
+
   describe "WalTransfer.move_cell/3" do
     test "moves a Cell's whole file set and is idempotent" do
       source = write_cell("class_a", "task", "k1", "wal-bytes")
       File.write!(Paths.outbox_dedup_path(source), "dedup")
       destination = {"class_b", "task", "k1"}
 
-      assert {:ok, 2} = WalTransfer.move_cell(node(), source, destination)
+      assert {:ok, 2} = WalTransfer.move_cell(node(), {:cell, source}, {:cell, destination})
 
       assert File.read!(Paths.wal_path(destination)) == "wal-bytes"
       assert File.read!(Paths.outbox_dedup_path(destination)) == "dedup"
       refute File.exists?(Paths.wal_path(source))
 
       # Nothing left to move — and the destination is untouched.
-      assert {:ok, 0} = WalTransfer.move_cell(node(), source, destination)
+      assert {:ok, 0} = WalTransfer.move_cell(node(), {:cell, source}, {:cell, destination})
       assert File.read!(Paths.wal_path(destination)) == "wal-bytes"
     end
 
     test "a move onto itself is a no-op" do
       source = write_cell("class_a", "task", "k1", "wal-bytes")
-      assert {:ok, 0} = WalTransfer.move_cell(node(), source, source)
+      assert {:ok, 0} = WalTransfer.move_cell(node(), {:cell, source}, {:cell, source})
       assert File.read!(Paths.wal_path(source)) == "wal-bytes"
     end
   end

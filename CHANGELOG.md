@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: a per-input workflow runs as a partition group
+
+`flz operative start <factory> --partitions N` now starts a `per_input` workflow as N ordinary
+workflow instances, each with its own key-group range, journal, input log and pass sheet, and
+`flz operative scale` rescales it between passes. Each member ends, compensates and commits on
+its own; there is no group end, result or rollback. A `once` or `chained` workflow is refused
+with `PartitionsWithoutPerInputLoop`, and a workflow class declares `loop_mode` in its
+`AddOperative` response. A partitioned start carrying `--text` is refused.
+
+A rescale seals every surviving workflow member at its latest committed iteration: a rewind or an
+all-or-nothing rollback no longer reaches a pass committed before it, and the scale command says
+so. On the shared path, a stop that keeps state for a move now closes the operative's writers and
+its input log on the node it ran on, a same-id move from another controller is a real pull, a
+cross-controller pull carries a workflow's journal and input log with its Cells, and a member
+placed on another controller pulls its files before its bind reads its resume state.
+
 ### Changed: timers fire inside a workflow; `wake_after` is gone
 
 A workflow tasklet registers Cell timers exactly as a stream tasklet does, in all seven SDKs, and

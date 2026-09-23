@@ -319,18 +319,17 @@ defmodule Flezha.State.DurabilityTier do
   def ship(ref), do: if(enabled?(), do: Shipper.enqueue(ref), else: :ok)
 
   @doc """
-  Every shippable reference stored under one on-disk STATE KEY: its Cells
-  plus the reserved task-journal identity (`Artifact.cell_refs/1`) and, when
-  the instance has durable input, its input log.
+  Every shippable reference stored under one on-disk STATE KEY: the durable
+  references `Paths.durable_refs/1` names (its Cells, a workflow's journal,
+  its input log) that hold local state, and its dead-letter trees.
 
   An operative can occupy two state keys — see `refs_of_operative/1`, which is
   what anything holding an operative id should call.
   """
   @spec refs_of_state_key(binary()) :: [Artifact.ref()]
   def refs_of_state_key(state_key) when is_binary(state_key) do
-    input_log = {:input_log, state_key}
-    extra = if Artifact.has_local_state?(input_log), do: [input_log], else: []
-    Artifact.cell_refs(state_key) ++ extra ++ Artifact.dlq_refs(state_key)
+    Enum.filter(Paths.durable_refs(state_key), &Artifact.has_local_state?/1) ++
+      Artifact.dlq_refs(state_key)
   end
 
   @doc """

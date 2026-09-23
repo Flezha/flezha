@@ -627,7 +627,7 @@ message AddOperative {
 | Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either kind, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of the park idle |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
-| Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedTasklet: ...` |
+| Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
 
 `AddOperativeResponse.metadata` carries the class's SDK-side declarations so
 the controller resolves per-class capabilities without a parallel config
@@ -640,6 +640,7 @@ channel (absent/undecodable ⇒ every default):
 | `effectively_once` | `"true"` | the class runs on the effectively-once tier |
 | `durability` | `"sync_remote"` | workflow only: withhold barrier acks until the remote backend holds them |
 | `keyed` | `"false"` | stream class with no keyed entry-fed tasklet (sent only when false) |
+| `loop_mode` | `"once"` / `"per_input"` / `"chained"` | workflow only: how the class repeats; only `per_input` partitions |
 | `correction_window_ms` | ms | late-input correction window |
 | `beyond_window_policy` | `"process_as_arrival"` / `"drop"` | what a late input beyond the window gets |
 | `ack_granularity` | `"checkpoint"` | the class acknowledges input only at checkpoints |
@@ -656,9 +657,14 @@ carry one member of a partitioned operative over 256 key groups
 checks that each computed Cell key hashes into
 `[key_group_from, key_group_to]` and parks a miss with an error naming the
 key, its key group and the owning partition. A migrate-time `AddOperative`
-carries the same fields. A class with no keyed entry-fed tasklet is refused
-with `PartitionsWithoutKeyedTasklet` and answers `keyed: "false"` so the
-controller refuses a later partitioned start before touching a runner.
+carries the same fields, for either kind. A workflow class whose loop mode is
+`once` or `chained` is refused first, with `PartitionsWithoutPerInputLoop`:
+its one message would reach one member while the others waited. A class with
+no keyed entry-fed tasklet is refused with `PartitionsWithoutKeyedTasklet`.
+A stream class answers `keyed: "false"` and a workflow class its `loop_mode`,
+so the controller refuses a later partitioned start of a known class before
+touching a runner. On a workflow member a refused entry key parks the message
+under its entry channel and opens no pass.
 
 ### RemOperative
 

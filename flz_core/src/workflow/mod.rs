@@ -46,6 +46,18 @@ pub enum LoopMode {
     Chained,
 }
 
+impl LoopMode {
+    /// The name a class declares its loop mode by, on the wire and in a
+    /// refusal.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LoopMode::Once => "once",
+            LoopMode::PerInput => "per_input",
+            LoopMode::Chained => "chained",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollbackMode {
     /// Any failure undoes every completed tasklet in reverse. The default.

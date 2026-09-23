@@ -248,6 +248,13 @@ defmodule Flezha.Service.Cli.Operative do
 
         Enum.each(result.members, &IO.puts("  #{&1}"))
 
+        if result.sealed != [] do
+          IO.puts(
+            "Sealed #{Enum.join(result.sealed, ", ")} at their latest committed iteration: " <>
+              "no rewind or rollback reaches a pass committed before this rescale."
+          )
+        end
+
       {:error, reason} ->
         Context.fail!("scaling operative: #{Context.format_reason(reason)}")
     end

@@ -109,22 +109,22 @@ defmodule Flezha.Operative.PartitionGroup do
   @spec members(String.t(), String.t()) :: [%{id: String.t(), partition: map()}]
   def members(namespace, group_id), do: HubManager.partition_members(namespace, group_id)
 
-  # A partitioned start names no kind either: the factory's is read where a
-  # runner here announces it, and each member's start judges it where it lands.
-  defp workflow?(namespace, %{kind: kind, factory_id: factory_id}),
-    do: kind == :workflow or FleetManager.factory_kind(namespace, factory_id) == {:ok, :workflow}
-
   defp check_partitionable(namespace, operative, partitions, already_held) do
+    known = ClassRegistry.partitioning(operative.factory_id)
+
     cond do
       partitions < 2 or partitions > KeyGroup.key_groups() ->
         {:error,
          "partitions must be between 2 and #{KeyGroup.key_groups()} " <>
            "(one partition per key group); got #{partitions}"}
 
-      workflow?(namespace, operative) ->
+      # Copied into every member, the message would park at all but one.
+      Keyword.get(operative.opts, :seed_input) != nil ->
         {:error,
-         "partitions apply to stream operatives only; factory #{operative.factory_id} is a " <>
-           "workflow"}
+         "a partitioned start carries no first message: a message names one instance, and " <>
+           "a group's message reaches its member by key; send it through a keyed forward, " <>
+           "or to a member id (#{Partition.member_id(operative.id, 0)}) once the group " <>
+           "runs"}
 
       # The base id is never claimed by a group — only member ids are — so a
       # live claim on it means an unpartitioned operative already runs there.
@@ -136,7 +136,10 @@ defmodule Flezha.Operative.PartitionGroup do
       byte_size(Partition.member_id(operative.id, partitions - 1)) > id_limit() ->
         {:error, id_budget_refusal(operative.id, partitions)}
 
-      ClassRegistry.keyless?(operative.factory_id) ->
+      known.loop_mode in [:once, :chained] ->
+        {:error, KeyGroup.one_message_refusal(operative.factory_id, known.loop_mode, partitions)}
+
+      known.keyless ->
         {:error,
          "PartitionsWithoutKeyedTasklet: factory #{operative.factory_id} has no keyed " <>
            "entry-fed tasklet, so its partitions would each fold a slice of the input " <>
@@ -329,10 +332,10 @@ defmodule Flezha.Operative.PartitionGroup do
   @doc """
   Rescale the partition group `group_id` to `target` members.
 
-  The order is quiesce → preflight → stop → move → start, and it is what makes
-  the operation safe rather than merely sequential: nothing durable moves until
-  every member has consumed its input log and its DLQ is empty, and no member
-  runs again until every owed move has landed. A crash between those two is
+  The order is quiesce → preflight → stop → move → seal → start, and it is
+  what makes the operation safe rather than merely sequential: nothing durable
+  moves until every member has consumed its input log and its DLQ is empty, and
+  no member runs again until every owed move has landed. A crash between those two is
   recoverable by re-running the command — each move is atomic per Cell, so a
   re-run re-derives what is left from what is on disk.
 
@@ -371,20 +374,23 @@ defmodule Flezha.Operative.PartitionGroup do
     with {:ok, members} <- rescale_members(namespace, group_id),
          {:ok, template, plugins} <- rescale_template(namespace, group_id, members),
          :ok <- check_partitionable(namespace, template, target, length(members)),
-         :ok <- quiesce_group(namespace, members, opts),
-         moves = plan_moves(members, Partition.ranges(target), group_id),
-         :ok <- stop_members(namespace, members),
-         :ok <- apply_moves(moves),
+         :ok <- quiesce_group(namespace, members, template.kind, opts),
+         cell_moves = plan_moves(members, Partition.ranges(target), group_id),
+         {survivors, leaving} = Enum.split_with(members, &(&1.partition.index < target)),
+         sealed = sealed(template.kind, survivors),
+         :ok <- stop_members(namespace, members, sealed),
+         :ok <- apply_moves(cell_moves ++ instance_moves(members)),
          {:ok, started} <-
            start_members(namespace, template, Partition.ranges(target), plugins) do
-      vacated = cleanup_vacated(members, started.members)
+      vacated = cleanup_vacated(leaving)
 
       {:ok,
        Map.merge(started, %{
          from: length(members),
          to: target,
-         cells_moved: length(moves),
-         vacated: vacated
+         cells_moved: length(cell_moves),
+         vacated: vacated,
+         sealed: sealed
        })}
     end
   end
@@ -407,7 +413,7 @@ defmodule Flezha.Operative.PartitionGroup do
           | id: group_id,
             opts:
               builder.opts
-              |> Keyword.drop([:plugins | Partition.opt_keys()])
+              |> Keyword.drop([:plugins, :seed_input | Partition.opt_keys()])
               # A rescale assembles the whole group's Cells on the node
               # running it; a member ProcessHub then places elsewhere pulls
               # its class tree from here before restoring.
@@ -455,7 +461,7 @@ defmodule Flezha.Operative.PartitionGroup do
   # Sources off, every input log fully consumed, no parked entries anywhere.
   # Until all three hold, moving a Cell's files would move it away from
   # input it has not read yet.
-  defp quiesce_group(namespace, members, opts) do
+  defp quiesce_group(namespace, members, kind, opts) do
     _ = PluginManager.disable_operatives(namespace, Enum.map(members, & &1.id))
 
     with :ok <- refuse_on_parked_entries(members) do
@@ -463,7 +469,7 @@ defmodule Flezha.Operative.PartitionGroup do
         System.monotonic_time(:millisecond) +
           Keyword.get(opts, :quiesce_timeout_ms, Durations.get(:partition_quiesce_timeout_ms))
 
-      await_consumed(members, deadline)
+      await_consumed(members, kind, deadline)
     end
   end
 
@@ -482,44 +488,57 @@ defmodule Flezha.Operative.PartitionGroup do
     end
   end
 
-  defp await_consumed(members, deadline) do
+  defp await_consumed(members, kind, deadline) do
     case Enum.find(members, &(not consumed?(&1.id))) do
       nil ->
         :ok
 
       laggard ->
         if System.monotonic_time(:millisecond) >= deadline do
-          {:error, quiesce_timeout_message(laggard.id)}
+          {:error, quiesce_timeout_message(laggard.id, kind)}
         else
           Process.sleep(Durations.get(:partition_quiesce_poll_ms))
-          await_consumed(members, deadline)
+          await_consumed(members, kind, deadline)
         end
     end
   end
 
   # A log that refused a record answers no offset, so its class has not
-  # consumed its inputs and the quiesce times out saying so.
+  # consumed its inputs and the quiesce times out saying so. A workflow
+  # member's floor is its journal's, so a pass in flight holds it below the
+  # log's end until the pass commits.
   defp consumed?(member_id) do
-    case InputLog.last_offset(member_id) do
-      last when is_integer(last) -> last < 0 or InputLog.watermark(member_id) == last
+    case InputLog.tail(member_id) do
+      {:ok, floor, last} -> last <= floor
       {:error, _refusal} -> false
     end
   end
 
-  defp quiesce_timeout_message(member_id) do
-    watermark = InputLog.watermark(member_id)
-    last = InputLog.last_offset(member_id)
+  defp quiesce_timeout_message(member_id, kind) do
+    {watermark, last} =
+      case InputLog.tail(member_id) do
+        {:ok, floor, last} -> {floor, last}
+        {:error, refusal} -> {nil, refusal}
+      end
 
     "rescale aborted: #{member_id} has not consumed its input log " <>
       "(watermark #{inspect(watermark)}, last offset #{inspect(last)}); nothing was stopped or moved. " <>
       "A checkpoint-ack class only advances its watermark at a checkpoint close, so the wait " <>
-      "rides its checkpoint cadence — retry with a longer --timeout, or drive a checkpoint."
+      "rides its checkpoint cadence — retry with a longer --timeout, or drive a checkpoint." <>
+      workflow_wait(kind)
   end
 
+  defp workflow_wait(:workflow),
+    do:
+      " A workflow member's watermark advances at each pass commit, so the wait rides " <>
+        "the pass in flight."
+
+  defp workflow_wait(_stream), do: ""
+
   # Every Cell whose key group changes owner under the new ranges, as
-  # `{source_node, source_cell_id, dest_cell_id}`. Derived from what is on
-  # disk, which is what makes a re-run after a crash complete the remainder
-  # rather than move anything twice.
+  # `{source_node, source_ref, dest_ref}`. Derived from what is on disk, which
+  # is what makes a re-run after a crash complete the remainder rather than
+  # move anything twice.
   defp plan_moves(members, new_ranges, group_id) do
     reserved = Paths.reserved_cell_keys()
 
@@ -532,21 +551,24 @@ defmodule Flezha.Operative.PartitionGroup do
         # A move is owed when the owner changes — and also when the Cell
         # merely sits on another controller node, because the rescale gathers
         # the whole group here before the new members start.
-        new_class != member.id or member_node(member) not in [nil, node()],
-        do: {member_node(member), cell, {new_class, tasklet, key}}
+        new_class != member.id or remote?(member),
+        do: {member_node(member), {:cell, cell}, {:cell, {new_class, tasklet, key}}}
+  end
+
+  # A workflow member's journal and input log, gathered here under its own id
+  # when it sits on another node. They move together: the journal's floor
+  # counts offsets in that one log. A vacated member's then go with its tree.
+  defp instance_moves(members) do
+    for member <- members,
+        remote?(member),
+        ref <- [{:cell, Paths.journal_id(member.id)}, {:input_log, member.id}],
+        do: {member_node(member), ref, ref}
   end
 
   defp cells_of_member(%{id: member_id} = member) do
-    case member_node(member) do
-      nil ->
-        Paths.cells_of(member_id)
-
-      source when source == node() ->
-        Paths.cells_of(member_id)
-
-      source ->
-        peer_cells(source, member_id)
-    end
+    if remote?(member),
+      do: peer_cells(member_node(member), member_id),
+      else: Paths.cells_of(member_id)
   end
 
   # A peer that cannot be reached would silently contribute no moves, leaving
@@ -554,12 +576,12 @@ defmodule Flezha.Operative.PartitionGroup do
   defp peer_cells(source_node, member_id) do
     case :erpc.call(
            source_node,
-           WalTransfer,
-           :cells,
+           Paths,
+           :durable_refs,
            [member_id],
            Durations.get(:partition_peer_call_ms)
          ) do
-      cells when is_list(cells) -> cells
+      refs when is_list(refs) -> for {:cell, cell} <- refs, do: cell
       other -> log_unreachable_peer(source_node, member_id, other)
     end
   catch
@@ -577,13 +599,18 @@ defmodule Flezha.Operative.PartitionGroup do
 
   defp member_node(member), do: Map.get(member, :node)
 
+  defp remote?(member), do: member_node(member) not in [nil, node()]
+
   # A member's `:stop_operative` call replies before ProcessHub has finished
   # unregistering the child, so a rescale that reuses an id — every rescale does,
   # `#p0` survives any N — can lose the claim to the corpse of the member it just
   # stopped. Wait for the very predicate the restart will check. Nothing durable
   # has moved yet, so giving up here costs only the stop.
-  defp stop_members(namespace, members) do
-    Enum.each(members, &OperativeManager.stop_operative(namespace, &1.id, preserve_state: true))
+  defp stop_members(namespace, members, sealed) do
+    Enum.each(members, fn %{id: id} ->
+      keep = if id in sealed, do: :sealed, else: true
+      OperativeManager.stop_operative(namespace, id, preserve_state: keep)
+    end)
 
     await_ids_released(
       namespace,
@@ -630,18 +657,25 @@ defmodule Flezha.Operative.PartitionGroup do
     end)
   end
 
-  # An old member past the new count keeps only a fully-consumed input log once
-  # its Cells have moved out. Removing it is what stops a stale class tree
-  # from reading as durable evidence of an operative the fleet does not hold; its
-  # stop already removed it from the hub's declared set and deleted its
-  # registry row, so a returning node can never resurrect it.
-  defp cleanup_vacated(old_members, new_member_ids) do
-    old_members
+  # Every surviving member of a workflow group resumes on a journal cut to its
+  # latest committed iteration, which its stop seals on its own node before the
+  # journal moves. The kind is the template's: a member on another node
+  # recorded its own there.
+  defp sealed(:workflow, survivors), do: Enum.map(survivors, & &1.id)
+  defp sealed(_stream, _survivors), do: []
+
+  # An old member past the new count keeps only a fully-consumed input log,
+  # and for a workflow its journal, once its Cells have moved out. Removing it
+  # is what stops a stale class tree from reading as durable evidence of an
+  # operative the fleet does not hold; its stop already removed it from the
+  # hub's declared set and deleted its registry row, so a returning node can
+  # never resurrect it.
+  defp cleanup_vacated(leaving) do
+    leaving
     |> Enum.map(& &1.id)
-    |> Enum.reject(&(&1 in new_member_ids))
     |> Enum.filter(&vacated?/1)
     |> Enum.map(fn class ->
-      Paths.delete_class_dir(class)
+      :ok = OperativeManager.delete_state_dir(class)
       class
     end)
   end

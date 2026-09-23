@@ -340,7 +340,9 @@ defmodule Flezha.Service.OperativeManager do
   channels, stop the child through the hub, delete its on-disk state, release
   its quota — under the one operative-stop budget. Drives `RemOperative`
   (terminal) — the converged teardown for both an explicit stop and a
-  `WorkflowCompleted`.
+  `WorkflowCompleted`. `preserve_state: true` keeps the files for a rescale to
+  move and `:sealed` also seals a workflow's journal at its latest committed
+  iteration; either closes the writers on the node the operative ran on.
   """
   @spec stop_operative(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_operative(namespace, operative_id, opts \\ []) do
@@ -350,7 +352,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp do_stop_operative(namespace, operative_id, preserve_state?) do
-    with_operative_pid(namespace, operative_id, fn _operative_pid ->
+    with_operative_pid(namespace, operative_id, fn operative_pid ->
       # Read the binding and the cell count before the stop tears the
       # operative down — the operative is gone afterwards, the flush needs its
       # runner and the quota step needs the count to release
@@ -360,6 +362,7 @@ defmodule Flezha.Service.OperativeManager do
       target = %{
         namespace: namespace,
         operative_id: operative_id,
+        node: node(operative_pid),
         runner_id: runner_id,
         preserve_state?: preserve_state?,
         cell_count: cell_count
@@ -392,6 +395,14 @@ defmodule Flezha.Service.OperativeManager do
   namespace whose runners stay.
   """
   def stop_all_operatives(namespace), do: Teardown.stop_all(namespace, Shutdown.stop_timeout_ms())
+
+  @doc """
+  Reclaim a stopped operative's state directory on this node: its writers
+  closed, its tree removed unless a completion record keeps it for the
+  retention window.
+  """
+  @spec delete_state_dir(String.t()) :: :ok
+  defdelegate delete_state_dir(operative_id), to: Teardown, as: :delete_operative_state_dir
 
   def send_io(operative_id, namespace, message, metadata) do
     with_operative_pid(namespace, operative_id, fn pid ->

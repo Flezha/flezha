@@ -841,6 +841,32 @@ defmodule FlezhaTest.State.TaskJournalTest do
     end
   end
 
+  test "a rescale's seal cuts a compensable class to its resume point at once, keeping what is owed" do
+    inst = instance_id()
+    ClassRegistry.put_compensable_ops(inst, [0])
+    seg = seg_identity(inst, "TaskA", "s0")
+
+    # seqs: iteration i's task at 2i, its commit at 2i+1; iteration 1's output
+    # is still owed, and the rewind to 1 leaves iteration 2's task to undo.
+    for iter <- 0..2 do
+      outbox = if iter == 1, do: [outbox_item(seg, 1, "owed")], else: []
+      :ok = TaskJournal.append_task_committed(inst, 0, iter, [seg], [], outbox)
+      :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [])
+    end
+
+    :ok = TaskJournal.append_rewound(inst, 1)
+
+    :ok = TaskJournal.cut(inst)
+    assert seqs(inst) == Enum.to_list(0..6)
+
+    :ok = TaskJournal.cut(inst, seal: true)
+    assert seqs(inst) == [2, 3, 4, 5, 6]
+    assert [%{seq: 2}] = TaskJournal.pending_entries(inst)
+    assert [%{iter: 2}] = TaskJournal.restore_state(inst).rewind_undo
+    assert TaskJournal.committed_iterations(inst) == [1]
+    assert %{iter: 2, consumed_offset: 2} = TaskJournal.restore_state(inst)
+  end
+
   test "the outbox_flushed marker waits for the sink, and a re-entered flush does not re-deliver" do
     inst = instance_id()
     seg = seg_identity(inst, "TaskA", "s0")

@@ -1,4 +1,6 @@
 {
   "compensable_tasks": "",
-  "leaf_tasks": "1"
+  "leaf_tasks": "1",
+  "loop_mode": "once",
+  "sleep_when_idle": "true"
 }

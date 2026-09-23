@@ -8,6 +8,7 @@ use crate::operative::topology::OperativeTopology;
 use crate::pb::{AddOperative, AddOperativeResponse};
 use crate::runner::RunnerNode;
 use crate::workflow::spec::WorkflowSpec;
+use crate::workflow::LoopMode;
 
 impl CommandAction for AddOperative {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
@@ -38,9 +39,10 @@ impl CommandAction for AddOperative {
 
 impl AddOperative {
     /// Bind an instance of either kind and seed it from `init_values`. A
-    /// keyless stream class cannot be partitioned, and only the SDK can tell
-    /// — key closures are compiled code — so the refusal is here. A workflow
-    /// takes the bind's resume facts and opens once its state is in place.
+    /// keyless class, or a workflow that reads one message, cannot be
+    /// partitioned, and only the SDK can tell — key closures are compiled
+    /// code — so the refusal is here. A workflow takes the bind's resume facts
+    /// and opens once its state is in place.
     fn start(
         &self,
         runner: &mut RunnerNode,
@@ -49,13 +51,11 @@ impl AddOperative {
         instance_id: &str,
         errors: &mut Vec<String>,
     ) {
-        let workflow = topology.workflow.is_some();
-        if !workflow {
-            if let Some(refusal) = partition_refusal(self, topology, factory_id) {
-                errors.push(refusal);
-                return;
-            }
+        if let Some(refusal) = partition_refusal(self, topology, factory_id) {
+            errors.push(refusal);
+            return;
         }
+        let workflow = topology.workflow.is_some();
         let resume = crate::workflow::Resume {
             expected: self.resume_cell_count as usize,
             owed_inbox: self.inbox_tail_count,
@@ -120,6 +120,22 @@ fn partition_refusal(
     if command.partition_count < 2 {
         return None;
     }
+    // Ahead of the keyless arm: a one-message loop is unpartitionable however
+    // it is keyed, and its loop mode is what the author can change.
+    if let Some(spec) = topology
+        .workflow
+        .as_ref()
+        .filter(|spec| spec.loop_mode != LoopMode::PerInput)
+    {
+        return Some(format!(
+            "PartitionsWithoutPerInputLoop: class {} reads one message (loop_mode {}), so \
+             its {} partitions would each wait for a message that reaches one of them; \
+             declare loop_mode per_input before partitioning",
+            factory_id,
+            spec.loop_mode.as_str(),
+            command.partition_count
+        ));
+    }
     if has_keyed_entry_tasklet(topology) {
         None
     } else {
@@ -157,14 +173,16 @@ fn metadata_response(class: Option<&OperativeTopology>) -> Vec<u8> {
     AddOperativeResponse { metadata }.encode_to_vec()
 }
 
-/// What a workflow class declares: synchronous durability, the compensable
-/// positions (a rewind may only unwind those) and the leaves (the operative
-/// is done when all committed).
+/// What a workflow class declares: synchronous durability, its loop mode
+/// (only a `per_input` loop partitions), the compensable positions (a rewind
+/// may only unwind those) and the leaves (the operative is done when all
+/// committed).
 fn workflow_metadata(
     topology: &OperativeTopology,
     spec: &WorkflowSpec,
     metadata: &mut HashMap<String, String>,
 ) {
+    metadata.insert("loop_mode".to_string(), spec.loop_mode.as_str().to_string());
     if spec.sync_durability {
         metadata.insert("durability".to_string(), "sync_remote".to_string());
     }
@@ -316,7 +334,8 @@ mod metadata_tests {
             keys.into_iter().collect::<Vec<_>>(),
             vec![
                 ("compensable_tasks".to_string(), String::new()),
-                ("leaf_tasks".to_string(), "0".to_string())
+                ("leaf_tasks".to_string(), "0".to_string()),
+                ("loop_mode".to_string(), "once".to_string())
             ]
         );
         assert!(metadata_response(
@@ -431,6 +450,69 @@ mod partition_tests {
 
         assert!(partition_refusal(&command, &class_of(&id), &id).is_none());
         assert_eq!(command.key_group_range(), KeyGroupRange::UNPARTITIONED);
+    }
+
+    /// A chained loop registers non-durable: a durable one needs a terminal
+    /// handoff this one-tasklet class does not have.
+    fn register_workflow(id: &str, cell_mode: &str, loop_mode: &str) {
+        let persistent = loop_mode != "chained";
+        let json = format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":{persistent},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p","cell_mode":"{cell_mode}"}}],
+                 "workflow":{{"loop_mode":"{loop_mode}"}}}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    }
+
+    fn declared_loop_mode(id: &str) -> Option<String> {
+        let encoded =
+            super::metadata_response(crate::operative::registry::get_class(id).as_deref());
+        AddOperativeResponse::decode(encoded.as_slice())
+            .expect("decodes")
+            .metadata
+            .get("loop_mode")
+            .cloned()
+    }
+
+    #[test]
+    fn a_workflow_that_reads_one_message_is_refused_before_the_keyless_arm() {
+        for loop_mode in ["once", "chained"] {
+            let id = format!("part_wf_{loop_mode}_{}", std::process::id());
+            register_workflow(&id, "dynamic", loop_mode);
+
+            let refusal =
+                partition_refusal(&partitioned(&id, 2), &class_of(&id), &id).expect("refused");
+            assert!(
+                refusal.starts_with("PartitionsWithoutPerInputLoop"),
+                "{refusal}"
+            );
+            assert!(refusal.contains(&id), "{refusal}");
+            assert!(refusal.contains(loop_mode), "{refusal}");
+            assert!(refusal.contains("loop_mode per_input"), "{refusal}");
+            assert_eq!(declared_loop_mode(&id).as_deref(), Some(loop_mode));
+
+            let mut single = partitioned(&id, 2);
+            single.partition_count = 0;
+            assert!(partition_refusal(&single, &class_of(&id), &id).is_none());
+        }
+    }
+
+    #[test]
+    fn a_per_input_workflow_partitions_when_keyed_and_is_refused_as_keyless_otherwise() {
+        let keyed = format!("part_wf_keyed_{}", std::process::id());
+        register_workflow(&keyed, "dynamic", "per_input");
+        assert!(partition_refusal(&partitioned(&keyed, 2), &class_of(&keyed), &keyed).is_none());
+        assert_eq!(declared_loop_mode(&keyed).as_deref(), Some("per_input"));
+
+        let keyless = format!("part_wf_keyless_{}", std::process::id());
+        register_workflow(&keyless, "single", "per_input");
+        let refusal = partition_refusal(&partitioned(&keyless, 2), &class_of(&keyless), &keyless)
+            .expect("refused");
+        assert!(
+            refusal.starts_with("PartitionsWithoutKeyedTasklet"),
+            "{refusal}"
+        );
     }
 
     #[test]

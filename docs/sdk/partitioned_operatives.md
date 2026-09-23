@@ -1,8 +1,8 @@
 # Partitioned operatives
 
 For operative authors and the operators who run them. `--partitions N` materialises one
-stream operative as N ordinary instances (`ohlc#p0..#p{N-1}`), each owning a contiguous slice
-of 256 key groups. The model — partition as instance, no stored group record, key groups
+operative, a stream or a `per_input` workflow, as N ordinary instances (`ohlc#p0..#p{N-1}`),
+each owning a contiguous slice of 256 key groups. The model — partition as instance, no stored group record, key groups
 instead of `mod N`, a guarded routing contract — lives in
 [`../architecture/stream_profile.md`](../architecture/stream_profile.md#partitioned-operatives).
 This page is the contract: the one rule an author must keep, how sources and forwards split,
@@ -12,8 +12,9 @@ the operator surface, converge and rescale semantics, sizing, and the named limi
 flz operative start candles --id ohlc --partitions 3
 ```
 
-`--partitions 1` (the default) is an unpartitioned start. `N` must be between 2 and 256;
-`--partitions` applies to stream operatives only — a workflow start is refused.
+`--partitions 1` (the default) is an unpartitioned start. `N` must be between 2 and 256. A
+partitioned start carries no first message: `--text` names one instance, and a group's message
+reaches its member by key, so `--partitions` with `--text` is refused before any member starts.
 
 ## Key groups
 
@@ -67,6 +68,12 @@ partitioned start of a known-keyless class is refused before any runner is touch
 deliberate everything-in-one-place aggregate belongs in the two-stage pattern below. A
 **statically** keyed class partitions normally: every member declares every key, and the ones
 outside its range receive no input.
+
+**A workflow that reads one message is refused.** A `once` or `chained` workflow would hand its
+one message to one member while the others waited for nothing, so the SDK refuses the
+`AddOperative` with `PartitionsWithoutPerInputLoop`, ahead of the keyless check, and the class
+declares `loop_mode` in its response metadata so a later partitioned start of it is refused
+before any runner is touched. Only a `per_input` workflow is a group.
 
 ## Sources: filter the ask, never the data
 
@@ -160,9 +167,12 @@ flz operative scale ohlc 5 --timeout 60000     # quiesce timeout in ms, default 
 4. **Move.** Every Cell whose key group changes owner has its whole durable file set moved
    into the new owner's tree — an atomic rename on the same controller, the `WalTransfer`
    chunked pull (fsync, then rename, then drop the source) across controllers. Cell identity
-   contains the key and no runner, so no file format changes.
+   contains the key and no runner, so no file format changes. A member on another controller
+   is gathered here under its own id, and a workflow member's journal and input log travel
+   with its Cells. The stop closed every member's writers first, on the node that ran it.
 5. **Start.** The M members start with the new ranges and restore through the ordinary bind —
-   a cold working-set rebuild, the same cost class as crash-resume.
+   a cold working-set rebuild, the same cost class as crash-resume. A member placed on another
+   controller pulls its files before the bind reads its resume state.
 6. **Clean up.** A vacated instance tree, now holding only a fully-consumed input log, is
    removed; members past M already left the hub's declared set and the registry at their stop,
    so an absent node can never resurrect one.
@@ -175,6 +185,33 @@ group follow it**: a forwarding plugin whose resolved members no longer match th
 itself unhealthy, and the convergence loop restarts it so it re-reads the member set (a
 surviving member keeps its worker and queued payloads, a removed member's queue is re-routed to
 the new owner). The rescale command itself reports the move, not the forwards.
+
+## A per-input workflow as a group
+
+A `per_input` workflow partitions like a stream: `--partitions N` starts N ordinary workflow
+instances, each with its own key-group range, journal, input log and pass sheet, through the
+same start, converge and rescale. Its entry edge must be keyed. A message reaches its member by
+key, through a keyed forward, or by member id (`flz operative send orders#p1 ...`); a key the
+member does not own parks under the entry channel and opens no pass. What a workflow adds is
+only what it already is:
+
+- **Each member ends and compensates itself.** `ctx.complete`, `max_duration`, a stop or a
+  terminal failure ends that member alone, with its own completion record; its rollback undoes
+  its own passes. There is no group-wide end, no group result and no group rollback. A member
+  that ended leaves a coverage gap in `flz operative info` until a converge restarts it.
+- **Per member, by member id**: `flz operative rewind`, `flz state journal`,
+  `flz state inbox`. `flz operative stop <group>` is one cooperative stop per member.
+- **A rescale happens between passes.** The quiesce waits until every member's input log is
+  consumed to its floor, which for a workflow holds when no pass is in flight and no message
+  is queued; a pass that outlives `--timeout` refuses the rescale with nothing changed.
+- **A rescale seals.** Each surviving member's journal is cut to its latest committed
+  iteration before it restarts, whatever the class declares, because a moved Cell's earlier
+  passes now belong to another member. A rewind below the seal is refused with the committed
+  range, and an all-or-nothing rollback stops at the seal. The scale command names the members
+  it sealed. A new member starts at iteration 0 with an empty log.
+- **`once` and `chained` are refused** (`PartitionsWithoutPerInputLoop`), and so is `--text`.
+- **A spawn and a schedule name one instance.** Neither carries a key: `ctx.spawn_workflow`
+  naming a group's base id is refused as a plain start of that id is.
 
 ## Hot keys: two-stage aggregation
 
@@ -217,7 +254,7 @@ symbol — that stage 1's `key_by` must return, or the guard says so on the firs
   file move, tree adoption); the orchestration above it is exercised single-node.
 - Assignment is contiguous and even; the wire and opts carry an explicit range, but there is
   no authoring surface for a weighted assignment.
-- Workflow operatives are not partitionable.
+- A `once` or `chained` workflow is not partitionable; see above.
 
 ## See also
 

@@ -224,15 +224,27 @@ defmodule Flezha.State.TaskJournal do
   rollback and a rewind both replan from the committed history, which a cut
   would silently shorten. A class that declared nothing is not known to be safe
   and keeps its history too.
+
+  `seal: true` is a partition rescale's history boundary: the prefix is cut
+  whatever the class declares and however small it is, and the cut has landed
+  when this returns, because the member restarts on it next. A moved Cell's
+  earlier passes belong to a member that may no longer own it, so no rewind or
+  rollback may reach below the rescale.
   """
-  @spec cut(binary()) :: :ok
-  def cut(instance_id) when is_binary(instance_id) do
-    with [] <- ClassRegistry.compensable_tasks(instance_id),
+  @spec cut(binary(), keyword()) :: :ok
+  def cut(instance_id, opts \\ []) when is_binary(instance_id) do
+    seal? = Keyword.get(opts, :seal, false)
+
+    with true <- seal? or ClassRegistry.compensable_tasks(instance_id) == [],
          {:ok, raw} <- read(instance_id),
          floor when is_integer(floor) and floor > 0 <- cut_floor(raw),
          {:ok, writer} <- Supervisor.find_or_start(Paths.journal_id(instance_id)) do
-      min_bytes = PersistenceResolver.record_log_cut_after_bytes()
-      WalWriter.truncate_up_to_async(writer, floor - 1, min_bytes: min_bytes)
+      if seal? do
+        WalWriter.truncate_up_to(writer, floor - 1)
+      else
+        min_bytes = PersistenceResolver.record_log_cut_after_bytes()
+        WalWriter.truncate_up_to_async(writer, floor - 1, min_bytes: min_bytes)
+      end
     end
 
     :ok

@@ -238,6 +238,14 @@ planner's `committed` input is the journaled tasklets grouped by iteration, so `
 keeps every committed iteration and `AllOrNothing` unwinds them after the in-flight one. For a
 single-pass chain the two coincide.
 
+**A partitioned loop.** Each member of a partitioned `per_input` workflow rolls back its own
+passes only. A rescale seals every surviving member's journal at its latest committed iteration,
+because a Cell moved to another member takes its earlier passes out of this member's reach: after
+a rescale, `AllOrNothing` unwinds only the iterations committed since, and `flz operative rewind`
+refuses an iteration below the seal with the committed range. The scale command names the
+members it sealed. A loop whose passes must stay undoable across the rescale must not be
+rescaled.
+
 - The plan is the Kahn order reversed — a join before any of its producers, a shared root last,
   independent subtrees in unspecified relative order. Hooks run once per cell that had an
   effect, inside the single teardown. A hookless tasklet is skipped; a failing hook is logged

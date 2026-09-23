@@ -137,3 +137,47 @@ A workflow instance SHALL take two kinds of trigger: a message on one of its ent
 - **WHEN** a `per_input` instance with pending timers is stopped and its compensation has run
 - **THEN** the instance SHALL end `cancelled`, and no timer of it SHALL fire afterwards
 
+### Requirement: A per-input workflow SHALL run as a partition group of independent instances
+
+A workflow operative whose loop mode is `per_input` SHALL be startable with `--partitions N`,
+and the group SHALL be N ordinary workflow instances `<id>#p0` .. `<id>#p{N-1}`, each with its own
+key-group range, journal, durable input log, pass sheet and `max_duration` clock, started,
+converged, read and rescaled through the same group module a stream's group is, with no group
+mechanism of the workflow's own. A message SHALL reach its member by key as a stream's does, and
+the SDK's key-group guard SHALL apply to a workflow member unchanged. Each member SHALL end and
+compensate itself only: a member's exit trigger (`ctx.complete` in one of its passes, its
+`max_duration`, a stop, a terminal failure) SHALL end that member alone, emitting its own
+`WorkflowCompleted`, driving its own teardown and writing its own completion record under its
+member id, while the other members run on; a member's rollback, in either mode, SHALL undo that
+member's passes and no other member's. There SHALL be no group-wide end, no group `complete`
+result and no group rollback. The member count SHALL change only between passes, when every
+member is quiet, and a rescale SHALL be a history boundary for each surviving member. A `once`
+or `chained` workflow SHALL be refused `--partitions` with a reason naming that its one message
+would reach one member while the others waited for nothing.
+
+#### Scenario: Messages by key reach their member and each member commits its own passes
+
+- **WHEN** a `per_input` workflow started with `--partitions 2` receives three messages whose
+  keys hash into `#p0`'s range and two whose keys hash into `#p1`'s, through a keyed forward
+- **THEN** `#p0` commits three iterations and `#p1` two, each in its own journal, each member's
+  Cells hold only its own keys, and neither member's journal names the other's Cells
+
+#### Scenario: One member ends itself and the other runs on
+
+- **WHEN** a tasklet of `orders#p1` calls `ctx.complete(result)` and the iteration commits
+- **THEN** `orders#p1` emits `WorkflowCompleted` with status `ok` and `result`, is torn down and
+  keeps its completion record under `orders#p1`, and `orders#p0` receives and runs its next
+  message unaffected
+
+#### Scenario: One member fails and compensates itself only
+
+- **WHEN** a pass of `orders#p0` fails terminally after partial progress
+- **THEN** `orders#p0` compensates its own completed tasklets per its rollback mode and ends with
+  status `error`, no tasklet of `orders#p1` is compensated, and `orders#p1` keeps running
+
+#### Scenario: A once workflow is refused partitions
+
+- **WHEN** `flz operative start <factory> --partitions 2` names a `once` workflow
+- **THEN** the start is refused with `PartitionsWithoutPerInputLoop`, naming that one message
+  reaches one member, and no instance runs
+

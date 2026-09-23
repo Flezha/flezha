@@ -20,17 +20,23 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PluginManager
+  alias Flezha.Service.Workflow
   alias Flezha.State.Paths
+  alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.WorkflowResumeHarness
 
   @relay_tasklet "partition_relay_tasklet"
   @dynamic_tasklet "dynamic_cell_tasklet"
+  @loop_tasklet "keyed_loop_count"
 
   # Key groups under `ranges(3)` = [{0,84},{85,169},{170,255}]: SOL-USD hashes
   # to 60, BTC-USD to 129, ETH-USD to 213 — one key per member, and the same
@@ -304,5 +310,157 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
            ),
            "#{moved_key} never reached #{new_target}, its owner after the rescale — " <>
              "the upstream forward is still routing by the old member set"
+  end
+
+  # --- a per-input workflow as a group ---
+
+  # Every output of every member, into one collector; a rescale re-mints the
+  # plugin onto the new members from the live table.
+  defp collect_group(namespace, group) do
+    collector = spawn_link(fn -> WorkflowResumeHarness.collect_loop([]) end)
+    plugin_id = "klw_sink_#{System.unique_integer([:positive])}"
+
+    sink = %{
+      WorkflowResumeHarness.forward_sink(plugin_id, collector)
+      | namespace: namespace,
+        operative_id: group
+    }
+
+    assert {:ok, _} = PluginManager.enable_plugin(plugin_id, sink)
+    collector
+  end
+
+  defp trade(namespace, member, text),
+    do: WorkflowResumeHarness.send_turn(namespace, member, text, "trades")
+
+  defp await_sink(collector, expected) do
+    assert NodeTestHelper.wait_until(
+             fn ->
+               Enum.sort(WorkflowResumeHarness.collected(collector)) == Enum.sort(expected)
+             end,
+             30_000
+           ),
+           "the sink holds #{inspect(WorkflowResumeHarness.collected(collector))}, " <>
+             "expected #{inspect(expected)}"
+  end
+
+  defp await_iterations(member, expected) do
+    assert NodeTestHelper.wait_until(
+             fn -> TaskJournal.committed_iterations(member) == expected end,
+             30_000
+           ),
+           "#{member} committed #{inspect(TaskJournal.committed_iterations(member))}, " <>
+             "expected #{inspect(expected)}"
+  end
+
+  @tag capability: :workflow, skip: FlezhaTest.SystemCase.deferral(:workflow)
+  test "a per-input workflow runs as a group: by key, a mis-route parked, a rescale sealed" do
+    namespace = "partitioned_workflow_e2e"
+    start_fleet(namespace, 2)
+    group = "kloop#{System.unique_integer([:positive])}"
+
+    assert {:ok, %{members: [p0, p1]}} =
+             PartitionGroup.start(namespace, builder(group, "keyed_loop_workflow"), 2)
+
+    collector = collect_group(namespace, group)
+
+    # --- messages by key reach their member, each member commits its own passes ---
+    # Under two members SOL-USD (60) is p0's, BTC-USD (129) and ETH-USD (213) p1's.
+    for text <- ["SOL-USD:1", "BTC-USD:1", "SOL-USD:2", "ETH-USD:1", "BTC-USD:2"] do
+      [symbol | _] = String.split(text, ":")
+      trade(namespace, owner(group, 2, symbol), text)
+    end
+
+    await_sink(collector, ~w(SOL-USD:1 SOL-USD:2 BTC-USD:1 BTC-USD:2 ETH-USD:1))
+    await_iterations(p0, [0, 1])
+    await_iterations(p1, [0, 1, 2])
+
+    for key <- @keys, member <- [p0, p1] do
+      assert File.exists?(Paths.wal_path({member, @loop_tasklet, key})) ==
+               (member == owner(group, 2, key)),
+             "#{key}'s Cell must exist under its owner and nowhere else"
+    end
+
+    info = capture_io(fn -> CliManager.operative_info(namespace) end)
+    assert info =~ "Partition group: #{group} (2/2)"
+    assert info =~ "all 256 key groups owned exactly once"
+
+    # --- a mis-routed key parks and opens no pass; the next in-range one runs ---
+    trade(namespace, p1, "SOL-USD:x")
+
+    assert NodeTestHelper.wait_until(fn -> DlqStore.list(p1) != [] end, 30_000),
+           "a key #{p1} does not own must be parked"
+
+    [parked] = DlqStore.list(p1)
+    assert parked["error"] =~ "SOL-USD"
+    assert parked["error"] =~ "key group 60"
+    assert parked["error"] =~ "key_by"
+
+    trade(namespace, p1, "BTC-USD:3")
+    await_sink(collector, ~w(SOL-USD:1 SOL-USD:2 BTC-USD:1 BTC-USD:2 BTC-USD:3 ETH-USD:1))
+    await_iterations(p1, [0, 1, 2, 3])
+
+    :ok =
+      DlqStore.drop("#{parked["operative_class"]}/#{parked["tasklet_id"]}/#{parked["id"]}")
+
+    # --- a rescale between passes: every key continues on its new owner ---
+    # Under three members ETH-USD moves to p2; the other two keys stay.
+    assert {:ok, rescaled} = PartitionGroup.rescale(namespace, group, 3)
+    assert rescaled.sealed == [p0, p1]
+    p2 = Partition.member_id(group, 2)
+    assert rescaled.members == [p0, p1, p2]
+
+    await_iterations(p0, [1])
+    await_iterations(p1, [3])
+
+    assert {:error, {:uncommitted_iteration, [1]}} =
+             Workflow.rewind_instance(namespace, p0, 0)
+
+    for text <- ["SOL-USD:3", "BTC-USD:4", "ETH-USD:2"] do
+      [symbol | _] = String.split(text, ":")
+      trade(namespace, owner(group, 3, symbol), text)
+    end
+
+    await_sink(
+      collector,
+      ~w(SOL-USD:1 SOL-USD:2 SOL-USD:3 BTC-USD:1 BTC-USD:2 BTC-USD:3 BTC-USD:4 ETH-USD:1 ETH-USD:2)
+    )
+
+    await_iterations(p0, [1, 2])
+    await_iterations(p1, [3, 4])
+    await_iterations(p2, [0])
+
+    info_after = capture_io(fn -> CliManager.operative_info(namespace) end)
+    assert info_after =~ "Partition group: #{group} (3/3)"
+    assert info_after =~ "all 256 key groups owned exactly once"
+  end
+
+  @tag capability: :workflow, skip: FlezhaTest.SystemCase.deferral(:workflow)
+  test "a workflow that reads one message is refused partitions" do
+    namespace = "partitioned_once_e2e"
+    start_fleet(namespace, 2)
+    group = "once#{System.unique_integer([:positive])}"
+
+    # A class whose loop mode no bind has declared is refused at its first
+    # member's bind; the record is node-wide, so forget any earlier test's.
+    ClassRegistry.put_partitioning("echo_workflow", %{keyless: false, loop_mode: nil})
+    assert {:error, refusal} = PartitionGroup.start(namespace, builder(group, "echo_workflow"), 2)
+    assert refusal =~ "failed to start"
+    assert refusal =~ "PartitionsWithoutPerInputLoop"
+    refute refusal =~ "PartitionsWithoutKeyedTasklet"
+    assert PartitionGroup.members(namespace, group) == []
+
+    # Once a bind has declared its loop mode, the refusal comes before any start.
+    single = "once_single#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             OperativeManager.start_operative(namespace, builder(single, "echo_workflow"))
+
+    :ok = OperativeManager.stop_operative(namespace, single)
+
+    assert {:error, "PartitionsWithoutPerInputLoop: class echo_workflow" <> _} =
+             PartitionGroup.start(namespace, builder(group, "echo_workflow"), 2)
+
+    assert PartitionGroup.members(namespace, group) == []
   end
 end
