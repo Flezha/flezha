@@ -162,6 +162,10 @@ defmodule Flezha.Operative.Lifecycle do
          :ok <- Replay.adopt_foreign_state(operative.opts, Overwatch.operative_class(state)),
          operative =
            with_resume_state(operative, Overwatch.operative_class(state)),
+         # Before the runner starts: its Cell writers learn their commit unit
+         # from the kind, and a live one drops what the journal never named.
+         :ok <- ClassRegistry.put(Overwatch.operative_class(state), state.builder.kind),
+         :ok <- Replay.seed_workflow_outboxes(state),
          # A park landing after the runner starts the instance writes a record
          # that stays; a failed start leaves none for a boot to take for a sleep.
          :ok <- ClassRegistry.put_parked(Overwatch.operative_class(state), nil),
@@ -221,7 +225,6 @@ defmodule Flezha.Operative.Lifecycle do
     # flush dispatches `:on_output` through was recorded before the SDK
     # started).
     operative_class = Overwatch.operative_class(state)
-    _ = ClassRegistry.put(operative_class, state.builder.kind)
     _ = ClassRegistry.put_declarations(operative_class, declarations)
     # Partitionability is a class-code fact, so it is recorded against the
     # factory: a later `--partitions N` start of a known-keyless class, or of

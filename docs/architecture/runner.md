@@ -289,8 +289,9 @@ sequenceDiagram
     CORE-->>W: Work batch for one cell
     W->>W: run the tasklet body
     W->>CORE: complete — changes, outputs, verdict
-    Note over W: outputs held on the sheet; at the stage's last item
-    W->>CTRL: TaskCommit {cells_ran, handoff, staged outbox}
+    W->>CTRL: the Cell's effect record (state changes + plugin outputs), sent at once
+    Note over W: edge outputs held on the sheet; at the stage's last item
+    W->>CTRL: TaskCommit {cells_ran, handoff}
     CTRL-->>R: ack, on the control-channel reader
     Note over R: the held outputs enter the children's mailboxes
 ```

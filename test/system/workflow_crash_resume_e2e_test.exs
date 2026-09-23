@@ -60,6 +60,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   alias Flezha.State.Completion
   alias Flezha.Service.CliManager
   alias Flezha.State.Paths
+  alias Flezha.SDK.Wire
+  alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.NodeTestHelper
@@ -444,18 +446,17 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  describe "transactional outbox (uds)" do
+  describe "a workflow output's identity (uds)" do
     @describetag transport: :uds, scenario: :uds_outbox
 
-    # The chain's args are the serialized `init_values` the harness starts with.
+    # The chain's first message, as the harness starts it.
     @a_out ~s(a-out:{"seed":"go"})
     @undo_forward ~s(out:{"seed":"go"})
 
-    # workflow-transactional-outbox: task A's plugin output is STAGED — it reaches
-    # the sink only after the controller journaled A's `task_committed` entry (with
-    # the output inside it) and fsynced. A crash after that flush must not
-    # re-deliver it: the `outbox_flushed` marker gates the restore re-drive.
-    test "staged output is flushed once after its commit and never re-delivered", ctx do
+    # A stage's output rides its Cell's effect record; the stage's journal entry
+    # names that record by seq and channel, and the Cell's writer releases the
+    # output once the entry is durable, stamped from the record.
+    test "a workflow output carries its Cell record's identity, delivered once", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id =
@@ -463,51 +464,44 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           ctx,
           "outbox_block_workflow",
           "ok",
-          &committed_and_flushed?/1,
+          &committed_and_delivered?/1,
           plugins: [forward_sink("outbox_sink", collector)]
         )
+
+      [{_seq, record}] = effect_records(operative_id, "commit_a")
+      assert record.changes != [], "the change and the output are one record"
+      assert [%{channel: "mid", key: "k", metadata: [{"trace", "t1"}]}] = record.outputs
+
+      %{cells_ran: [cell]} = stage_entry(operative_id, 0)
+      seq = cell.seq
+      assert {cell.first_seq, cell.channels} == {seq, ["mid"]}
 
       delivered = await_outputs(collector, 1, operative_id)
 
       assert [{@a_out, md}] = delivered,
-             "task A's staged output must reach the sink exactly once: #{inspect(delivered)}"
+             "task A's output must reach the sink exactly once: #{inspect(delivered)}"
 
-      # Minted from the journal: producing cell, task index + per-task sequence,
-      # instance epoch — the effectively-once output-identity shape.
       assert md["flz.cell"] == "#{operative_id}/commit_a/"
-      assert md["flz.seq"] == "0.0"
+      assert md["flz.seq"] == "#{seq}.0"
       assert md["flz.epoch"] == "0"
+      assert md["flz.key"] == "k"
+      assert md["trace"] == "t1"
       assert md["channel"] == "mid"
 
-      assert TaskJournal.pending_entries(operative_id) == [],
-             "the instance still owes outbox entries after completing"
-
-      {:ok, entries} = TaskJournal.read(operative_id)
-
-      assert Enum.any?(
-               entries,
-               &match?(
-                 %{type: :outbox_flushed, task_idx: 0, payload: %{for_type: :task_committed}},
-                 &1
-               )
-             ),
-             "task A's flush was never recorded"
-
-      # Operator surface: the journal renders the outbox and its flush marker.
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
           CliManager.state_journal(operative_id)
         end)
 
-      assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_task=0 channel=mid"
-      assert rendered =~ "flushes: task_committed"
+      assert rendered =~ "ran: #{operative_id}/commit_a/ record=#{seq} channels=mid"
+      refute rendered =~ "outbox:"
+      refute rendered =~ "flushes:"
     end
 
-    # The crash-before-flush window: the `task_committed` record (output inside)
-    # is durable, its `outbox_flushed` marker never landed — exactly what a
-    # controller crash between the commit fsync and the flush leaves behind.
-    # Restore must re-drive the delivery with the ORIGINAL keys.
-    test "a commit whose flush never landed re-drives on restore with identical keys", ctx do
+    # The crash-before-flush window, from the Cell's side: the entry is
+    # durable, the flush cursor never passed the record. The rebind's writer
+    # re-drives it with the identity it had.
+    test "a crash before the flush re-drives the output with identical stamps", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id =
@@ -515,32 +509,26 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           ctx,
           "outbox_block_workflow",
           "ok",
-          &committed_and_flushed?/1,
+          &committed_and_delivered?/1,
           plugins: [forward_sink("outbox_sink", collector)],
-          before_rebind: &drop_flush_markers/1
+          before_rebind: &rewind_flush_cursor/1
         )
 
       delivered = await_outputs(collector, 2, operative_id)
 
       assert [{@a_out, first}, {@a_out, second}] = delivered,
-             "the un-flushed commit was not re-driven on restore: #{inspect(delivered)}"
+             "the output was not re-driven on the rebind: #{inspect(delivered)}"
 
-      # The key is a pure function of the journal, so the re-drive is byte-exact:
-      # a dedup-capable sink absorbs it, an append sink sees at-least-once.
       assert identity(first) == identity(second)
-      assert identity(second)["flz.seq"] == "0.0"
-
-      # The re-drive recorded its own flush marker, so it is owed no more.
-      assert TaskJournal.pending_entries(operative_id) == []
+      assert second["flz.key"] == "k"
     end
 
-    # workflow-operative-saga + outbox: a `compensate` hook's plugin output is
-    # staged too. On the first runner the hook emits and then BLOCKS, so the
-    # SIGKILL lands with the undo emitted but never journaled — it must not leak.
-    # The resumed runner re-runs the outstanding hook (its done marker never
-    # landed), journals the undo in a `compensated` entry, and flushes it once
-    # under a comp-marked key that cannot collide with the forward output.
-    test "a compensation's undo output is staged, journaled, and delivered once", ctx do
+    # A compensation hook's undo output is the compensating Cell's own record,
+    # named by the `compensated` entry. On the first runner the hook blocks, so
+    # the SIGKILL lands before it wrote anything; the resumed runner re-runs it
+    # (its done marker never landed) and the undo is delivered once, as a newer
+    # record of the same Cell.
+    test "a compensation's undo output rides its Cell's record and is delivered once", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id =
@@ -548,7 +536,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           ctx,
           "undo_outbox_workflow",
           "error",
-          &committed_and_flushed?/1,
+          &committed_and_delivered?/1,
           plugins: [forward_sink("undo_sink", collector)]
         )
 
@@ -557,26 +545,71 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert [{@undo_forward, forward}, {"out:undone", undo}] = delivered,
              "expected the forward output then exactly one undo: #{inspect(delivered)}"
 
-      # Same cell, same tasklet, same per-task sequence — only the comp
-      # marker keeps the undo's key off the forward output it reverses.
-      assert identity(forward)["flz.seq"] == "0.0"
-      assert identity(undo)["flz.seq"] == "0.0.1"
-      assert identity(undo)["flz.cell"] == identity(forward)["flz.cell"]
+      assert undo["flz.cell"] == forward["flz.cell"]
+      assert seq_of(undo) > seq_of(forward), "the undo is a newer record of the same Cell"
 
       {:ok, entries} = TaskJournal.read(operative_id)
 
-      assert [%{type: :compensated, task_idx: 0, payload: %{outbox: [_]}}] =
+      assert [%{type: :compensated, task_idx: 0, payload: %{cells_ran: [%{channels: ["mid"]}]}}] =
                Enum.filter(entries, &(&1.type == :compensated)),
-             "the undo output was not journaled exactly once"
-
-      assert Enum.any?(
-               entries,
-               &match?(%{type: :outbox_flushed, payload: %{for_type: :compensated}}, &1)
-             ),
-             "the undo flush was never recorded"
+             "the undo record was not journaled exactly once"
 
       assert comp_done_count(operative_id) == 1, "the hook ran for exactly one cell"
-      assert TaskJournal.pending_entries(operative_id) == []
+    end
+
+    # The window this change closes: with the runner's flush linger raised, a
+    # stage's record must still be durable before the entry naming it.
+    test "the record precedes the entry naming it under a long flush linger", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("workflow_linger")
+      operative_id = unique("outbox_block_workflow")
+      id_path = unique_id_path()
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      boot_runner(namespace, ctx, id_path,
+        release?: true,
+        extra_env: [{"FLEZHA_FLUSH_LINGER_MS", "20000"}]
+      )
+
+      start_workflow(namespace, operative_id, "outbox_block_workflow",
+        plugins: [forward_sink("outbox_sink", collector)]
+      )
+
+      assert NodeTestHelper.wait_until(fn -> 0 in committed_tasks(operative_id) end, 30_000)
+      %{cells_ran: [%{seq: seq}]} = stage_entry(operative_id, 0)
+
+      assert seq in Enum.map(effect_records(operative_id, "commit_a"), &elem(&1, 0)),
+             "the journal names record #{seq}, which the Cell's WAL does not hold"
+
+      await_status(operative_id, "ok", 30_000)
+      assert [{@a_out, _md}] = await_outputs(collector, 1, operative_id)
+    end
+
+    # A stage that fails commits nothing: no marker names the record its Cell
+    # wrote before the failure, so that record's output never leaves.
+    test "a failed stage delivers nothing, though its Cell wrote a record", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("workflow_failed_stage")
+      operative_id = unique("failed_stage_workflow")
+      id_path = unique_id_path()
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      boot_runner(namespace, ctx, id_path, release?: true)
+
+      start_workflow(namespace, operative_id, "failed_stage_workflow",
+        plugins: [forward_sink("lost_sink", collector)],
+        first_message: "a,b"
+      )
+
+      await_status(operative_id, "error", 30_000)
+
+      assert [{_seq, %{outputs: [%{channel: "mid"}]}}] =
+               effect_records(operative_id, "failed_stage"),
+             "the failed stage's Cell never wrote the record whose output must not leave"
+
+      refute 1 in committed_tasks(operative_id)
+      assert outboxes_settled?(operative_id)
+      assert collected(collector) == [], "a failed stage's output reached the sink"
     end
   end
 
@@ -591,51 +624,87 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  # The durable mid-run point for the outbox scenarios: task A's boundary is
-  # journaled AND its outbox is recorded flushed (the two are separate records,
-  # so waiting on the commit alone would race the flush).
+  # The durable mid-run point for the output scenarios: task A's entry is
+  # journaled and the output its record carries has been confirmed by the sink
+  # (its Cell's writer owes nothing and its cursor passed the record).
+  defp committed_and_delivered?(operative_id) do
+    case TaskJournal.read(operative_id) do
+      {:ok, [%{type: :task_committed, payload: %{cells_ran: cells}} | _]} ->
+        Enum.all?(cells, fn
+          %{seq: nil} -> true
+          %{cell_id: id, seq: seq} -> cursor_past?(id, seq)
+        end)
 
-  # The durable mid-run point for the outbox scenarios: task A's boundary is
-  # journaled AND its outbox is recorded flushed (the two are separate records,
-  # so waiting on the commit alone would race the flush).
-  defp committed_and_flushed?(operative_id) do
-    TaskJournal.restore_state(operative_id) != nil and
-      TaskJournal.pending_entries(operative_id) == []
-  end
-
-  # Roll the journal back to the bytes it held before its first `outbox_flushed`
-  # record: the commit is durable, the flush marker is not. Truncating at a
-  # record boundary is precisely what a crash produces. The live journal writer
-  # is closed first so it does not append past the truncation point.
-  defp drop_flush_markers(operative_id) do
-    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(operative_id))
-    WalWriter.close(pid)
-
-    path = Paths.journal_path(operative_id)
-    bytes = File.read!(path)
-    kept = truncate_at_flush_marker(bytes, 0)
-
-    assert kept < byte_size(bytes), "no outbox_flushed record to drop — the flush never happened"
-    File.write!(path, binary_part(bytes, 0, kept))
-  end
-
-  # Byte offset of the first `outbox_flushed` (entry type 2) record. WAL framing
-  # is `<<seq::64, len::32, body::len, crc::32>>`; the body is a 16-byte header
-  # followed by the journal entry, whose first byte is the type.
-  defp truncate_at_flush_marker(
-         <<_seq::64-big, len::32-big, body::binary-size(len), _crc::32-big, rest::binary>>,
-         offset
-       ) do
-    case body do
-      <<_header::binary-size(16), 2::8, _::binary>> -> offset
-      _ -> truncate_at_flush_marker(rest, offset + 8 + 4 + len + 4)
+      _ ->
+        false
     end
   end
 
-  defp truncate_at_flush_marker(_, offset), do: offset
+  defp cursor_past?(cell_id, seq) do
+    {:ok, cell} = Wire.decode_cell_id(cell_id)
 
-  # The identity a flushed outbox entry is keyed by.
-  defp identity(md), do: Map.take(md, ["flz.cell", "flz.seq", "flz.epoch", "channel"])
+    case Flezha.State.WriterRegistry.lookup(cell) do
+      {:ok, writer} ->
+        match?(
+          %{pending: 0, awaiting: 0, outbox_flushed_seq: flushed} when flushed >= seq,
+          WalWriter.outbox_status(writer)
+        )
+
+      :error ->
+        Outbox.read(cell).outbox_flushed_seq >= seq
+    end
+  end
+
+  # The state a controller crash between the sink's confirmation and the
+  # cursor's write leaves: `commit_a`'s cursor back below its record. The live
+  # writer is closed first so it does not write the cursor forward again.
+  defp rewind_flush_cursor(operative_id) do
+    cell = {operative_id, "commit_a", ""}
+
+    with {:ok, writer} <- Flezha.State.WriterRegistry.lookup(cell) do
+      WalWriter.close(writer)
+
+      assert NodeTestHelper.wait_until(
+               fn -> Flezha.State.WriterRegistry.lookup(cell) == :error end,
+               2_000
+             )
+    end
+
+    dedup = Outbox.read(cell)
+    assert dedup.outbox_flushed_seq >= 0, "the output was never confirmed before the crash"
+    :ok = Outbox.write(cell, %{dedup | outbox_flushed_seq: -1})
+  end
+
+  # The one `task_committed` entry of `task_idx`.
+  defp stage_entry(operative_id, task_idx) do
+    {:ok, entries} = TaskJournal.read(operative_id)
+    [entry] = for %{type: :task_committed, task_idx: ^task_idx} = e <- entries, do: e
+    entry.payload
+  end
+
+  # Every effect record in `tasklet`'s single Cell WAL, `{seq, record}`.
+  defp effect_records(operative_id, tasklet) do
+    [Paths.class_dir(operative_id), tasklet, "*.wal"]
+    |> Path.join()
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path ->
+      {:ok, records} =
+        Flezha.SDK.RecordFrame.fold_bytes(File.read!(path), {:log, "effect_records"}, [], fn
+          {seq, header, body, _raw}, acc ->
+            case Wire.decode_effect_record(header, body) do
+              nil -> {:cont, acc}
+              record -> {:cont, [{seq, record} | acc]}
+            end
+        end)
+
+      Enum.reverse(records)
+    end)
+  end
+
+  # The identity a released output is keyed by.
+  defp identity(md), do: Map.take(md, ["flz.cell", "flz.seq", "flz.epoch", "flz.key", "channel"])
+
+  defp seq_of(md), do: md["flz.seq"] |> String.split(".") |> Enum.map(&String.to_integer/1)
 
   defp wal_record_count(operative_id, tasklet) do
     [Paths.class_dir(operative_id), tasklet, "*.wal"]

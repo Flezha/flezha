@@ -28,7 +28,6 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.Operative.Replay
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Wire
   alias Flezha.Service.CliManager
@@ -94,16 +93,6 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       # consumed prefix was released.
       assert consumed_offsets(operative_id) == [0, 1]
       assert_released(operative_id)
-
-      # The iteration boundary compacts every Cell of the instance: the
-      # controller's CompactCell must resolve a WORKFLOW Cell (not only a
-      # stream one), so a snapshot lands beside the turn WAL.
-      assert NodeTestHelper.wait_until(
-               fn -> snapshot_count(operative_id, "chat_turn") > 0 end,
-               20_000
-             ),
-             "no boundary snapshot for chat_turn after two committed iterations; dir holds " <>
-               inspect(File.ls(Path.join(Paths.class_dir(operative_id), "chat_turn")))
 
       assert NodeTestHelper.wait_until(
                fn -> ClassRegistry.parked(operative_id) != nil end,
@@ -258,12 +247,11 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
     end
 
-    # The same park/rehydrate cycle for a class with NO per-Cell state. It has
-    # no Cell WAL, so the controller ships no `RestoreInitState` on the
-    # rehydrating bind — the task-journal reaches the driver only because it rides
-    # `AddOperative`. Delivered on the restore frame instead, turn two commits at
-    # iteration 0 again, collides with iteration 0's `outbox_flushed`, and its
-    # reply is journaled but never delivered.
+    # The same park/rehydrate cycle for a class with NO per-Cell state: its
+    # Cell's records carry its replies and nothing to restore, so the
+    # task-journal reaches the driver only because it rides `AddOperative`.
+    # Delivered on a restore frame alone, turn two commits at iteration 0 again
+    # and collides with iteration 0's entries.
     test "a loop with no per-Cell state resumes at its iteration and still delivers", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
       namespace = unique("workflow_loop_stateless")
@@ -290,16 +278,13 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
              "the idle stateless loop never parked"
 
-      # Nothing on disk to restore — the journal is the only thing carried over.
-      assert Replay.resume_cell_count(operative_id) == 0
-
       send_turn(namespace, operative_id, "two")
 
       assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
              "the rehydrated turn did not commit as iteration 1: " <>
                inspect(committed_iters(operative_id))
 
-      # The point of the test: the second turn's staged output was delivered.
+      # The point of the test: the second turn's output was delivered.
       assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
     end
   end
@@ -459,8 +444,11 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     #   * the loop resumes waiting at iteration 1, and the next message sent is
     #     processed as that iteration (a rewind is undo-and-continue: a committed
     #     turn's input is not retained past its commit);
-    #   * everything emitted after the rewind carries a bumped epoch, so a guarded
-    #     sink takes the post-rewind output as newer than the unwound run's.
+    #   * the journal epoch is bumped, so the re-run of iteration 1 is a new
+    #     entry rather than a re-send of the unwound one; every output is a
+    #     record of the reply Cell, so what is emitted after the rewind carries a
+    #     higher `flz.seq` under the same `flz.epoch`, and a guarded sink takes
+    #     it as newer than the unwound run's.
     test "rewind compensates back, resumes at the rewound-to iteration, and bumps the epoch",
          ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
@@ -529,18 +517,26 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       outputs = await_outputs(collector, 6, operative_id)
 
       # Undo runs in reverse iteration order (gamma, then beta), and only then
-      # does the loop resume forward. The epoch rule, on the wire: everything the
-      # unwound run emitted carries epoch 0; every undo and everything the resumed
-      # loop emits carries epoch 1, so a guarded sink takes it as the newer value.
-      assert Enum.map(outputs, fn {payload, md} -> {payload, Map.get(md, "flz.epoch")} end) ==
-               [
-                 {"reply:alpha", "0"},
-                 {"reply:beta", "0"},
-                 {"reply:gamma", "0"},
-                 {"retract:gamma", "1"},
-                 {"retract:beta", "1"},
-                 {"reply:delta", "1"}
-               ]
+      # does the loop resume forward. On the wire every output is a newer record
+      # of the one reply Cell: one `flz.cell` and `flz.epoch`, rising `flz.seq`.
+      assert Enum.map(outputs, &elem(&1, 0)) ==
+               ~w(reply:alpha reply:beta reply:gamma retract:gamma retract:beta reply:delta)
+
+      assert [{cell, "0"}] =
+               outputs
+               |> Enum.map(fn {_, md} -> {md["flz.cell"], md["flz.epoch"]} end)
+               |> Enum.uniq()
+
+      assert is_binary(cell)
+      seqs = Enum.map(outputs, fn {_, md} -> record_seq(md) end)
+      assert seqs == Enum.sort(seqs) and seqs == Enum.uniq(seqs), inspect(seqs)
+
+      # The re-run of iteration 1 was appended under the bumped epoch beside
+      # the unwound entry, not answered from it.
+      {:ok, entries} = TaskJournal.read(operative_id)
+
+      assert [0, 1] =
+               for(%{type: :iter_committed, iter: 1, epoch: epoch} <- entries, do: epoch)
     end
   end
 
@@ -570,7 +566,7 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     end
 
     # Arming more failures than the ladder has attempts exhausts it: the original
-    # error is terminal, task A rolls back (its undo record is journaled + flushed),
+    # error is terminal, task A rolls back (its undo record is journaled, then released),
     # and the run reports `error` — the pre-change failure path, unchanged.
     test "a persistent cell failure exhausts the ladder, compensates and errors", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
@@ -717,7 +713,8 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
       {:ok, entries} = TaskJournal.read(operative_id)
       [ran] = for %{type: :task_committed, task_idx: 1, payload: p} <- entries, do: p.cells_ran
 
-      assert Enum.sort(ran) == Enum.map(~w(a b c), &keyed_identity(operative_id, &1)),
+      assert ran |> Enum.map(& &1.cell_id) |> Enum.sort() ==
+               Enum.map(~w(a b c), &keyed_identity(operative_id, &1)),
              "the keyed stage's commit must name each minted Cell once"
     end
 
@@ -753,6 +750,9 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
              "the hookless first tasklet was compensated"
     end
   end
+
+  # The record a released output came from, the first half of its `flz.seq`.
+  defp record_seq(md), do: md["flz.seq"] |> String.split(".") |> hd() |> String.to_integer()
 
   defp keyed_cells(operative_id),
     do: Enum.sort(for {_, "keyed_commit", key} <- Paths.cells_of(operative_id), do: key)
@@ -806,11 +806,6 @@ defmodule FlezhaTest.System.WorkflowControlFlowE2ETest do
     assert NodeTestHelper.wait_until(fn -> InputLog.undelivered(operative_id) == [] end, 10_000),
            "the log still owes #{inspect(InputLog.undelivered(operative_id))}"
   end
-
-  # Count change-log records in a tasklet's retained WAL file(s). The WAL is
-  # a stream of `<seq::64><len::32><body::len><crc::32>` records.
-  defp snapshot_count(operative_id, tasklet),
-    do: length(Paths.snapshot_paths({operative_id, tasklet, ""}))
 
   # Distinct Changes applied to the keyless Cell: the seqs still in its WAL
   # plus everything its latest snapshot folded (seq 0..snapshot_seq).

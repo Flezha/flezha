@@ -22,7 +22,7 @@ use std::fmt;
 pub use instance::{Deadline, Resume, WorkflowRun};
 pub use run::{
     attempt_failed, complete, entry_parked, hold_emit, item_settled, message, note_failure, open,
-    plugin_output, removed, restore_landed, stop, unwired_stream,
+    removed, restore_landed, ship_stage_record, stop, unwired_stream,
 };
 pub(crate) use run::{
     committed_firings, crossed, deadline_due, firing_assembled, firing_promoted, firings_joined,

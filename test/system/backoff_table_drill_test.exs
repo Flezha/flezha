@@ -58,8 +58,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   @accounted %{
     park_resend: "test/flezha/sdk/effectively_once_test.exs — a park is resent until acked",
     hub_retry: "test/flezha/schedule/hub_test.exs — the schedule hub retries its start",
-    task_outbox_retry:
-      "test/flezha/runner/control_channel_commits_test.exs — the task outbox re-drives",
     port_restart: "no suite drives the crash-loop path",
     kafka_force_replace:
       "test/flezha/plugin/kafka_test.exs — a wedged client is replaced once per window",

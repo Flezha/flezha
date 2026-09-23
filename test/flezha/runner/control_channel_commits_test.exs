@@ -1,11 +1,12 @@
 defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   @moduledoc """
-  SDK -> Controller `TaskCommit` dispatch path (`workflow-task-journal` +
-  `workflow-transactional-outbox`): the ControlChannel appends the
-  `task_committed` entry — cells, handoff AND the tasklet's staged outbox
-  in one record — fsyncs, replies `TaskCommitResponse` under the request's
-  reference_id, and only then flushes the outbox to the bound operative. A
-  failed append rides back in `error` and flushes nothing.
+  SDK -> Controller `TaskCommit` dispatch path (`workflow-task-journal`): the
+  commit worker waits until every effect record the barrier names is durable
+  on its Cell's writer, appends the `task_committed` entry naming them, fsyncs,
+  replies `TaskCommitResponse` under the request's reference_id, and only then
+  has the Cells' writers release those records' outputs. A failed append, or a
+  named record that never becomes durable, rides back in `error` and releases
+  nothing.
 
   Uses the 4-tuple ControlChannel constructor with a capturing `write_fun`
   (`Flezha.Transport.Native` is a NIF and cannot be Mimic-copied).
@@ -21,13 +22,15 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.SDK.Wire
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal, TestHelpers}
+  alias Flezha.State.{InputLog, Paths, TaskJournal, TestHelpers}
   alias Flezha.State.InputLog.Sweep
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   import Flezha.State.TestHelpers, only: [next_output: 1, refute_dispatched: 1]
+
+  alias Flezha.SDK.RecordFrame
 
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
@@ -58,7 +61,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # The ack was emitted only after the entry landed in the journal.
     assert {:ok, [entry]} = TaskJournal.read(inst)
     assert %{type: :task_committed, task_idx: 1, iter: 0} = entry
-    assert entry.payload.cells_ran == [seg]
+    assert entry.payload.cells_ran == [%{cell_id: seg, first_seq: nil, seq: nil, channels: []}]
     assert entry.payload.handoff == [{4, "handoff"}]
   end
 
@@ -180,63 +183,117 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
   end
 
-  # The marker is appended by the instance's journal writer once the delivery is
-  # confirmed, off the flushing process — so the journal is read after it lands.
-  defp await_marker(inst) do
-    assert wait_until(
-             fn ->
-               {:ok, entries} = TaskJournal.read(inst)
-               Enum.any?(entries, &(&1.type == :outbox_flushed))
-             end,
-             2_000
-           ),
-           "outbox_flushed marker never landed"
+  # A durable workflow Cell of `inst` whose writer holds one effect record at
+  # `seq` carrying one output keyed `k` with a metadata pair, on `channel`.
+  defp workflow_cell(inst, seq, payload, opts \\ []) do
+    :ok = ClassRegistry.put(inst, :workflow)
+    cell = {inst, "TaskA", "s0"}
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell)
+
+    if Keyword.get(opts, :written?, true) do
+      :ok = WalWriter.append(writer, seq, effect_header(), effect_body(payload, opts))
+    end
+
+    {cell, writer}
   end
 
-  test "the staged outbox is journaled with the commit and flushed only after the ack" do
-    inst = "opc_outbox_#{System.unique_integer([:positive])}"
-    {control_channel, stream_ref} = start_control_channel("outbox")
+  defp effect_header(),
+    do: RecordFrame.encode_header(1, 1, 1, RecordFrame.format_id(:effect_record), <<>>)
 
-    # Stand in as the bound operative: the flush casts `:io_out_batch` at us.
+  defp effect_body(payload, opts) do
+    Wire.encode_effect_body(%{
+      changes: [<<1>>],
+      outputs: [
+        %{
+          channel: Keyword.get(opts, :channel, "out"),
+          key: "k",
+          metadata: [{"trace", "t1"}],
+          payload: payload
+        }
+      ],
+      consumed_offset: nil,
+      dlq: nil
+    })
+  end
+
+  test "the entry waits for the records it names, and their outputs leave after the ack" do
+    inst = "opc_records_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("records")
     own(inst, control_channel)
 
+    # The record is appended but its batch has not synced when the barrier lands.
+    :ok = :sys.suspend(Flezha.State.FsyncBatcher)
+    {_cell, writer} = workflow_cell(inst, 0, "a-out")
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
-
-    payload =
-      build_task_commit_payload(inst, 0, [seg], [], "ref-opc-outbox",
-        outbox: [
-          %{cell_id: seg, seq_in_task: 0, channel: "out", payload: "one"},
-          %{cell_id: seg, seq_in_task: 1, channel: "out", payload: "two"}
-        ]
-      )
-
+    payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-records")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
+    refute_receive {:test_writer_called, ^stream_ref, _reply}, 200
+    assert {:ok, []} = TaskJournal.read(inst)
+    refute_dispatched(0)
+    :ok = :sys.resume(Flezha.State.FsyncBatcher)
+    :ok = WalWriter.fsync(writer)
+
     # The ack comes first: it IS the durable point past which output may be seen.
-    assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
+    assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
     assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
              decode_reply(reply).command
 
-    assert {"one", meta_one, _} = next_output(1_000)
-    assert {"two", meta_two, _} = next_output(1_000)
-    assert meta_one["flz.cell"] == "#{inst}/TaskA/s0"
-    assert meta_one["flz.seq"] == "0.0"
-    assert meta_one["flz.epoch"] == "0"
-    assert meta_one["channel"] == "out"
-    assert meta_two["flz.seq"] == "0.1"
+    assert {:ok, [entry]} = TaskJournal.read(inst)
+    assert entry.payload.cells_ran == [%{cell_id: seg, first_seq: 0, seq: 0, channels: ["out"]}]
 
-    # Standing in for the Overwatch also means reporting the chain run: the
-    # marker is what a confirmed delivery leaves behind, never the hand-off.
-    :ok = Outbox.settled(meta_one)
-    :ok = Outbox.settled(meta_two)
-    await_marker(inst)
+    assert {"a-out", meta, _} = next_output(1_000)
+    assert meta["flz.cell"] == "#{inst}/TaskA/s0"
+    assert meta["flz.seq"] == "0.0"
+    assert meta["flz.epoch"] == "0"
+    assert meta["flz.key"] == "k"
+    assert meta["trace"] == "t1"
+    assert meta["channel"] == "out"
+  end
 
-    # Outbox and progress are one record; the flush is recorded separately.
-    assert {:ok, [committed, flushed]} = TaskJournal.read(inst)
-    assert [%{payload: "one"}, %{payload: "two"}] = committed.payload.outbox
-    assert %{type: :outbox_flushed, task_idx: 0, payload: %{for_type: :task_committed}} = flushed
-    assert TaskJournal.pending_entries(inst) == []
+  test "a record the writer never gets fails the barrier, naming the Cell and the seq" do
+    on_exit(TestHelpers.override_env(:sdk_commit_ack_ms, 200))
+    inst = "opc_missing_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("missing")
+    own(inst, control_channel)
+    workflow_cell(inst, 5, "never", written?: false)
+
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+    payload = build_task_commit_payload(inst, 0, [{seg, 5, 5, ["out"]}], [], "ref-missing")
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
+             decode_reply(reply).command
+
+    assert error == "record_not_durable: #{inst}/TaskA/s0 seq=5"
+    assert {:ok, []} = TaskJournal.read(inst)
+  end
+
+  test "a re-sent barrier whose first copy still waits on its records joins that wait" do
+    inst = "opc_join_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("join")
+    own(inst, control_channel)
+
+    :ok = :sys.suspend(Flezha.State.FsyncBatcher)
+    {_cell, writer} = workflow_cell(inst, 0, "once")
+    seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+    payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-join")
+
+    for _copy <- 1..2,
+        do: send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    refute_receive {:test_writer_called, ^stream_ref, _reply}, 200
+    :ok = :sys.resume(Flezha.State.FsyncBatcher)
+    :ok = WalWriter.fsync(writer)
+
+    assert_receive {:test_writer_called, ^stream_ref, _reply}, 2_000
+    refute_receive {:test_writer_called, ^stream_ref, _second}, 300
+    assert {:ok, [_one_entry]} = TaskJournal.read(inst)
+    assert {"once", _meta, _} = next_output(1_000)
+    refute_dispatched(100)
   end
 
   describe "synchronous remote durability" do
@@ -309,17 +366,18 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     end
   end
 
-  test "a compensating commit journals a `compensated` entry with comp-marked keys" do
+  test "a compensating commit journals the undo record it names and releases its output" do
     inst = "opc_comp_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("comp")
     own(inst, control_channel)
 
+    {_cell, writer} = workflow_cell(inst, 0, "undo", channel: "mid")
+    :ok = WalWriter.fsync(writer)
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
 
     payload =
-      build_task_commit_payload(inst, 2, [seg], [], "ref-opc-comp",
-        compensating: true,
-        outbox: [%{cell_id: seg, seq_in_task: 0, channel: "mid", payload: "undo"}]
+      build_task_commit_payload(inst, 2, [{seg, 0, 0, ["mid"]}], [], "ref-opc-comp",
+        compensating: true
       )
 
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
@@ -330,32 +388,31 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
              decode_reply(reply).command
 
     assert {"undo", meta, _} = next_output(1_000)
-    # The comp marker keeps the undo key off the forward output it reverses.
-    assert meta["flz.seq"] == "2.0.1"
+    assert meta["flz.seq"] == "0.0"
+    assert meta["channel"] == "mid"
 
-    :ok = Outbox.settled(meta)
-    await_marker(inst)
-
-    assert {:ok, [compensated, flushed]} = TaskJournal.read(inst)
+    assert {:ok, [compensated]} = TaskJournal.read(inst)
     assert %{type: :compensated, task_idx: 2} = compensated
-    assert [%{payload: "undo", channel: "mid"}] = compensated.payload.outbox
-    assert %{type: :outbox_flushed, payload: %{for_type: :compensated}} = flushed
+
+    assert compensated.payload.cells_ran == [
+             %{cell_id: seg, first_seq: 0, seq: 0, channels: ["mid"]}
+           ]
   end
 
-  test "a refused commit flushes nothing" do
+  test "a refused commit releases nothing" do
     on_exit(TestHelpers.override_env(:wal_high_watermark_bytes, 1024))
 
     inst = "opc_norefuse_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("norefuse")
     own(inst, control_channel)
 
+    {_cell, writer} = workflow_cell(inst, 0, "never")
+    :ok = WalWriter.fsync(writer)
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     fat = :binary.copy(<<0>>, TaskJournal.max_entry_bytes() + 1)
 
     payload =
-      build_task_commit_payload(inst, 0, [seg], [], "ref-opc-norefuse",
-        outbox: [%{cell_id: seg, seq_in_task: 0, channel: "out", payload: fat}]
-      )
+      build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [{1, fat}], "ref-opc-norefuse")
 
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
@@ -365,7 +422,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
              decode_reply(reply).command
 
     assert error =~ "oversized_handoff"
-    # Nothing durable ⇒ nothing delivered.
+    # Nothing journaled ⇒ nothing released.
     refute_dispatched(300)
     assert {:ok, []} = TaskJournal.read(inst)
   end
@@ -417,11 +474,9 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert InputLog.watermark(inst) == 1
   end
 
-  test "the iteration boundary requests a snapshot for the instance's cells" do
+  test "the iteration boundary requests no snapshot: the Watchdog compacts a workflow's Cells" do
     inst = "iter_snap_#{System.unique_integer([:positive])}"
 
-    # A persisted Cell of this instance — what the boundary compacts so a
-    # rehydrate loads iteration-N state instead of replaying the WAL tail.
     seg_id = {inst, "TaskA", "s0"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(seg_id)
     :ok = WalWriter.append(writer, 0, <<0::128>>, "change")
@@ -440,12 +495,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
-
-    expected = Wire.encode_cell_id(inst, "TaskA", "s0")
-
-    assert_receive {:control_command,
-                    {:compact_cell, %RunnerCommands.CompactCell{cell_id: ^expected}}},
-                   1_000
+    refute_receive {:control_command, {:compact_cell, _}}, 300
   end
 
   test "IterPark hands the park record to the instance's Overwatch" do
@@ -526,14 +576,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
          operative_id: operative_id,
          task_idx: task_idx,
          iter: 0,
-         cells_ran: cells_ran,
+         cells_ran: Enum.map(cells_ran, &committed_cell/1),
          handoff:
            Enum.map(handoff, fn {cid, bytes} ->
              %RunnerCommands.TaskHandoffItem{channel_id: cid, payload: bytes}
-           end),
-         outbox:
-           Enum.map(Keyword.get(opts, :outbox, []), fn item ->
-             struct!(RunnerCommands.TaskOutboxItem, item)
            end),
          compensating: Keyword.get(opts, :compensating, false),
          completes: Keyword.has_key?(opts, :completes_with),
@@ -541,6 +587,18 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
        }}
     )
   end
+
+  # A Cell a stage ran: its identity alone, or with the records it wrote there
+  # and the channels they wrote on.
+  defp committed_cell({id, first, last, channels}),
+    do: %RunnerCommands.CommittedCell{
+      cell_id: id,
+      first_seq: first,
+      seq: last,
+      channels: channels
+    }
+
+  defp committed_cell(id) when is_binary(id), do: %RunnerCommands.CommittedCell{cell_id: id}
 
   defp build_iter_commit_payload(
          operative_id,

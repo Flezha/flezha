@@ -173,8 +173,10 @@ pub struct AddOperative {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddOperativeResponse {
     #[prost(map = "string, string", tag = "1")]
-    pub metadata:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemOperative {
@@ -298,40 +300,37 @@ pub struct TaskHandoffItem {
     #[prost(bytes = "vec", tag = "2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
-/// One staged plugin-bound output of a tasklet, buffered per cell
-/// while the tasklet ran and shipped at its barrier
-/// (workflow-transactional-outbox). `seq_in_task` orders the entries a single
-/// cell staged during the tasklet; `channel` is the producing plugin
-/// channel's name, carried through to the flushed frame's `channel`
-/// metadata.
+/// One Cell a stage (or an undo) ran: the effect records it wrote in the stage,
+/// `first_seq..=seq` on its WAL, and the plugin channels those records wrote
+/// on. Both seqs are absent when the Cell wrote no record. The Controller
+/// journals the stage only once every named record is durable, and releases
+/// exactly those records' outputs once the entry is.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TaskOutboxItem {
+pub struct CommittedCell {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(uint32, tag = "2")]
-    pub seq_in_task: u32,
-    #[prost(string, tag = "3")]
-    pub channel: ::prost::alloc::string::String,
-    #[prost(bytes = "vec", tag = "4")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, optional, tag = "2")]
+    pub seq: ::core::option::Option<u64>,
+    #[prost(string, repeated, tag = "3")]
+    pub channels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint64, optional, tag = "4")]
+    pub first_seq: ::core::option::Option<u64>,
 }
 /// SDK -> Controller, at each tasklet barrier of a durable structured
 /// workflow operative (workflow-task-journal): tasklet `task_idx` completed
-/// forward on `cells_ran` (wire cell identities) and released the
-/// serialized `handoff` batch plus the `outbox` its cells staged
-/// (workflow-transactional-outbox — nothing reached a plugin yet). The
-/// Controller appends ONE `task_committed` entry carrying handoff AND outbox
-/// to the instance's task-journal, fsyncs, replies TaskCommitResponse, and only
-/// then flushes the outbox; the driver starts the next tasklet after the
-/// successful reply. Direction is reversed like RunnerShutdownNotification:
-/// SDK -> Controller over the "control_command" payload_id; old Controllers
-/// ignore the unknown variant via Protox unknown-field handling. `iter` is 0
-/// for the single-pass chain (the durable-loop follow-up increments it).
+/// forward on `cells_ran`, each naming the effect records it wrote in the
+/// stage, and released the serialized `handoff` batch. The Controller waits
+/// until every named record is durable on its Cell's writer, appends ONE
+/// `task_committed` entry to the instance's task-journal, fsyncs, replies
+/// TaskCommitResponse, and only then releases the named records' outputs; the
+/// driver starts the next tasklet after the successful reply. Direction is
+/// reversed like RunnerShutdownNotification: SDK -> Controller over the
+/// "control_command" payload_id. `iter` is the loop iteration, 0 for a
+/// single-pass chain.
 ///
-/// `compensating` marks the undo twin: a `compensate` hook's staged output
-/// for the already-committed tasklet `task_idx`, journaled as a
-/// `compensated` entry and flushed with comp-marked keys. The per-cell
-/// compensation markers still decide which hooks run.
+/// `compensating` marks the undo twin: the records a `compensate` hook wrote
+/// for the already-committed tasklet `task_idx`, journaled as a `compensated`
+/// entry. The per-cell compensation markers still decide which hooks run.
 ///
 /// `completes` / `result` carry the tasklet's `ctx.complete` request, so a
 /// crash before the iteration commits still ends the instance on resume.
@@ -343,12 +342,10 @@ pub struct TaskCommit {
     pub task_idx: u32,
     #[prost(uint32, tag = "3")]
     pub iter: u32,
-    #[prost(bytes = "vec", repeated, tag = "4")]
-    pub cells_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, repeated, tag = "4")]
+    pub cells_ran: ::prost::alloc::vec::Vec<CommittedCell>,
     #[prost(message, repeated, tag = "5")]
     pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
-    #[prost(message, repeated, tag = "6")]
-    pub outbox: ::prost::alloc::vec::Vec<TaskOutboxItem>,
     #[prost(bool, tag = "7")]
     pub compensating: bool,
     #[prost(bool, tag = "8")]
@@ -390,9 +387,8 @@ pub struct TaskCommitResponse {
 /// the `flz.offset` of the input that seeded it, absent when it consumed none
 /// (0 is the log's first offset) — and released `handoff` as its terminal
 /// batch. The Controller appends `iter_committed(iter, consumed_offset)` to the
-/// task-journal, fsyncs, requests a boundary snapshot for the instance's cells,
-/// flushes whatever the iteration's tasklets staged, reports the consumed
-/// offset into the input log's watermark, and replies IterCommitResponse. The
+/// task-journal, fsyncs, replies IterCommitResponse, and then reports the
+/// consumed offset into the input log's watermark. The
 /// driver enters iteration `iter + 1` only on the successful reply — a crash
 /// before it re-runs the whole iteration (at-least-once), never the ones below
 /// it.

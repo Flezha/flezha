@@ -95,8 +95,8 @@ which members succeeded and which failed, by name.
 `operative_forward` targeting a group resolves the member set at `init_provider` and keeps
 **one worker per target member** (a worker is one queue with one in-flight slot, so a shared
 router would head-of-line-block every partition behind the slowest). Each message routes by
-`group(flz.key)` to the owning member's worker. A message with **no `flz.key`** — an emit on a
-channel not declared `.keyed()`, or any workflow-outbox output — is parked with
+`group(flz.key)` to the owning member's worker. A message with **no `flz.key`** (an emit on a
+channel not declared `.keyed()`, from a stream or a workflow) is parked with
 `partitioned target requires keyed emit`; it is never round-robined and never payload-hashed.
 
 ## The operator's view

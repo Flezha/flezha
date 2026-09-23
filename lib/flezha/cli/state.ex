@@ -383,9 +383,10 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state outbox <operative/tasklet/key>` — effectively-once outbox
-  status for one Cell: durable seq, flush cursor, epoch, undispatched
-  lag, and the operative's input-log min-watermark.
+  `flz state outbox <operative/tasklet/key>`: outbox status for one Cell
+  (effectively-once tier or durable workflow): durable seq, flush cursor,
+  epoch, undispatched lag, the entries a workflow Cell holds until its stage
+  commits, and the operative's input-log min-watermark.
   """
   def state_outbox(_path_string, %{row: %{cell_id: {rc, sh, pk} = cell_id}}) do
     status =
@@ -396,7 +397,7 @@ defmodule Flezha.Service.Cli.State do
         :error ->
           # The same cursor record the writer answers with, read off the dedup
           # file instead of the live writer; only the outbox depth is unknown.
-          Map.put(Outbox.read(cell_id), :pending, nil)
+          Map.merge(Outbox.read(cell_id), %{pending: nil, held: nil})
       end
 
     watermark = InputLog.watermark(rc)
@@ -406,6 +407,7 @@ defmodule Flezha.Service.Cli.State do
     IO.puts("outbox_flushed_seq #{status.outbox_flushed_seq}")
     IO.puts("epoch              #{status.epoch}")
     IO.puts("outbox_lag         #{status.pending || "unknown (writer not running)"}")
+    IO.puts("held_for_stage     #{status.held || "unknown (writer not running)"}")
     IO.puts("input_watermark    #{watermark || "none"}")
   end
 

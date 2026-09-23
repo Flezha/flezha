@@ -70,14 +70,14 @@ on the effectively-once tier writes.
 | `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved journal over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
 | `Flezha.State.FsyncBatcher` | One shared GenServer casting `:fsync` to every dirty writer per tick. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
-| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always a `WalWriter`: the Cell's for a stream, the journal writer for a workflow. |
+| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a stream Cell and a workflow Cell alike: a stream's entry is committed by its record's fsync, a workflow's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
 | `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a stream on the effectively-once tier, a durable workflow): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a workflow's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
 | `Flezha.State.PersistenceResolver` | Per-class knobs: operator map → instance metadata → SDK declaration → global default. |
 | `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
 | `Flezha.State.Watchdog` | Sensor: compaction triggers and timeouts, output stalls, disk-quota and RPO alarms. |
 | `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, finished workflows (`completion.record`) and input logs. |
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
-| `Flezha.State.TaskJournal` | Workflow step journal over the reserved writer, and the reporter of each consumed offset into the input log's watermark (`release_input/2`). |
+| `Flezha.State.TaskJournal` | Workflow step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `compensated` and `rewound`, the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
 | `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md). |
 
@@ -195,30 +195,30 @@ header: [epoch: u32 BE][type: u8][task_idx: u16 BE][iter: u32 BE][0: 40 bits]
 body:   [type: u8][task_idx: u16 BE][iter: u32 BE][payload]
 ```
 
-Journal entry types: `1 = task_committed` (the cells that ran, the serialized inter-task
-handoff and the tasklet's staged outbox — ONE durable write), `2 = outbox_flushed` (that
-outbox reached the plugins), `3 = iter_committed` (a loop iteration finished: the input-log
-offset it consumed, the entry channel whose chain it ran, and its terminal handoff), `4 =
-parked` (the loop is suspended at a committed boundary, with an optional wake deadline and the
-last input-log offset it parked to the dead-letter queue unread), `5 = compensated` (a
-compensation hook's undo outbox), `6 = rewound` (the loop was rewound to the iteration in this
-entry's `iter` field).
+Journal entry types: `1 = task_committed` (the Cells the stage ran, each naming the effect
+records it wrote and their plugin channels, the serialized inter-task handoff, the completion
+and the timer trigger), `3 = iter_committed` (a loop iteration finished: the input-log offset it
+consumed, the entry channel whose chain it ran, and its terminal handoff), `5 = compensated`
+(the Cells a compensation hook ran on, each naming its undo records), `6 = rewound` (the loop
+was rewound to the iteration in this entry's `iter` field). Types 2 and 4 are unused. The
+journal holds markers only: a Cell's state changes and plugin outputs live in its own effect
+records, which the writer has made durable before the entry naming them is appended.
 
 ```text
-task_committed: [n_cells: u16 BE] n × ([len: u16 BE][cell_identity])
-                [handoff]
-                [outbox]
-                [completion]
+task_committed: [cells][handoff][completion][trigger]
 iter_committed: [offset][len: u16 BE][entry_channel][handoff][completion]
-parked:         [wake_deadline_ms: u64 BE][offset]   # 0 = no deadline
-compensated:    [outbox]
-outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
+compensated:    [cells]
 rewound:        <empty>          # the target iteration is the `iter` field
+cells:          [n: u16 BE] n × ([len: u16 BE][cell_identity][records]
+                                 [n_chan: u16 BE] n_chan × ([len: u16 BE][channel]))
+records:        [0: u8]                                  # the Cell wrote no record
+                | [1: u8][first_seq: u64 BE][seq: u64 BE] # its records first_seq..seq
 handoff:        [n: u32 BE] n × ([channel_id: u32 BE][len: u32 BE][payload])
-outbox:         [n: u32 BE] n × ([len: u16 BE][cell_identity][seq_in_task: u32 BE]
-                                 [len: u16 BE][channel][len: u32 BE][payload])
 completion:     <empty>                      # none; an entry written before completions existed
                 | [1: u8][len: u32 BE][result]
+trigger:        <empty>                      # the pass was not opened by a timer
+                | [2: u8][len: u16 BE][cell_key][kind: u8][scheduled_at: u64 BE]
+                                             # kind 0 = processing time, 1 = event time
 offset:         [0: u8][0: u64 BE]           # consumed no journaled input
                 | [1: u8][consumed_offset: u64 BE]   # 0 is the log's first offset
 ```
@@ -617,8 +617,9 @@ instance metadata → SDK declaration → global default.
 | `:credit_flow_control_enabled` | `true` (`FLEZHA_CREDIT_FLOW_CONTROL`) | `false` skips the `CreditWindowInit` offer. |
 | `:credit_window_bytes` | `%{}` (default `wal_high_watermark_bytes`, capped by `max_mailbox_bytes_total`) | Per-class state-stream window. |
 | `:credit_low_watermark_bytes` | `window / 2` | Grant trigger. |
-| `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed before the flush waits. |
+| `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed, per Cell of either kind, before the flush waits. |
 | `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back. |
+| `:sdk_commit_ack_ms` | `30_000` (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`) | The commit worker's deadline for the effect records a workflow barrier names to become durable; past it the barrier fails with `record_not_durable`. The runner's barrier re-send reads the same variable. |
 | `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before the journal or an input log rewrites to cut its prefix. |
 | `:default_compact_after_bytes` | `8 * 1024 * 1024` (`FLEZHA_COMPACT_AFTER_BYTES`) | Size trigger; `:compact_after_bytes` map overrides per class. |
 | `:compact_after_age_ms` | `300_000` (`FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`) | Age trigger; `0` disables; raised to a declared correction window. |

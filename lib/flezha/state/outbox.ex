@@ -23,7 +23,6 @@ defmodule Flezha.State.Outbox do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.SDK.Wire
   alias Flezha.State.{Paths, WriterRegistry}
-  alias Flezha.State.TaskJournal
 
   @type t :: %{
           last_persisted_seq: non_neg_integer(),
@@ -75,17 +74,18 @@ defmodule Flezha.State.Outbox do
   @run_key {__MODULE__, :run}
 
   @typedoc """
-  What one confirmation completes on the owning writer: a stream tier entry's
-  cursor advance, or a workflow instance's `outbox_flushed` journal marker.
-  Every output of one entry decodes to the same key — that is what makes the
+  What one confirmation completes on the owning writer: the entry of the
+  effect record at that seq, whose completion lets the cursor pass it. Every
+  output of one entry decodes to the same key, which is what makes the
   writer's tally per entry rather than per output.
   """
-  @type key ::
-          {:cursor, non_neg_integer()}
-          | {:marker, byte(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+  @type key :: {:cursor, non_neg_integer()}
 
-  @typedoc "Decoded `flz.ack` token: who owns the cursor, whose output it is, what it completes."
-  @type ack :: %{owner: Paths.cell_id(), target: Paths.cell_id(), key: key()}
+  @typedoc """
+  Decoded `flz.ack` token: the Cell whose writer owns the cursor and whose
+  output it is, and what it completes.
+  """
+  @type ack :: %{owner: Paths.cell_id(), key: key()}
 
   @typedoc """
   One stamped output on its way to the chain: the payload, the metadata it
@@ -109,16 +109,16 @@ defmodule Flezha.State.Outbox do
   key one confirmation completes) and optional `:metadata` the output carries of
   its own.
 
-  The token names the entry, not the output, so every output of one entry whose
-  target is also its owner carries the identical token: such a caller mints it
-  once with `token/2` and passes it as `:ack`.
+  The token names the entry, not the output, so every output of one entry
+  carries the identical token: a caller mints it once with `token/2` and passes
+  it as `:ack`.
   """
   @spec stamp(binary(), map()) :: output()
-  def stamp(payload, %{owner: owner, entry: entry, cell: cell} = identity) do
+  def stamp(payload, %{owner: owner, entry: entry} = identity) do
     stamps =
       identity
       |> Map.drop([:owner, :entry, :metadata])
-      |> Map.put_new_lazy(:ack, fn -> token(owner, cell, entry) end)
+      |> Map.put_new_lazy(:ack, fn -> token(owner, entry) end)
       |> output_stamps()
 
     {payload, Map.merge(Map.new(Map.get(identity, :metadata, %{})), stamps),
@@ -153,27 +153,14 @@ defmodule Flezha.State.Outbox do
   end
 
   @doc """
-  Mint the confirmation token for one outbox entry: who owns the cursor it
-  moves, whose output it is, and what one confirmation completes. `target`
-  defaults to the owner — true for a stream Cell, whose writer owns its own
-  output; a workflow instance's journal writer owns output belonging to other
-  Cells.
+  Mint the confirmation token for one outbox entry: the Cell whose writer owns
+  the cursor it moves (a Cell's writer owns its own output) and what one
+  confirmation completes.
   """
   @spec token(Paths.cell_id(), key()) :: binary()
-  def token(owner, key), do: token(owner, owner, key)
-
-  @spec token(Paths.cell_id(), Paths.cell_id() | binary(), key()) :: binary()
-  def token(owner, target, key) do
+  def token(owner, {:cursor, seq}) do
     owner = cell_bytes(owner)
-    target = cell_bytes(target)
-    # An elided target reads back as the owner: the stream tier's every token
-    # would otherwise carry the same identity twice.
-    target = if target == owner, do: <<>>, else: target
-
-    encode(
-      <<byte_size(owner)::16-big, owner::binary, byte_size(target)::16-big, target::binary,
-        encode_key(key)::binary>>
-    )
+    encode(<<byte_size(owner)::16-big, owner::binary, 1, seq::64-big>>)
   end
 
   @doc """
@@ -250,7 +237,7 @@ defmodule Flezha.State.Outbox do
   @spec park(map(), binary() | nil, term(), non_neg_integer()) :: :ok
   def park(metadata, payload, error, attempts) when is_map(metadata) do
     with token when is_binary(token) <- ack(metadata),
-         {:ok, %{target: {rc, sh, pk}}} <- decode(token) do
+         {:ok, %{owner: {rc, sh, pk}}} <- decode(token) do
       entry =
         DlqEntry.new!(%{
           operative_class: rc,
@@ -288,19 +275,7 @@ defmodule Flezha.State.Outbox do
     end
   end
 
-  @doc """
-  Run a completed entry's journal-marker completion. Called by the owning
-  writer, which must not append to its own log from inside its own callback.
-  """
-  @spec complete(Paths.cell_id(), key()) :: :ok
-  def complete({instance_id, _, _}, {:marker, for_type, task_idx, iter, epoch}) do
-    TaskJournal.mark_flushed(instance_id, for_type, task_idx, iter, epoch)
-  end
-
-  @doc """
-  Decode a token into the writer that owns it, the Cell the output belongs
-  to, and the entry key one confirmation completes.
-  """
+  @doc "Decode a token into the Cell whose writer owns it and the entry one confirmation completes."
   @spec decode(binary()) :: {:ok, ack()} | :error
   def decode(token) when is_binary(token) do
     with {:ok, bytes} <- Base.url_decode64(token, padding: false) do
@@ -310,35 +285,14 @@ defmodule Flezha.State.Outbox do
     end
   end
 
-  defp decode_body(
-         <<owner_len::16-big, owner::binary-size(owner_len), target_len::16-big,
-           target::binary-size(target_len), key::binary>>
-       ) do
-    with {:ok, owner_id} <- Wire.decode_cell_id(owner),
-         {:ok, target_id} <- decode_target(target, owner_id),
-         {:ok, key} <- decode_key(key) do
-      {:ok, %{owner: owner_id, target: target_id, key: key}}
-    else
+  defp decode_body(<<owner_len::16-big, owner::binary-size(owner_len), 1, seq::64-big>>) do
+    case Wire.decode_cell_id(owner) do
+      {:ok, owner_id} -> {:ok, %{owner: owner_id, key: {:cursor, seq}}}
       _ -> :error
     end
   end
 
   defp decode_body(_), do: :error
-
-  defp decode_target(<<>>, owner_id), do: {:ok, owner_id}
-  defp decode_target(bytes, _owner_id), do: Wire.decode_cell_id(bytes)
-
-  defp encode_key({:cursor, seq}), do: <<1, seq::64-big>>
-
-  defp encode_key({:marker, for_type, task_idx, iter, epoch}),
-    do: <<2, for_type::8, task_idx::16-big, iter::32-big, epoch::32-big>>
-
-  defp decode_key(<<1, seq::64-big>>), do: {:ok, {:cursor, seq}}
-
-  defp decode_key(<<2, for_type::8, task_idx::16-big, iter::32-big, epoch::32-big>>),
-    do: {:ok, {:marker, for_type, task_idx, iter, epoch}}
-
-  defp decode_key(_), do: :error
 
   defp notify(metadata, tag) when is_map(metadata) do
     case entry_of(metadata) do
@@ -405,15 +359,14 @@ defmodule Flezha.State.Outbox do
   conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
   `Flezha.Plugin.Provider.Kafka`).
 
-  Both durable outbox flushes mint it: the stream effectively-once tier
-  (`Flezha.State.WalWriter`, `seq` = `<change_seq>.<emit_ordinal>`) and the
-  workflow transactional outbox (`Flezha.State.TaskJournal`, `seq` =
-  `<task_idx>.<seq_in_task>`, an undo carrying a trailing `.1`). `seq` is a numeric
-  dotted sequence so a sink can order it; `key` is omitted when the output
-  carries no natural key.
+  The one durable outbox mints it, for a stream Cell under the
+  effectively-once tier and a durable workflow Cell alike
+  (`Flezha.State.WalWriter`, `seq` = `<record seq>.<emit_ordinal>`). `seq` is
+  a numeric dotted sequence so a sink can order it; `key` is omitted when the
+  output carries no natural key.
 
-  `ack` is the delivery-confirmation token (`ack_key/0`) the owning
-  writer waits on before advancing its cursor. Both durable flushes mint one;
+  `ack` is the delivery-confirmation token (`ack_key/0`) the owning writer
+  waits on before advancing its cursor. Every durable output carries one;
   live non-durable output carries none, and a sink treats its absence as "no
   cursor is waiting on this".
   """

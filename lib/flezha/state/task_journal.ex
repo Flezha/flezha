@@ -1,7 +1,8 @@
 defmodule Flezha.State.TaskJournal do
   @moduledoc """
   Per-instance append-only task-progress journal for a durable structured
-  workflow operative, and its transactional outbox.
+  workflow operative: the markers of its progress, never its Cells' state or
+  output.
 
   One `task.journal` per instance, written through the `WalWriter` framing +
   `FsyncBatcher` path under the reserved identity `Paths.journal_id/1`. Each
@@ -9,18 +10,21 @@ defmodule Flezha.State.TaskJournal do
   instance epoch and the entry's identity, which a commit barrier dedups on. The
   entry types and payload layouts are in `docs/internals/state_persistence.md`.
 
-  **Journal state, not memory, decides what is owed.** Every fold runs over
-  `live_entries/1`, which replays `rewound` markers — a rewind is a marker, not
-  a truncation, so a rewound iteration's outbox stops being owed and
-  `consumed_offset/1` moves back while `released_offset/1`, which no rewind
-  lowers, holds the instance's floor in its input log. The marker bumps the epoch, so a re-run's
-  output supersedes the unwound run's at a guarded sink.
+  A stage entry names, for each Cell it ran, the effect records the Cell wrote
+  in the stage; those records carry the stage's state and output, and their
+  Cell's writer releases the output once the entry naming them is durable
+  (`committed_records/1`).
+
+  **Journal state, not memory, decides what is committed.** Every fold runs
+  over `live_entries/1`, which replays `rewound` markers: a rewind is a
+  marker, not a truncation, so a rewound iteration's records stop being
+  committed and `consumed_offset/1` moves back while `released_offset/1`,
+  which no rewind lowers, holds the instance's floor in its input log. The
+  marker bumps the epoch, which keys every later barrier's identity.
   """
 
-  require Logger
-
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.Operative.Lookup
+  alias Flezha.SDK.Wire
 
   alias Flezha.State.{
     InputLog,
@@ -35,23 +39,26 @@ defmodule Flezha.State.TaskJournal do
   alias Flezha.State.TaskJournal.Codec
 
   @type_task_committed Codec.type_code(:task_committed)
-  @type_outbox_flushed Codec.type_code(:outbox_flushed)
   @type_iter_committed Codec.type_code(:iter_committed)
   @type_compensated Codec.type_code(:compensated)
   @type_rewound Codec.type_code(:rewound)
 
-  @type outbox_entry :: %{
+  @typedoc """
+  One Cell a stage or an undo ran: its identity, the effect records it wrote
+  there (`first_seq..seq` on its WAL, both `nil` when it wrote none) and the
+  plugin channels those records wrote on.
+  """
+  @type committed_cell :: %{
           cell_id: binary(),
-          seq_in_task: non_neg_integer(),
-          channel: binary(),
-          payload: binary()
+          first_seq: non_neg_integer() | nil,
+          seq: non_neg_integer() | nil,
+          channels: [binary()]
         }
 
   @type handoff_item :: {channel_id :: non_neg_integer(), payload :: binary()}
 
   @type entry_type_name ::
           :task_committed
-          | :outbox_flushed
           | :iter_committed
           | :compensated
           | :rewound
@@ -63,14 +70,19 @@ defmodule Flezha.State.TaskJournal do
           task_idx: non_neg_integer(),
           iter: non_neg_integer(),
           payload:
-            %{cells_ran: [binary()], handoff: [handoff_item()], outbox: [outbox_entry()]}
+            %{
+              cells_ran: [committed_cell()],
+              handoff: [handoff_item()],
+              completion: completion(),
+              trigger: trigger()
+            }
             | %{
                 consumed_offset: non_neg_integer() | nil,
                 entry_channel: String.t(),
-                handoff: [handoff_item()]
+                handoff: [handoff_item()],
+                completion: completion()
               }
-            | %{outbox: [outbox_entry()]}
-            | %{for_type: entry_type_name()}
+            | %{cells_ran: [committed_cell()]}
             | %{}
         }
 
@@ -87,9 +99,9 @@ defmodule Flezha.State.TaskJournal do
   journals and what the synchronous `append_*` forms wrap.
   """
   @type barrier ::
-          {:task_committed, non_neg_integer(), non_neg_integer(), [binary()], [handoff_item()],
-           [outbox_entry()], completion(), trigger()}
-          | {:compensated, non_neg_integer(), non_neg_integer(), [outbox_entry()]}
+          {:task_committed, non_neg_integer(), non_neg_integer(), [committed_cell()],
+           [handoff_item()], completion(), trigger()}
+          | {:compensated, non_neg_integer(), non_neg_integer(), [committed_cell()]}
           | {:iter_committed, non_neg_integer(), non_neg_integer() | nil, String.t(),
              [handoff_item()], completion()}
 
@@ -109,12 +121,11 @@ defmodule Flezha.State.TaskJournal do
           | nil
 
   @doc """
-  Append one `task_committed` entry — cells ran, inter-task handoff, the
-  tasklet's staged outbox, the completion it asked for and, on a timer-fed
-  pass's root, the firing that opened it, in ONE record —
-  durable before returning; the caller replies `TaskCommitResponse` only on
-  `:ok`. An entry whose encoded body
-  exceeds `max_entry_bytes/0` is refused with
+  Append one `task_committed` entry (the Cells the stage ran with the records
+  each wrote, the inter-task handoff, the completion it asked for and, on a
+  timer-fed pass's root, the firing that opened it, in ONE record), durable
+  before returning; the caller replies `TaskCommitResponse` only on `:ok`. An
+  entry whose encoded body exceeds `max_entry_bytes/0` is refused with
   `{:error, {:oversized_handoff, size, max}}` (keep bulk data in Cell state,
   which is already WAL-durable, and hand off references).
   """
@@ -122,9 +133,8 @@ defmodule Flezha.State.TaskJournal do
           binary(),
           non_neg_integer(),
           non_neg_integer(),
-          [binary()],
+          [committed_cell()],
           [handoff_item()],
-          [outbox_entry()],
           completion(),
           trigger()
         ) :: :ok | {:error, term()}
@@ -134,14 +144,13 @@ defmodule Flezha.State.TaskJournal do
         iter,
         cells_ran,
         handoff,
-        outbox \\ [],
         completion \\ nil,
         trigger \\ nil
       )
       when is_binary(instance_id) and is_integer(task_idx) and task_idx >= 0 do
     append_barrier(
       instance_id,
-      {:task_committed, task_idx, iter, cells_ran, handoff, outbox, completion, trigger}
+      {:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger}
     )
   end
 
@@ -179,14 +188,13 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  Append one `compensated` entry carrying a compensation hook's undo outbox,
-  durable before the reply. Its outputs are flushed with comp-marked keys, so
-  an undo can never collide with the forward output it reverses.
+  Append one `compensated` entry naming the undo records the tasklet's hooks
+  wrote, durable before the reply.
   """
-  @spec append_compensated(binary(), non_neg_integer(), non_neg_integer(), [outbox_entry()]) ::
+  @spec append_compensated(binary(), non_neg_integer(), non_neg_integer(), [committed_cell()]) ::
           :ok | {:error, term()}
-  def append_compensated(instance_id, task_idx, iter, outbox) when is_binary(instance_id) do
-    append_barrier(instance_id, {:compensated, task_idx, iter, outbox})
+  def append_compensated(instance_id, task_idx, iter, cells_ran) when is_binary(instance_id) do
+    append_barrier(instance_id, {:compensated, task_idx, iter, cells_ran})
   end
 
   @doc """
@@ -212,8 +220,10 @@ defmodule Flezha.State.TaskJournal do
   @doc """
   Drop the journal's settled prefix: everything below the oldest entry the fold
   still needs — the latest live `iter_committed` (the resume point, its consumed
-  offset and the epoch), every entry whose outbox is still owed, and the latest
-  `rewound` marker with the unwound commits it still names. Driven once an
+  offset and the epoch), every stage entry naming a record its Cell's flush
+  cursor has not passed (a writer that restarts releases a record only once a
+  live entry names it), and the latest `rewound` marker with the unwound
+  commits it still names. Driven once an
   iteration commit is durable, so a loop's journal is bounded by one iteration
   plus a settled prefix below `PersistenceResolver.record_log_cut_after_bytes/0`
   — never by its history; `restore_state/1` folds the cut journal to the state
@@ -267,62 +277,6 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  Deliver every journaled outbox entry this instance still owes, in journal
-  order, and record each delivery with an `outbox_flushed` entry.
-
-  Idempotent and driven purely by journal state: an entry whose flush is already
-  recorded is never re-delivered, and one whose flush is not is re-driven with
-  the original keys. Returns `{:error, :no_overwatch}` when the instance is not
-  (yet) bound — the caller retries; nothing is dropped. `overwatch` may be
-  supplied by a caller that already holds the pid (the restore re-drive, which
-  runs off the Overwatch itself).
-  """
-  @spec flush_pending(binary(), pid() | nil) :: :ok | {:error, term()}
-  def flush_pending(instance_id, overwatch \\ nil) when is_binary(instance_id) do
-    case pending_entries(instance_id) do
-      [] ->
-        :ok
-
-      pending ->
-        with {:ok, pid} <- resolve_overwatch(instance_id, overwatch) do
-          Enum.each(pending, &flush_entry(instance_id, pid, &1))
-        end
-    end
-  end
-
-  defp resolve_overwatch(_instance_id, pid) when is_pid(pid), do: {:ok, pid}
-
-  defp resolve_overwatch(instance_id, nil) do
-    case Lookup.overwatch(instance_id) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, _reason} -> {:error, :no_overwatch}
-    end
-  end
-
-  @doc """
-  The entries whose outbox is journaled but not yet recorded flushed, in
-  journal order. An entry carrying no output needs no delivery and is not
-  pending, and a rewound entry's outbox stops being owed at all.
-  """
-  @spec pending_entries(binary()) :: [entry()]
-  def pending_entries(instance_id) when is_binary(instance_id),
-    do: instance_id |> live() |> pending_of()
-
-  defp pending_of(entries) do
-    flushed =
-      for %{type: :outbox_flushed, task_idx: task_idx, iter: iter, payload: %{for_type: for_type}} <-
-            entries,
-          into: MapSet.new(),
-          do: {for_type, task_idx, iter}
-
-    Enum.filter(entries, fn entry ->
-      entry.type in [:task_committed, :compensated] and
-        entry.payload.outbox != [] and
-        not MapSet.member?(flushed, {entry.type, entry.task_idx, entry.iter})
-    end)
-  end
-
-  @doc """
   Decode every complete entry, in append order. `{:ok, []}` when the
   instance has no journal. Reads the file directly (no writer needed);
   stops at the first invalid record, mirroring the WAL torn-tail contract.
@@ -347,8 +301,9 @@ defmodule Flezha.State.TaskJournal do
   them released, so every uncommitted child branch re-seeds from exactly its own
   parent's edge (`workflow-branching`). `handoff` is the previous iteration's
   terminal handoff — what a handoff-chained loop feeds its next iteration.
-  `committed_tasks` carries every forward task commit with its iteration and the
-  completion it asked for, which is what the driver folds into
+  `committed_tasks` carries every forward task commit with its iteration, the
+  identities of the Cells it ran and the completion it asked for, which is what
+  the driver folds into
   `plan_compensation`'s per-iteration `committed` input and what ends a resumed
   iteration whose completing tasklet committed before the crash.
   `completion` is the result the last committed iteration ended the instance
@@ -489,9 +444,11 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  The plugin channels the tasklets above `to_iter` staged output on, each with
-  the tasklet that staged it — everything a rewind to `to_iter` would have to
-  undo. The rewind guard refuses when one of these tasklets cannot compensate.
+  The plugin channels the tasklets above `to_iter` wrote output on, each with
+  the tasklet that wrote it: everything a rewind to `to_iter` would have to
+  undo, read from the stage entries alone, since compaction may have truncated
+  the records themselves. The rewind guard refuses when one of these tasklets
+  cannot compensate.
   """
   @spec staged_channels_above(binary(), non_neg_integer()) ::
           [{non_neg_integer(), binary()}]
@@ -499,9 +456,94 @@ defmodule Flezha.State.TaskJournal do
     for %{type: :task_committed, iter: iter, task_idx: task_idx, payload: payload} <-
           live(instance_id),
         iter > to_iter,
-        item <- payload.outbox,
+        cell <- payload.cells_ran,
+        channel <- cell.channels,
         uniq: true,
-        do: {task_idx, item.channel}
+        do: {task_idx, channel}
+  end
+
+  @doc """
+  The effect records the live `task_committed` and `compensated` entries name,
+  as `first..last` ranges per Cell identity, in journal order. A Cell writer
+  holds its workflow Cell's outputs until a range names them; one its Cell
+  wrote outside every range, between two ranges or above the last, belongs to
+  an attempt that never committed (a crash, a failed stage, an unwound
+  iteration). The cut never drops an entry whose records are still owed, so
+  every record above a Cell's flush cursor that did commit is named here.
+  """
+  @spec committed_records(binary()) ::
+          %{optional(binary()) => [{non_neg_integer(), non_neg_integer()}]}
+  def committed_records(instance_id) when is_binary(instance_id) do
+    for %{type: type, payload: %{cells_ran: cells}} <- live(instance_id),
+        type in [:task_committed, :compensated],
+        {id, first, last} <- record_ranges(cells),
+        reduce: %{} do
+      acc -> Map.update(acc, id, [{first, last}], &(&1 ++ [{first, last}]))
+    end
+  end
+
+  @doc """
+  The records a stage entry's Cells wrote, `{cell_id, first_seq, seq}` for
+  each Cell that wrote any.
+  """
+  @spec record_ranges([committed_cell()]) :: [{binary(), non_neg_integer(), non_neg_integer()}]
+  def record_ranges(cells),
+    do:
+      for(
+        %{cell_id: id, first_seq: first, seq: last} <- cells,
+        is_integer(last),
+        do: {id, first, last}
+      )
+
+  @doc """
+  Ask the writer of the Cell `cell_id` names to answer once its record at
+  `seq` is durable (`WalWriter.await_durable_async/4`, under `label` into
+  `reqids`). A Cell whose writer cannot be reached is refused with the reason
+  a barrier naming it fails with.
+  """
+  @spec await_record_async(binary(), non_neg_integer(), term(), term()) ::
+          {:ok, term()} | {:error, String.t()}
+  def await_record_async(cell_id, seq, reqids, label) do
+    case record_writer(cell_id) do
+      {:ok, writer} -> {:ok, WalWriter.await_durable_async(writer, seq, reqids, label)}
+      {:error, _reason} -> {:error, record_not_durable(cell_id, seq)}
+    end
+  end
+
+  @doc "Why a barrier naming the record at `seq` of `cell_id` fails."
+  @spec record_not_durable(binary(), non_neg_integer()) :: String.t()
+  def record_not_durable(cell_id, seq),
+    do: "record_not_durable: #{Outbox.cell_label(cell_id)} seq=#{seq}"
+
+  @doc """
+  The entry naming `records` (`record_ranges/1`) is durable: each Cell's
+  writer releases their outputs.
+  """
+  @spec release_records([{binary(), non_neg_integer(), non_neg_integer()}]) :: :ok
+  def release_records(records) do
+    for {id, first, last} <- records,
+        {:ok, writer} <- [record_writer(id)],
+        do: WalWriter.commit_records(writer, first, last)
+
+    :ok
+  end
+
+  @doc """
+  The outbox entries the instance's live Cell writers still owe the sinks:
+  dispatchable, or in the chain awaiting confirmation. An entry held for a
+  stage marker is owed nothing, and a writer that is not running, or exits
+  before it answers, holds its debt on disk for its next boot.
+  """
+  @spec owed_outputs(binary()) :: non_neg_integer()
+  def owed_outputs(instance_id) do
+    for writer <- Supervisor.live_writers(instance_id),
+        %{pending: pending, awaiting: awaiting} <- [WalWriter.outbox_status(writer)],
+        reduce: 0,
+        do: (owed -> owed + pending + awaiting)
+  end
+
+  defp record_writer(cell_id) do
+    with {:ok, cell} <- Wire.decode_cell_id(cell_id), do: Supervisor.find_or_start(cell)
   end
 
   # The journal as every fold sees it: read, with the rewind markers applied.
@@ -565,7 +607,7 @@ defmodule Flezha.State.TaskJournal do
     entries = live_entries(raw)
 
     with %{seq: head} <- latest_iter_committed(entries) do
-      owed = for %{seq: seq} <- pending_of(entries), do: seq
+      owed = for %{seq: seq} = entry <- entries, seq < head, owes_output?(entry), do: seq
 
       unwound =
         case rewind_undo_entries(raw) do
@@ -577,11 +619,26 @@ defmodule Flezha.State.TaskJournal do
     end
   end
 
+  # A stage entry naming a record above its Cell's persisted flush cursor. The
+  # cursor lags what the sinks confirmed, never leads it, so this keeps an entry
+  # a little longer than needed and never too briefly.
+  defp owes_output?(%{type: type, payload: %{cells_ran: cells}})
+       when type in [:task_committed, :compensated] do
+    Enum.any?(record_ranges(cells), fn {id, _first, seq} ->
+      case Wire.decode_cell_id(id) do
+        {:ok, cell} -> seq > Outbox.read(cell).outbox_flushed_seq
+        {:error, _} -> false
+      end
+    end)
+  end
+
+  defp owes_output?(_entry), do: false
+
   defp committed_task(%{task_idx: task_idx, iter: iter, payload: payload}),
     do: %{
       task_idx: task_idx,
       iter: iter,
-      cells_ran: payload.cells_ran,
+      cells_ran: Enum.map(payload.cells_ran, & &1.cell_id),
       completion: payload.completion,
       trigger: payload.trigger
     }
@@ -622,9 +679,9 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  The instance's current epoch — part of every flushed output's dedup key.
-  `0` until a rewind bumps it; carried verbatim across crash re-drives, so a
-  re-driven output keys identically to its original delivery.
+  The instance's current epoch, part of every barrier's identity, so a re-run
+  of a stage a rewind unwound is a new entry rather than a re-send of the old
+  one. `0` until a rewind bumps it.
   """
   @spec current_epoch(binary()) :: non_neg_integer()
   def current_epoch(instance_id) when is_binary(instance_id) do
@@ -638,8 +695,8 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Journal entry size bound — the WAL soft watermark scale
-  (`:wal_high_watermark_bytes`, default 16 MiB). Covers the combined
-  handoff + outbox payload.
+  (`:wal_high_watermark_bytes`, default 16 MiB). Covers the entry's handoff
+  and the Cells it names.
   """
   @spec max_entry_bytes() :: pos_integer()
   def max_entry_bytes(), do: PersistenceResolver.wal_high_watermark_bytes()
@@ -653,20 +710,18 @@ defmodule Flezha.State.TaskJournal do
     append(instance_id, type, task_idx, iter, payload)
   end
 
-  defp barrier_record(
-         {:task_committed, task_idx, iter, cells_ran, handoff, outbox, completion, trigger}
-       ),
-       do:
-         {@type_task_committed, task_idx, iter,
-          [
-            Codec.encode_committed_payload(cells_ran, handoff),
-            Codec.encode_outbox(outbox),
-            Codec.encode_completion(completion),
-            Codec.encode_trigger(trigger)
-          ]}
+  defp barrier_record({:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger}),
+    do:
+      {@type_task_committed, task_idx, iter,
+       [
+         Codec.encode_cells(cells_ran),
+         Codec.encode_handoff(handoff),
+         Codec.encode_completion(completion),
+         Codec.encode_trigger(trigger)
+       ]}
 
-  defp barrier_record({:compensated, task_idx, iter, outbox}),
-    do: {@type_compensated, task_idx, iter, Codec.encode_outbox(outbox)}
+  defp barrier_record({:compensated, task_idx, iter, cells_ran}),
+    do: {@type_compensated, task_idx, iter, Codec.encode_cells(cells_ran)}
 
   defp barrier_record(
          {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion}
@@ -681,10 +736,9 @@ defmodule Flezha.State.TaskJournal do
             Codec.encode_completion(completion)
           ]}
 
-  # `epoch` defaults to the instance's current one (a journal read); a caller
-  # already holding the entry it is marking passes that entry's epoch instead,
-  # which both saves the read and pins the marker to the epoch it flushed. An
-  # entry the journal already holds (a re-sent barrier) is `:ok` — it is durable.
+  # `epoch` defaults to the instance's current one (a journal read); a rewind
+  # passes the bumped one. An entry the journal already holds (a re-sent
+  # barrier) is `:ok`: it is durable.
   defp append(instance_id, type, task_idx, iter, payload, epoch \\ nil) do
     with {:ok, header, body} <- encode(instance_id, type, task_idx, iter, payload, epoch),
          {:ok, _seq} <-
@@ -713,90 +767,8 @@ defmodule Flezha.State.TaskJournal do
   defp encode_header(epoch, type, task_idx, iter),
     do: <<epoch::32-big, type::8, task_idx::16-big, iter::32-big, 0::40>>
 
-  # A barrier is batched and idempotent by identity; a marker and the park are
-  # batched; a rewind syncs inline — rare, and durable before the eviction.
+  # A barrier is batched and idempotent by identity; a rewind syncs inline:
+  # rare, and durable before the eviction.
   defp append_opts(@type_rewound), do: [sync: :sync]
   defp append_opts(type) when type in @barrier_types, do: [sync: :batched, dedup: true]
-  defp append_opts(_type), do: [sync: :batched]
-
-  # ---------- Flush ----------
-
-  # Deliver one journaled entry's outbox through the operative's `:on_output`
-  # chain — the same fan-out `StreamChannel` uses for live workflow output and
-  # `WalWriter` uses for the stream effectively-once outbox. The instance's
-  # journal writer delivers: it owns the entry until the sinks confirm (then
-  # appends the `outbox_flushed` marker), and it is what keeps a re-entered
-  # flush from handing the chain an entry it already has. A writer that cannot
-  # start delivers nothing; the journal still owes the entry to the next flush.
-  defp flush_entry(instance_id, pid, entry) do
-    comp? = entry.type == :compensated
-    for_type = Codec.entry_type_code(entry.type)
-    key = {:marker, for_type, entry.task_idx, entry.iter, entry.epoch}
-    owner = Paths.journal_id(instance_id)
-
-    outputs =
-      Enum.map(entry.payload.outbox, fn item ->
-        # An undo output's seq carries a trailing `.1` — the compensation
-        # marker — so it can never collide with the forward output it
-        # reverses while staying a numeric dotted sequence a keyed sink can
-        # order.
-        seq = "#{entry.task_idx}.#{item.seq_in_task}"
-
-        Outbox.stamp(item.payload, %{
-          owner: owner,
-          entry: key,
-          cell: item.cell_id,
-          seq: if(comp?, do: seq <> ".1", else: seq),
-          epoch: entry.epoch,
-          channel: item.channel
-        })
-      end)
-
-    telemetry =
-      {[:flezha, :state, :task_outbox_flush], %{count: 1, entries: length(outputs)},
-       %{
-         operative_id: instance_id,
-         task_idx: entry.task_idx,
-         epoch: entry.epoch,
-         compensating: comp?
-       }}
-
-    with {:ok, writer} <- Supervisor.find_or_start(owner) do
-      WalWriter.flush_outbox(writer, key, outputs, pid, telemetry)
-    end
-
-    :ok
-  end
-
-  @doc """
-  Record one entry's outbox as delivered — the sinks confirmed it. Called by the
-  instance's journal writer through `Flezha.State.Outbox`, never by the flush:
-  the marker is what a restore reads to know an entry stopped being owed, so it
-  may only follow a confirmed delivery.
-  """
-  @spec mark_flushed(
-          binary(),
-          byte(),
-          non_neg_integer(),
-          non_neg_integer(),
-          non_neg_integer()
-        ) :: :ok
-  def mark_flushed(instance_id, for_type, task_idx, iter, epoch) do
-    case append(instance_id, @type_outbox_flushed, task_idx, iter, <<for_type::8>>, epoch) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        # The outbox reached the sinks but the marker did not land: a restore
-        # re-drives this entry. Duplicate delivery with an identical key is the
-        # documented at-least-once posture; losing the marker write silently is
-        # not.
-        Logger.warning(
-          "[task_journal] outbox_flushed append failed instance=#{inspect(instance_id)} " <>
-            "task_idx=#{task_idx}: #{inspect(reason)} — entry will re-drive on restore"
-        )
-
-        :ok
-    end
-  end
 end

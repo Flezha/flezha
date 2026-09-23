@@ -18,7 +18,8 @@ defmodule Flezha.Service.Cli.Journal do
   @doc """
   `flz state journal <operative/instance>` — render a workflow instance's
   task-journal entries (`workflow-task-journal`) in append order: seq, type,
-  task index, iteration, the cells that ran, and the handoff batch size.
+  task index, iteration, the cells that ran with the effect records each wrote
+  and the channels they wrote on, and the handoff batch size.
   """
   def state_journal(instance_id, output_format, _call) do
     {:ok, entries} = TaskJournal.read(instance_id)
@@ -62,10 +63,7 @@ defmodule Flezha.Service.Cli.Journal do
     entry
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
-    |> Map.merge(%{
-      cells_ran: Enum.map(payload.cells_ran, &Outbox.cell_label/1),
-      outbox: journal_outbox(payload.outbox)
-    })
+    |> Map.put(:cells_ran, journal_cells(payload.cells_ran))
     |> journal_completion(payload.completion)
     |> journal_trigger(payload.trigger, payload.cells_ran)
   end
@@ -73,7 +71,7 @@ defmodule Flezha.Service.Cli.Journal do
   defp journal_row(%{type: :compensated, payload: payload} = entry) do
     entry
     |> base_journal_row()
-    |> Map.put(:outbox, journal_outbox(payload.outbox))
+    |> Map.put(:cells_ran, journal_cells(payload.cells_ran))
   end
 
   defp journal_row(%{type: :iter_committed, payload: payload} = entry) do
@@ -83,14 +81,6 @@ defmodule Flezha.Service.Cli.Journal do
     |> Map.put(:consumed_offset, payload.consumed_offset)
     |> Map.put(:entry_channel, payload.entry_channel)
     |> journal_completion(payload.completion)
-  end
-
-  # `for_type` names which entry's outbox this marks delivered — a tasklet
-  # can have both a forward `task_committed` outbox and a `compensated` undo one.
-  defp journal_row(%{type: :outbox_flushed, payload: %{for_type: for_type}} = entry) do
-    entry
-    |> base_journal_row()
-    |> Map.put(:flushes, to_string(for_type))
   end
 
   # A `rewound` entry's `iter` IS the iteration it rewound to; spell that out
@@ -132,8 +122,8 @@ defmodule Flezha.Service.Cli.Journal do
     }
   end
 
-  # A completing entry names the result's size, as an outbox item does, rather
-  # than printing an author's bytes.
+  # A completing entry names the result's size rather than printing an
+  # author's bytes.
   defp journal_completion(row, nil), do: row
   defp journal_completion(row, result), do: Map.put(row, :completes_bytes, byte_size(result))
 
@@ -143,7 +133,7 @@ defmodule Flezha.Service.Cli.Journal do
 
   defp journal_trigger(row, trigger, cells_ran) do
     tasklet =
-      Enum.find_value(cells_ran, "?", fn cell_id ->
+      Enum.find_value(cells_ran, "?", fn %{cell_id: cell_id} ->
         case Wire.decode_cell_id(cell_id) do
           {:ok, {_class, tasklet, key}} when key == trigger.cell_key -> tasklet
           _ -> nil
@@ -158,13 +148,13 @@ defmodule Flezha.Service.Cli.Journal do
     })
   end
 
-  defp journal_outbox(outbox) do
-    Enum.map(outbox, fn item ->
+  defp journal_cells(cells) do
+    Enum.map(cells, fn cell ->
       %{
-        cell: Outbox.cell_label(item.cell_id),
-        seq_in_task: item.seq_in_task,
-        channel: item.channel,
-        bytes: byte_size(item.payload)
+        cell: Outbox.cell_label(cell.cell_id),
+        first_seq: cell.first_seq,
+        seq: cell.seq,
+        channels: cell.channels
       }
     end)
   end
@@ -174,7 +164,7 @@ defmodule Flezha.Service.Cli.Journal do
       "  seq=#{row.seq} #{row.type} task_idx=#{row.task_idx} iter=#{row.iter} epoch=#{row.epoch}"
     )
 
-    Enum.each(Map.get(row, :cells_ran, []), fn seg -> IO.puts("    ran: #{seg}") end)
+    Enum.each(Map.get(row, :cells_ran, []), &print_journal_cell/1)
 
     if Map.has_key?(row, :handoff_items) do
       IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
@@ -185,17 +175,6 @@ defmodule Flezha.Service.Cli.Journal do
         "      edge: channel_id=#{edge.channel_id} #{edge.items} item(s), #{edge.bytes} byte(s)"
       )
     end)
-
-    Enum.each(Map.get(row, :outbox, []), fn item ->
-      IO.puts(
-        "    outbox: #{item.cell} seq_in_task=#{item.seq_in_task} " <>
-          "channel=#{item.channel} #{item.bytes} byte(s)"
-      )
-    end)
-
-    if flushes = Map.get(row, :flushes) do
-      IO.puts("    flushes: #{flushes}")
-    end
 
     case Map.fetch(row, :consumed_offset) do
       {:ok, nil} -> IO.puts("    consumed no journaled input")
@@ -218,6 +197,14 @@ defmodule Flezha.Service.Cli.Journal do
     end
 
     IO.puts("")
+  end
+
+  defp print_journal_cell(%{cell: cell, seq: nil}), do: IO.puts("    ran: #{cell}")
+
+  defp print_journal_cell(%{cell: cell, first_seq: first, seq: last, channels: channels}) do
+    records = if first == last, do: "record=#{last}", else: "records=#{first}..#{last}"
+    written = if channels == [], do: "", else: " channels=#{Enum.join(channels, ",")}"
+    IO.puts("    ran: #{cell} #{records}#{written}")
   end
 
   @doc """

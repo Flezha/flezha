@@ -406,25 +406,26 @@ pub(super) fn settle_item(
     }
 }
 
-/// A workflow Cell's item: its changes folded as a stream's are, its edge
-/// outputs held for the stage's commit, its plugin outputs staged and its
-/// completion noted — or, where a stream would park it, its stage failed with
-/// no dead letter. Either way the stage owes it no longer.
-/// A host's answer to a workflow undo: its changes folded as an item's are,
-/// its plugin outputs staged for the undo's record, a failed hook reported.
+/// A host's answer to a workflow undo: its changes and plugin outputs settled
+/// as an item's are, into the undo's own record; a failed hook reported.
 pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
     match outcome {
         schema::ActivationOutcome::Work(effects) => {
             let Some(facts) = slot.dispatcher.host_facts() else {
                 return;
             };
+            let stream = crate::workflow::unwired_stream();
             for effect in effects {
-                fold_workflow_changes(slot, facts, effect.changes, Vec::new(), effect.event_time);
-                for output in effect.outputs {
-                    if let schema::OutputTarget::Plugin { channel } = output.target {
-                        crate::workflow::plugin_output(slot, &channel, output.payload);
-                    }
-                }
+                let (_edge, wire) = split_outputs(effect.outputs);
+                settle_workflow_effects(
+                    slot,
+                    facts,
+                    effect.changes,
+                    Vec::new(),
+                    effect.event_time,
+                    wire,
+                    &stream,
+                );
             }
         }
         schema::ActivationOutcome::Failed(error) => crate::workflow::note_failure(
@@ -437,15 +438,26 @@ pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::Activa
     }
 }
 
-/// A workflow Cell's changes and durable timer ops into its buffer; its
-/// outputs and park are the workflow's to settle.
-fn fold_workflow_changes(
+/// A workflow Cell's changes, durable timer ops and plugin outputs. A class
+/// that journals writes them as one effect record, sent at once and named on
+/// the pass sheet for the stage's barrier; one that does not sends the outputs
+/// to the wire with their channel, key and metadata.
+fn settle_workflow_effects(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     changes: Vec<Vec<u8>>,
     timers: Vec<TimerOp>,
     event_time: u64,
+    wire_outputs: Vec<schema::Output>,
+    stream: &Arc<FlezhaStream>,
 ) {
+    let channels: Vec<String> = wire_outputs
+        .iter()
+        .filter_map(|output| match &output.target {
+            schema::OutputTarget::Plugin { channel } => Some(channel.clone()),
+            schema::OutputTarget::Edge { .. } => None,
+        })
+        .collect();
     let effects = InvocationEffects {
         changes,
         timers,
@@ -455,9 +467,20 @@ fn fold_workflow_changes(
         checkpointed: false,
         parked: false,
     };
-    settle_into_buffer(slot, facts, effects, Vec::new(), None);
+    let (_park, plugin_outputs) = settle_into_buffer(slot, facts, effects, wire_outputs, None);
+    ship_plugin_outputs(slot, stream, plugin_outputs);
+    if !slot.topology.records_effects(slot.persistence_enabled) {
+        return;
+    }
+    let mut buffer = slot.flush_buffer.lock_recover();
+    crate::workflow::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
 }
 
+/// A workflow Cell's item: its changes and plugin outputs settled into its
+/// record, its edge outputs held for the stage's commit and its completion
+/// noted; or, where a stream would park it, its stage failed with no dead
+/// letter and only its changes recorded. Either way the stage owes it no
+/// longer.
 fn settle_workflow_item(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
@@ -471,7 +494,21 @@ fn settle_workflow_item(
     commit_timers(slot, &timers, stream);
     let mut durable = timers;
     crate::timer::hold_firing_removal(slot, &mut durable, firing_of(&work.item));
-    fold_workflow_changes(slot, facts, effect.changes, durable, effect.event_time);
+    let outputs = if park.is_some() {
+        Vec::new()
+    } else {
+        effect.outputs
+    };
+    let (edge_outputs, wire_outputs) = split_outputs(outputs);
+    settle_workflow_effects(
+        slot,
+        facts,
+        effect.changes,
+        durable,
+        effect.event_time,
+        wire_outputs,
+        stream,
+    );
     match park {
         Some((error, attempts)) => {
             let error = if unreadable {
@@ -488,41 +525,37 @@ fn settle_workflow_item(
             };
             crate::workflow::note_failure(slot, error, payload, attempts);
         }
-        None => hold_workflow_outputs(slot, stream, effect.outputs, effect.complete),
+        None => hold_workflow_edges(slot, stream, edge_outputs, effect.complete),
     }
     crate::workflow::item_settled(slot);
 }
 
 /// A host workflow stage emits one untransformed output per released value,
 /// naming its producing channel; the consumer applies the edge on delivery.
-fn hold_workflow_outputs(
+fn hold_workflow_edges(
     slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
-    outputs: Vec<schema::Output>,
+    edge_outputs: Vec<schema::Output>,
     complete: Option<Vec<u8>>,
 ) {
     let Some(instance) = slot.instance.upgrade() else {
         return;
     };
-    for output in outputs {
-        match output.target {
-            schema::OutputTarget::Edge { channel, .. } => {
-                let Some(descriptor) = instance.topology.channel(channel) else {
-                    continue;
-                };
-                let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
-                    bytes: output.payload,
-                    channel,
-                    keys: output.key.into_iter().collect(),
-                    event_time: output.event_time,
-                    metadata: output.metadata,
-                });
-                crate::workflow::hold_emit(&instance, Some(descriptor), &value, stream, slot);
-            }
-            schema::OutputTarget::Plugin { channel } => {
-                crate::workflow::plugin_output(slot, &channel, output.payload);
-            }
-        }
+    for output in edge_outputs {
+        let schema::OutputTarget::Edge { channel, .. } = output.target else {
+            continue;
+        };
+        let Some(descriptor) = instance.topology.channel(channel) else {
+            continue;
+        };
+        let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
+            bytes: output.payload,
+            channel,
+            keys: output.key.into_iter().collect(),
+            event_time: output.event_time,
+            metadata: output.metadata,
+        });
+        crate::workflow::hold_emit(&instance, Some(descriptor), &value, stream, slot);
     }
     if let Some(result) = complete {
         crate::workflow::complete(slot, result);
@@ -649,8 +682,9 @@ fn route_edge_outputs(
     }
 }
 
-/// Fold the invocation into the buffer per its tier; outside the tier the
-/// wire outputs and the park are handed back to ship after the buffer ops.
+/// Fold the invocation into the buffer per its Cell's policy; a Cell that
+/// records no effects hands its wire outputs and park back to ship after the
+/// buffer ops.
 fn settle_into_buffer(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
@@ -662,8 +696,9 @@ fn settle_into_buffer(
     let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
         return (None, Vec::new());
     };
+    let records_effects = slot.topology.records_effects(slot.persistence_enabled);
     let mut plugin_outputs = Vec::new();
-    if facts.effectively_once {
+    if records_effects {
         effects.outputs = output_records(wire_outputs);
     } else {
         plugin_outputs = wire_outputs;
@@ -671,7 +706,7 @@ fn settle_into_buffer(
     let tier_off_dlq = crate::flusher::settle_effects(
         bytes,
         SettlePolicy {
-            effectively_once: facts.effectively_once,
+            records_effects,
             checkpoint: facts.checkpoint,
             buffered: slot.flusher_entry_id.is_some(),
         },

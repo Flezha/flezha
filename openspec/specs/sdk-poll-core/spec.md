@@ -241,12 +241,17 @@ branch included), handed out as `Work` activations under per-cell exclusivity, f
 in-flight cap, and retried on the core's per-item ladder. A cell's inter-tasklet output SHALL
 be held on the instance's pass sheet at the routing seam, post-transform and addressed to its
 consumer cells, and SHALL be released into those mailboxes only on the producer stage's commit
-ack. A stage SHALL be done when every item admitted for it has settled, counted, and SHALL
+ack. A cell's plugin output SHALL NOT be held on the sheet: it is settled into the cell's effect
+record with the item's state changes, through the one settle path a stream cell uses, and the
+record is framed and sent on the worker that settles the item, before the stage's barrier; the
+barrier names each cell's last record of the stage by seq. A stage SHALL be done when every item
+admitted for it has settled, counted, and SHALL
 commit then, whether or not a sibling stage is still running. No core-owned thread SHALL
 execute user code, no core thread SHALL block awaiting a host completion, and no thread SHALL
 exist per instance. Saga compensation crosses as the `CompensateRun` activation, carrying the
-recorded outputs, for both language paths, with its completion an event on the sheet; the
-task-journal, staged outbox, durable loop, suspension and rewind semantics are unchanged. Every
+recorded outputs, for both language paths, with its completion an event on the sheet and its
+undo output settled into the compensating cell's own record; the
+task-journal, durable loop, suspension and rewind semantics are unchanged. Every
 workflow class declares tasklets, so every workflow host class runs through work activations; a
 completion MAY carry a tasklet's completion request, which the sheet folds at the iteration
 seal.
@@ -259,7 +264,12 @@ seal.
 #### Scenario: A stage commits on its last item and releases on the ack
 
 - **WHEN** a durable structured workflow class's stage has every admitted item settled
-- **THEN** the worker that settled the last one SHALL send `TaskCommit` for that stage, the stage's children SHALL receive their input only once the controller acks it, and a crash-resume SHALL skip journaled tasks exactly as the driver suites pin
+- **THEN** the worker that settled the last one SHALL send `TaskCommit` for that stage naming each cell's record, the stage's children SHALL receive their input only once the controller acks it, and a crash-resume SHALL skip journaled tasks exactly as the driver suites pin
+
+#### Scenario: A cell's record leaves on the worker, ahead of the barrier
+
+- **WHEN** a durable workflow cell's item settles with a change and a plugin output
+- **THEN** the worker that settled it frames and sends the cell's effect record before any barrier for that stage is sent, and the barrier carries that record's seq for the cell
 
 #### Scenario: A workflow step costs no thread beyond the one running it
 

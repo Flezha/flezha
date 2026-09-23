@@ -243,24 +243,19 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   # ---------- Effect-record scan ----------
 
-  def scan_effect_records_above(device, path, cursor) do
+  def scan_effect_records_above(state, device, cursor) do
     # Both callers walked this file to its end immediately before, so a record
     # that does not decode here is impossible, not a case to answer.
     {:ok, {acc, max_consumed}} =
-      RecordFrame.fold_records(device, path, {[], nil}, fn {seq, header, body},
-                                                           {acc, max_consumed} = unchanged ->
+      RecordFrame.fold_records(device, state.wal_path, {[], nil}, fn {seq, header, body},
+                                                                     {acc, max_consumed} =
+                                                                       unchanged ->
         case Wire.decode_effect_record(header, body) do
           nil ->
             {:cont, unchanged}
 
           effect ->
-            entry = %{
-              seq: seq,
-              outputs: effect.outputs,
-              consumed_offset: effect.consumed_offset,
-              dlq: effect.dlq
-            }
-
+            entry = Settlement.entry(state, seq, effect)
             acc = if seq > cursor, do: [entry | acc], else: acc
             {:cont, {acc, max_offset(max_consumed, effect.consumed_offset)}}
         end
@@ -308,7 +303,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     # and the same scan yields the consumed-offset the input-log watermark must
     # fall back to.
     flushed = min(state.outbox_flushed_seq, seq)
-    {surviving, max_consumed} = scan_effect_records_above(file, state.wal_path, flushed)
+    {surviving, max_consumed} = scan_effect_records_above(state, file, flushed)
     rewind_input_watermark(state, max_consumed)
 
     size = RecordFrame.file_size(state.wal_path)

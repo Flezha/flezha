@@ -16,12 +16,17 @@ defmodule FlezhaTest.State.TaskJournalTest do
   alias Flezha.State.{Commands, Outbox, Paths, TaskJournal, TestHelpers, WalWriter}
   alias Flezha.State.TaskJournal.Codec
 
-  import Flezha.State.TestHelpers,
-    only: [next_output: 0, refute_dispatched: 0, refute_dispatched: 1]
-
   defp instance_id(), do: "opj_inst_#{System.unique_integer([:positive])}"
 
   defp seg_identity(rc, sh, pk), do: Wire.encode_cell_id(rc, sh, pk)
+
+  # A Cell a stage ran as its barrier names it: the records it wrote there
+  # (`{first, last}`) and the plugin channels they wrote on.
+  defp ran(id, records \\ nil, channels \\ [])
+  defp ran(id, nil, channels), do: %{cell_id: id, first_seq: nil, seq: nil, channels: channels}
+
+  defp ran(id, {first, last}, channels),
+    do: %{cell_id: id, first_seq: first, seq: last, channels: channels}
 
   defp close_journal_writer(inst) do
     {:ok, pid} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(inst))
@@ -42,13 +47,13 @@ defmodule FlezhaTest.State.TaskJournalTest do
     seg_a = seg_identity(inst, "TaskA", "s0")
     handoff = [{2, <<1, 2, 3>>}, {2, <<>>}]
 
-    assert :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg_a], handoff)
+    assert :ok = TaskJournal.append_task_committed(inst, 0, 0, [ran(seg_a)], handoff)
     assert :ok = TaskJournal.append_task_committed(inst, 1, 0, [], [{3, "next"}])
 
     assert {:ok, [first, second]} = TaskJournal.read(inst)
 
     assert %{seq: 0, type: :task_committed, task_idx: 0, iter: 0} = first
-    assert first.payload.cells_ran == [seg_a]
+    assert first.payload.cells_ran == [ran(seg_a)]
     assert first.payload.handoff == handoff
 
     assert %{seq: 1, type: :task_committed, task_idx: 1} = second
@@ -161,7 +166,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert TaskJournal.consumed_offset(inst) == nil
 
     # Iteration 0: two tasks, then the boundary.
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [{1, "a"}])
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [ran(seg)], [{1, "a"}])
     :ok = TaskJournal.append_task_committed(inst, 1, 0, [], [])
     :ok = TaskJournal.append_iter_committed(inst, 0, 4, [{2, "carry"}])
 
@@ -177,7 +182,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     # Iteration 1 gets one task in before the crash: resume skips it and seeds
     # from ITS handoff instead.
-    :ok = TaskJournal.append_task_committed(inst, 0, 1, [seg], [{1, "b"}])
+    :ok = TaskJournal.append_task_committed(inst, 0, 1, [ran(seg)], [{1, "b"}])
 
     resume = TaskJournal.restore_state(inst)
     assert resume.iter == 1
@@ -200,7 +205,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
   test "a completion rides both commit entries, and an entry without one reads as not completing" do
     inst = instance_id()
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [{1, "h"}], [], "3")
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [{1, "h"}], "3")
     :ok = TaskJournal.append_iter_committed(inst, 0, 2, [], "3")
     :ok = TaskJournal.append_task_committed(inst, 1, 1, [], [])
 
@@ -209,11 +214,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     # Written the way a build without completions wrote them: no trailing segment.
     path = Paths.journal_path(inst)
 
-    old_task =
-      Codec.encode_entry(1, 2, 1, [
-        Codec.encode_committed_payload([], []),
-        Codec.encode_outbox([])
-      ])
+    old_task = Codec.encode_entry(1, 2, 1, [Codec.encode_cells([]), Codec.encode_handoff([])])
 
     old_iter =
       Codec.encode_entry(3, 0, 1, [
@@ -238,8 +239,8 @@ defmodule FlezhaTest.State.TaskJournalTest do
   test "the root of a timer-fed pass records the firing that opened it, and no other entry does" do
     inst = instance_id()
     trigger = %{cell_key: "a", kind: :processing_time, scheduled_at: 31_000}
-    :ok = TaskJournal.append_task_committed(inst, 0, 4, ["tick"], [{1, "x"}], [], nil, trigger)
-    :ok = TaskJournal.append_task_committed(inst, 1, 4, ["relay"], [], [], "done")
+    :ok = TaskJournal.append_task_committed(inst, 0, 4, [ran("tick")], [{1, "x"}], nil, trigger)
+    :ok = TaskJournal.append_task_committed(inst, 1, 4, [ran("relay")], [], "done")
 
     assert {:ok, [root, child]} = TaskJournal.read(inst)
     assert root.payload.trigger == trigger
@@ -250,7 +251,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
              TaskJournal.restore_state(inst).committed_tasks
 
     event = %{trigger | kind: :event_time, cell_key: ""}
-    :ok = TaskJournal.append_task_committed(inst, 0, 5, [], [], [], "r", event)
+    :ok = TaskJournal.append_task_committed(inst, 0, 5, [], [], "r", event)
     assert {:ok, [_, _, last]} = TaskJournal.read(inst)
     assert {last.payload.trigger, last.payload.completion} == {event, "r"}
   end
@@ -309,7 +310,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     # Iteration 1's completing tasklet commits and the crash lands before its
     # iteration does: the in-flight commit carries what it asked for.
-    :ok = TaskJournal.append_task_committed(inst, 0, 1, [], [{1, "bye"}], [], "2")
+    :ok = TaskJournal.append_task_committed(inst, 0, 1, [], [{1, "bye"}], "2")
     resume = TaskJournal.restore_state(inst)
     assert %{iter: 1, committed_task_idxs: [0], completion: nil} = resume
 
@@ -338,7 +339,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
   test "flz state journal names a completing entry and the size of its result" do
     inst = instance_id()
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [], [], "done")
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [], "done")
     :ok = TaskJournal.append_iter_committed(inst, 0, 1, [], "done")
 
     text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
@@ -369,120 +370,69 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert TaskJournal.restore_state(inst) == nil
   end
 
-  # ---------- transactional outbox (workflow-transactional-outbox) ----------
+  # ---------- the records a stage entry names ----------
 
-  defp outbox_item(seg, seq_in_task, payload, channel \\ "out") do
-    %{cell_id: seg, seq_in_task: seq_in_task, channel: channel, payload: payload}
-  end
-
-  # `flush_pending/2` delivers one entry's outbox through
-  # `GenServer.cast(overwatch, {:io_out_batch, ..})`, so a plain test pid stands
-  # in for the bound Overwatch — including its duty to settle the chain run,
-  # which is what lets the `outbox_flushed` marker land.
-  defp assert_flushed(payload, seq, epoch \\ "0") do
-    assert {^payload, meta, _ack} = next_output()
-    assert meta["flz.seq"] == seq
-    assert meta["flz.epoch"] == epoch
-    :ok = Outbox.settled(meta)
-    meta
-  end
-
-  # The marker is appended by the journal writer once the delivery is confirmed,
-  # off the flushing process — so the journal is read after it lands.
-  defp await_markers(inst, count) do
-    assert wait_until(fn -> length(markers(inst)) == count end, 2_000),
-           "expected #{count} outbox_flushed marker(s), got #{length(markers(inst))}"
-
-    markers(inst)
-  end
-
-  defp markers(inst) do
-    {:ok, entries} = TaskJournal.read(inst)
-    Enum.filter(entries, &(&1.type == :outbox_flushed))
-  end
-
-  test "a tasklet's outbox is journaled inside its task_committed entry" do
+  test "a stage entry names its Cells' records and channels, and carries no output" do
     inst = instance_id()
-    seg = seg_identity(inst, "TaskA", "s0")
+    seg_a = seg_identity(inst, "TaskA", "s0")
+    seg_b = seg_identity(inst, "TaskB", "")
 
     :ok =
-      TaskJournal.append_task_committed(inst, 0, 0, [seg], [{1, "h"}], [
-        outbox_item(seg, 0, "first"),
-        outbox_item(seg, 1, "second")
-      ])
+      TaskJournal.append_task_committed(inst, 0, 0, [ran(seg_a, {3, 4}, ["out"]), ran(seg_b)], [])
 
     assert {:ok, [entry]} = TaskJournal.read(inst)
-    # One record carries progress AND output: they cannot tear apart.
-    assert entry.payload.handoff == [{1, "h"}]
+    assert entry.payload.cells_ran == [ran(seg_a, {3, 4}, ["out"]), ran(seg_b)]
+    refute Map.has_key?(entry.payload, :outbox)
 
-    assert [%{seq_in_task: 0, payload: "first"}, %{seq_in_task: 1, payload: "second"}] =
-             entry.payload.outbox
+    text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    assert text =~ "ran: #{inst}/TaskA/s0 records=3..4 channels=out"
+    assert text =~ "ran: #{inst}/TaskB/\n"
+    refute text =~ "outbox"
+    refute text =~ "flushes"
 
-    assert [^entry] = TaskJournal.pending_entries(inst)
+    json = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "json", nil) end)
+    assert %{"entries" => [%{"cells_ran" => [a, b]}]} = Jason.decode!(json)
+
+    assert a == %{
+             "cell" => "#{inst}/TaskA/s0",
+             "first_seq" => 3,
+             "seq" => 4,
+             "channels" => ["out"]
+           }
+
+    assert %{"seq" => nil, "channels" => []} = b
   end
 
-  test "flush delivers in journal order with identity stamps, then gates on outbox_flushed" do
+  test "the committed records are the live stage entries' ranges, per Cell" do
+    inst = instance_id()
+    seg = seg_identity(inst, "TaskA", "s0")
+    other = seg_identity(inst, "TaskB", "")
+
+    assert TaskJournal.committed_records(inst) == %{}
+
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [ran(seg, {0, 1}), ran(other)], [])
+    :ok = TaskJournal.append_task_committed(inst, 1, 0, [ran(other, {0, 0})], [])
+    :ok = TaskJournal.append_compensated(inst, 0, 0, [ran(seg, {3, 3}, ["undo"])])
+
+    assert TaskJournal.committed_records(inst) == %{seg => [{0, 1}, {3, 3}], other => [{0, 0}]}
+    assert TaskJournal.record_ranges([ran(seg, {0, 1}), ran(other)]) == [{seg, 0, 1}]
+  end
+
+  test "the rewind guard reads the channels the stage entries name" do
     inst = instance_id()
     seg = seg_identity(inst, "TaskA", "s0")
 
-    :ok =
-      TaskJournal.append_task_committed(inst, 0, 0, [seg], [], [
-        outbox_item(seg, 0, "a"),
-        outbox_item(seg, 1, "b")
-      ])
+    for iter <- 0..2 do
+      channels = if iter == 0, do: [], else: ["out", "audit"]
 
-    :ok = TaskJournal.append_task_committed(inst, 1, 0, [seg], [], [outbox_item(seg, 0, "c")])
+      :ok =
+        TaskJournal.append_task_committed(inst, 0, iter, [ran(seg, {iter, iter}, channels)], [])
 
-    assert :ok = TaskJournal.flush_pending(inst, self())
+      :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [])
+    end
 
-    meta = assert_flushed("a", "0.0")
-    assert meta["flz.cell"] == "#{inst}/TaskA/s0"
-    assert meta["channel"] == "out"
-    assert_flushed("b", "0.1")
-    assert_flushed("c", "1.0")
-    refute_dispatched()
-
-    # Delivery is recorded per entry, naming which entry type it flushed.
-    assert [
-             %{type: :outbox_flushed, task_idx: 0, payload: %{for_type: :task_committed}},
-             %{task_idx: 1}
-           ] = await_markers(inst, 2)
-
-    # An already-flushed task is never re-delivered — a restore re-drive is a no-op.
-    assert TaskJournal.pending_entries(inst) == []
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    refute_dispatched()
-  end
-
-  test "a crash between commit and flush re-drives the outbox with identical keys" do
-    inst = instance_id()
-    seg = seg_identity(inst, "TaskA", "s0")
-
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "once")])
-
-    # The durable state a crash-before-flush leaves: the commit landed, the
-    # flush marker did not. Capture the file at exactly that point.
-    close_journal_writer(inst)
-    path = Paths.journal_path(inst)
-    committed_only = File.read!(path)
-
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    first = assert_flushed("once", "0.0")
-    await_markers(inst, 1)
-
-    # Roll the journal back to the pre-flush bytes (the marker never landed)
-    # and restore: the entry is owed again and re-drives with the SAME key.
-    close_journal_writer(inst)
-    File.write!(path, committed_only)
-
-    assert [%{task_idx: 0}] = TaskJournal.pending_entries(inst)
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    second = assert_flushed("once", "0.0")
-
-    assert first == second
-    # The marker is journaled after the settlement, not with the cast.
-    await_markers(inst, 1)
-    assert TaskJournal.pending_entries(inst) == []
+    assert Enum.sort(TaskJournal.staged_channels_above(inst, 0)) == [{0, "audit"}, {0, "out"}]
+    assert TaskJournal.staged_channels_above(inst, 2) == []
   end
 
   test "the epoch is 0 at first start and stable across respawns" do
@@ -490,69 +440,15 @@ defmodule FlezhaTest.State.TaskJournalTest do
     seg = seg_identity(inst, "TaskA", "s0")
 
     assert TaskJournal.current_epoch(inst) == 0
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [ran(seg, {0, 0})], [])
 
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "x")])
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    assert_flushed("x", "0.0", "0")
-    await_markers(inst, 1)
-
-    # A respawn (writer gone, journal on disk) keeps minting the same epoch, so
-    # every re-driven output keys identically to its original delivery.
+    # A respawn (writer gone, journal on disk) keeps the same epoch.
     close_journal_writer(inst)
-    :ok = TaskJournal.append_task_committed(inst, 1, 0, [seg], [], [outbox_item(seg, 0, "y")])
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    assert_flushed("y", "1.0", "0")
-    await_markers(inst, 2)
+    :ok = TaskJournal.append_task_committed(inst, 1, 0, [ran(seg, {1, 1})], [])
 
     assert TaskJournal.current_epoch(inst) == 0
     assert {:ok, entries} = TaskJournal.read(inst)
     assert Enum.all?(entries, &(&1.epoch == 0))
-  end
-
-  test "a compensation's undo output is journaled and keyed distinctly from the forward output" do
-    inst = instance_id()
-    seg = seg_identity(inst, "TaskA", "s0")
-
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "did")])
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    forward = assert_flushed("did", "0.0")
-    await_markers(inst, 1)
-
-    # The undo of that very output: same tasklet, same cell, same per-task
-    # sequence — only the comp marker keeps its key from colliding.
-    :ok = TaskJournal.append_compensated(inst, 0, 0, [outbox_item(seg, 0, "undo")])
-
-    assert [%{type: :compensated, task_idx: 0}] = TaskJournal.pending_entries(inst)
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    undo = assert_flushed("undo", "0.0.1")
-
-    assert undo["flz.cell"] == forward["flz.cell"]
-    assert undo["flz.seq"] != forward["flz.seq"]
-
-    # The two flush markers are distinct: the forward outbox and the undo outbox
-    # of the SAME tasklet are gated independently.
-    assert [%{payload: %{for_type: :task_committed}}, %{payload: %{for_type: :compensated}}] =
-             await_markers(inst, 2)
-
-    assert TaskJournal.pending_entries(inst) == []
-  end
-
-  test "the frame-size guard covers handoff plus outbox combined" do
-    on_exit(TestHelpers.override_env(:wal_high_watermark_bytes, 1024))
-
-    inst = instance_id()
-    seg = seg_identity(inst, "TaskA", "s0")
-    max = TaskJournal.max_entry_bytes()
-    half = :binary.copy(<<0>>, div(max, 2) + 8)
-
-    # Neither half exceeds the bound alone; together they do.
-    assert {:error, {:oversized_handoff, size, ^max}} =
-             TaskJournal.append_task_committed(inst, 0, 0, [seg], [{1, half}], [
-               outbox_item(seg, 0, half)
-             ])
-
-    assert size > max
-    refute File.exists?(Paths.journal_path(inst))
   end
 
   # No Cell WAL is seeded: the journal is instance-scoped and rides the bind,
@@ -564,9 +460,9 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     # Iteration 0 committed one tasklet and finished; iteration 1 has one
     # tasklet in before the crash. The resume must carry BOTH granularities.
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg_id], [{2, "h0"}])
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [ran(seg_id, {0, 0})], [{2, "h0"}])
     :ok = TaskJournal.append_iter_committed(inst, 0, 3, [{2, "carry"}])
-    :ok = TaskJournal.append_task_committed(inst, 0, 1, [seg_id], [{2, "h"}])
+    :ok = TaskJournal.append_task_committed(inst, 0, 1, [ran(seg_id, {1, 1})], [{2, "h"}])
 
     journal = Commands.task_journal_state(inst)
 
@@ -601,16 +497,16 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # ---------- workflow-loop-rewind ----------
 
   # Three committed iterations (0, 1, 2), each one task that ran on `seg` and
-  # staged one output — the shape every rewind test below rewinds out of.
+  # wrote one record, seq `iter`, with an output on `out`: the shape every
+  # rewind test below rewinds out of.
   defp three_committed_iterations(inst, seg) do
     for iter <- 0..2 do
-      :ok = TaskJournal.append_task_committed(inst, 0, iter, [seg], [], [outbox_item(seg, iter)])
+      :ok =
+        TaskJournal.append_task_committed(inst, 0, iter, [ran(seg, {iter, iter}, ["out"])], [])
+
       :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [{1, "carry#{iter}"}])
     end
   end
-
-  defp outbox_item(seg, seq_in_task),
-    do: %{cell_id: seg, seq_in_task: seq_in_task, channel: "out", payload: "v#{seq_in_task}"}
 
   test "a rewind bumps the epoch, and every later append inherits it" do
     inst = instance_id()
@@ -653,16 +549,16 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert TaskJournal.committed_iterations(inst) == [0, 1]
   end
 
-  test "a rewound iteration's unflushed outbox is no longer owed" do
+  test "a rewound iteration's records are no longer committed" do
     inst = instance_id()
     seg = seg_identity(inst, "TaskA", "s0")
     three_committed_iterations(inst, seg)
 
-    assert Enum.map(TaskJournal.pending_entries(inst), & &1.iter) == [0, 1, 2]
+    assert TaskJournal.committed_records(inst) == %{seg => [{0, 0}, {1, 1}, {2, 2}]}
 
     :ok = TaskJournal.append_rewound(inst, 0)
 
-    assert Enum.map(TaskJournal.pending_entries(inst), & &1.iter) == [0]
+    assert TaskJournal.committed_records(inst) == %{seg => [{0, 0}]}
   end
 
   test "rewind_undo drains as compensations land, and never double-plans" do
@@ -690,7 +586,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     :ok = TaskJournal.append_compensated(inst, 0, 2, [])
 
     # Iteration 1 re-runs under the bumped epoch and commits.
-    :ok = TaskJournal.append_task_committed(inst, 0, 1, [seg], [], [outbox_item(seg, 9)])
+    :ok = TaskJournal.append_task_committed(inst, 0, 1, [ran(seg, {9, 9}, ["out"])], [])
     :ok = TaskJournal.append_iter_committed(inst, 1, 2, [{1, "redone"}])
 
     resume = TaskJournal.restore_state(inst)
@@ -699,8 +595,8 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert resume.rewind_undo == []
     assert TaskJournal.committed_iterations(inst) == [0, 1]
 
-    # Only the re-run's output is owed — the unwound run's is gone for good.
-    assert [%{iter: 0}, %{iter: 1}] = TaskJournal.pending_entries(inst)
+    # Only the re-run's record is committed; the unwound run's is gone for good.
+    assert TaskJournal.committed_records(inst) == %{seg => [{0, 0}, {9, 9}]}
 
     # A second rewind unwinds the re-run, not the undone original: the original's
     # `compensated` entry is newer than its commit, the re-run's commit is newer
@@ -734,7 +630,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # Two tasks and the boundary per iteration, nothing staged: seqs 3i..3i+2.
   defp commit_iterations(inst, seg, range) do
     for iter <- range do
-      :ok = TaskJournal.append_task_committed(inst, 0, iter, [seg], [{1, "h#{iter}"}])
+      :ok = TaskJournal.append_task_committed(inst, 0, iter, [ran(seg)], [{1, "h#{iter}"}])
       :ok = TaskJournal.append_task_committed(inst, 1, iter, [], [])
       :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [{2, "carry#{iter}"}])
     end
@@ -747,7 +643,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     commit_iterations(inst, seg, 0..2)
     # Iteration 3 has one task in before the cut.
-    :ok = TaskJournal.append_task_committed(inst, 0, 3, [seg], [{1, "h3"}])
+    :ok = TaskJournal.append_task_committed(inst, 0, 3, [ran(seg)], [{1, "h3"}])
     assert seqs(inst) == Enum.to_list(0..9)
     full = TaskJournal.restore_state(inst)
 
@@ -767,27 +663,35 @@ defmodule FlezhaTest.State.TaskJournalTest do
     cut_and_await(inst, [8, 9])
   end
 
-  test "a pending outbox entry holds the cut, and goes with its flush" do
+  # The Cell's persisted flush cursor, as its writer would leave it once the
+  # sinks confirmed everything up to `flushed`.
+  defp confirm_through(cell, flushed) do
+    File.mkdir_p!(Path.dirname(Paths.outbox_dedup_path(cell)))
+    :ok = Outbox.write(cell, %{last_persisted_seq: 9, outbox_flushed_seq: flushed, epoch: 0})
+  end
+
+  test "an entry whose record is still owed holds the cut, and goes once the cursor passes it" do
     inst = instance_id()
     cuttable(inst)
+    cell = {inst, "TaskA", "s0"}
     seg = seg_identity(inst, "TaskA", "s0")
 
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "owed")])
+    :ok = TaskJournal.append_task_committed(inst, 0, 0, [ran(seg, {0, 0}, ["out"])], [])
     :ok = TaskJournal.append_iter_committed(inst, 0, 1, [])
-    :ok = TaskJournal.append_task_committed(inst, 0, 1, [seg], [])
+    :ok = TaskJournal.append_task_committed(inst, 0, 1, [ran(seg, {1, 1})], [])
     :ok = TaskJournal.append_iter_committed(inst, 1, 2, [])
 
-    # An owed outbox holds the cut at its entry.
+    # Nothing confirmed: the entry naming record 0 holds the cut.
     cut_and_await(inst, [0, 1, 2, 3])
-    assert [%{seq: 0}] = TaskJournal.pending_entries(inst)
+    assert TaskJournal.committed_records(inst) == %{seg => [{0, 0}, {1, 1}]}
 
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    assert_flushed("owed", "0.0")
-    await_markers(inst, 1)
+    # Record 0 confirmed: the entry naming record 1 holds it next.
+    confirm_through(cell, 0)
+    cut_and_await(inst, [2, 3])
 
-    # The head and the marker after it.
-    cut_and_await(inst, [3, 4])
-    assert TaskJournal.pending_entries(inst) == []
+    confirm_through(cell, 1)
+    cut_and_await(inst, [3])
+    assert TaskJournal.committed_records(inst) == %{}
     assert %{iter: 2, consumed_offset: 2} = TaskJournal.restore_state(inst)
   end
 
@@ -797,7 +701,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     seg = seg_identity(inst, "TaskA", "s0")
 
     for iter <- 0..2 do
-      :ok = TaskJournal.append_task_committed(inst, 0, iter, [seg], [])
+      :ok = TaskJournal.append_task_committed(inst, 0, iter, [ran(seg)], [])
       :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [{1, "carry#{iter}"}])
     end
 
@@ -812,7 +716,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     :ok = TaskJournal.append_compensated(inst, 0, 2, [])
     :ok = TaskJournal.append_compensated(inst, 0, 1, [])
     # Iteration 1 re-runs under the bumped epoch and commits: the new head.
-    :ok = TaskJournal.append_task_committed(inst, 0, 1, [seg], [])
+    :ok = TaskJournal.append_task_committed(inst, 0, 1, [ran(seg)], [])
     :ok = TaskJournal.append_iter_committed(inst, 1, 2, [{1, "redone"}])
 
     cut_and_await(inst, [10])
@@ -846,11 +750,13 @@ defmodule FlezhaTest.State.TaskJournalTest do
     ClassRegistry.put_compensable_ops(inst, [0])
     seg = seg_identity(inst, "TaskA", "s0")
 
-    # seqs: iteration i's task at 2i, its commit at 2i+1; iteration 1's output
-    # is still owed, and the rewind to 1 leaves iteration 2's task to undo.
+    # seqs: iteration i's task at 2i, its commit at 2i+1; iteration i's record
+    # is seq i, confirmed through 0, so iteration 1's is still owed; the rewind
+    # to 1 leaves iteration 2's task to undo.
+    confirm_through({inst, "TaskA", "s0"}, 0)
+
     for iter <- 0..2 do
-      outbox = if iter == 1, do: [outbox_item(seg, 1, "owed")], else: []
-      :ok = TaskJournal.append_task_committed(inst, 0, iter, [seg], [], outbox)
+      :ok = TaskJournal.append_task_committed(inst, 0, iter, [ran(seg, {iter, iter})], [])
       :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [])
     end
 
@@ -861,40 +767,9 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     :ok = TaskJournal.cut(inst, seal: true)
     assert seqs(inst) == [2, 3, 4, 5, 6]
-    assert [%{seq: 2}] = TaskJournal.pending_entries(inst)
+    assert TaskJournal.committed_records(inst) == %{seg => [{1, 1}]}
     assert [%{iter: 2}] = TaskJournal.restore_state(inst).rewind_undo
     assert TaskJournal.committed_iterations(inst) == [1]
     assert %{iter: 2, consumed_offset: 2} = TaskJournal.restore_state(inst)
-  end
-
-  test "the outbox_flushed marker waits for the sink, and a re-entered flush does not re-deliver" do
-    inst = instance_id()
-    seg = seg_identity(inst, "TaskA", "s0")
-
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "held")])
-
-    assert :ok = TaskJournal.flush_pending(inst, self())
-
-    # The hold is taken inside the chain, before the run settles — which is the
-    # order the real dispatcher produces.
-    assert {"held", meta, %{owner: owner}} = next_output()
-    :ok = Outbox.hold(meta)
-    :ok = Outbox.settled(meta)
-
-    # Held by a delivery-guaranteed sink: dispatched is not delivered, so the
-    # marker must not land and the entry is still owed. The reports are casts
-    # to the owning writer; a call to it answers once they are folded.
-    {:ok, writer} = Flezha.State.Supervisor.lookup(owner)
-    _ = :sys.get_state(writer)
-    assert markers(inst) == []
-    assert [%{task_idx: 0}] = TaskJournal.pending_entries(inst)
-
-    # A flush re-entered while the entry is with the chain must not send it twice.
-    assert :ok = TaskJournal.flush_pending(inst, self())
-    refute_dispatched(100)
-
-    :ok = Outbox.confirm(meta)
-    assert [%{task_idx: 0, payload: %{for_type: :task_committed}}] = await_markers(inst, 1)
-    assert TaskJournal.pending_entries(inst) == []
   end
 end

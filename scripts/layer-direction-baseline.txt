@@ -77,9 +77,7 @@ lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManag
 lib/flezha/plugin/provider/operative_forward.ex -> Flezha.Service.HubManager
 lib/flezha/plugin/provider/operative_forward.ex -> Flezha.Service.OperativeManager
 lib/flezha/plugin/provider/operative_forward/forward_worker.ex -> Flezha.Service.OperativeManager
-lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Commands
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
-lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Paths
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Operative.Migration
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.Admin

@@ -39,12 +39,15 @@ defmodule Flezha.State.WalWriter.State do
     :credit_pending,
     :credit_active?,
     :refused_sessions,
-    # Effectively-once outbox: FIFO of effect-record entries awaiting the
-    # fsync-gated `:on_output` dispatch (`%{seq, outputs, consumed_offset}`,
-    # dispatchable once `seq <= outbox_durable_seq`), the flush cursor, the
-    # realign epoch, and the retry timer armed while the operative's
-    # Overwatch is not yet resolvable.
+    # The outbox: FIFO of effect-record entries awaiting the gated
+    # `:on_output` dispatch (`%{seq, outputs, consumed_offset, dlq,
+    # committed?}`, dispatchable once `seq <= outbox_durable_seq` and
+    # committed), what commits an entry (`:record`, its own fsync, a stream
+    # Cell's; or `:stage`, the workflow stage marker naming it), the flush
+    # cursor, the realign epoch, and the retry timer armed while the
+    # operative's Overwatch is not yet resolvable.
     :pending_outbox,
+    :commit_unit,
     :outbox_durable_seq,
     :outbox_flushed_seq,
     :outbox_epoch,
@@ -68,6 +71,9 @@ defmodule Flezha.State.WalWriter.State do
     # Batched appends owed their reply: `{from, reply}` newest first, answered
     # in append order once the records are synced.
     :sync_waiters,
+    # Callers waiting for a record to be durable: `{from, seq}`, each answered
+    # by the sync that makes its seq durable.
+    :durable_waiters,
     # `header => seq` of every record still in the file, for a log whose
     # appends dedup on their header (a record log's barrier).
     # Built from the file on the first keyed append, never for a stream WAL.
@@ -102,6 +108,7 @@ defmodule Flezha.State.WalWriter.State do
           credit_active?: boolean(),
           refused_sessions: MapSet.t(binary()),
           pending_outbox: :queue.queue(map()),
+          commit_unit: :record | :stage,
           outbox_durable_seq: integer(),
           outbox_flushed_seq: integer(),
           outbox_epoch: non_neg_integer(),
@@ -111,6 +118,7 @@ defmodule Flezha.State.WalWriter.State do
           outbox_last_seq: integer(),
           seq_index: SeqIndex.t(),
           sync_waiters: [{GenServer.from(), term()}],
+          durable_waiters: [{GenServer.from(), non_neg_integer()}],
           header_index: %{optional(binary()) => non_neg_integer()} | nil,
           refusal: RecordFrame.refusal() | nil
         }

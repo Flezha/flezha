@@ -459,18 +459,23 @@ The Java SDK SHALL expose user-extensible base classes/interfaces under the cano
 
 ### Requirement: Java SDK implements the effectively-once output tier
 
-The Java SDK SHALL implement the `effectively-once-output` capability. A channel declaration SHALL support `c.effectivelyOnce()`; the runtime SHALL then, for each invocation, buffer the invocation's state changes, plugin outputs, consumed input offset, and (on a dead-letter park) its DLQ entry into ONE `cell_effect_record` frame rather than separate change and output frames.
+The Java SDK SHALL implement the `effectively-once-output` capability. A channel declaration SHALL support `c.effectivelyOnce()`; the runtime SHALL then, for each invocation, buffer the invocation's state changes, plugin outputs, consumed input offset, and (on a dead-letter park) its DLQ entry into ONE `cell_effect_record` frame rather than separate change and output frames. A durable workflow class SHALL NOT declare the tier and SHALL produce the same record for every invocation, with no consumed offset and no park, through the shared core; the Java runtime's part is the same output list it hands the core for a stream tasklet.
 
 The frame SHALL carry the 16-byte state header with `format_id = 2` and `sdk_lang = 2`, and its body SHALL be the postcard encoding of `EffectRecordBody { changes: Vec<Vec<u8>>, outputs: Vec<OutputRecord>, consumed_offset: Option<u64>, dlq: Option<DlqEntryBody>, event_time: u64 }` in exactly that field order, byte-identical to the Rust SDK. The `changes` elements SHALL be the SDK's own change bytes (Kryo, as a Java plain change record carries) — the controller stores and re-ships them without decoding.
 
 The runtime SHALL read the inbound `flz.offset` metadata key to learn the input's offset, and SHALL re-forward replayed inputs on restore. A dead-letter park under the tier SHALL ride inside the effect record rather than emitting a separate `park_payload` frame, so that the park and the consumed-offset advance are one atomic record.
 
-Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-enabled class; a non-keyed plugin channel SHALL fail registration.
+Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-enabled class; a non-keyed plugin channel SHALL fail registration. The runtime SHALL write the `flz.cell`, `flz.seq` and `flz.key` stamps on a keyed plugin output only when the class records no effects: neither under the tier nor for a durable workflow class, whose outputs the controller stamps from the record at flush.
 
 #### Scenario: A tier invocation ships one effect record, not separate frames
 
 - **WHEN** a tier-enabled Tasklet's `run` applies two Changes and emits one keyed output for an input carrying `flz.offset = 7`
 - **THEN** the SDK SHALL ship exactly one `cell_effect_record` frame whose decoded body has `changes.length == 2`, `outputs.length == 1`, and `consumed_offset == 7`; and SHALL NOT ship any `cell_state_change` frame for that invocation
+
+#### Scenario: A durable workflow invocation ships the same record
+
+- **WHEN** a durable Java workflow tasklet's `run` applies one Change and emits one keyed output
+- **THEN** exactly one `cell_effect_record` frame SHALL leave for that cell, with `changes.length == 1`, `outputs.length == 1` and no `consumed_offset`, and its output SHALL carry no `flz.` stamp from the runtime
 
 #### Scenario: Effect-record bytes are byte-identical to the Rust encoder
 
@@ -553,9 +558,9 @@ A replay SHALL NOT lower the event-time high-water mark.
 
 ### Requirement: Java SDK implements the workflow task-journal and TaskCommit handshake
 
-The Java SDK SHALL implement the `workflow-task-journal` capability. At every task barrier of a durable structured workflow class, the SDK SHALL ship `TaskCommit` (tag 28) carrying the tasks that ran and the channel-tagged handoff blobs, and SHALL block on the controller's `TaskCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation.
+The Java SDK SHALL implement the `workflow-task-journal` capability. At every task barrier of a durable structured workflow class, the shared core SHALL ship `TaskCommit` (tag 28) on the SDK's behalf, carrying the cells that ran, each with the seq of its last effect record in the stage and the plugin channels it wrote on, and the channel-tagged handoff blobs, and SHALL await the controller's `TaskCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation. The Java runtime SHALL hand the core each invocation's changes and outputs as it does for a stream tasklet, and the core SHALL settle them into the cell's effect record and send it before the barrier; the runtime SHALL keep no staged output of its own.
 
-The SDK SHALL declare no inter-tasklet codec and SHALL offer no method to declare one: it hands the core bytes, so the core derives the journal codec from the channel's kind. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
+The SDK SHALL declare no inter-tasklet codec and SHALL offer no method to declare one: it hands the core bytes, so the core derives the journal codec from the channel's kind. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top, and their plugin outputs SHALL reach the wire with their channel, key and metadata as an opted-out stream's do.
 
 On resume, the SDK SHALL read the journal state shipped on `AddOperative.task_journal`, SHALL **skip** tasks already recorded as committed, and SHALL seed the next task's batch from the journaled handoff via the channel codec.
 
@@ -569,6 +574,11 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperative.task_jo
 - **WHEN** a durable structured workflow class wires task A into task B and declares nothing about how the value between them is encoded
 - **THEN** registration SHALL succeed, and A's handoff SHALL be journaled at the commit barrier and re-seeded on resume
 
+#### Scenario: A Java workflow tasklet's emit rides its cell's record
+
+- **WHEN** a durable Java workflow tasklet calls `ctx.emitKeyedWithMeta("k", v, Map.of("trace", "t1"))` and reaches its barrier
+- **THEN** the cell's `cell_effect_record` carries the output with channel, key `k` and the metadata, the `TaskCommit` names that record's seq for the cell, and the sink receives the frame with `flz.key` `k` and `trace` once the controller acks the commit
+
 #### Scenario: An opted-out class re-runs from the top
 
 - **WHEN** a workflow class declares `persistenceEnabled() == false` and is resumed after a crash
@@ -578,22 +588,6 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperative.task_jo
 
 - **WHEN** the controller does not answer a `TaskCommit` within 30 seconds
 - **THEN** the SDK SHALL treat the task as terminally failed and SHALL run the compensation plan
-
-### Requirement: Java SDK implements workflow staged commit and the transactional outbox
-
-The Java SDK SHALL implement the `workflow-transactional-outbox` capability. Inside a structured task of a durable workflow class, `ctx.emit` SHALL NOT reach the wire: `WorkflowCollectSink` SHALL buffer `(channel, bytes)` and the buffered outputs SHALL ride the same `TaskCommit` as the journal record, in the `outbox` field (`TaskOutboxItem{cell_id, seq_in_task, channel, payload}`). A failing stage SHALL drop its staged bytes together with the error, so nothing leaks. A transport-less run SHALL keep the direct-emit path.
-
-Compensation output SHALL ride the same handshake with `compensating` set.
-
-#### Scenario: A task's emits are staged, not shipped, until the barrier
-
-- **WHEN** a structured task of a durable workflow class calls `ctx.emit(v)` twice and then reaches its task barrier
-- **THEN** no plugin frame SHALL be sent during the task body, and the `TaskCommit` at the barrier SHALL carry both outputs in its `outbox`
-
-#### Scenario: A failing stage leaks no staged output
-
-- **WHEN** a stage emits once and then throws
-- **THEN** the staged bytes SHALL be dropped with the error and SHALL NOT appear in any subsequent `TaskCommit`
 
 ### Requirement: Java SDK implements the workflow durable loop and suspension
 

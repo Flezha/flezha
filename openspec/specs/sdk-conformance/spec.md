@@ -958,3 +958,34 @@ the coverage report.
   the keyless refusal, the group is rolled back with no member left running, and a second
   attempt is refused before any member starts
 
+### Requirement: A workflow's keyed output is a fixture every manifest carries
+
+Every SDK test app SHALL register `outbox_block_workflow` as a durable workflow whose first
+tasklet emits once on a keyed sink channel with a key and one user metadata pair and commits an
+idempotent change in the same invocation, and whose second tasklet blocks until
+`FLEZHA_WORKFLOW_E2E_RELEASE` is set; every manifest SHALL list it under `workflow` in the
+reference's order. The scenarios that drive it SHALL live in
+`test/system/workflow_crash_resume_e2e_test.exs`, tagged `capability: :workflow` and pinned to
+no runtime, and SHALL assert through the controller: that the first tasklet's Cell WAL holds one
+effect record carrying the change and the output; that the `task_committed` entry names that
+record's seq and channel and carries no payload; that the sink received the output once, after
+the commit's ack, stamped `flz.cell`, `flz.seq = <seq>.0`, `flz.epoch` `0`, `flz.key`, `channel`
+and the metadata pair; and that a rebind with the Cell's flush cursor moved back re-drives the
+same output with identical stamps. A second scenario SHALL raise `FLEZHA_FLUSH_LINGER_MS` on the
+runner and assert, on every host runtime, that the record precedes the entry naming it.
+
+#### Scenario: A workflow output carries its identity on every runtime
+
+- **WHEN** `outbox_block_workflow` is started under any of the seven runtimes with the release set and sent one message
+- **THEN** the sink receives exactly one frame carrying `flz.key`, the metadata pair and `channel`, its `flz.seq` equals the first tasklet's record seq with ordinal `0`, and `flz state journal` shows the stage naming that seq and channel and no `outbox` or `flushes` line
+
+#### Scenario: A crash before the flush re-drives with identical stamps
+
+- **WHEN** the instance is killed after the commit's ack, the Cell's `outbox_flushed_seq` is moved back below the record, and a runner with the release is bound
+- **THEN** the sink receives the output a second time with stamps byte-identical to the first, and the instance completes `ok`
+
+#### Scenario: The record precedes the marker under a long linger
+
+- **WHEN** `outbox_block_workflow` runs on a host runtime with `FLEZHA_FLUSH_LINGER_MS=20000` and the first tasklet commits
+- **THEN** the Cell WAL holds the record before the journal holds `task_committed(0)`, and the entry names that record's seq
+

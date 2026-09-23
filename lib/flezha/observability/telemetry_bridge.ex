@@ -180,8 +180,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     # the SDK observes and the durability counters, not a per-commit event.
     commit_path: [
       [:flezha, :state, :iter_commit],
-      [:flezha, :state, :task_commit],
-      [:flezha, :state, :task_outbox_flush]
+      [:flezha, :state, :task_commit]
     ],
     # The same fact is already a counted slot that IS exported, so a
     # per-occurrence signal would be a second, weaker account of it.

@@ -5,12 +5,15 @@
 //! waits for the next one instead of ending, and a durable run's park
 //! releases it. A stream given the same verdict parks the item at once.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crossbeam::channel::{unbounded, Receiver};
+use flz_transport::service::payloader;
+use flz_transport::transport::FlezhaStream;
 
 use crate::host::{apply_result, HostPayload};
 use crate::poll_core::{EnginePayload, Polled};
@@ -151,19 +154,55 @@ fn effect(verdict: schema::Verdict, bytes: &[u8]) -> schema::ItemEffect {
 
 use crate::test_support::host_class::bind as start;
 
+/// The connection a test's messages ride and the frames the run writes back
+/// on it: an opted-out workflow's plugin outputs leave on the connection their
+/// item came in on, as a stream's do.
+struct Wire {
+    stream: Arc<FlezhaStream>,
+    frames: Receiver<(String, Vec<u8>, HashMap<String, String>)>,
+}
+
+impl Wire {
+    fn new() -> Self {
+        let (stream, controller_end) = stream_pair();
+        let (tx, frames) = unbounded();
+        thread::spawn(move || {
+            let controller_end = FlezhaStream::Unix(controller_end);
+            while let Ok(frame) = payloader::extract_payload(&controller_end) {
+                if tx.send(frame).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { stream, frames }
+    }
+
+    /// The payloads written for workflow `id` until nothing more arrives.
+    fn outputs_of(&self, id: &str) -> Vec<Vec<u8>> {
+        self.frames
+            .try_iter()
+            .chain(std::iter::from_fn(|| {
+                self.frames.recv_timeout(Duration::from_millis(200)).ok()
+            }))
+            .filter(|(payload_id, _, _)| payload_id == id)
+            .map(|(_, payload, _)| payload)
+            .collect()
+    }
+}
+
 /// One message into workflow `id` on its first entry channel.
-fn feed(node: &RunnerNode, id: &str, message: &[u8]) {
+fn feed(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8]) {
     node.operative_dispatch_handle().dispatch(
         id,
         message.to_vec(),
         &Default::default(),
-        stream_pair().0,
+        Arc::clone(&wire.stream),
     );
 }
 
 /// One message into workflow `id` naming `channel`, at input-log `offset`.
 fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
-    let metadata = std::collections::HashMap::from([
+    let metadata = HashMap::from([
         ("channel".to_string(), channel.to_string()),
         ("flz.offset".to_string(), offset.to_string()),
     ]);
@@ -196,23 +235,22 @@ fn await_park(rx: &Receiver<RunnerMessage>, id: &str) -> crate::pb::IterPark {
 }
 
 /// The outputs and the completion `(status, error, result)` of workflow `id`.
-fn drain(rx: &Receiver<RunnerMessage>, id: &str) -> (Vec<Vec<u8>>, (String, String, Vec<u8>)) {
-    let mut outs = Vec::new();
+fn drain(
+    rx: &Receiver<RunnerMessage>,
+    wire: &Wire,
+    id: &str,
+) -> (Vec<Vec<u8>>, (String, String, Vec<u8>)) {
     loop {
         match rx
             .recv_timeout(Duration::from_secs(5))
             .unwrap_or_else(|_| panic!("timed out waiting for workflow {id}"))
         {
-            RunnerMessage::EmitWorkflowOutput {
-                operative_id,
-                payload,
-            } if operative_id == id => outs.push(payload),
             RunnerMessage::EmitWorkflowCompleted {
                 operative_id,
                 status,
                 error,
                 result,
-            } if operative_id == id => return (outs, (status, error, result)),
+            } if operative_id == id => return (wire.outputs_of(id), (status, error, result)),
             _ => {}
         }
     }
@@ -248,13 +286,14 @@ fn a_host_workflow_takes_init_values_as_state_before_its_first_message() {
         .expect("class registers");
     let host = FakeHost::serve(|_| schema::Verdict::Ok);
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-init-1", r#"{"p0":{"budget":100}}"#, 0).is_empty());
     // The state crossed before the bind was answered, and nothing else did.
     assert_eq!(host.applied(), vec![r#"{"budget":100}"#.to_string()]);
 
-    feed(&node, "host-init-1", b"ticket");
-    let (outs, done) = drain(&rx, "host-init-1");
+    feed(&wire, &node, "host-init-1", b"ticket");
+    let (outs, done) = drain(&rx, &wire, "host-init-1");
     assert_eq!(
         outs,
         vec![b"ticket".to_vec()],
@@ -301,9 +340,10 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
         }
     });
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
     assert!(start(&mut node, &id, "host-unread-1", "", 0).is_empty());
 
-    feed(&node, "host-unread-1", b"bad");
+    feed(&wire, &node, "host-unread-1", b"bad");
     spin_until("the unreadable message to be parked", || {
         !parks.lock().expect("park capture poisoned").is_empty()
     });
@@ -318,8 +358,8 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
     assert_eq!(park.identity.1, "in");
     assert_no_completion(&rx, "host-unread-1", Duration::from_millis(300));
 
-    feed(&node, "host-unread-1", b"good");
-    let (outs, done) = drain(&rx, "host-unread-1");
+    feed(&wire, &node, "host-unread-1", b"good");
+    let (outs, done) = drain(&rx, &wire, "host-unread-1");
     assert_eq!(
         outs,
         vec![b"good".to_vec()],
@@ -536,10 +576,11 @@ fn a_host_workflows_released_values_cross_once_for_their_keys() {
     let crossings = Arc::new(Crossings::default());
     let _host = keyed_host(mid, Arc::clone(&crossings), false);
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-keyed-1", "", 0).is_empty());
-    feed(&node, "host-keyed-1", b"a,b,c");
-    let (mut outs, done) = drain(&rx, "host-keyed-1");
+    feed(&wire, &node, "host-keyed-1", b"a,b,c");
+    let (mut outs, done) = drain(&rx, &wire, "host-keyed-1");
     outs.sort();
     assert_eq!(done.0, "ok");
     assert_eq!(
@@ -578,6 +619,11 @@ fn a_resumed_host_workflow_crosses_its_journaled_handoff() {
         .expect("encodes"),
     };
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    // The journal's handoff re-seeds on the secondary stream, which is where
+    // the stages it feeds write their outputs.
+    let _sink = state_sink::test_guard();
+    state_sink::set_secondary_stream(Some(Arc::clone(&wire.stream)));
     let mut errors = Vec::new();
     crate::command::CommandAction::handle(
         &crate::pb::AddOperative {
@@ -600,13 +646,14 @@ fn a_resumed_host_workflow_crosses_its_journaled_handoff() {
     assert!(errors.is_empty(), "{errors:?}");
 
     // The committed root is skipped; the re-forwarded message resumes the pass.
-    feed(&node, "host-keyed-resume", b"ignored");
-    let (mut outs, done) = drain(&rx, "host-keyed-resume");
+    feed(&wire, &node, "host-keyed-resume", b"ignored");
+    let (mut outs, done) = drain(&rx, &wire, "host-keyed-resume");
     outs.sort();
     assert_eq!(done.0, "ok");
     assert_eq!(outs, [b"k:x:x".to_vec(), b"k:y:y".to_vec()]);
     assert_eq!(live_keys(&node, "host-keyed-resume"), ["x", "y"]);
     assert_eq!(*crossings.0.lock().unwrap(), [2]);
+    state_sink::set_secondary_stream(None);
 }
 
 #[test]
@@ -622,10 +669,11 @@ fn a_crossing_the_host_refuses_fails_the_stage_and_parks_nothing() {
     let crossings = Arc::new(Crossings::default());
     let _host = keyed_host(mid, Arc::clone(&crossings), true);
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-keyed-refused", "", 0).is_empty());
-    feed(&node, "host-keyed-refused", b"a");
-    let (outs, done) = drain(&rx, "host-keyed-refused");
+    feed(&wire, &node, "host-keyed-refused", b"a");
+    let (outs, done) = drain(&rx, &wire, "host-keyed-refused");
     assert!(outs.is_empty());
     assert_eq!(done.0, "error");
     assert!(done.1.contains("no key for that"), "{}", done.1);
@@ -737,18 +785,15 @@ fn timed_host(nows: Arc<Mutex<Vec<Option<u64>>>>) -> FakeHost {
 }
 
 /// Outputs of workflow `id` until `count` arrived.
-fn outputs(rx: &Receiver<RunnerMessage>, id: &str, count: usize) -> Vec<Vec<u8>> {
+fn outputs(wire: &Wire, id: &str, count: usize) -> Vec<Vec<u8>> {
     let mut outs = Vec::new();
     while outs.len() < count {
-        match rx
+        let (payload_id, payload, _) = wire
+            .frames
             .recv_timeout(Duration::from_secs(5))
-            .unwrap_or_else(|_| panic!("workflow {id} released {outs:?} and then nothing"))
-        {
-            RunnerMessage::EmitWorkflowOutput {
-                operative_id,
-                payload,
-            } if operative_id == id => outs.push(payload),
-            _ => {}
+            .unwrap_or_else(|_| panic!("workflow {id} released {outs:?} and then nothing"));
+        if payload_id == id {
+            outs.push(payload);
         }
     }
     outs
@@ -757,7 +802,7 @@ fn outputs(rx: &Receiver<RunnerMessage>, id: &str, count: usize) -> Vec<Vec<u8>>
 #[test]
 fn a_host_workflows_entry_crosses_for_its_event_time_and_is_dispatched_at_it() {
     let _env = crate::runner::env_test_guard();
-    let (tx, rx) = unbounded::<RunnerMessage>();
+    let (tx, _rx) = unbounded::<RunnerMessage>();
     crate::runner::install_reconnect_trigger(tx);
     let id = format!("host_wf_event_time_{}", std::process::id());
     crate::host::register_host_class_json(timed_json(&id, "event_time").as_bytes())
@@ -765,10 +810,11 @@ fn a_host_workflows_entry_crosses_for_its_event_time_and_is_dispatched_at_it() {
     let nows = Arc::new(Mutex::new(Vec::new()));
     let _host = timed_host(Arc::clone(&nows));
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-et-1", "", 0).is_empty());
-    feed(&node, "host-et-1", b"1234");
-    assert_eq!(outputs(&rx, "host-et-1", 1), [b"1234".to_vec()]);
+    feed(&wire, &node, "host-et-1", b"1234");
+    assert_eq!(outputs(&wire, "host-et-1", 1), [b"1234".to_vec()]);
     assert_eq!(
         *nows.lock().unwrap(),
         [Some(1234)],
@@ -779,18 +825,19 @@ fn a_host_workflows_entry_crosses_for_its_event_time_and_is_dispatched_at_it() {
 #[test]
 fn a_host_workflow_tasklets_timer_fires_into_a_pass_of_its_own() {
     let _env = crate::runner::env_test_guard();
-    let (tx, rx) = unbounded::<RunnerMessage>();
+    let (tx, _rx) = unbounded::<RunnerMessage>();
     crate::runner::install_reconnect_trigger(tx);
     let id = format!("host_wf_timer_{}", std::process::id());
     crate::host::register_host_class_json(timed_json(&id, "wall").as_bytes())
         .expect("class registers");
     let _host = timed_host(Arc::new(Mutex::new(Vec::new())));
     let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
 
     assert!(start(&mut node, &id, "host-timer-1", "", 0).is_empty());
-    feed(&node, "host-timer-1", b"arm");
+    feed(&wire, &node, "host-timer-1", b"arm");
     assert_eq!(
-        outputs(&rx, "host-timer-1", 2),
+        outputs(&wire, "host-timer-1", 2),
         [b"arm".to_vec(), b"fired".to_vec()],
         "the firing ran with no second message"
     );

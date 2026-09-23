@@ -5,13 +5,15 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   decodes and acks it once the batch holding the record has synced.
 
   The reader forwards and returns, so a commit storm never queues a ping, a
-  stop, a park or a compaction behind disk I/O. Appends are issued without
-  waiting: the in-flight request collection IS the set of acks owed.
+  stop, a park or a compaction behind disk I/O. Every wait is issued without
+  blocking: the in-flight request collection IS the set of answers owed.
 
-  Invariant: journal-then-ack. The ack carries the append's outcome in its
-  `error` field (empty = durable) and gates the post-ack work — the outbox
-  flush, and for an iteration commit the boundary snapshot, the input-log
-  release and the journal cut. The ack itself is written by the channel, the one
+  Invariant: records, then journal, then ack. A stage barrier names the effect
+  records its Cells wrote; the entry is appended only once each is durable on
+  its Cell's writer, and the ack carries the append's outcome in its `error`
+  field (empty = durable). The ack gates the post-ack work: releasing the
+  named records' outputs, and for an iteration commit the input-log release
+  and the journal cut. The ack itself is written by the channel, the one
   process that writes control frames.
   """
 
@@ -19,15 +21,10 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   require Logger
 
-  alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
-  alias Flezha.State.Commands
   alias Flezha.State.{DurabilityTier, TaskJournal}
-  alias Flezha.State.Paths
-
-  # Re-attempt cadence for a journaled outbox whose operative is not bound yet
-  # (mirrors the stream outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
 
   def start_link({namespace, runner_id}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id},
@@ -52,23 +49,29 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   @impl true
   def init({namespace, runner_id}) do
-    {:ok, %{namespace: namespace, runner_id: runner_id, reqids: :gen_server.reqids_new()}}
+    {:ok,
+     %{
+       namespace: namespace,
+       runner_id: runner_id,
+       reqids: :gen_server.reqids_new(),
+       waiting: %{}
+     }}
   end
 
-  # The append is issued, not awaited; an entry refused before the write (an
-  # oversized payload) is acked with its error at once.
+  # A barrier whose first copy is still waiting on its records is a re-send:
+  # the one wait answers both. One naming records waits for each to be durable
+  # before its entry is appended; any other is appended at once.
   @impl true
   def handle_cast({:commit, reference_id, frame}, state) do
-    commit = decode(frame, state)
+    if Map.has_key?(state.waiting, reference_id) do
+      {:noreply, state}
+    else
+      commit = decode(frame, state)
 
-    case TaskJournal.append_async(
-           commit.operative_id,
-           commit.barrier,
-           state.reqids,
-           {reference_id, commit}
-         ) do
-      {:ok, reqids} -> {:noreply, %{state | reqids: reqids}}
-      {:error, _} = error -> {:noreply, settle(state, reference_id, commit, error)}
+      case commit.records do
+        [] -> {:noreply, append(state, reference_id, commit)}
+        records -> {:noreply, await_records(state, reference_id, commit, records)}
+      end
     end
   end
 
@@ -86,19 +89,28 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   def handle_info({:commit_shipped, reference_id, commit, ship}, state),
     do: {:noreply, ack(state, reference_id, commit, ship)}
 
-  # Retry a journaled outbox whose operative was not bound when the flush was
-  # first attempted. The journal is the source of truth, so the retry simply
-  # re-runs the same flush; it stops when nothing is owed.
-  def handle_info({:task_outbox_retry, operative_id}, state) do
-    flush_task_outbox(operative_id)
-    {:noreply, state}
+  # The ack deadline elapsed with a named record still not durable.
+  def handle_info({:records_overdue, reference_id}, state) do
+    case Map.fetch(state.waiting, reference_id) do
+      {:ok, %{owed: owed}} ->
+        [{cell_id, seq} | _] = Enum.sort(owed)
+
+        {:noreply,
+         records_failed(state, reference_id, TaskJournal.record_not_durable(cell_id, seq))}
+
+      :error ->
+        {:noreply, state}
+    end
   end
 
-  # A journal writer's answer — `{:ok, seq}` or `{:duplicate, seq}` once the
-  # record is synced, or the writer's exit, which the monitored request reports
-  # the same way.
+  # A Cell writer's answer to a record wait, or a journal writer's to an
+  # append (`{:ok, seq}` or `{:duplicate, seq}` once the record is synced),
+  # or either writer's exit, which the monitored request reports the same way.
   def handle_info(msg, state) do
     case :gen_server.check_response(msg, state.reqids, true) do
+      {answer, {:record, reference_id, cell_id, seq}, reqids} ->
+        {:noreply, record_answered(%{state | reqids: reqids}, reference_id, cell_id, seq, answer)}
+
       {{:reply, _synced}, {reference_id, commit}, reqids} ->
         {:noreply, settle(%{state | reqids: reqids}, reference_id, commit, :ok)}
 
@@ -111,6 +123,78 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         )
 
         {:noreply, state}
+    end
+  end
+
+  # One wait per named record, on its Cell's writer; the deadline is the one
+  # the SDK re-sends on. A Cell whose writer cannot be reached fails the
+  # barrier at once.
+  defp await_records(state, reference_id, commit, records) do
+    Enum.reduce_while(records, {:ok, state.reqids}, fn {cell_id, _first, seq}, {:ok, reqids} ->
+      label = {:record, reference_id, cell_id, seq}
+
+      case TaskJournal.await_record_async(cell_id, seq, reqids, label) do
+        {:ok, reqids} -> {:cont, {:ok, reqids}}
+        {:error, reason} -> {:halt, reason}
+      end
+    end)
+    |> case do
+      {:ok, reqids} ->
+        timer =
+          Process.send_after(
+            self(),
+            {:records_overdue, reference_id},
+            Durations.get(:sdk_commit_ack_ms)
+          )
+
+        owed = MapSet.new(records, fn {cell_id, _first, seq} -> {cell_id, seq} end)
+        wait = %{commit: commit, owed: owed, timer: timer}
+        %{state | reqids: reqids, waiting: Map.put(state.waiting, reference_id, wait)}
+
+      reason ->
+        settle(state, reference_id, commit, {:error, reason})
+    end
+  end
+
+  defp record_answered(state, reference_id, cell_id, seq, answer) do
+    case {Map.fetch(state.waiting, reference_id), answer} do
+      # A wait the barrier no longer holds: it failed, or its deadline passed.
+      {:error, _answer} ->
+        state
+
+      {{:ok, wait}, {:reply, {:ok, _seq}}} ->
+        owed = MapSet.delete(wait.owed, {cell_id, seq})
+
+        if MapSet.size(owed) == 0 do
+          Process.cancel_timer(wait.timer)
+          state = %{state | waiting: Map.delete(state.waiting, reference_id)}
+          append(state, reference_id, wait.commit)
+        else
+          put_in(state.waiting[reference_id].owed, owed)
+        end
+
+      {{:ok, _wait}, _refused_or_gone} ->
+        records_failed(state, reference_id, TaskJournal.record_not_durable(cell_id, seq))
+    end
+  end
+
+  defp records_failed(state, reference_id, reason) do
+    {%{commit: commit, timer: timer}, waiting} = Map.pop(state.waiting, reference_id)
+    Process.cancel_timer(timer)
+    settle(%{state | waiting: waiting}, reference_id, commit, {:error, reason})
+  end
+
+  # The append is issued, not awaited; an entry refused before the write (an
+  # oversized payload) is acked with its error at once.
+  defp append(state, reference_id, commit) do
+    case TaskJournal.append_async(
+           commit.operative_id,
+           commit.barrier,
+           state.reqids,
+           {reference_id, commit}
+         ) do
+      {:ok, reqids} -> %{state | reqids: reqids}
+      {:error, _} = error -> settle(state, reference_id, commit, error)
     end
   end
 
@@ -173,15 +257,13 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp status(:ok), do: :ok
   defp status({:error, _}), do: :error
 
-  # Task-boundary commit (workflow-task-journal + workflow-transactional-outbox):
-  # ONE `task_committed` record — cells ran, handoff, AND the tasklet's
-  # staged outbox — acked once durable. The ack IS the durable point the driver
-  # gates the next tasklet on, and the point past which the staged output may
-  # finally be delivered: the flush runs AFTER it, and the next tasklet is
-  # free to run while the flush lands (the chain hands data forward through the
-  # handoff, never through the sink). `compensating` marks the undo twin: the
-  # same handshake carrying a compensation hook's staged undo output, journaled
-  # as a `compensated` entry.
+  # Task-boundary commit (workflow-task-journal): ONE `task_committed` entry
+  # (the Cells the stage ran, each with the records it wrote, and the handoff),
+  # appended once those records are durable and acked once the entry is. The
+  # ack IS the durable point the driver gates the next tasklet on, and the
+  # point past which the named records' outputs may be delivered: their Cells'
+  # writers release them after it. `compensating` marks the undo twin, the
+  # records a compensation hook wrote, journaled as a `compensated` entry.
   defp decode(%RunnerCommands.TaskCommit{} = commit, state) do
     %RunnerCommands.TaskCommit{
       operative_id: operative_id,
@@ -189,36 +271,29 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       iter: iter,
       cells_ran: cells_ran,
       handoff: handoff,
-      outbox: outbox,
       compensating: compensating,
       completes: completes,
       result: result,
       trigger: trigger
     } = commit
 
-    outbox =
-      Enum.map(outbox, fn %RunnerCommands.TaskOutboxItem{} = item ->
-        %{
-          cell_id: item.cell_id,
-          seq_in_task: item.seq_in_task,
-          channel: item.channel,
-          payload: item.payload
-        }
-      end)
+    cells = Enum.map(cells_ran, &committed_cell/1)
+    records = TaskJournal.record_ranges(cells)
 
     barrier =
       if compensating,
-        do: {:compensated, task_idx, iter, outbox},
+        do: {:compensated, task_idx, iter, cells},
         else:
-          {:task_committed, task_idx, iter, cells_ran, handoff_items(handoff), outbox,
+          {:task_committed, task_idx, iter, cells, handoff_items(handoff),
            completion(completes, result), trigger(trigger)}
 
     %{
       operative_id: operative_id,
       barrier: barrier,
+      records: records,
       telemetry:
         {[:flezha, :state, :task_commit],
-         %{count: 1, handoff_items: length(handoff), outbox_items: length(outbox)},
+         %{count: 1, handoff_items: length(handoff), cells: length(cells)},
          %{
            namespace: state.namespace,
            operative_id: operative_id,
@@ -229,7 +304,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       response:
         {:task_commit_response,
          %RunnerCommands.TaskCommitResponse{operative_id: operative_id, task_idx: task_idx}},
-      post: fn -> flush_task_outbox(operative_id) end
+      post: fn -> TaskJournal.release_records(records) end
     }
   end
 
@@ -237,14 +312,11 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # ONE `iter_committed(iter, consumed_offset)` record — with the iteration's
   # terminal handoff, so a crash can re-seed the next iteration — then the ack.
   # Everything after the ack is cleanup the commit does not depend on: the
-  # boundary snapshot (so a rehydrate loads iteration-N state instead of
-  # replaying the WAL tail), the iteration's staged outbox, the report of the
-  # input it consumed into the input log's watermark (whose retention sweep
-  # then reclaims the prefix), and the cut of the journal prefix the fold no
-  # longer needs. A failure in any of them costs work, never correctness — the
-  # iteration is already committed. The flush runs here, in journal order; the
-  # cuts are the writers' to run, so this process never waits on a file
-  # rewrite.
+  # report of the input it consumed into the input log's watermark (whose
+  # retention sweep then reclaims the prefix) and the cut of the journal prefix
+  # the fold no longer needs. A failure in either costs work, never
+  # correctness: the iteration is already committed. The cuts are the
+  # writers' to run, so this process never waits on a file rewrite.
   defp decode(%RunnerCommands.IterCommit{} = commit, state) do
     %RunnerCommands.IterCommit{
       operative_id: operative_id,
@@ -256,13 +328,12 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       entry_channel: entry_channel
     } = commit
 
-    runner_id = state.runner_id
-
     %{
       operative_id: operative_id,
       barrier:
         {:iter_committed, iter, consumed_offset, entry_channel, handoff_items(handoff),
          completion(completes, result)},
+      records: [],
       telemetry:
         {[:flezha, :state, :iter_commit], %{count: 1},
          %{
@@ -276,13 +347,19 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         {:iter_commit_response,
          %RunnerCommands.IterCommitResponse{operative_id: operative_id, iter: iter}},
       post: fn ->
-        snapshot_iteration_boundary(runner_id, operative_id)
-        flush_task_outbox(operative_id)
         TaskJournal.release_input(operative_id, consumed_offset)
         TaskJournal.cut(operative_id)
       end
     }
   end
+
+  defp committed_cell(%RunnerCommands.CommittedCell{} = cell),
+    do: %{
+      cell_id: cell.cell_id,
+      first_seq: cell.first_seq || cell.seq,
+      seq: cell.seq,
+      channels: cell.channels
+    }
 
   defp handoff_items(handoff) do
     Enum.map(handoff, fn %RunnerCommands.TaskHandoffItem{channel_id: cid, payload: bytes} ->
@@ -301,50 +378,4 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       kind: if(trigger.event_time, do: :event_time, else: :processing_time),
       scheduled_at: trigger.scheduled_at
     }
-
-  # Boundary snapshot: ask the SDK to compact every Cell of the instance, so a
-  # rehydrate restores iteration-N state from a snapshot instead of replaying the
-  # whole WAL. Off this process: `CompactCell` is dispatched through
-  # `send_control`, a call into the channel whose reader's frames feed this
-  # process; the reply must not wait on an ack this process owes. Best-effort
-  # besides: a failed or dropped compaction only means the restore falls back to
-  # WAL replay, which the Watchdog's own size/age triggers will re-attempt.
-  defp snapshot_iteration_boundary(runner_id, operative_id) do
-    cells = Paths.cells_of(operative_id)
-
-    Task.start(fn -> Enum.each(cells, &compact_cell(runner_id, &1)) end)
-  end
-
-  defp compact_cell(runner_id, cell_id) do
-    case Commands.dispatch_compact_cell(runner_id, cell_id) do
-      {:ok, _ref} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.debug(
-          "[control_channel] boundary snapshot skipped for #{inspect(cell_id)}: " <>
-            "#{inspect(reason)} — rehydrate falls back to WAL replay"
-        )
-    end
-  end
-
-  # Journal-driven flush: everything this instance owes, in journal order, with
-  # the `outbox_flushed` marker written per entry after delivery. An unbound
-  # operative (cold-boot re-drive before the bind lands) retries on a timer;
-  # the journal still owes the entries, so nothing is dropped either way.
-  defp flush_task_outbox(operative_id) do
-    case TaskJournal.flush_pending(operative_id) do
-      :ok ->
-        :ok
-
-      {:error, :no_overwatch} ->
-        Process.send_after(
-          self(),
-          {:task_outbox_retry, operative_id},
-          Backoff.arm(:task_outbox_retry, 1, operative_id)
-        )
-
-        :ok
-    end
-  end
 end

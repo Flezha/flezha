@@ -744,8 +744,17 @@ stream operative's Cell set, held through the one module `Flezha.SDK.Operative` 
 through: single and static Cells prewarmed at start, a keyed Cell minted on the first value of
 a pass addressed to its key, every value reaching its Cells through the same per-mode target
 resolution the stream operative routes with, one barrier queued behind each Cell the stage
-handed a value to, and the stage done when those reply. A stage's record SHALL name the Cells
-it dispatched to, by identity, whether or not they emitted; its `TaskCommit.cells_ran`, its
+handed a value to, and the stage done when those reply. Every stage Cell SHALL be started with
+the same ctx facts a stream Cell gets from its node's sink routes (`channel`, `keyed_sink?`,
+`key_required?`), so `Flezha.SDK.Ctx.emit_keyed/3` and `emit_with_meta/3` answer in a workflow
+tasklet exactly as in a stream tasklet. A durable class's Cell SHALL capture each sink output
+into its invocation's effect record, unstamped, through the same sink leaf and the same record
+path a tier stream Cell uses, and SHALL ship the record on its own record stream before the
+stage's barrier; the driver SHALL keep no outbox of its own, and a class that journals nothing
+SHALL route its sink outputs to the wire with their channel, key and metadata as a
+non-persistent stream Cell does. A stage's record SHALL name the Cells
+it dispatched to, by identity, whether or not they emitted, each with the seq of its last effect
+record in the stage and the sink channels it wrote on; its `TaskCommit.cells_ran`, its
 intent markers and its undo SHALL read that record, so the undo runs on exactly the Cells that
 ran and on no declared Cell that received nothing. A restore naming a keyed Cell SHALL
 materialise it through the same lookup a stream's restore uses, refusing past the cap, and the
@@ -761,8 +770,7 @@ out of the Cell's records and its timestamp in the Cell's pending set, un-armed,
 releases it on the stage's acknowledgement, and the driver SHALL drop from a rebound Cell's
 restored timers every firing the journal records committed. At a park the driver SHALL read
 each Cell's earliest pending processing-time timer and ship the minimum as the wake deadline. Each stage
-SHALL be committed durably before the next begins, its plugin-bound output SHALL be staged into
-that commit rather than shipped, and the class's leaf and compensable positions SHALL be
+SHALL be committed durably before the next begins, and the class's leaf and compensable positions SHALL be
 declared to the controller in the `AddOperative` response.
 
 #### Scenario: A structured class is refused for every fault at once
@@ -796,12 +804,20 @@ declared to the controller in the `AddOperative` response.
   while a third declared Cell of that tasklet that received no value is neither named nor
   compensated
 
-#### Scenario: A stage's plugin output reaches nothing before its commit is durable
+#### Scenario: A workflow tasklet emits to a keyed sink as a stream tasklet does
 
-- **WHEN** a tasklet on a hybrid channel emits while the class journals
-- **THEN** the output is carried in that stage's `TaskCommit` outbox and reaches the plugin only
-  after the controller has journalled and acknowledged the commit, and a class that journals
-  nothing stages none
+- **WHEN** a durable workflow tasklet wired `into(Emitter) |> named("out") |> keyed() |> sink()` calls `Ctx.emit_keyed(ctx, "k", value)` and then `Ctx.emit(ctx, value)`
+- **THEN** the first answers `:ok` and the second `{:error, {:key_required_on_keyed_channel, "out"}}`, exactly as under `use Flezha.SDK.StreamOperative`
+
+#### Scenario: A stage's sink output rides its Cell's record and waits for the commit
+
+- **WHEN** a tasklet on a sink channel emits with `%{"tag" => "a"}` while the class journals
+- **THEN** the Cell's effect record for that invocation carries channel `out`, the key, metadata `[{"tag", "a"}]` and the payload with no `flz.` key, the record is on the Cell's stream before the stage's `TaskCommit`, the `TaskCommit` names that record's seq for the Cell, and the sink receives the frame with `flz.cell`, `flz.seq`, `flz.key` and `tag` only after the controller acks the commit
+
+#### Scenario: A class that journals nothing sends its output to the wire
+
+- **WHEN** a workflow class with `persistence_enabled: false` emits on its sink
+- **THEN** the frame leaves on the wire with `channel`, the key and the metadata during the pass, and nothing of it is dropped with the iteration
 
 #### Scenario: A tasklet ends its workflow
 

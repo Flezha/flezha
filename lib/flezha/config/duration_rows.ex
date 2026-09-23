@@ -249,7 +249,7 @@ defmodule Flezha.Config.DurationRows do
     {:data_heartbeat_ms, :ms, 10_000,
      env: "FLEZHA_DATA_HEARTBEAT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     {:sdk_commit_ack_ms, :ms, 30_000,
-     env: "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
+     key: true, env: "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     # A call into one of the runner's own control processes: the RunnerServer,
     # an Operative, a local run. None of them runs author code on the answering
     # clause, so a wait here is a wedged process rather than a busy one.

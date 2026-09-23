@@ -7,11 +7,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::compensation::{CellRun, StagedOutput};
+use super::compensation::{CellRun, RecordSpan};
 use super::instance::{FiringKey, Value};
 use super::run::Run;
 use super::WorkflowError;
-use crate::cell::CellSlot;
 use crate::channel::ChannelId;
 use crate::pb::command_request::Command;
 
@@ -31,10 +30,9 @@ pub(super) fn ack_timeout() -> Duration {
     ))
 }
 
-/// `TaskCommit` for a completed stage: its handoff through the output
-/// channel's codec, its Cells' staged plugin output as the outbox, the
-/// completion it asked for, and on a timer-fed pass's root the firing that
-/// opened it.
+/// `TaskCommit` for a completed stage: each Cell it ran with the records it
+/// wrote, its handoff through the output channel's codec, the completion it
+/// asked for, and on a timer-fed pass's root the firing that opened it.
 pub(super) fn task_frame(
     r: &Run<'_>,
     node: usize,
@@ -55,13 +53,9 @@ pub(super) fn task_frame(
         iter,
         cells_ran: cells
             .iter()
-            .map(|run| run.cell.cell_identity.as_ref().clone())
+            .map(|run| RecordSpan::committed_cell(&run.cell, run.record.as_ref()))
             .collect(),
         handoff,
-        outbox: cells
-            .iter()
-            .flat_map(|run| outbox_items(&run.cell, &run.staged))
-            .collect(),
         compensating: false,
         completes: completion.is_some(),
         result: completion.unwrap_or_default(),
@@ -108,13 +102,12 @@ pub(super) fn iteration_frame(
     }))
 }
 
-/// One tasklet's undo record, carrying what its hooks staged.
+/// One tasklet's undo entry, naming the records its hooks wrote.
 pub(super) fn undo_frame(
     r: &Run<'_>,
     node: usize,
     iter: u32,
-    cells_ran: Vec<Vec<u8>>,
-    outbox: Vec<crate::pb::TaskOutboxItem>,
+    cells_ran: Vec<crate::pb::CommittedCell>,
 ) -> Command {
     Command::TaskCommit(crate::pb::TaskCommit {
         operative_id: r.inst.instance_id.to_string(),
@@ -122,7 +115,6 @@ pub(super) fn undo_frame(
         iter,
         cells_ran,
         handoff: Vec::new(),
-        outbox,
         compensating: true,
         completes: false,
         result: Vec::new(),
@@ -163,25 +155,5 @@ fn encode_handoff(
                     ))
                 })
         })
-        .collect()
-}
-
-/// One Cell's staged plugin output as outbox entries, keyed by its wire
-/// identity and emit order.
-pub(super) fn outbox_items(
-    slot: &Arc<CellSlot>,
-    staged: &[StagedOutput],
-) -> Vec<crate::pb::TaskOutboxItem> {
-    staged
-        .iter()
-        .enumerate()
-        .map(
-            |(seq_in_task, (channel, payload))| crate::pb::TaskOutboxItem {
-                cell_id: slot.cell_identity.as_ref().clone(),
-                seq_in_task: seq_in_task as u32,
-                channel: channel.clone(),
-                payload: payload.clone(),
-            },
-        )
         .collect()
 }

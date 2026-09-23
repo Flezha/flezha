@@ -150,7 +150,7 @@ defmodule Flezha.Operative.Replay do
 
     spawn(fn ->
       :ok = adopt_foreign_state(operative_opts, operative_class)
-      replay_persisted_cells(state.builder.kind, operative_class, runner_id, overwatch)
+      replay_persisted_cells(operative_class, runner_id, overwatch)
     end)
 
     :ok
@@ -186,15 +186,7 @@ defmodule Flezha.Operative.Replay do
 
   # Bind-time restore follows the class's persistence switch, for either kind;
   # for a workflow it IS its crash-resume.
-  defp replay_persisted_cells(kind, operative_class, runner_id, overwatch) do
-    # Transactional outbox re-drive (workflow-transactional-outbox): a tasklet
-    # journaled `task_committed` (or `compensated`) whose outbox never reached the
-    # plugins owes that output. Re-drive it — with the original keys — before the
-    # resumed run advances, so a crash between commit and flush loses nothing.
-    if kind == :workflow do
-      _ = TaskJournal.flush_pending(operative_class, overwatch)
-    end
-
+  defp replay_persisted_cells(operative_class, runner_id, overwatch) do
     # Awaited, not fire-and-forget: the reply carries whether the SDK had to
     # migrate records from an older schema version, and the controller answers
     # that with a compaction. This already runs off-process (the enumeration
@@ -202,7 +194,7 @@ defmodule Flezha.Operative.Replay do
     # concurrently rather than serialising a large rebind.
     refusals =
       restorable_cells(operative_class)
-      |> Flezha.Parallel.map(&await_restore(runner_id, &1),
+      |> Flezha.Parallel.map(&restore_cell(runner_id, &1),
         max_concurrency: restore_concurrency()
       )
       |> Enum.filter(&match?({:error, _}, &1))
@@ -216,6 +208,35 @@ defmodule Flezha.Operative.Replay do
 
     :ok
   end
+
+  # Starting the writer replays its WAL scan: it arms the outbox re-drive of
+  # what the Cell's records still owe the sinks, and repopulates the Cell's
+  # durable consumed-offset watermark.
+  defp restore_cell(runner_id, cell_id) do
+    _ = Flezha.State.Supervisor.find_or_start(cell_id)
+    await_restore(runner_id, cell_id)
+  end
+
+  @doc """
+  Re-derive what a durable workflow's running Cell writers hold from its
+  journal, before the bound runner writes anything newer. A writer still
+  running from before this bind holds outputs of stages the journal may never
+  name (an attempt the rebound runner interrupted, an iteration a rewind
+  unwound), and drops them; a writer that is not running derives the same when
+  it boots.
+  """
+  @spec seed_workflow_outboxes(Overwatch.t()) :: :ok
+  def seed_workflow_outboxes(%Overwatch{durable_workflow: true} = state) do
+    operative_class = Overwatch.operative_class(state)
+    committed = TaskJournal.committed_records(operative_class)
+
+    for writer <- Flezha.State.Supervisor.live_writers(operative_class),
+        do: WalWriter.seed_commits(writer, committed)
+
+    :ok
+  end
+
+  def seed_workflow_outboxes(%Overwatch{}), do: :ok
 
   @doc """
   Await one Cell's `RestoreInitState` and report a decisive verdict.
@@ -294,7 +315,7 @@ defmodule Flezha.Operative.Replay do
   `workflow-operative-durability`).
 
   `0` for a fresh spawn and for a class whose persistence is off. Matches the
-  frames `replay_persisted_cells/4` ships (same enumeration +
+  frames `replay_persisted_cells/3` ships (same enumeration +
   `has_persisted_state?` filter); only a workflow's run waits on it.
   """
   @spec resume_cell_count(binary()) :: non_neg_integer()
@@ -317,11 +338,7 @@ defmodule Flezha.Operative.Replay do
       |> Overwatch.operative_class()
       |> restorable_cells()
       |> Enum.find_value(fn cell_id ->
-        # Starting the writer replays its WAL scan: arms the outbox re-drive
-        # and repopulates the Cell's durable consumed-offset watermark.
-        _ = Flezha.State.Supervisor.find_or_start(cell_id)
-
-        case await_restore(state.runner_id, cell_id) do
+        case restore_cell(state.runner_id, cell_id) do
           :ok -> nil
           {:error, reason} -> reason
         end

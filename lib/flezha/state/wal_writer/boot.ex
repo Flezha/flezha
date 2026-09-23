@@ -7,10 +7,13 @@ defmodule Flezha.State.WalWriter.Boot do
   I/O, and `open/1` does the mkdir, the open, the torn-tail scan and the
   restart re-drive — every durable effect record above the flush cursor
   re-entering the outbox with identical identity, so a stale cursor widens the
-  re-drive and never skips it.
+  re-drive and never skips it. A durable workflow Cell's writer holds each
+  re-driven entry until its instance's journal names it, and drops the ones
+  the journal says never committed.
   """
 
-  alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex}
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex, TaskJournal}
   alias Flezha.State.WalWriter.{Admission, Epoch, Settlement, State}
 
   @doc "The struct a writer starts from, before any disk I/O."
@@ -45,6 +48,7 @@ defmodule Flezha.State.WalWriter.Boot do
       credit_active?: false,
       refused_sessions: MapSet.new(),
       pending_outbox: :queue.new(),
+      commit_unit: :record,
       outbox_durable_seq: -1,
       outbox_flushed_seq: -1,
       outbox_epoch: 0,
@@ -54,6 +58,7 @@ defmodule Flezha.State.WalWriter.Boot do
       outbox_last_seq: -1,
       seq_index: SeqIndex.new(),
       sync_waiters: [],
+      durable_waiters: [],
       header_index: nil,
       refusal: nil
     }
@@ -69,6 +74,7 @@ defmodule Flezha.State.WalWriter.Boot do
   rather than the channel's.
   """
   def open(state) do
+    state = %{state | commit_unit: commit_unit(state.cell_id)}
     File.mkdir_p!(Path.dirname(state.wal_path))
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
@@ -106,12 +112,10 @@ defmodule Flezha.State.WalWriter.Boot do
     dedup = Outbox.read(state.cell_id)
 
     {redrive, max_consumed} =
-      Epoch.scan_effect_records_above(file, state.wal_path, dedup.outbox_flushed_seq)
+      Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq)
 
-    if is_integer(max_consumed) do
-      {rc, _sh, _pk} = state.cell_id
-      InputLog.record_consumed(rc, state.cell_id, max_consumed)
-    end
+    {rc, _sh, _pk} = state.cell_id
+    if is_integer(max_consumed), do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
 
     state = %{
       state
@@ -126,7 +130,19 @@ defmodule Flezha.State.WalWriter.Boot do
         outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
     }
 
-    Settlement.try_dispatch_outbox(state)
+    case state.commit_unit do
+      :record -> Settlement.try_dispatch_outbox(state)
+      :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
+    end
+  end
+
+  # A Cell of a workflow class commits at its stage marker; every other Cell at
+  # its record. The kind outlives the instance's registration on disk, so a
+  # writer that boots before its instance binds still reads it.
+  defp commit_unit({operative_class, _sh, key}) do
+    if key not in Paths.reserved_cell_keys() and ClassRegistry.get(operative_class) == :workflow,
+      do: :stage,
+      else: :record
   end
 
   # Seed the producing-liveness cursor from what the re-drive owes. Starting it at
@@ -134,7 +150,7 @@ defmodule Flezha.State.WalWriter.Boot do
   # classifier would see as an outbox that suddenly grew.
   defp redrive_last_seq(redrive, flushed_seq) do
     redrive
-    |> Enum.filter(&(&1.outputs != []))
+    |> Enum.filter(&(&1.committed? and &1.outputs != []))
     |> Enum.reduce(flushed_seq, fn entry, acc -> max(acc, entry.seq) end)
   end
 end

@@ -1,14 +1,19 @@
 defmodule Flezha.State.WalWriter.Settlement do
   @moduledoc """
-  The writer's effectively-once outbox: which durable entries are owed, which
-  are in flight, and when the cursor may pass one.
+  The writer's outbox, for a stream Cell under the effectively-once tier and a
+  durable workflow Cell alike: which durable entries are owed, which are in
+  flight, and when the cursor may pass one.
 
   An effect record's outputs queue on append and dispatch only once the record
-  is durable. An entry completes when every output has settled and every hold
-  has answered; the cursor then drains over the leading run of completed
-  entries, so an out-of-order confirmation can never carry it past output no
-  sink has taken. Back-pressure here is queueing, never loss — with the window
-  full the entries stay on disk until a sink answers.
+  is durable and its kind has committed it: a stream's record is its own
+  commit; a workflow Cell's entry is held until the stage marker naming it is
+  durable (`commit_records/3`), and one that no marker will ever name (an
+  interrupted, failed or unwound attempt's) is dropped without reaching the
+  chain. An entry completes when every output has settled and every hold has
+  answered; the cursor then drains over the leading run of completed entries,
+  so an out-of-order confirmation can never carry it past output no sink has
+  taken. Back-pressure here is queueing, never loss: with the window full the
+  entries stay on disk until a sink answers.
   """
 
   require Logger
@@ -24,7 +29,25 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   @reserved_cell_keys Paths.reserved_cell_keys()
 
-  # ---------- Effectively-once outbox (fsync-gated flush) ----------
+  # ---------- The outbox (fsync- and commit-gated flush) ----------
+
+  @doc """
+  One outbox entry for the effect record at `seq`: committed on arrival for a
+  writer whose record is its own commit, held for a stage-committing one.
+  """
+  def entry(state, seq, decoded),
+    do: %{
+      seq: seq,
+      outputs: decoded.outputs,
+      consumed_offset: decoded.consumed_offset,
+      dlq: decoded.dlq,
+      committed?: state.commit_unit == :record
+    }
+
+  # The one gate: an entry leaves once its record is durable and its kind has
+  # committed it.
+  defguardp dispatchable(entry, state)
+            when entry.committed? and entry.seq <= state.outbox_durable_seq
 
   # Queue an effect record's outputs for the post-fsync dispatch. Plain
   # change records pay one header-byte check and nothing else.
@@ -32,19 +55,12 @@ defmodule Flezha.State.WalWriter.Settlement do
     if Wire.effect_record_header?(header) do
       case Wire.decode_effect_body(body) do
         {:ok, decoded} ->
-          entry = %{
-            seq: seq,
-            outputs: decoded.outputs,
-            consumed_offset: decoded.consumed_offset,
-            dlq: decoded.dlq
-          }
-
-          last = if decoded.outputs == [], do: state.outbox_last_seq, else: seq
+          entry = entry(state, seq, decoded)
 
           %{
             state
             | pending_outbox: :queue.in(entry, state.pending_outbox),
-              outbox_last_seq: max(state.outbox_last_seq, last)
+              outbox_last_seq: owed_last_seq(state.outbox_last_seq, entry)
           }
 
         {:error, reason} ->
@@ -73,13 +89,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   # per tick.
   def try_dispatch_outbox(state) do
     case :queue.peek(state.pending_outbox) do
-      :empty ->
-        state
-
-      {:value, %{seq: seq}} when seq > state.outbox_durable_seq ->
-        state
-
-      {:value, _entry} ->
+      {:value, entry} when dispatchable(entry, state) ->
         if window_full?(state) do
           state
         else
@@ -90,6 +100,9 @@ defmodule Flezha.State.WalWriter.Settlement do
             {:error, _reason} -> schedule_outbox_retry(state)
           end
         end
+
+      _empty_or_held ->
+        state
     end
   end
 
@@ -114,11 +127,11 @@ defmodule Flezha.State.WalWriter.Settlement do
   # the effect-record fsync never wait on this.
   defp take_outbox_window(state, chunks, consumed) do
     case :queue.out(state.pending_outbox) do
-      {{:value, %{seq: seq} = entry}, rest} when seq <= state.outbox_durable_seq ->
+      {{:value, entry}, rest} when dispatchable(entry, state) ->
         if window_full?(state) do
           {state, chunks, consumed}
         else
-          key = {:cursor, seq}
+          key = {:cursor, entry.seq}
           outputs = entry_outputs(state, key, entry)
 
           # An entry with no outputs completes inside `await_entry/4`, which
@@ -144,8 +157,8 @@ defmodule Flezha.State.WalWriter.Settlement do
   # The stamped outputs alone — what a re-dispatch owes, and how many the
   # entry's tally waits on before the cursor may pass it.
   defp entry_outputs(state, key, entry) do
-    # The token names the entry, and a stream Cell's writer owns its own
-    # output — so one token covers every output of the entry.
+    # The token names the entry, and a Cell's writer owns its own output, so
+    # one token covers every output of the entry.
     ack = Outbox.token(state.cell_id, key)
 
     entry.outputs
@@ -221,6 +234,90 @@ defmodule Flezha.State.WalWriter.Settlement do
     DurabilityTier.on_effect_flushed(state.cell_id, entry.consumed_offset)
   end
 
+  @doc """
+  A workflow Cell's records `first..last` are named by a durable stage marker:
+  release them. A held entry below `first` belongs to an attempt of an earlier
+  stage that never committed (a stage's attempts on one Cell run one after
+  another, and each commit names the attempt that succeeded), so it is dropped
+  without reaching the chain.
+  """
+  def commit_records(state, first, last) do
+    state
+    |> settle_held(fn
+      %{seq: seq} when seq >= first and seq <= last -> :commit
+      %{seq: seq} when seq < first -> :drop
+      _entry -> :hold
+    end)
+    |> try_dispatch_outbox()
+  end
+
+  @doc """
+  Re-derive which held entries are committed from the journal's live entries,
+  `committed` being the record ranges they name per Cell
+  (`TaskJournal.committed_records/1`). An entry outside every range of this
+  Cell and below the last is an attempt that never committed, or one a rewind
+  unwound, and is dropped. One above the last belongs to an attempt still
+  running when a writer boots (it stays held) or, at a bind, to the attempt
+  the rebound runner interrupted, and it is dropped.
+  """
+  def seed_commits(%{cell_id: {rc, sh, pk}} = state, committed, above)
+      when above in [:hold, :drop] do
+    ranges = Map.get(committed, Wire.encode_cell_id(rc, sh, pk), [])
+    last = ranges |> Enum.map(&elem(&1, 1)) |> Enum.max(fn -> -1 end)
+
+    state
+    |> settle_held(fn %{seq: seq} ->
+      cond do
+        Enum.any?(ranges, fn {f, l} -> seq >= f and seq <= l end) -> :commit
+        seq < last -> :drop
+        true -> above
+      end
+    end)
+    |> try_dispatch_outbox()
+  end
+
+  # Every held entry's fate by `decide`; a committed one keeps its place, a
+  # dropped one leaves the queue, and the producing-liveness cursor counts the
+  # newly owed.
+  defp settle_held(state, decide) do
+    {kept, last} =
+      state.pending_outbox
+      |> :queue.to_list()
+      |> Enum.flat_map_reduce(state.outbox_last_seq, fn
+        %{committed?: true} = entry, last ->
+          {[entry], last}
+
+        entry, last ->
+          case decide.(entry) do
+            :commit ->
+              committed = %{entry | committed?: true}
+              {[committed], owed_last_seq(last, committed)}
+
+            :drop ->
+              {[], last}
+
+            :hold ->
+              {[entry], last}
+          end
+      end)
+
+    %{state | pending_outbox: :queue.from_list(kept), outbox_last_seq: last}
+  end
+
+  # The highest committed, output-bearing entry: what the classifier compares
+  # against the flush cursor to see an outbox that grows without draining. A
+  # held entry is not owed yet, however long its stage takes.
+  defp owed_last_seq(last, %{committed?: true, outputs: [_ | _], seq: seq}), do: max(last, seq)
+  defp owed_last_seq(last, _entry), do: last
+
+  @doc "Entries owed a dispatch now, and entries held for a stage marker."
+  def queued(state) do
+    Enum.reduce(:queue.to_list(state.pending_outbox), {0, 0}, fn
+      %{committed?: true}, {owed, held} -> {owed + 1, held}
+      _held, {owed, held} -> {owed, held + 1}
+    end)
+  end
+
   def schedule_outbox_retry(state) do
     if Timer.armed?(state.timers, :outbox_retry) do
       state
@@ -240,17 +337,15 @@ defmodule Flezha.State.WalWriter.Settlement do
   # which is what keeps a chain with no delivery-guaranteed sink behaving as it
   # always did.
   #
-  # Registration always precedes the reports (both the stream dispatch and the
-  # journal flush register inside the handler that casts), so a report against
-  # an unknown entry is one a resettle superseded — dropped, because the live
-  # registration owns the entry now. `entry` is retained for exactly that
-  # resettle; the journal flush keeps `nil` and re-drives from its own journal.
-  def register_entry(state, key, outputs, entry) do
+  # Registration always precedes the reports (the dispatch registers inside
+  # the handler that casts), so a report against an unknown entry is one a
+  # resettle superseded, dropped because the live registration owns the entry
+  # now. `entry` is retained for exactly that resettle.
+  defp register_entry(state, key, outputs, entry) do
     tally = %{
       pending: outputs,
       holds: 0,
       confirms: 0,
-      done?: false,
       entry: entry,
       at: State.now_ms()
     }
@@ -274,25 +369,17 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   def tally(state, key, fun) do
     case Map.fetch(state.outbox_awaiting, key) do
-      # A report for an entry that is gone (a resettle superseded it) or already
-      # completing changes nothing.
+      # A report for an entry that is gone (a resettle superseded it) changes
+      # nothing.
       :error ->
-        state
-
-      {:ok, %{done?: true}} ->
         state
 
       {:ok, tally} ->
         tally = fun.(tally)
 
-        if complete?(tally) do
-          complete_entry(
-            %{state | outbox_awaiting: Map.put(state.outbox_awaiting, key, tally)},
-            key
-          )
-        else
-          %{state | outbox_awaiting: Map.put(state.outbox_awaiting, key, tally)}
-        end
+        if complete?(tally),
+          do: complete_entry(state, key),
+          else: %{state | outbox_awaiting: Map.put(state.outbox_awaiting, key, tally)}
     end
   end
 
@@ -306,8 +393,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   # it. Re-dispatch its outputs under their identical identity (conforming sinks
   # dedup; the record's own side effects already landed) and
   # start the tally over: a hold the lost run took would otherwise never be
-  # answered, wedging the cursor for good. The journal's entries carry no copy —
-  # dropping the tally is what lets the next journal-driven flush re-drive them.
+  # answered, wedging the cursor for good.
   def resettle_outbox(state) do
     if resettle_due?(state) do
       {rc, _sh, _pk} = state.cell_id
@@ -337,7 +423,7 @@ defmodule Flezha.State.WalWriter.Settlement do
     end
   end
 
-  defp resettle_entry({:ok, _pid}, state, chunks, key, %{entry: entry}) when entry != nil do
+  defp resettle_entry({:ok, _pid}, state, chunks, key, %{entry: entry}) do
     outputs = entry_outputs(state, key, entry)
     {register_entry(state, key, length(outputs), entry), [outputs | chunks]}
   end
@@ -345,29 +431,9 @@ defmodule Flezha.State.WalWriter.Settlement do
   # Nothing to re-dispatch to: the entry stays owed with its tally untouched, so
   # the next tick tries again instead of restarting the clock against a chain
   # that cannot run.
-  defp resettle_entry(:error, state, chunks, _key, %{entry: entry}) when entry != nil,
-    do: {state, chunks}
+  defp resettle_entry(:error, state, chunks, _key, _tally), do: {state, chunks}
 
-  defp resettle_entry(_overwatch, state, chunks, key, _tally),
-    do: {%{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}, chunks}
-
-  # The entry stays registered until its marker is durable: a journal-driven
-  # re-flush reads the journal, so dropping it any sooner would let the entry be
-  # delivered a second time. The append itself must not run here — it is a call
-  # back into this very process — so it runs off-process and reports back.
-  defp complete_entry(state, {:marker, _, _, _, _} = key) do
-    writer = self()
-    cell_id = state.cell_id
-
-    spawn(fn ->
-      Outbox.complete(cell_id, key)
-      send(writer, {:outbox_marked, key})
-    end)
-
-    put_in(state.outbox_awaiting[key].done?, true)
-  end
-
-  defp complete_entry(state, {:cursor, _seq} = key) do
+  defp complete_entry(state, key) do
     %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
     |> drain_confirmed()
     |> try_dispatch_outbox()
@@ -402,9 +468,9 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   # Advance the dedup file (persistence watermark + flush cursor + epoch)
   # with one atomic tmp+rename — at most once per fsync batch. The reserved
-  # per-instance identity (the task-journal) skips it: it carries no effect
-  # records, and the dedup side-file would register a phantom Cell with
-  # `Paths.scan_dir/1`.
+  # per-instance identities (the task-journal, the input log) skip it: they
+  # carry no effect records, and the dedup side-file would register a phantom
+  # Cell with `Paths.scan_dir/1`.
   def persist_dedup(%{cell_id: {_, _, key}} = state) when key in @reserved_cell_keys,
     do: state
 

@@ -306,12 +306,6 @@ impl Coordinator {
             RunnerMessage::SendDataHeartbeat => {
                 heartbeat_tick(&self.runner.shared_io_streams);
             }
-            RunnerMessage::EmitWorkflowOutput {
-                operative_id,
-                payload,
-            } => {
-                write_workflow_output(&self.runner.shared_io_streams, &operative_id, &payload);
-            }
             RunnerMessage::EmitWorkflowCompleted {
                 operative_id,
                 status,
@@ -396,30 +390,6 @@ impl Coordinator {
         let stream = Some(&*self.control_stream);
         crate::state_sink::write(crate::state_sink::Class::Control, stream, frame).refused()
     }
-}
-
-/// A workflow's output on any one secondary stream, tagged with its
-/// `operative_id`. An output the wire cannot take is held for the reconnect on
-/// the ring every writer on this wire shares, never printed and dropped.
-///
-/// An absent stream takes the same route as a refused write, and arms the same
-/// flood ladder: `heartbeat_tick` already reads an empty map as a transport
-/// failure, and a second policy inside one function is how a wire ends up with
-/// two answers to one question.
-fn write_workflow_output(
-    io_streams: &RwLock<HashMap<u32, FlezhaStream>>,
-    operative_id: &str,
-    payload: &[u8],
-) {
-    let frame = payloader::build_without_metadata(operative_id, payload);
-    let streams = io_streams.read().unwrap();
-    // Held framed, not as a record: the ring re-frames a record with empty
-    // metadata, which would strip a stamped output of its identity.
-    crate::state_sink::write(
-        crate::state_sink::Class::Output,
-        streams.values().next(),
-        frame,
-    );
 }
 
 /// A `control_command` frame under a `<ref_prefix>-<nonce>` reference id.

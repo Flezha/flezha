@@ -29,8 +29,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Service.Admin
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.Completion
-  alias Flezha.State.TaskJournal
+  alias Flezha.State.{Completion, TaskJournal}
 
   require Logger
 
@@ -155,47 +154,48 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   # A completion must not tear the Overwatch down under output still on its
-  # way: a durable class's last outbox is flushed after its commit ack on this
-  # channel, and an opted-out class's direct outputs travel the data stream
-  # while the completion travels this one. Two debts, settled differently:
+  # way: a durable class's last stage output leaves its Cells' outboxes after
+  # the commit ack on this channel, and an opted-out class's direct outputs
+  # travel the data stream while the completion travels this one. Two debts,
+  # settled differently:
   #
   #   * the data stream is FLUSHED, once, by a barrier across the runner's
   #     stream channels. Nothing is counted — counting what the runner wrote
   #     against what the controller ran is decidable only while nothing is
   #     ever lost, and a frame routed to an Overwatch that has since been
   #     replaced is exactly that loss.
-  #   * the journal is WAITED for, unchanged: `pending_entries/1` is an exact,
-  #     durable, re-drivable debt, and `Durations.get(:drain_owed_ms)` keeps a sink that never
-  #     confirms from holding the teardown — the retained journal keeps the
-  #     debt. Under a start storm the flush itself queues behind the channel
-  #     for tens of seconds, and the instance is retained either way.
+  #   * the Cells' outboxes are WAITED for: each writer's committed entries
+  #     are an exact, durable, re-drivable debt, and
+  #     `Durations.get(:drain_owed_ms)` keeps a sink that never confirms from
+  #     holding the teardown; the WAL keeps the debt. An entry still held for
+  #     a stage marker belongs to a stage that never committed, and is owed
+  #     nothing.
 
   defp drain_owed_outputs(runner_id, operative_id) do
     StreamPool.flush_channels(runner_id)
 
-    await_owed_journal(
+    await_owed_outboxes(
       operative_id,
       System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
     )
   end
 
-  defp await_owed_journal(operative_id, deadline) do
-    pending = TaskJournal.pending_entries(operative_id)
+  defp await_owed_outboxes(operative_id, deadline) do
+    owed = TaskJournal.owed_outputs(operative_id)
 
     cond do
-      pending == [] ->
+      owed == 0 ->
         :ok
 
       System.monotonic_time(:millisecond) >= deadline ->
         Logger.warning(
           "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
-            "#{length(pending)} outbox entries still owed"
+            "#{owed} outbox entries still owed"
         )
 
       true ->
-        TaskJournal.flush_pending(operative_id)
         Process.sleep(50)
-        await_owed_journal(operative_id, deadline)
+        await_owed_outboxes(operative_id, deadline)
     end
   end
 

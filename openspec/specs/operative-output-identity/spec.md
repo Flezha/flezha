@@ -25,7 +25,9 @@ source of truth for whether output identity exists on that channel.
 ### Requirement: `emit_keyed` supplies the natural key on keyed channels
 
 `TaskletCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
-the caller-supplied natural key. On a keyed channel, plain `emit` /
+the caller-supplied natural key, in a workflow tasklet exactly as in a stream tasklet: no SDK
+SHALL refuse a keyed emit, or drop its key or metadata, because the tasklet runs inside a
+workflow. On a keyed channel, plain `emit` /
 `emit_with_meta` (no key) SHALL default to the invoking cell's own key whenever
 the cell has one — a dynamically keyed cell or one of a declared static
 keyset — so the stamped key SHALL equal the routing key by construction; it SHALL
@@ -41,6 +43,11 @@ cell key being part of the invocation's identity.
 - **WHEN** `run` calls `ctx.emit_keyed("BTC/1m/1720000000", candle)` on a keyed
   channel
 - **THEN** the output is emitted and carries the supplied key
+
+#### Scenario: Keyed emit from a workflow tasklet
+
+- **WHEN** a durable workflow tasklet's `run` calls `ctx.emit_keyed("order-7", ticket)` on a keyed channel, in any SDK
+- **THEN** the output is recorded with the key and reaches the sink stamped `flz.key` `order-7`, and the same call on a non-keyed channel fails with the same typed error a stream tasklet gets
 
 #### Scenario: Un-keyed emit in a keyed cell defaults to the cell key
 
@@ -131,9 +138,9 @@ SHALL show no regression on non-keyed emit paths.
 
 ### Requirement: Every host mints the identity stamps, and the ordinal rule is one rule
 
-An SDK whose tasklets run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class does not declare effectively-once; under the tier the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.cell` SHALL be spelled `<operative>/<tasklet>/<cell_key or empty>`, matching the label the core derives for the same Cell, and `flz.seq` SHALL read the change sequence the activation carried at handout.
+An SDK whose tasklets run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class records no effects: a stream class that does not declare effectively-once and a workflow class that opted out of persistence. Under the tier, and for a durable workflow class, the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.cell` SHALL be spelled `<operative>/<tasklet>/<cell_key or empty>`, matching the label the core derives for the same Cell, and `flz.seq` SHALL read the change sequence the activation carried at handout.
 
-An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK — not a poll host, inheriting nothing from `flz_core` — mints them in its own core at the routing seam where a sink frame is built: the same three keys, the seq the invocation started at, the ordinal advancing per plugin output of the invocation, appended after the user's metadata; under the effectively-once tier it stamps nothing and captures the sink frame into the invocation's effect record, the controller deriving the identity at flush.
+An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK — not a poll host, inheriting nothing from `flz_core` — mints them in its own core at the routing seam where a sink frame is built: the same three keys, the seq the invocation started at, the ordinal advancing per plugin output of the invocation, appended after the user's metadata; when the class records effects, under the tier or as a durable workflow, it stamps nothing and captures the sink frame into the invocation's effect record, the controller deriving the identity at flush.
 
 #### Scenario: The ordinal advances across emits within one invocation
 
@@ -154,6 +161,16 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 
 - **WHEN** a class declaring effectively-once emits on its keyed plugin channel
 - **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`
+
+#### Scenario: A host writes no stamps for a durable workflow class
+
+- **WHEN** a durable workflow class's tasklet on a Java runner emits on its keyed plugin channel
+- **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`, and the sink receives them from the controller's flush of the Cell's record
+
+#### Scenario: A host stamps an opted-out workflow's output
+
+- **WHEN** a workflow class that opted out of persistence emits on its keyed plugin channel from a host runner
+- **THEN** the output carries `flz.cell`, `flz.seq` and `flz.key` from the host, as an at-least-once stream's does
 
 #### Scenario: An SDK that defers the capability says so in its manifest
 

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Changed: a workflow stage commits through its Cells' own records
+
+A durable workflow Cell writes the same effect record a stream Cell on the effectively-once tier
+writes: one record per invocation with its state changes and its plugin outputs, shipped as the
+item settles. A stage's `TaskCommit` names the records each Cell wrote (`CommittedCell`, a
+`first_seq..seq` range and the channels written on) instead of carrying an outbox, and the
+controller appends the stage's journal entry only once every named record is durable, then acks.
+A committed stage can no longer be durable ahead of the state it commits.
+
+There is one outbox, the Cell writer's, for both kinds. A workflow Cell's outputs leave once the
+entry naming their record is durable; a failed, interrupted or rewound attempt's outputs never
+do. A workflow output carries the identity a stream's carries: `flz.cell`, `flz.seq = <record
+seq>.<ordinal>`, the Cell's `flz.epoch`, `channel`, `flz.key` and the author's metadata, so
+`emit_keyed` and metadata work in a workflow tasklet in every SDK, and an undo output is a newer
+record of the compensating Cell rather than a `.1` suffix. With persistence off a workflow's
+outputs go to the wire with their full metadata.
+
+Removed with the second outbox: `TaskOutboxItem` and `TaskCommit.outbox` (field 6 reserved), the
+journal's `outbox_flushed` entry, the iteration-boundary snapshot (the Watchdog's triggers compact
+workflow Cells as they do stream Cells), the `task_outbox_flush` telemetry event and the
+`task_outbox_retry` backoff row. `flz state journal` prints each Cell's records and channels;
+`flz state outbox` prints the entries held for a stage marker.
+
 ### Changed: a per-input workflow runs as a partition group
 
 `flz operative start <factory> --partitions N` now starts a `per_input` workflow as N ordinary

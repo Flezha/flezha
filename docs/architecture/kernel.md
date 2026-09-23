@@ -511,8 +511,9 @@ The distinction is a real honesty boundary, not a formality:
   Together they are a sufficient handle for exact append-only dedup.
 
 `flz.` is a reserved metadata namespace. A user emit carrying a `flz.`-prefixed key is rejected
-at emit time, so stamps cannot be forged or clobbered. The workflow transactional outbox mints
-through the same controller-side function, with `flz.seq = <task_idx>.<seq_in_task>`.
+at emit time, so stamps cannot be forged or clobbered. A durable workflow's Cells write the same
+effect record and mint through the same controller-side function, so their outputs carry the
+same `flz.seq = <record seq>.<emit ordinal>` and `flz.epoch`.
 
 ## The epoch rule
 
@@ -529,7 +530,6 @@ flowchart TB
     subgraph BUMP["BUMP the epoch — the new output passes dedup and overwrites"]
         B1["late-input correction"]:::sink
         B2["flz operative replay"]:::sink
-        B3["flz operative rewind (workflow loop)"]:::sink
     end
     KEEP --> RULE["durable identity = (cell, seq, epoch)"]:::store
     BUMP --> RULE
@@ -544,6 +544,10 @@ The distinction is *intent*. An accident — a crash, a takeover, a re-drive —
 what the world sees, so it reproduces the same identity and the sink swallows it. A deliberate
 correction *must* change what the world sees, so it raises the epoch and the sink lets it
 through.
+
+A workflow's `flz operative rewind` moves no output epoch. It bumps only the journal epoch,
+which keys the re-run's barriers; the re-run's output is a newer record of the same Cell, so its
+higher `flz.seq` passes the sink's guard under the unchanged epoch.
 
 `flz dlq replay` sits on the **keep** side and it is worth knowing why: it re-injects the parked
 payload as an ordinary new input, so it gets a fresh input-log offset and a fresh WAL sequence.

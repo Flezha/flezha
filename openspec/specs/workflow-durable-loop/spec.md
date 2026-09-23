@@ -2,48 +2,49 @@
 
 ## Purpose
 
-The workflow-durable-loop capability turns the structured workflow chain into a durable loop: a class may declare its chain to repeat, one iteration seeded from the next durable inbox item or from the previous iteration's handoff, with each iteration running under the existing per-task commit gating (`workflow-task-journal`) and ending in an iteration commit. The commit tuple is one durable point plus its consequences — the controller appends `iter_committed(N, consumed_inbox_offset)` to the instance's `task.journal`, requests iteration-boundary snapshot compaction of the instance's cells through the existing CompactCell machinery, and flushes the iteration's staged outbox (`workflow-transactional-outbox`). Per-task journal entries carry the enclosing iteration so a resumed instance re-enters at iteration `N+1` — never at the loop start — restored from the boundary snapshots (or WAL-tail replay) and re-seeded from the recorded consumed offset; only an uncommitted in-flight iteration may re-run (at-least-once, unchanged author contract). Because committed iterations are journal-backed, the saga planner's `committed` input is finally real: `KeepProgress` keeps every journaled iteration and undoes only the in-flight one, while all-or-nothing unwinds the in-flight iteration and then every journaled iteration in reverse, reusing `plan_compensation`'s ordering contract unchanged. Loop termination (terminal predicate, cancellation, `complete`) is preserved from the existing loop contract.
+The workflow-durable-loop capability turns the structured workflow chain into a durable loop: a class may declare its chain to repeat, one iteration seeded from the next durable inbox item or from the previous iteration's handoff, with each iteration running under the existing per-task commit gating (`workflow-task-journal`) and ending in an iteration commit. The commit tuple is one durable point plus its consequences — the controller appends `iter_committed(N, consumed_inbox_offset)` to the instance's `task.journal`, and then reports the consumed offset into the input log's watermark; the iteration's stage outputs leave through their Cells' own outboxes as each stage commits, and the Watchdog's size and age triggers compact the instance's Cells. Per-task journal entries carry the enclosing iteration so a resumed instance re-enters at iteration `N+1` — never at the loop start — restored from the boundary snapshots (or WAL-tail replay) and re-seeded from the recorded consumed offset; only an uncommitted in-flight iteration may re-run (at-least-once, unchanged author contract). Because committed iterations are journal-backed, the saga planner's `committed` input is finally real: `KeepProgress` keeps every journaled iteration and undoes only the in-flight one, while all-or-nothing unwinds the in-flight iteration and then every journaled iteration in reverse, reusing `plan_compensation`'s ordering contract unchanged. Loop termination (terminal predicate, cancellation, `complete`) is preserved from the existing loop contract.
 ## Requirements
 ### Requirement: A structured workflow chain can loop with a durable per-iteration commit
 
 A structured workflow class SHALL be able to declare its chain as a loop: each
-iteration seeds from the next input-log record or from the previous iteration's
-handoff, runs the chain the pass's entry channel roots under the existing per-task
-commit gating, and ends with an iteration commit. The controller SHALL append
-`iter_committed(N, consumed_offset, entry_channel)` to the task-journal, where
-`consumed_offset` is the `flz.offset` of the input that seeded the iteration or is
-absent when nothing journaled seeded it, naming the entry channel whose chain the
-iteration ran, trigger boundary snapshot compaction for the instance's cells
-(existing CompactCell machinery), and flush the iteration's staged outbox. The
-`iter_committed` append SHALL be made durable by the `FsyncBatcher` tick like a
-task commit, and its ack SHALL follow the sync. Once `iter_committed(N)` is durable
-the controller SHALL cut the task-journal below the oldest entry its fold still
-needs, the pending outbox entries, the latest `rewound` marker with the commits it
-has yet to undo, and the latest `iter_committed` that carries the resume point, the
-entry channel and the epoch, so the journal a loop keeps is bounded by one
-iteration plus a settled prefix below the cut threshold (64 KiB by default), never
-by its history. The cut SHALL be the journal writer's own work, off the process
-that acks, and a class whose tasklets declare compensation SHALL keep its history
-(the saga and a rewind replan from it). The input-log append that precedes a turn
+iteration seeds from the next input-log record or the previous iteration's handoff,
+runs the chain under the existing per-task commit gating, and ends with an
+iteration commit. The controller SHALL append `iter_committed(N, consumed_offset)` to the
+task-journal, where `consumed_offset` is the `flz.offset` of the input that seeded the
+iteration or is absent when nothing journaled seeded it. The `iter_committed` append SHALL be made durable
+by the `FsyncBatcher` tick like a task commit, and its ack SHALL follow the
+sync. The iteration commit SHALL request no boundary snapshot and SHALL flush no outbox of its
+own: the iteration's outputs left through the Cells' own outboxes as each stage committed, and
+the instance's Cells are compacted by the Watchdog's size and age triggers as a stream's are, a
+rehydrate that finds no snapshot replaying the WAL tail. Once `iter_committed(N)` is durable the controller SHALL cut the
+task-journal below the oldest entry its fold still needs, the
+latest `rewound` marker with the commits it has yet to undo, and
+the latest `iter_committed` that carries the resume point and the epoch, so
+the journal a loop keeps is bounded by one iteration plus a settled prefix
+below the cut threshold (64 KiB by default), never by its history. The cut
+SHALL be the journal writer's own work, off the process that acks, and a
+class whose tasklets declare compensation SHALL keep its history (the saga
+and a rewind replan from it). The input-log append that precedes a turn
 SHALL NOT re-read the log file or fold the journal: the log SHALL keep its
-message-id index in memory, over the records it retains, rebuilt from the file once
-and trimmed at every truncation. Once `iter_committed(N)` is durable the controller
-SHALL report its consumed offset into the input log's watermark under the
-journal's identity; the release of the consumed prefix is then the log's
-retention, which SHALL rewrite the file only once the released prefix exceeds the
-cut threshold. Per-task journal entries within iteration N SHALL carry `iter = N`.
-Loop termination semantics (terminal predicate, cancellation, `complete`) SHALL be
-preserved from the existing loop contract.
+message-id index in memory, over the records it retains, rebuilt from the file
+once and trimmed at every truncation. Once `iter_committed(N)` is durable the
+controller SHALL report its consumed offset into the input log's watermark under
+the journal's identity; the release of the consumed prefix is then the log's
+retention, which SHALL rewrite the file only once the released prefix exceeds
+the cut threshold. Per-task journal entries within
+iteration N SHALL carry `iter = N`. Loop termination semantics (terminal
+predicate, cancellation, `complete`) SHALL be preserved from the existing
+loop contract.
 
-#### Scenario: Turn ends with journal + snapshot + flush
+#### Scenario: Turn ends with the journal entry and the watermark
 
 - **WHEN** a looping workflow operative finishes iteration N
-- **THEN** the journal SHALL hold `iter_committed(N)` with the consumed input-log offset and the pass's entry channel, the cells SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
+- **THEN** the journal SHALL hold `iter_committed(N)` with the consumed input-log offset, the instance's watermark row SHALL be at that offset, and no `CompactCell` SHALL have been requested for the boundary
 
 #### Scenario: The journal does not grow with the turns
 
-- **WHEN** a looping workflow operative with no compensable tasklet has committed 1 000 iterations whose outboxes were all flushed
-- **THEN** its task-journal SHALL hold the entries of the current iteration plus at most the cut threshold of settled prefix, and a rehydrate SHALL restore from them the resume point, consumed offset, entry channel, handoff and epoch a full history would have given
+- **WHEN** a looping workflow operative with no compensable tasklet has committed 1 000 iterations
+- **THEN** its task-journal SHALL hold the entries of the current iteration plus at most the cut threshold of settled prefix, and a rehydrate SHALL restore from them the resume point, consumed offset, handoff and epoch a full history would have given
 
 #### Scenario: A class with compensable tasklets keeps its history
 
@@ -65,10 +66,10 @@ preserved from the existing loop contract.
 - **WHEN** iteration N commits with consumed offset 7 and fewer released bytes than the cut threshold lie below it
 - **THEN** the log's watermark for the instance SHALL be 7 at once, and the file SHALL be rewritten only by a later sweep once the released prefix exceeds the threshold
 
-#### Scenario: Snapshot failure does not lose the commit
+#### Scenario: A loop's Cells compact on the Watchdog's triggers
 
-- **WHEN** the boundary snapshot compaction fails after `iter_committed(N)` is durable
-- **THEN** the iteration SHALL remain committed and a later rehydrate SHALL fall back to WAL-tail replay for the affected cells
+- **WHEN** a looping workflow operative's Cell WAL grows past `compact_after_bytes`, or its oldest unsnapshotted record ages past `compact_after_age_ms`
+- **THEN** the Watchdog requests the Cell's compaction exactly as it does for a stream Cell, and a rehydrate before that restores from the WAL tail
 
 ### Requirement: Crash-resume enters the iteration after the last committed one
 
@@ -132,7 +133,7 @@ iterations.
 
 ### Requirement: A tasklet ends its workflow after the iteration commits
 
-A tasklet running inside a workflow operative SHALL be able to call `ctx.complete(result)` on its own tasklet context, in every SDK. The call SHALL NOT stop the iteration: every remaining stage of the iteration SHALL run, its outputs SHALL be staged and committed as usual, and once the iteration's commit is durable the instance SHALL end with status `ok` and `result`, instead of waiting for the next inbox item, re-seeding a chained loop, or parking. The completion SHALL travel with the iteration commit (`IterCommit`) and be journaled in its `iter_committed` entry, so an instance that crashes after that commit is durable and before its `WorkflowCompleted` is sent SHALL, on resume, end with the same result rather than wait for input. The completing tasklet's own completion SHALL also travel with its task commit (`TaskCommit`) and be journaled in its `task_committed` entry, and a resume that skips that committed tasklet SHALL end the resumed iteration with it, so a crash between the two commits loses nothing. In a `once` workflow the call SHALL set the result the single pass ends with.
+A tasklet running inside a workflow operative SHALL be able to call `ctx.complete(result)` on its own tasklet context, in every SDK. The call SHALL NOT stop the iteration: every remaining stage of the iteration SHALL run, its outputs SHALL be recorded and released as usual, and once the iteration's commit is durable the instance SHALL end with status `ok` and `result`, instead of waiting for the next inbox item, re-seeding a chained loop, or parking. The completion SHALL travel with the iteration commit (`IterCommit`) and be journaled in its `iter_committed` entry, so an instance that crashes after that commit is durable and before its `WorkflowCompleted` is sent SHALL, on resume, end with the same result rather than wait for input. The completing tasklet's own completion SHALL also travel with its task commit (`TaskCommit`) and be journaled in its `task_committed` entry, and a resume that skips that committed tasklet SHALL end the resumed iteration with it, so a crash between the two commits loses nothing. In a `once` workflow the call SHALL set the result the single pass ends with.
 
 When more than one cell calls `ctx.complete` in one iteration, the instance SHALL end once, with the result of the call whose tasklet is latest in the chain's commit order and, within that tasklet, whose cell key sorts last, so the result does not depend on scheduling. A tasklet that calls `ctx.complete` and then fails SHALL fail its iteration as any failure does, and the completion SHALL be discarded with the iteration.
 
@@ -160,6 +161,11 @@ When more than one cell calls `ctx.complete` in one iteration, the instance SHAL
 
 - **WHEN** two cells of one tasklet call `ctx.complete` with different results in one iteration
 - **THEN** the instance SHALL end once, with the result of the cell whose key sorts last
+
+#### Scenario: A completing tasklet's output is released at its own commit
+
+- **WHEN** a tasklet emits plugin-bound output and calls `ctx.complete(result)` in the same run
+- **THEN** its output is written in its Cell's effect record, released when that stage's `task_committed` entry is acked, and the instance ends only after the iteration commits
 
 ### Requirement: A timer-fed iteration commits like any iteration
 

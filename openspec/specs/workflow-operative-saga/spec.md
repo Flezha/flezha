@@ -72,17 +72,30 @@ For a durable workflow operative, the completion of each tasklet SHALL be durabl
 ### Requirement: Compensation undo-effects are delivered durably and keyed
 
 Plugin-bound output emitted by a `compensate` hook SHALL NOT be delivered
-best-effort from the runner for a durable workflow operative; it SHALL be
-staged and delivered through the journal-gated transactional outbox
-(`workflow-transactional-outbox`), so that a crash between a compensation's
-completion and its undo-output delivery re-drives the delivery with stable,
-comp-marked keys. The existing per-cell compensation intent/done markers
-SHALL remain the sole mechanism deciding which hooks run on resume.
+best-effort from the runner for a durable workflow operative; it SHALL be written in the
+compensating Cell's own effect record when the `CompensateRun` activation settles, together
+with any state change the hook applied, and released through that Cell's outbox only once the
+`compensated` journal entry naming the record is durable and acked, so that a crash between a
+compensation's completion and its undo-output delivery re-drives the delivery with the same
+identity. The undo record's seq is above the forward record's, so an undo output can never
+collide with the forward output it reverses, and no compensation marker is added to its `flz.seq`.
+The `compensated` entry SHALL name, for each Cell whose hook ran, its identity, the seq of its
+undo record (absent when the hook changed nothing and emitted nothing) and the channels the
+record wrote on; the controller SHALL append it only after every named record is durable, exactly
+as it appends a `task_committed` entry. The existing per-cell compensation intent/done markers
+SHALL remain the sole mechanism deciding which hooks run on resume, and the done marker SHALL be
+written after the `compensated` entry is acked, so a crash between the two re-runs the idempotent
+hook rather than losing its undo output.
+
+#### Scenario: Undo output is durable and released at the compensated entry
+
+- **WHEN** tasklet B is compensated and its hook emits an undo record
+- **THEN** the undo output is in B's Cell's effect record before the `compensated` entry is appended, reaches the sink only after that entry is acked, and carries `flz.seq` above B's forward output's
 
 #### Scenario: Undo delivery survives a crash
 
-- **WHEN** a compensation hook completes and the process crashes before its undo output reaches the plugin
-- **THEN** after respawn the undo output SHALL be delivered (not lost), with the same comp-marked key, and the hook itself SHALL NOT re-run
+- **WHEN** a compensation hook completes and the process crashes after the `compensated` entry is durable but before its undo output reaches the plugin
+- **THEN** after respawn the undo output SHALL be delivered (not lost), with the same identity, and the hook itself SHALL NOT re-run
 
 #### Scenario: Markers still gate hook execution
 

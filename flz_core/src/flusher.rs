@@ -232,17 +232,20 @@ impl CellFlusher {
 }
 
 /// Drain ONE cell's buffer and ship the frames, for the background pass
-/// and the inline flush-before-emit alike. The caller holds the buffer lock.
+/// and the inline flush-before-emit alike, answering the seq of the last
+/// effect record it shipped. The caller holds the buffer lock, which is what
+/// makes the seqs the drain assigned the frames' own.
 pub fn flush_one(
     buffer: &mut dyn FlushableBuffer,
     cell_identity: &[u8],
     change_seq: &AtomicU64,
     header: &HeaderTemplate,
     persistence_enabled: bool,
-) {
+) -> Option<u64> {
     if buffer.is_empty() {
-        return;
+        return None;
     }
+    let first_seq = change_seq.load(Ordering::Relaxed);
     let (_count, frames) = buffer.drain_to_frames(cell_identity, change_seq, header);
     if !persistence_enabled {
         tracing::trace!(
@@ -250,8 +253,12 @@ pub fn flush_one(
             "drain-and-discard {} frames (persistence_enabled = false)",
             frames.len(),
         );
-        return;
+        return None;
     }
+    let record_seq = frames
+        .iter()
+        .rposition(|f| f.payload_id == crate::state_sink::CELL_EFFECT_RECORD_PAYLOAD_ID)
+        .map(|index| first_seq + index as u64);
     for frame in frames {
         // Credit debit-on-send. Parks here (under the caller's buffer lock,
         // which is what keeps per-Cell seq order across the background and
@@ -260,6 +267,7 @@ pub fn flush_one(
         crate::credit::global().acquire(frame.bytes.len());
         crate::state_sink::send(frame.payload_id, frame.bytes);
     }
+    record_seq
 }
 
 /// One `cell_effect_record` frame from a serialized body, stamped

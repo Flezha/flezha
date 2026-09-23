@@ -220,36 +220,33 @@ message TaskHandoffItem {
     bytes payload = 2;
 }
 
-// One staged plugin-bound output of a tasklet, buffered per cell
-// while the tasklet ran and shipped at its barrier
-// (workflow-transactional-outbox). `seq_in_task` orders the entries a single
-// cell staged during the tasklet; `channel` is the producing plugin
-// channel's name, carried through to the flushed frame's `channel`
-// metadata.
-message TaskOutboxItem {
+// One Cell a stage (or an undo) ran: the effect records it wrote in the stage,
+// `first_seq..=seq` on its WAL, and the plugin channels those records wrote
+// on. Both seqs are absent when the Cell wrote no record. The Controller
+// journals the stage only once every named record is durable, and releases
+// exactly those records' outputs once the entry is.
+message CommittedCell {
     bytes cell_id = 1;
-    uint32 seq_in_task = 2;
-    string channel = 3;
-    bytes payload = 4;
+    optional uint64 seq = 2;
+    repeated string channels = 3;
+    optional uint64 first_seq = 4;
 }
 
 // SDK -> Controller, at each tasklet barrier of a durable structured
 // workflow operative (workflow-task-journal): tasklet `task_idx` completed
-// forward on `cells_ran` (wire cell identities) and released the
-// serialized `handoff` batch plus the `outbox` its cells staged
-// (workflow-transactional-outbox — nothing reached a plugin yet). The
-// Controller appends ONE `task_committed` entry carrying handoff AND outbox
-// to the instance's task-journal, fsyncs, replies TaskCommitResponse, and only
-// then flushes the outbox; the driver starts the next tasklet after the
-// successful reply. Direction is reversed like RunnerShutdownNotification:
-// SDK -> Controller over the "control_command" payload_id; old Controllers
-// ignore the unknown variant via Protox unknown-field handling. `iter` is 0
-// for the single-pass chain (the durable-loop follow-up increments it).
+// forward on `cells_ran`, each naming the effect records it wrote in the
+// stage, and released the serialized `handoff` batch. The Controller waits
+// until every named record is durable on its Cell's writer, appends ONE
+// `task_committed` entry to the instance's task-journal, fsyncs, replies
+// TaskCommitResponse, and only then releases the named records' outputs; the
+// driver starts the next tasklet after the successful reply. Direction is
+// reversed like RunnerShutdownNotification: SDK -> Controller over the
+// "control_command" payload_id. `iter` is the loop iteration, 0 for a
+// single-pass chain.
 //
-// `compensating` marks the undo twin: a `compensate` hook's staged output
-// for the already-committed tasklet `task_idx`, journaled as a
-// `compensated` entry and flushed with comp-marked keys. The per-cell
-// compensation markers still decide which hooks run.
+// `compensating` marks the undo twin: the records a `compensate` hook wrote
+// for the already-committed tasklet `task_idx`, journaled as a `compensated`
+// entry. The per-cell compensation markers still decide which hooks run.
 //
 // `completes` / `result` carry the tasklet's `ctx.complete` request, so a
 // crash before the iteration commits still ends the instance on resume.
@@ -257,9 +254,9 @@ message TaskCommit {
     string operative_id = 1;
     uint32 task_idx = 2;
     uint32 iter = 3;
-    repeated bytes cells_ran = 4;
+    repeated CommittedCell cells_ran = 4;
     repeated TaskHandoffItem handoff = 5;
-    repeated TaskOutboxItem outbox = 6;
+    reserved 6;
     bool compensating = 7;
     bool completes = 8;
     bytes result = 9;
@@ -292,9 +289,8 @@ message TaskCommitResponse {
 // the `flz.offset` of the input that seeded it, absent when it consumed none
 // (0 is the log's first offset) — and released `handoff` as its terminal
 // batch. The Controller appends `iter_committed(iter, consumed_offset)` to the
-// task-journal, fsyncs, requests a boundary snapshot for the instance's cells,
-// flushes whatever the iteration's tasklets staged, reports the consumed
-// offset into the input log's watermark, and replies IterCommitResponse. The
+// task-journal, fsyncs, replies IterCommitResponse, and then reports the
+// consumed offset into the input log's watermark. The
 // driver enters iteration `iter + 1` only on the successful reply — a crash
 // before it re-runs the whole iteration (at-least-once), never the ones below
 // it.

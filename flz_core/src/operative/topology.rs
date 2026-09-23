@@ -183,6 +183,16 @@ pub enum ChannelLookup<'a> {
 }
 
 impl OperativeTopology {
+    /// Whether a Cell of this class settles every invocation into one effect
+    /// record: under the effectively-once tier, and for a durable workflow,
+    /// whose stage commit names the records it stands for.
+    pub fn records_effects(&self, persistence_enabled: bool) -> bool {
+        self.effectively_once
+            || (self.workflow.is_some()
+                && persistence_enabled
+                && crate::runner::coordinator_installed())
+    }
+
     pub fn lookup_channel_id(&self, name: &str) -> Option<ChannelId> {
         self.name_to_id.get(name).copied()
     }

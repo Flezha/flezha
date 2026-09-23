@@ -977,10 +977,12 @@ The delete is reachable via two paths:
 The per-Cell WAL SHALL support an additional record type carrying an
 invocation's state change(s), its outbox entries (channel, key, user metadata,
 payload, emit ordinal), and its consumed input offset as one crc-protected record
-appended and fsynced as a unit. Existing change-record and snapshot requirements
-are unchanged; at-least-once operatives never produce effect records. Restore and
+appended and fsynced as a unit. A Cell of a stream class on the effectively-once tier and a
+Cell of a durable workflow class SHALL both write it, the workflow Cell with no consumed offset;
+a plain stream Cell never produces effect records. Existing change-record and snapshot requirements
+are unchanged. Restore and
 time-travel readers SHALL fold the state-change portion of effect records exactly
-as they fold plain change records.
+as they fold plain change records, for either kind.
 
 #### Scenario: Effect record replays as state
 
@@ -988,6 +990,11 @@ as they fold plain change records.
   handshake
 - **THEN** the assembled payload folds the change portions in seq order and the
   restored state equals the pre-crash state
+
+#### Scenario: A workflow Cell's WAL holds effect records
+
+- **WHEN** a durable workflow Cell applies a change and emits in one invocation
+- **THEN** its WAL holds one effect record for the invocation, and the restore handshake folds its change portion into the Cell's state exactly as it folds a stream Cell's
 
 #### Scenario: Mixed WAL stays readable
 

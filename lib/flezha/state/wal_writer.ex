@@ -18,7 +18,7 @@ defmodule Flezha.State.WalWriter do
   alias Flezha.Config.Durations
   alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.{FsyncBatcher, Metrics, Outbox, RecordFrame, SeqIndex, WriterRegistry}
+  alias Flezha.State.{FsyncBatcher, Metrics, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, Settlement, State}
 
   @type t :: State.t()
@@ -219,21 +219,44 @@ defmodule Flezha.State.WalWriter do
   def last_persisted_seq(server), do: call(server, :last_persisted_seq)
 
   @doc """
-  Deliver one workflow transactional-outbox entry — its stamped `outputs`, to
-  `overwatch` — under `key`, registering the entry as owed to the sinks so its
-  `outbox_flushed` marker is appended once they confirm; `telemetry` is the
-  `{event, measurements, metadata}` emitted with the delivery. An entry a
-  previous flush already handed to the chain is not delivered again: the
-  writer owns the awaiting set, so the check and the dispatch are one step in
-  its loop. Fire-and-forget — the flush is journal-driven and re-entrant, so
-  a caller never waits on this writer's sync.
+  Ask for the record at `seq` to be durable, with `:gen_server.send_request/4`
+  under `label` into `reqids`: `{:ok, seq}` comes back at once when it already
+  is, else from the sync that makes it so, and a writer whose file refused a
+  record answers `{:error, refusal}`. A record that never arrives is never
+  answered; the caller bounds the wait.
   """
-  @spec flush_outbox(GenServer.server(), Outbox.key(), [term()], pid(), {[atom()], map(), map()}) ::
-          :ok
-  def flush_outbox(server, key, outputs, overwatch, telemetry),
-    do: GenServer.cast(server, {:outbox_flush, key, outputs, overwatch, telemetry})
+  @spec await_durable_async(
+          GenServer.server(),
+          non_neg_integer(),
+          :gen_server.request_id_collection(),
+          term()
+        ) :: :gen_server.request_id_collection()
+  def await_durable_async(server, seq, reqids, label),
+    do: :gen_server.send_request(server, {:await_durable, seq}, label, reqids)
 
-  @doc "Live effectively-once outbox status (`flz state outbox`)."
+  @doc """
+  A workflow Cell's records `first..last` are named by a stage marker that is
+  now durable: release their outputs (`Flezha.State.WalWriter.Settlement`).
+  """
+  @spec commit_records(GenServer.server(), non_neg_integer(), non_neg_integer()) :: :ok
+  def commit_records(server, first, last),
+    do: GenServer.cast(server, {:commit_records, first, last})
+
+  @doc """
+  At a workflow bind, re-derive which of this Cell's queued outputs are
+  committed from the instance's `TaskJournal.committed_records/1`, dropping the
+  rest: what the rebound runner interrupted, and what a rewind unwound.
+  """
+  @spec seed_commits(GenServer.server(), %{
+          optional(binary()) => [{non_neg_integer(), non_neg_integer()}]
+        }) :: :ok
+  def seed_commits(server, committed), do: GenServer.cast(server, {:seed_commits, committed})
+
+  @doc """
+  Live outbox status (`flz state outbox`): the cursors, the entries owed a
+  dispatch (`pending`), those held for a workflow stage marker (`held`) and
+  those in the plugin chain awaiting confirmation (`awaiting`).
+  """
   @spec outbox_status(GenServer.server(), timeout()) :: map()
   def outbox_status(server, timeout \\ 5_000),
     do: call(server, :outbox_status, timeout)
@@ -270,10 +293,10 @@ defmodule Flezha.State.WalWriter do
 
   # Everything that writes to the WAL file or cuts it. A refused writer answers
   # each of them with its refusal; the read-only status calls still answer.
-  @writing_requests [:append, :append_next, :rewind_to, :truncate_up_to]
+  @writing_requests [:append, :append_next, :rewind_to, :truncate_up_to, :await_durable]
 
   # A writer whose file refused a record answers every request that would write
-  # to it, or cut it, with that refusal — and stays alive doing so. Raising here
+  # to it, cut it, or wait on it, with that refusal, and stays alive doing so. Raising here
   # would be restarted straight back into the same file (`restart: :transient`),
   # and the read-only status calls below still answer, so the watchdog and the
   # convergence loop keep seeing the Cell. The refusal is what leaves the
@@ -351,6 +374,12 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call(:fsync, _from, state), do: {:reply, :ok, do_fsync(state)}
 
+  def handle_call({:await_durable, seq}, _from, state) when seq <= state.outbox_durable_seq,
+    do: {:reply, {:ok, seq}, state}
+
+  def handle_call({:await_durable, seq}, from, state),
+    do: {:noreply, %{state | durable_waiters: [{from, seq} | state.durable_waiters]}}
+
   def handle_call({:rewind_to, seq, epoch}, _from, state) do
     case Epoch.rewind(state, seq, epoch) do
       {:ok, state} -> {:reply, :ok, state}
@@ -410,9 +439,12 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_call(:outbox_status, _from, state) do
+    {pending, held} = Settlement.queued(state)
+
     status =
       Map.merge(State.progress(state), %{
-        pending: :queue.len(state.pending_outbox),
+        pending: pending,
+        held: held,
         awaiting: map_size(state.outbox_awaiting)
       })
 
@@ -479,23 +511,14 @@ defmodule Flezha.State.WalWriter do
     {:noreply, state}
   end
 
-  # The workflow flush: the entry is registered here, in the writer that owns
-  # the awaiting set, and dispatched from here (a stream writer registers its
-  # own as it dispatches). An entry already awaiting is one a previous flush
-  # handed to the chain and whose marker is merely waiting on the sinks.
-  def handle_cast({:outbox_flush, key, outputs, overwatch, {event, measurements, meta}}, state) do
-    if Map.has_key?(state.outbox_awaiting, key) do
-      {:noreply, state}
-    else
-      state = Settlement.register_entry(state, key, length(outputs), nil)
-      Outbox.dispatch(overwatch, outputs)
-      :telemetry.execute(event, measurements, meta)
-      {:noreply, state}
-    end
-  end
+  def handle_cast({:commit_records, first, last}, state),
+    do: {:noreply, Settlement.commit_records(state, first, last)}
 
-  # Delivery confirmation (`Flezha.State.Outbox`): sinks report against the entry
-  # the flush registered, whichever flush registered it.
+  def handle_cast({:seed_commits, committed}, state),
+    do: {:noreply, Settlement.seed_commits(state, committed, :drop)}
+
+  # Delivery confirmation (`Flezha.State.Outbox`): sinks report against the
+  # entry the dispatch registered.
 
   def handle_cast({:outbox_hold, key}, state),
     do: {:noreply, Settlement.tally(state, key, &%{&1 | holds: &1.holds + 1})}
@@ -545,9 +568,6 @@ defmodule Flezha.State.WalWriter do
     {:noreply, state}
   end
 
-  def handle_info({:outbox_marked, key}, state),
-    do: {:noreply, %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}}
-
   def handle_info(_msg, state), do: {:noreply, state}
 
   # A clean close syncs what it holds and answers the batched appends it owes;
@@ -558,7 +578,9 @@ defmodule Flezha.State.WalWriter do
     _ = :file.close(file)
     _ = Admission.flush_credit_pending(state)
     _ = Settlement.persist_dedup(state)
+
     if synced == :ok and clean_exit?(reason), do: reply_synced(state)
+
     :ok
   end
 
@@ -604,19 +626,25 @@ defmodule Flezha.State.WalWriter do
         # batch (never per record).
         new_state = %{new_state | outbox_durable_seq: new_state.last_persisted_seq}
         new_state = Settlement.try_dispatch_outbox(new_state)
+
         new_state |> Settlement.persist_dedup() |> reply_synced()
     end
   end
 
-  # Everything appended is durable: answer the batched appends, oldest first.
-  defp reply_synced(%{sync_waiters: []} = state), do: state
-
+  # Everything appended is durable: answer the batched appends, oldest first,
+  # and every caller waiting on a record the sync covered.
   defp reply_synced(state) do
     state.sync_waiters
     |> Enum.reverse()
     |> Enum.each(fn {from, reply} -> GenServer.reply(from, reply) end)
 
-    %{state | sync_waiters: []}
+    {due, waiting} =
+      Enum.split_with(state.durable_waiters, fn {_from, seq} ->
+        seq <= state.last_persisted_seq
+      end)
+
+    Enum.each(due, fn {from, seq} -> GenServer.reply(from, {:ok, seq}) end)
+    %{state | sync_waiters: [], durable_waiters: waiting}
   end
 
   # ---------- Header dedup ----------

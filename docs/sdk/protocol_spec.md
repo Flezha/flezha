@@ -216,9 +216,9 @@ than at emit.
 | `channel` | controller → runner | The Operative's entry channel that receives this input. Absent ⇒ the Operative's first declared input channel. A name that is not one of the Operative's entry channels — undeclared, or declared as a channel of another kind — is parked to the dead-letter store under that name, never dropped and never routed to another channel. |
 | `channel` | runner → controller | Set on every plugin-bound emit. Plugin providers match on it via their `:channel` option to select which channel's outputs they consume. |
 | `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<operative_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
-| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>` (stream) or `<task_idx>.<seq_in_task>` (workflow outbox). |
+| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (a stream on the effectively-once tier, or a durable workflow Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
 | `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
-| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch (stream tier) or the instance's journal epoch (workflow outbox). `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
+| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a stream on the effectively-once tier and a durable workflow Cell alike; a workflow rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a stream on the effectively-once tier or a durable workflow (§11). A stream's invocation carries it back as its effect record's `consumed_offset`, a workflow's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
@@ -698,9 +698,10 @@ sockets. Before deregistering the instance the controller **flushes** the
 runner's stream channels: one bounded synchronous call per channel, which is
 answered only after every frame already in that channel's mailbox has been
 routed onward. Nothing is counted, because a count of what the runner wrote is
-decidable only while nothing is ever lost. A durable class's outputs ride the
-journaled outbox instead, and that debt — exact and durable — is still waited
-for, re-driven, under a 60 s bound. Field 5 was a `direct_outputs` count and is
+decidable only while nothing is ever lost. A durable class's outputs ride its
+Cells' effect records instead, and that debt (exact and durable) is waited for
+under a 60 s bound, until every Cell writer of the instance owes nothing; an
+entry still held for a stage marker is owed nothing. Field 5 was a `direct_outputs` count and is
 reserved; a runner that still sets it is simply not read.
 
 ### CellState
@@ -1099,11 +1100,16 @@ header for every host it serves — and the Elixir SDK's own fold does the same
 
 ### Data-stream payload-id `cell_effect_record`
 
-Runner → controller, effectively-once tier only. Same frame as
+Runner → controller, from a Cell that records effects: a stream Cell on the
+effectively-once tier, and every Cell of a durable workflow class (which does
+not declare the tier; the record is its durability). Same frame as
 `cell_state_change` with `format_id = 2`; `body` is the postcard
-`EffectRecordBody` — one invocation's state change(s), plugin outputs and
+`EffectRecordBody`: one invocation's state change(s), plugin outputs and
 consumed input-log offset, persisted by the controller as ONE WAL record under
-ONE fsync so state, outputs and progress can never tear apart. Decoded by
+ONE fsync so state, outputs and progress can never tear apart. A workflow
+Cell's record carries no consumed offset (the iteration's `IterCommit` does)
+and no dead-letter park, and is sent as the item settles, ahead of the stage's
+`TaskCommit`, never on the flush linger. Decoded by
 `Flezha.SDK.Wire.decode_effect_body/1`:
 
 ```text
@@ -1135,10 +1141,13 @@ as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
   advance, so a crash can never advance the offset while losing the park; the
   controller materializes the DLQ entry after the fsync (idempotent on
   `cell_key@consumed_offset`) and sends no `ParkPayloadAck` for it.
-- On the tier plugin emits never ride the primary stream: the controller
-  dispatches them to the `:on_output` chain only after the record's fsync,
-  stamped with `flz.cell`, `flz.seq = <record WAL seq>.<emit ordinal>` and
-  `flz.epoch`. Effect records are never coalesced at drain time.
+- A recorded plugin emit never rides the primary stream: the controller
+  dispatches it to the `:on_output` chain only after the record's fsync (for a
+  workflow Cell, only once the durable `task_committed` or `compensated` entry
+  naming the record has been acked), stamped with `flz.cell`,
+  `flz.seq = <record WAL seq>.<emit ordinal>`, `flz.epoch`, `channel`, `flz.key`
+  when keyed, and the author's metadata. Effect records are never coalesced at
+  drain time.
 
 ### Data-stream payload-id `cell_state_snapshot`
 
@@ -1438,20 +1447,20 @@ the instance.
 ### Control command `TaskCommit` (runner → controller)
 
 ```protobuf
-message TaskOutboxItem {
-    bytes  cell_id = 1;     // wire identity of the producing Cell
-    uint32 seq_in_task = 2;   // that Cell's emit order within the tasklet
-    string channel = 3;       // producing plugin channel's name
-    bytes  payload = 4;       // serialized plugin-bound output
+message CommittedCell {
+    bytes cell_id = 1;                // wire identity of a Cell the stage ran
+    optional uint64 seq = 2;          // last effect record it wrote in the stage
+    repeated string channels = 3;     // plugin channels those records wrote on
+    optional uint64 first_seq = 4;    // first effect record it wrote in the stage
 }
 
 message TaskCommit {
     string operative_id = 1;
     uint32 task_idx = 2;
     uint32 iter = 3;                        // 0 for the single-pass chain
-    repeated bytes cells_ran = 4;        // wire Cell identities
+    repeated CommittedCell cells_ran = 4;
     repeated TaskHandoffItem handoff = 5;
-    repeated TaskOutboxItem outbox = 6;     // staged plugin output
+    reserved 6;
     bool compensating = 7;                  // undo record, not forward progress
     bool completes = 8;                     // this tasklet called `ctx.complete`
     bytes result = 9;                       // with this result
@@ -1476,30 +1485,34 @@ and nothing waits for it: the ack is an event that releases them. Opted-out clas
 (`PERSISTENCE_ENABLED = false`) skip the barrier and keep the direct
 at-least-once wire path.
 
-`outbox` is the tasklet's **staged** plugin-bound output: inside a structured
-tasklet `ctx.emit` never reaches the wire; each Cell buffers its serialized
-output and it travels here, so a failed or aborted tasklet leaks nothing. The
-controller journals handoff AND outbox in ONE `task_committed` record and
-flushes the outbox only after that fsync. The frame bound applies to the
-combined payload; an oversized handoff + outbox is refused with a non-empty
-`error`.
+`cells_ran` names each Cell the stage ran, with the range `first_seq..seq` of
+effect records it wrote in the stage (both absent when it wrote none) and the
+plugin channels those records wrote on. The barrier carries no output: a
+stage's plugin output is in its Cells' `cell_effect_record`s, each sent before
+the barrier. The frame bound applies to the handoff; an oversized handoff is
+refused with a non-empty `error`.
 
-`compensating = true` marks the undo twin: a `compensate` hook's staged output
-for the already-committed tasklet `task_idx`, journaled as a `compensated`
-entry and flushed with comp-marked keys. It is shipped BEFORE that Cell's
-`compensation_done` marker, so a crash between the two re-runs the
-(idempotent) hook rather than losing its undo output.
+`compensating = true` marks the undo twin: `cells_ran` names the records a
+`compensate` hook wrote for the already-committed tasklet `task_idx`,
+journaled as a `compensated` entry under the same wait and release as a
+forward stage. It is shipped BEFORE that Cell's `compensation_done` marker, so
+a crash between the two re-runs the (idempotent) hook rather than losing its
+undo output.
 
-**Reply and durability.** `TaskCommitResponse` rides a controller-initiated
-`CommandRequest` under the request's `reference_id`, emitted only AFTER the
-`task_committed` entry is fsynced in the instance's `task.journal`
-(journal-then-ack). The fsync is batched by the `FsyncBatcher` tick and the
+**Reply and durability.** Before it appends, the controller waits until every
+record `cells_ran` names is durable on its Cell's writer; a record the writer
+refuses, or one not durable within `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`, fails the
+barrier with `record_not_durable: <cell> seq=<n>`, and a re-sent barrier whose
+first copy still waits joins that wait. `TaskCommitResponse` rides a
+controller-initiated `CommandRequest` under the request's `reference_id`,
+emitted only AFTER the `task_committed` entry is fsynced in the instance's
+`task.journal` (records, then journal, then ack). The fsync is batched by the `FsyncBatcher` tick and the
 acks of every barrier in the tick — across every instance on the runner — are
 released after that one sync. The control-channel reader never journals: it
 hands the frame to the per-runner commit worker (`ControlChannel.Commits`), so
 a commit storm never queues a ping, stop, park or compaction behind disk I/O.
-A non-empty `error` (journal write failure, oversized payload) terminates the
-run abnormally through the terminal-error path, including saga compensation.
+A non-empty `error` (journal write failure, oversized payload, a record not
+durable) terminates the run abnormally through the terminal-error path, including saga compensation.
 
 **Idempotent re-send.** An ack that does not arrive within
 `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 s) of a send is re-sent: the same
@@ -1513,28 +1526,32 @@ exhausted ladder is mid-run channel loss: the run terminates and crash-resume
 re-drives from the last committed task (the un-acked task re-runs —
 at-least-once).
 
-**Outbox flush.** The response is the durable point past which the staged
-output may be seen; the controller flushes it right after the ack, in journal
-order, through the same `:on_output` fan-out live workflow output uses,
-stamping each frame with the identity below, and appends `outbox_flushed`. A
-delivery that cannot happen yet is retried, never dropped; on restore every
-`task_committed` / `compensated` entry without a matching `outbox_flushed` is
-re-driven with its original keys before the resumed run advances — a crash
-between commit and flush duplicates at worst (at-least-once with stable keys)
-and loses nothing.
+**Release.** The response is the durable point past which the named records'
+outputs may be seen: right after the ack the controller tells each named
+Cell's writer that its range is committed, and the writer's outbox, the same
+one a tier stream Cell uses, dispatches those outputs through the
+`:on_output` chain. A held entry of that Cell below the range belongs to an
+attempt that never committed and is dropped. On restart the writer re-queues
+every record above its flush cursor and releases what a live journal entry
+names; a crash between commit and flush duplicates at worst (at-least-once
+with stable keys) and loses nothing.
 
-**Workflow output identity.** Every flushed outbox frame carries the same
-`flz.*` shape the effectively-once tier stamps, minted from the journal:
+**Workflow output identity.** Every released frame carries the identity a tier
+stream's output carries, minted by the Cell's writer from the effect record:
 
 | Key | Value |
 |-----|-------|
 | `flz.cell` | `<instance_id>/<tasklet_name>/<cell_key>` of the producing Cell |
-| `flz.seq` | `<task_idx>.<seq_in_task>`; an undo output carries a trailing `.1` (`<task_idx>.<seq_in_task>.1`) so it never collides with the forward output it reverses |
-| `flz.epoch` | the instance's journal epoch: `0` at first start, carried verbatim across crash re-drives, bumped only by a rewind |
+| `flz.seq` | `<record seq>.<emit ordinal>`; an undo output is a newer record of the compensating Cell, so its seq sorts above the forward output's |
+| `flz.epoch` | the Cell's realign epoch, carried verbatim across crash re-drives; a rewind does not move it (a rewind bumps only the journal epoch, which keys barrier identity) |
 | `channel` | the producing plugin channel's name |
+| `flz.key` | the emit's key, when the channel is keyed |
+| author metadata | every pair the emit supplied |
 
-The tuple is a pure function of the journal, so a re-drive replays
-byte-identical stamps.
+The tuple is a pure function of the record, so a re-drive replays
+byte-identical stamps. An opted-out class writes no record: its outputs go
+straight to the wire with `channel`, `flz.key` and metadata, as a tier-off
+stream's do.
 
 ### Control command `IterCommit` (runner → controller)
 
@@ -1565,12 +1582,11 @@ The controller appends ONE `iter_committed(iter, consumed_offset, entry_channel)
 entry carrying the terminal handoff, fsyncs, and acks under the same batching,
 terminal-error and bounded re-send contract as `TaskCommitResponse` (a re-sent
 `IterCommit` is journaled once by `{iter, epoch}`). Everything after the ack is
-cleanup: a boundary `CompactCell` per Cell of the instance, the flush of
-what the iteration staged, the report of `consumed_offset` into the input
-log's watermark (whose retention then reclaims the prefix below it), and a cut
-of the task-journal below the oldest entry its
-fold still needs (the latest `iter_committed`, entries whose outbox is still
-owed, the latest `rewound` marker with its pending undos), deferred until the
+cleanup: the report of `consumed_offset` into the input log's watermark
+(whose retention then reclaims the prefix below it), and a cut of the
+task-journal below the oldest entry its fold still needs (the latest
+`iter_committed`, a stage entry naming a record above its Cell's flush cursor,
+the latest `rewound` marker with its pending undos), deferred until the
 settled prefix exceeds `:record_log_cut_after_bytes` (64 KiB) and skipped for
 a class whose tasklets declare `compensate`. The instance enters iteration
 `iter + 1` only on success, so a crash re-runs at most the in-flight
@@ -1669,8 +1685,8 @@ unchanged.
 consumers that upsert on `flz.key`. It is NOT a sufficient handle for exact
 append-only dedup: consecutive invocations that apply no state change can
 produce colliding `<change_seq>.<emit_ordinal>` pairs. Exact dedup needs a
-durable outbox — the effectively-once tier and the workflow outbox both stamp
-`flz.epoch`, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
+durable outbox: the Cell writer's outbox stamps `flz.epoch` for the
+effectively-once tier and for a durable workflow alike, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
 conforming sink deduplicates on (the Kafka producer uses `flz.key` as the
 record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 `flezha.dedup_key` header; the Postgres sink guards on `(epoch, seq)`). See

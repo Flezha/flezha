@@ -9,7 +9,7 @@ nothing.
 - [Structure: a graph of tasklets](#structure-a-graph-of-tasklets)
 - [The task journal](#the-task-journal)
 - [Happy path: the stage barrier](#happy-path-the-stage-barrier)
-- [The transactional outbox](#the-transactional-outbox)
+- [One outbox](#one-outbox)
 - [Retry, then abort](#retry-then-abort)
 - [Saga compensation](#saga-compensation)
 - [The durable loop](#the-durable-loop)
@@ -102,13 +102,18 @@ record body:          [type u8][task_idx u16 BE][iter u32 BE][payload]
 
 | Type | Entry | Carries |
 | --- | --- | --- |
-| 1 | `task_committed` | the cells that ran, the handoff batch, the staged outbox, and the tasklet's completion if it asked to end the instance |
-| 2 | `outbox_flushed` | a marker: this entry's outbox reached its sinks |
+| 1 | `task_committed` | `cells_ran`, the handoff batch, and the tasklet's completion if it asked to end the instance |
 | 3 | `iter_committed` | the input-log offset the iteration consumed (or none, for a carry-fed pass), its terminal handoff, and its completion |
-| 5 | `compensated` | an undo ran — with the undo's own outbox |
+| 5 | `compensated` | an undo ran: `cells_ran` naming the undo records |
 | 6 | `rewound` | a marker: everything above this iteration is un-committed |
 
-Type 4 is unused: where an instance sleeps is not the journal's (see [Suspension](#suspension)).
+`cells_ran` names, for each Cell the stage ran, its identity, the range of effect records it
+wrote in the stage (`first_seq..seq`, both absent when it wrote none) and the plugin channels
+those records wrote on. The journal holds markers only: no Cell state and no plugin output,
+which live in the Cells' own effect records.
+
+Types 2 and 4 are unused: delivery is tracked by each Cell writer's flush cursor, and where an
+instance sleeps is not the journal's (see [Suspension](#suspension)).
 The journal is **append-only**. `rewound` does not truncate it — one fold applies the markers,
 and every reader (what is committed, what is owed, what is compensated, where the loop is) runs
 over that fold. The epoch lives in the record header and stays `0` until a rewind bumps it.
@@ -124,19 +129,20 @@ sequenceDiagram
     CTRL->>EX: start, then the first message enters the root tasklet's chain
     EX->>EX: the root's cells run in parallel
     Note over EX: BARRIER — the root's last item settled
-    EX->>CTRL: TaskCommit {task_idx, cells_ran, handoff, staged outbox}
-    CTRL->>CTRL: 💾 journal task_committed — append + fsync
+    EX->>CTRL: TaskCommit {task_idx, cells_ran, handoff}
+    CTRL->>CTRL: wait until every record cells_ran names is durable
+    CTRL->>CTRL: 💾 journal task_committed: append + fsync
     CTRL-->>EX: TaskCommitResponse (durable)
-    CTRL->>SINK: flush THIS task's outbox — deduped, stamped (cell, task.seq, epoch)
+    CTRL->>SINK: release the named records' outputs, stamped (cell, record seq, epoch)
     Note over EX: only NOW do the root's outputs reach B and C
 
     EX->>EX: B's cells and C's cells run TOGETHER on the pool
     Note over EX: C finishes first — its own barrier
     EX->>CTRL: TaskCommit C
-    CTRL-->>EX: ack + flush C's outbox
+    CTRL-->>EX: ack, then release C's records
     Note over EX: B finishes — its own barrier
     EX->>CTRL: TaskCommit B
-    CTRL-->>EX: ack + flush B's outbox
+    CTRL-->>EX: ack, then release B's records
     Note over CTRL: every LEAF tasklet committed → the operative is done.<br/>The controller derives the same fact from the journal —<br/>the SDK declared its leaf set at bind.
 ```
 
@@ -146,7 +152,7 @@ acknowledged. A child with several producers (a join) runs once every one of the
 committed. Siblings are therefore never committed *atomically*, and in no fixed order. A
 sibling that fails after the one beside it committed compensates the committed one exactly as a
 deeper failure would; a tasklet still running when the pass fails is recorded as having run,
-so it is compensated, but it is **not committed**, because committing would flush an outbox that
+so it is compensated, but it is **not committed**, because committing would release outputs that
 must immediately be undone.
 
 Nothing waits for an ack: it is an event that releases the tasklet's outputs. One not received
@@ -165,9 +171,12 @@ resumed instance skips it and seeds its children from the durable batch. Without
 an opted-out class — the chain re-runs from the top over the restored cell state, which is
 why a tasklet body is required to be idempotent.
 
-## The transactional outbox
+## One outbox
 
-Inside a structured tasklet, `ctx.emit` does **not** hit the wire. It stages.
+Inside a structured tasklet, `ctx.emit` writes into the Cell's effect record, exactly as a
+stream Cell on the effectively-once tier does: one `cell_effect_record` per invocation holding
+the state changes and the plugin outputs (channel, key, metadata, payload). The record is
+durable before the stage marker; its outputs wait for the marker.
 
 ```mermaid
 sequenceDiagram
@@ -175,27 +184,32 @@ sequenceDiagram
     participant CTRL as 🧠 Controller
     participant SINK as 📤 Sink
 
-    Note over EX: B's cells run — every emit is STAGED per cell, never sent
-    Note over EX: a failing stage drops its staged bytes with the error — nothing leaks
-    Note over EX: BARRIER — B's last item settled
-    EX->>CTRL: TaskCommit — the cells that ran, the handoff, AND the staged outbox
-    CTRL->>CTRL: 💾 ONE journal record, ONE fsync
-    Note over CTRL: DURABLE POINT — only now may anything be flushed
-    CTRL->>SINK: flush each staged item, stamped flz.cell · flz.seq = task_idx.seq_in_task · flz.epoch
-    CTRL->>CTRL: 💾 outbox_flushed marker
-    Note over CTRL,SINK: a crash BEFORE the flush → the journal still owes it →<br/>the restore re-drives it with IDENTICAL identity → the sink dedups
+    Note over EX: each of B's items settles into ONE effect record, sent at once
+    CTRL->>CTRL: 💾 the Cell's writer syncs the record and HOLDS its outputs
+    Note over EX: BARRIER: B's last item settled
+    EX->>CTRL: TaskCommit: the cells that ran with their record ranges, the handoff
+    CTRL->>CTRL: wait until every named record is durable
+    CTRL->>CTRL: 💾 ONE journal entry, ONE fsync, then the ack
+    Note over CTRL: DURABLE POINT: only now may the named records' outputs leave
+    CTRL->>SINK: each Cell's writer releases its range, stamped flz.cell · flz.seq = record_seq.ordinal · flz.epoch · flz.key
+    Note over CTRL,SINK: a crash BEFORE the flush: the writer re-queues the record above its cursor,<br/>the journal still names it, the re-drive carries IDENTICAL identity, the sink dedups
 ```
 
-The journal — not memory — decides what is owed, which makes the re-drive idempotent by
-construction. A crash between the commit and the flush costs nothing but a duplicate the sink
-absorbs.
+The Cell writer's outbox is the only outbox, for both kinds: the same cursor, confirmation
+tally, resettle and restart re-drive. What differs is the commit unit. A stream Cell's record
+is committed by its own fsync; a workflow Cell's is committed by the stage marker that names it.
+A record no marker will name (a failing stage, a stage a crash interrupted and re-ran, an
+iteration a rewind unwound) is dropped from the queue without reaching a sink, so a failed
+stage leaks nothing. A crash between the commit and the flush costs nothing but a duplicate the
+sink absorbs.
 
-An **opted-out** class, or one running without a controller (a unit test, a bench), keeps the
-direct path: emits go straight to the wire as they happen, exactly as before.
+An **opted-out** class, or one running without a controller (a unit test, a bench), writes no
+record: emits go straight to the wire as they happen, with their channel, key and metadata.
 
-A workflow output carries no `flz.key`: its plugin wire has no natural key to stamp. That is why
-the *only* undo the engine can guarantee for a workflow tasklet is the tasklet's own
-`compensate` hook, which is what the rewind guard enforces.
+A workflow output carries `flz.key` when its channel is keyed, as a stream's does. The rewind
+guard still requires a `compensate` hook for every unwound tasklet that wrote plugin output: a
+rewind re-runs nothing over the unwound inputs, so no later output overwrites the original by
+its key, and the hook is the only undo the engine can guarantee.
 
 ## Retry, then abort
 
@@ -210,7 +224,7 @@ flowchart TB
     RT{"attempts left?<br/>3 total, exponential backoff<br/>+ jitter, capped at 5 s"}:::ctrl
     NR{"classified<br/>non-retryable?"}:::ctrl
     OK["k2 succeeds → B's last item settles → COMMIT + flush"]:::exec
-    FAIL["the tasklet does NOT commit<br/>nothing was staged out — nothing leaked"]:::ctrl
+    FAIL["the tasklet does NOT commit<br/>no marker names its records: nothing leaked"]:::ctrl
     ABORT["ABORT → compensate the previously committed tasklets<br/>(B itself needs no undo — it never committed)"]:::sink
 
     B --> K1
@@ -258,8 +272,8 @@ sequenceDiagram
 
     Note over CTRL,EX: SAGA — reverse-topological: descendants before ancestors
     CTRL->>EX: compensate C (per cell, in parallel)
-    EX->>CTRL: 💾 compensated — WITH C's undo outbox
-    CTRL->>SINK: C's undo effects (seq suffixed .1 — it can never collide with the forward output)
+    EX->>CTRL: 💾 compensated, naming C's undo record
+    CTRL->>SINK: C's undo effects (a newer record of C's Cell: its seq sorts above the forward output)
     CTRL->>EX: compensate B
     EX->>CTRL: 💾 compensated
     CTRL->>SINK: B's undo effects
@@ -328,8 +342,10 @@ keep-progress rollback unit, and rewind all attach.
 
 At every boundary the SDK ships `IterCommit`, the controller journals **one** `iter_committed`
 entry carrying the terminal handoff and the consumed input-log offset, acks, and only then does
-its post-ack cleanup: a boundary snapshot per cell, the outbox flush, and the release of the
-consumed input. A failure in that cleanup costs work, not correctness.
+its post-ack cleanup: the release of the consumed input and the journal cut. The boundary takes
+no snapshot and flushes nothing: each stage's outputs left at its own marker, and the
+Watchdog's size and age compaction triggers serve a workflow's Cells as they serve a stream's.
+A failure in that cleanup costs work, not correctness.
 
 **The durable input log.** A workflow operative's input is journaled to the same per-instance
 input log the effectively-once tier uses, before it is forwarded, and stamped `flz.offset`. A
@@ -405,14 +421,14 @@ sequenceDiagram
     participant SINK as 📤 Sink
 
     OP->>CTRL: rewind --to-iteration 2
-    CTRL->>CTRL: guard — is iteration 2 committed?<br/>does every un-committed task that staged output declare compensate?
+    CTRL->>CTRL: guard: is iteration 2 committed?<br/>does every unwound task that wrote plugin output declare compensate?
     CTRL->>CTRL: 💾 append rewound(2) at epoch + 1 — the first non-zero epoch anything writes
-    Note over CTRL: the fold now PURGES iterations above 2.<br/>Their unflushed outbox ceases to be owed — not merely skipped.
+    Note over CTRL: the fold now PURGES iterations above 2.<br/>The rebind drops their records' outputs not yet handed to a sink.
     CTRL->>EX: evict, then rehydrate (unconditionally — the loop must come back to run the undo)
     CTRL->>EX: journal state, including the DERIVED rewind_undo list
     EX->>EX: compensate the unwound tasklets in reverse — forced AllOrNothing
     EX->>CTRL: 💾 one compensated entry per tasklet — even an EMPTY one for a hookless task
-    CTRL->>SINK: the undo effects, under epoch + 1
+    CTRL->>SINK: the undo effects, released at each compensated entry
     Note over EX: the loop resumes WAITING. The NEXT message becomes iteration 3.
 ```
 
@@ -422,10 +438,10 @@ their own commit*. That "after its own commit" test is what keeps a re-run disti
 the original it replaced, and what makes a second rewind work. There is no done-marker and no
 completeness oracle — a crash mid-rewind resumes with exactly the outstanding work.
 
-**The guard runs before anything durable changes.** A tasklet that staged plugin output but
-declares no `compensate` hook cannot be unwound — a workflow emit carries no natural key, so a
-re-run's output cannot be relied on to overwrite the original. The rewind is refused, naming the
-channel.
+**The guard runs before anything durable changes.** A tasklet that wrote plugin output but
+declares no `compensate` hook cannot be unwound: a rewind re-runs nothing over the unwound
+inputs, so no later output overwrites the original by its key. The rewind is refused, naming the
+channel, which the guard reads from the stage entries' `cells_ran`, never from the Cell WALs.
 
 > **A rewind does not replay inputs.** Every iteration commit raises the instance's floor in its
 > input log and a rewind never lowers it, so a committed turn's message is not delivered again
@@ -465,7 +481,7 @@ sheet on each instance (the iteration, the tasklets in flight and done, the outp
 their commit, the completion) advanced by events on the thread that brings each one — a worker
 settling a tasklet's last item, the control-channel reader bringing a commit ack or a stop, the
 data-channel reader bringing a message, a poller promoting a deadline. It owns the task journal
-handshake, the staged outbox, the compensation plan, the loop, suspension and rewind. A host
+handshake, the stage's record ranges, the compensation plan, the loop, suspension and rewind. A host
 SDK supplies the tasklet bodies and the threads that run them: a stage's items are ordinary cell
 work, handed out under poll exactly as a stream's are. Rust runs an item on a pool worker, Java
 on a virtual thread; neither owns the chain's position, so there is no per-host resume or

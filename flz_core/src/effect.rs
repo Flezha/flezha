@@ -384,18 +384,22 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct SettlePolicy {
-    pub effectively_once: bool,
+    /// One effect record per invocation: the effectively-once tier, or a
+    /// durable workflow Cell ([`OperativeTopology::records_effects`]).
+    ///
+    /// [`OperativeTopology::records_effects`]: crate::operative::topology::OperativeTopology::records_effects
+    pub records_effects: bool,
     pub checkpoint: Option<CheckpointPolicy>,
     /// Whether tier-off changes and timer ops are kept for a drain at all —
     /// false for a host class with no flusher entry.
     pub buffered: bool,
 }
 
-/// Settle one invocation into its Cell's buffer per the tier: under
-/// effectively-once everything folds into ONE effect record, park included;
-/// outside it the changes and timer ops are kept for the flusher and the park
-/// is handed back for the caller's blocking tier-off park. A retryable
-/// attempt's held changes are re-taken first.
+/// Settle one invocation into its Cell's buffer per its policy: a Cell that
+/// records effects folds everything into ONE effect record, park included;
+/// any other keeps the changes and timer ops for the flusher and hands the
+/// park back for the caller's blocking tier-off park. A retryable attempt's
+/// held changes are re-taken first.
 pub fn settle_effects<B: Bodies>(
     buffer: &mut EffectBuffer<B>,
     policy: SettlePolicy,
@@ -409,7 +413,7 @@ pub fn settle_effects<B: Bodies>(
         changes.extend(effects.changes);
     }
     effects.changes = changes;
-    if policy.effectively_once {
+    if policy.records_effects {
         // An effect-free invocation contributes nothing durable — unless it
         // parked, in which case the record MUST ship so the dead-letter park
         // and the consumed-offset advance stay atomic.
@@ -508,7 +512,7 @@ mod effect_buffer_tests {
         let mut off = EffectBuffer::<RawBodies>::default();
         off.pending_attempt.push(vec![0]);
         let policy = SettlePolicy {
-            effectively_once: false,
+            records_effects: false,
             checkpoint: None,
             buffered: true,
         };
@@ -523,7 +527,7 @@ mod effect_buffer_tests {
 
         let mut on = EffectBuffer::<RawBodies>::default();
         let policy = SettlePolicy {
-            effectively_once: true,
+            records_effects: true,
             checkpoint: None,
             buffered: true,
         };

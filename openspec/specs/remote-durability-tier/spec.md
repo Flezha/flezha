@@ -42,11 +42,15 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 - **THEN** both are stored without either overwriting the other, and a cold controller hydrates exactly one of them
 
 ### Requirement: Shipping triggers reuse existing boundaries plus an RPO backstop
-The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and workflow TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
+The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and workflow TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. A workflow barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the operative's full artifact set; no boundary snapshot is requested at an iteration commit, so a workflow Cell's snapshot ships when the Watchdog's compaction lands, as a stream Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
 
 #### Scenario: Compaction snapshot ships
 - **WHEN** a compaction completes for a cell
 - **THEN** the snapshot and the segments it supersedes are reflected in a new shipped manifest entry for that cell
+
+#### Scenario: A stage barrier ships the records it names
+- **WHEN** a durable workflow's `task_committed` entry naming a Cell record at seq 5 is acked
+- **THEN** that Cell's range through seq 5 and the journal suffix are enqueued for shipping together
 
 #### Scenario: Quiet cell is bounded by the backstop
 - **WHEN** a cell has unshipped record ranges and hits no compaction, checkpoint, or barrier for `ship_interval_ms`
@@ -91,11 +95,15 @@ In async mode (all stream classes, and workflow classes that do not opt into syn
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Per-class synchronous mode for workflow operatives
-A workflow class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0). The declaration SHALL have exactly one spelling per SDK, the class-level one; no SDK's channel builder SHALL carry a synchronous-durability call. A stream class declaring synchronous mode SHALL be refused at registration under the name `SyncDurabilityOnStream`, whether the SDK judges the class itself or the shared core does.
+A workflow class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix and of every Cell record the barrier's entry names before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0) of the stage's state and output, not of the marker alone. The gate SHALL be the commit worker's one gate, applied after the entry's local sync and before the ack, and no other path SHALL gate on the remote ship. The declaration SHALL have exactly one spelling per SDK, the class-level one; no SDK's channel builder SHALL carry a synchronous-durability call. A stream class declaring synchronous mode SHALL be refused at registration under the name `SyncDurabilityOnStream`, whether the SDK judges the class itself or the shared core does.
 
 #### Scenario: Sync workflow commit is remote-durable before ack
 - **WHEN** a sync-declared workflow class reaches an IterCommit and the remote ship succeeds
 - **THEN** the ack is sent only after the backend confirms the manifest write
+
+#### Scenario: A sync stage commit ships its records before the ack
+- **WHEN** a sync-declared workflow class reaches a TaskCommit naming a Cell record at seq 5
+- **THEN** the ack is sent only after the backend confirms the manifest covering that Cell's range through seq 5 and the journal suffix
 
 #### Scenario: Crash between local append and remote ship
 - **WHEN** the controller crashes after the local journal append but before the remote ship of a sync-mode barrier

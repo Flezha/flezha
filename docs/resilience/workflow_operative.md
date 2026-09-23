@@ -45,14 +45,16 @@ teardown, `OperativeManager.request_stop/3`).
 Every trigger converges on one `WorkflowCompleted` (`status` `ok | error | cancelled`, `error`,
 `result`). The controller writes the completion record, then tears down off the control-channel
 reader, **settling both output debts first** (`ControlChannel.drain_owed_outputs/2`). They are
-settled differently. The data stream is *flushed*: `Placement.flush_stream_channels/1` issues one
+settled differently. The data stream is *flushed*: `StreamPool.flush_channels/1` issues one
 bounded call per stream channel of the runner, and a channel answers only after every frame
 already in its mailbox has been routed to an Overwatch — so an opted-out class's
 last direct output is run before its Overwatch is stopped, however the two sockets interleave on
-arrival, and even when an output of that run was lost rather than delivered. The journal is
-*waited for*: up to 60 s, re-driving `TaskJournal.flush_pending/1`, until
-`TaskJournal.pending_entries/1` is empty. A deadline hit is logged (`... still owed`) and the
-retained journal keeps the debt. `status = "error"` tears down identically — there is no
+arrival, and even when an output of that run was lost rather than delivered. The Cells'
+outboxes are *waited for*: up to `drain_owed_ms` (60 s), polling every 50 ms, until every live
+Cell writer of the instance reports nothing pending and nothing awaiting a sink's confirmation
+(`WalWriter.outbox_status/2`). An entry still held for a stage marker belongs to a stage that
+never committed and is owed nothing. A deadline hit is logged (`... still owed`) and the
+retained WAL keeps the debt. `status = "error"` tears down identically: there is no
 platform retry of a failed tasklet. A frame addressed to a running instance takes the
 stream's entrance (channel resolved, parsed, transformed, parked when it cannot enter), never
 dropped: it starts a pass when the instance is waiting at a committed boundary, and otherwise
@@ -73,13 +75,14 @@ wiring is a plugin sink gets no journal codec, because the runtime attaches one 
 channels and nothing else. Either way a crash would re-seed empty, read as converged.
 
 **The iteration boundary.** `IterCommit` rides the same commit worker as `TaskCommit` (below).
-After the ack the worker runs the post-ack cleanup in order: a boundary snapshot
-(`CompactCell` per Cell, in a task, best-effort — a failed compaction means the rehydrate
-replays the WAL tail), the outbox flush in journal order, the report of the iteration's
-consumed offset into the input log's watermark (`TaskJournal.release_input/2`) and the journal
-cut (`TaskJournal.cut/1`). An iteration that consumed no journaled input (a carry-fed pass)
-reports nothing. Both files are cut by their own writers — the journal on this cast, the input
-log by its retention sweep below the watermark — so the worker never waits on a file rewrite,
+After the ack the worker reports the iteration's consumed offset into the input log's watermark
+(`TaskJournal.release_input/2`) and cuts the journal (`TaskJournal.cut/1`). The boundary takes
+no snapshot and flushes nothing: the stages' outputs were released at their own markers, and
+the Watchdog's size and age compaction triggers serve a workflow's Cells as they serve a
+stream's, so a rehydrate replays whatever WAL tail lies above the last snapshot. An iteration
+that consumed no journaled input (a carry-fed pass) reports nothing. Both files are cut by their
+own writers (the journal on this cast, the input log by its retention sweep below the
+watermark), so the worker never waits on a file rewrite,
 and a prefix cut below `:record_log_cut_after_bytes` (64 KiB) is deferred until that many
 released bytes accumulate.
 The journal is cut only for a class whose `compensable_tasks` is `[]` (a saga or a rewind
@@ -154,8 +157,8 @@ instance, so a park landing after the start keeps its own record. Inspect with
 with its consumed offset or "consumed no journaled input"; the journal records no park) and
 `flz state inbox <operative/instance>` (the input log's
 retained records, and which are still above the floor). `flz operative replay` refuses a
-workflow Cell, since its baseline is a journal iteration, not an effect record; `flz operative
-rewind` is a loop's way back.
+workflow Cell, since its baseline is a committed iteration across every Cell of the instance and
+its effect records carry no consumed offset; `flz operative rewind` is a loop's way back.
 
 A workflow tasklet's Cell timers fire as passes of their own
 ([`cell_timers.md`](../sdk/cell_timers.md#timers-in-a-workflow)). A served firing leaves its
@@ -204,14 +207,20 @@ flz operative rewind <instance> --to-iteration N
 `Migration.rewind_to/2` runs, in order:
 
 1. **The guard**, before anything durable changes. `N` must be a committed iteration (the refusal
-   names the committed range), and every tasklet above `N` that staged plugin output must be in
-   `compensable_tasks` (`TaskJournal.staged_channels_above/2`; the refusal names the channels) —
-   a workflow emit carries no `flz.key`, so the hook is the only undo the engine can guarantee.
+   names the committed range), and every tasklet above `N` that wrote plugin output must be in
+   `compensable_tasks` (`TaskJournal.staged_channels_above/2`, which reads the channels each
+   Cell wrote on from the stage entries' `cells_ran`, never from the Cell WALs compaction may
+   have truncated; the refusal names the channels). A rewind is undo-and-continue: nothing
+   re-runs over the unwound inputs, so no later output overwrites the original by its key, and
+   the hook is the only undo the engine can guarantee.
    A class that declared nothing (`nil`) is not a chain with nothing compensable (`[]`). Neither
    refusal touches the journal.
 2. **The marker.** `TaskJournal.append_rewound/2` appends `rewound(N)` at `current_epoch + 1` with
    a synchronous fsync. The fold purges accumulated entries with `iter > N` and keeps everything
-   appended after the marker, so a rewound iteration's unflushed outbox ceases to be owed.
+   appended after the marker, so a rewound iteration's records are no longer named by a live
+   entry, and the rebind drops those whose outputs were not yet handed to the plugin chain. The
+   marker's epoch keys the barrier identity of the re-run; an output's `flz.epoch` is its Cell's
+   and does not move.
 3. **Evict and rehydrate unconditionally**: a rebind, not a park: no park record, no wake
    timer, and the loop comes back with no input waiting because it must run the undo.
 
@@ -250,7 +259,7 @@ rescaled.
   independent subtrees in unspecified relative order. Hooks run once per cell that had an
   effect, inside the single teardown. A hookless tasklet is skipped; a failing hook is logged
   and the rest of the plan still runs. A clean `ok` never compensates.
-- Each stage commits on its own, so a sibling can be committed, its outbox flushed, before the
+- Each stage commits on its own, so a sibling can be committed, its outputs released, before the
   stage beside it fails; it is then undone like any committed stage, in reverse completion
   order. A stage still running when the pass fails is recorded as having run, so it is
   compensated, and is not committed. A cooperative stop takes the same path, and the undo is
@@ -270,7 +279,7 @@ journal-rebuilt tasklet's `completed_output` is empty on resume (its inter-taskl
 was never durable), so a durable compensable tasklet keeps its undo handle in Cell state,
 and hooks are idempotent.
 
-## Durability: staged commit, task.journal, outbox, crash-resume
+## Durability: effect records, task.journal, outbox, crash-resume
 
 A class is durable by default and opts out with `PERSISTENCE_ENABLED = false` /
 `persistenceEnabled()`, the switch a stream class carries too; the runner announces it
@@ -279,19 +288,23 @@ A class is durable by default and opts out with `PERSISTENCE_ENABLED = false` /
 per-Cell flush drains and discards (no WAL, snapshot, journal or handshake); a crash re-runs
 from the top, a live Cell read answers `{:error, :persistence_off}`, and the class cannot sleep.
 
-**The commit path.** When a stage's last item settles, the worker that settled it ships
-`TaskCommit` (`task_idx`, `iter`, `cells_ran`, the handoff through the channel's codec, the
-staged `outbox`); nothing waits for the ack, which is an event on the control-channel reader
+**The commit path.** Every item a workflow Cell settles is one `cell_effect_record` (its
+state changes and its plugin outputs with channel, key and metadata), flushed inline by the
+worker that settled it rather than on the flush linger. When a stage's last item settles, that
+worker ships `TaskCommit` (`task_idx`, `iter`, `cells_ran` naming each Cell's record range in the
+stage and the plugin channels those records wrote on, the handoff through the channel's codec;
+no output); nothing waits for the ack, which is an event on the control-channel reader
 that releases the stage's outputs into its children.
 
 | Step | Where | Detail |
 | --- | --- | --- |
 | decode, hand over | control-channel reader | casts to `ControlChannel.Commits` and returns — no disk I/O on the reader, so a commit storm never delays a ping, stop, park or compaction |
-| append | `Commits` (one per runner) | `TaskJournal.append_async/4`, `sync: :batched`: the reply is deferred until the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; the worker's request collection is the set of acks owed and it never waits on a writer |
+| records | `Commits` (one per runner) | before a `task_committed` or `compensated` entry, `WalWriter.await_durable_async/4` for every named `{cell, seq}` on its Cell's writer, answered once the record's batch has synced; a refusal, an unreachable writer or `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` elapsing fails the barrier with `record_not_durable: <cell> seq=<n>`, and a re-sent barrier whose first copy still waits joins that wait |
+| append | `Commits` | once every named record is durable, `TaskJournal.append_async/4`, `sync: :batched`: the reply is deferred until the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; the worker's request collection is the set of acks owed and it never waits on a writer |
 | identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key: a re-sent barrier is answered from the existing entry, never journaled twice |
-| ack | written by the channel | `TaskCommitResponse` under the request's `reference_id`; a non-empty `error` (write failure, `{:oversized_handoff, size, max}`) terminates the run |
+| ack | written by the channel | `TaskCommitResponse` under the request's `reference_id`; a non-empty `error` (write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) terminates the run |
 | sync remote | a task, before the ack | `SYNC_DURABILITY = true` / `syncDurability()` (`durability: sync_remote` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](../operations/remote_durability_tier.md) first — RPO 0, workflow classes only |
-| flush | after the ack, on the worker | `TaskJournal.flush_pending/1` delivers in journal order and writes `outbox_flushed`; an unbound operative retries every 1 s |
+| release | after the ack, on the worker | `WalWriter.commit_records/3` for each named range: the Cell's writer releases those records' outputs to the plugin chain and drops a held entry of that Cell below the range (an attempt that never committed) |
 
 Each send arms a deadline of `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` (default 30 000) on the poll core's
 deferred-wake list. One that comes due with the ack still owed re-sends the same frame under the
@@ -300,10 +313,12 @@ rather than a class setting; the ack stays registered across the re-sends, so a 
 continues the chain, and only the third expiry is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
 journal codec, in Rust from the producing tasklet's declared `Output` type — and a journal entry
 is bounded by `:wal_high_watermark_bytes` (16 MiB): keep bulk data in Cell state and hand off
-references. Every flushed item is stamped
-`flz.cell`, `flz.seq = <task_idx>.<seq_in_task>` (an undo's seq carries a trailing `.1`,
-numeric so the Postgres sink's guard still orders it), `flz.epoch` and `channel`; there is no
-`flz.key`. Flush contract: [`data_durability.md`](data_durability.md#workflow-operatives-staged-commit-and-the-transactional-outbox).
+references. Every released output carries the stream's identity: `flz.cell`,
+`flz.seq = <record seq>.<emit ordinal>`, `flz.epoch` (the Cell's realign epoch, which a rewind
+does not move), `channel`, `flz.key` when the channel is keyed, and the author's metadata. An
+undo output is a newer record of the compensating Cell, so its seq sorts above the forward
+output's. An opted-out class sends its outputs straight to the wire with the same channel, key
+and metadata. Flush contract: [`data_durability.md`](data_durability.md#workflow-operatives-one-record-released-at-the-stage-commit).
 
 **Crash-resume.** Journal state rides `AddOperative.task_journal` on the bind — not a per-Cell
 restore, because a class whose tasklets hold no per-Cell state receives no
@@ -327,7 +342,8 @@ past the journaled tasklets — or resumes the compensation — to a terminal `W
 A live instance and a resumed one are the same data: the pass the journal describes is the
 pass the instance runs.
 
-Telemetry: `[:flezha, :state, :task_commit | :iter_commit | :task_outbox_flush]`,
+Telemetry: `[:flezha, :state, :task_commit]` (measurements `count`, `handoff_items`, `cells`),
+`[:flezha, :state, :iter_commit]`,
 `[:flezha, :workflow, :completed | :failed | :parked | :suspended | :rehydrating]`.
 
 ## Finished-job retention

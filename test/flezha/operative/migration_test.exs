@@ -511,15 +511,16 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> "ex_2" end)
   end
 
-  defp commit_turns(inst, count, outbox) do
+  defp commit_turns(inst, count, cells_ran) do
     for iter <- 0..(count - 1) do
-      :ok = TaskJournal.append_task_committed(inst, 0, iter, [], [], outbox)
+      :ok = TaskJournal.append_task_committed(inst, 0, iter, cells_ran, [])
       :ok = TaskJournal.append_iter_committed(inst, iter, iter + 1, [])
     end
   end
 
+  # A stage whose Cell wrote a record with an output on `replies`.
   defp emitting_outbox(),
-    do: [%{cell_id: "seg", seq_in_task: 0, channel: "replies", payload: "hi"}]
+    do: [%{cell_id: "seg", first_seq: 0, seq: 0, channels: ["replies"]}]
 
   test "rewind journals the marker, evicts, and rehydrates" do
     inst = instance_id()

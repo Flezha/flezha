@@ -530,16 +530,16 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
     seed_ts = Run.now_ns()
     :ets.insert(Run.waiters(), {id, seq, seed_ts, waiter})
 
-    # A run-once chain reads its entry from the spawn args (JSON of
-    # `init_values`); a loop reads its inbox, so it starts empty.
-    init_values = if cfg.scenario == :chain, do: %{"s" => "#{seq},#{seed_ts}"}, else: %{}
+    # A run-once chain is seeded by its first message; a loop is sent its
+    # turns later, so it starts with none.
+    seed = if cfg.scenario == :chain, do: [seed_input: {"#{seq},#{seed_ts}", %{}}], else: []
 
     builder = %Builder{
       id: id,
       factory_id: cfg.factory,
       kind: :workflow,
-      init_values: init_values,
-      opts: [plugins: [sink]]
+      init_values: %{},
+      opts: [plugins: [sink]] ++ seed
     }
 
     t0 = Run.now_ns()

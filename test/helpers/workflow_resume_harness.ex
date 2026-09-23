@@ -57,19 +57,22 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
     }
   end
 
-  # Wait for the sink to receive at least `count` frames and for the journal to
-  # owe nothing more, then take everything: an unexpected EXTRA delivery still
-  # fails the exact-count assertions, because it lands before the journal is
-  # settled.
+  # Wait for the sink to receive at least `count` frames and for the instance's
+  # Cell writers to owe nothing more, then take everything: an unexpected EXTRA
+  # delivery still fails the exact-count assertions, because it lands before
+  # the outboxes are settled.
   def await_outputs(collector, count, operative_id) do
     NodeTestHelper.wait_until(fn -> length(collected(collector)) >= count end, 30_000)
-    assert journal_settled?(operative_id), "the task journal still owes output"
+    assert outboxes_settled?(operative_id), "a Cell writer still owes output"
     collected_with_meta(collector)
   end
 
-  def journal_settled?(operative_id),
+  def outboxes_settled?(operative_id),
     do:
-      NodeTestHelper.wait_until(fn -> TaskJournal.pending_entries(operative_id) == [] end, 30_000)
+      NodeTestHelper.wait_until(
+        fn -> TaskJournal.owed_outputs(operative_id) == 0 end,
+        30_000
+      )
 
   # --- durable-loop helpers ---------------------------------------------------
 

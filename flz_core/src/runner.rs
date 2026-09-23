@@ -48,13 +48,6 @@ pub fn coordinator_installed() -> bool {
     RECONNECT_TRIGGER.get().is_some()
 }
 
-pub fn emit_workflow_output(operative_id: String, payload: Vec<u8>) {
-    coordinator_send(RunnerMessage::EmitWorkflowOutput {
-        operative_id,
-        payload,
-    });
-}
-
 /// An SDK-initiated request under the caller's `reference_id`, which the
 /// controller's reply echoes to wake the registered waiter.
 pub fn emit_control_request(reference_id: String, command: crate::pb::command_request::Command) {
@@ -101,11 +94,6 @@ pub enum RunnerMessage {
     SendControlKeepalive,
     /// The heartbeat timer's tick: a heartbeat on every secondary stream.
     SendDataHeartbeat,
-    /// A workflow's output, written on a secondary stream under `operative_id`.
-    EmitWorkflowOutput {
-        operative_id: String,
-        payload: Vec<u8>,
-    },
     /// A workflow reached an exit trigger.
     EmitWorkflowCompleted {
         operative_id: String,

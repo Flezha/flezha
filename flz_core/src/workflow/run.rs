@@ -14,7 +14,7 @@ use flz_transport::transport::FlezhaStream;
 
 use super::commit::{ack_timeout, iteration_frame, task_frame, undo_frame, BARRIER_SENDS};
 use super::compensation::{
-    plan_compensation, rewind_steps, saga_steps, stages_from_intents, CellRun,
+    plan_compensation, rewind_steps, saga_steps, stages_from_intents, CellRun, RecordSpan,
 };
 use super::instance::{
     AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Firing, FiringKey,
@@ -26,6 +26,8 @@ use super::spec::{Chain, WorkflowSpec};
 use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge, OverflowPolicy};
+use crate::flusher::FlushableBuffer;
+use crate::header::HeaderTemplate;
 use crate::host::HostPayload;
 use crate::operative::instance::OperativeInstance;
 use crate::operative::sleep::{iter_park, park_idle, OWED_INBOX_WAIT};
@@ -59,9 +61,9 @@ impl<'a> Run<'a> {
         })
     }
 
-    /// Whether this run journals its task boundaries — the one gate on both
-    /// the `TaskCommit` handshake and output staging. A transport-less run
-    /// has no journal, so its plugin output goes straight to the wire.
+    /// Whether this run journals its task boundaries: the one gate on the
+    /// `TaskCommit` handshake, and the same fact that makes its Cells write
+    /// effect records (`OperativeTopology::records_effects`).
     pub(crate) fn journaling(&self) -> bool {
         self.inst.durable()
     }
@@ -257,17 +259,35 @@ pub fn hold_emit(
     });
 }
 
-/// A plugin-bound output of a workflow Cell: staged for its stage's commit
-/// when the run journals, straight to the wire otherwise.
-pub fn plugin_output(slot: &Arc<CellSlot>, channel: &str, bytes: Vec<u8>) {
+/// Ship a workflow Cell's just-settled effect record at once, ahead of the
+/// stage's barrier, and name it on the pass sheet with the plugin `channels`
+/// its outputs were written on, for the barrier to name in turn. The one step
+/// both settle sites take, the erased host's and the typed worker's; a settle
+/// that left nothing durable ships and names nothing.
+pub fn ship_stage_record(
+    slot: &Arc<CellSlot>,
+    buffer: &mut dyn FlushableBuffer,
+    header: &HeaderTemplate,
+    channels: Vec<String>,
+) {
+    let Some(seq) = crate::flusher::flush_one(
+        buffer,
+        &slot.cell_identity,
+        &slot.change_seq,
+        header,
+        slot.persistence_enabled,
+    ) else {
+        return;
+    };
+    let record = RecordSpan {
+        first: seq,
+        last: seq,
+        channels,
+    };
     with_cell(slot, |r, node, cell| {
-        if !r.journaling() {
-            crate::runner::emit_workflow_output(r.inst.instance_id.to_string(), bytes);
-            return;
-        }
         r.decide(|d| {
             let attempt = d.s.attempts.entry((node, cell)).or_default();
-            attempt.staged.push((channel.to_string(), bytes));
+            RecordSpan::absorb(&mut attempt.record, record);
         });
     });
 }
@@ -807,8 +827,8 @@ pub(crate) fn workflow_item(value: &Value, stream: &Arc<FlezhaStream>) -> CellIt
 }
 
 /// The connection a workflow value that arrived on none rides — a journal
-/// re-seed, an undo. It is never written: a workflow's outputs leave through
-/// the coordinator.
+/// re-seed, an undo: the runner's secondary stream, or a detached one before
+/// any is connected.
 pub fn unwired_stream() -> Arc<FlezhaStream> {
     crate::state_sink::secondary_stream().unwrap_or_else(|| {
         static DETACHED: std::sync::OnceLock<Arc<FlezhaStream>> = std::sync::OnceLock::new();
@@ -992,7 +1012,7 @@ impl Decide<'_, '_, '_> {
             self.s.phase = Phase::Compensating;
             self.s.undo = Some(Undo {
                 steps: rewind,
-                outbox: Vec::new(),
+                cells: Vec::new(),
                 then: AfterUndo::Resume,
             });
             return self.undo_step();
@@ -1262,7 +1282,7 @@ impl Decide<'_, '_, '_> {
         let Attempt {
             outputs,
             held,
-            staged,
+            record,
             completion,
             removals,
             failure,
@@ -1284,7 +1304,9 @@ impl Decide<'_, '_, '_> {
                 .entry(cell.clone())
                 .or_insert_with(|| CellRun::new(Arc::clone(slot)));
             run.outputs.extend(outputs);
-            run.staged.extend(staged);
+            if let Some(record) = record {
+                RecordSpan::absorb(&mut run.record, record);
+            }
             run.removals.extend(removals);
             if completion.is_some() {
                 run.completion = completion;
@@ -1822,7 +1844,7 @@ impl Decide<'_, '_, '_> {
         );
         self.s.undo = Some(Undo {
             steps,
-            outbox: Vec::new(),
+            cells: Vec::new(),
             then,
         });
         self.undo_step();
@@ -1873,18 +1895,31 @@ impl Decide<'_, '_, '_> {
                 undo.steps.pop_front();
                 continue;
             }
-            let outbox = std::mem::take(&mut undo.outbox);
-            let command = undo_frame(r, node, iter, cells_ran, outbox);
+            let written = std::mem::take(&mut undo.cells);
+            let cells = cells_ran
+                .into_iter()
+                .map(|cell_id| {
+                    written
+                        .iter()
+                        .find(|cell| cell.cell_id == cell_id)
+                        .cloned()
+                        .unwrap_or(crate::pb::CommittedCell {
+                            cell_id,
+                            ..Default::default()
+                        })
+                })
+                .collect();
+            let command = undo_frame(r, node, iter, cells);
             let id = self.barrier(BarrierFor::Undo);
             self.fx.frames.push((id, Frame::Built(Box::new(command))));
             return;
         }
     }
 
-    /// One Cell's undo answered. A saga journals what the hook staged before
-    /// the done marker — the marker stops the hook re-running on resume, so a
-    /// crash between the two must fall on the side that re-runs the
-    /// (idempotent) hook. A rewind collects it into its tasklet's record.
+    /// One Cell's undo answered. A saga journals the record the hook wrote
+    /// before the done marker: the marker stops the hook re-running on
+    /// resume, so a crash between the two must fall on the side that re-runs
+    /// the (idempotent) hook. A rewind collects it into its tasklet's entry.
     fn undone(&mut self, node: usize, cell: CellPos, slot: &Arc<CellSlot>) {
         let attempt = self.s.attempts.remove(&(node, cell)).unwrap_or_default();
         if let Some(failure) = attempt.failure {
@@ -1899,17 +1934,19 @@ impl Decide<'_, '_, '_> {
         let Some(UndoStep::Cell { iter, marks, .. }) = undo.steps.pop_front() else {
             return;
         };
-        let outbox = super::commit::outbox_items(slot, &attempt.staged);
+        let written = attempt
+            .record
+            .map(|span| RecordSpan::committed_cell(slot, Some(&span)));
         if !marks {
-            undo.outbox.extend(outbox);
+            undo.cells.extend(written);
             return self.undo_step();
         }
         let identity = Arc::clone(&slot.cell_identity);
         undo.steps.push_front(UndoStep::Mark {
             identity: Arc::clone(&identity),
         });
-        if !outbox.is_empty() {
-            undo.outbox = outbox;
+        if let Some(written) = written {
+            undo.cells = vec![written];
             undo.steps.push_front(UndoStep::Record {
                 node,
                 iter,

@@ -201,7 +201,6 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
          iter: 0,
          cells_ran: [],
          handoff: [%RunnerCommands.TaskHandoffItem{channel_id: 1, payload: "forged-by-b"}],
-         outbox: [],
          compensating: false
        }}
     )

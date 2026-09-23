@@ -37,8 +37,12 @@ The assigned offset SHALL be stamped on the forwarded frame as reserved metadata
 for an instance of either kind, and there SHALL be no other offset stamp. The SDK SHALL thread it
 through to the durable record that consumes it: a stream's atomic effect record SHALL carry it as
 its consumed offset, and a workflow's iteration commit SHALL carry the offset of the input that
-seeded the iteration. An iteration or an effect record that consumed no journaled input SHALL
-carry no offset; `0` is an offset, never "none".
+seeded the iteration. A workflow Cell's own effect record SHALL carry no consumed offset, whether
+or not the Cell is the one the message entered through: the iteration is the workflow's unit of
+consumption and its `iter_committed` entry is the instance's one reporter into the log's
+watermark, so a Cell that runs rarely never holds the instance's floor. An iteration or an
+effect record that consumed no journaled input SHALL carry no offset; `0` is an offset, never
+"none".
 
 #### Scenario: Offset round-trips
 
@@ -51,6 +55,11 @@ carry no offset; `0` is an offset, never "none".
 - **WHEN** input at offset 0 seeds a durable workflow's iteration
 - **THEN** that iteration's commit carries consumed offset 0, and the journal records 0, not
   "none"
+
+#### Scenario: A workflow Cell's record carries no offset
+
+- **WHEN** input at offset 4711 seeds a durable workflow's iteration and the entry tasklet's Cell writes an effect record for it
+- **THEN** that record's consumed offset is absent, the Cell reports no watermark row, and the instance's floor moves only when the iteration commits
 
 #### Scenario: A pass that consumed nothing carries no offset
 

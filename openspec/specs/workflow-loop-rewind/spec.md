@@ -63,16 +63,20 @@ crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
 
 After a rewind to iteration N, the journal SHALL fold as though the tasklets of
 iterations above N had not been committed: they SHALL NOT be skipped as
-already-done on resume, and any outbox entries they staged but had not yet flushed
-SHALL NOT be flushed. Tasklets journaled after the rewind SHALL fold normally,
-including a re-run of an iteration that was unwound.
+already-done on resume, and the effect records those tasklets wrote whose outputs had not yet
+been handed to the plugin chain SHALL NOT be released: the rebind that follows the rewind
+SHALL re-derive each Cell writer's committed records from the folded journal's live entries
+and drop the queued entries no live entry names. An output already handed to the chain before the rewind SHALL be left to its
+confirmation, and the unwound tasklet's `compensate` hook is what reverses it. Tasklets
+journaled after the rewind SHALL fold normally, including a re-run of an iteration that was
+unwound, and their records SHALL be released as any committed stage's are.
 
-#### Scenario: Unflushed output of an unwound iteration is not owed
+#### Scenario: Unreleased output of an unwound iteration is dropped
 
-- **WHEN** iteration 5 committed a tasklet whose outbox had not yet flushed, and
-  the instance is rewound to iteration 3
-- **THEN** that outbox is never flushed, and the re-run of iteration 4 flushes only
-  its own outputs
+- **WHEN** iteration 5 committed a tasklet whose Cell record's output had not yet reached the
+  plugin chain, and the instance is rewound to iteration 3
+- **THEN** that output is never released, the rebind drops it from the writer's queue, and the
+  re-run of iteration 4 releases only its own records' outputs
 
 #### Scenario: Re-run of an unwound iteration commits normally
 
@@ -82,44 +86,59 @@ including a re-run of an iteration that was unwound.
 
 ### Requirement: Rewound outputs republish under a bumped epoch
 
-A rewind SHALL bump the instance's epoch. Outputs emitted after a rewind SHALL
-carry the bumped epoch so that conforming sinks accept them as newer than the
-unwound iterations' outputs. Crash-retry re-emits within an un-rewound run SHALL
-keep their epoch and be deduplicated. This is the same epoch rule as stream
-correction.
+A rewind SHALL bump the instance's journal epoch, which keys every later barrier's identity so
+a re-run's `TaskCommit` for a `(task_idx, iter)` the rewind unwound is a new entry and not a
+re-send of the old one. Outputs carry no journal epoch: an output's `flz.epoch` is its Cell's
+realign epoch, unchanged by a rewind, and an output emitted after a rewind is a newer record of
+the same Cell, so its `flz.seq` sorts above every output of the unwound iterations and a
+conforming sink accepts it as newer. Crash-retry re-emits within an un-rewound run SHALL keep
+their identity and be deduplicated. This is the same ordering rule a stream's outputs follow,
+and a stream correction's epoch bump stays the one thing that moves a Cell's `flz.epoch`.
 
-#### Scenario: Re-run turn's output supersedes the unwound turn's
+#### Scenario: A re-run turn's output sorts above the unwound turn's
 
 - **WHEN** iteration 4 re-runs after a rewind and emits on a channel that iteration
   4's original run had already written to a guarded sink
-- **THEN** the re-run's output carries a higher epoch than the original and the
+- **THEN** the re-run's output carries the same `flz.epoch` and a higher `flz.seq` than the original, and the
   sink's final visible value for the affected identity is the re-run's
 
-#### Scenario: Crash re-emit does not bump
+#### Scenario: A re-sent barrier after a rewind is a new entry
 
-- **WHEN** a crash re-drives an un-rewound instance's unflushed outbox
-- **THEN** the re-driven outputs carry their original epoch
+- **WHEN** iteration 4 re-runs after a rewind to 3 and its first tasklet commits
+- **THEN** its `task_committed(0, iter 4)` entry carries the bumped journal epoch and is appended, not answered from the unwound entry
+
+#### Scenario: Crash re-emit keeps its identity
+
+- **WHEN** a crash re-drives an un-rewound instance's undelivered outputs
+- **THEN** the re-driven outputs carry their original `flz.cell`, `flz.seq` and `flz.epoch`
 
 ### Requirement: Compensation-coverage guard
 
 A rewind SHALL be refused with a typed error when any tasklet being unwound
-staged plugin output and its tasklet declares no `compensate` hook. A workflow
-operative's staged plugin output carries no natural key, so a re-run's output
-cannot be relied on to overwrite the original at every sink; a semantic undo is
-therefore the only coverage the engine can guarantee. The error SHALL name the
-uncovered channels, and no compensation and no epoch bump SHALL occur.
+wrote plugin output and its tasklet declares no `compensate` hook. A rewind is undo-and-continue:
+nothing re-runs over the unwound iterations' inputs, so no later output overwrites the original
+at a sink by its key, and a semantic undo is
+therefore the only coverage the engine can guarantee. The channels a tasklet wrote on SHALL be
+read from the journal's stage entries, which name them per Cell, never from the Cell WALs,
+which compaction may have truncated. The error SHALL name
+the uncovered channels, and no compensation and no epoch bump SHALL occur.
 
-A tasklet that staged no plugin output SHALL require no coverage.
+A tasklet that wrote no plugin output SHALL require no coverage.
 
 #### Scenario: Uncovered emitting tasklet blocks rewind
 
-- **WHEN** iteration 5 ran a tasklet that staged output on a channel and that
+- **WHEN** iteration 5 ran a tasklet that wrote output on a channel and that
   tasklet declares no `compensate`
 - **THEN** the rewind is refused before any compensation runs, naming that channel,
   and the journal is unchanged
 
 #### Scenario: Pure state iterations rewind freely
 
-- **WHEN** the iterations being unwound staged no plugin output
+- **WHEN** the iterations being unwound wrote no plugin output
 - **THEN** the rewind proceeds with no coverage requirement
+
+#### Scenario: The guard reads the journal after the Cell WAL was compacted
+
+- **WHEN** a compensable class's Cell was compacted past the records iteration 5 wrote, and the operator rewinds to iteration 3
+- **THEN** the guard still names the channels iteration 5 wrote on, from the `task_committed` entries alone
 

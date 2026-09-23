@@ -10,9 +10,13 @@ The controller SHALL maintain one append-only task-journal file per durable work
 operative instance at `app_data/state/{operative_class}/{instance_id}/task.journal`,
 written through the existing WalWriter framing and FsyncBatcher path (no parallel
 persistence machinery). Journal entries SHALL be typed, length-prefixed frames
-carrying `{seq, type, task_idx, iter, payload}`. This capability ships the
-`task_committed` entry type; the codec SHALL tolerate the reserved entry types
-(`outbox_flushed`, `iter_committed`, `parked`, `compensated`) without crashing. A
+carrying `{seq, type, task_idx, iter, payload}`. The entry types SHALL be
+`task_committed`, `iter_committed`, `compensated` and `rewound`, and no other;
+the journal SHALL hold markers about the instance's progress and SHALL carry no Cell state
+and no plugin output: a `task_committed` or `compensated` entry names, for each Cell the stage
+ran, its identity, the range of effect records it wrote in that stage (first and last seq,
+both absent when it wrote none) and the plugin channels those records wrote on, and the entry's own payload is the stage's
+inter-task handoff and its completion. A
 torn trailing frame SHALL be truncated on open. An opted-out class
 (`PERSISTENCE_ENABLED = false`) SHALL produce no journal file.
 
@@ -20,6 +24,11 @@ torn trailing frame SHALL be truncated on open. An opted-out class
 
 - **WHEN** a durable structured workflow operative commits its first tasklet
 - **THEN** `task.journal` SHALL exist in the instance's state directory alongside its cell WAL files, and its first decoded entry SHALL be `task_committed` for task index 0
+
+#### Scenario: A stage entry names its records, not their contents
+
+- **WHEN** a stage ran two Cells, one of which changed state and emitted on channel `out` and the other did nothing durable
+- **THEN** the `task_committed` entry names both Cells, the first with the range of its effect records and `out`, the second with no seq and no channel, and the entry carries no output payload
 
 #### Scenario: Torn tail is recovered
 
@@ -35,9 +44,14 @@ torn trailing frame SHALL be truncated on open. An opted-out class
 
 The SDK SHALL send, at each tasklet barrier of a durable structured workflow
 operative, a `TaskCommit` control-channel request carrying the tasklet index,
-the set of cells that ran, and the serialized inter-task handoff batch. The
-controller SHALL append the `task_committed` entry, make it durable, and only
-then reply `TaskCommitResponse`. Durability SHALL be batched: the append
+the set of Cells that ran, each with the range of effect records it wrote in the stage and the
+plugin channels they wrote on, and the serialized inter-task handoff batch. Every effect record a
+barrier names SHALL have been sent on the Cell's state stream before the barrier is sent. The
+controller SHALL, before appending, wait until each named record is durable on its Cell's writer,
+then append the `task_committed` entry, make it durable, and only
+then reply `TaskCommitResponse`; the ack therefore implies that every record the entry names is
+durable. A named record that the writer refuses, or that is not durable within the barrier's
+deadline, SHALL be reported in the response as an error naming the Cell and the seq. Durability SHALL be batched: the append
 marks the journal writer dirty and the `FsyncBatcher` tick syncs every dirty
 writer with one fsync per file, after which the acks of every barrier that
 landed in the tick are released together. The control-channel reader process
@@ -50,17 +64,31 @@ SHALL be reported in the response and SHALL terminate the run abnormally
 response does not arrive within the driver's wait SHALL be re-sent under the
 same `reference_id` up to a bounded number of attempts before the run fails;
 the controller SHALL treat a re-sent barrier whose entry is already journaled
-as acked. A barrier (`TaskCommit` or `IterCommit`) from a runner whose stable
+as acked, and a re-sent barrier whose first copy is still waiting on its records SHALL join that
+wait rather than start a second. A barrier (`TaskCommit` or `IterCommit`) from a runner whose stable
 identity the instance's ownership record does not name SHALL NOT be appended:
 the commit worker SHALL answer it with a non-empty error, so the sending
 driver ends its run through the same terminal-error path, and the refusal
 SHALL be counted and reported as `runner-identity-and-session` prescribes.
-Opted-out classes SHALL skip the handshake entirely.
+After a successful ack the commit worker SHALL tell each named Cell's writer that the records
+in the range the entry names are committed, which is what releases their outputs; a held record
+of that Cell below the range belongs to an attempt that never committed and SHALL be dropped. Opted-out classes
+SHALL skip the handshake entirely.
 
 #### Scenario: Next tasklet waits for the durable ack
 
 - **WHEN** tasklet A's cells all quiesce at the barrier
 - **THEN** tasklet B SHALL start only after the controller has durably journaled `task_committed(A)` and acked it
+
+#### Scenario: The marker waits for the records it names
+
+- **WHEN** a `TaskCommit` names a Cell's record at seq 5 and that record's batch has not synced when the barrier arrives
+- **THEN** the `task_committed` entry SHALL NOT be appended until that batch has synced, and the ack SHALL follow the entry's own sync
+
+#### Scenario: A record the writer never got fails the barrier
+
+- **WHEN** a `TaskCommit` names a record at seq 5 of a Cell whose writer holds no record at that seq within the barrier's deadline
+- **THEN** the response SHALL carry an error naming the Cell and seq 5, no entry SHALL be appended, and the run SHALL end through the terminal-error path
 
 #### Scenario: Barriers landing in one tick share one fsync
 
@@ -182,26 +210,6 @@ decoded journal entries.
 
 - **WHEN** an operator runs `flz state journal <operative/instance>` for an instance with journaled commits
 - **THEN** the CLI SHALL list the decoded entries (seq, type, task index, iteration) in order
-
-### Requirement: The task-commit payload carries staged outbox entries
-
-The `TaskCommit` request and the `task_committed` journal entry SHALL carry the
-tasklet's staged outbox entries (`{cell_key, seq_in_task, payload,
-plugin_route}`) in addition to the cells-ran set and the handoff batch. The
-journal frame size guard SHALL apply to the combined payload, with the same
-typed oversized error. The `outbox_flushed` and `compensated` entry types
-(previously reserved) SHALL be written and interpreted as defined by the
-`workflow-transactional-outbox` capability.
-
-#### Scenario: Commit and outbox arrive as one request
-
-- **WHEN** a structured tasklet with staged outputs reaches its barrier
-- **THEN** a single `TaskCommit` request SHALL carry both the handoff batch and the outbox entries, journaled in one `task_committed` entry
-
-#### Scenario: Oversized combined payload is rejected with a typed error
-
-- **WHEN** a tasklet's handoff plus staged outbox exceeds the journal frame bound
-- **THEN** the commit SHALL fail with the typed oversized error and the run SHALL terminate abnormally
 
 ### Requirement: The crash-resume state ships every in-flight task's handoff
 

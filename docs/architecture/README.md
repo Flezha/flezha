@@ -17,7 +17,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 | **This file** | Roles, the workload model, the eight kernel invariants, process topology, on-disk layout, the failure model |
 | [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
 | [`stream_profile.md`](stream_profile.md) | Streaming: per-cell recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operatives |
-| [`workflow_profile.md`](workflow_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the transactional outbox, saga compensation, the durable loop, suspension, rewind |
+| [`workflow_profile.md`](workflow_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the stage commit over the Cells' outbox, saga compensation, the durable loop, suspension, rewind |
 | [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-cell exclusivity, and what each host SDK owns |
 
 ---
@@ -237,7 +237,7 @@ the workflow operative's step position (R).
 flowchart TB
     subgraph PROF["PROFILES — two ways to use it"]
         UNB["STREAM<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
-        BND["WORKFLOW<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal + staged outbox<br/>saga compensation<br/>durable loop and suspension"]:::exec
+        BND["WORKFLOW<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal naming each stage's records<br/>saga compensation<br/>durable loop and suspension"]:::exec
     end
     subgraph KERN["SHARED KERNEL — durable compute"]
         K1[("Durable input log<br/>offset-addressable, adapter-independent")]:::store
@@ -285,8 +285,9 @@ log and each cell recovers from its own consumed offset.
 **4. Output identity, and the epoch rule.** Replay-stable output identity is
 `(flz.cell, flz.seq, flz.key)`; the durable outbox identity adds `flz.epoch`. A crash
 retry, a re-drive, or a runner takeover **keeps** the epoch — sink-side dedup absorbs the
-repeat. Only a deliberate correction, an operator replay, or a workflow rewind **bumps** it, so
-the corrected output passes dedup and overwrites the stale row by natural key. See
+repeat. Only a deliberate correction or an operator replay **bumps** it, so the corrected
+output passes dedup and overwrites the stale row by natural key; a workflow rewind's re-run
+output passes as a newer record, on its higher `flz.seq`. See
 [`kernel.md`](kernel.md#the-epoch-rule).
 
 **5. One owner writes a cell's WAL.** Runner identity is two layers — a durable stable

@@ -12,8 +12,44 @@ use super::RollbackMode;
 use crate::cell::CellSlot;
 use crate::timer::TimerOp;
 
-/// One staged plugin-bound output: `(plugin channel, payload)`.
-pub type StagedOutput = (String, Vec<u8>);
+/// The effect records one Cell wrote in a stage or an undo: its first and last
+/// seq, and the plugin channels they wrote on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecordSpan {
+    pub first: u64,
+    pub last: u64,
+    pub channels: Vec<String>,
+}
+
+impl RecordSpan {
+    /// Widen `span` by one more record, or by another span, naming each
+    /// channel once; a Cell's records only grow.
+    pub fn absorb(span: &mut Option<RecordSpan>, other: RecordSpan) {
+        let span = span.get_or_insert_with(|| RecordSpan {
+            first: other.first,
+            last: other.last,
+            channels: Vec::new(),
+        });
+        span.first = span.first.min(other.first);
+        span.last = span.last.max(other.last);
+        for channel in other.channels {
+            if !span.channels.contains(&channel) {
+                span.channels.push(channel);
+            }
+        }
+    }
+
+    /// The Cell as a barrier names it: its identity and, when it wrote any,
+    /// its records.
+    pub fn committed_cell(cell: &CellSlot, span: Option<&RecordSpan>) -> crate::pb::CommittedCell {
+        crate::pb::CommittedCell {
+            cell_id: cell.cell_identity.as_ref().clone(),
+            seq: span.map(|s| s.last),
+            first_seq: span.map(|s| s.first),
+            channels: span.map(|s| s.channels.clone()).unwrap_or_default(),
+        }
+    }
+}
 
 /// One Cell's contribution to a completed stage; a Cell that received no
 /// item never ran and is not recorded.
@@ -21,7 +57,7 @@ pub type StagedOutput = (String, Vec<u8>);
 pub struct CellRun {
     pub cell: Arc<CellSlot>,
     pub outputs: Vec<Value>,
-    pub staged: Vec<StagedOutput>,
+    pub record: Option<RecordSpan>,
     /// The result this Cell's `complete` asked the instance to end with.
     pub completion: Option<Vec<u8>>,
     /// The firings this Cell served in the stage, whose removal from its
@@ -35,7 +71,7 @@ impl CellRun {
         Self {
             cell,
             outputs: Vec::new(),
-            staged: Vec::new(),
+            record: None,
             completion: None,
             removals: Vec::new(),
         }
@@ -174,6 +210,25 @@ mod tests {
 
     fn order(plan: &[&StageRecord]) -> Vec<usize> {
         plan.iter().map(|s| s.stage_idx).collect()
+    }
+
+    fn span(first: u64, last: u64, channels: &[&str]) -> RecordSpan {
+        RecordSpan {
+            first,
+            last,
+            channels: channels.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    /// A Cell's records in a stage widen into one range, each channel named
+    /// once, in first-written order.
+    #[test]
+    fn a_cells_records_widen_into_one_span() {
+        let mut record = None;
+        RecordSpan::absorb(&mut record, span(4, 4, &["mid", "mid"]));
+        RecordSpan::absorb(&mut record, span(5, 5, &[]));
+        RecordSpan::absorb(&mut record, span(6, 6, &["out", "mid"]));
+        assert_eq!(record, Some(span(4, 6, &["mid", "out"])));
     }
 
     #[test]

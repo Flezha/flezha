@@ -15,13 +15,11 @@ defmodule Flezha.State.TaskJournal.Codec do
   """
 
   @type_task_committed 1
-  @type_outbox_flushed 2
   @type_iter_committed 3
   @type_compensated 5
   @type_rewound 6
   @entry_types %{
     @type_task_committed => :task_committed,
-    @type_outbox_flushed => :outbox_flushed,
     @type_iter_committed => :iter_committed,
     @type_compensated => :compensated,
     @type_rewound => :rewound
@@ -66,20 +64,15 @@ defmodule Flezha.State.TaskJournal.Codec do
     end
   end
 
-  def entry_type_code(:task_committed), do: @type_task_committed
-  def entry_type_code(:compensated), do: @type_compensated
-
-  defp decode_payload(:task_committed, <<n_cells::16-big, rest::binary>>) do
-    with {:ok, cells, rest} <- decode_cells(rest, n_cells, []),
+  defp decode_payload(:task_committed, payload) do
+    with {:ok, cells, rest} <- decode_cells(payload),
          {:ok, handoff, rest} <- decode_handoff(rest),
-         {:ok, outbox, rest} <- decode_outbox(rest),
          {:ok, completion, rest} <- take_completion(rest),
          {:ok, trigger} <- decode_trigger(rest) do
       {:ok,
        %{
          cells_ran: cells,
          handoff: handoff,
-         outbox: outbox,
          completion: completion,
          trigger: trigger
        }}
@@ -110,14 +103,10 @@ defmodule Flezha.State.TaskJournal.Codec do
   end
 
   defp decode_payload(:compensated, payload) do
-    case decode_outbox(payload) do
-      {:ok, outbox, <<>>} -> {:ok, %{outbox: outbox}}
+    case decode_cells(payload) do
+      {:ok, cells, <<>>} -> {:ok, %{cells_ran: cells}}
       _ -> {:error, :bad_payload}
     end
-  end
-
-  defp decode_payload(:outbox_flushed, <<for_type::8>>) do
-    with {:ok, name} <- entry_type(for_type), do: {:ok, %{for_type: name}}
   end
 
   # The rewind target is the entry's own `iter` field — no payload to carry.
@@ -125,13 +114,59 @@ defmodule Flezha.State.TaskJournal.Codec do
 
   defp decode_payload(_name, _payload), do: {:error, :bad_payload}
 
-  def encode_committed_payload(cells_ran, handoff) do
+  @doc """
+  The Cells a stage entry names: each identity, the effect records it wrote in
+  the stage (`first_seq..seq`, both `nil` when it wrote none) and the plugin
+  channels they wrote on.
+  """
+  @spec encode_cells([TaskJournal.committed_cell()]) :: iodata()
+  def encode_cells(cells) do
+    [<<length(cells)::16-big>>, Enum.map(cells, &encode_cell/1)]
+  end
+
+  defp encode_cell(%{cell_id: id, first_seq: first, seq: last, channels: channels}) do
+    records = if is_integer(last), do: <<1, first::64-big, last::64-big>>, else: <<0>>
+
     [
-      <<length(cells_ran)::16-big>>,
-      Enum.map(cells_ran, fn id -> [<<byte_size(id)::16-big>>, id] end),
-      encode_handoff(handoff)
+      <<byte_size(id)::16-big>>,
+      id,
+      records,
+      <<length(channels)::16-big>>,
+      Enum.map(channels, &[<<byte_size(&1)::16-big>>, &1])
     ]
   end
+
+  defp decode_cells(<<n::16-big, rest::binary>>), do: decode_cells(rest, n, [])
+  defp decode_cells(_), do: {:error, :bad_payload}
+
+  defp decode_cells(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
+
+  defp decode_cells(<<len::16-big, id::binary-size(len), rest::binary>>, n, acc) do
+    with {:ok, first, last, rest} <- decode_records(rest),
+         <<n_chan::16-big, rest::binary>> <- rest,
+         {:ok, channels, rest} <- decode_strings(rest, n_chan, []) do
+      cell = %{cell_id: id, first_seq: first, seq: last, channels: channels}
+      decode_cells(rest, n - 1, [cell | acc])
+    else
+      _ -> {:error, :bad_payload}
+    end
+  end
+
+  defp decode_cells(_, _, _), do: {:error, :bad_payload}
+
+  defp decode_records(<<0, rest::binary>>), do: {:ok, nil, nil, rest}
+
+  defp decode_records(<<1, first::64-big, last::64-big, rest::binary>>),
+    do: {:ok, first, last, rest}
+
+  defp decode_records(_), do: {:error, :bad_payload}
+
+  defp decode_strings(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
+
+  defp decode_strings(<<len::16-big, value::binary-size(len), rest::binary>>, n, acc),
+    do: decode_strings(rest, n - 1, [value | acc])
+
+  defp decode_strings(_, _, _), do: {:error, :bad_payload}
 
   @doc """
   A consumed input-log offset or its absence, as an `iter_committed` payload
@@ -198,29 +233,6 @@ defmodule Flezha.State.TaskJournal.Codec do
     ]
   end
 
-  def encode_outbox(outbox) do
-    [
-      <<length(outbox)::32-big>>,
-      Enum.map(outbox, fn item ->
-        [
-          <<byte_size(item.cell_id)::16-big>>,
-          item.cell_id,
-          <<item.seq_in_task::32-big, byte_size(item.channel)::16-big>>,
-          item.channel,
-          <<byte_size(item.payload)::32-big>>,
-          item.payload
-        ]
-      end)
-    ]
-  end
-
-  defp decode_cells(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
-
-  defp decode_cells(<<len::16-big, id::binary-size(len), rest::binary>>, n, acc),
-    do: decode_cells(rest, n - 1, [id | acc])
-
-  defp decode_cells(_, _, _), do: {:error, :bad_payload}
-
   defp decode_handoff(<<n::32-big, rest::binary>>), do: decode_handoff_items(rest, n, [])
   defp decode_handoff(_), do: {:error, :bad_payload}
 
@@ -234,28 +246,4 @@ defmodule Flezha.State.TaskJournal.Codec do
        do: decode_handoff_items(rest, n - 1, [{channel_id, bytes} | acc])
 
   defp decode_handoff_items(_, _, _), do: {:error, :bad_payload}
-
-  defp decode_outbox(<<n::32-big, rest::binary>>), do: decode_outbox_items(rest, n, [])
-  defp decode_outbox(_), do: {:error, :bad_payload}
-
-  defp decode_outbox_items(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
-
-  defp decode_outbox_items(
-         <<seg_len::16-big, cell_id::binary-size(seg_len), seq_in_task::32-big, chan_len::16-big,
-           channel::binary-size(chan_len), payload_len::32-big, payload::binary-size(payload_len),
-           rest::binary>>,
-         n,
-         acc
-       ) do
-    item = %{
-      cell_id: cell_id,
-      seq_in_task: seq_in_task,
-      channel: channel,
-      payload: payload
-    }
-
-    decode_outbox_items(rest, n - 1, [item | acc])
-  end
-
-  defp decode_outbox_items(_, _, _), do: {:error, :bad_payload}
 end

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
-use super::compensation::{CellRun, StageRecord, StagedOutput};
+use super::compensation::{CellRun, RecordSpan, StageRecord};
 use super::WorkflowError;
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::ChannelId;
@@ -271,7 +271,7 @@ pub(crate) struct MidResume {
 pub(crate) struct Attempt {
     pub(crate) outputs: Vec<Value>,
     pub(crate) held: Vec<Release>,
-    pub(crate) staged: Vec<StagedOutput>,
+    pub(crate) record: Option<RecordSpan>,
     pub(crate) completion: Option<Vec<u8>>,
     pub(crate) removals: Vec<TimerOp>,
     pub(crate) failure: Option<Failure>,
@@ -381,8 +381,9 @@ pub(crate) struct Barrier {
 /// happens once the last one is done.
 pub(crate) struct Undo {
     pub(crate) steps: VecDeque<UndoStep>,
-    /// A rewind journals one entry per tasklet; this collects its outbox.
-    pub(crate) outbox: Vec<crate::pb::TaskOutboxItem>,
+    /// The Cells whose hook wrote a record, collected for the tasklet's
+    /// `compensated` entry.
+    pub(crate) cells: Vec<crate::pb::CommittedCell>,
     pub(crate) then: AfterUndo,
 }
 
@@ -397,7 +398,7 @@ pub(crate) enum UndoStep {
         marks: bool,
     },
     /// Journal a tasklet's undo: a rewound one's even when empty, a saga
-    /// Cell's when its hook staged output.
+    /// Cell's when its hook wrote a record.
     Record {
         node: usize,
         iter: u32,

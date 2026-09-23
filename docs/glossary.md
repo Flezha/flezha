@@ -105,8 +105,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   only when the platform calls the plugin.
 - **Operative-to-operative messaging** — one operative's output delivered into another's input
   stream by the `OperativeForward` plugin on the source (same namespace, no self-targeting),
-  retried until the target confirms. The guarantee is derived: a transactional-outbox source gets
-  effectively-once across the hop, any other at-least-once. See [`plugins/operative_forward.md`](plugins/operative_forward.md).
+  retried until the target confirms. The guarantee is derived: a source whose Cells record effects
+  (an effectively-once stream or a durable workflow) gets effectively-once across the hop, any
+  other at-least-once. See [`plugins/operative_forward.md`](plugins/operative_forward.md).
 - **`:on_message`** — the synchronous request/reply hook (`OperativeMessage` /
   `OperativeMessageResponse` on the control channel, `flz operative send`), as opposed to data
   flow into the input stream. See [`plugins/message_handlers.md`](plugins/message_handlers.md).
@@ -144,11 +145,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   flush, `outbox_flushed_seq` advances on the sink's confirmation of the `flz.ack` token,
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
 - **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
-  `flz.key`, and under the tier `flz.epoch`. `flz.` is reserved; a user emit carrying one is rejected.
+  `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable workflow). `flz.` is reserved; a user emit carrying one is rejected.
 - **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
   re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
-  (late-input correction, `flz operative replay`, a rewind) **bumps** it so the new output passes
-  dedup and overwrites by natural key.
+  (late-input correction, `flz operative replay`) **bumps** it so the new output passes
+  dedup and overwrites by natural key. A workflow rewind bumps only the journal epoch; its re-run's
+  output is a newer record and passes on its higher `flz.seq`.
 - **Owner / fence / realign** — an operative's **owner** is the stable identity its ownership
   record names (the `ClassRegistry` row its Overwatch writes before `AddOperative`); a frame about
   the operative from a runner of any other identity is refused, counted as `foreign_frame_refused`
@@ -205,21 +207,26 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 - **Task journal** — the per-instance append-only journal of workflow progress
   (`<state_root>/<namespace>/<instance_id>/<instance_id>/task.journal`, `Flezha.State.TaskJournal`)
-  on the WAL substrate under a reserved cell key. Its entries (`task_committed`, `outbox_flushed`,
-  `iter_committed`, `compensated`, `rewound`) are folded, never truncated. Where an instance
-  sleeps is not the journal's but its park record's, beside the class's declarations.
+  on the WAL substrate under a reserved cell key. Its entries (`task_committed`,
+  `iter_committed`, `compensated`, `rewound`) are markers, folded, never truncated; a stage entry
+  names each Cell's effect records and their plugin channels and holds no state and no output.
+  Where an instance sleeps is not the journal's but its park record's, beside the class's
+  declarations.
 - **Stage barrier / `TaskCommit`** — when a tasklet's last item settles, the runner ships one
-  `TaskCommit` for it `{cells_ran, handoff, staged outbox}`; the controller journals it and acks,
-  and only then do its outputs reach its children. Siblings commit independently. A committed
+  `TaskCommit` for it `{cells_ran, handoff}`, `cells_ran` naming each Cell's effect records in
+  the stage; the controller waits until those records are durable, journals the stage and acks,
+  and only then do its outputs reach its children and its plugin outputs leave. Siblings commit independently. A committed
   tasklet is never re-run.
 - **Pass sheet** — a workflow instance's run state in the runner core (iteration, tasklets in
   flight and done, outputs held for their commit, completion), advanced by events on the thread
   that brings each one; the in-memory form of what the task journal describes.
-- **Transactional outbox** — inside a structured tasklet `ctx.emit` stages rather than sends; the
-  staged outbox rides the `TaskCommit` and is flushed after the journal fsync, stamped
-  `flz.seq = <task_idx>.<seq_in_task>`. The journal, not memory, decides what is owed.
+- **Outbox (workflow)**: a workflow Cell's plugin output is written in its own effect record
+  and leaves through that Cell writer's outbox, the one a tier stream Cell uses, once the durable
+  stage marker naming the record has been acked. It carries the stream's identity
+  (`flz.cell`, `flz.seq = <record seq>.<emit ordinal>`, `flz.epoch`, `flz.key`, metadata). A
+  record no marker names is dropped, so a failed stage delivers nothing.
 - **Saga compensation** — on an abnormal exit, committed tasklets' `compensate` hooks run in
-  reverse-topological order, each journaled with its undo outbox. `RollbackMode::AllOrNothing`
+  reverse-topological order, each journaled as a `compensated` entry naming its undo record. `RollbackMode::AllOrNothing`
   (default) unwinds every committed iteration, `KeepProgress` only the in-flight one; a hookless
   tasklet is skipped, and an undo handle must live in cell state.
 - **Durable loop** — `LoopMode::Once` (default, one pass over the first message), `PerInput`
@@ -237,7 +244,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   ordinary bind path.
 - **Rewind** — `flz operative rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
-  undo-and-continue: inputs are not replayed, and a tasklet that staged output without a
+  undo-and-continue: inputs are not replayed, and a tasklet that wrote plugin output without a
   `compensate` hook refuses it. See [`resilience/workflow_operative.md`](resilience/workflow_operative.md).
 
 ## Runner internals

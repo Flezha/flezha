@@ -3,7 +3,7 @@
 The reference for **where Flezha can lose operative state or output, where it cannot, and how
 to operate so a planned action never loses data**, for operators and operative authors. It
 covers the scenario matrix, the hard-kill gap, the delivery semantics (at-least-once by
-default, the effectively-once tier), the durable input log and the workflow outbox, the cross-hop
+default, the effectively-once tier), the durable input log and a workflow's stage commit, the cross-hop
 guarantee, timers, the dead-letter queue, late-input correction, the remote durability tier
 and the operator playbook. Operative *placement* recovery is
 [`../internals/process_hub.md`](../internals/process_hub.md); the WAL substrate itself is
@@ -55,8 +55,8 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Node rejoins a live cluster** | Synced from peers; local durable copy kept | n/a | The reconcile's difference against live peers is empty, so the node starts nothing. The on-disk copy is never discarded to force that. |
 | **Kafka broker down, runners alive** | No loss | Buffered, resumes | The producer reconnects; the queue drains when the broker returns. |
 | **Sustained overload** (changes outpace fsync) | **No loss** | At-least-once | Credit-grant flow control: the sender's byte window (`:wal_high_watermark_bytes`, 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path — park, never drop. A shed on a credit session emits `[:flezha, :state, :credit_anomaly]`. |
-| **Workflow operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet and its handoff, so committed tasks are skipped, not redone. Inspect with `flz state journal`. |
-| **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** | At-least-once | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
+| **Workflow operative runner SIGKILL** (durable, the default) | **No loss** of a committed tasklet; an uncommitted one re-runs | Never lost; released only after its stage commits | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet, the effect records its Cells wrote and its handoff, and an entry is appended only once every record it names is durable, so committed tasks are skipped, not redone, over state that is on disk. Inspect with `flz state journal`. |
+| **Looping workflow operative runner SIGKILL** (durable) | **No loss** of a committed tasklet | Never lost; released only after its stage commits | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
 | **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
 | **Input sent to a sleeping stream instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once. |
 | **Controller redeploy while an instance of either kind is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
@@ -113,8 +113,9 @@ Two limits of the default tier: `flz.seq` is not an exact append-only dedup hand
 with no state change can collide on it), and there is no `flz.epoch` — the epoch belongs to the
 controller's outbox lineage. A conforming sink reads a keyed default-tier record as epoch `0`
 and orders by `flz.seq`; a *regressing* seq from a Cell that cold-started without a baseline
-is refused rather than guessed. The epoch, bumped by a WAL realign or a rewind, resolves that
-and exists only under the tier.
+is refused rather than guessed. The epoch, bumped by a WAL realign or a stream correction,
+resolves that and exists only where the controller's outbox mints the identity: under the tier
+and on a durable workflow's Cells.
 
 Nothing journals a default-tier input, which also decides the fate of input queued in a
 Cell's mailbox when a restore lands: with no log to re-forward from, the queue is the only
@@ -139,7 +140,7 @@ Two windows this does **not** close, both named so nobody reads more into the gu
 - **The consumer's volatile mailbox.** Once a push lands, the value lives only there until the
   consumer's own record is durable, and a tier-class restore clears the mailbox
   (`discard_queued_input_on_restore`); the controller re-forwards to the *entry* channel, where
-  the producer's own floor skips it. Closing it needs `OutputTarget::Edge` in the transactional
+  the producer's own floor skips it. Closing it needs `OutputTarget::Edge` in the Cell's
   outbox.
 - **The controller's send buffer**, which still discards the newest frame when a runner stops
   reading (`flz_nif/src/driver/mod.rs`, `StreamState::offer`). The backpressure chain is complete inside the runner
@@ -165,8 +166,8 @@ guarantee.
   time form ONE `cell_effect_record` under ONE fsync. No partial combination is ever durable
   and effect records are never coalesced away.
 - **An inter-tasklet output's offset is never durable ahead of the output.** An edge value is
-  the one output kind with **no** durable copy — `OutputTarget::Edge` is excluded from the
-  transactional outbox — so the only thing that can re-produce it is the producer re-running its
+  the one output kind with **no** durable copy (`OutputTarget::Edge` is excluded from the
+  Cell's outbox), so the only thing that can re-produce it is the producer re-running its
   input. The invocation is therefore treated as unresolved until every edge push has been
   admitted to its consumer's mailbox: its changes, its plugin outputs and its offset are held out
   of the flush buffer until then, exactly as a failed-but-retryable attempt's changes are. Fold
@@ -179,7 +180,7 @@ guarantee.
   the value lives only in the consumer's volatile mailbox, which a tier-class restore discards
   (`discard_queued_input_on_restore`) and which the controller re-supplies only at the *entry*
   channel, where the producer's floor skips it. Closing that needs `OutputTarget::Edge` in the
-  transactional outbox — a separate change.
+  Cell's outbox.
 - **Fsync-gated outbox.** Outputs reach the `:on_output` chain only after their record is
   fsynced, stamped `(flz.cell, flz.seq = outbox_seq, flz.epoch, flz.key)` — a sufficient handle
   for exact dedup. On restart the controller re-drives every record above the per-Cell
@@ -234,8 +235,9 @@ guarantee.
   longer than `window / ingest rate` delays ingestion; it never wedges it.
 - **Cost-free default.** Operatives without the flag keep every path byte-identical. Under the
   tier a slow or unreachable sink backs the outbox up on disk, never in memory.
-- **Workflow operatives** opt in with the same per-record semantics; without the tier a durable
-  structured workflow gets the task-boundary guarantee below.
+- **Workflow operatives** do not declare the tier (`EffectivelyOnceOnWorkflow`): a durable
+  workflow's Cells write the same effect record as their ordinary durability, released at the
+  stage commit below.
 
 Wire shapes: [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Output identity stamps" and
 "cell_effect_record".
@@ -273,46 +275,64 @@ that never checkpoints stops truncating its input log and eventually parks its o
 (`CheckpointAckWithoutTier` / `checkpointAckWithoutTier()`), and the controller's dataflow-stop
 watchdog skips a checkpoint class — silence between checkpoints is its steady state.
 
-## Workflow operatives: staged commit and the transactional outbox
+## Workflow operatives: one record, released at the stage commit
 
 A **durable structured** workflow operative (tasklets declared, the default
 `PERSISTENCE_ENABLED`) never lets a tasklet's plugin output escape before that tasklet is
 durable. The commit path, crash-resume and journal layout are in
 [`workflow_operative.md`](workflow_operative.md); this is the flush contract.
 
-- **Staged, not emitted.** Inside a structured tasklet `ctx.emit` does not reach the wire;
-  each Cell buffers its serialized plugin-bound output, so a failed, aborted or cancelled
-  tasklet leaks **nothing**. Opted-out classes have no barrier to stage against and keep the
-  direct at-least-once path.
-- **One durable write.** At the barrier the staged outbox travels inside `TaskCommit` and is
-  journaled with the tasklet's completion in ONE `task_committed` record in `task.journal`,
-  fsynced by the `FsyncBatcher` tick before the ack. Progress and output cannot tear apart; a
-  barrier re-sent under the same reference id is answered from the existing entry.
-- **Flush after the durable point.** Only after that fsync does the controller deliver the
-  entries, in journal order, through the plugin fan-out live output uses. The `outbox_flushed`
-  entry is written when the sinks confirm (`TaskJournal.mark_flushed/5`), not when the chain is
-  handed the payload; a re-entered flush does not deliver an entry still with the chain; an
-  unbound operative is retried. Compute is not coupled to sink health — the next tasklet runs
-  while the flush lands.
-- **Crash before flush re-drives.** On restore every `task_committed` (and `compensated`) entry
-  with no matching `outbox_flushed` is re-delivered with its original keys before the resumed
-  run advances (`TaskJournal.flush_pending/2`). A flushed task is never re-delivered.
+- **One record per invocation.** A workflow Cell writes the `cell_effect_record` a tier stream
+  Cell writes: its state changes and its plugin outputs (channel, key, the author's metadata,
+  payload) in one record under one fsync, with no consumed offset (the iteration's
+  `iter_committed` carries it). The runner sends the record as the item settles, before the
+  stage's barrier, never on the flush linger. A workflow class does not declare the tier; the
+  record is what its durability means.
+- **Records, then the marker, then the ack.** The barrier's `TaskCommit` names, per Cell, the
+  range of records it wrote in the stage and the plugin channels they wrote on, and carries no
+  output. The controller appends the `task_committed` entry only after every named record is
+  durable on its Cell's writer, so a durable marker always implies durable records. A record
+  that is refused or not durable within `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` fails the barrier. A
+  barrier re-sent under the same reference id is answered from the existing entry, or joins
+  the wait of the copy still waiting.
+- **One outbox.** The Cell writer's outbox serves both kinds: same `{:cursor, seq}` key,
+  dedup-file cursor, confirmation tally, resettle and restart re-drive. A stream Cell's entry is
+  committed by its own fsync; a workflow Cell's entry is **held** until a durable stage marker
+  names its record, and the commit worker releases the named range after the ack. Compute is
+  not coupled to sink health: the next tasklet runs while the flush lands.
+- **A failed stage leaks nothing.** A held entry that no marker will name (a stage interrupted
+  by a crash and re-run, a failed stage, an iteration a rewind unwound) is dropped without
+  reaching the chain: by the Cell's next committed range, which starts above it, or at the
+  instance's next bind, which re-derives the committed ranges from the journal. An entry
+  already handed to the chain is left to its confirmation.
+- **Crash before flush re-drives.** On restart the writer re-queues every record above its flush
+  cursor, reads the committed ranges from the journal and releases what a live entry names;
+  the bind starts the writer of every persisted Cell, so a Cell the resumed run never writes
+  again still re-drives what it owes. The journal's cut keeps any stage entry naming a record
+  above its Cell's flush cursor.
 - **Branches resume independently.** The restore carries each in-flight commit's handoff under
   its own `task_idx`: a respawn re-runs exactly the uncommitted subtrees, and a committed branch
   neither re-runs nor re-emits. A rollback runs in reverse topological order.
-- **Keys.** Each flushed frame carries `flz.cell`, `flz.seq` (`<task_idx>.<seq_in_task>`) and
-  `flz.epoch` — the effectively-once identity shape, minted from the journal — and no `flz.key`.
-- **The epoch rule.** `0` at first start. A crash re-drive keeps it, so a dedup sink absorbs the
-  repeat; a deliberate [rewind](workflow_operative.md#rewind-taking-a-loop-back-to-a-committed-iteration)
-  bumps it, so an `(epoch, seq)`-guarded sink overwrites. **Crash keeps the epoch, rewind bumps it.**
-- **Compensation rides the same path.** A `compensate` hook's output is staged, journaled in a
-  `compensated` entry and flushed after that fsync with a trailing `.1` seq component, so an
-  undo never collides with the forward output it reverses.
+- **Keys.** Each flushed frame carries the stream's identity: `flz.cell`,
+  `flz.seq = <record seq>.<emit ordinal>`, `flz.epoch` (the Cell's realign epoch), `channel`,
+  `flz.key` when the channel is keyed, and the author's metadata. `emit_keyed` and emit with
+  metadata work in a workflow tasklet in every SDK.
+- **The epoch rule.** A crash re-drive keeps every stamp, so a dedup sink absorbs the repeat. A
+  deliberate [rewind](workflow_operative.md#rewind-taking-a-loop-back-to-a-committed-iteration)
+  leaves `flz.epoch` alone: a re-run's output is a newer record of the same Cell, so its
+  `flz.seq` sorts above the unwound run's and an `(epoch, seq)`-guarded sink overwrites.
+- **Compensation rides the same path.** A `compensate` hook's output is a newer record of the
+  compensating Cell, named by the `compensated` entry and released once that entry is durable;
+  its seq is above the forward output's, so an undo never collides with it.
+- **Persistence off.** An opted-out class writes no record and no journal; its outputs go
+  straight to the wire with channel, key and metadata, as a tier-off stream's do.
 
 **Guarantee.** Never lost, never leaked before commit, and **at-least-once with stable keys** on
-the re-drive window (between a sink's confirmation and the `outbox_flushed` marker it
-triggers); a dedup-capable sink absorbs that duplicate exactly. Inspect what an instance owes
-with `flz state journal <operative/instance>`.
+the re-drive window (between a sink's confirmation and the flush cursor's write); a
+dedup-capable sink absorbs that duplicate exactly. Inspect what an instance's stages name with
+`flz state journal <operative/instance>` (each stage's `ran:` lines name the Cell's records and
+channels) and what a Cell still owes or holds for a stage with
+`flz state outbox <operative/tasklet/key>` (`outbox_lag`, `held_for_stage`).
 
 ## Workflow operatives: the same durable input log
 
@@ -382,16 +402,15 @@ source with no outbox has nothing to re-send from:
 | plain stream (no outbox) | at-least-once, best effort — no de-duplication |
 
 **A partitioned target adds a routing precondition.** Forwarding into a partition group routes
-by `hash(flz.key)` to the owning member; a message *without* `flz.key` (an unkeyed channel, or
-any workflow-outbox output) is **parked to the source's DLQ** with
+by `hash(flz.key)` to the owning member; a message *without* `flz.key` (an emit on an unkeyed
+channel, from either kind) is **parked to the source's DLQ** with
 `partitioned target requires keyed emit` rather than scattered. A park is a durable outcome the
 cursor may pass.
 
-**In-flight items survive a controller restart.** Both outbox drivers gate their cursor on the
-sink: a durable workflow's entry stays owed until `outbox_flushed` is written and
-`flush_pending/2` re-drives it; an effectively-once stream's writer keeps each dispatched entry
-in its confirmation tally and re-drives everything above the persisted `outbox_flushed_seq` on
-restore. A plain stream keeps retry-until-confirmed within the worker's lifetime only. Verdicts,
+**In-flight items survive a controller restart.** The Cell writer's outbox gates its cursor on
+the sink, for a durable workflow and an effectively-once stream alike: it keeps each dispatched
+entry in its confirmation tally and re-drives everything above the persisted
+`outbox_flushed_seq` on restore. A plain stream keeps retry-until-confirmed within the worker's lifetime only. Verdicts,
 refusals and telemetry: [`../plugins/operative_forward.md`](../plugins/operative_forward.md).
 
 ## Per-Cell timers: folded state, not a scheduler
