@@ -213,8 +213,6 @@ pub struct HostWorkflowDecl {
     pub rollback_mode: HostRollbackMode,
     #[serde(default)]
     pub max_duration_ms: Option<u64>,
-    #[serde(default)]
-    pub wake_after_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]

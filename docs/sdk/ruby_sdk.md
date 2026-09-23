@@ -173,7 +173,7 @@ retries a failing tasklet on the edge that feeds it: `retry_max` and
 `retry_backoff_ms` on the channel (3 attempts, 50 ms base by default), so
 `retry_max(1)` is fail-fast. Its class body declares `loop_mode` (`:once`,
 `:per_input`, `:chained`), `rollback_mode` (`:all_or_nothing`,
-`:keep_progress`), `max_duration_ms`, `wake_after_ms` and `sync_durability`;
+`:keep_progress`), `max_duration_ms` and `sync_durability`;
 a mode outside its values raises `Flezha::DeclarationError` naming the setting
 and the value where the class body writes it, on the full form and the short
 form alike.
@@ -192,10 +192,10 @@ Both kinds' class bodies take `persistent` (default `true`) and the
 on a stream; `sleep_when_idle` with `persistent false` is refused as
 `SleepWithoutPersistence` when the runner declares its classes.
 
-Timers do not fire inside a workflow yet, so `ctx.timer_after`,
-`ctx.timer_at_event_time` and `ctx.cancel_timer` in a workflow tasklet raise
-a `Flezha::EmitError` naming `TimersUnavailable`, and the attempt fails as
-any raising handler's does. A `ctx.spawn_workflow` naming a stream factory
+A workflow tasklet registers timers as a stream tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow));
+only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
+and `ctx.cancel_timer` raise a `Flezha::EmitError` naming `TimersUnavailable`. A `ctx.spawn_workflow` naming a stream factory
 resolves its handle to `Flezha::SpawnError::FactoryNotWorkflow`.
 
 ### Channel payloads

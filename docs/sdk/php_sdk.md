@@ -146,9 +146,10 @@ attribute and the class, and as `SyncDurabilityOnStream` when it sets
 to `false` on a stream. `sleepWhenIdle: true` with `persistent: false` is
 refused as `SleepWithoutPersistence` when the runner starts.
 
-A workflow fires no timers yet, so inside one `timerAfter`,
-`timerAtEventTime` and `cancelTimer` throw naming `TimersUnavailable`, and the
-tasklet fails without a retry.
+A workflow tasklet registers timers as a stream tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow));
+only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
+`cancelTimer` throw naming `TimersUnavailable`.
 
 ### The short form
 

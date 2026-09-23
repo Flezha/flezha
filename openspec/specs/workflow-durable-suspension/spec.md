@@ -61,13 +61,19 @@ and SHALL pay no append.
 ### Requirement: A suspended instance rehydrates on new input or its durable timer
 
 The controller SHALL rehydrate a `suspended` instance of either kind on a new input-log append
-or on the elapse of its recorded wake deadline: respawn through the normal bind path on any
+or on the elapse of its recorded wake deadline, which for a workflow is the earliest pending
+processing-time timer its Cells held when it parked: respawn through the normal bind path on any
 live runner (existing session fencing applies), restore its Cells from their snapshots and WAL
 tails and, for a workflow, its journal state, deliver the log's retained tail above the
 instance's floor through the one re-forward every bind runs, and continue: a workflow enters
-iteration N+1, a stream resumes folding input. Rehydration SHALL survive controller
-restart/redeploy: at boot an instance whose park record exists and whose log owes nothing
-SHALL enter `suspended` without binding, and one whose log owes input SHALL bind. Concurrent
+iteration N+1, a stream resumes folding input. A wake on the deadline SHALL append nothing to the input log:
+the restored Cells re-arm their pending timers, the due timer fires on the runner, and its
+firing opens the pass at the tasklet that set it. An elapsed wake deadline SHALL count as
+pending work wherever undelivered input does, so a wake that found no runner to rehydrate onto
+SHALL be retried on the next convergence tick. Rehydration SHALL survive controller
+restart/redeploy: at boot an instance whose park record exists, whose log owes nothing and
+whose wake deadline has not elapsed SHALL enter `suspended` without binding, and any other
+SHALL bind. Concurrent
 wake sources SHALL resolve to exactly one rehydration. Whether a suspended instance still owes
 input SHALL be read from the log's tail and the instance's floor, not from a decode of the file.
 
@@ -89,15 +95,20 @@ input SHALL be read from the log's tail and the instance's floor, not from a dec
 
 #### Scenario: Durable timer fires without input
 
-- **WHEN** an instance parked with a wake deadline reaches that deadline with no input
-- **THEN** it SHALL be rehydrated and the loop SHALL observe a timer wake (not an input item)
+- **WHEN** a workflow instance parked with a wake deadline, the earliest pending processing-time timer its Cells held, reaches that deadline with no input
+- **THEN** it SHALL be rehydrated, nothing SHALL be appended to its input log, and the tasklet that set the timer SHALL run `on_timer` on its Cell as iteration N+1
+
+#### Scenario: A wake with no runner is retried
+
+- **WHEN** an instance's wake deadline elapses while no runner is active, and a runner then connects
+- **THEN** the instance SHALL be rehydrated on the next convergence tick and its due timer SHALL fire
 
 #### Scenario: A park landing during an un-park keeps the suspension
 
 - **WHEN** the rehydrated instance parks again before the un-park task has reported its bound state
 - **THEN** the Overwatch SHALL stay suspended (the runner has already torn the instance down),
   the park record written by that park SHALL stand, and the Overwatch SHALL rehydrate again only
-  if the log still holds records above the instance's floor; the task's stale bound state SHALL
+  if the log still holds records above the instance's floor or its wake deadline has elapsed; the task's stale bound state SHALL
   NOT be adopted
 
 #### Scenario: Racing wake sources rehydrate once
@@ -117,17 +128,22 @@ class of either kind whose persistence is off. The idle threshold SHALL be
 in its name.
 
 The SDK SHALL, when an instance of a class that sleeps has been idle past the threshold, send
-`IterPark` (the iteration a workflow sleeps at, `0` for a stream, and an optional wake
-deadline) and remove the instance from runner memory; the controller SHALL write the park
+`IterPark` (the iteration a workflow sleeps at, `0` for a stream, and, for a workflow, a wake
+deadline: the earliest pending processing-time timer across the instance's Cells, none when no
+Cell holds one) and remove the instance from runner memory; the controller SHALL write the park
 record durably before the eviction, then tear the instance down without a terminal completion:
 registry state `suspended`, zero live runner resources. An instance is idle when no cell of it
-holds a queued, in-flight, held-back, retrying or unflushed item, no cell timer is pending, no
-input tail is owed and, for a workflow, its pass sheet is `Waiting` with an empty queue at a
+holds a queued, in-flight, held-back, retrying or unflushed item, no
+input tail is owed, for a stream no cell timer is pending (a workflow sleeps with its timers
+pending, its wake deadline naming the earliest) and, for a workflow, its pass sheet is `Waiting` with an empty queue at a
 committed iteration boundary, the boundary before its first pass included. The threshold SHALL
 be timed as one deadline on the core's deferred-wake list, armed once and re-armed from the
 cells' latest activity when it comes due early, promoted by a thread already waiting in `poll`,
 and SHALL hold no thread and touch no input path; an instance found busy when it comes due
-SHALL NOT sleep and the deadline SHALL re-arm. An iteration boundary SHALL be the only place a
+SHALL NOT sleep and the deadline SHALL re-arm. A workflow's processing-time timer that comes
+due inside the idle window SHALL fire and open a pass, as a message does, so the instance is
+not idle when the deadline comes due. No class-level wake setting SHALL exist: a workflow's
+wake deadline is what its tasklets' timers say. An iteration boundary SHALL be the only place a
 workflow waits for a message. An eviction-hysteresis knob SHALL avoid park/rehydrate thrash
 under trickling input.
 
@@ -160,13 +176,23 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 
 #### Scenario: A busy instance does not sleep at the deadline
 
-- **WHEN** the idle deadline comes due while a cell of the instance still holds an item in a retry backoff, an unflushed buffer or a pending timer
+- **WHEN** the idle deadline comes due while a cell of the instance still holds an item in a retry backoff, an unflushed buffer or, on a stream, a pending timer
 - **THEN** the instance SHALL NOT sleep and the deadline SHALL be re-armed
 
 #### Scenario: Sleeping without persistence is refused
 
 - **WHEN** a class of either kind declares `sleep_when_idle` with its persistence switch off, in any SDK
 - **THEN** registration SHALL fail with an error containing `SleepWithoutPersistence` and nothing SHALL be declared
+
+#### Scenario: A park records the earliest pending timer as its deadline
+
+- **WHEN** a looping workflow instance's Cells hold processing-time timers at 90 000 and 60 000 when it sleeps
+- **THEN** its `IterPark` SHALL carry 60 000 as its wake deadline and the park record SHALL hold it
+
+#### Scenario: A timer due inside the idle window fires instead of parking
+
+- **WHEN** a looping workflow instance commits iteration N holding a timer due before the idle threshold elapses
+- **THEN** the timer SHALL fire and open iteration N+1, and no park record SHALL be written for the boundary
 
 #### Scenario: A once instance waiting for its first message parks
 

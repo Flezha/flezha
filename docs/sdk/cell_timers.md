@@ -145,6 +145,39 @@ An `on_timer` panic or error climbs the input channel's retry ladder and
 parks to the dead-letter queue exactly as a failing `run` does. The removal is
 durable either way, so a **poison timer parks once instead of firing forever**.
 
+## Timers in a workflow
+
+A workflow tasklet's Cell registers, persists and restores its timers exactly
+as a stream Cell does. What differs is when a firing runs, since a workflow
+runs one pass at a time and commits it stage by stage:
+
+- **A firing is a trigger.** A due timer opens a pass at the tasklet that set
+  it; `on_timer`'s emits travel down that tasklet's chain and commit stage by
+  stage, as a message's pass does from the entry channel.
+- **It joins or waits.** A firing whose tasklet's stage is running in the
+  current pass joins that stage and runs on its Cell inside it. Any other
+  firing waits in the instance's queue beside messages, in arrival order, and
+  opens its own pass at the next committed boundary. A `CHAINED` loop's
+  carry waits behind a queued firing, so a loop that feeds itself never
+  starves a timer.
+- **The removal is durable at the stage's commit.** A served firing stays in
+  the Cell's pending set, off the wake list, until the stage that ran it
+  commits; only then is its removal written. A crash before the pass's root
+  commits fires the timer again into a fresh pass; a crash after it does not.
+  A class that journals nothing commits the removal with the firing, as a
+  stream does.
+- **A sleeping instance wakes at its earliest timer.** A parked instance
+  records its earliest pending processing-time timer as its wake deadline;
+  the controller rehydrates it then, and the restored timer fires into a new
+  pass. Event-time timers need an input to advance the high-water, and an
+  input wakes the instance anyway.
+- **Timers end with the instance.** When an instance completes, fails, is
+  stopped or ends its `ONCE` pass, its Cells are removed and their pending
+  timers go with them, as a removed stream Cell's do. A `ONCE` instance's
+  timer therefore fires only while its own stage is still running.
+- **An `on_timer` failure is a tasklet failure.** It climbs the input edge's
+  retry ladder and, exhausted, compensates the run.
+
 ## Bounds and observability
 
 `max_timers_per_cell()` / `maxTimersPerCell()` (default 10 000) bounds
@@ -165,11 +198,14 @@ wedged, not an idle Operative.
   `State` alone, and a handover that carried state suppresses the WAL restore
   that would fold the pending set; the timers are still on disk, so a later
   restore rebuilds them.
-- **Workflow operatives have no timers yet** — they have `wake_after` /
-  `wakeAfter`. Every SDK's ctx in a workflow stage or `compensate` hook
-  refuses a timer call with `TimersUnavailable`, and the shared core fails a
-  workflow step whose effect still carries a timer op under the same name, so
-  a timer never vanishes silently.
+- **A `compensate` hook has no timers.** A rollback is not a place to arm a
+  deadline: every SDK's ctx there answers a timer call with
+  `TimersUnavailable`.
+- **A host workflow tasklet fed by another tasklet has no event time.** The
+  host SDKs release a workflow tasklet's output unstamped, so such a tasklet
+  reads wall time under an event-time clock and its event-time timers never
+  come due. A tasklet fed by the workflow's entry channel is not affected,
+  nor is any tasklet in Rust or Elixir.
 - **Resolution is milliseconds.**
 - **A firing can run late** — during a restore backlog, or while every poll
   worker is inside user code, since promotion needs a thread in `poll`.
@@ -190,7 +226,9 @@ Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`, Java `Ac
 Elixir `sdk/elixir/test/flezha/sdk/timers_test.exs` and `test/flezha/sdk/cell_timers_test.exs`,
 and `test/system/cell_timers_e2e_test.exs`, which drives a session-timeout
 fixture on every runtime, including a re-seat from disk that proves the
-pending timer survived it. Examples: `sdk/rust/examples/session_timeout.rs`,
+pending timer survived it. `test/system/workflow_timers_e2e_test.exs` drives
+the workflow rules on every runtime, and `workflow_crash_resume_e2e_test.exs`
+the two crash placements around a firing's commit. Examples: `sdk/rust/examples/session_timeout.rs`,
 Java `E12_SessionTimeout`.
 
 ## See also

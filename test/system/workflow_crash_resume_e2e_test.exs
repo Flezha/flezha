@@ -285,6 +285,90 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
+  describe "a timer-fed pass (uds)" do
+    @describetag transport: :uds, scenario: :uds_timer_resume
+
+    # `timer_loop_workflow` parks the firing at the gate its first runner was
+    # booted with: inside `on_timer`, before `tick` commits, or in `relay`,
+    # after it.
+    test "a crash before the firing's root commits fires the timer again", ctx do
+      {collector, id, at} = crash_timer_pass(ctx, "timer", &(timer_commits(&1) == []))
+
+      assert NodeTestHelper.wait_until(
+               fn -> collected(collector) == ["relay:armed:#{at}", "relay:fired:#{at}"] end,
+               60_000
+             ),
+             "the restored timer did not fire into a fresh pass: #{inspect(collected(collector))}"
+
+      assert timer_commits(id) == [at]
+    end
+
+    test "a crash after the firing's root committed does not fire it again", ctx do
+      {collector, id, at} = crash_timer_pass(ctx, "relay", &(timer_commits(&1) != []))
+
+      assert NodeTestHelper.wait_until(
+               fn -> collected(collector) == ["relay:armed:#{at}", "relay:fired:#{at}"] end,
+               60_000
+             ),
+             "`relay` did not resume from `tick`'s commit: #{inspect(collected(collector))}"
+
+      Process.sleep(1_500)
+      assert collected(collector) == ["relay:armed:#{at}", "relay:fired:#{at}"]
+      assert timer_commits(id) == [at], "the committed firing did not run again"
+    end
+  end
+
+  # Arm a timer on a runner that parks its firing at `hold`, SIGKILL it once
+  # `ready?` holds on the journal, and rebind onto a released replacement.
+  defp crash_timer_pass(ctx, hold, ready?) do
+    collector = spawn_link(fn -> collect_loop([]) end)
+    namespace = unique("timer_resume")
+    id = unique("timer_loop_workflow")
+    id_path = unique_id_path()
+    on_exit(fn -> cleanup(namespace, id, id_path) end)
+
+    {port_a, runner_a} =
+      boot_runner(namespace, ctx, id_path,
+        release?: false,
+        extra_env: [{"FLEZHA_WORKFLOW_E2E_HOLD", hold}]
+      )
+
+    start_workflow(namespace, id, "timer_loop_workflow",
+      first_message: nil,
+      plugins: [forward_sink("out", collector)]
+    )
+
+    send_turn(namespace, id, "after:200")
+    assert NodeTestHelper.wait_until(fn -> collected(collector) != [] end, 30_000)
+    ["relay:armed:" <> at] = collected(collector)
+    at = String.to_integer(at)
+
+    # Past the deadline the firing is parked at the gate.
+    assert NodeTestHelper.wait_until(
+             fn -> System.system_time(:millisecond) > at + 500 and ready?.(id) end,
+             30_000
+           ),
+           "the firing never reached its crash point"
+
+    sigkill(os_pid(port_a))
+    boot_runner(namespace, ctx, id_path, release?: true)
+
+    assert NodeTestHelper.wait_until(
+             fn -> runner_a not in FleetManager.active_runners(namespace) end,
+             15_000
+           )
+
+    kill_overwatch(namespace, id)
+    {collector, id, at}
+  end
+
+  # The scheduled timestamps the journal's roots of timer-fed passes name.
+  defp timer_commits(id) do
+    {:ok, entries} = TaskJournal.read(id)
+
+    for %{type: :task_committed, payload: %{trigger: %{scheduled_at: at}}} <- entries, do: at
+  end
+
   describe "a mid-iteration resume of a message-fed pass (uds)" do
     @describetag transport: :uds, scenario: :uds_message_resume
 

@@ -222,7 +222,6 @@ than at emit.
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a stream on the effectively-once tier or a durable workflow (§11). A stream's invocation carries it back as its effect record's `consumed_offset`, a workflow's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
-| `flz.wake` | controller → runner | `"timer"` on the synthetic empty input-log record that wakes a parked loop at its recorded deadline (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
 
@@ -1390,6 +1389,7 @@ message TaskHandoffItem   { uint32 channel_id = 1; bytes payload = 2; }   // cha
 message TaskCommittedTask {
     uint32 task_idx = 1; uint32 iter = 2; repeated bytes cells_ran = 3;
     bool completes = 4; bytes result = 5;          // the tasklet's own `ctx.complete`
+    optional TimerTrigger trigger = 6;             // the firing whose pass this task was the root of
 }
 message TaskEdgeHandoff   { uint32 task_idx = 1; repeated TaskHandoffItem handoff = 2; }
 
@@ -1416,7 +1416,12 @@ iteration N+1 of a handoff-chained loop from `handoff`, and rebuilds the
 compensation planner's input from `committed_tasks`. When `completed` is set
 the instance ends the run at once with `result`, and a skipped tasklet of the
 in-flight iteration whose `completes` is set supplies that iteration's
-completion, since it never runs again to ask. `rewind_undo` lists the
+completion, since it never runs again to ask. A committed task of the
+in-flight iteration that carries a `trigger` was the root of a pass a timer
+firing opened: the instance resumes that tasklet's chain rather than waiting
+for a message, and drops the named timer from its Cell's restored pending set
+before re-arming, so a firing whose stage committed never runs twice.
+`rewind_undo` lists the
 tasklets a rewind unwound that nothing has compensated yet: the instance runs
 them through the ordinary compensation planner (reverse iteration, reverse
 chain position) before resuming forward at `iter`, each undo journaling a
@@ -1444,6 +1449,13 @@ message TaskCommit {
     bool compensating = 7;                  // undo record, not forward progress
     bool completes = 8;                     // this tasklet called `ctx.complete`
     bytes result = 9;                       // with this result
+    optional TimerTrigger trigger = 10;     // on the root stage of a timer-fed pass only
+}
+
+message TimerTrigger {
+    string cell_key = 1;       // the Cell of the stage's tasklet whose timer fired
+    bool event_time = 2;       // the timer's kind: true = event time
+    uint64 scheduled_at = 3;   // its scheduled timestamp
 }
 
 message TaskCommitResponse { string operative_id = 1; uint32 task_idx = 2; string error = 3; }
@@ -1564,15 +1576,16 @@ iteration.
 message IterPark {
     string operative_id = 1;
     uint32 iter = 2;               // the last COMMITTED iteration; 0 for a stream
-    uint64 wake_deadline_ms = 3;   // 0 = wake on input only
+    uint64 wake_deadline_ms = 3;   // earliest pending processing-time timer; 0 = wake on input only
     optional uint64 consumed_offset = 4;  // the last message parked unread; absent = none
 }
 ```
 
 An instance of either kind whose class sleeps (`sleep_when_idle`) asks to
 sleep with this once it has been idle past `FLEZHA_PARK_IDLE_MS` (default ten
-minutes) with every Cell holding nothing queued, in flight, retrying, unflushed
-or timed. A workflow of any loop mode does so only at a **committed** iteration
+minutes) with every Cell holding nothing queued, in flight, retrying or
+unflushed. A pending timer keeps a stream awake; a workflow sleeps with its
+timers pending and names the earliest in `wake_deadline_ms`. A workflow of any loop mode does so only at a **committed** iteration
 boundary, the boundary before its first pass included, and emits it instead of
 `WorkflowCompleted`; a stream sends `iter` `0`. Suspension is not a terminal
 outcome. A rehydrated instance waits up to 60 s for the input-log tail the
@@ -1591,11 +1604,15 @@ bind that wakes it clears the record. The
 registry entry and the controller-side Overwatch stay: it is the **runner**
 that holds zero resources, and `flz operative info` reports the instance
 `suspended`. Rehydration has one path, whichever wakes it — a new input-log
-append, or the journaled deadline, which the controller delivers as a
-synthetic input-log record with an empty payload and `flz.wake = timer` — and
-both re-bind the instance through the normal spawn path on any live runner,
-restoring its Cells (and a workflow's journal) and delivering the input log's
-undelivered tail. Two racing wakes collapse into exactly one rehydration.
+append, or the journaled deadline elapsing — and both re-bind the instance
+through the normal spawn path on any live runner, restoring its Cells (and a
+workflow's journal) and delivering the input log's undelivered tail. The
+deadline appends nothing: `wake_deadline_ms` is the earliest processing-time
+timer pending on any of the instance's Cells when it parked, so the restored
+Cell re-arms that timer and its firing opens the pass. An elapsed deadline
+counts as pending work, like undelivered input, so a wake that found no live
+runner is retried and a controller booting past it rehydrates at once. Two
+racing wakes collapse into exactly one rehydration.
 
 ### Data frame metadata: the durable input log (`flz.offset`, `flz.msg_id`)
 

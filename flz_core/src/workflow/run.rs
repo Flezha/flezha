@@ -17,11 +17,12 @@ use super::compensation::{
     plan_compensation, rewind_steps, saga_steps, stages_from_intents, CellRun,
 };
 use super::instance::{
-    AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Message, MidResume,
-    Pass, PassSheet, Phase, Release, Stage, StageState, Undo, UndoStep, Value, WorkflowRun,
+    AfterUndo, Attempt, Barrier, BarrierFor, Carry, CellPos, Deadline, Failure, Firing, FiringKey,
+    Message, MidResume, Pass, PassOrigin, PassSheet, Phase, Release, Stage, StageState, Trigger,
+    Undo, UndoStep, Value, WorkflowRun,
 };
 use super::resume::{carried_channel, journaled_stages, resumed_seed, seed_from_journal, Seed};
-use super::spec::{EntryChain, WorkflowSpec};
+use super::spec::{Chain, WorkflowSpec};
 use super::{LoopMode, RollbackMode, WorkflowError};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge, OverflowPolicy};
@@ -32,6 +33,7 @@ use crate::operative::topology::{CellMode, TaskletDescriptor};
 use crate::pb::command_request::Command;
 use crate::routing::Destination;
 use crate::state_sink::{COMPENSATION_DONE_PAYLOAD_ID, COMPENSATION_INTENT_PAYLOAD_ID};
+use crate::timer::{TimerFire, TimerKind, TimerOp};
 
 /// How long a message's item waits before a full mailbox is tried again.
 const ADMIT_RETRY: Duration = Duration::from_millis(5);
@@ -83,8 +85,16 @@ impl<'a> Run<'a> {
         Some((node, (index, slot.cell_key.clone())))
     }
 
-    pub(crate) fn chain(&self, channel: ChannelId) -> Option<&EntryChain> {
+    pub(crate) fn chain(&self, channel: ChannelId) -> Option<&Chain> {
         self.spec.dag.chain(channel)
+    }
+
+    /// The chain a pass of `origin` runs.
+    pub(crate) fn origin_chain(&self, origin: &PassOrigin) -> Option<&Chain> {
+        match origin {
+            PassOrigin::Message { channel } => self.chain(*channel),
+            PassOrigin::Timer { node, .. } => self.spec.dag.from_node.get(*node),
+        }
     }
 
     fn weak(&self) -> Weak<OperativeInstance> {
@@ -320,6 +330,100 @@ pub(crate) fn items_dropped(slot: &Arc<CellSlot>, count: usize) {
             d.owe_less(node, count);
         })
     });
+}
+
+/// A processing-time timer of one of the instance's Cells came due on the
+/// wake list: it opens a pass, joins its own stage or waits its turn, and
+/// reaches its Cell through the run's admission, as a message's item does.
+pub(crate) fn firing_promoted(slot: &Arc<CellSlot>, fire: TimerFire) {
+    with_cell(slot, |r, node, _| {
+        r.decide(|d| {
+            if let Some(firing) = d.admit_firing(Firing::new(node, slot, fire)) {
+                d.fx.admit.push(firing.into_release());
+            }
+        })
+    });
+}
+
+/// An event-time firing the Cell's assembly found due at the top of a
+/// batch: whether it runs in this batch.
+pub(crate) fn firing_assembled(slot: &Arc<CellSlot>, fire: &TimerFire) -> bool {
+    let mut runs = false;
+    with_cell(slot, |r, node, _| {
+        r.decide(|d| {
+            runs = d
+                .admit_firing(Firing::new(node, slot, fire.clone()))
+                .is_some()
+        });
+    });
+    runs
+}
+
+/// Event-time firings the assembly staged ahead of an input join the stage
+/// that delivered the input.
+pub(crate) fn firings_joined(slot: &Arc<CellSlot>, count: usize) {
+    if count == 0 {
+        return;
+    }
+    with_cell(slot, |r, node, _| {
+        r.decide(|d| {
+            if let Some(stage) = d.running_stage(node) {
+                stage.owed += count;
+            }
+        })
+    });
+}
+
+/// Hold a served firing's removal on its attempt, to be written when the
+/// stage commits; `false` when the run journals nothing, where it commits at
+/// settle as a stream's does.
+pub(crate) fn hold_removal(slot: &Arc<CellSlot>, op: TimerOp) -> bool {
+    let mut held = false;
+    with_cell(slot, |r, node, cell| {
+        if !r.journaling() {
+            return;
+        }
+        r.decide(|d| {
+            d.s.attempts
+                .entry((node, cell))
+                .or_default()
+                .removals
+                .push(op)
+        });
+        held = true;
+    });
+    held
+}
+
+/// The removals the running pass holds for `slot`, not yet durable.
+pub(crate) fn held_removals(slot: &Arc<CellSlot>) -> Vec<TimerOp> {
+    let mut held = Vec::new();
+    with_cell(slot, |r, node, cell| {
+        let sheet = r.run.sheet();
+        let stage = sheet.pass.as_ref().and_then(|pass| pass.stages.get(&node));
+        let recorded = stage.and_then(|stage| stage.cells.get(&cell));
+        held.extend(recorded.iter().flat_map(|run| run.removals.iter().copied()));
+        let attempt = sheet.attempts.get(&(node, cell));
+        held.extend(attempt.iter().flat_map(|a| a.removals.iter().copied()));
+    });
+    held
+}
+
+/// The firings of `slot` whose stage the bind's journal records committed.
+pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<(TimerKind, u64)> {
+    let mut fired = Vec::new();
+    with_cell(slot, |r, node, _| {
+        let sheet = r.run.sheet();
+        fired.extend(
+            sheet
+                .journal
+                .iter()
+                .flat_map(|journal| journal.firings())
+                .filter(|&(_, at, key)| at == node && key.cell_key == slot.cell_key)
+                .map(|(_, _, key)| (key.kind, key.scheduled_at)),
+        );
+    });
+    fired
 }
 
 /// The Cells an idle sweep of `inst` must keep: `None` — every one — unless
@@ -618,6 +722,15 @@ impl Run<'_> {
     /// crash interrupted, the journal's committed producers re-seeded into
     /// their children.
     fn begin_pass(&self, source: Source) {
+        if let Source::Firing(firing) = source {
+            // A firing that waited may have been served or cancelled since.
+            // A Cell in the middle of an invocation holds its set: that answer
+            // waits for the assembly, which drops a firing no longer pending.
+            let pending = firing.slot.timers.try_lock().map_or(true, |pending| {
+                pending.contains(firing.fire.kind, firing.fire.scheduled_at)
+            });
+            return self.decide(|d| d.start_firing(firing, pending));
+        }
         let mid = {
             let mut sheet = self.run.sheet();
             if sheet.phase != Phase::Starting {
@@ -627,7 +740,9 @@ impl Run<'_> {
         };
         let seeded = self.seed(source, mid.as_deref());
         self.decide(|d| match seeded {
-            Ok(Some((channel, offset, roots, seed))) => d.start_pass(channel, offset, roots, seed),
+            Ok(Some((origin, channel, offset, roots, seed))) => {
+                d.start_pass(origin, channel, offset, roots, seed)
+            }
             Ok(None) => d.finish_clean(),
             Err(error) => d.compensate_on(error),
         });
@@ -638,31 +753,49 @@ impl Run<'_> {
         &self,
         source: Source,
         mid: Option<&MidResume>,
-    ) -> Result<Option<(ChannelId, Option<u64>, Vec<Release>, Seed)>, WorkflowError> {
-        let (channel, offset, mut roots) = match source {
-            Source::Message(message) => (message.channel, message.offset, message.roots),
-            Source::Carry(carry) => (carry.channel, None, carry.items),
+    ) -> Result<Option<(PassOrigin, ChannelId, Option<u64>, Vec<Release>, Seed)>, WorkflowError>
+    {
+        let message = |channel| PassOrigin::Message { channel };
+        let (origin, channel, offset, mut roots) = match source {
+            Source::Message(m) => (message(m.channel), m.channel, m.offset, m.roots),
+            Source::Carry(carry) => (message(carry.channel), carry.channel, None, carry.items),
+            Source::Firing(_) => return Ok(None),
+            Source::Resumed { .. } if mid.is_none() => return Ok(None),
+            Source::Resumed { origin, channel } => (origin, channel, None, Vec::new()),
             Source::Journal { channel, handoff } => {
                 let values = seed_from_journal(&self.inst.topology, &handoff, None)?;
                 if values.is_empty() && mid.is_none() {
                     return Ok(None);
                 }
                 let stream = unwired_stream();
-                (
-                    channel,
-                    None,
-                    self.to_roots(channel, &values, &stream, None),
-                )
+                let roots = self.to_roots(channel, &values, &stream, None);
+                (message(channel), channel, None, roots)
             }
         };
         let seed = match mid {
             Some(mid) => {
                 roots.retain(|r| !mid.committed_nodes.contains(&r.node));
-                resumed_seed(self, mid, channel)?
+                resumed_seed(self, mid, self.resumed_chain(&origin)?)?
             }
             None => Seed::default(),
         };
-        Ok(Some((channel, offset, roots, seed)))
+        Ok(Some((origin, channel, offset, roots, seed)))
+    }
+
+    /// The chain an interrupted pass of `origin` resumes over.
+    fn resumed_chain(&self, origin: &PassOrigin) -> Result<&Chain, WorkflowError> {
+        self.origin_chain(origin).ok_or_else(|| {
+            WorkflowError::non_retryable(match origin {
+                PassOrigin::Message { channel } => format!(
+                    "channel {channel} is not an entry channel of workflow {}",
+                    self.inst.instance_id
+                ),
+                PassOrigin::Timer { .. } => format!(
+                    "the journaled timer pass of workflow {} names no tasklet of its chain",
+                    self.inst.instance_id
+                ),
+            })
+        })
     }
 }
 
@@ -688,6 +821,12 @@ pub fn unwired_stream() -> Arc<FlezhaStream> {
 enum Source {
     Message(Message),
     Carry(Carry),
+    Firing(Firing),
+    /// A timer-fed pass the crash interrupted after its root committed.
+    Resumed {
+        origin: PassOrigin,
+        channel: ChannelId,
+    },
     /// The journal's terminal handoff into the roots of `channel`'s chain.
     Journal {
         channel: ChannelId,
@@ -820,13 +959,18 @@ impl Decide<'_, '_, '_> {
         self.s.committed = committed;
         self.s.done = in_flight;
         self.s.iter = journal.iter;
+        if !journal.entry_channel.is_empty() {
+            self.s.entry = Some((carried_channel(self.r, &journal), journal.consumed_offset));
+        }
         // A committed root of some chain IS "this is a mid-iteration resume",
         // and a journal that records a child without its parent re-runs the
-        // whole iteration rather than trusting the fragment.
-        let root_committed = journal
-            .committed_task_idxs
-            .iter()
-            .any(|&i| self.r.spec.dag.is_root(i as usize));
+        // whole iteration rather than trusting the fragment. A timer-fed
+        // pass's root is whichever tasklet's commit carries the firing.
+        let root_committed = journal.in_flight_trigger().is_some()
+            || journal
+                .committed_task_idxs
+                .iter()
+                .any(|&i| self.r.spec.dag.is_root(i as usize));
         let committed_nodes = if root_committed {
             journal
                 .committed_task_idxs
@@ -867,7 +1011,14 @@ impl Decide<'_, '_, '_> {
             handoff: point.journal.handoff.clone(),
         };
         if !point.committed_nodes.is_empty() {
-            let fed = self.message_fed();
+            let timer = point
+                .journal
+                .in_flight_trigger()
+                .map(|(node, firing)| PassOrigin::Timer {
+                    node,
+                    firing: firing.clone(),
+                });
+            let fed = timer.is_none() && self.message_fed();
             self.s.resume_mid = Some(Arc::new(point));
             if fed {
                 // The pass took its message before the crash; the controller
@@ -875,7 +1026,13 @@ impl Decide<'_, '_, '_> {
                 return self.enter_waiting();
             }
             self.s.phase = Phase::Starting;
-            self.fx.start = Some(carried);
+            self.fx.start = Some(match timer {
+                Some(origin) => Source::Resumed {
+                    origin,
+                    channel: self.entry_point().0,
+                },
+                None => carried,
+            });
             return;
         }
         match self.r.spec.loop_mode {
@@ -890,8 +1047,9 @@ impl Decide<'_, '_, '_> {
 
     // -- messages and passes -----------------------------------------------------
 
-    /// Back at a committed boundary: the next queued message starts its pass,
-    /// or the instance waits, and one whose class sleeps arms its park.
+    /// Back at a committed boundary: the next queued trigger starts its pass,
+    /// then a chained loop's carry, or the instance waits, and one whose
+    /// class sleeps arms its park.
     fn enter_waiting(&mut self) {
         self.s.pass = None;
         if self.cancelled() {
@@ -900,15 +1058,120 @@ impl Decide<'_, '_, '_> {
         if self.r.spec.loop_mode == LoopMode::Once && self.s.iter > 0 {
             return self.finish_clean();
         }
-        if self.message_fed() {
-            if let Some(message) = self.s.queue.pop_front() {
-                self.s.phase = Phase::Starting;
-                self.fx.start = Some(Source::Message(message));
-                return;
-            }
+        let source = match self.next_trigger() {
+            Some(Trigger::Message(message)) => Some(Source::Message(message)),
+            Some(Trigger::Firing(firing)) => Some(Source::Firing(firing)),
+            None => self.s.carry.take().map(Source::Carry),
+        };
+        if let Some(source) = source {
+            self.s.phase = Phase::Starting;
+            self.fx.start = Some(source);
+            return;
         }
         self.s.phase = Phase::Waiting;
         self.rearm_park_idle();
+    }
+
+    /// The first queued trigger this boundary may start, in arrival order: a
+    /// firing always, a message only where it seeds a pass. An interrupted
+    /// pass waiting for its message's re-forward runs before anything else.
+    fn next_trigger(&mut self) -> Option<Trigger> {
+        let fed = self.message_fed();
+        let mid = self.s.resume_mid.is_some();
+        let at = self.s.queue.iter().position(|trigger| match trigger {
+            Trigger::Message(_) => fed,
+            Trigger::Firing(_) => !mid,
+        })?;
+        self.s.queue.remove(at)
+    }
+
+    /// The entry channel a timer-fed pass's commit names, with the consumed
+    /// offset it carries: the last message-fed pass's.
+    fn entry_point(&self) -> (ChannelId, Option<u64>) {
+        self.s.entry.unwrap_or_else(|| {
+            let first = self.r.spec.dag.entries.first().map(|(channel, _)| *channel);
+            (
+                first.expect("registration refuses a workflow without an entry channel"),
+                None,
+            )
+        })
+    }
+
+    /// `node`'s stage, while it is running in a live pass.
+    fn running_stage(&mut self, node: usize) -> Option<&mut Stage> {
+        if self.r.run.pass_dead.load(Ordering::Acquire) {
+            return None;
+        }
+        self.s
+            .pass
+            .as_mut()
+            .and_then(|pass| pass.stages.get_mut(&node))
+            .filter(|stage| stage.state == StageState::Running)
+    }
+
+    /// Where a due firing goes: back to the caller when it runs now, owed by
+    /// a stage, a new pass's or the running one of its own tasklet; otherwise
+    /// it waits its turn in the queue.
+    fn admit_firing(&mut self, firing: Firing) -> Option<Firing> {
+        let key = firing.key();
+        if let Some(stage) = self.running_stage(firing.node) {
+            if stage.claim.as_ref() == Some(&key) {
+                stage.claim = None;
+            } else {
+                stage.owed += 1;
+            }
+            return Some(firing);
+        }
+        let queued = self.s.queue.iter().any(|trigger| {
+            matches!(trigger, Trigger::Firing(f) if Arc::ptr_eq(&f.slot, &firing.slot) && f.key() == key)
+        });
+        if queued || self.s.phase == Phase::Done {
+            return None;
+        }
+        if self.s.phase == Phase::Waiting && self.s.queue.is_empty() {
+            self.open_timer_pass(firing.node, key);
+            return Some(firing);
+        }
+        self.s.queue.push_back(Trigger::Firing(firing));
+        None
+    }
+
+    /// A pass at the tasklet whose timer fired, its stage owing the firing.
+    fn open_timer_pass(&mut self, node: usize, firing: FiringKey) -> Option<&mut Stage> {
+        self.disarm(Deadline::ParkIdle);
+        let (channel, offset) = self.entry_point();
+        let mut pass = Pass::new(PassOrigin::Timer { node, firing }, channel, offset);
+        pass.stages.insert(node, Stage::owing(1));
+        self.s.pass = Some(pass);
+        self.s.phase = Phase::Running;
+        self.r.run.pass_dead.store(false, Ordering::Release);
+        self.s.pass.as_mut()?.stages.get_mut(&node)
+    }
+
+    /// A queued firing's turn: its pass opens when the timer is still
+    /// pending. A processing-time firing is admitted into its Cell; an
+    /// event-time one is claimed by the stage and generated by the Cell's
+    /// next assembly, which is readied here.
+    fn start_firing(&mut self, firing: Firing, pending: bool) {
+        if self.s.phase != Phase::Starting {
+            return;
+        }
+        if !pending {
+            return self.enter_waiting();
+        }
+        if self.cancelled() {
+            return self.compensate(AfterUndo::Terminal("cancelled".to_string(), String::new()));
+        }
+        let key = firing.key();
+        let Some(stage) = self.open_timer_pass(firing.node, key.clone()) else {
+            return;
+        };
+        if firing.fire.kind == TimerKind::EventTime {
+            stage.claim = Some(key);
+            self.fx.ready.push(firing.slot);
+            return;
+        }
+        self.fx.admit.push(firing.into_release());
     }
 
     /// The idle clock restarts: the owed inbox tail's bound while any of it
@@ -932,12 +1195,13 @@ impl Decide<'_, '_, '_> {
             self.s.phase = Phase::Starting;
             self.fx.start = Some(Source::Message(message));
         } else {
-            self.s.queue.push_back(message);
+            self.s.queue.push_back(Trigger::Message(message));
         }
     }
 
     fn start_pass(
         &mut self,
+        origin: PassOrigin,
         channel: ChannelId,
         offset: Option<u64>,
         roots: Vec<Release>,
@@ -949,7 +1213,10 @@ impl Decide<'_, '_, '_> {
         if self.cancelled() {
             return self.compensate(AfterUndo::Terminal("cancelled".to_string(), String::new()));
         }
-        let mut pass = Pass::new(channel, offset);
+        if matches!(origin, PassOrigin::Message { .. }) {
+            self.s.entry = Some((channel, offset));
+        }
+        let mut pass = Pass::new(origin, channel, offset);
         pass.completion = seed.completion;
         for node in seed.committed_nodes {
             let mut stage = Stage::owing(0);
@@ -996,6 +1263,7 @@ impl Decide<'_, '_, '_> {
             held,
             staged,
             completion,
+            removals,
             failure,
         } = attempt;
         let Some(stage) = self
@@ -1016,6 +1284,7 @@ impl Decide<'_, '_, '_> {
                 .or_insert_with(|| CellRun::new(Arc::clone(slot)));
             run.outputs.extend(outputs);
             run.staged.extend(staged);
+            run.removals.extend(removals);
             if completion.is_some() {
                 run.completion = completion;
             }
@@ -1139,6 +1408,10 @@ impl Decide<'_, '_, '_> {
         };
         let cells: Vec<CellRun> = stage.cells.values().cloned().collect();
         let asked = node_completion(&cells);
+        let trigger = match &pass.origin {
+            PassOrigin::Timer { node: root, firing } if *root == node => Some(firing.clone()),
+            _ => None,
+        };
         if dead {
             stage.state = StageState::Done;
         } else {
@@ -1176,6 +1449,7 @@ impl Decide<'_, '_, '_> {
                 iter,
                 cells,
                 completion: asked,
+                trigger,
             },
         ));
     }
@@ -1200,6 +1474,12 @@ impl Decide<'_, '_, '_> {
         if dead || pass.failure.is_some() {
             return self.settle_pass();
         }
+        for run in stage.cells.values_mut() {
+            let removals = std::mem::take(&mut run.removals);
+            if !removals.is_empty() {
+                self.fx.removals.push((Arc::clone(&run.cell), removals));
+            }
+        }
         if dag.children[node].is_empty() {
             let values = stage
                 .cells
@@ -1217,7 +1497,7 @@ impl Decide<'_, '_, '_> {
                 .or_default()
                 .push(release);
         }
-        let chain = self.r.chain(pass.channel);
+        let chain = self.r.origin_chain(&pass.origin);
         let mut ready = Vec::new();
         for &child in &dag.children[node] {
             let waiting = pass
@@ -1281,13 +1561,14 @@ impl Decide<'_, '_, '_> {
         let channel = pass.channel;
         let offset = pass.consumed_offset;
         let failure = pass.failure.clone();
+        let message_pass = matches!(pass.origin, PassOrigin::Message { .. });
         for id in owed_acks {
             self.drop_barrier(id);
         }
         // A root whose message was unreadable, with nothing of the pass done:
         // the message parks under its entry channel and the pass never
         // happened.
-        let message_fed = self.message_fed();
+        let message_fed = message_pass && self.message_fed();
         let unread = failure.as_ref().filter(|f| {
             f.error.unreadable
                 && message_fed
@@ -1324,11 +1605,19 @@ impl Decide<'_, '_, '_> {
         if !self.r.journaling() {
             return self.iter_acked();
         }
+        // A timer-fed pass that released nothing at the leaf commits the
+        // carry as it stood, so a chained loop does not end on it.
+        let values = match (&pass.origin, &self.s.carry) {
+            (PassOrigin::Timer { .. }, Some(carry)) if pass.leaf_values.is_empty() => {
+                carry.values.clone()
+            }
+            _ => pass.leaf_values.clone(),
+        };
         let frame = Frame::Iteration {
             iter,
             offset: pass.consumed_offset,
             channel: pass.channel,
-            values: pass.leaf_values.clone(),
+            values,
             completion,
         };
         self.s.phase = Phase::Sealing;
@@ -1350,19 +1639,21 @@ impl Decide<'_, '_, '_> {
         if let Some(result) = pass.completion.result() {
             return self.terminal("ok", String::new(), result);
         }
-        if self.r.spec.loop_mode != LoopMode::Chained {
-            return self.enter_waiting();
+        // A chained loop carries its leaf batch into the next pass and ends
+        // on an empty one; a timer-fed pass that released nothing at the
+        // leaf leaves the carry as it stood.
+        if self.r.spec.loop_mode == LoopMode::Chained {
+            if !pass.leaf_values.is_empty() {
+                self.s.carry = Some(Carry {
+                    channel: pass.channel,
+                    values: pass.leaf_values,
+                    items: pass.carry,
+                });
+            } else if matches!(pass.origin, PassOrigin::Message { .. }) {
+                return self.finish_clean();
+            }
         }
-        // A chained loop ends on an empty batch; a stop between two passes
-        // unwinds what the loop committed.
-        if pass.leaf_values.is_empty() {
-            return self.finish_clean();
-        }
-        self.s.phase = Phase::Starting;
-        self.fx.start = Some(Source::Carry(Carry {
-            channel: pass.channel,
-            items: pass.carry,
-        }));
+        self.enter_waiting();
     }
 
     fn barrier_answered(&mut self, target: BarrierFor, result: Result<(), String>) {
@@ -1471,16 +1762,10 @@ impl Decide<'_, '_, '_> {
     }
 
     /// Suspend at the committed boundary: `IterPark` names the last committed
-    /// iteration and the last message parked unread, and the run tears down
-    /// without a completion.
+    /// iteration, the last message parked unread and the earliest pending
+    /// processing-time timer, and the run tears down without a completion.
     fn park(&mut self) {
-        let iter = self.s.iter.saturating_sub(1);
-        self.fx.control.push(iter_park(
-            &self.r.inst.instance_id,
-            iter,
-            self.r.spec.wake_after,
-            self.s.parked_offset,
-        ));
+        self.fx.park = Some((self.s.iter.saturating_sub(1), self.s.parked_offset));
         self.s.phase = Phase::Parked;
         self.clear_waits();
     }
@@ -1651,6 +1936,7 @@ enum Frame {
         iter: u32,
         cells: Vec<CellRun>,
         completion: Option<Vec<u8>>,
+        trigger: Option<FiringKey>,
     },
     Iteration {
         iter: u32,
@@ -1677,6 +1963,12 @@ struct Effects {
     completed: Option<(String, String, Vec<u8>)>,
     run_undo: Option<(Arc<CellSlot>, Vec<Value>)>,
     start: Option<Source>,
+    /// Firing removals a stage's commit made durable, per Cell.
+    removals: Vec<(Arc<CellSlot>, Vec<TimerOp>)>,
+    /// Cells whose next assembly generates a firing their stage claimed.
+    ready: Vec<Arc<CellSlot>>,
+    /// Park at this iteration, naming this offset parked unread.
+    park: Option<(u32, Option<u64>)>,
 }
 
 impl Run<'_> {
@@ -1694,6 +1986,9 @@ impl Run<'_> {
             completed,
             run_undo,
             start,
+            removals,
+            ready,
+            park,
         } = fx;
         // Intent markers precede the commit: a crash between marker and ack
         // resolves as "not committed, re-run".
@@ -1704,6 +1999,14 @@ impl Run<'_> {
             self.send_barrier(id, frame);
         }
         for (reference_id, command) in control {
+            crate::runner::emit_control_request(reference_id, command);
+        }
+        for (slot, ops) in removals {
+            slot.dispatcher.write_timer_ops(&slot, ops);
+        }
+        if let Some((iter, offset)) = park {
+            let wake = self.inst.earliest_processing_timer();
+            let (reference_id, command) = iter_park(&self.inst.instance_id, iter, wake, offset);
             crate::runner::emit_control_request(reference_id, command);
         }
         for reference_id in drop_acks {
@@ -1717,6 +2020,11 @@ impl Run<'_> {
             core.arm_instance(self.weak(), self.inst.seq, deadline, due);
         }
         self.admit(admit);
+        for slot in ready {
+            if slot.mailbox.claim_inflight() {
+                core.schedule(&slot);
+            }
+        }
         for slot in cancel_retries {
             items_dropped(&slot, core.cancel_retry(&slot));
         }
@@ -1724,6 +2032,7 @@ impl Run<'_> {
             self.park_unread(channel, offset, failure);
         }
         if let Some((status, error, result)) = completed {
+            self.log_dropped_timers();
             crate::runner::emit_workflow_completed(
                 self.inst.instance_id.to_string(),
                 status,
@@ -1739,6 +2048,25 @@ impl Run<'_> {
         }
     }
 
+    /// An ended instance's pending timers go with its Cells, as a stream's
+    /// do on removal; the completion record says nothing of them.
+    fn log_dropped_timers(&self) {
+        let pending: usize = self
+            .inst
+            .all_slots()
+            .iter()
+            .map(|slot| slot.timers.try_lock().map_or(0, |pending| pending.len()))
+            .sum();
+        if pending > 0 {
+            tracing::debug!(
+                target: "flezha::workflow",
+                instance = %self.inst.instance_id,
+                pending,
+                "workflow ended; its pending timers are dropped with its cells"
+            );
+        }
+    }
+
     /// Build a barrier's frame (the journal codecs run here), register its
     /// ack as an event, send it, and keep it for a re-send.
     fn send_barrier(&self, id: u64, frame: Frame) {
@@ -1748,7 +2076,8 @@ impl Run<'_> {
                 iter,
                 cells,
                 completion,
-            } => task_frame(self, node, iter, &cells, completion),
+                trigger,
+            } => task_frame(self, node, iter, &cells, completion, trigger),
             Frame::Iteration {
                 iter,
                 offset,

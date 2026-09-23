@@ -322,7 +322,7 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 ### Requirement: A PHP class of either kind is judged on what it wrote
 
-`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationException` naming it. `#[Workflow]` on a class extending `Flezha\StreamOperative` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Workflow]` SHALL carry no `retryAttempts`, `retryBackoffMs` or `barrierRetryAttempts`; the builder SHALL carry no `syncDurability()` call, `#[Workflow(syncDurability: true)]` being the one spelling. A `Ctx` inside a workflow SHALL throw an error naming `TimersUnavailable` from `timerAfter`, `timerAtEventTime` and `cancelTimer`.
+`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationException` naming it. `#[Workflow]` on a class extending `Flezha\StreamOperative` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Workflow]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `syncDurability()` call, `#[Workflow(syncDurability: true)]` being the one spelling. A `Ctx` inside a workflow SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL throw an error naming `TimersUnavailable` from them.
 
 #### Scenario: A tier call on a workflow reaches the core
 
@@ -334,8 +334,13 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 - **WHEN** a class extending `Flezha\StreamOperative` carries `#[Workflow(loopMode: LoopMode::PerInput)]`
 - **THEN** `registerFactory` throws `DeclarationException` naming `#[Workflow]` and the class
 
-#### Scenario: A timer inside a workflow tasklet is refused
+#### Scenario: The retired wake argument is refused
 
-- **WHEN** a tasklet of a running workflow calls `$ctx->timerAfter(1000)`
-- **THEN** the call throws an error naming `TimersUnavailable` and the effect carries no timer op
+- **WHEN** a class carries `#[Workflow(wakeAfterMs: 5000)]`
+- **THEN** PHP refuses the unknown named argument when the attribute is instantiated, and no declaration carries `wake_after_ms`
+
+#### Scenario: A timer inside a workflow tasklet fires
+
+- **WHEN** a tasklet of a running `PerInput` workflow calls `$ctx->timerAfter(300)` in `run`
+- **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 

@@ -7,9 +7,10 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crate::operative::instance::OperativeInstance;
+use crate::util::LockRecover;
 use crate::workflow::Deadline;
 
 /// How long an instance stays idle before it sleeps (`FLEZHA_PARK_IDLE_MS`).
@@ -64,9 +65,31 @@ impl OperativeInstance {
     }
 
     /// Whether every Cell holds nothing queued, in flight, held back,
-    /// retrying, staged or unflushed, and no timer is pending.
+    /// retrying, staged or unflushed. A pending timer keeps a stream awake;
+    /// a workflow sleeps with it, its park naming the earliest.
     pub(crate) fn cells_idle(&self) -> bool {
-        !self.ladders_running() && self.all_slots().iter().all(|slot| slot.quiescent())
+        let timers_hold = self.workflow.is_none();
+        !self.ladders_running()
+            && self
+                .all_slots()
+                .iter()
+                .all(|slot| slot.quiescent(timers_hold))
+    }
+
+    /// The earliest processing-time timer pending on any Cell: what a
+    /// sleeping workflow wakes at. Event-time timers wait for an input,
+    /// which wakes a sleeper anyway.
+    pub(crate) fn earliest_processing_timer(&self) -> Option<u64> {
+        self.all_slots()
+            .iter()
+            .filter_map(|slot| {
+                let pending = slot.timers.lock_recover();
+                pending
+                    .all(crate::timer::TimerKind::ProcessingTime)
+                    .first()
+                    .copied()
+            })
+            .min()
     }
 }
 
@@ -148,15 +171,9 @@ fn stream_idle_due(inst: &Arc<OperativeInstance>) {
 pub(crate) fn iter_park(
     instance_id: &str,
     iter: u32,
-    wake_after: Option<Duration>,
+    wake_deadline_ms: Option<u64>,
     parked_offset: Option<u64>,
 ) -> (String, crate::pb::command_request::Command) {
-    let wake_deadline_ms = wake_after.map_or(0, |after| {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        (now + after).as_millis() as u64
-    });
     (
         format!(
             "iter-park-{}-{}-{}",
@@ -167,7 +184,7 @@ pub(crate) fn iter_park(
         crate::pb::command_request::Command::IterPark(crate::pb::IterPark {
             operative_id: instance_id.to_string(),
             iter,
-            wake_deadline_ms,
+            wake_deadline_ms: wake_deadline_ms.unwrap_or(0),
             consumed_offset: parked_offset,
         }),
     )

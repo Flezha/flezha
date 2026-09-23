@@ -16,6 +16,7 @@ use crate::operative::topology::CorrectionPolicy;
 use crate::poll_core::ItemAttempt;
 use crate::schema;
 use crate::timer::PendingTimers;
+use crate::util::LockRecover;
 
 /// An entry payload as the host layer carries it — the bytes plus what the
 /// core resolved about them; the erased value inside a host class's
@@ -146,6 +147,20 @@ impl TaskletDispatcher for HostDispatcher {
             return false;
         };
         bytes.close_interval()
+    }
+
+    fn write_timer_ops(&self, slot: &Arc<CellSlot>, ops: Vec<crate::timer::TimerOp>) {
+        let mut buffer = slot.flush_buffer.lock_recover();
+        if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
+            bytes.timer_ops.extend(ops);
+        }
+        crate::flusher::flush_one(
+            &mut **buffer,
+            &slot.cell_identity,
+            &slot.change_seq,
+            &self.facts.header(),
+            slot.persistence_enabled,
+        );
     }
 
     fn interval_deadline(

@@ -10,6 +10,7 @@ use super::resume::stages_by_iter;
 use super::run::Run;
 use super::RollbackMode;
 use crate::cell::CellSlot;
+use crate::timer::TimerOp;
 
 /// One staged plugin-bound output: `(plugin channel, payload)`.
 pub type StagedOutput = (String, Vec<u8>);
@@ -23,6 +24,9 @@ pub struct CellRun {
     pub staged: Vec<StagedOutput>,
     /// The result this Cell's `complete` asked the instance to end with.
     pub completion: Option<Vec<u8>>,
+    /// The firings this Cell served in the stage, whose removal from its
+    /// pending set is written when the stage commits.
+    pub removals: Vec<TimerOp>,
 }
 
 impl CellRun {
@@ -33,6 +37,7 @@ impl CellRun {
             outputs: Vec::new(),
             staged: Vec::new(),
             completion: None,
+            removals: Vec::new(),
         }
     }
 }

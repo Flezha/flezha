@@ -355,6 +355,20 @@ pub struct TaskCommit {
     pub completes: bool,
     #[prost(bytes = "vec", tag = "9")]
     pub result: ::prost::alloc::vec::Vec<u8>,
+    /// Set on the root stage of a pass a timer firing opened, and on no other.
+    #[prost(message, optional, tag = "10")]
+    pub trigger: ::core::option::Option<TimerTrigger>,
+}
+/// The firing that opened a timer-fed pass: the Cell of the stage's tasklet,
+/// the timer's kind (`true` for event time) and its scheduled timestamp.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TimerTrigger {
+    #[prost(string, tag = "1")]
+    pub cell_key: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub event_time: bool,
+    #[prost(uint64, tag = "3")]
+    pub scheduled_at: u64,
 }
 /// Controller -> SDK reply to TaskCommit, emitted only AFTER the journal
 /// entry is durable (fsync). Carries the originating request's
@@ -454,6 +468,8 @@ pub struct TaskCommittedTask {
     pub completes: bool,
     #[prost(bytes = "vec", tag = "5")]
     pub result: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "6")]
+    pub trigger: ::core::option::Option<TimerTrigger>,
 }
 /// What one committed tasklet of the in-flight iteration released, keyed by
 /// its task_idx (workflow-branching). A tasklet tree re-seeds each uncommitted

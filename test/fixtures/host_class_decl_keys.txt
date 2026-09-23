@@ -53,4 +53,3 @@ tasklet.min_readable_schema_version
 workflow.loop_mode
 workflow.rollback_mode
 workflow.max_duration_ms
-workflow.wake_after_ms

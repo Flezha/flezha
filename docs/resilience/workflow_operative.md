@@ -59,6 +59,9 @@ dropped: it starts a pass when the instance is waiting at a committed boundary, 
 waits in the instance's queue for the next one. Every loop mode reads it: `Once` its one
 message, `PerInput` one per iteration, `Chained` the first and then its own carry. An instance
 with no message waits, and a second message to a `Once` instance is accepted and never read.
+A due Cell timer waits in the same queue, in arrival order with messages, and a `Chained`
+loop's carry is fed only once nothing is queued, so a firing that came due during a pass runs
+before the loop's next carry-fed pass.
 
 ## Durable loop and suspension
 
@@ -136,10 +139,14 @@ un-park is still binding wins (`parked_in_flight` discards the task's stale boun
 pending tail wakes it again). A workflow's journal, Cells and input log share one key, its
 instance id, so a bind whose `:operative_class` names anything else is refused.
 
-**The wake timer** (`wake_after()` / `wakeAfter()`) is kept in the park record and re-armed
-with `Process.send_after` from it at boot, so it survives a controller redeploy. It fires by
-appending a synthetic empty input-log record (`flz.wake = timer`), so a racing message and timer
-collapse into one rehydration. At boot an instance with a park record and nothing undelivered
+**The wake timer** is the instance's earliest pending processing-time Cell timer, which the
+runner names in the park (`IterPark.wake_deadline_ms`). The controller keeps it in the park
+record and re-arms it with `Process.send_after` from it at boot, so it survives a controller
+redeploy. It fires by rehydrating the instance, nothing appended to its input log: the restored
+Cells re-arm their timers and the due one opens a pass. A racing message and the deadline
+collapse into one rehydration, and an elapsed deadline counts as pending work beside
+undelivered input, so a wake that found no runner is retried on the next convergence tick and a
+controller that boots past it rehydrates at once. At boot an instance with a park record and nothing undelivered
 (`Migration.suspended_on_disk?/1`) enters suspended without binding; undelivered input outranks
 the park. The bind that wakes it clears the record before the runner is told to start the
 instance, so a park landing after the start keeps its own record. Inspect with
@@ -150,10 +157,12 @@ retained records, and which are still above the floor). `flz operative replay` r
 workflow Cell, since its baseline is a journal iteration, not an effect record; `flz operative
 rewind` is a loop's way back.
 
-The wake timer is the one timer a workflow has. Cell timers do not fire inside a workflow yet,
-so a timer a workflow tasklet registers is refused rather than dropped: every SDK's ctx answers
-`TimersUnavailable`, and the shared core fails an item whose effect still carries a timer op
-with a non-retryable error of that name, so the run compensates and ends in `error`.
+A workflow tasklet's Cell timers fire as passes of their own
+([`cell_timers.md`](../sdk/cell_timers.md#timers-in-a-workflow)). A served firing leaves its
+Cell's pending set when the stage that ran it commits, and the root's `TaskCommit` names the
+firing, so a resume knows the pass it opened: a crash before that commit fires the restored
+timer again into a fresh pass, and a crash after it drops the restored timer and resumes the
+pass from the journal.
 
 ## Cell retry: the rung before the abort
 

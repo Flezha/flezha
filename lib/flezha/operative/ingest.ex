@@ -126,18 +126,6 @@ defmodule Flezha.Operative.Ingest do
   #
   # Every other operative passes through untouched (cost-free default).
   @doc """
-  Journal a suspended instance's timer wake: an empty record marked
-  `flz.wake`, appended like any input, so a racing message and the deadline
-  collapse into one rehydration, and forwarded by the rehydrating bind with
-  the rest of the tail.
-  """
-  @spec journal_wake(Overwatch.t()) :: :ok
-  def journal_wake(%Overwatch{} = state) do
-    _ = InputLog.append(Overwatch.operative_class(state), "", %{"flz.wake" => "timer"})
-    :ok
-  end
-
-  @doc """
   Whether the next input is the instance's first: always for an instance
   without a durable workflow's log, and for one whose log has journaled
   nothing. A log that holds records makes a bind a restart, not a spawn.

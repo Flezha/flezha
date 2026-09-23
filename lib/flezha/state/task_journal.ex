@@ -77,7 +77,9 @@ defmodule Flezha.State.TaskJournal do
   @type committed_task :: %{
           task_idx: non_neg_integer(),
           iter: non_neg_integer(),
-          cells_ran: [binary()]
+          cells_ran: [binary()],
+          completion: completion(),
+          trigger: trigger()
         }
 
   @typedoc """
@@ -86,7 +88,7 @@ defmodule Flezha.State.TaskJournal do
   """
   @type barrier ::
           {:task_committed, non_neg_integer(), non_neg_integer(), [binary()], [handoff_item()],
-           [outbox_entry()], completion()}
+           [outbox_entry()], completion(), trigger()}
           | {:compensated, non_neg_integer(), non_neg_integer(), [outbox_entry()]}
           | {:iter_committed, non_neg_integer(), non_neg_integer() | nil, String.t(),
              [handoff_item()], completion()}
@@ -94,9 +96,22 @@ defmodule Flezha.State.TaskJournal do
   @typedoc "The result a tasklet's `complete` asked for, or `nil` when none did."
   @type completion :: binary() | nil
 
+  @typedoc """
+  The timer firing that opened a pass, carried by its root tasklet's
+  `task_committed` entry; `nil` on every other.
+  """
+  @type trigger ::
+          %{
+            cell_key: binary(),
+            kind: :processing_time | :event_time,
+            scheduled_at: non_neg_integer()
+          }
+          | nil
+
   @doc """
   Append one `task_committed` entry — cells ran, inter-task handoff, the
-  tasklet's staged outbox and the completion it asked for in ONE record —
+  tasklet's staged outbox, the completion it asked for and, on a timer-fed
+  pass's root, the firing that opened it, in ONE record —
   durable before returning; the caller replies `TaskCommitResponse` only on
   `:ok`. An entry whose encoded body
   exceeds `max_entry_bytes/0` is refused with
@@ -110,7 +125,8 @@ defmodule Flezha.State.TaskJournal do
           [binary()],
           [handoff_item()],
           [outbox_entry()],
-          completion()
+          completion(),
+          trigger()
         ) :: :ok | {:error, term()}
   def append_task_committed(
         instance_id,
@@ -119,12 +135,13 @@ defmodule Flezha.State.TaskJournal do
         cells_ran,
         handoff,
         outbox \\ [],
-        completion \\ nil
+        completion \\ nil,
+        trigger \\ nil
       )
       when is_binary(instance_id) and is_integer(task_idx) and task_idx >= 0 do
     append_barrier(
       instance_id,
-      {:task_committed, task_idx, iter, cells_ran, handoff, outbox, completion}
+      {:task_committed, task_idx, iter, cells_ran, handoff, outbox, completion, trigger}
     )
   end
 
@@ -553,7 +570,8 @@ defmodule Flezha.State.TaskJournal do
       task_idx: task_idx,
       iter: iter,
       cells_ran: payload.cells_ran,
-      completion: payload.completion
+      completion: payload.completion,
+      trigger: payload.trigger
     }
 
   defp latest_iter_committed(entries) do
@@ -623,14 +641,17 @@ defmodule Flezha.State.TaskJournal do
     append(instance_id, type, task_idx, iter, payload)
   end
 
-  defp barrier_record({:task_committed, task_idx, iter, cells_ran, handoff, outbox, completion}),
-    do:
-      {@type_task_committed, task_idx, iter,
-       [
-         Codec.encode_committed_payload(cells_ran, handoff),
-         Codec.encode_outbox(outbox),
-         Codec.encode_completion(completion)
-       ]}
+  defp barrier_record(
+         {:task_committed, task_idx, iter, cells_ran, handoff, outbox, completion, trigger}
+       ),
+       do:
+         {@type_task_committed, task_idx, iter,
+          [
+            Codec.encode_committed_payload(cells_ran, handoff),
+            Codec.encode_outbox(outbox),
+            Codec.encode_completion(completion),
+            Codec.encode_trigger(trigger)
+          ]}
 
   defp barrier_record({:compensated, task_idx, iter, outbox}),
     do: {@type_compensated, task_idx, iter, Codec.encode_outbox(outbox)}

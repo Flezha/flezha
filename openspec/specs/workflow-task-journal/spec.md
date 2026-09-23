@@ -266,3 +266,27 @@ offset `0`.
 - **WHEN** a tasklet of iteration 3 calls `ctx.complete(result)` and iteration 3 commits
 - **THEN** the journal's `iter_committed(3)` entry and the completing tasklet's `task_committed` entry SHALL each carry the completion and `result`, and `flz state journal` SHALL render both as completing
 
+### Requirement: The root stage of a timer-fed pass records its trigger, and a resume reads the chain and the consumed firing from it
+
+The `TaskCommit` of the stage that a timer firing opened SHALL carry the trigger: the Cell key, the timer kind and the scheduled timestamp. The controller SHALL write it as a trailing segment of that `task_committed` entry, beside the completion segment, absent on every other entry, and SHALL hand it back on the corresponding committed task in the restore state (`TaskJournalState.committed_tasks`). No `IterCommit` SHALL carry a trigger. On a rebind, the SDK SHALL read the in-flight iteration's chain from the trigger when the iteration's root committed with one, and from the re-forwarded message otherwise; a join SHALL count only the producers of that chain. Before any restored Cell's processing-time timers are re-armed, the SDK SHALL drop from the Cell's restored pending set every timer whose firing's stage the journal records as committed, writing the removal as a timer-ops record, so a committed firing never fires twice. `flz state journal` SHALL render a `task_committed` entry that carries a trigger as opened by that timer, naming the tasklet, the Cell, the kind and the timestamp.
+
+#### Scenario: The root's commit names the firing
+
+- **WHEN** a timer scheduled at 31000 on Cell `a` of tasklet `tick` fires and `tick`'s stage commits
+- **THEN** the journal's `task_committed` entry for `tick` SHALL carry the trigger `(a, processing_time, 31000)`, and `flz state journal` SHALL render it as opened by that timer
+
+#### Scenario: A resume after the root committed follows the timer's chain
+
+- **WHEN** a workflow declares entry `a` feeding `A -> J` and entry `b` feeding `B -> J`, a timer set by `B` fires, `B` commits with the trigger, and the runner crashes before `J` commits
+- **THEN** on rebind `J` SHALL run seeded from `B`'s journaled handoff without waiting for `A`, and the timer SHALL NOT be pending on `B`'s Cell
+
+#### Scenario: A resume before the root committed re-arms the timer
+
+- **WHEN** a timer fires on `B`, `on_timer` completes, and the runner crashes before `B`'s `TaskCommit` is acknowledged
+- **THEN** on rebind the journal SHALL show no committed task for that iteration, `B`'s Cell SHALL restore the timer pending, it SHALL be re-armed, and its firing SHALL open the pass again
+
+#### Scenario: A non-root stage carries no trigger
+
+- **WHEN** `J` commits in a timer-fed iteration
+- **THEN** its `task_committed` entry SHALL carry no trigger segment, and its restore-state counterpart SHALL carry none
+

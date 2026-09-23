@@ -104,6 +104,10 @@ fn queued_messages(instance: &OperativeInstance) -> Vec<Queued> {
     run.sheet()
         .queue
         .iter()
+        .filter_map(|trigger| match trigger {
+            crate::workflow::instance::Trigger::Message(message) => Some(message),
+            crate::workflow::instance::Trigger::Firing(_) => None,
+        })
         .map(|message| {
             let values = message
                 .roots
@@ -185,7 +189,6 @@ fn parsing_workflow(id: &'static str) -> Arc<OperativeInstance> {
             max_duration: None,
             rollback_mode: crate::workflow::RollbackMode::AllOrNothing,
             loop_mode: crate::workflow::LoopMode::Once,
-            wake_after: None,
             sync_durability: false,
         }),
     };

@@ -710,3 +710,17 @@ SHALL be unable to set either, as it can set no class-level setting.
 - **WHEN** a class of either kind, in any SDK, declares `sleep_when_idle` on and its persistence switch off
 - **THEN** registration SHALL fail with an error containing `SleepWithoutPersistence` and nothing SHALL be declared
 
+### Requirement: The timer contract holds in both kinds and no class-level wake exists
+
+The `on_timer` contract of section 3.4 of the authoring contract SHALL hold for a tasklet of a workflow operative exactly as for a tasklet of a stream operative, in every SDK: the four timer calls SHALL be available on the tasklet context in both kinds under the same names, `fired_at` SHALL be the scheduled timestamp and equal `ctx.now()` inside the hook, `timer_after` SHALL anchor on `ctx.now()`, and a registration made during a replay or a re-run SHALL be registered. What differs in a workflow SHALL be only what follows from the workflow's peculiarities, and the contract SHALL state it: a firing starts a pass at the tasklet that set the timer, or joins that tasklet's stage while it runs, or waits its turn behind the pass in flight; a `ONCE` instance ends with its one pass and a timer due after that never fires; a firing's removal is durable at its stage's commit. No SDK SHALL declare a class-level wake setting (`wake_after`, `wakeAfter`, `wake_after_ms`, `wakeAfterMs`): a workflow that must wake itself writes a timer in a tasklet. The `compensate` hook SHALL keep no timer session in either kind.
+
+#### Scenario: The same tasklet code arms a timer in both kinds
+
+- **WHEN** a tasklet whose `run` calls `timer_after` and whose `on_timer` emits is wired into a stream operative and, unchanged, into a `per_input` workflow operative
+- **THEN** both SHALL register the timer, both SHALL run `on_timer` at its scheduled time, and the workflow's firing SHALL open a pass at that tasklet
+
+#### Scenario: The retired wake setting is refused as an unknown setting
+
+- **WHEN** a workflow class in any SDK writes the wake setting in that SDK's old spelling
+- **THEN** the SDK SHALL refuse it as it refuses any unknown class setting (a compile error, a `TypeError`, a `NoMethodError`, an unknown attribute argument, a `CompileError`), and no declaration SHALL carry `wake_after_ms`
+

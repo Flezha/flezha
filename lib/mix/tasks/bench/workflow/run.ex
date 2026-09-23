@@ -250,9 +250,10 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
             do: %{st | first_out_after_kill: now},
             else: st
 
-        :timer_wake ->
+        {:timer_wake, fired_at} ->
           id = md |> Map.get("flz.cell", "") |> String.split("/") |> hd()
-          %{st | timer_wakes: [{id, now} | st.timer_wakes]}
+          late_ms = max(System.system_time(:millisecond) - fired_at, 0)
+          %{st | timer_wakes: [{id, late_ms} | st.timer_wakes]}
 
         :unknown ->
           %{st | out: %{st.out | foreign: st.out.foreign + 1}}
@@ -300,8 +301,8 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
       end
 
     case body do
-      "" ->
-        :timer_wake
+      "wake:" <> fired_at ->
+        {:timer_wake, String.to_integer(fired_at)}
 
       _ ->
         with [seq, ts] <- String.split(body, ",", parts: 2),

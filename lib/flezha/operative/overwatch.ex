@@ -649,17 +649,23 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, %{state | extensions: Table.fire_timer(state.extensions, name, plugin_id)}}
   end
 
-  # The recorded wake deadline elapsed (`workflow-durable-suspension`): append a
-  # timer wake to the input log and rehydrate. Routing the wake THROUGH the log
-  # is what makes two racing wake sources — a message and the deadline —
-  # collapse into one rehydration: the second is a no-op on an
-  # already-rehydrating instance, and the loop simply reads whatever the log
-  # holds. The wake item carries an empty payload, which the class's entry
-  # channel decodes as its tick.
+  # The recorded wake deadline elapsed (`workflow-durable-suspension`): it is
+  # the earliest timer the instance's Cells held when it parked, so the
+  # rehydrate alone wakes it: the restored Cells re-arm the timer and its
+  # firing opens the pass. Nothing is appended. A racing message collapses
+  # into the same rehydration, which is a no-op on a rehydrating instance.
+  # With no runner to wake on, the deadline is retried a convergence tick
+  # later, since no input will arrive to wake it.
   @impl true
   def handle_info(:wake_deadline, %__MODULE__{} = state) do
-    :ok = Ingest.journal_wake(state)
-    {:noreply, Migration.rehydrate(timer_fired(state, :wake))}
+    case Migration.wake(timer_fired(state, :wake), nil) do
+      {:ok, state} ->
+        {:noreply, state}
+
+      {{:error, :no_runner}, state} ->
+        retry_at = System.system_time(:millisecond) + Durations.get(:convergence_tick_ms)
+        {:noreply, Lifecycle.arm_wake_timer(state, retry_at)}
+    end
   end
 
   # The in-flight `:runner_migrate` task posts its result via a plain `send/2`

@@ -202,9 +202,19 @@ defmodule Flezha.State.Commands do
       iter: task.iter,
       cells_ran: task.cells_ran,
       completes: task.completion != nil,
-      result: task.completion || <<>>
+      result: task.completion || <<>>,
+      trigger: timer_trigger(task[:trigger])
     }
   end
+
+  defp timer_trigger(nil), do: nil
+
+  defp timer_trigger(trigger),
+    do: %RunnerCommands.TimerTrigger{
+      cell_key: trigger.cell_key,
+      event_time: trigger.kind == :event_time,
+      scheduled_at: trigger.scheduled_at
+    }
 
   defp handoff_items(handoff) do
     Enum.map(handoff, fn {cid, bytes} ->

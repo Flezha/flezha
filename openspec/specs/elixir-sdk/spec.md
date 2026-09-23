@@ -695,12 +695,13 @@ the output was lost and no counter records it.
 The Elixir SDK SHALL carry a `Flezha.SDK.WorkflowOperative` behaviour whose class declares
 a structured DAG in `channels/1`, the same callback and builder token a stream class uses, and no one-function
 `run/2` body, plus the optional knobs `max_duration_ms/0`, `self_terminating?/0`,
-`loop_mode/0` (`:once` | `:per_input` | `:chained`), `wake_after_ms/0`, `rollback_mode/0` (`:all_or_nothing` |
+`loop_mode/0` (`:once` | `:per_input` | `:chained`), `rollback_mode/0` (`:all_or_nothing` |
 `:keep_progress`), `persistence_enabled/0` and `sync_durability/0`, each reading a default when
-the class is silent. There SHALL be no `retry_attempts/0`, `retry_backoff_ms/0` or
-`barrier_retry_attempts/0`: a stage's ladder is bounded by the edge's `retry_max/2` and
-`retry_backoff_ms/2` as a stream's is, and a barrier is re-sent a fixed number of times read
-from `Flezha.SDK.Knob`. `Flezha.SDK.register_factory/2` SHALL register such a class onto the runner handle
+the class is silent. There SHALL be no `retry_attempts/0`, `retry_backoff_ms/0`,
+`barrier_retry_attempts/0` or `wake_after_ms/0`: a stage's ladder is bounded by the edge's `retry_max/2` and
+`retry_backoff_ms/2` as a stream's is, a barrier is re-sent a fixed number of times read
+from `Flezha.SDK.Knob`, and a sleeping instance's wake deadline is the earliest pending processing-time
+timer its tasklets registered. `Flezha.SDK.register_factory/2` SHALL register such a class onto the runner handle
 exactly as it registers a stream class, and the runner SHALL announce the class's kind with its
 factory id, so the controller places by factory id and knows the kind before it sends `AddOperative`.
 
@@ -723,8 +724,9 @@ channel. A missing inter-tasklet codec SHALL be named by no SDK, this one includ
 inter-tasklet value has a serialization everywhere, so there is nothing for an author to
 declare and nothing to refuse.
 
-A structured class SHALL drive its DAG frontier by frontier, over the chain of the entry channel
-the pass's message arrived on: a tasklet becomes runnable only once every producer feeding it in
+A structured class SHALL drive its DAG frontier by frontier, over the chain of the pass's origin:
+the entry channel the pass's message arrived on, or the tasklet whose timer's firing opened the pass.
+A tasklet becomes runnable only once every producer feeding it in
 that chain has committed, so a fan-out interleaves independently, a fan-in is dispatched exactly
 once with the accumulated batch of this pass's producers, and a producer of another chain is
 never waited for. A message SHALL enter through the same `resolve_channel`, `parse` and park
@@ -741,7 +743,16 @@ ran and on no declared Cell that received nothing. A restore naming a keyed Cell
 materialise it through the same lookup a stream's restore uses, refusing past the cap, and the
 driver SHALL count every restore frame the bind owes as landed whether or not a Cell took it,
 after the frame's fold so the gate never opens over unapplied state, and a frame no Cell takes
-never leaves it waiting. Each stage
+never leaves it waiting. A stage's Cell SHALL hand its due
+timer firings to the driver rather than its own queue, and the driver SHALL be the gate: a firing
+while the driver waits opens a pass at that tasklet, dispatched to that one Cell with a barrier
+behind it; a firing whose stage is in flight joins it with one more barrier; any other firing
+waits in the driver's queue, in arrival order with messages, and is served at the next boundary
+before the loop mode's own continuation. A firing the driver dispatched SHALL keep its removal
+out of the Cell's records and its timestamp in the Cell's pending set, un-armed, until the driver
+releases it on the stage's acknowledgement, and the driver SHALL drop from a rebound Cell's
+restored timers every firing the journal records committed. At a park the driver SHALL read
+each Cell's earliest pending processing-time timer and ship the minimum as the wake deadline. Each stage
 SHALL be committed durably before the next begins, its plugin-bound output SHALL be staged into
 that commit rather than shipped, and the class's leaf and compensable positions SHALL be
 declared to the controller in the `AddOperative` response.
@@ -755,11 +766,11 @@ declared to the controller in the `AddOperative` response.
 #### Scenario: A stage's Cells are the SDK's own, not a second mechanism
 
 - **WHEN** a workflow stage dispatches a batch
-- **THEN** it runs on `Flezha.SDK.Cell` processes with the same state, records and
+- **THEN** it runs on `Flezha.SDK.Cell` processes with the same state, records, timers and
   retry ladder a stream operative's Cells have, the ladder's bounds read from the consuming
   edge's `retry_max` / `retry_backoff_ms` exactly as a stream Cell reads them, differing only in
   that an exhausted ladder fails the tasklet instead of parking the input to the dead-letter queue
-  and that timers are unavailable until they work inside a workflow
+  and that a due firing is handed to the driver, which decides when it runs
 
 #### Scenario: A keyed workflow tasklet mints its Cells on dispatch
 
@@ -799,6 +810,21 @@ declared to the controller in the `AddOperative` response.
 
 - **WHEN** a `:once` class whose entry parser raises receives a message the parser rejects
 - **THEN** the message is parked to the dead-letter queue as the stream operative parks one, no stage is dispatched, and the instance keeps waiting for its message
+
+#### Scenario: A firing names the chain it starts
+
+- **WHEN** a `:per_input` class `in -> tick -> relay -> out` waits for a message and `tick`'s Cell reports a due firing
+- **THEN** the driver dispatches the firing to that Cell with a barrier, `on_timer/4` runs there, `relay` runs over what it emitted, `tick`'s `TaskCommit` carries the trigger, and the iteration commits
+
+#### Scenario: A firing during a pass waits for the boundary
+
+- **WHEN** `tick`'s Cell reports a due firing while the driver is committing `relay`
+- **THEN** the firing waits in the driver's queue and opens the next pass after the iteration's acknowledgement, ahead of a message that arrived later
+
+#### Scenario: The park names the earliest timer
+
+- **WHEN** a `:per_input` instance's Cells hold processing-time timers at 90 000 and 60 000 when the park-idle window elapses
+- **THEN** the driver ships `IterPark` with `wake_deadline_ms` 60 000
 
 ### Requirement: One plugin sink per channel and plugin
 
@@ -1180,7 +1206,7 @@ The SDK SHALL declare a connect behaviour for in-node runners and SHALL call the
 - **THEN** the SDK SHALL refuse naming the behaviour and the modes it does support
 
 ### Requirement: The Elixir SDK authors with `use` macros that expand to its behaviours
-The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `cell_idle_ttl_ms`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `clock` and `max_timers_per_cell`, plus the short-form options; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.StreamOperative` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.WorkflowOperative` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `wake_after_ms`, `rollback_mode`, `persistence_enabled` and `sync_durability`; `loop_mode` SHALL accept only `:once`, `:per_input` and `:chained`, and `rollback_mode` only `:all_or_nothing` and `:keep_progress`, any other value being a `CompileError` naming it. Both operative macros SHALL import `Flezha.SDK.Channels`; a workflow tasklet ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module written with `@behaviour` and hand-written callbacks SHALL keep working unchanged.
+The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative` and `use Flezha.SDK.WorkflowOperative`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `cell_idle_ttl_ms`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `clock` and `max_timers_per_cell`, plus the short-form options; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.StreamOperative` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.WorkflowOperative` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `rollback_mode`, `persistence_enabled` and `sync_durability`; `loop_mode` SHALL accept only `:once`, `:per_input` and `:chained`, and `rollback_mode` only `:all_or_nothing` and `:keep_progress`, any other value being a `CompileError` naming it. Both operative macros SHALL import `Flezha.SDK.Channels`; a workflow tasklet ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module written with `@behaviour` and hand-written callbacks SHALL keep working unchanged.
 
 #### Scenario: A written option is a callback, an unwritten one is not
 
@@ -1204,8 +1230,8 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.StreamOperative`
 
 #### Scenario: A retired workflow option fails to compile
 
-- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "w", retry_attempts: 5`
-- **THEN** compilation fails with a `CompileError` naming `retry_attempts`, as for any unknown option
+- **WHEN** a module writes `use Flezha.SDK.WorkflowOperative, factory_id: "w", retry_attempts: 5` or `use Flezha.SDK.WorkflowOperative, factory_id: "w", wake_after_ms: 5000`
+- **THEN** compilation fails with a `CompileError` naming the option, as for any unknown option
 
 #### Scenario: The behaviour form is unchanged
 
@@ -1301,7 +1327,7 @@ The Elixir SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, 
 
 ### Requirement: The Elixir SDK announces each class's kind and refuses the other kind's settings
 
-The handshake's factory entries and every `FactoryDecl` the SDK ships in `UpdateFactories` SHALL carry `kind`, `"stream"` or `"workflow"`, read from the module's behaviour, for a class registered before start and for one defined after it alike. `Flezha.SDK.Topology.build/2` SHALL judge kind facts for both kinds: on a workflow class it SHALL answer `EffectivelyOnceOnWorkflow` for `effectively_once/1`, `CheckpointOnWorkflow` for any of `checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2`, and `CorrectionWindowOnWorkflow` for `correction_window/2`, carried in `{:error, {:invalid_workflow, issues}}` as its other refusals are; on a stream class it SHALL keep `SyncDurabilityOnStream`. `Flezha.SDK.Declarations.for/1` SHALL declare no `effectively_once` for a workflow, because none can register. A hand-written `loop_mode/0` or `rollback_mode/0` outside the values the `use` macro accepts SHALL be refused at `register_factory/2` as `{:InvalidMode, factory_id, knob, value}` in the same `{:error, {:invalid_workflow, issues}}`. A workflow stage's Cells SHALL be started with timers unavailable, so `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` answer `{:error, :timers_unavailable}` inside a workflow tasklet and arm nothing.
+The handshake's factory entries and every `FactoryDecl` the SDK ships in `UpdateFactories` SHALL carry `kind`, `"stream"` or `"workflow"`, read from the module's behaviour, for a class registered before start and for one defined after it alike. `Flezha.SDK.Topology.build/2` SHALL judge kind facts for both kinds: on a workflow class it SHALL answer `EffectivelyOnceOnWorkflow` for `effectively_once/1`, `CheckpointOnWorkflow` for any of `checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2`, and `CorrectionWindowOnWorkflow` for `correction_window/2`, carried in `{:error, {:invalid_workflow, issues}}` as its other refusals are; on a stream class it SHALL keep `SyncDurabilityOnStream`. `Flezha.SDK.Declarations.for/1` SHALL declare no `effectively_once` for a workflow, because none can register, and no `wake_after_ms` for any class. A hand-written `loop_mode/0` or `rollback_mode/0` outside the values the `use` macro accepts SHALL be refused at `register_factory/2` as `{:InvalidMode, factory_id, knob, value}` in the same `{:error, {:invalid_workflow, issues}}`. A workflow stage's Cells SHALL be started with the same timer policy and clock a stream's are, so `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` answer inside a workflow tasklet exactly as inside a stream tasklet, and `on_timer/4` runs on a firing in both kinds.
 
 #### Scenario: The handshake carries the kind
 
@@ -1318,8 +1344,8 @@ The handshake's factory entries and every `FactoryDecl` the SDK ships in `Update
 - **WHEN** a module declaring `@behaviour Flezha.SDK.WorkflowOperative` defines `loop_mode/0` returning `:forever`
 - **THEN** `register_factory/2` answers `{:error, {:invalid_workflow, issues}}` carrying `{:InvalidMode, factory_id, :loop_mode, :forever}`
 
-#### Scenario: A timer inside a workflow tasklet is refused
+#### Scenario: A timer inside a workflow tasklet fires
 
-- **WHEN** a tasklet of a running workflow calls `Flezha.SDK.Ctx.timer_after(ctx, 1_000)`
-- **THEN** the call answers `{:error, :timers_unavailable}`, no timer is armed, and the same call inside a stream tasklet still answers `{:ok, at}`
+- **WHEN** a tasklet of a running `:per_input` workflow calls `Flezha.SDK.Ctx.timer_after(ctx, 300)` in `run/3`
+- **THEN** the call answers `{:ok, at}`, the same call inside a stream tasklet answers the same, and `on_timer/4` runs on that Cell with `fired_at == at`, opening a pass at that tasklet
 

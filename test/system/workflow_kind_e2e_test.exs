@@ -98,26 +98,6 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     assert Enum.sort(delivered) == ["a:go", "b:go"]
   end
 
-  # Timers do not fire inside a workflow yet, so a tasklet that registers one
-  # is refused by name rather than having it vanish: the pass fails and the
-  # instance ends in error, whatever the runtime.
-  test "a timer registered inside a workflow tasklet ends the instance in error, by name" do
-    operative_id = "timer_refused_#{System.unique_integer([:positive])}"
-
-    assert {:ok, _} =
-             OperativeManager.start_operative(@namespace, %Builder{
-               id: operative_id,
-               factory_id: "workflow_timer_refused",
-               opts: [seed_input: {"tick", %{}}]
-             })
-
-    assert wait_until(fn -> match?({:ok, _}, Completion.read(operative_id)) end, 30_000),
-           "the refused pass never ended the instance"
-
-    assert {:ok, %{status: "error", error: error}} = Completion.read(operative_id)
-    assert error =~ "TimersUnavailable"
-  end
-
   # A tasklet spawns the `stateless_loop_workflow` loop once with no id and
   # once with its input as the id, then prints each handle's result as
   # `spawn_result <unnamed|named> <id> <outcome>`. The runner's stdout is the
@@ -201,13 +181,13 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     assert seen =~ "once_ran ticket-7", "the spawned pass never ran on its payload:\n#{seen}"
 
     assert wait_until(
-             fn -> match?({:ok, %{status: "ok"}}, Flezha.State.Completion.read(spawned)) end,
+             fn -> match?({:ok, %{status: "ok"}}, Completion.read(spawned)) end,
              30_000
            ),
            "the spawned once workflow did not complete ok: " <>
-             inspect(Flezha.State.Completion.read(spawned))
+             inspect(Completion.read(spawned))
 
-    assert {:ok, %{result: "ticket-7"}} = Flezha.State.Completion.read(spawned)
+    assert {:ok, %{result: "ticket-7"}} = Completion.read(spawned)
 
     assert wait_until(
              fn ->

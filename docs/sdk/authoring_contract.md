@@ -419,6 +419,13 @@ Tasklet that registers a timer without handling it cannot be refused at
 build time. Full contract, including which
 kind to reach for, in [`cell_timers.md`](cell_timers.md).
 
+The contract holds in both kinds. In a workflow, a firing is one more thing
+that starts a pass: it opens a pass at the tasklet that set the timer, or
+joins that tasklet's stage while it runs, or waits its turn behind the pass in
+flight, and its timer leaves the pending set when that stage commits. Only a
+`compensate` hook has no timers; there every timer call answers
+`TimersUnavailable`.
+
 ## 4. Cell mode is an explicit opt-in, never inferred
 
 The mode changes lifecycle and on-disk state layout, so it is always an
@@ -745,9 +752,8 @@ on a stream as `SyncDurabilityOnStream`, and in PHP `#[Workflow]` on a class
 extending `Flezha\StreamOperative` is refused naming the attribute. The shared
 core judges the five host SDKs' declarations; Rust and Elixir judge their own
 under the same names. Synchronous durability has one spelling per SDK, the
-class-level one; no channel builder carries it. A timer registered inside a
-workflow tasklet is refused with `TimersUnavailable` until timers work inside
-a workflow; `compact_after_bytes` belongs to a tasklet and is accepted on
+class-level one; no channel builder carries it. Timers belong to a tasklet
+and work in either kind; `compact_after_bytes` belongs to a tasklet and is accepted on
 either kind.
 
 ## 6. Canonical reference operative (cross-SDK conformance anchor)

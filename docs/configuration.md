@@ -766,7 +766,6 @@ abnormally.
 | `max_duration()` (`maxDuration`) | none | Wall-clock bound on one run. |
 | `self_terminating()` (`selfTerminating`) | `true` | Whether the run ends on its own or waits for a stop. |
 | `loop_mode()` (`loopMode`) | `Once` | `Once`, `PerInput` or `Chained` looping over the instance's messages (its durable input log when durable). |
-| `wake_after()` (`wakeAfter`) | none | Deadline at which a parked loop rehydrates without input. |
 | `rollback_mode()` (`rollbackMode`) | `AllOrNothing` | How a rewind undoes journaled tasks: `AllOrNothing` or `KeepProgress`. |
 | `PERSISTENCE_ENABLED` (`persistenceEnabled`) | `true` | `false` keeps the instance in memory only: a crash re-runs from the top. |
 | `SYNC_DURABILITY` (`syncDurability`) | `false` | Ack a commit barrier only after its remote ship (RPO 0); inert without a durability backend, workflow classes only. |

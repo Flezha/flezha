@@ -118,3 +118,22 @@ A workflow operative's input SHALL be the messages sent to it: a tasklet's `ctx.
 - **WHEN** two messages are sent to a `once` instance before it ends
 - **THEN** the instance SHALL run its one pass over the first, the second SHALL stay unread, and no refusal SHALL be answered to the sender
 
+### Requirement: A timer firing is an input to the run beside a message, and pending timers end with the instance
+
+A workflow instance SHALL take two kinds of trigger: a message on one of its entry channels, which starts that channel's chain, and a Cell timer's firing, which starts the chain of the tasklet that set it. Both SHALL obey the one-pass-at-a-time rule and the loop mode: a `PER_INPUT` instance SHALL run one pass per trigger in arrival order; a `CHAINED` instance SHALL serve a queued firing before its carry; a `ONCE` instance SHALL end on its one pass, so a firing that comes due after that pass's last stage has committed SHALL never run. When an instance ends, on any terminal outcome, its Cells' pending timers and any firing still queued SHALL be dropped with the Cells, exactly as a stream's are on removal; the runner SHALL log one debug-level line naming the instance and the count dropped, and the completion record SHALL be unchanged.
+
+#### Scenario: A firing in a per_input loop is one iteration
+
+- **WHEN** a `per_input` instance has consumed two messages and a timer set in the second fires
+- **THEN** iteration 2 SHALL run from the tasklet that set it, `iter_committed(2)` SHALL be journaled, and the instance SHALL wait for the next trigger
+
+#### Scenario: A once instance ends with its timers
+
+- **WHEN** a `once` instance's tasklet registers a timer 30 s out and the pass completes in under a second
+- **THEN** the instance SHALL end with status `ok` at its last stage's commit, the timer SHALL be dropped with the Cells, `on_timer` SHALL never run, and the completion record SHALL carry nothing about the timer
+
+#### Scenario: A stop drops the timers with the cells
+
+- **WHEN** a `per_input` instance with pending timers is stopped and its compensation has run
+- **THEN** the instance SHALL end `cancelled`, and no timer of it SHALL fire afterwards
+

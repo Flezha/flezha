@@ -578,12 +578,12 @@ fn structured_workflow(
 ) -> Result<crate::workflow::spec::WorkflowSpec, Error> {
     let dag = build_host_dag(topology)?;
     if workflow.loop_mode == HostLoopMode::Chained {
-        if let Some(branching) = dag.branching_chain() {
+        if let Some((channel_id, branching)) = dag.branching_chain() {
             return Err(Error::Declaration(format!(
                 "a handoff-chained loop needs exactly one terminal tasklet per chain; the \
                  chain of entry channel `{}` has {}",
                 topology
-                    .channel(branching.channel_id)
+                    .channel(channel_id)
                     .map(|c| c.name.to_string())
                     .unwrap_or_default(),
                 branching.leaves(&dag).count()

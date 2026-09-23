@@ -190,9 +190,9 @@ defmodule FlezhaTest.State.TaskJournalTest do
     # Every forward commit is carried back with its iteration — the compensation
     # planner's per-iteration `committed` input.
     assert resume.committed_tasks == [
-             %{task_idx: 0, iter: 0, cells_ran: [seg], completion: nil},
-             %{task_idx: 1, iter: 0, cells_ran: [], completion: nil},
-             %{task_idx: 0, iter: 1, cells_ran: [seg], completion: nil}
+             %{task_idx: 0, iter: 0, cells_ran: [seg], completion: nil, trigger: nil},
+             %{task_idx: 1, iter: 0, cells_ran: [], completion: nil, trigger: nil},
+             %{task_idx: 0, iter: 1, cells_ran: [seg], completion: nil, trigger: nil}
            ]
   end
 
@@ -233,6 +233,26 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert plain.payload.completion == nil
     assert {old_p.payload.completion, old_i.payload.completion} == {nil, nil}
     assert old_i.payload.consumed_offset == 5
+  end
+
+  test "the root of a timer-fed pass records the firing that opened it, and no other entry does" do
+    inst = instance_id()
+    trigger = %{cell_key: "a", kind: :processing_time, scheduled_at: 31_000}
+    :ok = TaskJournal.append_task_committed(inst, 0, 4, ["tick"], [{1, "x"}], [], nil, trigger)
+    :ok = TaskJournal.append_task_committed(inst, 1, 4, ["relay"], [], [], "done")
+
+    assert {:ok, [root, child]} = TaskJournal.read(inst)
+    assert root.payload.trigger == trigger
+    assert root.payload.completion == nil
+    assert {child.payload.trigger, child.payload.completion} == {nil, "done"}
+
+    assert [%{task_idx: 0, trigger: ^trigger}, %{task_idx: 1, trigger: nil}] =
+             TaskJournal.restore_state(inst).committed_tasks
+
+    event = %{trigger | kind: :event_time, cell_key: ""}
+    :ok = TaskJournal.append_task_committed(inst, 0, 5, [], [], [], "r", event)
+    assert {:ok, [_, _, last]} = TaskJournal.read(inst)
+    assert {last.payload.trigger, last.payload.completion} == {event, "r"}
   end
 
   test "offset 0 is an offset, and a pass that consumed nothing records none" do
@@ -297,7 +317,8 @@ defmodule FlezhaTest.State.TaskJournalTest do
              task_idx: 0,
              iter: 1,
              cells_ran: [],
-             completion: "2"
+             completion: "2",
+             trigger: nil
            }
 
     journal = Commands.task_journal_state(inst)

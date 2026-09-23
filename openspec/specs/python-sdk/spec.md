@@ -351,7 +351,7 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 
 ### Requirement: A Python workflow class carries what its builder recorded
 
-A workflow's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder a stream's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `workflow_operative` SHALL take no `retry_attempts`, `retry_backoff_ms` or `barrier_retry_attempts`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a workflow SHALL raise an error naming `TimersUnavailable` from `timer_after`, `timer_at_event_time` and `cancel_timer`.
+A workflow's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder a stream's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `workflow_operative` SHALL take no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms`, and the declaration SHALL carry no `wake_after_ms`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a workflow SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
 
 #### Scenario: A tier call on a workflow reaches the core
 
@@ -360,11 +360,11 @@ A workflow's `ClassSpec` SHALL be built from every flag the `Channels` builder r
 
 #### Scenario: A retired keyword is refused
 
-- **WHEN** a module declares `@flezha.workflow_operative(id="w", retry_attempts=5)`
-- **THEN** importing it raises `TypeError` for the unknown keyword, the decorator declaring none
+- **WHEN** a module declares `@flezha.workflow_operative(id="w", retry_attempts=5)` or `@flezha.workflow_operative(id="w", wake_after_ms=5000)`
+- **THEN** importing it raises `TypeError` for the unknown keyword, the decorator declaring neither
 
-#### Scenario: A timer inside a workflow tasklet is refused
+#### Scenario: A timer inside a workflow tasklet fires
 
-- **WHEN** a tasklet of a running workflow calls `ctx.timer_after(1000)`
-- **THEN** the call raises an error naming `TimersUnavailable` and the effect carries no timer op
+- **WHEN** a tasklet of a running `per_input` workflow calls `ctx.timer_after(300)` in `run`
+- **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `on_timer` runs on that Cell at that timestamp, opening a pass at that tasklet
 

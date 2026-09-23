@@ -94,8 +94,8 @@ refused at registration, and so is one whose `channels` set the stream's
 `effectively_once`, a checkpoint flag or `correction_window`
 (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`,
 `CorrectionWindowOnWorkflow`). A tasklet's retry ladder is its input edge's
-`retry_max` / `retry_backoff_ms`, as on a stream, and a timer registered inside
-a workflow tasklet fails with `TimersUnavailable`. A tasklet ends a
+`retry_max` / `retry_backoff_ms`, as on a stream, and its timers fire as passes
+of their own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow)). A tasklet ends a
 looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
 `WorkflowCompleted` on the control stream and the controller drives the one
 teardown path (`Flezha.Service.OperativeManager.stop_operative/3`). A tasklet

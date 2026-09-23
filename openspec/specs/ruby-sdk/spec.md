@@ -169,7 +169,7 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 ### Requirement: A Ruby workflow class carries what its builder recorded
 
-`Flezha::WorkflowOperative#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the stream's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::DeclarationError` naming it. `Flezha::WorkflowOperative` SHALL declare no `retry_attempts`, `retry_backoff_ms` or `barrier_retry_attempts` setting; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a workflow SHALL raise an error naming `TimersUnavailable` from `timer_after`, `timer_at_event_time` and `cancel_timer`.
+`Flezha::WorkflowOperative#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the stream's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::DeclarationError` naming it. `Flezha::WorkflowOperative` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a workflow SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
 
 #### Scenario: A tier call on a workflow reaches the core
 
@@ -178,11 +178,11 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 #### Scenario: A retired setting is refused
 
-- **WHEN** a `Flezha::WorkflowOperative` subclass writes `retry_attempts 5` in its class body
+- **WHEN** a `Flezha::WorkflowOperative` subclass writes `retry_attempts 5` or `wake_after_ms 5000` in its class body
 - **THEN** loading it raises `NoMethodError`, the setting no longer being declared
 
-#### Scenario: A timer inside a workflow tasklet is refused
+#### Scenario: A timer inside a workflow tasklet fires
 
-- **WHEN** a tasklet of a running workflow calls `ctx.timer_after(1000)`
-- **THEN** the call raises an error naming `TimersUnavailable` and the effect carries no timer op
+- **WHEN** a tasklet of a running `per_input` workflow calls `ctx.timer_after(300)` in `run`
+- **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `on_timer` runs on that Cell at that timestamp, opening a pass at that tasklet
 

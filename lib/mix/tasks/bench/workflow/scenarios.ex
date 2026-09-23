@@ -420,8 +420,8 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
     )
   end
 
-  # The second storm: nothing casts, every sleeper's own deadline fires. Late
-  # is measured from the deadline the park set, not from the wake.
+  # The second storm: nothing casts, every sleeper's own timer fires. Late is
+  # measured from the timer's scheduled time, which its wake marker names.
   defp timer_wake_storm(cfg, st, n) do
     IO.puts("Timer wake storm: every sleeper's #{cfg.wake_after_ms} ms deadline...")
     st = %{st | timer_wakes: [], rehydrating: 0}
@@ -430,14 +430,10 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
     t1 = Run.now_ns()
 
     late =
-      Enum.reduce(st.timer_wakes, Tally.new(n), fn {id, at}, acc ->
-        case {:ets.lookup(Run.waiters(), id), Map.get(st.park_at, id)} do
-          {[{_, seq, _, _}], parked_at} when is_integer(parked_at) ->
-            deadline = parked_at + cfg.wake_after_ms * 1_000_000
-            Tally.record({seq, max(at - deadline, 0)}, acc)
-
-          _ ->
-            acc
+      Enum.reduce(st.timer_wakes, Tally.new(n), fn {id, late_ms}, acc ->
+        case :ets.lookup(Run.waiters(), id) do
+          [{_, seq, _, _}] -> Tally.record({seq, late_ms * 1_000_000}, acc)
+          _ -> acc
         end
       end)
 
@@ -447,7 +443,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
         [
           {"timer wakes",
            "#{length(st.timer_wakes)} of #{n} in #{Report.ms_from_ns(t1 - t0)} ms; rehydrations #{st.rehydrating}"},
-          {"deadline → reply", Tally.latency_line(late)}
+          {"timer → reply", Tally.latency_line(late)}
         ] ++ if(st.stalled, do: [{"result", "STALLED"}], else: [])
       )
     )

@@ -167,7 +167,7 @@ pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, us
     // The snapshot body is the host's State alone; the timer ops the coming
     // truncation would delete are re-stated as a full set AFTER the seq is
     // read — landing at `snapshot_seq + 1`, which `truncate_up_to` keeps.
-    let register_ops = slot.timers.lock_recover().as_register_ops();
+    let register_ops = crate::timer::restated(slot, &slot.timers.lock_recover()).as_register_ops();
     if !register_ops.is_empty() {
         let mut buffer = slot.flush_buffer.lock_recover();
         if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {

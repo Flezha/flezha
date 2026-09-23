@@ -239,11 +239,18 @@ impl PollCore {
                 scheduled_at,
             } => {
                 let live = slot.upgrade()?;
-                let fire = CellItem::Timer(TimerFire {
+                let fire = TimerFire {
                     kind: TimerKind::ProcessingTime,
                     scheduled_at,
                     stream: Arc::clone(&stream),
-                });
+                };
+                // A workflow's firing is a trigger of its run: the pass sheet
+                // decides when it reaches the Cell, and admits it itself.
+                if live.topology.workflow.is_some() {
+                    crate::workflow::firing_promoted(&live, fire);
+                    return None;
+                }
+                let fire = CellItem::Timer(fire);
                 Some((
                     live,
                     fire,

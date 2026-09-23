@@ -405,10 +405,10 @@ as `EventTimeClockWithoutExtractor` without it). Inside `on_timer/4`, `now/1` is
 scheduled timestamp under every clock, so a chained `timer_after/2` schedules off the timer
 that woke it and a replay registers the same instant.
 
-Timers are a stream's. Until they fire inside a workflow, a workflow's tasklet cannot register
-or cancel one: its Cells run with timers unavailable, so each of the four ctx timer calls
-answers `{:error, :timers_unavailable}` and arms nothing, and a `run/3` that returns that
-error fails the tasklet with a text naming `TimersUnavailable`.
+Timers work in a workflow's tasklets as in a stream's, and a firing runs as a pass of its own
+([`cell_timers.md`](cell_timers.md#timers-in-a-workflow)). Only a `compensate` hook runs with
+timers unavailable: there each of the four ctx timer calls answers
+`{:error, :timers_unavailable}` and arms nothing.
 
 A Tasklet registers a deadline from `run/3` or from a firing and handles it in
 `on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers

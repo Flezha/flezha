@@ -106,7 +106,7 @@ effectively-once tier, a checkpoint setting or a correction window on a
 workflow is refused at registration as `EffectivelyOnceOnWorkflow`,
 `CheckpointOnWorkflow` or `CorrectionWindowOnWorkflow`, and
 `syncDurability: true` on a stream as `SyncDurabilityOnStream`. A workflow's
-own options (`loopMode`, `rollbackMode`, `maxDurationMs`, `wakeAfterMs`)
+own options (`loopMode`, `rollbackMode`, `maxDurationMs`)
 written on `defineStream`, full form or short, are refused where it runs,
 naming them. Synchronous durability is only the definition's `syncDurability`
 field; the builder has no call for it.
@@ -121,9 +121,10 @@ with `persistent: false` is refused at registration as
 on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
 and `retryMax(1)` fails fast.
 
-**A tasklet inside a workflow cannot use timers yet.** `timerAfter`,
-`timerAtEventTime` and `cancelTimer` throw an error beginning
-`TimersUnavailable`, which fails the attempt.
+**A workflow tasklet's timers work as a stream tasklet's.** A firing runs as a
+pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow)); only
+inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
+`cancelTimer` throw an error beginning `TimersUnavailable`.
 
 **State is mutated only through declared changes.** Assigning to a field of
 `ctx.state` throws, naming the field and the change-based path: declared state

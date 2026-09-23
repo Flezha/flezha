@@ -354,8 +354,8 @@ sequenceDiagram
     participant EX2 as ⚙️ Runner (new)
 
     Note over EX1: iteration N committed, nothing is waiting, the idle window elapses
-    EX1->>CTRL: IterPark {iter N}
-    CTRL->>CTRL: 💾 park record (wake deadline) in the class directory, durable FIRST
+    EX1->>CTRL: IterPark {iter N, earliest pending timer}
+    CTRL->>CTRL: 💾 park record (wake deadline = that timer) in the class directory, durable FIRST
     CTRL->>EX1: RemOperative — evict
     Note over CTRL,EX1: the runner now holds NOTHING for this operative.<br/>The Overwatch and the registry entry remain.
 
@@ -366,16 +366,18 @@ sequenceDiagram
     CTRL->>EX2: rehydrate — bind, carrying the journal state, then restore the cells
     CTRL->>EX2: re-forward the log's records above the floor
     EX2->>EX2: iteration N+1
-    Note over CTRL,EX2: a durable timer is the same model — the trigger is the clock, not a message
+    Note over CTRL,EX2: the wake deadline is the same bind with no message:<br/>the restored Cell re-arms its timer and the firing opens the pass
 ```
 
 Rehydration is **the ordinary bind path**. Crash-resume, migration, and un-park all converge on
 it, so there is one code path and one set of bugs. The journal rides that bind
 (`AddOperative.task_journal`) rather than a per-Cell restore, because it is instance-scoped: an
 operative whose tasklets hold no per-Cell state has nothing to restore, and would otherwise
-rehydrate at iteration 0 every time. The wake timer wakes the operative by
-appending an empty record to its own input log, which means two racing wake sources — a message
-and a timer — collapse into one rehydration by construction.
+rehydrate at iteration 0 every time. The wake deadline is the instance's earliest
+pending processing-time Cell timer; when it elapses the controller rehydrates the instance and
+appends nothing, so the restored Cell re-arms the timer and its firing opens the pass. A message
+and the deadline racing collapse into one rehydration, since a rehydrate of a bound instance is a
+no-op.
 
 The park record is a per-instance fact beside the class's declarations, written before the
 eviction and cleared by the bind that wakes the instance, before the runner is told to start it.

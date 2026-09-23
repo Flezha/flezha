@@ -73,8 +73,16 @@ defmodule Flezha.State.TaskJournal.Codec do
     with {:ok, cells, rest} <- decode_cells(rest, n_cells, []),
          {:ok, handoff, rest} <- decode_handoff(rest),
          {:ok, outbox, rest} <- decode_outbox(rest),
-         {:ok, completion} <- decode_completion(rest) do
-      {:ok, %{cells_ran: cells, handoff: handoff, outbox: outbox, completion: completion}}
+         {:ok, completion, rest} <- take_completion(rest),
+         {:ok, trigger} <- decode_trigger(rest) do
+      {:ok,
+       %{
+         cells_ran: cells,
+         handoff: handoff,
+         outbox: outbox,
+         completion: completion,
+         trigger: trigger
+       }}
     else
       {:error, _} = err -> err
       _ -> {:error, :bad_payload}
@@ -146,9 +154,40 @@ defmodule Flezha.State.TaskJournal.Codec do
   def encode_completion(nil), do: <<>>
   def encode_completion(result), do: <<1, byte_size(result)::32-big, result::binary>>
 
-  defp decode_completion(<<>>), do: {:ok, nil}
-  defp decode_completion(<<1, len::32-big, result::binary-size(len)>>), do: {:ok, result}
-  defp decode_completion(_), do: {:error, :bad_payload}
+  defp decode_completion(bin) do
+    case take_completion(bin) do
+      {:ok, completion, <<>>} -> {:ok, completion}
+      _ -> {:error, :bad_payload}
+    end
+  end
+
+  defp take_completion(<<1, len::32-big, result::binary-size(len), rest::binary>>),
+    do: {:ok, result, rest}
+
+  defp take_completion(rest), do: {:ok, nil, rest}
+
+  @doc """
+  The trailing trigger segment of a `task_committed` payload, after the
+  completion: the timer firing that opened the pass this tasklet was the root
+  of, empty on every other entry.
+  """
+  def encode_trigger(nil), do: <<>>
+
+  def encode_trigger(%{cell_key: cell_key, kind: kind, scheduled_at: at}),
+    do: <<2, byte_size(cell_key)::16-big, cell_key::binary, kind_code(kind), at::64-big>>
+
+  defp decode_trigger(<<>>), do: {:ok, nil}
+
+  defp decode_trigger(<<2, key_len::16-big, cell_key::binary-size(key_len), kind, at::64-big>>)
+       when kind in [0, 1],
+       do: {:ok, %{cell_key: cell_key, kind: kind_name(kind), scheduled_at: at}}
+
+  defp decode_trigger(_), do: {:error, :bad_payload}
+
+  defp kind_code(:processing_time), do: 0
+  defp kind_code(:event_time), do: 1
+  defp kind_name(0), do: :processing_time
+  defp kind_name(1), do: :event_time
 
   def encode_handoff(handoff) do
     [

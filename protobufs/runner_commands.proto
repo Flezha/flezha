@@ -263,6 +263,16 @@ message TaskCommit {
     bool compensating = 7;
     bool completes = 8;
     bytes result = 9;
+    // Set on the root stage of a pass a timer firing opened, and on no other.
+    optional TimerTrigger trigger = 10;
+}
+
+// The firing that opened a timer-fed pass: the Cell of the stage's tasklet,
+// the timer's kind (`true` for event time) and its scheduled timestamp.
+message TimerTrigger {
+    string cell_key = 1;
+    bool event_time = 2;
+    uint64 scheduled_at = 3;
 }
 
 // Controller -> SDK reply to TaskCommit, emitted only AFTER the journal
@@ -340,6 +350,7 @@ message TaskCommittedTask {
     repeated bytes cells_ran = 3;
     bool completes = 4;
     bytes result = 5;
+    optional TimerTrigger trigger = 6;
 }
 
 // What one committed tasklet of the in-flight iteration released, keyed by

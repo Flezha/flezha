@@ -14,6 +14,7 @@ use super::WorkflowError;
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::ChannelId;
 use crate::operative::instance::OperativeInstance;
+use crate::timer::{TimerFire, TimerKind, TimerOp};
 
 pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 
@@ -124,13 +125,19 @@ pub(crate) struct PassSheet {
     pub(crate) resume_point: Option<MidResume>,
     /// A mid-iteration resume that waits for its message's re-forward.
     pub(crate) resume_mid: Option<Arc<MidResume>>,
+    /// The entry channel and consumed offset of the last message-fed pass,
+    /// which a timer-fed iteration's commit names in their place.
+    pub(crate) entry: Option<(ChannelId, Option<u64>)>,
+    /// A chained loop's next carry-fed pass, held while a queued firing
+    /// runs first.
+    pub(crate) carry: Option<Carry>,
     /// The fully committed iterations, for an all-or-nothing rollback.
     pub(crate) committed: Vec<Vec<StageRecord>>,
     /// This iteration's finished stages, in completion order.
     pub(crate) done: Vec<StageRecord>,
     pub(crate) pass: Option<Pass>,
-    /// Messages that arrived while no pass could start.
-    pub(crate) queue: VecDeque<Message>,
+    /// Triggers that arrived while no pass could start, in arrival order.
+    pub(crate) queue: VecDeque<Trigger>,
     /// The highest input-log offset parked unread, released by the park record.
     pub(crate) parked_offset: Option<u64>,
     /// Unread messages still on their way to the dead-letter queue.
@@ -165,9 +172,91 @@ pub(crate) struct Message {
     pub(crate) roots: Vec<Release>,
 }
 
+/// A chained loop's carry: the leaf batch its commit recorded, and the same
+/// values addressed to the roots of the loop's chain.
 pub(crate) struct Carry {
     pub(crate) channel: ChannelId,
+    pub(crate) values: Vec<Value>,
     pub(crate) items: Vec<Release>,
+}
+
+/// What starts a pass.
+pub(crate) enum Trigger {
+    Message(Message),
+    Firing(Firing),
+}
+
+/// A due timer on a Cell of the instance, waiting for its pass.
+pub(crate) struct Firing {
+    pub(crate) node: usize,
+    pub(crate) slot: Arc<CellSlot>,
+    pub(crate) fire: TimerFire,
+}
+
+impl Firing {
+    pub(crate) fn new(node: usize, slot: &Arc<CellSlot>, fire: TimerFire) -> Self {
+        Self {
+            node,
+            slot: Arc::clone(slot),
+            fire,
+        }
+    }
+
+    /// The firing as the item its Cell runs.
+    pub(crate) fn into_release(self) -> Release {
+        Release {
+            node: self.node,
+            cell: Some(self.slot),
+            item: CellItem::Timer(self.fire),
+            producer: None,
+        }
+    }
+
+    pub(crate) fn key(&self) -> FiringKey {
+        FiringKey {
+            cell_key: self.slot.cell_key.clone(),
+            kind: self.fire.kind,
+            scheduled_at: self.fire.scheduled_at,
+        }
+    }
+}
+
+/// Which timer fired: its Cell's key, its kind and its scheduled timestamp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FiringKey {
+    pub cell_key: Option<Arc<str>>,
+    pub kind: TimerKind,
+    pub scheduled_at: u64,
+}
+
+impl FiringKey {
+    pub(crate) fn to_wire(&self) -> crate::pb::TimerTrigger {
+        crate::pb::TimerTrigger {
+            cell_key: self.cell_key.as_deref().unwrap_or_default().to_string(),
+            event_time: self.kind == TimerKind::EventTime,
+            scheduled_at: self.scheduled_at,
+        }
+    }
+
+    fn from_wire(trigger: &crate::pb::TimerTrigger) -> Self {
+        Self {
+            cell_key: (!trigger.cell_key.is_empty()).then(|| Arc::from(trigger.cell_key.as_str())),
+            kind: if trigger.event_time {
+                TimerKind::EventTime
+            } else {
+                TimerKind::ProcessingTime
+            },
+            scheduled_at: trigger.scheduled_at,
+        }
+    }
+}
+
+/// What a pass runs: the chain of the entry channel its message arrived on,
+/// or the chain of the tasklet whose timer fired.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PassOrigin {
+    Message { channel: ChannelId },
+    Timer { node: usize, firing: FiringKey },
 }
 
 /// A pass the crash interrupted after some of its tasklets committed.
@@ -184,6 +273,7 @@ pub(crate) struct Attempt {
     pub(crate) held: Vec<Release>,
     pub(crate) staged: Vec<StagedOutput>,
     pub(crate) completion: Option<Vec<u8>>,
+    pub(crate) removals: Vec<TimerOp>,
     pub(crate) failure: Option<Failure>,
 }
 
@@ -214,6 +304,9 @@ pub(crate) struct Stage {
     /// Settled outputs addressed to the children's Cells, per producing Cell,
     /// released on commit in Cell order whichever settled first.
     pub(crate) held: BTreeMap<CellPos, Vec<Release>>,
+    /// An event-time firing the stage owes before its Cell's assembly has
+    /// generated it.
+    pub(crate) claim: Option<FiringKey>,
 }
 
 impl Stage {
@@ -223,12 +316,15 @@ impl Stage {
             state: StageState::Running,
             cells: BTreeMap::new(),
             held: BTreeMap::new(),
+            claim: None,
         }
     }
 }
 
-/// One iteration in progress.
+/// One iteration in progress. `channel` is the entry channel its commit
+/// names, which for a timer-fed pass is the last message-fed pass's.
 pub(crate) struct Pass {
+    pub(crate) origin: PassOrigin,
     pub(crate) channel: ChannelId,
     pub(crate) consumed_offset: Option<u64>,
     pub(crate) stages: BTreeMap<usize, Stage>,
@@ -245,8 +341,13 @@ pub(crate) struct Pass {
 }
 
 impl Pass {
-    pub(crate) fn new(channel: ChannelId, consumed_offset: Option<u64>) -> Self {
+    pub(crate) fn new(
+        origin: PassOrigin,
+        channel: ChannelId,
+        consumed_offset: Option<u64>,
+    ) -> Self {
         Self {
+            origin,
             channel,
             consumed_offset,
             stages: BTreeMap::new(),
@@ -339,6 +440,7 @@ fn committed_task(task: &crate::pb::TaskCommittedTask) -> CommittedTask {
         iter: task.iter,
         cells_ran: task.cells_ran.clone(),
         completion: task.completes.then(|| task.result.clone()),
+        trigger: task.trigger.as_ref().map(FiringKey::from_wire),
     }
 }
 
@@ -361,6 +463,8 @@ pub struct JournalResume {
     /// The name of the entry channel the last committed iteration's chain
     /// belongs to; empty before any iteration committed.
     pub entry_channel: String,
+    /// The input-log offset the last committed iteration consumed.
+    pub consumed_offset: Option<u64>,
     pub handoff: Vec<(u32, Vec<u8>)>,
     pub task_handoffs: Vec<EdgeHandoff>,
     pub committed_tasks: Vec<CommittedTask>,
@@ -384,6 +488,26 @@ pub struct CommittedTask {
     pub cells_ran: Vec<Vec<u8>>,
     /// The result this tasklet's `complete` asked for.
     pub completion: Option<Vec<u8>>,
+    /// The firing that opened the pass this tasklet was the root of.
+    pub trigger: Option<FiringKey>,
+}
+
+impl JournalResume {
+    /// The firing that opened the in-flight iteration, when its root
+    /// committed with one.
+    pub(crate) fn in_flight_trigger(&self) -> Option<(usize, &FiringKey)> {
+        self.firings()
+            .find(|(iter, ..)| *iter == self.iter)
+            .map(|(_, node, firing)| (node, firing))
+    }
+
+    /// Every firing a committed root stage names: its iteration, its tasklet
+    /// and the firing. None of them may fire again.
+    pub(crate) fn firings(&self) -> impl Iterator<Item = (u32, usize, &FiringKey)> {
+        self.committed_tasks
+            .iter()
+            .filter_map(|task| Some((task.iter, task.task_idx as usize, task.trigger.as_ref()?)))
+    }
 }
 
 impl From<&crate::pb::TaskJournalState> for JournalResume {
@@ -392,6 +516,7 @@ impl From<&crate::pb::TaskJournalState> for JournalResume {
             committed_task_idxs: journal.committed_task_idxs.clone(),
             iter: journal.iter,
             entry_channel: journal.entry_channel.clone(),
+            consumed_offset: journal.consumed_offset,
             handoff: handoff_items(&journal.handoff),
             task_handoffs: journal
                 .task_handoffs

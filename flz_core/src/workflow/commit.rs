@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::compensation::{CellRun, StagedOutput};
-use super::instance::Value;
+use super::instance::{FiringKey, Value};
 use super::run::Run;
 use super::WorkflowError;
 use crate::cell::CellSlot;
@@ -33,13 +33,15 @@ pub(super) fn ack_timeout() -> Duration {
 
 /// `TaskCommit` for a completed stage: its handoff through the output
 /// channel's codec, its Cells' staged plugin output as the outbox, the
-/// completion it asked for.
+/// completion it asked for, and on a timer-fed pass's root the firing that
+/// opened it.
 pub(super) fn task_frame(
     r: &Run<'_>,
     node: usize,
     iter: u32,
     cells: &[CellRun],
     completion: Option<Vec<u8>>,
+    trigger: Option<FiringKey>,
 ) -> Result<Command, WorkflowError> {
     let values: Vec<Value> = cells
         .iter()
@@ -63,6 +65,7 @@ pub(super) fn task_frame(
         compensating: false,
         completes: completion.is_some(),
         result: completion.unwrap_or_default(),
+        trigger: trigger.as_ref().map(FiringKey::to_wire),
     }))
 }
 
@@ -123,6 +126,7 @@ pub(super) fn undo_frame(
         compensating: true,
         completes: false,
         result: Vec::new(),
+        trigger: None,
     })
 }
 

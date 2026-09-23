@@ -597,11 +597,11 @@ Compensation output SHALL ride the same handshake with `compensating` set.
 
 ### Requirement: Java SDK implements the workflow durable loop and suspension
 
-The Java SDK SHALL implement the `workflow-durable-loop` and `workflow-durable-suspension` capabilities. `WorkflowOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
+The Java SDK SHALL implement the `workflow-durable-loop` and `workflow-durable-suspension` capabilities. `WorkflowOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), and no wake setting: a sleeping instance's wake deadline is the earliest pending processing-time timer its tasklets registered.
 
 At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed input-log offset when the iteration's input carried one and no offset otherwise, the terminal handoff, and a tasklet's completion request with its result when one was made, and SHALL await `IterCommitResponse` (tag 31). A durable `CHAINED` loop whose terminal task releases no inter-tasklet channel, whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec, SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
 
-When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
+When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) carrying the earliest pending processing-time timer across the instance's Cells as its wake deadline (`0` when none) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
 
 #### Scenario: Each loop iteration commits at its boundary
 
@@ -1123,7 +1123,7 @@ absent from.
 
 ### Requirement: Both kinds declare their graph in `channels` on the `Operative` base
 
-`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operative.Operative`; `StreamOperative` and `WorkflowOperative` SHALL inherit it and SHALL NOT redeclare it, and `WorkflowOperative` SHALL carry no `tasklets` method. A workflow class SHALL be built through the same `StreamOperativeTopologyBuilder` entry a stream is, which reads the kind from the class's interface, and SHALL be registered as the same `StreamOperativeTopology` a stream is; the `@Tasklet` processor SHALL emit `channels` for a generated operative of either kind. `WorkflowOperative` SHALL keep only the settings that are a workflow's own: `maxDuration()`, `selfTerminating()`, `loopMode()`, `wakeAfter()`, `rollbackMode()`, `persistenceEnabled()` and `syncDurability()`; `retryAttempts()`, `retryBackoff()` and `barrierRetryAttempts()` SHALL NOT exist, and `WorkflowOperativeConfigurationException` SHALL carry no `ZeroRetryBackoff`. The javadoc of `Operative`, `StreamOperative`, `WorkflowOperative`, `com.flezha.sdk.operative.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a workflow as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
+`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operative.Operative`; `StreamOperative` and `WorkflowOperative` SHALL inherit it and SHALL NOT redeclare it, and `WorkflowOperative` SHALL carry no `tasklets` method. A workflow class SHALL be built through the same `StreamOperativeTopologyBuilder` entry a stream is, which reads the kind from the class's interface, and SHALL be registered as the same `StreamOperativeTopology` a stream is; the `@Tasklet` processor SHALL emit `channels` for a generated operative of either kind. `WorkflowOperative` SHALL keep only the settings that are a workflow's own: `maxDuration()`, `selfTerminating()`, `loopMode()`, `rollbackMode()`, `persistenceEnabled()` and `syncDurability()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and `WorkflowOperativeConfigurationException` SHALL carry no `ZeroRetryBackoff`. The javadoc of `Operative`, `StreamOperative`, `WorkflowOperative`, `com.flezha.sdk.operative.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a workflow as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
 
 #### Scenario: A workflow class writes channels
 
@@ -1145,9 +1145,9 @@ absent from.
 - **WHEN** `sdk/java/flezha-sdk-api/src/main/java` is searched for "ordered steps", "step sequence", "resumes at the step", "between two steps" or "step boundary"
 - **THEN** no javadoc or comment carries any of them, and `sdk/java/flezha-sdk-runtime/src/main/java` carries none either
 
-### Requirement: A Java workflow class carries no stream-only setting and no timer
+### Requirement: A Java workflow class carries no stream-only setting and no wake
 
-`HostClassDeclaration.forWorkflow` SHALL put on the wire every key the class's builder recorded, tier and checkpoint keys included, and SHALL run the core's check on a record that carries the `workflow` key, so a stream-only setting on a workflow class is refused by the core under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) at `registerFactory`, wrapped in `WorkflowOperativeConfigurationException` with the name in its message, and never stripped, never honoured in process while withheld from the controller. Inside a workflow instance, `OperativeInstance.runItem` SHALL attach no `TimerSession` to the `EmitContext`, as `compensate` already attaches none, so every timer call answers `TaskletException.TimersUnavailable`.
+`HostClassDeclaration.forWorkflow` SHALL put on the wire every key the class's builder recorded, tier and checkpoint keys included, and SHALL run the core's check on a record that carries the `workflow` key, so a stream-only setting on a workflow class is refused by the core under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) at `registerFactory`, wrapped in `WorkflowOperativeConfigurationException` with the name in its message, and never stripped, never honoured in process while withheld from the controller. `WorkflowOperative` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a workflow instance, `OperativeInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for a stream instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both kinds; `compensate` SHALL attach none.
 
 #### Scenario: The tier on a workflow class is refused by the core's name
 
@@ -1159,8 +1159,13 @@ absent from.
 - **WHEN** a `WorkflowOperative`'s `channels` calls `c.checkpointEvery(100)`
 - **THEN** `registerFactory` SHALL throw with a message containing `CheckpointOnWorkflow`
 
-#### Scenario: A timer inside a workflow tasklet is refused
+#### Scenario: A timer inside a workflow tasklet fires
 
-- **WHEN** a tasklet of a running workflow calls `ctx.timerAfter(Duration.ofSeconds(1))`
-- **THEN** the call SHALL throw `TaskletException.TimersUnavailable`, no timer op SHALL reach the effect, and the attempt SHALL fail as one throwing that exception fails
+- **WHEN** a tasklet of a running `PER_INPUT` workflow calls `ctx.timerAfter(Duration.ofMillis(300))` in `run`
+- **THEN** the call SHALL answer the scheduled timestamp, the timer op SHALL reach the effect, and `onTimer` SHALL run on that Cell at that timestamp with `firedAt` equal to it, opening a pass at that tasklet
+
+#### Scenario: The retired wake method does not compile
+
+- **WHEN** a class implementing `WorkflowOperative` writes `@Override public Optional<Duration> wakeAfter()`
+- **THEN** compilation fails, the interface declaring no such method
 

@@ -181,10 +181,11 @@ Both kind interfaces carry the two class settings: `persistenceEnabled()` (defau
 restored; declaring it with persistence off makes `registerFactory` throw naming
 `SleepWithoutPersistence`.
 
-Inside a
-workflow, a tasklet's context carries no timer session: every timer call throws
-`TaskletException.TimersUnavailable`, which fails the attempt as any tasklet
-exception does. A `spawnWorkflow` naming a stream factory reads
+A workflow
+tasklet registers timers as a stream tasklet does, and a firing runs as a pass
+of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow)); only a
+`compensate` hook's context carries no timer session, and there every timer
+call throws `TaskletException.TimersUnavailable`. A `spawnWorkflow` naming a stream factory reads
 `SpawnException.FactoryNotWorkflow`.
 
 ## Scope

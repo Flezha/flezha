@@ -227,9 +227,9 @@ impl CellSlot {
     }
 
     /// Whether this Cell has nothing left to do: drained, nothing staged
-    /// behind a replay slice, nothing unflushed and no timer pending. The
-    /// sleep of an instance asks it of every Cell.
-    pub(crate) fn quiescent(self: &Arc<Self>) -> bool {
+    /// behind a replay slice, nothing unflushed and, where `timers_hold`, no
+    /// timer pending. The sleep of an instance asks it of every Cell.
+    pub(crate) fn quiescent(self: &Arc<Self>, timers_hold: bool) -> bool {
         if !self.claim_drained() {
             return false;
         }
@@ -240,7 +240,7 @@ impl CellSlot {
         let idle = !unflushed
             && self.replay_depth.load(Ordering::Acquire) == 0
             && self.deferred_live.lock_recover().is_empty()
-            && self.timers.lock_recover().is_empty();
+            && (!timers_hold || self.timers.lock_recover().is_empty());
         self.release_drained();
         idle
     }
@@ -363,6 +363,11 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
         let _ = flush_buffer;
         false
     }
+
+    /// Append timer ops committed outside an invocation to this Cell's
+    /// record stream and ship them at once: a workflow firing's removal, at
+    /// its stage's commit.
+    fn write_timer_ops(&self, slot: &Arc<CellSlot>, ops: Vec<crate::timer::TimerOp>);
 
     /// When the open checkpoint interval must close by; `None` when nothing
     /// is open or the class declared no delay.

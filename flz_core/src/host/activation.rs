@@ -419,7 +419,7 @@ pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::Activa
                 return;
             };
             for effect in effects {
-                fold_workflow_changes(slot, facts, effect.changes, effect.event_time);
+                fold_workflow_changes(slot, facts, effect.changes, Vec::new(), effect.event_time);
                 for output in effect.outputs {
                     if let schema::OutputTarget::Plugin { channel } = output.target {
                         crate::workflow::plugin_output(slot, &channel, output.payload);
@@ -437,17 +437,18 @@ pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::Activa
     }
 }
 
-/// A workflow Cell's changes into its buffer; its outputs, timers and park
-/// are the workflow's to settle.
+/// A workflow Cell's changes and durable timer ops into its buffer; its
+/// outputs and park are the workflow's to settle.
 fn fold_workflow_changes(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     changes: Vec<Vec<u8>>,
+    timers: Vec<TimerOp>,
     event_time: u64,
 ) {
     let effects = InvocationEffects {
         changes,
-        timers: Vec::new(),
+        timers,
         outputs: Vec::new(),
         offset: None,
         event_time,
@@ -466,7 +467,11 @@ fn settle_workflow_item(
     park: Option<(String, u32)>,
 ) {
     let unreadable = matches!(effect.verdict, schema::Verdict::Unreadable { .. });
-    fold_workflow_changes(slot, facts, effect.changes, effect.event_time);
+    let timers = committed_timers(&work.item, effect.timers, park.is_some());
+    commit_timers(slot, &timers, stream);
+    let mut durable = timers;
+    crate::timer::hold_firing_removal(slot, &mut durable, firing_of(&work.item));
+    fold_workflow_changes(slot, facts, effect.changes, durable, effect.event_time);
     match park {
         Some((error, attempts)) => {
             let error = if unreadable {
@@ -483,16 +488,6 @@ fn settle_workflow_item(
             };
             crate::workflow::note_failure(slot, error, payload, attempts);
         }
-        // Timers do not fire inside a workflow yet; a host whose ctx let one
-        // through fails the item rather than dropping the timer.
-        None if !effect.timers.is_empty() => crate::workflow::note_failure(
-            slot,
-            crate::workflow::WorkflowError::non_retryable(
-                "TimersUnavailable: a workflow tasklet cannot register a timer",
-            ),
-            None,
-            work.attempt,
-        ),
         None => hold_workflow_outputs(slot, stream, effect.outputs, effect.complete),
     }
     crate::workflow::item_settled(slot);
@@ -552,6 +547,14 @@ fn split_outputs(outputs: Vec<schema::Output>) -> (Vec<schema::Output>, Vec<sche
         .partition(|o| matches!(o.target, schema::OutputTarget::Edge { .. }))
 }
 
+/// The firing an item is, if it is one.
+fn firing_of(item: &CellItem) -> Option<(crate::timer::TimerKind, u64)> {
+    match item {
+        CellItem::Timer(fire) => Some((fire.kind, fire.scheduled_at)),
+        CellItem::Input(_) | CellItem::CloseInterval => None,
+    }
+}
+
 /// The offset is core-authoritative; a firing consumes nothing.
 fn consumed_offset_of(item: &CellItem) -> Option<u64> {
     match item {
@@ -560,15 +563,16 @@ fn consumed_offset_of(item: &CellItem) -> Option<u64> {
     }
 }
 
-/// A failed invocation commits no timer registrations — except a poison
-/// firing's own removal, so it parks once instead of firing forever.
+/// A firing commits its own removal first, whatever the host reported: the
+/// pending set is the core's, and a timer left in it fires again. A failed
+/// invocation commits nothing else, so a poison firing parks once instead of
+/// firing forever.
 fn committed_timers(item: &CellItem, timers: Vec<TimerOp>, parked: bool) -> Vec<TimerOp> {
-    if !parked {
-        return timers;
-    }
-    match item {
-        CellItem::Timer(fire) => vec![TimerOp::cancel(fire.kind, fire.scheduled_at)],
-        CellItem::Input(_) | CellItem::CloseInterval => Vec::new(),
+    let removal = firing_of(item).map(|(kind, at)| TimerOp::cancel(kind, at));
+    match removal {
+        _ if parked => removal.into_iter().collect(),
+        Some(op) if !timers.contains(&op) => std::iter::once(op).chain(timers).collect(),
+        _ => timers,
     }
 }
 

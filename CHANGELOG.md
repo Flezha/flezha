@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Changed: timers fire inside a workflow; `wake_after` is gone
+
+A workflow tasklet registers Cell timers exactly as a stream tasklet does, in all seven SDKs, and
+a due timer opens a pass at the tasklet that set it: its `on_timer` output travels down that
+tasklet's chain and commits stage by stage. A firing whose tasklet's stage is running joins it;
+any other waits beside messages and runs at the next committed boundary. Its timer leaves the
+pending set when that stage commits, so a crash before the commit fires it again and a crash
+after it does not. A sleeping workflow wakes at its earliest pending timer. Only a `compensate`
+hook still answers `TimersUnavailable`.
+
+The class setting `wake_after` (`wakeAfter`, `wake_after_ms`, `wakeAfterMs`) is removed from
+every SDK, and a woken instance no longer receives an empty `flz.wake` message; a tasklet that
+wants a periodic wake registers `timer_after` in its `run`. A host workflow's entry channel now
+runs the event-time crossing a stream's does.
+
 ### Changed: an operative of either kind sleeps when idle
 
 `sleep_when_idle` is a class setting of both kinds in all seven SDKs. A stream class that declares

@@ -286,7 +286,6 @@ pub(super) fn workflow_spec(
             .map(std::time::Duration::from_millis),
         rollback_mode: rollback_of(workflow.rollback_mode),
         loop_mode,
-        wake_after: workflow.wake_after_ms.map(std::time::Duration::from_millis),
         sync_durability: decl.sync_durability,
     }
 }

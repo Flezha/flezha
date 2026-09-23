@@ -5,6 +5,7 @@ defmodule Flezha.Service.Cli.Journal do
   """
 
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.SDK.Wire
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
   alias Flezha.State.Outbox
@@ -66,6 +67,7 @@ defmodule Flezha.Service.Cli.Journal do
       outbox: journal_outbox(payload.outbox)
     })
     |> journal_completion(payload.completion)
+    |> journal_trigger(payload.trigger, payload.cells_ran)
   end
 
   defp journal_row(%{type: :compensated, payload: payload} = entry) do
@@ -135,6 +137,27 @@ defmodule Flezha.Service.Cli.Journal do
   defp journal_completion(row, nil), do: row
   defp journal_completion(row, result), do: Map.put(row, :completes_bytes, byte_size(result))
 
+  # The root of a timer-fed pass names the firing that opened it, on the
+  # tasklet whose Cell set the timer.
+  defp journal_trigger(row, nil, _cells_ran), do: row
+
+  defp journal_trigger(row, trigger, cells_ran) do
+    tasklet =
+      Enum.find_value(cells_ran, "?", fn cell_id ->
+        case Wire.decode_cell_id(cell_id) do
+          {:ok, {_class, tasklet, key}} when key == trigger.cell_key -> tasklet
+          _ -> nil
+        end
+      end)
+
+    Map.put(row, :opened_by, %{
+      kind: trigger.kind,
+      scheduled_at: trigger.scheduled_at,
+      tasklet: tasklet,
+      cell: trigger.cell_key
+    })
+  end
+
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
@@ -184,6 +207,12 @@ defmodule Flezha.Service.Cli.Journal do
       IO.puts("    completes the instance: result #{row.completes_bytes} byte(s)")
     end
 
+    if timer = Map.get(row, :opened_by) do
+      IO.puts(
+        "    opened by: timer #{timer.kind} #{timer.scheduled_at} on #{timer.tasklet}/#{timer.cell}"
+      )
+    end
+
     if Map.has_key?(row, :rewound_to) do
       IO.puts("    rewound to iteration: #{row.rewound_to}")
     end
@@ -195,8 +224,8 @@ defmodule Flezha.Service.Cli.Journal do
   `flz state inbox <instance>` — the instance's durable input log, for a stream
   on the effectively-once tier and a durable workflow alike
   (`durable-input-log`): every retained record with its offset, whether it is
-  at or below the instance's floor (consumed) or above it (pending), its size,
-  channel and wake mark.
+  at or below the instance's floor (consumed) or above it (pending), its size
+  and channel.
   """
   def state_inbox(instance_id, output_format, _call) do
     case retained_input(instance_id) do
@@ -207,8 +236,7 @@ defmodule Flezha.Service.Cli.Journal do
               offset: offset,
               consumed: offset <= floor,
               bytes: byte_size(message),
-              channel: Map.get(metadata, "channel"),
-              wake: Map.get(metadata, "flz.wake")
+              channel: Map.get(metadata, "channel")
             }
           end)
 
@@ -243,8 +271,7 @@ defmodule Flezha.Service.Cli.Journal do
       IO.puts(
         "  offset=#{row.offset} #{if row.consumed, do: "consumed", else: "PENDING"} " <>
           "#{row.bytes} byte(s)" <>
-          if(row.channel, do: " channel=#{row.channel}", else: "") <>
-          if(row.wake, do: " wake=#{row.wake}", else: "")
+          if(row.channel, do: " channel=#{row.channel}", else: "")
       )
     end)
 

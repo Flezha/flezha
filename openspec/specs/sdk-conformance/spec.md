@@ -826,9 +826,7 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 ### Requirement: Kind-only settings are refusal rows every builder reaches
 
-The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `EffectivelyOnceOnWorkflow`, `CorrectionWindowOnWorkflow`, `CheckpointOnWorkflow` (a workflow class writing `class.checkpoint_every(500)`) and `SyncDurabilityOnStream`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three workflow rows, which SHALL need the `workflow` surface instead. The one remaining named skip is `SyncDurabilityOnStream` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose stream class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_workflow` and `saga_block_workflow` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms` or `barrier_retry_attempts` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `workflow.retry_attempts`, `workflow.retry_backoff_ms` or `workflow.barrier_retry_attempts`.
-
-A `test/system/` scenario tagged `capability: :workflow` SHALL drive a workflow fixture whose tasklet registers a timer, on every runtime, and SHALL assert the instance ends with an error naming `TimersUnavailable`; no runtime SHALL complete that instance with status `ok`.
+The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `EffectivelyOnceOnWorkflow`, `CorrectionWindowOnWorkflow`, `CheckpointOnWorkflow` (a workflow class writing `class.checkpoint_every(500)`) and `SyncDurabilityOnStream`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three workflow rows, which SHALL need the `workflow` surface instead. The one remaining named skip is `SyncDurabilityOnStream` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose stream class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_workflow` and `saga_block_workflow` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `workflow.retry_attempts`, `workflow.retry_backoff_ms`, `workflow.barrier_retry_attempts` or `workflow.wake_after_ms`.
 
 #### Scenario: A builder that drops a stream-only setting fails the drill
 
@@ -845,10 +843,10 @@ A `test/system/` scenario tagged `capability: :workflow` SHALL drive a workflow 
 - **WHEN** the seven manifests and the `needs` vocabulary are read
 - **THEN** none names `raw_class_flags`, the three workflow rows need `workflow`, and only the Rust and Java manifests lack `sync_durability`, skipping `SyncDurabilityOnStream` by that name
 
-#### Scenario: A timer in a workflow tasklet is refused on every runtime
+#### Scenario: The wake key is gone from every declaration
 
-- **WHEN** the timer-in-workflow fixture is started under any runtime and one message reaches its entry channel
-- **THEN** the instance ends with status `error` and an error naming `TimersUnavailable`, and no timer fires
+- **WHEN** the declaration goldens and `host_class_decl_keys.txt` are read
+- **THEN** none carries `wake_after_ms`, and a host runtime that puts it on the wire fails the declaration-key gate naming the key
 
 ### Requirement: A keyed workflow tasklet is a fixture every manifest carries
 
@@ -889,4 +887,28 @@ compensation-done markers.
 - **THEN** the instance completes `error`, a compensation-done marker exists for each of the
   three keyed Cells and no other Cell of the keyed tasklet, and the first tasklet, which
   declares no hook, is not compensated
+
+### Requirement: Timers inside a workflow are proven on every runtime
+
+Every manifest SHALL list two fixtures under `workflow`, registered under the same ids in every test app: `timer_loop_workflow`, a `per_input` workflow `in -> tick -> relay -> out` whose `tick` registers a processing-time timer of the delay its message names (`after:<ms>`), sleeps for the duration a `slow:<ms>` message names, emits `armed:<at>` from `run` and `fired:<at>` from `on_timer`, and whose `relay` prefixes what it receives with `relay:` onto the sink; and `event_timer_workflow`, a `per_input` workflow whose entry-fed tasklet declares an event-time clock read from the message, registers `timer_at_event_time` at the message's event time plus 100 and emits `fired:<at>` from `on_timer`, onto a sink. A `test/system/` module tagged `capability: :workflow` SHALL drive both on every runtime and assert: a firing reaches the sink through `relay` with no second message; a firing due while a `slow` pass runs reaches the sink after that pass's output; an instance parked under a short `FLEZHA_PARK_IDLE_MS` with a timer pending is reported `suspended` with the timer's timestamp as its park record's wake deadline, rehydrates at it and the firing reaches the sink; a runner killed with a timer pending and restarted fires it; an event-time timer fires ahead of the message that advanced the high-water. The interim timer-in-workflow refusal scenario and its fixture SHALL NOT exist.
+
+#### Scenario: The processing-time fixture is driven on every runtime
+
+- **WHEN** `timer_loop_workflow` is started under any runtime and `after:300` is sent
+- **THEN** the sink SHALL receive `relay:armed:<at>` and, about 300 ms later with nothing else sent, `relay:fired:<at>` with the same `<at>`
+
+#### Scenario: A firing waits behind a running pass on every runtime
+
+- **WHEN** `after:500` is sent and `slow:1500` immediately after it
+- **THEN** the sink SHALL receive the slow pass's output before `relay:fired:<at>`, on every runtime
+
+#### Scenario: A sleeper wakes at its timer on every runtime
+
+- **WHEN** `after:2000` is sent under `FLEZHA_PARK_IDLE_MS=200`
+- **THEN** the instance SHALL be reported `suspended` with its park record's wake deadline equal to `<at>` before the firing, and the sink SHALL receive `relay:fired:<at>` after it, on every runtime
+
+#### Scenario: The event-time fixture is driven on every runtime
+
+- **WHEN** `event_timer_workflow` receives a message with event time 1000 and then one with event time 1150
+- **THEN** the sink SHALL receive `fired:1100` before whatever the second message produces, on every runtime
 

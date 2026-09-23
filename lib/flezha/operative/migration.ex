@@ -245,16 +245,36 @@ defmodule Flezha.Operative.Migration do
   end
 
   # The invariant that keeps a turn from being stranded: an instance with
-  # undelivered input is never left suspended. Applied wherever suspension is
-  # entered — at the park, and at boot from durable state.
-  @doc "Rehydrate a suspended instance whose input log still holds input above its floor."
+  # undelivered input, or whose wake deadline has elapsed, is never left
+  # suspended. Applied wherever suspension is entered — at the park, and at
+  # boot from durable state.
+  @doc """
+  Rehydrate a suspended instance whose input log still holds input above its
+  floor, or whose recorded wake deadline has elapsed.
+  """
   @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
   def rehydrate_if_pending(%Overwatch{suspended: false} = state), do: state
 
   def rehydrate_if_pending(%Overwatch{} = state) do
-    if Replay.owed_count(Overwatch.operative_class(state)) > 0,
+    if pending?(Overwatch.operative_class(state)),
       do: rehydrate(state),
       else: state
+  end
+
+  defp pending?(operative_class),
+    do: Replay.owed_count(operative_class) > 0 or wake_due?(operative_class)
+
+  # The park's deadline is the earliest timer the instance's Cells held: once
+  # it has passed, the instance has work waiting as surely as undelivered
+  # input.
+  defp wake_due?(operative_class) do
+    case ClassRegistry.parked(operative_class) do
+      %{wake_deadline_ms: deadline} when is_integer(deadline) ->
+        deadline <= System.system_time(:millisecond)
+
+      _ ->
+        false
+    end
   end
 
   @doc """
@@ -319,13 +339,14 @@ defmodule Flezha.Operative.Migration do
   end
 
   @doc """
-  Suspended per durable state alone: a park record exists AND the input log
-  owes nothing above the instance's floor. Undelivered input outranks the park:
-  the instance has work waiting, so it binds instead.
+  Suspended per durable state alone: a park record exists, the input log owes
+  nothing above the instance's floor and the park's wake deadline has not
+  passed. Undelivered input or an elapsed deadline outranks the park: the
+  instance has work waiting, so it binds instead.
   """
   @spec suspended_on_disk?(binary()) :: boolean()
   def suspended_on_disk?(operative_class) do
-    ClassRegistry.parked(operative_class) != nil and Replay.owed_count(operative_class) == 0
+    ClassRegistry.parked(operative_class) != nil and not pending?(operative_class)
   end
 
   @doc """

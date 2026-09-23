@@ -590,6 +590,12 @@ fn a_local_run_fires_an_event_time_timer_on_the_advancing_high_water() {
         vec![format!("event_time:{}", armed_ops(&armed)[0])],
         "the later input's event time brought the deadline due"
     );
+
+    // The host reported no removal; the firing's own is the core's to commit.
+    run.feed("ticks", b"tick@3000".to_vec()).expect("accepted");
+    run.run_until_idle(Duration::from_secs(10))
+        .expect("the graph settles");
+    assert_eq!(payloads(&seen).len(), 1, "a fired timer fires once");
 }
 
 // ------------------------------------------------- the prepare crossing

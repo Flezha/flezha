@@ -235,7 +235,7 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 
 ### Requirement: The Rust workflow trait carries the stream's body and none of the stream's settings
 
-`WorkflowOperative` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `StreamOperative::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff` or `barrier_retry_attempts` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `wake_after`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a workflow whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildWorkflowError` variants named `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`, and `ZeroRetryBackoff` SHALL NOT exist. A workflow cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `workflow_metadata` in the shared core SHALL advertise no `effectively_once` for a workflow class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
+`WorkflowOperative` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `StreamOperative::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a workflow whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildWorkflowError` variants named `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`, and `ZeroRetryBackoff` SHALL NOT exist. A workflow cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `workflow_metadata` in the shared core SHALL advertise no `effectively_once` for a workflow class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `TaskletCtx` a workflow cell's `run` and `on_timer` receive SHALL carry the same timer session a stream cell's does, so `timer_after`, `timer_at_event_time`, `cancel_processing_time_timer` and `cancel_event_time_timer` answer as in a stream; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
 
 #### Scenario: A workflow writes channels and no retry knob
 
@@ -251,4 +251,14 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 
 - **WHEN** a type implements `WorkflowOperative` with `fn tasklets(c: &ChannelBuilder)` and no `channels`
 - **THEN** compilation fails naming the missing `channels` and the unknown `tasklets`
+
+#### Scenario: The retired wake item does not compile
+
+- **WHEN** a type implements `WorkflowOperative` with `fn wake_after() -> Option<Duration>`
+- **THEN** compilation fails naming `wake_after` as not a member of the trait
+
+#### Scenario: A timer inside a workflow tasklet fires
+
+- **WHEN** a tasklet of a running `PerInput` workflow calls `ctx.timer_after(Duration::from_millis(300))` in `run`
+- **THEN** the call answers `Ok(at)`, and `on_timer` runs on that cell with `fired_at == at`, opening a pass at that tasklet
 

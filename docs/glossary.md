@@ -88,7 +88,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   timer fires when the cell's event-time high-water crosses it, a **processing-time** timer from
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
-  state, so a crash-resume owes exactly the timers it owed. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
+  state, so a crash-resume owes exactly the timers it owed. In a workflow a firing opens a pass
+  at the tasklet that set it. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed from a
   `.fpz` (`flz plugin install`), attached per operative (`flz plugin enable|disable`).
@@ -229,8 +230,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   log's watermark, and `flz state inbox` renders it. The driver's own queue of arrived messages
   is still called its inbox.
 - **Suspension / rehydrate** — between iterations the instance is evicted from its runner entirely
-  (`IterPark`, journaled first) while the Overwatch and registry entry remain; a new message or a
-  durable wake timer rehydrates it through the ordinary bind path.
+  (`IterPark`, recorded first) while the Overwatch and registry entry remain; a new message or its
+  wake deadline, the earliest pending processing-time Cell timer, rehydrates it through the
+  ordinary bind path.
 - **Rewind** — `flz operative rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
   undo-and-continue: inputs are not replayed, and a tasklet that staged output without a

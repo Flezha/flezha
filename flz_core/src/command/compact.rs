@@ -56,9 +56,9 @@ fn snapshot_slot(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::E
         Err(poisoned) => poisoned.into_inner(),
     };
     let mut buffer_guard = slot.flush_buffer.lock_recover();
-    let timer_guard = slot.timers.lock_recover();
+    let timers = crate::timer::restated(slot, &slot.timers.lock_recover());
     slot.dispatcher
-        .snapshot_frame(&mut state_guard, &mut buffer_guard, &timer_guard)
+        .snapshot_frame(&mut state_guard, &mut buffer_guard, &timers)
 }
 
 impl CommandAction for CompactCell {

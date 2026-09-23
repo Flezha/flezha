@@ -69,7 +69,11 @@ pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
         // use the live secondary stream (the `rearm_restored` precedent);
         // without one the firing waits for the next input.
         if let Some(stream) = crate::state_sink::secondary_stream() {
+            let from = items.len();
             push_due_event_timers(slot, &stream, &mut items, &mut fired, policy);
+            if slot.topology.workflow.is_some() {
+                keep_admitted_firings(slot, &mut items, from);
+            }
         }
     }
 
@@ -91,6 +95,16 @@ pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
         flush_closed_slice(slot, &mut items, &mut fired, policy, event_time_class);
     }
     items
+}
+
+/// A workflow Cell's firings run only where its pass sheet admits them; the
+/// rest wait on the sheet for their pass.
+fn keep_admitted_firings(slot: &Arc<CellSlot>, items: &mut Vec<ItemAttempt>, from: usize) {
+    let generated = items.split_off(from);
+    items.extend(generated.into_iter().filter(|work| match &work.item {
+        CellItem::Timer(fire) => crate::workflow::firing_assembled(slot, fire),
+        CellItem::Input(_) | CellItem::CloseInterval => true,
+    }));
 }
 
 /// A failed or cancelled workflow pass: what its Cell still has queued would
@@ -258,6 +272,9 @@ fn stage_timer(
         });
     } else {
         crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+        if slot.topology.workflow.is_some() {
+            crate::workflow::items_dropped(slot, 1);
+        }
     }
 }
 
@@ -305,8 +322,13 @@ fn stage_input(
     }
     // Event-time timers fire on the high-water this input just advanced,
     // ascending, and BEFORE the input itself — otherwise a window would
-    // close after the record that belongs to the next one.
+    // close after the record that belongs to the next one. In a workflow
+    // they join the stage that delivered the input.
+    let from = items.len();
     push_due_event_timers(slot, &payload.stream, items, fired, policy);
+    if slot.topology.workflow.is_some() {
+        crate::workflow::firings_joined(slot, items.len() - from);
+    }
     items.push(ItemAttempt {
         now: Some(event_time),
         attempt: 1,

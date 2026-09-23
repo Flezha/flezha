@@ -673,3 +673,125 @@ fn a_host_streams_entry_crossing_mints_its_keyed_cells() {
     });
     assert_eq!(*crossings.0.lock().unwrap(), [1]);
 }
+
+// ---- time on the host path ------------------------------------------------
+
+/// `in -> e0 -> out`: `e0` runs on `clock`, and on its first message arms a
+/// processing-time timer 30 ms out, whose firing releases `fired`.
+fn timed_json(id: &str, clock: &str) -> String {
+    format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"out","kind":"plugin","producer":0,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"e0","clock":"{clock}"}}],
+             "workflow":{{"loop_mode":"per_input"}}}}"#
+    )
+}
+
+/// Answers a crossing with each payload's bytes as its event time, and each
+/// item with its bytes on `out` (`fired` for a firing), arming a timer on
+/// `arm`; every item's `now` is recorded.
+fn timed_host(nows: Arc<Mutex<Vec<Option<u64>>>>) -> FakeHost {
+    FakeHost::answering(move |payload, _| match payload {
+        EnginePayload::Prepare(crossing) => schema::ActivationOutcome::Prepared(
+            crossing
+                .entries
+                .iter()
+                .map(|entry| {
+                    Ok(schema::PrepareAnswer {
+                        keys: Vec::new(),
+                        event_time: String::from_utf8_lossy(&entry.bytes).parse().ok(),
+                    })
+                })
+                .collect(),
+        ),
+        EnginePayload::Work { items, .. } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| {
+                    nows.lock().unwrap().push(item.now);
+                    match &item.item {
+                        crate::cell::CellItem::Input(payload) => {
+                            let bytes = host_bytes(&payload.value);
+                            let mut armed = effect(schema::Verdict::Ok, &bytes);
+                            if bytes == b"arm" {
+                                let at = crate::util::wall_now_ms() + 30;
+                                armed.timers = vec![crate::timer::TimerOp::register(
+                                    crate::timer::TimerKind::ProcessingTime,
+                                    at,
+                                )];
+                            }
+                            armed
+                        }
+                        _ => effect(schema::Verdict::Ok, b"fired"),
+                    }
+                })
+                .collect(),
+        ),
+        _ => schema::ActivationOutcome::Failed(schema::WorkError {
+            message: "unexpected activation".to_string(),
+            non_retryable: true,
+        }),
+    })
+}
+
+/// Outputs of workflow `id` until `count` arrived.
+fn outputs(rx: &Receiver<RunnerMessage>, id: &str, count: usize) -> Vec<Vec<u8>> {
+    let mut outs = Vec::new();
+    while outs.len() < count {
+        match rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("workflow {id} released {outs:?} and then nothing"))
+        {
+            RunnerMessage::EmitWorkflowOutput {
+                operative_id,
+                payload,
+            } if operative_id == id => outs.push(payload),
+            _ => {}
+        }
+    }
+    outs
+}
+
+#[test]
+fn a_host_workflows_entry_crosses_for_its_event_time_and_is_dispatched_at_it() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_wf_event_time_{}", std::process::id());
+    crate::host::register_host_class_json(timed_json(&id, "event_time").as_bytes())
+        .expect("class registers");
+    let nows = Arc::new(Mutex::new(Vec::new()));
+    let _host = timed_host(Arc::clone(&nows));
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    assert!(start(&mut node, &id, "host-et-1", "", 0).is_empty());
+    feed(&node, "host-et-1", b"1234");
+    assert_eq!(outputs(&rx, "host-et-1", 1), [b"1234".to_vec()]);
+    assert_eq!(
+        *nows.lock().unwrap(),
+        [Some(1234)],
+        "the item ran at the event time the host answered on the way in"
+    );
+}
+
+#[test]
+fn a_host_workflow_tasklets_timer_fires_into_a_pass_of_its_own() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_wf_timer_{}", std::process::id());
+    crate::host::register_host_class_json(timed_json(&id, "wall").as_bytes())
+        .expect("class registers");
+    let _host = timed_host(Arc::new(Mutex::new(Vec::new())));
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    assert!(start(&mut node, &id, "host-timer-1", "", 0).is_empty());
+    feed(&node, "host-timer-1", b"arm");
+    assert_eq!(
+        outputs(&rx, "host-timer-1", 2),
+        [b"arm".to_vec(), b"fired".to_vec()],
+        "the firing ran with no second message"
+    );
+}

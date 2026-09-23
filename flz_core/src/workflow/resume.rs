@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use super::compensation::{CellRun, StageRecord};
 use super::instance::{CommittedTask, Completion, JournalResume, MidResume, Release, Value};
 use super::run::{unwired_stream, Run};
+use super::spec::Chain;
 use super::{RollbackMode, WorkflowError};
 use crate::channel::{ChannelId, ChannelKind};
 use crate::operative::topology::OperativeTopology;
@@ -67,23 +68,17 @@ pub(crate) struct Seed {
     pub(crate) waiting: HashMap<usize, usize>,
 }
 
-/// A mid-iteration resume of the pass on `channel`: every uncommitted node of
-/// its chain with a committed producer re-seeds from that producer's
-/// journaled handoff on the producer's own channel, through the edge between
-/// them; a join with a producer still uncommitted banks it and waits,
-/// counting only the producers in this chain.
+/// A mid-iteration resume of a pass over `chain`: every uncommitted node of
+/// it with a committed producer re-seeds from that producer's journaled
+/// handoff on the producer's own channel, through the edge between them; a
+/// join with a producer still uncommitted banks it and waits, counting only
+/// the producers in this chain.
 pub(super) fn resumed_seed(
     r: &Run<'_>,
     mid: &MidResume,
-    channel: ChannelId,
+    chain: &Chain,
 ) -> Result<Seed, WorkflowError> {
     let dag = &r.spec.dag;
-    let chain = dag.chain(channel).ok_or_else(|| {
-        WorkflowError::non_retryable(format!(
-            "channel {channel} is not an entry channel of workflow {}",
-            r.inst.instance_id
-        ))
-    })?;
     let committed = &mid.committed_nodes;
     let journal = &mid.journal;
     let mut seed = Seed {

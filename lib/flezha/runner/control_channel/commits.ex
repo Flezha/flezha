@@ -192,7 +192,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       outbox: outbox,
       compensating: compensating,
       completes: completes,
-      result: result
+      result: result,
+      trigger: trigger
     } = commit
 
     outbox =
@@ -210,7 +211,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         do: {:compensated, task_idx, iter, outbox},
         else:
           {:task_committed, task_idx, iter, cells_ran, handoff_items(handoff), outbox,
-           completion(completes, result)}
+           completion(completes, result), trigger(trigger)}
 
     %{
       operative_id: operative_id,
@@ -291,6 +292,15 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   defp completion(true, result), do: result
   defp completion(false, _result), do: nil
+
+  defp trigger(nil), do: nil
+
+  defp trigger(%RunnerCommands.TimerTrigger{} = trigger),
+    do: %{
+      cell_key: trigger.cell_key,
+      kind: if(trigger.event_time, do: :event_time, else: :processing_time),
+      scheduled_at: trigger.scheduled_at
+    }
 
   # Boundary snapshot: ask the SDK to compact every Cell of the instance, so a
   # rehydrate restores iteration-N state from a snapshot instead of replaying the

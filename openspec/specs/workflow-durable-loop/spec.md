@@ -152,3 +152,22 @@ When more than one cell calls `ctx.complete` in one iteration, the instance SHAL
 - **WHEN** two cells of one tasklet call `ctx.complete` with different results in one iteration
 - **THEN** the instance SHALL end once, with the result of the cell whose key sorts last
 
+### Requirement: A timer-fed iteration commits like any iteration
+
+An iteration opened by a timer firing SHALL take the next iteration number and SHALL end with an `IterCommit` as a message-fed iteration does, under the same journal-then-ack gating, boundary snapshot compaction and outbox flush. Its commit SHALL carry no new consumed offset, a firing consuming no input: the offset the previous iteration recorded, or its absence where the journal records absence. It SHALL name the entry channel the previous iteration named, which is the chain a `CHAINED` resume re-enters. For a `CHAINED` loop its handoff SHALL be the iteration's leaf batch when the firing's chain reached the loop's leaf and released something, else the carry as it stood, so a timer-fed iteration that released nothing at the leaf SHALL NOT end the loop as an empty terminal batch would. A `PER_INPUT` loop's timer-fed iteration SHALL record its leaf batch as today.
+
+#### Scenario: A timer-fed iteration keeps the consumed offset where it was
+
+- **WHEN** a `per_input` loop committed iteration 3 with consumed offset 7 and a timer firing runs iteration 4
+- **THEN** `iter_committed(4)` SHALL carry consumed offset 7, or the absence of one where the journal records absence, and no input-log record SHALL be released by it
+
+#### Scenario: A chained loop keeps its carry across a timer-fed iteration that reached no leaf
+
+- **WHEN** a `chained` loop's leaf released batch `B` in iteration 2 and a timer firing runs iteration 3 through a chain that does not reach the leaf
+- **THEN** `iter_committed(3)` SHALL carry `B` as its handoff and iteration 4 SHALL be seeded from `B` into the loop's chain
+
+#### Scenario: A chained loop takes a timer-fed iteration's leaf batch as its carry
+
+- **WHEN** a timer firing's chain in a `chained` loop reaches the loop's leaf and the leaf releases batch `C`
+- **THEN** `iter_committed` for that iteration SHALL carry `C` and the next carry-fed iteration SHALL be seeded from `C`
+

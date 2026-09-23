@@ -266,7 +266,7 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 
 ### Requirement: A Node workflow definition carries what its builder recorded
 
-`defineWorkflow` SHALL build its `ClassSpec` from every field the channel builder recorded, exactly as `defineStream` does, and `toHostClassDecl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `WorkflowDefinition` SHALL carry no `retryAttempts`, `retryBackoffMs` or `barrierRetryAttempts`; the channel builder SHALL carry no `syncDurability()` call, the definition field being the one spelling. A tasklet context inside a workflow SHALL throw an error naming `TimersUnavailable` from `timerAfter`, `timerAtEventTime` and `cancelTimer`.
+`defineWorkflow` SHALL build its `ClassSpec` from every field the channel builder recorded, exactly as `defineStream` does, and `toHostClassDecl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `WorkflowDefinition` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the channel builder SHALL carry no `syncDurability()` call, the definition field being the one spelling. A tasklet context inside a workflow SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's context SHALL throw an error naming `TimersUnavailable` from them.
 
 #### Scenario: A tier call on a workflow reaches the core
 
@@ -278,8 +278,13 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 - **WHEN** a module exports `defineWorkflow({ factoryId: 'sd', syncDurability: true, channels })`
 - **THEN** the declaration carries `sync_durability: true`, and `c.syncDurability` is not a function on the builder
 
-#### Scenario: A timer inside a workflow tasklet is refused
+#### Scenario: A timer inside a workflow tasklet fires
 
-- **WHEN** a tasklet of a running workflow calls `ctx.timerAfter(1000)`
-- **THEN** the call throws an error naming `TimersUnavailable` and the effect carries no timer op
+- **WHEN** a tasklet of a running `perInput` workflow calls `ctx.timerAfter(300)` in `run`
+- **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
+
+#### Scenario: The retired wake field is refused
+
+- **WHEN** a module exports `defineWorkflow({ factoryId: 'w', wakeAfterMs: 5000, channels })`
+- **THEN** `defineWorkflow` rejects the unknown field by name, and no declaration carries `wake_after_ms`
 

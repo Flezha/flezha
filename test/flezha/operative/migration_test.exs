@@ -129,7 +129,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert suspended.suspended
     assert suspended.runner_id == nil
     assert suspended.channel == nil
-    refute Timer.armed?(suspended.timers, :wake), "no wake_after declared ⇒ wait for input alone"
+    refute Timer.armed?(suspended.timers, :wake), "no pending timer ⇒ wait for input alone"
   end
 
   # fails when: a park clears the ownership record, so a cell frame the
@@ -224,7 +224,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     :ok = await_migrate_task(rehydrating)
   end
 
-  test "the wake deadline rehydrates with a timer tick and no input" do
+  test "the wake deadline rehydrates and appends nothing" do
     inst = instance_id()
     stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> "ex_2" end)
 
@@ -234,8 +234,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert rehydrating.migrate_task != nil
     refute Timer.armed?(rehydrating.timers, :wake)
 
-    assert [{0, "", %{"flz.wake" => "timer"}}] = InputLog.undelivered(inst),
-           "the timer wake rides the input log — one wake path, so racing sources collapse"
+    assert InputLog.undelivered(inst) == [],
+           "the restored Cells' own timer fires; nothing rides the input log"
 
     :ok = await_migrate_task(rehydrating)
   end
@@ -251,6 +251,20 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert still.suspended
     assert still.migrate_task == nil
     assert [{0, "hi", _metadata}] = InputLog.undelivered(inst), "the input is not lost"
+  end
+
+  test "a wake deadline with no runner to rehydrate onto is retried a convergence tick later" do
+    inst = instance_id()
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
+
+    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    {:noreply, still} = Overwatch.handle_info(:wake_deadline, suspended)
+
+    assert still.suspended
+    assert still.migrate_task == nil
+    assert Timer.armed?(still.timers, :wake), "nothing else would wake it"
+    retry_in = Process.read_timer(elem(Map.fetch!(still.timers, :wake), 0))
+    assert retry_in > 0 and retry_in <= Flezha.Config.Durations.get(:convergence_tick_ms)
   end
 
   # The input log's answer to the append a cast issued — the host acts on it
@@ -327,6 +341,17 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       {:ok, 0} = InputLog.append(inst, "arrived", %{})
       refute Flezha.Operative.Migration.suspended_on_disk?(inst), "#{kind} owes input"
     end
+  end
+
+  test "an elapsed wake deadline is pending work, as undelivered input is" do
+    inst = instance_id()
+    now = System.system_time(:millisecond)
+
+    :ok = ClassRegistry.put_parked(inst, park(now + 60_000))
+    assert Flezha.Operative.Migration.suspended_on_disk?(inst), "its timer is not due yet"
+
+    :ok = ClassRegistry.put_parked(inst, park(now - 1))
+    refute Flezha.Operative.Migration.suspended_on_disk?(inst), "its timer is due: it binds"
   end
 
   test "a sleeping stream is rediscovered asleep at boot, and its forwarded floor with it" do

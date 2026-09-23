@@ -12,33 +12,48 @@ use crate::operative::topology::{OperativeTopology, TaskletDescriptor};
 /// The tasklet DAG in Kahn order from the entry channels' consumers, so
 /// every producer sits at a lower index than its consumer. A node's index is
 /// its `stage_idx` and its wire `task_idx`, and reversing the order is the
-/// compensation order. Each entry channel roots a chain: a message runs only
-/// the chain of the channel it arrived on.
+/// compensation order. A pass runs one chain: an entry channel's, for a
+/// message that arrived on it, or a tasklet's, for a timer firing it set.
 #[derive(Debug, Default)]
 pub struct TaskDag {
     pub order: Vec<TaskletId>,
     pub parents: Vec<Vec<usize>>,
     pub children: Vec<Vec<usize>>,
-    pub chains: Vec<EntryChain>,
+    /// One chain per entry channel.
+    pub entries: Vec<(ChannelId, Chain)>,
+    /// One chain per tasklet, rooted at it, indexed by position.
+    pub from_node: Vec<Chain>,
 }
 
-/// One entry channel's chain: the positions it feeds, everything reachable
-/// from them, and each member's count of parents inside the chain, which is
-/// what a join waits for in a pass on this channel.
+/// What one pass runs: its roots, everything reachable from them, and each
+/// member's count of parents inside the chain, which is what a join waits
+/// for in that pass.
 #[derive(Debug, Clone)]
-pub struct EntryChain {
-    pub channel_id: ChannelId,
+pub struct Chain {
     pub roots: Vec<usize>,
     members: Vec<bool>,
     parents_in_chain: Vec<usize>,
 }
 
-impl EntryChain {
+impl Chain {
+    fn reaching(parents: &[Vec<usize>], children: &[Vec<usize>], roots: Vec<usize>) -> Self {
+        let members = reachable(children, roots.iter().copied());
+        let parents_in_chain = parents
+            .iter()
+            .map(|ps| ps.iter().filter(|&&p| members[p]).count())
+            .collect();
+        Self {
+            roots,
+            members,
+            parents_in_chain,
+        }
+    }
+
     pub fn contains(&self, node: usize) -> bool {
         self.members.get(node).copied().unwrap_or(false)
     }
 
-    /// The producers of `node` that run in a pass on this channel.
+    /// The producers of `node` that run in a pass on this chain.
     pub fn parents_in_chain(&self, node: usize) -> usize {
         self.parents_in_chain.get(node).copied().unwrap_or(0)
     }
@@ -57,36 +72,28 @@ impl EntryChain {
 }
 
 impl TaskDag {
-    /// The DAG over positions, with one chain per entry channel computed by
-    /// reachability from the positions that channel feeds. `entries` pairs
-    /// each entry channel with the positions of its consumers.
+    /// The DAG over positions, with one chain per entry channel and one per
+    /// tasklet, each computed by reachability from its roots. `entries`
+    /// pairs each entry channel with the positions of its consumers.
     pub fn new(
         order: Vec<TaskletId>,
         parents: Vec<Vec<usize>>,
         children: Vec<Vec<usize>>,
         entries: impl IntoIterator<Item = (ChannelId, Vec<usize>)>,
     ) -> Self {
-        let chains = entries
+        let entries = entries
             .into_iter()
-            .map(|(channel_id, roots)| {
-                let members = reachable(&children, roots.iter().copied());
-                let parents_in_chain = parents
-                    .iter()
-                    .map(|ps| ps.iter().filter(|&&p| members[p]).count())
-                    .collect();
-                EntryChain {
-                    channel_id,
-                    roots,
-                    members,
-                    parents_in_chain,
-                }
-            })
+            .map(|(channel_id, roots)| (channel_id, Chain::reaching(&parents, &children, roots)))
+            .collect();
+        let from_node = (0..order.len())
+            .map(|node| Chain::reaching(&parents, &children, vec![node]))
             .collect();
         Self {
             order,
             parents,
             children,
-            chains,
+            entries,
+            from_node,
         }
     }
 
@@ -131,8 +138,11 @@ impl TaskDag {
     }
 
     /// The chain the entry channel `channel_id` roots.
-    pub fn chain(&self, channel_id: ChannelId) -> Option<&EntryChain> {
-        self.chains.iter().find(|c| c.channel_id == channel_id)
+    pub fn chain(&self, channel_id: ChannelId) -> Option<&Chain> {
+        self.entries
+            .iter()
+            .find(|(id, _)| *id == channel_id)
+            .map(|(_, chain)| chain)
     }
 
     /// The position tasklet `tasklet_id` holds, its `stage_idx`.
@@ -142,15 +152,16 @@ impl TaskDag {
 
     /// Whether `node` is fed by an entry channel.
     pub fn is_root(&self, node: usize) -> bool {
-        self.chains.iter().any(|c| c.roots.contains(&node))
+        self.entries.iter().any(|(_, c)| c.roots.contains(&node))
     }
 
     /// The first chain a handoff-chained loop cannot carry forward: one with
     /// several leaves, so no single terminal batch.
-    pub fn branching_chain(&self) -> Option<&EntryChain> {
-        self.chains
+    pub fn branching_chain(&self) -> Option<(ChannelId, &Chain)> {
+        self.entries
             .iter()
-            .find(|chain| chain.single_leaf(self).is_none())
+            .find(|(_, chain)| chain.single_leaf(self).is_none())
+            .map(|(channel_id, chain)| (*channel_id, chain))
     }
 
     /// The first chain's terminal whose output is not an inter-tasklet
@@ -160,9 +171,9 @@ impl TaskDag {
         &self,
         topology: &'t OperativeTopology,
     ) -> Option<&'t TaskletDescriptor> {
-        self.chains
+        self.entries
             .iter()
-            .filter_map(|chain| chain.single_leaf(self))
+            .filter_map(|(_, chain)| chain.single_leaf(self))
             .filter_map(|leaf| topology.tasklet(self.order[leaf]))
             .find(|terminal| {
                 !terminal
@@ -295,7 +306,6 @@ pub struct WorkflowSpec {
     pub max_duration: Option<Duration>,
     pub rollback_mode: RollbackMode,
     pub loop_mode: LoopMode,
-    pub wake_after: Option<Duration>,
     /// The controller ships a barrier to its durability backend before acking
     /// it; inert without a backend.
     pub sync_durability: bool,

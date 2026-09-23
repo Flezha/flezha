@@ -378,9 +378,45 @@ pub fn arm_interval_deadline(slot: &Arc<CellSlot>) {
     }
 }
 
+/// A workflow firing served inside a pass leaves the pending set durably
+/// when its stage commits, as a message leaves the input log at the commit
+/// that consumed it: its removal is taken out of the ops an attempt makes
+/// durable and held on the pass until the stage's ack. The live set drops it
+/// at once, so it never fires twice while the pass runs.
+pub fn hold_firing_removal(
+    slot: &Arc<CellSlot>,
+    ops: &mut Vec<TimerOp>,
+    firing: Option<(TimerKind, u64)>,
+) {
+    let Some((kind, scheduled_at)) = firing else {
+        return;
+    };
+    let Some(at) = ops
+        .iter()
+        .position(|op| !op.register && op.kind == kind && op.scheduled_at == scheduled_at)
+    else {
+        return;
+    };
+    if crate::workflow::hold_removal(slot, ops[at]) {
+        ops.remove(at);
+    }
+}
+
+/// The pending set a compaction re-states: the live one plus every firing
+/// whose removal a workflow stage still holds, which is not durable yet.
+pub fn restated(slot: &Arc<CellSlot>, live: &PendingTimers) -> PendingTimers {
+    let mut pending = live.clone();
+    for op in crate::workflow::held_removals(slot) {
+        pending.apply(&TimerOp::register(op.kind, op.scheduled_at));
+    }
+    pending
+}
+
 /// Re-arm a restored Cell's processing-time timers; anything past its
-/// deadline fires on the next promotion, ascending.
+/// deadline fires on the next promotion, ascending. A workflow Cell first
+/// drops every firing its journal records as committed.
 pub fn rearm_restored(slot: &Arc<CellSlot>) {
+    drop_committed_firings(slot);
     let ops = slot
         .timers
         .lock_recover()
@@ -400,6 +436,29 @@ pub fn rearm_restored(slot: &Arc<CellSlot>) {
         return;
     };
     apply_ops(slot, &ops, &stream);
+}
+
+/// A firing whose stage committed before the crash, while its removal was
+/// still unwritten: it must not fire again.
+fn drop_committed_firings(slot: &Arc<CellSlot>) {
+    if slot.topology.workflow.is_none() {
+        return;
+    }
+    let fired = crate::workflow::committed_firings(slot);
+    if fired.is_empty() {
+        return;
+    }
+    let removals: Vec<TimerOp> = {
+        let mut pending = slot.timers.lock_recover();
+        fired
+            .into_iter()
+            .map(|(kind, at)| TimerOp::cancel(kind, at))
+            .filter(|op| pending.apply(op))
+            .collect()
+    };
+    if !removals.is_empty() {
+        slot.dispatcher.write_timer_ops(slot, removals);
+    }
 }
 
 #[cfg(test)]
