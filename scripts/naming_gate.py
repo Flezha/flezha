@@ -440,6 +440,11 @@ GATES = (
     # an artefact is on a registry it is too late by definition.
     {"id": "publish-readiness-release", "group": "release",
      "argv": ["scripts/check-publish-readiness.sh", "--release"]},
+    # Every SDK repository's CI, run locally against a release built from this
+    # tree. Run by hand before a release: it builds, and it needs docker.
+    {"id": "sdk-ci-rehearsal", "group": "rehearsal",
+     "tools": ["docker:install Docker", "act:brew install act"],
+     "argv": ["scripts/rehearse-sdk-ci.sh"]},
     # Its `size` arm reads the packed repository, so it needs the whole history
     # and runs in a job that checks out with fetch-depth 0.
     {"id": "build-artifacts-size", "group": "history",
@@ -704,7 +709,7 @@ def _registry_self_test():
         elif target and head != "python3" and not os.access(target, os.X_OK):
             problems.append(f"  {gate_id}: {target} is not executable")
 
-    for spec in ("all", "@naming", "@format", "@history", "@release"):
+    for spec in ("all", "@naming", "@format", "@history", "@release", "@rehearsal"):
         try:
             if not select(spec):
                 problems.append(f"  {spec}: selects no gate")

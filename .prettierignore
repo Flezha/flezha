@@ -1,3 +1,0 @@
-# A `@ts-expect-error` directive binds to the next line; a reflow moves the
-# error off it and the type tests stop testing.
-sdk/node/types-tests/

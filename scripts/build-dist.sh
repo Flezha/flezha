@@ -44,6 +44,16 @@
 #             <dir> under their published asset names and write a SHA-256
 #             manifest beside them. This is what the release job uploads,
 #             and the names are the ones the SDK repositories fetch.
+#   --triples <triple>[,<triple>...]
+#             Build or stage only these of the five triples, and leave out the
+#             two fat jars, which carry all five. A set this narrow is a
+#             pre-release for the SDK repositories' CI, never a release.
+#
+# FLEZHA_GIT_MIRROR, when set, is a directory of bare repositories named as on
+# GitHub (`flezha`, `flezha_ruby_sdk.git`, ...). Cargo takes the core's tag, and
+# the submodules it fetches with it, from there instead of from GitHub (the
+# wheels and the gems build against that tag), so a release can be rehearsed
+# before anything is pushed.
 #
 # Host-mode requirements that this script will NOT auto-install:
 #   - Rust stable (rustup), Maven 3.8+, JDK 21, python3 + python3-venv
@@ -69,11 +79,13 @@ cd "${REPO_ROOT}"
 # ---------------------------------------------------------------------------
 MODE="host"
 STAGE_RELEASE_DIR=""
+TRIPLES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host)   MODE="host"; shift ;;
     --docker) MODE="docker"; shift ;;
     --stage-release) MODE="stage-release"; STAGE_RELEASE_DIR="$2"; shift 2 ;;
+    --triples) TRIPLES="$2"; shift 2 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -113,7 +125,7 @@ if [[ "${MODE}" == "docker" ]]; then
     -e MAVEN_OPTS="-Dmaven.repo.local=/cache/m2/repository" \
     -w /flezha \
     "${IMAGE}" \
-    bash -c 'mkdir -p "$HOME" "$CARGO_TARGET_DIR" /cache/m2/repository && exec scripts/build-dist.sh --host'
+    bash -c 'mkdir -p "$HOME" "$CARGO_TARGET_DIR" /cache/m2/repository && exec scripts/build-dist.sh --host ${1:+--triples "$1"}' _ "${TRIPLES}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -190,6 +202,20 @@ require_cmd() {
 # shellcheck source=scripts/native_triples.sh
 source "${SCRIPT_DIR}/native_triples.sh"
 
+if [[ -n "${TRIPLES}" ]]; then
+  IFS=',' read -ra selected <<< "${TRIPLES}"
+  for t in "${selected[@]}"; do
+    [[ -n "${TRIPLE_TO_DIR[${t}]:-}" ]] || { red "--triples: ${t} is not one of: ${ALL_TRIPLES[*]}"; exit 1; }
+  done
+  ALL_TRIPLES=("${selected[@]}")
+fi
+
+ORG_GIT_URL="https://github.com/flezha/"
+if [[ -n "${FLEZHA_GIT_MIRROR:-}" ]]; then
+  export CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="url.file://${FLEZHA_GIT_MIRROR}/.insteadOf" GIT_CONFIG_VALUE_0="${ORG_GIT_URL}"
+fi
+
 # The Node package's platform table, one `<suffix>|<target>` row per platform.
 # Read from what the package built rather than transcribed here: the loader
 # resolves against that table, and a platform declared in one place and
@@ -200,7 +226,13 @@ node_platforms() {
     import(process.argv[1]).then(({ NATIVE_PLATFORMS }) => {
       for (const p of NATIVE_PLATFORMS) console.log(`${p.suffix}|${p.target}`);
     });
-  ' "${NODE_PLATFORM_TABLE}"
+  ' "${NODE_PLATFORM_TABLE}" | while IFS='|' read -r suffix target; do
+    # The table's Windows row is MSVC, which ALL_TRIPLES does not spell, so a
+    # narrowed set is matched on the table's own target.
+    if [[ -z "${TRIPLES}" || ",${TRIPLES}," == *",${target},"* ]]; then
+      echo "${suffix}|${target}"
+    fi
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -301,8 +333,10 @@ if [[ "${MODE}" == "stage-release" ]]; then
     stage_asset "${ELIXIR_NIFS_OUT}/${nif}" "${nif}"
   done
   stage_asset "${ELIXIR_NIFS_OUT}/${ELIXIR_NIF_CHECKSUMS}" "${ELIXIR_NIF_CHECKSUMS}"
-  stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
-  stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
+  if [[ -z "${TRIPLES}" ]]; then
+    stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
+    stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
+  fi
   stage_fixture_archive
   stage_node_packages
   stage_wheels
@@ -566,12 +600,20 @@ RUBY_GEM_SOURCE="${REPO_ROOT}/dist/ruby-gem-source"
 rm -rf "${RUBY_GEM_SOURCE}"
 mkdir -p "${RUBY_GEM_SOURCE}" "${RUBY_GEMS_OUT}"
 git -C "${REPO_ROOT}/sdk/ruby" archive HEAD | tar -x -C "${RUBY_GEM_SOURCE}"
+# The container sees only the gem's directory and none of this environment, so
+# it gets its own copy of the mirror and is told to use it before the build.
+dock_prelude=()
+if [[ -n "${FLEZHA_GIT_MIRROR:-}" ]]; then
+  mkdir -p "${RUBY_GEM_SOURCE}/tmp"
+  cp -r "${FLEZHA_GIT_MIRROR}" "${RUBY_GEM_SOURCE}/tmp/git-mirror"
+  dock_prelude=(-- "export CARGO_NET_GIT_FETCH_WITH_CLI=true && git config --global url.file://${RUBY_GEM_SOURCE}/tmp/git-mirror/.insteadOf ${ORG_GIT_URL}")
+fi
 for t in "${ALL_TRIPLES[@]}"; do
   platform="${TRIPLE_TO_GEM_PLATFORM[${t}]}"
   echo
   bold "── building the ${platform} gem"
   if ( cd "${RUBY_GEM_SOURCE}" &&
-       rb-sys-dock --platform "${platform}" --ruby-versions "${RUBY_GEM_MINORS}" --build ); then
+       rb-sys-dock --platform "${platform}" --ruby-versions "${RUBY_GEM_MINORS}" --build "${dock_prelude[@]}" ); then
     cp -f "${RUBY_GEM_SOURCE}/pkg/flezha-${RELEASE_VERSION}-${platform}.gem" "${RUBY_GEMS_OUT}/"
   else
     red "  cannot build the ${platform} gem on this host"
@@ -603,6 +645,13 @@ for t in "${ALL_TRIPLES[@]}"; do
      "${PHP_NATIVE_OUT}/${dir}/${TRIPLE_TO_PREFIX[${t}]}flz_core_ffi.${ext}"
   echo "  -> ${PHP_NATIVE_OUT}/${dir}"
 done
+
+if [[ -n "${TRIPLES}" ]]; then
+  # The triples were chosen, so anything among them that did not build failed.
+  (( ${#UNBUILDABLE[@]} == 0 )) || exit 1
+  green "Built the ${TRIPLES} artefacts; the fat jars need all five triples and were left out."
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Build the SDK fat jar (-P native-build enforces all 5 natives present;
